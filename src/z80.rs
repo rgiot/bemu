@@ -69,10 +69,51 @@ lazy_static! {
 
 }
 
+/// Contains all the informations needed to drive the next
+/// cycles of the instruction
+#[derive(Copy, Clone, Debug)]
+struct OpcodeInformation {
+    /// Prefix for the current opcode
+    prefix: OpcodePrefix,
+    /// Number of bytes of the opcode that need to be fetched
+    nb_opcode_bytes: u8,
+    /// Location of the reading address
+    read_address: AddressSource,
+    /// Number of bytes to read from the address
+    nb_bytes_to_read: u8,
+}
 
+impl OpcodeInformation {
+    /// Fetch is finished for opcode of 1 byte with no memory/port access
+    fn fetch_finished(&self) -> bool {
+        self.nb_opcode_bytes == 0 && self.read_address == AddressSource::None
+    }
+
+    /// Check if CPU as to read from memory
+    fn expect_read(&self) -> bool {
+        AddressSource::None != self.read_address
+    }
+}
 
 
 impl OpcodePrefix {
+    /// Retreive all the information needed to data collection for the current opcode
+    fn opcode_information(&self, opcode: u8) -> OpcodeInformation {
+        let opcode = opcode as usize;
+
+        let read_address = self.read_address_source_table()[opcode];
+        let nb_bytes_to_read = match read_address {
+            AddressSource::None => 0,
+            _ => 1 // TODO really set the right value
+        };
+        OpcodeInformation {
+            prefix: self.clone(),
+            nb_opcode_bytes: self.bytes_to_read_table()[opcode],
+            read_address ,
+            nb_bytes_to_read, 
+        }
+    }
+
     /// Return the disassembling LUT table depending on the prefix
     fn disassembling_table(&self) -> &[&'static str; 256] {
         // the decoding table depends on the prefix
@@ -177,7 +218,7 @@ impl OpcodePrefix {
 }
 
 /// Where the CPU searches the address information to be put on the address line
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 enum AddressSource {
     /// No address handled by the opcode
     None,
@@ -192,7 +233,7 @@ enum AddressSource {
 }
 
 /// Where the CPU searches the information to link with the data bus
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 enum DataSource {
     /// No data handled by the opcode
     None,
@@ -209,6 +250,9 @@ enum DataSource {
 
 }
 
+
+
+/// Simulate the Cycles of hte CPU. No need to simulate the pipeline stuff however
 #[derive(Debug, PartialEq)]
 enum MCycle {
     /// M1 (State, byte number, opcode prefix)
@@ -216,10 +260,11 @@ enum MCycle {
     /// - T2: read the byte
     /// - T3&T4: memory refresh / decode the opcode
     FetchOpcode(TState, u8, OpcodePrefix),
-    Read(TState, u8, AddressSource, OpcodePrefix),
-    Write(TState),
-    Input(TState),
-    Output(TState),
+    /// Read state (state, byte index to read) opciode information is stored by CPU
+    Read(TState, u8),
+    Write(TState, u8),
+    Input(TState, u8),
+    Output(TState, u8),
 }
 
 
@@ -238,6 +283,12 @@ impl MCycle {
             MCycle::FetchOpcode(TState::T2, nb, prefix) => MCycle::FetchOpcode(TState::T3, *nb, *prefix),
             MCycle::FetchOpcode(TState::T3, nb, prefix) => MCycle::FetchOpcode(TState::T4, *nb, *prefix),
             MCycle::FetchOpcode(TState::T4, nb, prefix) => panic!("Ambigous"),
+
+
+            MCycle::Read(TState::T1, nb) => MCycle::Read(TState::T2, *nb),
+            MCycle::Read(TState::T2, nb) => MCycle::Read(TState::T3, *nb),
+            MCycle::Read(TState::T3, nb) => panic!("Ambigous"),
+
             _ => unimplemented!()
         }
     }
@@ -245,7 +296,7 @@ impl MCycle {
     fn prefix(&self) -> OpcodePrefix {
         match self {
             MCycle::FetchOpcode(_, _, prefix) => *prefix,
-            _ => unimplemented!()
+            _ => unreachable!()
         }
     }
 }
@@ -649,6 +700,29 @@ impl Reg16 {
     }
 }
 
+impl Into<Reg16> for &cpclib_asm::preamble::Register16 {
+    fn into(self) -> Reg16 {
+        match self {
+            cpclib_asm::preamble::Register16::Af => Reg16::Af,
+            cpclib_asm::preamble::Register16::Hl => Reg16::Hl,
+            cpclib_asm::preamble::Register16::Bc => Reg16::Bc,
+            cpclib_asm::preamble::Register16::De => Reg16::De,
+            cpclib_asm::preamble::Register16::Sp => Reg16::Sp,
+        }
+    }
+}
+
+impl Into<Reg16> for &cpclib_asm::preamble::IndexRegister16 {
+    fn into(self) -> Reg16 {
+        match self {
+            cpclib_asm::preamble::IndexRegister16::Ix => Reg16::Ix,
+            cpclib_asm::preamble::IndexRegister16::Iy => Reg16::Iy,
+        }
+    }
+}
+
+
+
 
 #[derive(Default)]
 pub struct Z80 {
@@ -683,27 +757,60 @@ pub struct Z80 {
     /// Instruction Register / contains the opcode of interest
     ir: Register8,
     /// Additional bytes read during the fetch pass
-    extra_bytes: Vec<u8>,
-    /// number of bytes expected to be read to build the opcode (in addition to the first one)
-    expected_additional_opcode_bytes: u8,
+    opcode_extra_byte: Vec<u8>,
+    /// Additioanl bytes read during the read pass
+    memory_read: Vec<u8>,
+  
 
     /// Refresh adr
     /// XXX Not handled at all by the emulator
     refresh_addr: u16,
 
-    memory_byte: Option<u8>
+    /// Information for the current opcode - Setup after fetching the very first byte
+    opcode_information: Option<OpcodeInformation>
 }
 
 impl Z80 {
 
+    /// During the fetch cycle, the CPU collected the information to obtain the address to read/write
+    /// This method obtains it
+    fn get_read_address_from_opcode_information(&self) -> u16 {
+        match self.opcode_information.as_ref() {
+            Some(oi) => {
+                match oi.read_address {
+                    AddressSource::None => unreachable!(),
+                    AddressSource::Immediate => {
+                        assert_eq!(self.opcode_extra_byte.len(), 2, "Impossible or unimplemented case");
+                        256 * self.opcode_extra_byte[1] as u16 + self.opcode_extra_byte[0] as u16 
+                    },
+                    AddressSource::Register16(ref reg) => {
+                        self.reg16(reg.into()).get()
+                    }
+                    ,
+                    AddressSource::IndexRegister16(ref reg) => {
+                        self.reg16(reg.into()).get()
+                    }
+                    ,
+                    AddressSource::Indexed(ref reg) => {
+                        // by definition, delta is within the first byte
+                        self.reg16(reg.into()).get() + self.opcode_extra_byte[0] as u16
+                    }
+                }
+            },
+            None => unreachable!()
+        }
+    }
+
     
     /// Execute the instruction ; all necessary stuffs has already been collected
-    fn execute_step(&mut self, prefix: OpcodePrefix) {
+    fn execute_step(&mut self) {
+        let prefix = &self.opcode_information.as_ref().unwrap().prefix;
+
         // By construction, it cannot fail
         let (opcode,rest) = dbg!(cpclib_asm::disass::disassemble_with_potential_argument(
             self.ir.get(),
             &prefix.disassembling_table(),
-            &self.extra_bytes
+            &self.opcode_extra_byte
         ).unwrap());
         assert_eq!(rest.len(), 0);
         assert!(opcode.is_opcode());
@@ -712,11 +819,17 @@ impl Z80 {
             opcode.mnemonic_arg1(),
             opcode.mnemonic_arg2(),
         );
-        self.extra_bytes.clear();
+
+        // reset the various buffers
+        self.opcode_information = None;
+        self.opcode_extra_byte.clear();
+        self.memory_read.clear();
     }
 
     /// Check how many bytes have to be read yet and set up appropriately the next state
     fn decode_step(&mut self) -> bool {
+        // Check if current opcode is a prefix or a real one
+        // In case it is a prefix, we redo a Fetch state from scratch
         let current_prefix = self.next_state.prefix();
         match self.ir.get() {
             // For prefixed instructions, we have to restart the process from scratch
@@ -743,19 +856,24 @@ impl Z80 {
 
             _ => {
 
-                let nb_requested_bytes = current_prefix.bytes_to_read_table()[self.ir.get() as usize];
+                // Get the number of additional bytes to read as well as the information for the next cycles
+                self.opcode_information = Some(current_prefix.opcode_information(self.ir.get()));
+                let opcode_information = self.opcode_information.as_ref().unwrap();
 
-                // TODO check if it is necessary to make some memory/chip access
-
-                if nb_requested_bytes == 0 {
+                if opcode_information.fetch_finished() {
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
-                    self.expected_additional_opcode_bytes = 0;
                     return true;
                 }
-                else {
-                    self.expected_additional_opcode_bytes = nb_requested_bytes;
+                else if opcode_information.nb_opcode_bytes != 0 {
                     self.next_state = MCycle::FetchOpcode(TState::T1, 1, current_prefix);
                     return false;
+                }
+                else if opcode_information.expect_read() {
+                    self.next_state = MCycle::Read(TState::T1, 0);
+                    return false;
+                }
+                else {
+                    unimplemented!()
                 }
             }
         }
@@ -802,7 +920,7 @@ impl Z80 {
             Mnemonic::Nop => {
             },
             Mnemonic::Xor => {
-                let right = self.get_available_8bits_value(arg1.unwrap());
+                let right = dbg!(self.get_available_8bits_value(arg1.unwrap()));
                 self.reg8_mut(Reg8::A).xor(right);
             },
             _ => unimplemented!()
@@ -826,7 +944,8 @@ impl Z80 {
             DataAccess::MemoryRegister16(_reg) => {
                 // Here we do not care at all of which register is used for memory reading
                 // Because the CPU has already read the information
-                return self.memory_byte.unwrap();
+                assert_eq!(1, self.memory_read.len());
+                return self.memory_read[0];
             },
             DataAccess::Expression(expr) => {
                 return expr.eval().unwrap() as u8; // cannot fail as the value has been disassembled
@@ -946,12 +1065,16 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
+        dbg!(&self.next_state) ;
+        dbg!(&self.opcode_information) ;
 
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
                 self.set_address_on_pins(self.pc.get());
+                // pc is incremented in T2 in a real CPU
                 self.pc.inc();
+
 
                 self.set_pin(Z80Pin::Neg_MREQ, false);
                 self.set_pin(Z80Pin::Neg_RD, false);
@@ -963,18 +1086,19 @@ impl Chip for Z80 {
 
             // Second step / may be delayed if wait is activated
             MCycle::FetchOpcode(TState::T2, nb,_) => {
+
                 self.set_pin(Z80Pin::Neg_RD, true);
                 self.set_pin(Z80Pin::Neg_MREQ, true);
                 self.set_pin(Z80Pin::Neg_M1, true);
 
-                let byte = self.get_8bit_value_from_pins(&Z80_PIN_DATA_BUS);
+                let byte = self.get_data_from_pins();
                 match nb {
                     0 => {
                         self.ir.set(byte);
-                        self.extra_bytes.clear();
+                        self.opcode_extra_byte.clear();
                     },
                     _ => { // TODO find where such information is really saved
-                        self.extra_bytes.push(byte);
+                        self.opcode_extra_byte.push(byte);
                     }
                 }
                 self.set_pin(Z80Pin::Neg_RFSH, false);
@@ -999,14 +1123,17 @@ impl Chip for Z80 {
                     if execute {
                         // nothing is required for the execution
                          // TODO check if input or memory cycle is required
-                        self.execute_step(prefix);
+                        self.execute_step();
                     }
                 } else {
-                    if nb == self.expected_additional_opcode_bytes {
-                        self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); // go back for a new instruction
-
-                         // TODO check if input or memory cycle is required
-                        self.execute_step(prefix);
+                    if nb == self.opcode_information.as_ref().unwrap().nb_opcode_bytes {
+                        if 0 == self.opcode_information.as_ref().unwrap().nb_bytes_to_read {
+                            self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); // go back for a new instruction
+                            self.execute_step();
+                        }
+                        else {
+                            self.next_state = MCycle::Read(TState::T1, 0);
+                        }
                     } 
                     else {
                         // we still need to read something
@@ -1015,7 +1142,37 @@ impl Chip for Z80 {
                 }
 
                
+            },
+
+
+            MCycle::Read(TState::T1, nb) => {
+                let address = self.get_read_address_from_opcode_information();
+                self.set_address_on_pins(address);
+                self.set_pin(Z80Pin::Neg_MREQ, false);
+                self.set_pin(Z80Pin::Neg_RD, false);
+                self.next_state.inc_state();
+            },
+            MCycle::Read(TState::T2, nb) => {
+                self.set_pin(Z80Pin::Neg_RD, true);
+                self.set_pin(Z80Pin::Neg_MREQ, true);
+                let byte = self.get_data_from_pins();
+                self.memory_read.push(byte);
+                self.next_state.inc_state();
+            },
+            MCycle::Read(TState::T3, nb) => {
+                if self.memory_read.len() as u8 == self.opcode_information.as_ref().unwrap().nb_bytes_to_read {
+                    // TODO take into account those that do a write after the read (if that exists)
+                    self.execute_step();
+                    self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); // go back for a new instruction
+
+                } else {
+                    // go to read the next byte
+                    self.next_state = MCycle::Read(TState::T1, nb+1);
+                }
+
             }
+
+
 
             _ => unimplemented!()
         }
@@ -1144,7 +1301,7 @@ mod test {
         cpu.reg8_mut(Reg8::A).set(0xff);
 
         assert_eq!(cpu.reg8(Reg8::A).get(), 0xff);
-        test_byte_FetchOpcode(&mut cpu, 0xae);
+        test_byte_FetchOpcodeRead(&mut cpu, 0xae, 0xff);
         assert_eq!(cpu.reg8(Reg8::A).get(), 0x00);
     }
         
@@ -1202,7 +1359,64 @@ mod test {
     }
 
 
+    fn test_byte_FetchOpcodeRead(cpu: &mut Z80, byte: u8, data: u8) {
 
+        let pc_base = cpu.reg16(Reg16::Pc).get();
+
+
+        cpu.set_pin(Z80Pin::Neg_MREQ, true);
+        cpu.set_pin(Z80Pin::Neg_RD, true);
+        cpu.set_pin(Z80Pin::Neg_WAIT, true);
+        cpu.set_pin(Z80Pin::Neg_M1, true);
+        cpu.set_pin(Z80Pin::Neg_RFSH, true);
+        cpu.set_pin(Z80Pin::Neg_IORQ, true);
+        cpu.set_pin(Z80Pin::Neg_WR, true);
+        
+
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None));
+        cpu.tick();
+        let addr = cpu.get_address_from_pins();
+        assert_eq!(addr, pc_base);
+        assert_eq!(cpu.pc.get(), pc_base + 1);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None));
+    
+        // GA set wait
+        cpu.set_pin(Z80Pin::Neg_WAIT, false);
+        cpu.tick();
+        assert_eq!(cpu.pc.get(), pc_base + 1);
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None));
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+
+        // Byte is available
+        cpu.set_pin(Z80Pin::Neg_WAIT, true);
+        cpu.set_data_on_pins(byte);
+        cpu.tick();
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T3, 0, OpcodePrefix::None));
+
+        cpu.tick();
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T4, 0, OpcodePrefix::None));
+
+        cpu.tick(); // execute
+        assert_eq!(cpu.next_state, MCycle::Read(TState::T1, 0));
+
+        ///TODO add assertions there
+        cpu.tick();
+        cpu.set_data_on_pins(data);
+        cpu.tick();
+        cpu.tick();
+    }
 
 
 
