@@ -538,7 +538,6 @@ enum Reg16 {
     Bc,
     Bc2,
     Wz,
-    Wz2,
     Pc,
     Sp,
     Ix,
@@ -557,7 +556,6 @@ enum Reg8 {
     B,
     B2,
     W,
-    W2,
     Ixh,
     Iyh,
 
@@ -570,7 +568,6 @@ enum Reg8 {
     C,
     C2,
     Z,
-    Z2,
     
     Ixl,
     Iyl,
@@ -619,7 +616,6 @@ impl Reg8 {
             B => true,
             B2 => true,
             W => true,
-            W2 => true,
             Ixh => true,
             Iyh => true,
         
@@ -639,7 +635,6 @@ impl Reg8 {
             B => Reg16::Bc,
             B2 => Reg16::Bc2,
             W => Reg16::Wz,
-            W2 => Reg16::Wz2,
             Ixh => Reg16::Ix,
             Iyh => Reg16::Iy,
 
@@ -652,7 +647,6 @@ impl Reg8 {
             C => Reg16::Bc,
             C2 => Reg16::Bc2,
             Z => Reg16::Wz,
-            Z2 => Reg16::Wz2,
             
             Ixl => Reg16::Ix,
             Iyl => Reg16::Iy,
@@ -673,7 +667,6 @@ impl Reg16 {
             Bc => Reg8::B,
             Bc2 => Reg8::B2,
             Wz => Reg8::W,
-            Wz2 => Reg8::W2,
             Ix => Reg8::Ixh,
             Iy => Reg8::Iyh,
             _ => unreachable!()
@@ -692,7 +685,6 @@ impl Reg16 {
             Bc => Reg8::C,
             Bc2 => Reg8::C2,
             Wz => Reg8::Z,
-            Wz2 => Reg8::Z2,
             Ix => Reg8::Ixl,
             Iy => Reg8::Iyl,
             _ => unreachable!()
@@ -747,19 +739,13 @@ pub struct Z80 {
 
     ix: Register16,
     iy: Register16,
-
     wz: Register16,
-    wz2: Register16,
 
     i: Register8,
     r: Register8,
 
     /// Instruction Register / contains the opcode of interest
     ir: Register8,
-    /// Additional bytes read during the fetch pass
-    opcode_extra_byte: Vec<u8>,
-    /// Additioanl bytes read during the read pass
-    memory_read: Vec<u8>,
   
 
     /// Refresh adr
@@ -780,8 +766,7 @@ impl Z80 {
                 match oi.read_address {
                     AddressSource::None => unreachable!(),
                     AddressSource::Immediate => {
-                        assert_eq!(self.opcode_extra_byte.len(), 2, "Impossible or unimplemented case");
-                        256 * self.opcode_extra_byte[1] as u16 + self.opcode_extra_byte[0] as u16 
+                        self.reg16(Reg16::Wz).get()
                     },
                     AddressSource::Register16(ref reg) => {
                         self.reg16(reg.into()).get()
@@ -793,7 +778,7 @@ impl Z80 {
                     ,
                     AddressSource::Indexed(ref reg) => {
                         // by definition, delta is within the first byte
-                        self.reg16(reg.into()).get() + self.opcode_extra_byte[0] as u16
+                        self.reg16(reg.into()).get() + self.reg8(Reg8::Z).get() as u16
                     }
                 }
             },
@@ -806,13 +791,17 @@ impl Z80 {
     fn execute_step(&mut self) {
         let prefix = &self.opcode_information.as_ref().unwrap().prefix;
 
+        let memory = [
+            self.reg8(Reg8::Z).get(),
+            self.reg8(Reg8::W).get()
+        ];
+
         // By construction, it cannot fail
         let (opcode,rest) = dbg!(cpclib_asm::disass::disassemble_with_potential_argument(
             self.ir.get(),
             &prefix.disassembling_table(),
-            &self.opcode_extra_byte
+            &memory
         ).unwrap());
-        assert_eq!(rest.len(), 0);
         assert!(opcode.is_opcode());
         self.execute_opcode(
             opcode.mnemonic().unwrap(),
@@ -822,8 +811,6 @@ impl Z80 {
 
         // reset the various buffers
         self.opcode_information = None;
-        self.opcode_extra_byte.clear();
-        self.memory_read.clear();
     }
 
     /// Check how many bytes have to be read yet and set up appropriately the next state
@@ -944,8 +931,7 @@ impl Z80 {
             DataAccess::MemoryRegister16(_reg) => {
                 // Here we do not care at all of which register is used for memory reading
                 // Because the CPU has already read the information
-                assert_eq!(1, self.memory_read.len());
-                return self.memory_read[0];
+                return self.reg8(Reg8::Z).get();
             },
             DataAccess::Expression(expr) => {
                 return expr.eval().unwrap() as u8; // cannot fail as the value has been disassembled
@@ -968,7 +954,6 @@ impl Z80 {
             Reg16::Hl2 => &mut self.hl2,
             Reg16::De2 => &mut self.de2,
             Reg16::Bc2 => &mut self.bc2,
-            Reg16::Wz2 => &mut self.wz2,
 
             Reg16::Ix => &mut self.ix,
             Reg16::Iy => &mut self.iy,
@@ -989,7 +974,6 @@ impl Z80 {
             Reg16::Hl2 => & self.hl2,
             Reg16::De2 => & self.de2,
             Reg16::Bc2 => & self.bc2,
-            Reg16::Wz2 => & self.wz2,
 
             Reg16::Ix => & self.ix,
             Reg16::Iy => & self.iy,
@@ -1095,10 +1079,15 @@ impl Chip for Z80 {
                 match nb {
                     0 => {
                         self.ir.set(byte);
-                        self.opcode_extra_byte.clear();
                     },
-                    _ => { // TODO find where such information is really saved
-                        self.opcode_extra_byte.push(byte);
+                    1 => {
+                        self.reg8_mut(Reg8::Z).set(byte);
+                    },
+                    2 => {
+                        self.reg8_mut(Reg8::W).set(byte);
+                    },
+                    _ => {
+                        unreachable!()
                     }
                 }
                 self.set_pin(Z80Pin::Neg_RFSH, false);
@@ -1156,11 +1145,16 @@ impl Chip for Z80 {
                 self.set_pin(Z80Pin::Neg_RD, true);
                 self.set_pin(Z80Pin::Neg_MREQ, true);
                 let byte = self.get_data_from_pins();
-                self.memory_read.push(byte);
+                if nb == 0 {
+                    self.reg8_mut(Reg8::Z).set(byte);
+                }
+                else /*if nb == 1*/ {
+                    self.reg8_mut(Reg8::W).set(byte);
+                }
                 self.next_state.inc_state();
             },
             MCycle::Read(TState::T3, nb) => {
-                if self.memory_read.len() as u8 == self.opcode_information.as_ref().unwrap().nb_bytes_to_read {
+                if nb+1 == self.opcode_information.as_ref().unwrap().nb_bytes_to_read {
                     // TODO take into account those that do a write after the read (if that exists)
                     self.execute_step();
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); // go back for a new instruction
@@ -1304,7 +1298,20 @@ mod test {
         test_byte_FetchOpcodeRead(&mut cpu, 0xae, 0xff);
         assert_eq!(cpu.reg8(Reg8::A).get(), 0x00);
     }
-        
+
+/*
+    #[test]
+    fn test_ld_a_mem_FetchOpcode() {
+        let mut cpu = Z80::default();
+        cpu.pc.set(0x1234);
+        cpu.reg8_mut(Reg8::A).set(0xff);
+
+        assert_eq!(cpu.reg8(Reg8::A).get(), 0b00111010);
+        test_byte_FetchOpcodeRead2(&mut cpu, 0xae, 0xff);
+        assert_eq!(cpu.reg8(Reg8::A).get(), 0x00);
+    }
+     */
+
     fn test_byte_FetchOpcode(cpu: &mut Z80, byte: u8) {
 
         let pc_base = cpu.reg16(Reg16::Pc).get();
