@@ -62,7 +62,7 @@ lazy_static! {
 
 /// Contains all the informations needed to drive the next
 /// cycles of the instruction
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug)]
 struct OpcodeInformation {
     /// Prefix for the current opcode
     prefix: OpcodePrefix,
@@ -70,9 +70,14 @@ struct OpcodeInformation {
     nb_additional_opcode_bytes: u8,
     /// Location of the reading address
     read_address: AddressSource,
+    /// Location of the write address
+    write_address: AddressSource,
     /// Number of bytes to read from the address
     nb_ADDITIONAL_BYTES_TO_READ: u8,
-    repr: &'static str
+    /// String representation
+    repr: &'static str,
+    /// Token just in case it is usefull (to be removed if not)
+    token: cpclib_asm::preamble::Token
 }
 
 impl OpcodeInformation {
@@ -93,17 +98,23 @@ impl OpcodePrefix {
     fn opcode_information(&self, opcode: u8) -> OpcodeInformation {
         let opcode = opcode as usize;
 
+        let repr = self.disassembling_table()[opcode];  
         let read_address = self.read_address_source(opcode);
+        let write_address = self.write_address_source(opcode);
+        let token = cpclib_asm::parser::parse_token(repr).unwrap().1;
+
         let nb_ADDITIONAL_BYTES_TO_READ = match read_address {
             AddressSource::None => 0,
             _ => 1 // TODO really set the right value
         };
+
         OpcodeInformation {
             prefix: self.clone(),
             nb_additional_opcode_bytes: self.opcode_bytes_to_read(opcode),
             read_address ,
+            write_address ,
             nb_ADDITIONAL_BYTES_TO_READ, 
-            repr: self.disassembling_table()[opcode]
+            repr, token
         }
     }
 
@@ -182,8 +193,58 @@ impl OpcodePrefix {
         else {
             AddressSource::None
         }
-      
     }
+
+
+
+    fn write_address_source(self, i: usize) ->  AddressSource {
+        lazy_static! {
+          static ref  indexed_iy: Regex = Regex::new(r"\(IY\+nn\)[^$]").unwrap();
+          static ref  indexed_ix: Regex = Regex::new(r"\(IX\+nn\)[^$]").unwrap();
+          static ref  in_hl: Regex = Regex::new(r"\(HL\)[^$]").unwrap();
+          static ref  in_bc: Regex = Regex::new(r"\(BC\)[^$]").unwrap();
+          static ref  in_de: Regex = Regex::new(r"\(DE\)[^$]").unwrap();
+          static ref  in_af: Regex = Regex::new(r"\(AF\)[^$]").unwrap();
+          static ref  in_ix: Regex = Regex::new(r"\(IX\)[^$]").unwrap();
+          static ref  in_iy: Regex = Regex::new(r"\(IY\)[^$]").unwrap();
+          static ref  immediate: Regex = Regex::new(r"\(nnnn\)[^$]").unwrap();
+        }
+
+  
+      let repr = self.disassembling_table()[i];
+
+      if indexed_iy.is_match(repr) {
+          AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Iy)
+      }
+      else if indexed_ix.is_match(repr) {
+          AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Ix)
+      }
+      else if in_af.is_match(repr) {
+          AddressSource::Register16(cpclib_asm::preamble::Register16::Af)
+      }
+      else if in_hl.is_match(repr) {
+          AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
+      }
+      else if in_de.is_match(repr) {
+          AddressSource::Register16(cpclib_asm::preamble::Register16::De)
+      }
+      else if in_bc.is_match(repr) {
+          AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
+      }
+      else if in_ix.is_match(repr) {
+          AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Ix)
+      }
+      else if in_iy.is_match(repr) {
+          AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Iy)
+      }
+      else if immediate.is_match(repr) {
+          AddressSource::Immediate
+      }
+      else {
+          AddressSource::None
+      }
+    
+  }
 }
 
 /// Where the CPU searches the address information to be put on the address line
