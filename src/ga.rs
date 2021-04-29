@@ -5,84 +5,84 @@ use num_enum::TryFromPrimitive;
 
 use flagset::{FlagSet, flags};
 
-flags! {
-    #[allow(non_camel_case_types)]
-    #[repr(u64)]
-pub enum GateArrayPin : u64 {
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[repr(u64)]
+pub enum GateArrayPin {
     /// Specify if the pin is for CPU or CRTC. 1MHZ signal
-    CPU_ADDR,
+    CPU_ADDR = 1<<0,
     /// Request the CPU to wait
-    READY,
+    READY = 1<<1,
     /// Validate high byte of address
-    CAS,
+    CAS = 1<<2,
     /// Activate data from cpu to ga
-    TWO_FOR_FOR_EN,
+    TWO_FOR_FOR_EN = 1<<3,
     /// Request write in RAM
-    MWE,
+    MWE = 1<<4,
     /// ????
-    CAS_ADDR,
+    CAS_ADDR = 1<<5,
     /// Adress is line address
-    RAS,
+    RAS = 1<<6,
     /// 16 Mhz signal
-    XTAL,
-    VCC2,
+    XTAL = 1<<7,
+    VCC2 = 1<<8,
     /// Request the CPU to interrupt
-    INTERRUPT,
+    INTERRUPT = 1<<9,
     /// Synchronization for screen
-    SYNC,
+    SYNC = 1<<10,
     /// Access to ROM
-    ROMEN,
+    ROMEN = 1<<11,
     /// Request data send to CPU
-    RAMRD,
+    RAMRD = 1<<12,
     /// Horizontal synchronisation from CRTC
-    HSYNC,
+    HSYNC = 1<<13,
     /// Vertical synchronisation from CRTC
-    VSYNC,
+    VSYNC = 1<<14,
     /// The CPU request an input/output (ignored if does not match)
-    IORQ,
+    IORQ = 1<<15,
     /// CPU received an interruption signal
-    M1,
+    M1 = 1<<16,
     /// CPU wants to access the memory
-    MERQ,
+    MERQ = 1<<17,
     /// CPU wants to read the memory
-    RD,
+    RD = 1<<18,
 
-    A15,
+    A15 = 1<<19,
 
     /// 1 Mhz for RAM refresh
-    MAO_CCLK,
+    MAO_CCLK = 1<<20,
 
     /// 4MHZ for CPU
-    PHI,
-    VCC1,
+    PHI = 1<<21,
+    VCC1 = 1<<22,
 
     /// Reset of the GA
-    RESET,
+    RESET = 1<<23,
 
     /// Red component of the video signal
-    R,
-    GND,
+    R = 1<<24,
+    GND = 1<<25,
     /// Green component of the video signal
-    G,
-    VCC3,
+    G = 1<<26,
+    VCC3 = 1<<27,
     /// Blue component of the video signal
-    B,
+    B = 1<<28,
 
-    D7,
-    D6,
-    D5,
-    D4,
-    D3,
-    D2,
-    D1,
-    D0,
+    D7 = 1<<29,
+    D6 = 1<<30,
+    D5 = 1<<31,
+    D4 = 1<<32,
+    D3 = 1<<33,
+    D2 = 1<<34,
+    D1 = 1<<35,
+    D0 = 1<<36,
 
     /// CRTC request a display
-    DISPEN,
-    VCC4,
-    A14
+    DISPEN = 1<<37,
+    VCC4 = 1<<38,
+    A14 = 1<<39
 }
-}
+
 
 impl Into<u64> for GateArrayPin {
     fn into(self) -> u64 {
@@ -90,6 +90,11 @@ impl Into<u64> for GateArrayPin {
     }
 }
 
+impl Into<u64> for &GateArrayPin {
+    fn into(self) -> u64 {
+        *self as u64
+    }
+}
 const GA_PIN_DATA_BUS : [GateArrayPin;8] = [GateArrayPin::D7, GateArrayPin::D6, GateArrayPin::D5, GateArrayPin::D4, GateArrayPin::D3, GateArrayPin::D2, GateArrayPin::D1, GateArrayPin::D0];
 
 #[derive(Default)]

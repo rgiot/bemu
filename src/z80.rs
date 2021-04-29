@@ -1984,19 +1984,5 @@ mod test {
         assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None));
     }
 
-    #[test]
-    fn test_bool() {
-        let vals = [true, false];
-
-        for a in vals.iter() {
-            for b in vals.iter() {
-                for c in vals.iter() {
-                    assert_eq!(
-                        *a && *b || *c,
-                        *a && (*b || *c)
-                    )
-                }
-            }
-        }
-    }
+    
 }
