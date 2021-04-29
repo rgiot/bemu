@@ -81,6 +81,7 @@ struct OpcodeInformation {
     read_address: AddressSource,
     /// Number of bytes to read from the address
     nb_bytes_to_read: u8,
+    repr: &'static str
 }
 
 impl OpcodeInformation {
@@ -111,6 +112,7 @@ impl OpcodePrefix {
             nb_opcode_bytes: self.bytes_to_read_table()[opcode],
             read_address ,
             nb_bytes_to_read, 
+            repr: self.disassembling_table()[opcode]
         }
     }
 
@@ -153,8 +155,8 @@ impl OpcodePrefix {
     /// Serve to generate lookup tables at start
     fn bytes_to_read_build_function(self) -> Box<Fn(usize) -> u8> {
         lazy_static! {
-            static ref  height_bits: Regex = Regex::new(r"[^n]?nn[^n]?").unwrap();
-            static ref sixteen_bits: Regex = Regex::new(r"[^n]?nnnn[^n]?").unwrap();
+            static ref  height_bits: Regex = Regex::new(r"([^n]nn[^n])|([^n]nn$)").unwrap();
+            static ref sixteen_bits: Regex = Regex::new(r"[^n]nnnn[^n]").unwrap();
         }
 
         Box::new(move |i: usize|{
@@ -935,9 +937,13 @@ impl Z80 {
             },
             DataAccess::Expression(expr) => {
                 return expr.eval().unwrap() as u8; // cannot fail as the value has been disassembled
+            },
+            DataAccess::Memory(_) => {
+                return self.reg8(Reg8::Z).get()
+            },
+            _ => {
+                panic!("{:?} unhandled", data);
             }
-
-            _ => unimplemented!()
         }
     }
 
@@ -1299,18 +1305,82 @@ mod test {
         assert_eq!(cpu.reg8(Reg8::A).get(), 0x00);
     }
 
-/*
+
+
+    #[test]
+    fn test_lut() {
+        
+        assert_eq!(
+            OpcodePrefix::None.opcode_information(0x00).nb_opcode_bytes,
+            0   
+        );
+
+        // ld a, (nnnn)
+        let desc = dbg!(OpcodePrefix::None.opcode_information(0b00111010));
+        assert_eq!(
+            desc.nb_opcode_bytes,
+            2
+        );
+        assert_eq!(
+            desc.nb_bytes_to_read,
+            1
+        );
+
+        // ld l, nn
+        let desc = dbg!(OpcodePrefix::None.opcode_information(0x2e));
+        assert_eq!(
+            desc.nb_opcode_bytes,
+            1
+        );
+
+
+    }
+
     #[test]
     fn test_ld_a_mem_FetchOpcode() {
         let mut cpu = Z80::default();
         cpu.pc.set(0x1234);
-        cpu.reg8_mut(Reg8::A).set(0xff);
 
-        assert_eq!(cpu.reg8(Reg8::A).get(), 0b00111010);
-        test_byte_FetchOpcodeRead2(&mut cpu, 0xae, 0xff);
-        assert_eq!(cpu.reg8(Reg8::A).get(), 0x00);
+        cpu.set_pin(Z80Pin::Neg_MREQ, true);
+        cpu.set_pin(Z80Pin::Neg_RD, true);
+        cpu.set_pin(Z80Pin::Neg_WAIT, true);
+        cpu.set_pin(Z80Pin::Neg_M1, true);
+        cpu.set_pin(Z80Pin::Neg_RFSH, true);
+        cpu.set_pin(Z80Pin::Neg_IORQ, true);
+        cpu.set_pin(Z80Pin::Neg_WR, true);
+        
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None));
+
+        cpu.reg8_mut(Reg8::A).set(0x12);
+        assert_eq!(cpu.reg8(Reg8::A).get(), 0x12);
+                
+        cpu.tick();
+        cpu.set_data_on_pins(0b00111010);
+        cpu.tick();
+        cpu.tick();
+        cpu.tick();
+
+        cpu.tick();
+        cpu.set_data_on_pins(0xff);
+        cpu.tick();
+        cpu.tick();
+        cpu.tick();
+
+        cpu.tick();
+        cpu.set_data_on_pins(0xff);
+        cpu.tick();
+        cpu.tick();
+        cpu.tick();
+
+        cpu.tick();
+        cpu.set_data_on_pins(0x34);
+        cpu.tick();
+        cpu.tick();
+        cpu.tick();
+
+        assert_eq!(cpu.reg8(Reg8::A).get(), 0x34);
     }
-     */
+     
 
     fn test_byte_FetchOpcode(cpu: &mut Z80, byte: u8) {
 
@@ -1424,6 +1494,74 @@ mod test {
         cpu.tick();
         cpu.tick();
     }
+
+
+
+    fn test_byte_FetchOpcodeRead2(cpu: &mut Z80, byte: u8, data: u8, data2: u8) {
+
+        let pc_base = cpu.reg16(Reg16::Pc).get();
+
+
+        cpu.set_pin(Z80Pin::Neg_MREQ, true);
+        cpu.set_pin(Z80Pin::Neg_RD, true);
+        cpu.set_pin(Z80Pin::Neg_WAIT, true);
+        cpu.set_pin(Z80Pin::Neg_M1, true);
+        cpu.set_pin(Z80Pin::Neg_RFSH, true);
+        cpu.set_pin(Z80Pin::Neg_IORQ, true);
+        cpu.set_pin(Z80Pin::Neg_WR, true);
+        
+
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None));
+        cpu.tick();
+        let addr = cpu.get_address_from_pins();
+        assert_eq!(addr, pc_base);
+        assert_eq!(cpu.pc.get(), pc_base + 1);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None));
+    
+        // GA set wait
+        cpu.set_pin(Z80Pin::Neg_WAIT, false);
+        cpu.tick();
+        assert_eq!(cpu.pc.get(), pc_base + 1);
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None));
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+
+        // Byte is available
+        cpu.set_pin(Z80Pin::Neg_WAIT, true);
+        cpu.set_data_on_pins(byte);
+        cpu.tick();
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T3, 0, OpcodePrefix::None));
+
+        cpu.tick();
+        assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T4, 0, OpcodePrefix::None));
+
+        cpu.tick(); // execute
+        assert_eq!(cpu.next_state, MCycle::Read(TState::T1, 0));
+
+        ///TODO add assertions there
+        cpu.tick();
+        cpu.set_data_on_pins(data);
+        cpu.tick();
+        cpu.tick();
+
+        ///TODO add assertions there
+        cpu.tick();
+        cpu.set_data_on_pins(data2);
+        cpu.tick();
+        cpu.tick();
+    }
+
 
 
 
