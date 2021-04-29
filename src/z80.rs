@@ -52,20 +52,11 @@ impl Default for OpcodePrefix {
 // Generate the various lookup tables needed to control the opcodes execution
 // rust is currently unable to do that in a static way
 lazy_static! {
-    // Get the number of bytes to read in addition to the opcode
-    static ref TABINSTR_BYTES_TO_READ: [u8; 256] = array_init::array_init(OpcodePrefix::None.bytes_to_read_build_function());
-    static ref TABINSTRCB_BYTES_TO_READ: [u8; 256] = array_init::array_init(OpcodePrefix::Cb.bytes_to_read_build_function());
-    static ref TABINSTRDD_BYTES_TO_READ: [u8; 256] = array_init::array_init(OpcodePrefix::Dd.bytes_to_read_build_function());
-    static ref TABINSTRED_BYTES_TO_READ: [u8; 256] = array_init::array_init(OpcodePrefix::Ed.bytes_to_read_build_function());
-    static ref TABINSTRFD_BYTES_TO_READ: [u8; 256] = array_init::array_init(OpcodePrefix::Fd.bytes_to_read_build_function());
-
-
-    // Get the location of the address value (if any) to read something
-    static ref TABINSTR_INPUT_ADDRESS: [AddressSource; 256]  = array_init::array_init(OpcodePrefix::None.read_address_source_table_function());
-    static ref TABINSTRCB_INPUT_ADDRESS: [AddressSource; 256]  = array_init::array_init(OpcodePrefix::Cb.read_address_source_table_function());
-    static ref TABINSTRDD_INPUT_ADDRESS: [AddressSource; 256]  = array_init::array_init(OpcodePrefix::Dd.read_address_source_table_function());
-    static ref TABINSTRED_INPUT_ADDRESS: [AddressSource; 256]  = array_init::array_init(OpcodePrefix::Ed.read_address_source_table_function());
-    static ref TABINSTRFD_INPUT_ADDRESS: [AddressSource; 256]  = array_init::array_init(OpcodePrefix::Fd.read_address_source_table_function());
+    static ref OPCODE_PREFIX: [OpcodeInformation; 256] = array_init::array_init(|i| OpcodePrefix::None.opcode_information(i as u8));
+    static ref OPCODE_PREFIX_CB: [OpcodeInformation; 256] = array_init::array_init(|i| OpcodePrefix::Cb.opcode_information(i as u8));
+    static ref OPCODE_PREFIX_DD: [OpcodeInformation; 256] = array_init::array_init(|i| OpcodePrefix::Dd.opcode_information(i as u8));
+    static ref OPCODE_PREFIX_ED: [OpcodeInformation; 256] = array_init::array_init(|i| OpcodePrefix::Ed.opcode_information(i as u8));
+    static ref OPCODE_PREFIX_FD: [OpcodeInformation; 256] = array_init::array_init(|i| OpcodePrefix::Fd.opcode_information(i as u8));
 
 }
 
@@ -76,18 +67,18 @@ struct OpcodeInformation {
     /// Prefix for the current opcode
     prefix: OpcodePrefix,
     /// Number of bytes of the opcode that need to be fetched
-    nb_opcode_bytes: u8,
+    nb_additional_opcode_bytes: u8,
     /// Location of the reading address
     read_address: AddressSource,
     /// Number of bytes to read from the address
-    nb_bytes_to_read: u8,
+    nb_ADDITIONAL_BYTES_TO_READ: u8,
     repr: &'static str
 }
 
 impl OpcodeInformation {
     /// Fetch is finished for opcode of 1 byte with no memory/port access
     fn fetch_finished(&self) -> bool {
-        self.nb_opcode_bytes == 0 && self.read_address == AddressSource::None
+        self.nb_additional_opcode_bytes == 0 && self.read_address == AddressSource::None
     }
 
     /// Check if CPU as to read from memory
@@ -102,16 +93,16 @@ impl OpcodePrefix {
     fn opcode_information(&self, opcode: u8) -> OpcodeInformation {
         let opcode = opcode as usize;
 
-        let read_address = self.read_address_source_table()[opcode];
-        let nb_bytes_to_read = match read_address {
+        let read_address = self.read_address_source(opcode);
+        let nb_ADDITIONAL_BYTES_TO_READ = match read_address {
             AddressSource::None => 0,
             _ => 1 // TODO really set the right value
         };
         OpcodeInformation {
             prefix: self.clone(),
-            nb_opcode_bytes: self.bytes_to_read_table()[opcode],
+            nb_additional_opcode_bytes: self.opcode_bytes_to_read(opcode),
             read_address ,
-            nb_bytes_to_read, 
+            nb_ADDITIONAL_BYTES_TO_READ, 
             repr: self.disassembling_table()[opcode]
         }
     }
@@ -128,48 +119,24 @@ impl OpcodePrefix {
         }
     }
 
-    /// Returns the table that indicates where the CPU must retreive the information to put on the address bus in the Read cycles
-    fn read_address_source_table(&self) -> &'static [AddressSource; 256] {
-        match self {
-            OpcodePrefix::None => &TABINSTR_INPUT_ADDRESS,
-            OpcodePrefix::Cb => &TABINSTRCB_INPUT_ADDRESS,
-            OpcodePrefix::Dd => &TABINSTRDD_INPUT_ADDRESS,
-            OpcodePrefix::Ed => &TABINSTRED_INPUT_ADDRESS,
-            OpcodePrefix::Fd => &TABINSTRFD_INPUT_ADDRESS,
-        }     
-    }
-
-
-    /// Returns the table that provide the number of bytes to read to complete the opcode
-    fn bytes_to_read_table(&self) -> &'static [u8; 256]{
-        match self {
-            OpcodePrefix::None => &TABINSTR_BYTES_TO_READ,
-            OpcodePrefix::Cb => &TABINSTRCB_BYTES_TO_READ,
-            OpcodePrefix::Dd => &TABINSTRDD_BYTES_TO_READ,
-            OpcodePrefix::Ed => &TABINSTRED_BYTES_TO_READ,
-            OpcodePrefix::Fd => &TABINSTRFD_BYTES_TO_READ,
-        }
-    }
 
 
     /// Serve to generate lookup tables at start
-    fn bytes_to_read_build_function(self) -> Box<Fn(usize) -> u8> {
+    fn opcode_bytes_to_read(self, i: usize) -> u8 {
         lazy_static! {
             static ref  height_bits: Regex = Regex::new(r"([^n]nn[^n])|([^n]nn$)").unwrap();
             static ref sixteen_bits: Regex = Regex::new(r"[^n]nnnn[^n]").unwrap();
         }
 
-        Box::new(move |i: usize|{
-            let repr = self.disassembling_table()[i];
+        let repr = self.disassembling_table()[i];
 
-            let nb_height_bits_args = height_bits.captures_iter(repr).count();
-            let nb_sixteen_bits_args = sixteen_bits.captures_iter(repr).count();
+        let nb_height_bits_args = height_bits.captures_iter(repr).count();
+        let nb_sixteen_bits_args = sixteen_bits.captures_iter(repr).count();
 
-            (nb_height_bits_args + 2*nb_sixteen_bits_args) as u8
-        })
+        (nb_height_bits_args + 2*nb_sixteen_bits_args) as u8
     }
 
-    fn read_address_source_table_function(self) -> Box<Fn(usize) -> AddressSource> {
+    fn read_address_source(self, i: usize) ->  AddressSource {
           lazy_static! {
             static ref  indexed_iy: Regex = Regex::new(r"\(IY\+nn\)$").unwrap();
             static ref  indexed_ix: Regex = Regex::new(r"\(IX\+nn\)$").unwrap();
@@ -182,40 +149,40 @@ impl OpcodePrefix {
             static ref  immediate: Regex = Regex::new(r"\(nnnn\)$").unwrap();
           }
 
-          Box::new(move |i: usize|{
-            let repr = self.disassembling_table()[i];
+    
+        let repr = self.disassembling_table()[i];
 
-            if indexed_iy.is_match(repr) {
-                AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Iy)
-            }
-            else if indexed_ix.is_match(repr) {
-                AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Ix)
-            }
-            else if in_af.is_match(repr) {
-                AddressSource::Register16(cpclib_asm::preamble::Register16::Af)
-            }
-            else if in_hl.is_match(repr) {
-                AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
-            }
-            else if in_de.is_match(repr) {
-                AddressSource::Register16(cpclib_asm::preamble::Register16::De)
-            }
-            else if in_bc.is_match(repr) {
-                AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
-            }
-            else if in_ix.is_match(repr) {
-                AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Ix)
-            }
-            else if in_iy.is_match(repr) {
-                AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Iy)
-            }
-            else if immediate.is_match(repr) {
-                AddressSource::Immediate
-            }
-            else {
-                AddressSource::None
-            }
-        })
+        if indexed_iy.is_match(repr) {
+            AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Iy)
+        }
+        else if indexed_ix.is_match(repr) {
+            AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Ix)
+        }
+        else if in_af.is_match(repr) {
+            AddressSource::Register16(cpclib_asm::preamble::Register16::Af)
+        }
+        else if in_hl.is_match(repr) {
+            AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
+        }
+        else if in_de.is_match(repr) {
+            AddressSource::Register16(cpclib_asm::preamble::Register16::De)
+        }
+        else if in_bc.is_match(repr) {
+            AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
+        }
+        else if in_ix.is_match(repr) {
+            AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Ix)
+        }
+        else if in_iy.is_match(repr) {
+            AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Iy)
+        }
+        else if immediate.is_match(repr) {
+            AddressSource::Immediate
+        }
+        else {
+            AddressSource::None
+        }
+      
     }
 }
 
@@ -853,7 +820,7 @@ impl Z80 {
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
                     return true;
                 }
-                else if opcode_information.nb_opcode_bytes != 0 {
+                else if opcode_information.nb_additional_opcode_bytes != 0 {
                     self.next_state = MCycle::FetchOpcode(TState::T1, 1, current_prefix);
                     return false;
                 }
@@ -1121,8 +1088,8 @@ impl Chip for Z80 {
                         self.execute_step();
                     }
                 } else {
-                    if nb == self.opcode_information.as_ref().unwrap().nb_opcode_bytes {
-                        if 0 == self.opcode_information.as_ref().unwrap().nb_bytes_to_read {
+                    if nb == self.opcode_information.as_ref().unwrap().nb_additional_opcode_bytes {
+                        if 0 == self.opcode_information.as_ref().unwrap().nb_ADDITIONAL_BYTES_TO_READ {
                             self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); // go back for a new instruction
                             self.execute_step();
                         }
@@ -1160,7 +1127,7 @@ impl Chip for Z80 {
                 self.next_state.inc_state();
             },
             MCycle::Read(TState::T3, nb) => {
-                if nb+1 == self.opcode_information.as_ref().unwrap().nb_bytes_to_read {
+                if nb+1 == self.opcode_information.as_ref().unwrap().nb_ADDITIONAL_BYTES_TO_READ {
                     // TODO take into account those that do a write after the read (if that exists)
                     self.execute_step();
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); // go back for a new instruction
@@ -1311,25 +1278,25 @@ mod test {
     fn test_lut() {
         
         assert_eq!(
-            OpcodePrefix::None.opcode_information(0x00).nb_opcode_bytes,
+            OpcodePrefix::None.opcode_information(0x00).nb_additional_opcode_bytes,
             0   
         );
 
         // ld a, (nnnn)
         let desc = dbg!(OpcodePrefix::None.opcode_information(0b00111010));
         assert_eq!(
-            desc.nb_opcode_bytes,
+            desc.nb_additional_opcode_bytes,
             2
         );
         assert_eq!(
-            desc.nb_bytes_to_read,
+            desc.nb_ADDITIONAL_BYTES_TO_READ,
             1
         );
 
         // ld l, nn
         let desc = dbg!(OpcodePrefix::None.opcode_information(0x2e));
         assert_eq!(
-            desc.nb_opcode_bytes,
+            desc.nb_additional_opcode_bytes,
             1
         );
 
