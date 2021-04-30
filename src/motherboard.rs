@@ -1,9 +1,9 @@
-use crate::z80::*;
+use crate::chip::*;
 use crate::crtc::*;
 use crate::ga::*;
-use crate::pal::*;
-use crate::chip::*;
 use crate::memory::*;
+use crate::pal::*;
+use crate::z80::*;
 
 /// Motherboard of the AMstrad CPC
 /// Some component are emulated at the lowest level as possible (Z80/CRTC) while
@@ -15,9 +15,8 @@ struct Motherboard {
     ga: GateArray,
     pal: Pal,
 
-    memory: Memory
+    memory: Memory,
 }
-
 
 impl Motherboard {
     /// Reset all the components of the motherboard
@@ -30,7 +29,7 @@ impl Motherboard {
         self.sync_chips_pins();
     }
 
-    /// Execute one tick on all the components of the motherboard 
+    /// Execute one tick on all the components of the motherboard
     pub fn tick(&mut self) {
         // Divides and distribute the 16Mhz clock
         self.ga.manage_clocks();
@@ -44,13 +43,11 @@ impl Motherboard {
             self.cpu.tick();
         }
 
-
         self.sync_chips_pins();
     }
 
     /// Make the appropriate copy between some pins of some chips to other (we simulate the various buses here)
     fn sync_chips_pins(&mut self) {
-
         // CPU to others
         sync_pins(
             &self.cpu,
@@ -59,33 +56,57 @@ impl Motherboard {
             GateArray::pins_data(),
         );
 
-
         // GA to CPU
         sync_pins(
             &self.ga,
             &[GateArrayPin::CPU_ADDR],
             &mut self.cpu,
-            &[Z80Pin::Neg_CLK]
+            &[Z80Pin::Neg_CLK],
         );
 
         // CPU to GA
         sync_pins(
-            &self.cpu, 
+            &self.cpu,
             &[Z80Pin::A14, Z80Pin::A15],
-            &mut self.ga, 
-            &[GateArrayPin::A14, GateArrayPin::A15]);
+            &mut self.ga,
+            &[GateArrayPin::A14, GateArrayPin::A15],
+        );
 
         // CPU to PAL
         sync_pins(
-            &self.cpu, 
-            &[Z80Pin::A14, Z80Pin::A15, Z80Pin::D0, Z80Pin::D1, Z80Pin::D2, Z80Pin::D3, Z80Pin::D4, Z80Pin::D5], 
-            &mut self.pal, 
-            &[PalPin::A14, PalPin::A15, PalPin::D0, PalPin::D1, PalPin::D2, PalPin::D3, PalPin::D4, PalPin::D5]);
-        self.pal.set_pin(PalPin::D6_and_D7, self.cpu.get_pin(Z80Pin::D6) && self.cpu.get_pin(Z80Pin::D7));
-        self.pal.set_pin(PalPin::IOWR, self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ));
+            &self.cpu,
+            &[
+                Z80Pin::A14,
+                Z80Pin::A15,
+                Z80Pin::D0,
+                Z80Pin::D1,
+                Z80Pin::D2,
+                Z80Pin::D3,
+                Z80Pin::D4,
+                Z80Pin::D5,
+            ],
+            &mut self.pal,
+            &[
+                PalPin::A14,
+                PalPin::A15,
+                PalPin::D0,
+                PalPin::D1,
+                PalPin::D2,
+                PalPin::D3,
+                PalPin::D4,
+                PalPin::D5,
+            ],
+        );
+        self.pal.set_pin(
+            PalPin::D6_and_D7,
+            self.cpu.get_pin(Z80Pin::D6) && self.cpu.get_pin(Z80Pin::D7),
+        );
+        self.pal.set_pin(
+            PalPin::IOWR,
+            self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ),
+        );
     }
 }
-
 
 #[cfg(test)]
 mod test {

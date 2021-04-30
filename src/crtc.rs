@@ -3,21 +3,18 @@ use crate::chip::*;
 use num_enum::IntoPrimitive;
 use num_enum::TryFromPrimitive;
 
-
-
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(u64)]
 pub enum CrtcPin {
-D0,
-D1,
-D2,
-D3,
-D4,
-D5,
-D6,
-D7
-
+    D0,
+    D1,
+    D2,
+    D3,
+    D4,
+    D5,
+    D6,
+    D7,
 }
 
 impl Into<u64> for CrtcPin {
@@ -26,12 +23,20 @@ impl Into<u64> for CrtcPin {
     }
 }
 
-const CRTC_PIN_DATA_BUS : [CrtcPin;8] = [CrtcPin::D7, CrtcPin::D6, CrtcPin::D5, CrtcPin::D4, CrtcPin::D3, CrtcPin::D2, CrtcPin::D1, CrtcPin::D0];
-
+const CRTC_PIN_DATA_BUS: [CrtcPin; 8] = [
+    CrtcPin::D7,
+    CrtcPin::D6,
+    CrtcPin::D5,
+    CrtcPin::D4,
+    CrtcPin::D3,
+    CrtcPin::D2,
+    CrtcPin::D1,
+    CrtcPin::D0,
+];
 
 #[derive(Default)]
 pub struct Crtc {
-    pins: u64
+    pins: u64,
 }
 
 impl Chip for Crtc {
@@ -40,10 +45,9 @@ impl Chip for Crtc {
     fn pins_buffer_mut(&mut self) -> &mut u64 {
         &mut self.pins
     }
-    fn pins_buffer(&self) -> & u64 {
-        & self.pins
+    fn pins_buffer(&self) -> &u64 {
+        &self.pins
     }
-
 
     fn must_execute_tick(&self) -> bool {
         unimplemented!();
@@ -51,8 +55,6 @@ impl Chip for Crtc {
     fn execute_tick(&mut self) {
         unimplemented!();
     }
-
-    
 
     fn reset(&mut self) {
         unimplemented!();

@@ -12,13 +12,11 @@ pub trait Chip {
         }
     }
 
-    
     /// Check of the chip must execute its processing cycle
     fn must_execute_tick(&self) -> bool;
 
     /// Handle the appropriate treatment for the given tick
     fn execute_tick(&mut self);
-
 
     /// Set the boolean value to the selected pin of the chip
     /// panic if the pin does not exists
@@ -35,7 +33,6 @@ pub trait Chip {
         }
     }
 
-
     /// Get the boolean value of the selected pin of the chip
     /// panic if the pin does not exists
     fn get_pin(&self, pin: Self::PinType) -> bool {
@@ -48,16 +45,16 @@ pub trait Chip {
     }
 
     fn pins_buffer_mut(&mut self) -> &mut u64;
-    fn pins_buffer(&self) -> & u64;
+    fn pins_buffer(&self) -> &u64;
 
     /// Reset pins and counter
     fn reset(&mut self);
 
     /// Set the provided value in the provided list of pins. Pin index corresponds to the bit number
     /// panic if the number is larger
-    fn set_value_in_pins<V>(&mut self, mut value: V, pins: &[Self::PinType]) 
-    where 
-        V: num::Integer + num::cast::ToPrimitive + num::cast::FromPrimitive 
+    fn set_value_in_pins<V>(&mut self, mut value: V, pins: &[Self::PinType])
+    where
+        V: num::Integer + num::cast::ToPrimitive + num::cast::FromPrimitive,
     {
         for pin in pins.iter() {
             self.set_pin(pin.clone(), value.is_odd());
@@ -66,8 +63,7 @@ pub trait Chip {
         assert!(value.to_usize().unwrap() == 0);
     }
 
-    fn get_value_from_pins(&self, pins: &[Self::PinType]) -> u16
-    {
+    fn get_value_from_pins(&self, pins: &[Self::PinType]) -> u16 {
         assert!(pins.len() <= 16);
 
         let mut res = 0;
@@ -84,56 +80,52 @@ pub trait Chip {
     fn get_8bit_value_from_pins(&self, pins: &[Self::PinType]) -> u8 {
         return (self.get_value_from_pins(pins) & 0xff) as u8;
     }
-
-
 }
 
-pub trait DataChip : Chip{
+pub trait DataChip: Chip {
     /// Returns the ordered list of pins that contains the data
     fn pins_data() -> &'static [Self::PinType; 8];
 }
 
-pub trait AddressChip : Chip{
+pub trait AddressChip: Chip {
     /// Returns the ordered list of pins that contains the address
     fn pins_address() -> &'static [Self::PinType; 16];
 }
 
-
-pub trait ReadDataChip : DataChip {
+pub trait ReadDataChip: DataChip {
     /// Get the value from the appropriate pins
     fn get_data_from_pins(&self) -> u8 {
         self.get_8bit_value_from_pins(Self::pins_data())
     }
 }
 
-pub trait ReadAddressChip : AddressChip {
+pub trait ReadAddressChip: AddressChip {
     /// Get the provided address from the appropriate pins
     fn get_address_from_pins(&self) -> u16 {
         self.get_value_from_pins(Self::pins_address())
     }
 }
 
-
-
-pub trait WriteDataChip : DataChip {
+pub trait WriteDataChip: DataChip {
     /// Set the value on the appropriate pins
     fn set_data_on_pins(&mut self, addr: u8) {
         self.set_value_in_pins(addr, Self::pins_data());
     }
-
 }
 
-pub trait WriteAddressChip : AddressChip {
+pub trait WriteAddressChip: AddressChip {
     /// Set the provided address on the appropriate pins
     fn set_address_on_pins(&mut self, addr: u16) {
         self.set_value_in_pins(addr, Self::pins_address());
     }
 }
 
-
-
 /// Synchronize the pins of the first chip to the pins of the second chip
-pub fn sync_pins<C1: Chip, C2: Chip>(chip1: &C1, pins1: &[C1::PinType], chip2: &mut C2, pins2: &[C2::PinType]
+pub fn sync_pins<C1: Chip, C2: Chip>(
+    chip1: &C1,
+    pins1: &[C1::PinType],
+    chip2: &mut C2,
+    pins2: &[C2::PinType],
 ) {
     assert_eq!(pins1.len(), pins2.len());
 
