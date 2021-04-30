@@ -36,7 +36,7 @@ pub trait Chip {
     }
 
 
-    /// Get the boolean value of the selected pn of the chip
+    /// Get the boolean value of the selected pin of the chip
     /// panic if the pin does not exists
     fn get_pin(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();

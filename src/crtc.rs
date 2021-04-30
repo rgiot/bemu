@@ -3,13 +3,12 @@ use crate::chip::*;
 use num_enum::IntoPrimitive;
 use num_enum::TryFromPrimitive;
 
-use flagset::{FlagSet, flags};
 
 
-flags! {
 #[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(u64)]
-pub enum CrtcPin : u64 {
+pub enum CrtcPin {
 D0,
 D1,
 D2,
@@ -19,7 +18,6 @@ D5,
 D6,
 D7
 
-}
 }
 
 impl Into<u64> for CrtcPin {

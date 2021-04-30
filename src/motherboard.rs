@@ -78,10 +78,10 @@ impl Motherboard {
         // CPU to PAL
         sync_pins(
             &self.cpu, 
-            &[Z80Pin::A14, Z80Pin::A15, Z80Pin::D0, Z80Pin::D1, Z80Pin::D2], 
+            &[Z80Pin::A14, Z80Pin::A15, Z80Pin::D0, Z80Pin::D1, Z80Pin::D2, Z80Pin::D3, Z80Pin::D4, Z80Pin::D5], 
             &mut self.pal, 
-            &[PalPin::A14, PalPin::A15, PalPin::D0, PalPin::D1, PalPin::D2]);
-        self.pal.set_pin(PalPin::D6_D7, self.cpu.get_pin(Z80Pin::D6) && self.cpu.get_pin(Z80Pin::D7));
+            &[PalPin::A14, PalPin::A15, PalPin::D0, PalPin::D1, PalPin::D2, PalPin::D3, PalPin::D4, PalPin::D5]);
+        self.pal.set_pin(PalPin::D6_and_D7, self.cpu.get_pin(Z80Pin::D6) && self.cpu.get_pin(Z80Pin::D7));
         self.pal.set_pin(PalPin::IOWR, self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ));
     }
 }

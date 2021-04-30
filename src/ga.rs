@@ -3,7 +3,6 @@ use crate::chip::*;
 use num_enum::IntoPrimitive;
 use num_enum::TryFromPrimitive;
 
-use flagset::{FlagSet, flags};
 
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq)]
