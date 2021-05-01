@@ -115,14 +115,44 @@ impl Default for Pen {
         Pen::Pen(0)
     }
 }
+
+impl From<u8> for Pen {
+    fn from(b: u8) -> Pen {
+        match b {
+            0..17 => Pen::Pen(b),
+            16 => Pen::Border,
+            _ => unreachable!()
+        }
+    }
+}
+
+impl From<cpclib::ga::Pen> for Pen {
+    fn from(p: cpclib::ga::Pen) -> Pen {
+        p.number().into()
+    }
+}
+
 impl Into<u8> for &Pen {
     fn into(self) -> u8 {
+        self.value()
+    }
+}
+
+impl Into<u8> for Pen {
+    fn into(self) -> u8 {
+        self.value()
+    }
+}
+
+impl Pen {
+    fn value(&self) -> u8 {
         match self {
             Pen::Pen(nb) => *nb,
             Pen::Border => 17
         }
     }
 }
+
 
 /// Content of the INKR register
 struct INKR(u8);
@@ -333,7 +363,7 @@ impl PixelAutomata {
             }
         };
         
-        let ink = self.palette().unwrap()[u8::from(pen) as usize];
+        let ink = self.palette().unwrap()[pen.value() as usize];
         self.next_state();
         Self::rgb(ink)
     }
@@ -345,17 +375,17 @@ impl PixelAutomata {
                 let step = step / 4; // The same pixel is generated 4 times
                 match step {
                     0 => pens.0.into(),
-                    1 => pens.1.into(,
+                    1 => pens.1.into(),
                     _ => unreachable!()
                 }
             },
-            _ => unreachable!();
+            _ => unreachable!()
         }
     }
     pub fn get_mode1_pen(&mut self) -> Pen  {
         match (self.step(), self.byte(), self.palette()) {
             (Some(step), Some(byte), Some(pal)) => {
-                let pens = cpclib::pixels::mode0::byte_to_pens(byte);
+                let pens = cpclib::pixels::mode1::byte_to_pens(byte);
                 let step = step / 2; // The same pixel is generated 2 times
                 match step {
                     0 => pens.0.into(),
@@ -365,15 +395,15 @@ impl PixelAutomata {
                     _ => unreachable!()
                 }
             },
-            _ => unreachable!();
+            _ => unreachable!()
         }
     }
 
     pub fn get_mode2_pen(&mut self) -> Pen {
         match (self.step(), self.byte(), self.palette()) {
-            (Some(bit), Some(byte), Some(pal)) => {
-                if byte & (1<<(7-bit)) != 0 {
-                    Pen::Pen(0)
+            (Some(step), Some(byte), Some(pal)) => {
+                if byte & (1<<(7-step)) != 0 {
+                    Pen::Pen(1)
                 }
                 else {
                     Pen::Pen(0)
@@ -384,11 +414,7 @@ impl PixelAutomata {
     }
     pub fn get_mode3_pen(&mut self)  -> Pen {
         let mode0_pen = self.get_mode0_pen();
-<<<<<<< HEAD
-        Pen::Pen(mode0_pen & 0b11)
-=======
-        unimplemented!()
->>>>>>> d66776e8bd10f0816dd51bfec418cc1d9bf58e17
+        (mode0_pen.value() & 0b11).into()
     }
 
     pub fn step(&self) -> Option<u8> {
@@ -540,7 +566,10 @@ impl GateArray {
             self.rgb = RGB_PERCENTAGE_LEVELS_PER_INK[0];
         }
         else {
-            self.rgb = self.pixel_automata.generate_pixel(GateArrayPin::HSYNC);
+            self.rgb = self.pixel_automata.generate_pixel(
+                self.get_pin(GateArrayPin::HSYNC),
+                false
+            );
         }
 
     }
@@ -689,13 +718,16 @@ mod test {
         ga.set_memory_byte(0b01010101);
 
 
+        assert_eq!(ga.pixel_automata.step(), Some(0));
+        assert_eq!(ga.pixel_automata.mode(), Some(VideoMode::Mode2));
+        
         ga.tick();
         let rgb = dbg!(ga.rgb());
         assert!((rgb.0 - 0.0).abs() < 0.0001);
         assert!((rgb.1 - 0.9615).abs() < 0.0001);
         assert!((rgb.2 - 0.4808).abs() < 0.0001);
 
-
+        assert_eq!(ga.pixel_automata.step(), Some(1));
         ga.tick();
         let rgb = dbg!(ga.rgb());
         assert!((rgb.0 - 0.0).abs() < 0.0001);
