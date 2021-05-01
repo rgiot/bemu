@@ -103,10 +103,17 @@ const GA_PIN_DATA_BUS: [GateArrayPin; 8] = [
     GateArrayPin::D0,
 ];
 
+struct Rmr(u8);
+struct Penr(u8);
+struct Inkr(u8);
+
 #[derive(Default)]
 pub struct GateArray {
     clock: u64,
     pins: u64,
+    rmr: Rmr,
+    penr: Penr,
+    inkr: Inkr
 }
 
 impl DataChip for GateArray {
