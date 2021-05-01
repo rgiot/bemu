@@ -8,12 +8,14 @@ use crate::z80::*;
 /// Motherboard of the AMstrad CPC
 /// Some component are emulated at the lowest level as possible (Z80/CRTC) while
 /// some others are partially emulated (GA/PAL) or totally ignored (RAM)
+/// http://www.cpcwiki.eu/index.php/Default_I/O_Port_Summary
 #[derive(Default)]
 struct Motherboard {
     cpu: Z80,
     crtc: Crtc,
     ga: GateArray,
     pal: Pal,
+    rom_selector: UpperRomSelector,
 
     memory: Memory,
 }
@@ -48,13 +50,7 @@ impl Motherboard {
 
     /// Make the appropriate copy between some pins of some chips to other (we simulate the various buses here)
     fn sync_chips_pins(&mut self) {
-        // CPU to others
-        sync_pins(
-            &self.cpu,
-            Z80::pins_data(),
-            &mut self.ga,
-            GateArray::pins_data(),
-        );
+
 
         // GA to CPU
         sync_pins(
@@ -65,6 +61,12 @@ impl Motherboard {
         );
 
         // CPU to GA
+        sync_pins(
+            &self.cpu,
+            Z80::pins_data(),
+            &mut self.ga,
+            GateArray::pins_data(),
+        );
         sync_pins(
             &self.cpu,
             &[Z80Pin::A14, Z80Pin::A15],
@@ -105,6 +107,30 @@ impl Motherboard {
             PalPin::IOWR,
             self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ),
         );
+
+
+        // CPU to rom selection
+        sync_pins(
+            &self.cpu,
+            Z80::pins_data(),
+            &mut self.rom_selector,
+            UpperRomSelector::pins_data(),
+        );
+        sync_pins(
+            &self.cpu,
+            &[
+                Z80Pin::A13,
+                Z80Pin::Neg_IORQ,
+                Z80Pin::Neg_WR,
+            ],
+            &mut self.rom_selector,
+            &[
+                UpperRomSelectorPin::A13,
+                UpperRomSelectorPin::IORQ,
+                UpperRomSelectorPin::WR
+            ],
+        );
+
     }
 }
 

@@ -1,7 +1,7 @@
 [package]
 name = "amsrust"
 version = "0.1.0"
-authors = ["Romain Giot <romain.giot@u-bordeaux.fr>"]
+authors = ["Romain Giot <giot.romain@gmail.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
