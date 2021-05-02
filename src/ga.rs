@@ -384,7 +384,11 @@ impl PixelAutomata {
     }
     pub fn get_mode3_pen(&mut self)  -> Pen {
         let mode0_pen = self.get_mode0_pen();
+<<<<<<< HEAD
         Pen::Pen(mode0_pen & 0b11)
+=======
+        unimplemented!()
+>>>>>>> d66776e8bd10f0816dd51bfec418cc1d9bf58e17
     }
 
     pub fn step(&self) -> Option<u8> {
