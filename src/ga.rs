@@ -444,7 +444,14 @@ mod test {
             ga.next_video_mode(),
             VideoMode::Mode1
         );
-
+        assert_eq!(
+            ga.lower_rom_pagging(),
+            Flag::Disable
+        );
+        assert_eq!(
+            ga.upper_rom_pagging(),
+            Flag::Disable
+        );
         ga.set_data_on_pins(0x8e); // Mode 2
         ga.set_pin(GateArrayPin::A15, false);
         ga.set_pin(GateArrayPin::A14, true);
@@ -459,6 +466,14 @@ mod test {
         assert_eq!(
             ga.next_video_mode(),
             VideoMode::Mode2
+        );
+        assert_eq!(
+            ga.lower_rom_pagging(),
+            Flag::Disable
+        );
+        assert_eq!(
+            ga.upper_rom_pagging(),
+            Flag::Disable
         );
     }
 }
