@@ -1,5 +1,6 @@
 use crate::chip::*;
 use crate::memory::*;
+use delegate::delegate;
 
 use num_enum::IntoPrimitive;
 use num_enum::TryFromPrimitive;
@@ -195,6 +196,19 @@ impl Chip for Pal {
 
     fn reset(&mut self) {
         unimplemented!();
+    }
+}
+
+
+impl Pal {
+    delegate! {
+        // Delegate all methods EXCEPT video mode as it is bufferized
+        to self.mmr {
+            pub fn memory_mapping(&self) -> MemoryMapping;
+            pub fn use_supplementary_pages(&self) -> bool;
+            pub fn page_mapping(&self) -> PageMapping;
+            pub fn get_ram_configuration(&self) -> RamConfig;
+        }
     }
 }
 

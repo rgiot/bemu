@@ -132,14 +132,36 @@ impl Motherboard {
         );
 
     }
+
+
+    /// Provides the memory configuration for a proper access
+    fn memory_config(&self) -> MemoryConfig {
+        MemoryConfig (
+            RomConfig {
+                lower_rom: self.ga.lower_rom_pagging(),
+                upper_rom: self.ga.upper_rom_pagging(),
+                rom_number: self.rom_selector.upper_rom_number()
+            },
+            self.pal.get_ram_configuration()
+        )
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
 
-    fn test_cpu_pal_consistency() {
+    #[test]
+    fn test_pins_consistency() {
         let mut motherboard = Motherboard::default();
-        motherboard.cpu.set_address_on_pins(0x7F00);
+        motherboard.cpu.set_data_on_pins(0xfe);
+        motherboard.sync_chips_pins();
+        assert_eq!(
+            motherboard.ga.get_data_from_pins(),
+            0xfe
+        );
+
     }
+
+
 }

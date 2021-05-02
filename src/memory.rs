@@ -266,6 +266,11 @@ impl Chip for UpperRomSelector {
     }
 }
 
+impl UpperRomSelector {
+    pub fn upper_rom_number(&self) -> u8 {
+        self.rom_number
+    }
+}
 
 impl Default for Memory {
     fn default() -> Self {

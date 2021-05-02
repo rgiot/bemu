@@ -7,9 +7,16 @@ pub trait Chip {
     /// One clock tick appens; the chip has to make its stuff
     /// One tick correspond to activation/deactivation of the pin
     fn tick(&mut self) {
+        self.pre_tick();
         if self.must_execute_tick() {
             self.execute_tick();
         }
+    }
+
+    /// Is executed at each clock tick even if must_execute_tick returns false.
+    /// Mainly added for the Gate Array to make all its stuff not releated to PENR/INKR/MMR
+    fn pre_tick(&mut self) {
+
     }
 
     /// Check of the chip must execute its processing cycle

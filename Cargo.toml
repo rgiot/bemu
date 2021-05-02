@@ -14,3 +14,4 @@ cpclib-asm = {path = "../rust.cpclib/cpclib-asm"}
 regex = "1.4.6"
 lazy_static = "1.4.0"
 array-init = "2.0.0"
+delegate = "0.5.1"

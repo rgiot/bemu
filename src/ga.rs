@@ -1,5 +1,6 @@
 use crate::chip::*;
 use crate::memory::Flag;
+use delegate::delegate;
 
 
 #[allow(non_camel_case_types)]
@@ -104,7 +105,8 @@ const GA_PIN_DATA_BUS: [GateArrayPin; 8] = [
 
 /// Content of the PENR register
 struct PENR(u8);
-enum Pen {
+#[derive(Debug, Copy, Clone)]
+pub enum Pen {
     Pen(u8),
     Border
 }
@@ -116,8 +118,8 @@ impl Default for Pen {
 
 /// Content of the INKR register
 struct INKR(u8);
-#[derive(Default)]
-struct Ink(u8);
+#[derive(Debug, Copy, Clone)]
+pub struct Ink(u8);
 
 // https://www.grimware.org/doku.php/documentations/devices/gatearray
 const RGB_PERCENTAGE_LEVELS_PER_INK: [(f32,f32,f32); 32] = [
@@ -158,8 +160,8 @@ const RGB_PERCENTAGE_LEVELS_PER_INK: [(f32,f32,f32); 32] = [
 /// Content of the RMR register
 struct RMR(u8);
 
-
-enum VideoMode {
+#[derive(Clone,Copy,Debug,PartialEq)]
+pub enum VideoMode {
     Mode0,
     Mode1,
     Mode2, // Pay attention to its 1 pixel shift
@@ -323,6 +325,7 @@ impl DataChip for GateArray {
 }
 
 impl ReadDataChip for GateArray {}
+impl WriteDataChip for GateArray {}
 
 impl GateArray {
     /// Gate array works at 16Mhz and divide it to generate signals for other chips.
@@ -332,6 +335,35 @@ impl GateArray {
 
         self.clock += 1;
     }
+
+    /// get the active video mode
+    pub fn active_video_mode(&self) -> VideoMode {
+        self.current_mode
+    }
+
+    /// Get the video mode for the next line
+    pub fn next_video_mode(&self) -> VideoMode {
+        self.rmr.video_mode()
+    }
+
+    delegate! {
+        // Delegate all methods EXCEPT video mode as it is bufferized
+        to self.rmr {
+            pub fn upper_rom_pagging(&self) -> Flag;
+            pub fn lower_rom_pagging(&self) -> Flag;
+            pub fn interrupt_counter(&self) -> bool;
+        }
+
+        to self.inkr {
+            pub fn ink(&self) -> Ink;
+        }
+
+        to self.penr {
+            pub fn pen(&self) -> Pen ;
+            pub fn is_border(&self) -> bool ;
+        }
+    }
+
 }
 
 impl Chip for GateArray {
@@ -339,6 +371,13 @@ impl Chip for GateArray {
 
     fn must_execute_tick(&self) -> bool {
         !self.get_pin(GateArrayPin::A15) && self.get_pin(GateArrayPin::A14)
+    }
+
+    /// Change the screen mode when hsync is set
+    fn pre_tick(&mut self) {
+        if self.get_pin(GateArrayPin::HSYNC) {
+            self.current_mode = self.next_video_mode();
+        }
     }
 
     /// React to the port addressing of the CPU
@@ -380,5 +419,46 @@ mod test {
 
         ga.tick();
         ga.tick();
+    }
+
+
+    #[test]
+    fn test_video_mode_consistency() {
+        let mut ga = GateArray::default();
+        assert_eq!(
+            ga.active_video_mode(),
+            VideoMode::Mode0
+        );
+
+        ga.set_data_on_pins(0x8d); // Mode 1
+        ga.set_pin(GateArrayPin::A15, false);
+        ga.set_pin(GateArrayPin::A14, true);
+        assert!(ga.must_execute_tick());
+        ga.tick();
+
+        assert_eq!(
+            ga.active_video_mode(),
+            VideoMode::Mode0
+        );
+        assert_eq!(
+            ga.next_video_mode(),
+            VideoMode::Mode1
+        );
+
+        ga.set_data_on_pins(0x8e); // Mode 2
+        ga.set_pin(GateArrayPin::A15, false);
+        ga.set_pin(GateArrayPin::A14, true);
+        ga.set_pin(GateArrayPin::HSYNC, true);
+        ga.tick();
+
+
+        assert_eq!(
+            ga.active_video_mode(),
+            VideoMode::Mode1
+        );
+        assert_eq!(
+            ga.next_video_mode(),
+            VideoMode::Mode2
+        );
     }
 }
