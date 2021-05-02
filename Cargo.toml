@@ -10,6 +10,7 @@ edition = "2018"
 num = "0.4.0"
 num_enum = "0.5.1"
 itertools = "0.10.0"
+cpclib = {path = "../rust.cpclib/cpclib"}
 cpclib-asm = {path = "../rust.cpclib/cpclib-asm"}
 regex = "1.4.6"
 lazy_static = "1.4.0"

@@ -115,6 +115,14 @@ impl Default for Pen {
         Pen::Pen(0)
     }
 }
+impl Into<u8> for &Pen {
+    fn into(self) -> u8 {
+        match self {
+            Pen::Pen(nb) => *nb,
+            Pen::Border => 17
+        }
+    }
+}
 
 /// Content of the INKR register
 struct INKR(u8);
@@ -267,6 +275,152 @@ impl RMR {
     }
 }
 
+/// This is this strcuture that has the responsibility to produce the colors
+pub enum PixelAutomata {
+    AvailablePixel(u8, u8, VideoMode, [Ink;17]),
+    NeedToReadMemory
+}
+
+impl Default for PixelAutomata {
+    fn default() -> Self {
+        PixelAutomata::NeedToReadMemory
+    }
+}
+
+impl PixelAutomata {
+    pub fn new(b: u8, m: VideoMode, p: [Ink;17]) -> Self {
+        PixelAutomata::AvailablePixel(0, b, m, p)
+    }
+
+    pub fn is_done(&self) -> bool {
+        match self {
+            PixelAutomata::NeedToReadMemory => true,
+            _ => false
+        }
+    }
+
+    fn next_state(&mut self) {
+        *self = match self {
+            PixelAutomata::AvailablePixel(s, b, m, p) => {
+                if *s == 7 {
+                    PixelAutomata::NeedToReadMemory
+                }
+                else {
+                    PixelAutomata::AvailablePixel(*s+1, *b, *m, *p)
+                }
+            },
+            PixelAutomata::NeedToReadMemory => PixelAutomata::NeedToReadMemory,
+        }
+    }
+
+    /// XXX Can only be called in a valid state;
+    /// TODO manage the border
+    pub fn generate_pixel(&mut self, hsync: bool, border: bool) -> (f32, f32, f32) {
+        if hsync {
+           return (0.0, 0.0, 0.0);
+        }
+
+        let pen = if border {
+            Pen::Border
+        }
+        else {
+            match self.mode() {
+                Some(VideoMode::Mode0) => self.get_mode0_pen(),
+                Some(VideoMode::Mode1) => self.get_mode1_pen(),
+                Some(VideoMode::Mode2) => self.get_mode2_pen(),
+                Some(VideoMode::Mode3) => self.get_mode3_pen(),
+                None => unreachable!()
+            }
+        };
+        
+        let ink = self.palette().unwrap()[u8::from(pen) as usize];
+        self.next_state();
+        Self::rgb(ink)
+    }
+
+    pub fn get_mode0_pen(&mut self) -> Pen {
+        match (self.step(), self.byte(), self.palette()) {
+            (Some(step), Some(byte), Some(pal)) => {
+                let pens = cpclib::pixels::mode0::byte_to_pens(byte);
+                let step = step / 4; // The same pixel is generated 4 times
+                match step {
+                    0 => pens.0.into(),
+                    1 => pens.1.into(,
+                    _ => unreachable!()
+                }
+            },
+            _ => unreachable!();
+        }
+    }
+    pub fn get_mode1_pen(&mut self) -> Pen  {
+        match (self.step(), self.byte(), self.palette()) {
+            (Some(step), Some(byte), Some(pal)) => {
+                let pens = cpclib::pixels::mode0::byte_to_pens(byte);
+                let step = step / 2; // The same pixel is generated 2 times
+                match step {
+                    0 => pens.0.into(),
+                    1 => pens.1.into(),
+                    2 => pens.2.into(),
+                    3 => pens.3.into(),
+                    _ => unreachable!()
+                }
+            },
+            _ => unreachable!();
+        }
+    }
+
+    pub fn get_mode2_pen(&mut self) -> Pen {
+        match (self.step(), self.byte(), self.palette()) {
+            (Some(bit), Some(byte), Some(pal)) => {
+                if byte & (1<<(7-bit)) != 0 {
+                    Pen::Pen(0)
+                }
+                else {
+                    Pen::Pen(0)
+                }
+            },
+            _ => unreachable!()
+        }
+    }
+    pub fn get_mode3_pen(&mut self)  -> Pen {
+        let mode0_pen = self.get_mode0_pen();
+        Pen::Pen(mode0_pen & 0b11)
+    }
+
+    pub fn step(&self) -> Option<u8> {
+        match self {
+            PixelAutomata::AvailablePixel(s, _, _, _) => Some(*s),
+            PixelAutomata::NeedToReadMemory => None
+        }
+    }
+
+    pub fn mode(&self) -> Option<VideoMode> {
+        match self {
+            PixelAutomata::AvailablePixel(_, _, m,  _) => Some(*m),
+            PixelAutomata::NeedToReadMemory => None
+        }
+    }
+
+    pub fn byte(&self) -> Option<u8> {
+        match self {
+            PixelAutomata::AvailablePixel(_, b, _, _) => Some(*b),
+            PixelAutomata::NeedToReadMemory => None
+        }
+    }
+
+    pub fn palette(&self) -> Option<&[Ink; 17]> {
+        match self {
+            PixelAutomata::AvailablePixel(_, _, _, p) => Some(p),
+            PixelAutomata::NeedToReadMemory => None
+        }
+    }
+
+    fn rgb(ink: Ink) -> (f32, f32, f32) {
+        RGB_PERCENTAGE_LEVELS_PER_INK[ink.0 as usize]
+    }
+
+}
+
 
 /// GateArray emulation of the CPC.
 /// Version 40010 is targeted; it suffers of a shift in pixel rendering for mode 2
@@ -280,7 +434,12 @@ pub struct GateArray {
 
     palette: [Ink;17],
 
-    current_mode: VideoMode
+    /// The video mode used to generate the pixels
+    current_mode: VideoMode,
+    /// The automata that generate the 8 pixel per byte
+    pixel_automata: PixelAutomata,
+    /// Lastly generated pixel
+    rgb: (f32,f32, f32)
 }
 
 impl Default for GateArray {
@@ -313,7 +472,9 @@ impl Default for GateArray {
             Ink(0),
         ],
 
-        current_mode: VideoMode::Mode0
+        current_mode: VideoMode::Mode0,
+        pixel_automata: PixelAutomata::default(),
+        rgb: RGB_PERCENTAGE_LEVELS_PER_INK[0]
     }
 }
 }
@@ -346,6 +507,40 @@ impl GateArray {
         self.rmr.video_mode()
     }
 
+    pub fn rgb(&self) -> (f32, f32, f32) {
+        self.rgb
+    }
+
+    /// Set the video memory byte that serves the the next 8 RGB signal generation
+    fn set_memory_byte(&mut self, b: u8) {
+        assert!(self.pixel_automata.is_done());
+        self.pixel_automata = PixelAutomata::AvailablePixel(
+            0,
+            b,
+            self.active_video_mode(),
+            self.palette.clone()
+        );
+    }
+
+    /// Properly setup the pins for the video signal
+    /// However, the R G B pins are not ON/OFF but make the intensity.
+    /// For this reason, we do not use the pin mechanism as for the other components.
+    /// Instead RGB values are stored in 3 floats.
+    /// There are 1024 mode 2 pixels per line and 312 lines per frame.
+    /// Here, we do not care of where we are; it is up to the monitor to properly place these pixels at the right place thanks to other synchronization messages
+    /// We assume that the automata is in a valid state
+    fn generate_pixel(&mut self) {
+        assert!(!self.pixel_automata.is_done());
+
+        if self.get_pin(GateArrayPin::HSYNC) {
+            self.rgb = RGB_PERCENTAGE_LEVELS_PER_INK[0];
+        }
+        else {
+            self.rgb = self.pixel_automata.generate_pixel(GateArrayPin::HSYNC);
+        }
+
+    }
+
     delegate! {
         // Delegate all methods EXCEPT video mode as it is bufferized
         to self.rmr {
@@ -375,9 +570,12 @@ impl Chip for GateArray {
 
     /// Change the screen mode when hsync is set
     fn pre_tick(&mut self) {
+
         if self.get_pin(GateArrayPin::HSYNC) {
             self.current_mode = self.next_video_mode();
         }
+
+        self.generate_pixel()
     }
 
     /// React to the port addressing of the CPU
@@ -415,6 +613,7 @@ mod test {
     #[test]
     fn run_ga() {
         let mut ga = GateArray::default();
+        ga.set_memory_byte(0x0);
         ga.reset();
 
         ga.tick();
@@ -425,6 +624,7 @@ mod test {
     #[test]
     fn test_video_mode_consistency() {
         let mut ga = GateArray::default();
+        ga.set_memory_byte(0x0);
         assert_eq!(
             ga.active_video_mode(),
             VideoMode::Mode0
@@ -475,5 +675,36 @@ mod test {
             ga.upper_rom_pagging(),
             Flag::Disable
         );
+    }
+
+    #[test]
+    fn test_mode2_pixels_generation() {
+        let mut ga = GateArray::default();
+        ga.current_mode = VideoMode::Mode2;
+        ga.palette[1] = Ink(1);
+        ga.set_memory_byte(0b01010101);
+
+
+        ga.tick();
+        let rgb = dbg!(ga.rgb());
+        assert!((rgb.0 - 0.0).abs() < 0.0001);
+        assert!((rgb.1 - 0.9615).abs() < 0.0001);
+        assert!((rgb.2 - 0.4808).abs() < 0.0001);
+
+
+        ga.tick();
+        let rgb = dbg!(ga.rgb());
+        assert!((rgb.0 - 0.0).abs() < 0.0001);
+        assert!((rgb.1 - 0.9615).abs() < 0.0001);
+        assert!((rgb.2 - 41.8269).abs() < 0.0001);
+
+        ga.tick();
+        ga.tick();
+        ga.tick();
+        ga.tick();
+        ga.tick();
+        ga.tick();
+
+        assert!(ga.pixel_automata.is_done());
     }
 }
