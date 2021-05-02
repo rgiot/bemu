@@ -1,5 +1,5 @@
 use crate::chip::*;
-
+use crate::memory::Flag;
 
 
 #[allow(non_camel_case_types)]
@@ -157,10 +157,7 @@ const RGB_PERCENTAGE_LEVELS_PER_INK: [(f32,f32,f32); 32] = [
 
 /// Content of the RMR register
 struct RMR(u8);
-enum Flag {
-    Enable,
-    Disable
-}
+
 
 enum VideoMode {
     Mode0,
