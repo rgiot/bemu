@@ -1105,6 +1105,8 @@ impl WriteDataChip for Z80 {}
 
 impl ReadDataChip for Z80 {}
 
+impl Activable for Z80 {}
+
 impl Chip for Z80 {
     type PinType = Z80Pin;
 
@@ -1116,7 +1118,7 @@ impl Chip for Z80 {
     }
 
     fn must_execute_tick(&self) -> bool {
-        self.get_pin(Z80Pin::Neg_WAIT) // TODO do that only for Fetch/T2
+        self.get_pin(Z80Pin::Neg_CLK) && self.get_pin(Z80Pin::Neg_WAIT) // TODO do that only for Fetch/T2
     }
 
     fn execute_tick(&mut self) {

@@ -33,7 +33,7 @@ pub trait Chip {
         use std::ops::Not;
         assert_eq!(pin.count_ones(), 1);
 
-        let buffer = self.pins_buffer_mut();
+        let buffer = self.pins_buffer_mut().1;
         *buffer &= pin.not(); // Keep ALL other bits
         if value {
             *buffer |= pin; // Set the bit activated
@@ -44,15 +44,40 @@ pub trait Chip {
     /// panic if the pin does not exists
     fn get_pin(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
-
         use std::ops::Not;
         assert_eq!(pin.count_ones(), 1);
-        let buffer = self.pins_buffer();
-        0 != (*buffer & pin)
+
+        let current = self.pins_buffer().1;
+        0 != (*current & pin)
     }
 
-    fn pins_buffer_mut(&mut self) -> &mut u64;
-    fn pins_buffer(&self) -> &u64;
+    /// Check if the pin is in a front state
+    pub fn is_front(&self) -> bool {
+        let pin: u64 = pin.into();
+        use std::ops::Not;
+        assert_eq!(pin.count_ones(), 1);
+
+        let (current, previous) = self.pins_buffer();
+        0 != (*current & pin)
+        let current = 0 != (current & pin);
+        let previous = 0 != (previous & pin);
+
+        previous = false && current = true;
+
+    }
+
+    /// Force to save all the bits of the current state to test is_front and so on
+    /// (this is call at the syncing step in the motherboard code)
+    pub fn save_pins_state(&mut self) {
+        let buffer = self.pins_buffer_mut();
+        buffer.0 = buffer.1;
+    }
+
+    /// The buffer that encodes the current state of the pin (previous, current) (writeable)
+    fn pins_buffer_mut(&mut self) -> &mut (u64,  u64);
+    /// The buffer that encodes the current state of the pin (previous, current) (readable)
+    fn pins_buffer(&self) -> &(u64, u64);
+
 
     /// Reset pins and counter
     fn reset(&mut self);
@@ -126,6 +151,20 @@ pub trait WriteAddressChip: AddressChip {
         self.set_value_in_pins(addr, Self::pins_address());
     }
 }
+
+/// This trait needs to be activated for chips other than the GA that are activate in the front state of their clock
+pub trait Activable: Chip {
+    /// Get the id of the pin that contains the clock
+    fn clock_pin() -> Self::PinType;
+
+    /// Return true if the chip is activated (and thus its specific logic expect the wired pins one has to be executed)
+    /// Currently activation is done with the font of the chip. it means that we executae the behavior of the chip in one row
+    /// even if it takes several cycles of the Gate array chip that is emulated independnetly
+    fn is_activated() -> bool {
+        self.is_front(self.clock_pin());
+    }
+}
+
 
 /// Synchronize the pins of the first chip to the pins of the second chip
 pub fn sync_pins<C1: Chip, C2: Chip>(

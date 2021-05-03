@@ -522,7 +522,8 @@ impl GateArray {
     /// Gate array works at 16Mhz and divide it to generate signals for other chips.
     /// CPU is at 4 Mhz
     pub fn manage_clocks(&mut self) {
-        self.set_pin(GateArrayPin::CPU_ADDR, self.clock % 4 != 0);
+        self.set_pin(GateArrayPin::Neg_CLK self.clock % 4 != 0);
+        self.set_pin(CrtcPin::CLK, self.clock % 16 != 0)
 
         self.clock += 1;
     }

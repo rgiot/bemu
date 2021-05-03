@@ -37,12 +37,14 @@ impl Motherboard {
         self.ga.manage_clocks();
 
         // Keep this order to avoid side effect mixing previous state and current state
-        self.crtc.tick();
+        if self.cpu.is_activable() {
+            self.crtc.tick(); // Virtually uses 16 cycles
+        }
         self.ga.tick();
         self.pal.tick();
 
-        if !self.cpu.get_pin(Z80Pin::Neg_CLK) {
-            self.cpu.tick();
+        if self.cpu.is_activable() {
+            self.cpu.tick(); // Virtually uses 4 cycles
         }
 
         self.sync_chips_pins();
@@ -50,14 +52,27 @@ impl Motherboard {
 
     /// Make the appropriate copy between some pins of some chips to other (we simulate the various buses here)
     fn sync_chips_pins(&mut self) {
+        // Backup previous state
+        self.ga.save_pins_state();
+        self.pal.save_pins_state();
+        self.crtc.save_pins_state();
+        self.z80.save_pins_state();
 
 
         // GA to CPU
         sync_pins(
             &self.ga,
-            &[GateArrayPin::CPU_ADDR],
+            &[GateArrayPin::Neg_CLK],
             &mut self.cpu,
             &[Z80Pin::Neg_CLK],
+        );
+
+        // GA to CRTC
+        sync_pins(
+            &self.ga,
+            &[GateArrayPin::GateArrayPin::MAO_CCLK],
+            &mut self.cpu,
+            &[CrtcPin::CLK],
         );
 
         // CPU to GA
@@ -161,6 +176,11 @@ mod test {
             0xfe
         );
 
+    }
+
+    #[test]
+    fn test_chips_activation() {
+        unimplemented!();
     }
 
 
