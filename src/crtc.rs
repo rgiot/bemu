@@ -8,58 +8,58 @@ use rand::{thread_rng, Rng};
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(u64)]
 pub enum CrtcPin {
-    D0,
-    D1,
-    D2,
-    D3,
-    D4,
-    D5,
-    D6,
-    D7,
+    D0=1<<0,
+    D1=1<<1,
+    D2=1<<2,
+    D3=1<<3,
+    D4=1<<4,
+    D5=1<<5,
+    D6=1<<6,
+    D7=1<<7,
 
     /// Register select (A8)
-    RS,
+    RS=1<<8,
     /// Chip Select (14)
-    CS,
+    CS=1<<9,
     /// Read Write (A9)
-    RW,
+    RW=1<<10,
     /// Enable the CRTC
-    EN,
+    EN=1<<11,
 
     /// Vertical Sync
-    VS,
+    VS=1<<12,
     /// Horizontal Sync
-    HS,
+    HS=1<<13,
 
     /// Display Enable
-    DE,
+    DE=1<<14,
 
     /// Clock
-    CCLK,
+    CCLK=1<<15,
 
     /// Reset
-    RESET,
+    RESET=1<<16,
 
-    MA13,
-    MA12,
-    MA11,
-    MA10,
-    MA9,
-    MA8,
-    MA7,
-    MA6,
-    MA5,
-    MA4,
-    MA3,
-    MA2,
-    MA1,
-    MA0,
+    MA13=1<<17,
+    MA12=1<<18,
+    MA11=1<<19,
+    MA10=1<<20,
+    MA9=1<<21,
+    MA8=1<<22,
+    MA7=1<<23,
+    MA6=1<<24,
+    MA5=1<<25,
+    MA4=1<<26,
+    MA3=1<<27,
+    MA2=1<<28,
+    MA1=1<<29,
+    MA0=1<<30,
 
-    RA0,
-    RA1,
-    RA2,
-    RA3,
-    RA4
+    RA0=1<<31,
+    RA1=1<<32,
+    RA2=1<<33,
+    RA3=1<<34,
+    RA4=1<<35
 }
 
 impl Into<u64> for CrtcPin {
@@ -80,11 +80,13 @@ const CRTC_PIN_DATA_BUS: [CrtcPin; 8] = [
 ];
 
 const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
-    CrtcPin::RA2,
     CrtcPin::MA13,
     CrtcPin::MA12,
+
+    CrtcPin::RA2,
     CrtcPin::RA1,
     CrtcPin::RA0,
+
     CrtcPin::MA9,
     CrtcPin::MA8,
     CrtcPin::MA7,
@@ -95,6 +97,7 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
     CrtcPin::MA2,
     CrtcPin::MA1,
     CrtcPin::MA0,
+
     CrtcPin::CCLK
 ];
 
@@ -106,6 +109,8 @@ pub struct Crtc {
 
     /// Address Register / Selection of the working register
     ar: u8,
+    /// Status register (crtvc 1)
+    sr: u8,
     /// Horizontal Total Register
     r0: u8,
     /// Horizontal Display Register
@@ -140,15 +145,14 @@ pub struct Crtc {
     hcc: u8,
     /// Vertical Char Counter
     vcc: u8,
-    /// Vertical Line Counter
+    /// Vertical Line Counter (Raster address)
     vlc: u8,
 
-    /// Memory Adress
+    /// Memory Adress to put on the pins
     ma: u16,
-    /// Raster address
-    ra: u8,
+    /// Base address (corresponds to bufferised R12/R13)
+    base: u16,
 
-    selected_register: u8,
     crtc_type: CrtcType,
 
     hsync_counter: u8,
@@ -311,14 +315,14 @@ impl Crtc {
     /// Execute the CRTC register selection
     pub fn select_crtc_register(&mut self) {
         let reg = self.get_data_from_pins();
-        self.selected_register = reg & 0b11111;
+        self.ar = reg & 0b11111;
     }
 
     /// Execute the CRTC register write
     pub fn write_crtc_register(&mut self) {
         let val = self.get_data_from_pins();
-        if self.is_register_writable(self.selected_register) {
-            self.do_write_register(self.selected_register, val);
+        if self.is_register_writable(self.ar) {
+            self.do_write_register(self.ar, val);
         }
     }
 
@@ -332,7 +336,7 @@ impl Crtc {
             u<<7 + l<<6 + v<<5
         } 
         else if self.crtc_type.is_crtc3() || self.crtc_type.is_crtc4() {
-            self.do_read_register(self.selected_register)
+            self.do_read_register(self.ar)
         }
         else {
             thread_rng().gen::<u8>()
@@ -343,8 +347,8 @@ impl Crtc {
 
     /// Execute the CRTC register read
     pub fn read_crtc_register(&mut self) {
-        if self.is_register_readable(self.selected_register) {
-            let val = self.do_read_register(self.selected_register) & self.crtc_type.read_register_mask(self.selected_register);
+        if self.is_register_readable(self.ar) {
+            let val = self.do_read_register(self.ar) & self.crtc_type.read_register_mask(self.ar);
             self.set_data_on_pins(val);
         }
     }
@@ -428,7 +432,7 @@ impl Crtc {
         };
 
         if trigger && self.hcc == 0 {
-            self.ma = (self.r12 as u16) << 8 + self.r13 as u16;
+            self.base = (self.r12 as u16) << 8 + self.r13 as u16;
         }
     }
 
@@ -449,22 +453,25 @@ impl Crtc {
 
 
     fn update_memory_address(&mut self) {
-        self.hcc += 1;
-        self.ma += 1;
+
+        dbg!(&self.hcc, &self.vcc, &self.vlc);
 
         // decrease hsync counter if any
         if self.hsync_counter != 0 {
             self.hsync_counter -= 1;
         }
 
+        self.hcc += 1;
 
-        if self.hcc == self.r0 {
+
+
+        if self.hcc == self.r0+1 {
             // This is the end of the line, we have to trigger all the other stuffs
             self.hcc = 0; 
             self.vlc += 1;
 
             // This is the end of a char line
-            if self.vlc == self.r9 {
+            if self.vlc == self.r9+1 {
                 self.vlc = 0;
                 self.vcc += 1;
 
@@ -473,12 +480,14 @@ impl Crtc {
                     self.vsync_counter -= 1;
                 }
 
-                if self.vcc == self.r4 {
+                if self.vcc == self.r4+1 {
                     // This is the end of the screen
-                    self.vcc == 0;
+                    self.vcc = 0;
                 }
             }
         }
+
+
 
         if self.hcc >= self.r1 || self.vcc >= self.r6 {
             self.set_pin(CrtcPin::DE, false); // Activate Border
@@ -511,8 +520,10 @@ impl Crtc {
     /// MA and RA are variables manipulated during the process
     /// they are directly wired to the pin; this fonction replicate them here
     fn set_ma_ra_on_pins(&mut self) {
+        self.ma = self.vcc as u16 * self.r0 as u16 + self.hcc as u16 + self.base;
+
         self.set_value_in_pins(
-            self.ma & 0b1111111111111, 
+            self.ma & ( (1<<15)-1), 
             &[
                 CrtcPin::MA13,
                 CrtcPin::MA12,
@@ -532,7 +543,7 @@ impl Crtc {
         );
 
         self.set_value_in_pins(
-            self.ra & 0b11111, 
+            self.vlc & 0b11111, 
             &[
                 CrtcPin::RA4,
                 CrtcPin::RA3,
@@ -599,9 +610,9 @@ impl Chip for Crtc {
         self.r17 = 0;
 
         // Set the counters to the limits
-        self.vcc = self.r9 - 1;
-        self.vlc = self.r4 - 1;
-        self.hcc = self.r1 - 1;
+        self.vcc = self.r4;
+        self.vlc = self.r9;
+        self.hcc = self.r0;
 
     }
 }
@@ -636,6 +647,20 @@ mod test {
     #[test]
     fn test_address_generation() {
         let mut crtc = Crtc::default();
+        crtc.reset();
+
+        assert_eq!(
+            crtc.r1,
+            40
+        );
+        assert_eq!(
+            crtc.r4,
+            38
+        );
+        assert_eq!(
+            crtc.r9,
+            7
+        );
         
         crtc.set_pin(CrtcPin::CCLK, true);
         crtc.set_pin(CrtcPin::CS, false);
@@ -645,20 +670,25 @@ mod test {
 
         crtc.r12 = 0x30;
         crtc.r13 = 0x00;
-        crtc.pre_tick();
-        crtc.execute_tick();
-        let address1 = crtc.get_address_from_pins();
+        crtc.vcc = 0;
+        crtc.vlc = 0;
+        crtc.hcc = 0;
+        crtc.base = 0x3000;
+        crtc.set_ma_ra_on_pins();
+        println!("0x{:x}", crtc.get_address_from_pins());
+        assert_eq!(
+            crtc.get_address_from_pins(),
+            0xc000
+        );
+
 
         crtc.set_pin(CrtcPin::CCLK, false);
-
-        crtc.pre_tick();
-        crtc.execute_tick();
+        crtc.set_ma_ra_on_pins();
         let address2 = crtc.get_address_from_pins();
 
-
         assert_eq!(
-            (0xc000, 0xc001),
-            (address1, address2)
+             0xc001,
+           address2
         )
 
     }
