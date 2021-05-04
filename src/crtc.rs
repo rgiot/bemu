@@ -631,8 +631,16 @@ impl AddressChip for Crtc {
         return &CRTC_PIN_ADDRESS_BUS;
     }
 
+
+
 }
-impl ReadAddressChip for Crtc {}
+impl ReadAddressChip for Crtc {
+    /// CCLK as to be negated
+    fn get_address_from_pins(&self) -> u16 {
+        let addr = self.get_value_from_pins(Self::pins_address());
+        addr ^ 1
+    }
+}
 // Does not implement the writable one because adress is generated
 impl Activable for Crtc {
     fn clock_pin() -> Self::PinType {
@@ -675,21 +683,21 @@ mod test {
         crtc.hcc = 0;
         crtc.base = 0x3000;
         crtc.set_ma_ra_on_pins();
-        println!("0x{:x}", crtc.get_address_from_pins());
-        assert_eq!(
-            crtc.get_address_from_pins(),
-            0xc000
-        );
 
+        let address1 = crtc.get_address_from_pins();
 
         crtc.set_pin(CrtcPin::CCLK, false);
         crtc.set_ma_ra_on_pins();
+
         let address2 = crtc.get_address_from_pins();
 
+
         assert_eq!(
-             0xc001,
-           address2
-        )
+            (0xc000, 0xc001),
+            (address1, address2)
+        );
+
+
 
     }
 }
