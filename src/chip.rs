@@ -1,5 +1,8 @@
 use num::cast::ToPrimitive;
 
+/// Previous and current state to be able to compute the front and decrease
+pub type PinsBuffer = (u64, u64);
+
 /// Each chip of the machine must implement this trait
 pub trait Chip {
     type PinType: Into<u64> + Clone + Copy + 'static;
@@ -33,7 +36,7 @@ pub trait Chip {
         use std::ops::Not;
         assert_eq!(pin.count_ones(), 1);
 
-        let buffer = self.pins_buffer_mut().1;
+        let ref mut buffer = self.pins_buffer_mut().1;
         *buffer &= pin.not(); // Keep ALL other bits
         if value {
             *buffer |= pin; // Set the bit activated
@@ -47,48 +50,48 @@ pub trait Chip {
         use std::ops::Not;
         assert_eq!(pin.count_ones(), 1);
 
-        let current = self.pins_buffer().1;
-        0 != (*current & pin)
+        let ref current = self.pins_buffer().1;
+        0 != (current & pin)
     }
 
     /// Check if the pin is in a front state
-    pub fn is_front(&self) -> bool {
+    fn is_front(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
         use std::ops::Not;
         assert_eq!(pin.count_ones(), 1);
 
-        let (current, previous) = self.pins_buffer();
-        0 != (*current & pin)
+        let (ref current, ref previous) = self.pins_buffer();
+
         let current = 0 != (current & pin);
         let previous = 0 != (previous & pin);
 
-        previous = false && current = true;
+        previous == false && current == true
 
     }
 
     /// Force to save all the bits of the current state to test is_front and so on
     /// (this is call at the syncing step in the motherboard code)
-    pub fn save_pins_state(&mut self) {
+    fn save_pins_state(&mut self) {
         let buffer = self.pins_buffer_mut();
         buffer.0 = buffer.1;
     }
 
     /// The buffer that encodes the current state of the pin (previous, current) (writeable)
-    fn pins_buffer_mut(&mut self) -> &mut (u64,  u64);
+    fn pins_buffer_mut(&mut self) -> &mut PinsBuffer;
     /// The buffer that encodes the current state of the pin (previous, current) (readable)
-    fn pins_buffer(&self) -> &(u64, u64);
+    fn pins_buffer(&self) -> &PinsBuffer;
 
 
     /// Reset pins and counter
     fn reset(&mut self);
 
-    /// Set the provided value in the provided list of pins. Pin index corresponds to the bit number
+    /// Set the provided value in the provided list of pins. Pin index corresponds to the reversed number [bn, bn-1, ... b1, b0]
     /// panic if the number is larger
     fn set_value_in_pins<V>(&mut self, mut value: V, pins: &[Self::PinType])
     where
         V: num::Integer + num::cast::ToPrimitive + num::cast::FromPrimitive,
     {
-        for pin in pins.iter() {
+        for pin in pins.iter().rev() {
             self.set_pin(pin.clone(), value.is_odd());
             value = value.div_floor(&V::from_u8(2).unwrap());
         }
@@ -160,23 +163,25 @@ pub trait Activable: Chip {
     /// Return true if the chip is activated (and thus its specific logic expect the wired pins one has to be executed)
     /// Currently activation is done with the font of the chip. it means that we executae the behavior of the chip in one row
     /// even if it takes several cycles of the Gate array chip that is emulated independnetly
-    fn is_activated() -> bool {
-        self.is_front(self.clock_pin());
+    fn is_activated(&self) -> bool {
+        self.is_front(Self::clock_pin())
     }
 }
 
 
 /// Synchronize the pins of the first chip to the pins of the second chip
-pub fn sync_pins<C1: Chip, C2: Chip>(
+pub fn sync_pins<C1: Chip, C2: Chip, const COUNT: usize>(
     chip1: &C1,
-    pins1: &[C1::PinType],
+    pins1: &[C1::PinType; COUNT],
     chip2: &mut C2,
-    pins2: &[C2::PinType],
+    pins2: &[C2::PinType; COUNT],
 ) {
-    assert_eq!(pins1.len(), pins2.len());
+ //   assert_eq!(pins1.len(), pins2.len());
 
     use itertools::zip;
     for (pin1, pin2) in zip(pins1.iter(), pins2.iter()) {
         chip2.set_pin(*pin2, chip1.get_pin(*pin1));
     }
 }
+
+

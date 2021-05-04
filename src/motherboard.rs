@@ -37,13 +37,13 @@ impl Motherboard {
         self.ga.manage_clocks();
 
         // Keep this order to avoid side effect mixing previous state and current state
-        if self.cpu.is_activable() {
+        if self.crtc.is_activated() {
             self.crtc.tick(); // Virtually uses 16 cycles
         }
         self.ga.tick();
         self.pal.tick();
 
-        if self.cpu.is_activable() {
+        if self.cpu.is_activated() {
             self.cpu.tick(); // Virtually uses 4 cycles
         }
 
@@ -56,13 +56,13 @@ impl Motherboard {
         self.ga.save_pins_state();
         self.pal.save_pins_state();
         self.crtc.save_pins_state();
-        self.z80.save_pins_state();
+        self.cpu.save_pins_state();
 
 
         // GA to CPU
         sync_pins(
             &self.ga,
-            &[GateArrayPin::Neg_CLK],
+            &[GateArrayPin::NCPU],
             &mut self.cpu,
             &[Z80Pin::Neg_CLK],
         );
@@ -70,9 +70,9 @@ impl Motherboard {
         // GA to CRTC
         sync_pins(
             &self.ga,
-            &[GateArrayPin::GateArrayPin::MAO_CCLK],
-            &mut self.cpu,
-            &[CrtcPin::CLK],
+            &[GateArrayPin::CCLK],
+            &mut self.crtc,
+            &[CrtcPin::CCLK],
         );
 
         // CPU to GA
@@ -123,6 +123,17 @@ impl Motherboard {
             self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ),
         );
 
+        // CPU to CRTC
+        self.crtc.set_pin(
+            CrtcPin::EN, 
+            !self.cpu.get_pin(Z80Pin::Neg_IORQ) && (!self.cpu.get_pin(Z80Pin::Neg_RD) || !self.cpu.get_pin(Z80Pin::Neg_WR))
+        );
+
+        sync_pins(
+            &self.cpu, 
+            &[Z80Pin::A8, Z80Pin::A9, Z80Pin::A15], 
+            &mut self.crtc, 
+            &[CrtcPin::RS, CrtcPin::RW, CrtcPin::CS]);
 
         // CPU to rom selection
         sync_pins(

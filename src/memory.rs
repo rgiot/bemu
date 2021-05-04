@@ -78,7 +78,7 @@ pub struct RamConfig(pub [BankConfig; 4]);
 #[derive(Default)]
 pub struct UpperRomSelector {
     rom_number: u8,
-    pins: u64
+    pins: PinsBuffer
 }
 
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -244,10 +244,10 @@ impl ReadDataChip for UpperRomSelector {}
 impl Chip for UpperRomSelector {
     type PinType = UpperRomSelectorPin;
 
-    fn pins_buffer_mut(&mut self) -> &mut u64 {
+    fn pins_buffer_mut(&mut self) -> &mut PinsBuffer {
         &mut self.pins
     }
-    fn pins_buffer(&self) -> &u64 {
+    fn pins_buffer(&self) -> &PinsBuffer {
         &self.pins
     }
 

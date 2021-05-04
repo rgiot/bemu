@@ -785,7 +785,7 @@ impl Into<Reg16> for &cpclib_asm::preamble::IndexRegister16 {
 #[derive(Default)]
 pub struct Z80 {
     /// Encoding of the 40 Z80Pin
-    pins: u64,
+    pins: PinsBuffer,
     /// State of the Z80 state-machine
     next_state: MCycle,
 
@@ -1105,15 +1105,14 @@ impl WriteDataChip for Z80 {}
 
 impl ReadDataChip for Z80 {}
 
-impl Activable for Z80 {}
 
 impl Chip for Z80 {
     type PinType = Z80Pin;
 
-    fn pins_buffer_mut(&mut self) -> &mut u64 {
+    fn pins_buffer_mut(&mut self) -> &mut PinsBuffer {
         &mut self.pins
     }
-    fn pins_buffer(&self) -> &u64 {
+    fn pins_buffer(&self) -> &PinsBuffer {
         &self.pins
     }
 
@@ -1284,7 +1283,7 @@ impl Chip for Z80 {
     }
 
     fn reset(&mut self) {
-        self.pins = 0;
+        self.pins = (0,0);
 
         self.set_pin(Z80Pin::Neg_MREQ, true);
         self.set_pin(Z80Pin::Neg_RD, true);
@@ -1294,6 +1293,12 @@ impl Chip for Z80 {
 
         self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
         self.pc.set(0);
+    }
+}
+
+impl Activable for Z80 {
+    fn clock_pin() -> Self::PinType {
+        Z80Pin::Neg_CLK
     }
 }
 

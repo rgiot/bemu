@@ -151,7 +151,7 @@ impl MMR {
 /// On a real CPC it does not have access to bit 3-5 of the data.
 /// Here, we take the liberty to do it
 pub struct Pal {
-    pins: u64,
+    pins: PinsBuffer,
     mmr: MMR,
 }
 
@@ -166,7 +166,7 @@ impl ReadDataChip for Pal {}
 impl Default for Pal {
     fn default() -> Self {
         Pal {
-            pins: 0,
+            pins: (0,0),
             mmr: MMR(0xc0),
         }
     }
@@ -175,10 +175,10 @@ impl Default for Pal {
 impl Chip for Pal {
     type PinType = PalPin;
 
-    fn pins_buffer_mut(&mut self) -> &mut u64 {
+    fn pins_buffer_mut(&mut self) -> &mut PinsBuffer {
         &mut self.pins
     }
-    fn pins_buffer(&self) -> &u64 {
+    fn pins_buffer(&self) -> &PinsBuffer {
         &self.pins
     }
 

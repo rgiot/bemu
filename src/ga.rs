@@ -48,7 +48,7 @@ pub enum GateArrayPin {
     A15 = 1 << 19,
 
     /// 1 Mhz for RAM refresh
-    MAO_CCLK = 1 << 20,
+    CCLK = 1 << 20,
 
     /// 4MHZ for CPU
     PHI = 1 << 21,
@@ -79,6 +79,8 @@ pub enum GateArrayPin {
     DISPEN = 1 << 37,
     VCC4 = 1 << 38,
     A14 = 1 << 39,
+
+    NCPU = 1<<40
 }
 
 impl Into<u64> for GateArrayPin {
@@ -456,7 +458,7 @@ impl PixelAutomata {
 /// Version 40010 is targeted; it suffers of a shift in pixel rendering for mode 2
 pub struct GateArray {
     clock: u64,
-    pins: u64,
+    pins: PinsBuffer,
 
     rmr: RMR,
     penr: PENR,
@@ -476,7 +478,7 @@ impl Default for GateArray {
     fn default()-> Self {
     GateArray {
         clock: 0,
-        pins: 0,
+        pins: (0,0),
 
         penr: PENR(0b000_00000),
         inkr: INKR(0b010_00000),
@@ -522,10 +524,10 @@ impl GateArray {
     /// Gate array works at 16Mhz and divide it to generate signals for other chips.
     /// CPU is at 4 Mhz
     pub fn manage_clocks(&mut self) {
-        self.set_pin(GateArrayPin::Neg_CLK self.clock % 4 != 0);
-        self.set_pin(CrtcPin::CLK, self.clock % 16 != 0)
+        self.set_pin(GateArrayPin::NCPU, (self.clock / 4) & 1 != 0);
+        self.set_pin(GateArrayPin::CCLK, (self.clock / 16) & 1 != 0);
 
-        self.clock += 1;
+        self.clock.wrapping_add(1);
     }
 
     /// get the active video mode
@@ -628,10 +630,10 @@ impl Chip for GateArray {
         }
     }
 
-    fn pins_buffer_mut(&mut self) -> &mut u64 {
+    fn pins_buffer_mut(&mut self) -> &mut PinsBuffer {
         &mut self.pins
     }
-    fn pins_buffer(&self) -> &u64 {
+    fn pins_buffer(&self) -> &PinsBuffer {
         &self.pins
     }
 

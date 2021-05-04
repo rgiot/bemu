@@ -2,6 +2,7 @@ use crate::chip::*;
 
 use num_enum::IntoPrimitive;
 use num_enum::TryFromPrimitive;
+use rand::{thread_rng, Rng};
 
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -34,7 +35,7 @@ pub enum CrtcPin {
     DE,
 
     /// Clock
-    CLK,
+    CCLK,
 
     /// Reset
     RESET,
@@ -94,14 +95,14 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
     CrtcPin::MA2,
     CrtcPin::MA1,
     CrtcPin::MA0,
-    CrtcPin::CLK
+    CrtcPin::CCLK
 ];
 
 #[derive(Default)]
 /// https://www.grimware.org/doku.php/documentations/devices/crtc
 /// https://neuro-sys.github.io/2019/10/01/amstrad-cpc-crtc.html
 pub struct Crtc {
-    pins: u64,
+    pins: PinsBuffer,
 
     /// Address Register / Selection of the working register
     ar: u8,
@@ -141,8 +142,11 @@ pub struct Crtc {
     vcc: u8,
     /// Vertical Line Counter
     vlc: u8,
+
     /// Memory Adress
-    ma: u16
+    ma: u16,
+    /// Raster address
+    ra: u8,
 
     selected_register: u8,
     crtc_type: CrtcType,
@@ -157,7 +161,14 @@ pub enum CrtcType {
     Crtc0,
     Crtc1,
     Crtc2,
-    Crtc3
+    Crtc3,
+    Crtc4,
+}
+
+impl Default for CrtcType {
+    fn default() -> Self {
+        CrtcType::Crtc0
+    }
 }
 
 impl CrtcType {
@@ -197,7 +208,7 @@ impl CrtcType {
             },
 
             14 | 16  => {
-                0xb111111
+                0b111111
             },
 
             
@@ -299,13 +310,13 @@ impl Crtc {
 
     /// Execute the CRTC register selection
     pub fn select_crtc_register(&mut self) {
-        let reg = self.read_data_from_pins();
+        let reg = self.get_data_from_pins();
         self.selected_register = reg & 0b11111;
     }
 
     /// Execute the CRTC register write
     pub fn write_crtc_register(&mut self) {
-        let val = self.read_data_from_pins();
+        let val = self.get_data_from_pins();
         if self.is_register_writable(self.selected_register) {
             self.do_write_register(self.selected_register, val);
         }
@@ -317,15 +328,15 @@ impl Crtc {
             todo!("Implement CRTC1 behavior when reading status register");
             let u = 1; // TODO set the right value
             let v = 1; // TODO set the right value
-            let l = self.get_pin(CrtcPin::VSYNC); // TODO set the right value
+            let l = if self.get_pin(CrtcPin::VS){1}else{0}; // TODO set the right value
             u<<7 + l<<6 + v<<5
         } 
         else if self.crtc_type.is_crtc3() || self.crtc_type.is_crtc4() {
             self.do_read_register(self.selected_register)
         }
         else {
-            rand::thread_rng().gen()
-        }
+            thread_rng().gen::<u8>()
+        };
 
         self.set_data_on_pins(data);
     }
@@ -334,7 +345,7 @@ impl Crtc {
     pub fn read_crtc_register(&mut self) {
         if self.is_register_readable(self.selected_register) {
             let val = self.do_read_register(self.selected_register) & self.crtc_type.read_register_mask(self.selected_register);
-            self.write_data_on_pins(val);
+            self.set_data_on_pins(val);
         }
     }
 
@@ -382,25 +393,27 @@ impl Crtc {
     }
 
     pub fn do_read_register(&self, r: u8) -> u8 {
-        let r = match r {
-            0 => &self.r0,
-            1 => &self.r1,
-            2 => &self.r2,
-            3 => &self.r3,
-            4 => &self.r4,
-            5 => &self.r5,
-            6 => &self.r6,
-            7 => &self.r7,
-            8 => &self.r8,
-            9 => &self.r9,
-            10 => &self.r10,
-            11 => &self.r11,
-            12 => &self.r12,
-            13 => &self.r13,
-            14 => &self.r14,
-            15 => &self.r15,
-            _ => unreachable!()
+       let v = match r {
+            0 => self.r0,
+            1 => self.r1,
+            2 => self.r2,
+            3 => self.r3,
+            4 => self.r4,
+            5 => self.r5,
+            6 => self.r6,
+            7 => self.r7,
+            8 => self.r8,
+            9 => self.r9,
+            10 => self.r10,
+            11 => self.r11,
+            12 => self.r12,
+            13 => self.r13,
+            14 => self.r14,
+            15 => self.r15,
+            _ => panic!()
         };
+        let m = self.crtc_type.read_register_mask(r);
+        v & m
     }
 
 
@@ -415,7 +428,7 @@ impl Crtc {
         };
 
         if trigger && self.hcc == 0 {
-            self.ma = self.r12 << 8 + self.r13;
+            self.ma = (self.r12 as u16) << 8 + self.r13 as u16;
         }
     }
 
@@ -429,9 +442,9 @@ impl Crtc {
         }
     }
 
+        /// To set 0 is problematic (for non CTM I would say)
     fn hsync_width(&self) -> u8 {
-        /// To set 0 is problematic
-        let val = self.r3 & 0b00001111;
+        self.r3 & 0b00001111
     }
 
 
@@ -492,28 +505,62 @@ impl Crtc {
 
         self.trigger_new_screen_if_needed();
         self.set_ma_ra_on_pins();
-        self.set_vlc_on_pins();
     }
  
+
+    /// MA and RA are variables manipulated during the process
+    /// they are directly wired to the pin; this fonction replicate them here
+    fn set_ma_ra_on_pins(&mut self) {
+        self.set_value_in_pins(
+            self.ma & 0b1111111111111, 
+            &[
+                CrtcPin::MA13,
+                CrtcPin::MA12,
+                CrtcPin::MA11,
+                CrtcPin::MA10,
+                CrtcPin::MA9,
+                CrtcPin::MA8,
+                CrtcPin::MA7,
+                CrtcPin::MA6,
+                CrtcPin::MA5,
+                CrtcPin::MA4,
+                CrtcPin::MA3,
+                CrtcPin::MA2,
+                CrtcPin::MA1,
+                CrtcPin::MA0,
+            ]
+        );
+
+        self.set_value_in_pins(
+            self.ra & 0b11111, 
+            &[
+                CrtcPin::RA4,
+                CrtcPin::RA3,
+                CrtcPin::RA2,
+                CrtcPin::RA1,
+                CrtcPin::RA0,
+            ]
+        )
+    }
 }
 
 impl Chip for Crtc {
     type PinType = CrtcPin;
 
-    fn pins_buffer_mut(&mut self) -> &mut u64 {
+    fn pins_buffer_mut(&mut self) -> &mut PinsBuffer {
         &mut self.pins
     }
-    fn pins_buffer(&self) -> &u64 {
+    fn pins_buffer(&self) -> & PinsBuffer {
         &self.pins
     }
 
     fn must_execute_tick(&self) -> bool {
-        self.get_pin(CrtcPin::CLK) && ! self.get_pin(A14)
+        self.get_pin(CrtcPin::CCLK) && ! self.get_pin(CrtcPin::CS)
     }
 
     /// Execute the requested command from the CPU
     fn execute_tick(&mut self) {
-        match (self.get_pin(CrtcPin::A9), self.get_pin(CrtcPin::A8) {
+        match (self.get_pin(CrtcPin::RW), self.get_pin(CrtcPin::RS)) {
             (false, false) => self.select_crtc_register(),
             (false, true) => self.write_crtc_register(),
             (true, false) => self.status_register(),
@@ -526,8 +573,7 @@ impl Chip for Crtc {
     /// Execute the CRTC stuff command
     /// TODO use buffered values
     fn pre_tick(&mut self) {
-        // Screen address depends on the clock state
-        self.set_ma_ra_on_pins();
+      //  self.set_ma_ra_on_pins(); // For the CCLK change to ensure get_address works properly
     }
 
     fn reset(&mut self) {
@@ -577,26 +623,37 @@ impl AddressChip for Crtc {
 }
 impl ReadAddressChip for Crtc {}
 // Does not implement the writable one because adress is generated
-impl Activable for Crtc {}
-
+impl Activable for Crtc {
+    fn clock_pin() -> Self::PinType {
+        CrtcPin::CCLK
+    }
+}
 
 #[cfg(test)]
 mod test {
-    user super::*;
+    use super::*;
 
     #[test]
     fn test_address_generation() {
         let mut crtc = Crtc::default();
+        
+        crtc.set_pin(CrtcPin::CCLK, true);
+        crtc.set_pin(CrtcPin::CS, false);
+        crtc.set_pin(CrtcPin::RW, false);
+        crtc.set_pin(CrtcPin::RS, false);
+        crtc.set_pin(CrtcPin::EN, false);
 
         crtc.r12 = 0x30;
         crtc.r13 = 0x00;
         crtc.pre_tick();
         crtc.execute_tick();
-        let address1 = self.get_address_from_pins();
+        let address1 = crtc.get_address_from_pins();
+
+        crtc.set_pin(CrtcPin::CCLK, false);
 
         crtc.pre_tick();
         crtc.execute_tick();
-        let address2 = self.get_address_from_pins();
+        let address2 = crtc.get_address_from_pins();
 
 
         assert_eq!(
