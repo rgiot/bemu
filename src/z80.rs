@@ -1569,8 +1569,15 @@ mod test {
         assert_eq!(cpu.reg8(Reg8::A).get(), 0x34);
     }
 
+    fn force_front(cpu: &mut Z80) {
+        cpu.set_pin(Z80Pin::Neg_CLK, false);
+        cpu.save_pins_state();
+        cpu.set_pin(Z80Pin::Neg_CLK, true);
+    }
+
     fn test_byte_FetchOpcode(cpu: &mut Z80, byte: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
+        force_front(cpu);
 
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
@@ -1580,6 +1587,7 @@ mod test {
         cpu.set_pin(Z80Pin::Neg_IORQ, true);
         cpu.set_pin(Z80Pin::Neg_WR, true);
 
+        assert!(cpu.is_activated());
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
@@ -1639,6 +1647,8 @@ mod test {
 
     fn test_byte_FetchOpcodeRead(cpu: &mut Z80, byte: u8, data: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
+        force_front(cpu);
+
 
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
@@ -1710,6 +1720,8 @@ mod test {
 
     fn test_byte_FetchOpcodeRead2(cpu: &mut Z80, byte: u8, data: u8, data2: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
+        force_front(cpu);
+
 
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
@@ -1787,6 +1799,8 @@ mod test {
 
     fn test_byte_FetchOpcode2(cpu: &mut Z80, byte1: u8, byte2: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
+        force_front(cpu);
+
 
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
@@ -1912,6 +1926,8 @@ mod test {
         };
 
         let pc_base = cpu.reg16(Reg16::Pc).get();
+        force_front(cpu);
+
 
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
