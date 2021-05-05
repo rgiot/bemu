@@ -276,6 +276,14 @@ impl Monitor {
             previous_hsync: false
         }
     }
+
+
+    /// This function is called when a new frame starts (i.e., the gun beam is released from the top of screen)
+    fn new_frame(&mut self) {
+        self.full_texture = Default::default();
+    }
+
+
     /// Handle the information send from the CPC
     pub fn receive(&mut self, r: f32, g: f32, b: f32, vsync: bool, hsync: bool) {
         if self.state.is_in_vertical_retrace() {
@@ -310,6 +318,7 @@ impl Monitor {
 
             if *wait == 0.into() || vsync {
                 self.state = MonitorState::Display(Gun::default());
+                self.new_frame();
             }
         }
 
@@ -415,10 +424,7 @@ mod test {
         );
     }
 
-    #[test]
-    fn test_standard_screen() {
-        let mut monitor = Monitor::debug();
-
+    fn exec_one_frame(monitor: &mut Monitor) {
         let r7 = 0;
         let r4 = 38;
         let r9 = 7;
@@ -448,6 +454,34 @@ mod test {
             }
         }
 
+    }
+
+    #[test]
+    fn test_standard_screen() {
+        let mut monitor = Monitor::debug();
+
+        exec_one_frame(&mut monitor);
         monitor.full_texture.save("test_monitor_standard_screen.png").unwrap();
+    }
+
+
+    #[test]
+    fn test_standard_screen_catch_vsync() {
+        let mut monitor = Monitor::debug();
+
+        monitor.state = MonitorState::Display(Gun{x:100.into(), y:200.into()});
+
+        exec_one_frame(&mut monitor);
+        // this image is buggy as vsync is not properly placed
+        monitor.full_texture.save("test_standard_screen_catch_vsync1.png").unwrap();
+    
+    
+        for i in 0..300 {
+            exec_one_frame(&mut monitor);
+        }
+
+        // monitor is supposed to be good
+        monitor.full_texture.save("test_standard_screen_catch_vsync2.png").unwrap();
+
     }
 }
