@@ -783,6 +783,7 @@ impl Into<Reg16> for &cpclib_asm::preamble::IndexRegister16 {
 }
 
 #[derive(Default)]
+/// https://gist.github.com/drhelius/8497817
 pub struct Z80 {
     /// Encoding of the 40 Z80Pin
     pins: PinsBuffer,

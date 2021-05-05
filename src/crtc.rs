@@ -462,7 +462,7 @@ impl Crtc {
 
         // Request a vsync if needed
         if self.vcc == self.r7 {
-            self.vsync_counter == self.vsync_height();
+            self.vsync_counter = self.vsync_height();
         }
 
         self.set_pin(CrtcPin::HS, self.hsync_counter != 0); // Activate Hsync if needed
