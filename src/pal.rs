@@ -189,7 +189,7 @@ impl Chip for Pal {
     /// Retreive the MMR value and store it
     fn execute_tick(&mut self) {
         let a = self.get_data_from_pins();
-        if (a & (1 << 7)) == 1 && (a & (1 << 6) == 1) {
+        if (a & (1 << 7)) != 0 && (a & (1 << 6) != 0) {
             self.mmr.set(a);
         }
     }

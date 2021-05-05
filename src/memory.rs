@@ -316,7 +316,7 @@ impl MemoryConfig {
     /// Check if we have to read in the lower rom
     pub fn is_in_enabled_lower_rom(&self, addr: u16) -> bool {
         self.0.lower_rom.is_enabled() &&
-        addr >= 0x0000 &&
+       /* addr >= 0x0000 &&*/
         addr < 0x4000
     }
 
