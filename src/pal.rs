@@ -166,7 +166,7 @@ impl ReadDataChip for Pal {}
 impl Default for Pal {
     fn default() -> Self {
         Pal {
-            pins: (0,0),
+            pins: (0, 0),
             mmr: MMR(0xc0),
         }
     }
@@ -198,7 +198,6 @@ impl Chip for Pal {
         unimplemented!();
     }
 }
-
 
 impl Pal {
     delegate! {

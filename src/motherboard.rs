@@ -58,7 +58,6 @@ impl Motherboard {
         self.crtc.save_pins_state();
         self.cpu.save_pins_state();
 
-
         // GA to CPU
         sync_pins(
             &self.ga,
@@ -125,15 +124,17 @@ impl Motherboard {
 
         // CPU to CRTC
         self.crtc.set_pin(
-            CrtcPin::EN, 
-            !self.cpu.get_pin(Z80Pin::Neg_IORQ) && (!self.cpu.get_pin(Z80Pin::Neg_RD) || !self.cpu.get_pin(Z80Pin::Neg_WR))
+            CrtcPin::EN,
+            !self.cpu.get_pin(Z80Pin::Neg_IORQ)
+                && (!self.cpu.get_pin(Z80Pin::Neg_RD) || !self.cpu.get_pin(Z80Pin::Neg_WR)),
         );
 
         sync_pins(
-            &self.cpu, 
-            &[Z80Pin::A8, Z80Pin::A9, Z80Pin::A15], 
-            &mut self.crtc, 
-            &[CrtcPin::RS, CrtcPin::RW, CrtcPin::CS]);
+            &self.cpu,
+            &[Z80Pin::A8, Z80Pin::A9, Z80Pin::A15],
+            &mut self.crtc,
+            &[CrtcPin::RS, CrtcPin::RW, CrtcPin::CS],
+        );
 
         // CPU to rom selection
         sync_pins(
@@ -144,31 +145,25 @@ impl Motherboard {
         );
         sync_pins(
             &self.cpu,
-            &[
-                Z80Pin::A13,
-                Z80Pin::Neg_IORQ,
-                Z80Pin::Neg_WR,
-            ],
+            &[Z80Pin::A13, Z80Pin::Neg_IORQ, Z80Pin::Neg_WR],
             &mut self.rom_selector,
             &[
                 UpperRomSelectorPin::A13,
                 UpperRomSelectorPin::IORQ,
-                UpperRomSelectorPin::WR
+                UpperRomSelectorPin::WR,
             ],
         );
-
     }
-
 
     /// Provides the memory configuration for a proper access
     fn memory_config(&self) -> MemoryConfig {
-        MemoryConfig (
+        MemoryConfig(
             RomConfig {
                 lower_rom: self.ga.lower_rom_pagging(),
                 upper_rom: self.ga.upper_rom_pagging(),
-                rom_number: self.rom_selector.upper_rom_number()
+                rom_number: self.rom_selector.upper_rom_number(),
             },
-            self.pal.get_ram_configuration()
+            self.pal.get_ram_configuration(),
         )
     }
 }
@@ -182,17 +177,11 @@ mod test {
         let mut motherboard = Motherboard::default();
         motherboard.cpu.set_data_on_pins(0xfe);
         motherboard.sync_chips_pins();
-        assert_eq!(
-            motherboard.ga.get_data_from_pins(),
-            0xfe
-        );
-
+        assert_eq!(motherboard.ga.get_data_from_pins(), 0xfe);
     }
 
     #[test]
     fn test_chips_activation() {
         unimplemented!();
     }
-
-
 }

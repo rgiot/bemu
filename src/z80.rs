@@ -1105,7 +1105,6 @@ impl WriteDataChip for Z80 {}
 
 impl ReadDataChip for Z80 {}
 
-
 impl Chip for Z80 {
     type PinType = Z80Pin;
 
@@ -1283,7 +1282,7 @@ impl Chip for Z80 {
     }
 
     fn reset(&mut self) {
-        self.pins = (0,0);
+        self.pins = (0, 0);
 
         self.set_pin(Z80Pin::Neg_MREQ, true);
         self.set_pin(Z80Pin::Neg_RD, true);
@@ -1649,7 +1648,6 @@ mod test {
         let pc_base = cpu.reg16(Reg16::Pc).get();
         force_front(cpu);
 
-
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -1721,7 +1719,6 @@ mod test {
     fn test_byte_FetchOpcodeRead2(cpu: &mut Z80, byte: u8, data: u8, data2: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
         force_front(cpu);
-
 
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
@@ -1800,7 +1797,6 @@ mod test {
     fn test_byte_FetchOpcode2(cpu: &mut Z80, byte1: u8, byte2: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
         force_front(cpu);
-
 
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
@@ -1927,7 +1923,6 @@ mod test {
 
         let pc_base = cpu.reg16(Reg16::Pc).get();
         force_front(cpu);
-
 
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);

@@ -40,7 +40,6 @@ pub enum PageNumber {
     Page(u8),
 }
 
-
 /// Number of the bank
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum BankNumber {
@@ -61,7 +60,6 @@ impl BankNumber {
     }
 }
 
-
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct BankConfig(pub PageNumber, pub BankNumber);
 
@@ -72,22 +70,21 @@ pub struct BankConfig(pub PageNumber, pub BankNumber);
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct RamConfig(pub [BankConfig; 4]);
 
-
 /// I have no idea of how is coded the ROM selection stuff within the CPC.
 /// So I create this chip only for this purpose
 #[derive(Default)]
 pub struct UpperRomSelector {
     rom_number: u8,
-    pins: PinsBuffer
+    pins: PinsBuffer,
 }
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum Flag {
     Enable,
-    Disable
+    Disable,
 }
 impl Default for Flag {
-    fn default()-> Self {
+    fn default() -> Self {
         Flag::Disable
     }
 }
@@ -96,24 +93,20 @@ impl Flag {
     fn is_enabled(&self) -> bool {
         match self {
             Flag::Enable => true,
-            Flag::Disable => false
+            Flag::Disable => false,
         }
     }
 }
 
 #[derive(PartialEq, Copy, Clone, Debug)]
-pub struct RomConfig{
+pub struct RomConfig {
     pub lower_rom: Flag,
     pub upper_rom: Flag,
-    pub rom_number: u8
+    pub rom_number: u8,
 }
 
 #[derive(PartialEq, Copy, Clone, Debug)]
-pub struct MemoryConfig (
-    pub RomConfig,
-    pub RamConfig
-);
-
+pub struct MemoryConfig(pub RomConfig, pub RamConfig);
 
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -130,8 +123,7 @@ pub enum UpperRomSelectorPin {
 
     A13 = 1 << 8,
     IORQ = 1 << 9,
-    WR = 1 << 10
-
+    WR = 1 << 10,
 }
 
 impl Into<u64> for UpperRomSelectorPin {
@@ -151,12 +143,11 @@ const URS_PIN_DATA_BUS: [UpperRomSelectorPin; 8] = [
     UpperRomSelectorPin::D6,
     UpperRomSelectorPin::D5,
     UpperRomSelectorPin::D4,
-UpperRomSelectorPin::D3,
-UpperRomSelectorPin::D2,
-UpperRomSelectorPin::D1,
-UpperRomSelectorPin::D0,
+    UpperRomSelectorPin::D3,
+    UpperRomSelectorPin::D2,
+    UpperRomSelectorPin::D1,
+    UpperRomSelectorPin::D0,
 ];
-
 
 impl Default for Bank {
     fn default() -> Self {
@@ -172,16 +163,13 @@ impl Readable for Bank {
 
 impl Writeable for Bank {
     fn fill(&mut self, v: u8) {
-        self.0.iter_mut()
-            .for_each(|m| *m = v);
+        self.0.iter_mut().for_each(|m| *m = v);
     }
 
-    fn write(&mut self, addr: u16, val: u8){
+    fn write(&mut self, addr: u16, val: u8) {
         self.0[addr as usize] = val;
     }
 }
-
-
 
 impl Default for Rom {
     fn default() -> Self {
@@ -209,15 +197,12 @@ impl Rom {
     }
 }
 
-
-
 impl From<u8> for PageNumber {
     fn from(u: u8) -> Self {
         assert!(u <= 3);
         PageNumber::Page(u)
     }
 }
-
 
 impl From<u8> for BankNumber {
     fn from(u: u8) -> Self {
@@ -239,8 +224,6 @@ impl DataChip for UpperRomSelector {
 
 impl ReadDataChip for UpperRomSelector {}
 
-
-
 impl Chip for UpperRomSelector {
     type PinType = UpperRomSelectorPin;
 
@@ -252,9 +235,9 @@ impl Chip for UpperRomSelector {
     }
 
     fn must_execute_tick(&self) -> bool {
-        self.get_pin(UpperRomSelectorPin::A13) &&
-        self.get_pin(UpperRomSelectorPin::IORQ) &&
-        self.get_pin(UpperRomSelectorPin::WR)
+        self.get_pin(UpperRomSelectorPin::A13)
+            && self.get_pin(UpperRomSelectorPin::IORQ)
+            && self.get_pin(UpperRomSelectorPin::WR)
     }
 
     fn execute_tick(&mut self) {
@@ -288,7 +271,7 @@ impl Default for Memory {
             main_memory: Page::default(),
             additional_memory: vec![Page::default(); 1],
             upper_roms: roms,
-            lower_rom: Rom::os6128_azerty()
+            lower_rom: Rom::os6128_azerty(),
         }
     }
 }
@@ -296,19 +279,18 @@ impl Default for Memory {
 impl Default for MemoryConfig {
     fn default() -> MemoryConfig {
         MemoryConfig(
-            RomConfig{
+            RomConfig {
                 lower_rom: Flag::Disable,
                 upper_rom: Flag::Disable,
-                rom_number: 7
+                rom_number: 7,
             },
-            RamConfig ([
+            RamConfig([
                 BankConfig(PageNumber::Base, BankNumber::Bank0),
                 BankConfig(PageNumber::Base, BankNumber::Bank1),
                 BankConfig(PageNumber::Base, BankNumber::Bank2),
                 BankConfig(PageNumber::Base, BankNumber::Bank3),
-            ])
+            ]),
         )
-        
     }
 }
 
@@ -322,18 +304,16 @@ impl MemoryConfig {
 
     /// Check if we have to read in the upper rom
     pub fn is_in_enabled_upper_rom(&self, addr: u16) -> bool {
-        self.0.upper_rom.is_enabled() &&
-        addr >= 0xc000
+        self.0.upper_rom.is_enabled() && addr >= 0xc000
     }
 
     /// Return the Bank configuration for the given address
     pub fn bank_at(&self, addr: u16) -> &BankConfig {
-
         match addr {
-            0x0000 .. 0x4000 => &self.1.0[0],
-            0x4000 .. 0x8000 => &self.1.0[1],
-            0x8000 .. 0xc000 => &self.1.0[2],
-            0xc000 ..  => &self.1.0[3],
+            0x0000..0x4000 => &self.1 .0[0],
+            0x4000..0x8000 => &self.1 .0[1],
+            0x8000..0xc000 => &self.1 .0[2],
+            0xc000.. => &self.1 .0[3],
         }
     }
 
@@ -355,7 +335,6 @@ impl Page {
 }
 
 impl Memory {
-
     /// Read a byte according to the provided memory configuration
     /// If the address is in an activate rom space; this rom is read instead of the ram
     /// If the adress is within the ram space, then the value depends on the ram configuration
@@ -368,16 +347,13 @@ impl Memory {
         memory.read(MemoryConfig::relative_address_at(addr))
     }
 
-
     /// Get the appropriate bank to read for the given configuration
-    fn bank(&self, addr: u16, conf: &MemoryConfig) -> & Bank {
+    fn bank(&self, addr: u16, conf: &MemoryConfig) -> &Bank {
         if conf.is_in_enabled_lower_rom(addr) {
             self.lower_rom_bank()
-        }
-        else if conf.is_in_enabled_upper_rom(addr) {
+        } else if conf.is_in_enabled_upper_rom(addr) {
             self.upper_rom_bank(conf.0.rom_number)
-        }
-        else {
+        } else {
             self.ram_bank(conf.bank_at(addr))
         }
     }
@@ -388,44 +364,41 @@ impl Memory {
 
         if number >= self.upper_roms.len() {
             self.upper_rom_bank(0)
-        }
-        else {
-            match & self.upper_roms[number] {
+        } else {
+            match &self.upper_roms[number] {
                 Some(r) => &r.0,
                 None => {
-                    assert!(number!=0);
+                    assert!(number != 0);
                     self.upper_rom_bank(0)
                 }
             }
         }
     }
 
-    fn lower_rom_bank(&self) -> & Bank {
+    fn lower_rom_bank(&self) -> &Bank {
         &self.lower_rom.0
     }
-
 
     /// Get the memory for the given bank
     fn ram_bank(&self, conf: &BankConfig) -> &Bank {
         let page = match conf.0 {
             PageNumber::Base => &self.main_memory,
-            PageNumber::Page(p) => &self.additional_memory[p as usize]
+            PageNumber::Page(p) => &self.additional_memory[p as usize],
         };
 
         page.bank(conf.1)
     }
 
-        /// Get the memory for the given bank
-        fn ram_bank_mut(&mut self, conf: &BankConfig) -> &mut Bank {
-            let page = match conf.0 {
-                PageNumber::Base => &mut self.main_memory,
-                PageNumber::Page(p) => &mut self.additional_memory[p as usize]
-            };
-    
-            page.bank_mut(conf.1)
-        }
-}
+    /// Get the memory for the given bank
+    fn ram_bank_mut(&mut self, conf: &BankConfig) -> &mut Bank {
+        let page = match conf.0 {
+            PageNumber::Base => &mut self.main_memory,
+            PageNumber::Page(p) => &mut self.additional_memory[p as usize],
+        };
 
+        page.bank_mut(conf.1)
+    }
+}
 
 #[cfg(test)]
 mod test {

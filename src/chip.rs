@@ -18,9 +18,7 @@ pub trait Chip {
 
     /// Is executed at each clock tick even if must_execute_tick returns false.
     /// Mainly added for the Gate Array to make all its stuff not releated to PENR/INKR/MMR
-    fn pre_tick(&mut self) {
-
-    }
+    fn pre_tick(&mut self) {}
 
     /// Check of the chip must execute its processing cycle
     fn must_execute_tick(&self) -> bool;
@@ -66,7 +64,6 @@ pub trait Chip {
         let previous = 0 != (previous & pin);
 
         previous == false && current == true
-
     }
 
     /// Force to save all the bits of the current state to test is_front and so on
@@ -80,7 +77,6 @@ pub trait Chip {
     fn pins_buffer_mut(&mut self) -> &mut PinsBuffer;
     /// The buffer that encodes the current state of the pin (previous, current) (readable)
     fn pins_buffer(&self) -> &PinsBuffer;
-
 
     /// Reset pins and counter
     fn reset(&mut self);
@@ -168,7 +164,6 @@ pub trait Activable: Chip {
     }
 }
 
-
 /// Synchronize the pins of the first chip to the pins of the second chip
 pub fn sync_pins<C1: Chip, C2: Chip, const COUNT: usize>(
     chip1: &C1,
@@ -176,7 +171,7 @@ pub fn sync_pins<C1: Chip, C2: Chip, const COUNT: usize>(
     chip2: &mut C2,
     pins2: &[C2::PinType; COUNT],
 ) {
- //   assert_eq!(pins1.len(), pins2.len());
+    //   assert_eq!(pins1.len(), pins2.len());
 
     use itertools::zip;
     for (pin1, pin2) in zip(pins1.iter(), pins2.iter()) {
@@ -184,23 +179,22 @@ pub fn sync_pins<C1: Chip, C2: Chip, const COUNT: usize>(
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
 
     #[derive(Copy, Clone, Debug, PartialEq, Default)]
     struct MyChip {
-        pins: PinsBuffer
+        pins: PinsBuffer,
     }
 
     #[allow(non_camel_case_types)]
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[repr(u64)]
     enum MyChipPin {
-        A=1<<0,
-        B=1<<1,
-        C=1<<2,
+        A = 1 << 0,
+        B = 1 << 1,
+        C = 1 << 2,
     }
 
     impl Into<u64> for MyChipPin {
@@ -208,51 +202,48 @@ mod test {
             self as u64
         }
     }
-    
 
     impl Chip for MyChip {
         type PinType = MyChipPin;
 
-        fn pins_buffer_mut(&mut self) -> &mut PinsBuffer {&mut self.pins}
-        fn pins_buffer(&self) -> &PinsBuffer {&self.pins}
+        fn pins_buffer_mut(&mut self) -> &mut PinsBuffer {
+            &mut self.pins
+        }
+        fn pins_buffer(&self) -> &PinsBuffer {
+            &self.pins
+        }
 
-        fn must_execute_tick(&self) -> bool {unimplemented!()}
-        fn reset(&mut self) {unimplemented!()}
-        fn execute_tick(&mut self) {unimplemented!()}
-
+        fn must_execute_tick(&self) -> bool {
+            unimplemented!()
+        }
+        fn reset(&mut self) {
+            unimplemented!()
+        }
+        fn execute_tick(&mut self) {
+            unimplemented!()
+        }
     }
-
 
     #[test]
     fn test_setters() {
-
-
         let mut chip = MyChip::default();
 
         chip.set_pin(MyChipPin::A, false);
         chip.set_pin(MyChipPin::B, true);
         chip.set_pin(MyChipPin::C, false);
 
-        assert_eq!(
-            chip.pins.1,
-            0b010
-        );
-
+        assert_eq!(chip.pins.1, 0b010);
 
         chip.set_pin(MyChipPin::A, true);
         chip.set_pin(MyChipPin::B, false);
         chip.set_pin(MyChipPin::C, false);
 
-        assert_eq!(
-            chip.pins.1,
-            0b001
-        );
+        assert_eq!(chip.pins.1, 0b001);
 
         assert_eq!(
             chip.get_value_from_pins(&[MyChipPin::A, MyChipPin::B, MyChipPin::C]),
             0b100
         );
-
 
         chip.set_value_in_pins(0b010, &[MyChipPin::A, MyChipPin::B, MyChipPin::C]);
         assert_eq!(
@@ -263,7 +254,6 @@ mod test {
 
     #[test]
     fn test_front() {
-
         let mut chip = MyChip::default();
 
         chip.set_pin(MyChipPin::A, false);
@@ -272,11 +262,7 @@ mod test {
 
         assert_ne!(chip.pins.0, chip.pins.1);
 
-        dbg!(&chip );
+        dbg!(&chip);
         assert!(chip.is_front(MyChipPin::A));
-
     }
-
 }
-
-

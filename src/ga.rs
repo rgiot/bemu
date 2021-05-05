@@ -2,7 +2,6 @@ use crate::chip::*;
 use crate::memory::Flag;
 use delegate::delegate;
 
-
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(u64)]
@@ -80,7 +79,7 @@ pub enum GateArrayPin {
     VCC4 = 1 << 38,
     A14 = 1 << 39,
 
-    NCPU = 1<<40
+    NCPU = 1 << 40,
 }
 
 impl Into<u64> for GateArrayPin {
@@ -110,7 +109,7 @@ struct PENR(u8);
 #[derive(Debug, Copy, Clone)]
 pub enum Pen {
     Pen(u8),
-    Border
+    Border,
 }
 impl Default for Pen {
     fn default() -> Self {
@@ -123,7 +122,7 @@ impl From<u8> for Pen {
         match b {
             0..17 => Pen::Pen(b),
             16 => Pen::Border,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
@@ -150,11 +149,10 @@ impl Pen {
     fn value(&self) -> u8 {
         match self {
             Pen::Pen(nb) => *nb,
-            Pen::Border => 17
+            Pen::Border => 17,
         }
     }
 }
-
 
 /// Content of the INKR register
 struct INKR(u8);
@@ -162,50 +160,50 @@ struct INKR(u8);
 pub struct Ink(u8);
 
 // https://www.grimware.org/doku.php/documentations/devices/gatearray
-const RGB_PERCENTAGE_LEVELS_PER_INK: [(f32,f32,f32); 32] = [
-    (0.0000, 	0.9615, 	0.4808),
-    (0.0000, 	0.9615, 	41.8269),
-    (4.8077, 	0.9615, 	95.6731),
-    (42.3077, 	0.9615, 	0.4808),
-    (41.3462, 	0.9615, 	40.8654),
-    (42.3077, 	0.9615, 	94.7115),
-    (95.1923, 	1.9231, 	2.4038),
-    (94.2308, 	0.9615, 	40.8654),
-    (95.1923, 	0.9615, 	95.6731),
-    (0.9615, 	47.1154, 	0.4808),
-    (0.0000, 	47.1154, 	40.8654),
-    (4.8077, 	48.0769, 	95.6731),
-    (43.2692, 	48.0769, 	0.4808),
-    (43.2692, 	49.0385, 	41.8269),
-    (43.2692, 	48.0769, 	96.6346),
-    (95.1923, 	49.0385, 	5.2885),
-    (95.1923, 	49.0385, 	41.8269),
-    (98.0769, 	50.0000, 	97.5962),
-    (0.9615, 	94.2308, 	0.4808),
-    (0.0000, 	95.1923, 	41.8269),
-    (5.7692, 	95.1923, 	94.7115),
-    (44.2308, 	96.1538, 	1.4423),
-    (44.2308, 	95.1923, 	41.8269),
-    (44.2308, 	95.1923, 	95.6731),
-    (95.1923, 	95.1923, 	5.2885),
-    (95.1923, 	95.1923, 	42.7885),
-    (100.000, 	95.1923, 	97.5962),
-    (43.2692, 	48.0769, 	42.7885),
-    (95.1923, 	0.9615, 	40.8654),
-    (95.1923, 	95.1923, 	41.8269),
-    (0.0000, 	0.9615, 	40.8654),
-    (0.9615, 	95.1923, 	41.8269),
+const RGB_PERCENTAGE_LEVELS_PER_INK: [(f32, f32, f32); 32] = [
+    (0.0000, 0.9615, 0.4808),
+    (0.0000, 0.9615, 41.8269),
+    (4.8077, 0.9615, 95.6731),
+    (42.3077, 0.9615, 0.4808),
+    (41.3462, 0.9615, 40.8654),
+    (42.3077, 0.9615, 94.7115),
+    (95.1923, 1.9231, 2.4038),
+    (94.2308, 0.9615, 40.8654),
+    (95.1923, 0.9615, 95.6731),
+    (0.9615, 47.1154, 0.4808),
+    (0.0000, 47.1154, 40.8654),
+    (4.8077, 48.0769, 95.6731),
+    (43.2692, 48.0769, 0.4808),
+    (43.2692, 49.0385, 41.8269),
+    (43.2692, 48.0769, 96.6346),
+    (95.1923, 49.0385, 5.2885),
+    (95.1923, 49.0385, 41.8269),
+    (98.0769, 50.0000, 97.5962),
+    (0.9615, 94.2308, 0.4808),
+    (0.0000, 95.1923, 41.8269),
+    (5.7692, 95.1923, 94.7115),
+    (44.2308, 96.1538, 1.4423),
+    (44.2308, 95.1923, 41.8269),
+    (44.2308, 95.1923, 95.6731),
+    (95.1923, 95.1923, 5.2885),
+    (95.1923, 95.1923, 42.7885),
+    (100.000, 95.1923, 97.5962),
+    (43.2692, 48.0769, 42.7885),
+    (95.1923, 0.9615, 40.8654),
+    (95.1923, 95.1923, 41.8269),
+    (0.0000, 0.9615, 40.8654),
+    (0.9615, 95.1923, 41.8269),
 ];
 
 /// Content of the RMR register
 struct RMR(u8);
 
-#[derive(Clone,Copy,Debug,PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VideoMode {
     Mode0,
     Mode1,
     Mode2, // Pay attention to its 1 pixel shift
-    Mode3
+    Mode3,
 }
 
 impl Default for VideoMode {
@@ -221,12 +219,10 @@ impl From<u8> for VideoMode {
             1 => VideoMode::Mode1,
             2 => VideoMode::Mode2,
             3 => VideoMode::Mode3,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
-
-
 
 trait IsAddressedBy {
     /// Check if the followgin code is addressed to the register
@@ -235,22 +231,19 @@ trait IsAddressedBy {
 
 impl IsAddressedBy for PENR {
     fn is_addressed(u: u8) -> bool {
-        (u & (0b11100000) == 0b000_00000) ||
-        (u & (0b11100000) == 0b001_00000) 
+        (u & (0b11100000) == 0b000_00000) || (u & (0b11100000) == 0b001_00000)
     }
 }
 
 impl IsAddressedBy for INKR {
     fn is_addressed(u: u8) -> bool {
-        (u & (0b111_00000) == 0b010_00000) ||
-        (u & (0b111_00000) == 0b011_00000) 
+        (u & (0b111_00000) == 0b010_00000) || (u & (0b111_00000) == 0b011_00000)
     }
 }
 
 impl IsAddressedBy for RMR {
     fn is_addressed(u: u8) -> bool {
-        (u & (0b111_00000) == 0b100_00000) ||
-        (u & (0b111_00000) == 0b101_00000) 
+        (u & (0b111_00000) == 0b100_00000) || (u & (0b111_00000) == 0b101_00000)
     }
 }
 
@@ -259,8 +252,7 @@ impl PENR {
     fn pen(&self) -> Pen {
         if self.is_border() {
             Pen::Border
-        }
-        else {
+        } else {
             Pen::Pen(self.0 & 0b000_11111)
         }
     }
@@ -270,13 +262,11 @@ impl PENR {
     }
 }
 
-
 impl INKR {
     fn ink(&self) -> Ink {
         Ink(self.0 & 0b000_11111)
     }
 }
-
 
 impl RMR {
     fn interrupt_counter(&self) -> bool {
@@ -286,31 +276,28 @@ impl RMR {
     fn upper_rom_pagging(&self) -> Flag {
         if self.0 & 0b000_01000 == 0 {
             Flag::Enable
-        }
-        else {
+        } else {
             Flag::Disable
         }
     }
-
 
     fn lower_rom_pagging(&self) -> Flag {
         if self.0 & 0b000_00100 == 0 {
             Flag::Enable
-        }
-        else {
+        } else {
             Flag::Disable
         }
     }
 
-    fn video_mode(&self) -> VideoMode  {
+    fn video_mode(&self) -> VideoMode {
         (self.0 & 0b000_00011).into()
     }
 }
 
 /// This is this strcuture that has the responsibility to produce the colors
 pub enum PixelAutomata {
-    AvailablePixel(u8, u8, VideoMode, [Ink;17]),
-    NeedToReadMemory
+    AvailablePixel(u8, u8, VideoMode, [Ink; 17]),
+    NeedToReadMemory,
 }
 
 impl Default for PixelAutomata {
@@ -320,14 +307,14 @@ impl Default for PixelAutomata {
 }
 
 impl PixelAutomata {
-    pub fn new(b: u8, m: VideoMode, p: [Ink;17]) -> Self {
+    pub fn new(b: u8, m: VideoMode, p: [Ink; 17]) -> Self {
         PixelAutomata::AvailablePixel(0, b, m, p)
     }
 
     pub fn is_done(&self) -> bool {
         match self {
             PixelAutomata::NeedToReadMemory => true,
-            _ => false
+            _ => false,
         }
     }
 
@@ -336,11 +323,10 @@ impl PixelAutomata {
             PixelAutomata::AvailablePixel(s, b, m, p) => {
                 if *s == 7 {
                     PixelAutomata::NeedToReadMemory
+                } else {
+                    PixelAutomata::AvailablePixel(*s + 1, *b, *m, *p)
                 }
-                else {
-                    PixelAutomata::AvailablePixel(*s+1, *b, *m, *p)
-                }
-            },
+            }
             PixelAutomata::NeedToReadMemory => PixelAutomata::NeedToReadMemory,
         }
     }
@@ -349,22 +335,21 @@ impl PixelAutomata {
     /// TODO manage the border
     pub fn generate_pixel(&mut self, hsync: bool, border: bool) -> (f32, f32, f32) {
         if hsync {
-           return (0.0, 0.0, 0.0);
+            return (0.0, 0.0, 0.0);
         }
 
         let pen = if border {
             Pen::Border
-        }
-        else {
+        } else {
             match self.mode() {
                 Some(VideoMode::Mode0) => self.get_mode0_pen(),
                 Some(VideoMode::Mode1) => self.get_mode1_pen(),
                 Some(VideoMode::Mode2) => self.get_mode2_pen(),
                 Some(VideoMode::Mode3) => self.get_mode3_pen(),
-                None => unreachable!()
+                None => unreachable!(),
             }
         };
-        
+
         let ink = self.palette().unwrap()[pen.value() as usize];
         self.next_state();
         Self::rgb(ink)
@@ -378,13 +363,13 @@ impl PixelAutomata {
                 match step {
                     0 => pens.0.into(),
                     1 => pens.1.into(),
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
-            },
-            _ => unreachable!()
+            }
+            _ => unreachable!(),
         }
     }
-    pub fn get_mode1_pen(&mut self) -> Pen  {
+    pub fn get_mode1_pen(&mut self) -> Pen {
         match (self.step(), self.byte(), self.palette()) {
             (Some(step), Some(byte), Some(pal)) => {
                 let pens = cpclib::pixels::mode1::byte_to_pens(byte);
@@ -394,27 +379,26 @@ impl PixelAutomata {
                     1 => pens.1.into(),
                     2 => pens.2.into(),
                     3 => pens.3.into(),
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
-            },
-            _ => unreachable!()
+            }
+            _ => unreachable!(),
         }
     }
 
     pub fn get_mode2_pen(&mut self) -> Pen {
         match (self.step(), self.byte(), self.palette()) {
             (Some(step), Some(byte), Some(pal)) => {
-                if byte & (1<<(7-step)) != 0 {
+                if byte & (1 << (7 - step)) != 0 {
                     Pen::Pen(1)
-                }
-                else {
+                } else {
                     Pen::Pen(0)
                 }
-            },
-            _ => unreachable!()
+            }
+            _ => unreachable!(),
         }
     }
-    pub fn get_mode3_pen(&mut self)  -> Pen {
+    pub fn get_mode3_pen(&mut self) -> Pen {
         let mode0_pen = self.get_mode0_pen();
         (mode0_pen.value() & 0b11).into()
     }
@@ -422,37 +406,35 @@ impl PixelAutomata {
     pub fn step(&self) -> Option<u8> {
         match self {
             PixelAutomata::AvailablePixel(s, _, _, _) => Some(*s),
-            PixelAutomata::NeedToReadMemory => None
+            PixelAutomata::NeedToReadMemory => None,
         }
     }
 
     pub fn mode(&self) -> Option<VideoMode> {
         match self {
-            PixelAutomata::AvailablePixel(_, _, m,  _) => Some(*m),
-            PixelAutomata::NeedToReadMemory => None
+            PixelAutomata::AvailablePixel(_, _, m, _) => Some(*m),
+            PixelAutomata::NeedToReadMemory => None,
         }
     }
 
     pub fn byte(&self) -> Option<u8> {
         match self {
             PixelAutomata::AvailablePixel(_, b, _, _) => Some(*b),
-            PixelAutomata::NeedToReadMemory => None
+            PixelAutomata::NeedToReadMemory => None,
         }
     }
 
     pub fn palette(&self) -> Option<&[Ink; 17]> {
         match self {
             PixelAutomata::AvailablePixel(_, _, _, p) => Some(p),
-            PixelAutomata::NeedToReadMemory => None
+            PixelAutomata::NeedToReadMemory => None,
         }
     }
 
     fn rgb(ink: Ink) -> (f32, f32, f32) {
         RGB_PERCENTAGE_LEVELS_PER_INK[ink.0 as usize]
     }
-
 }
-
 
 /// GateArray emulation of the CPC.
 /// Version 40010 is targeted; it suffers of a shift in pixel rendering for mode 2
@@ -464,51 +446,51 @@ pub struct GateArray {
     penr: PENR,
     inkr: INKR,
 
-    palette: [Ink;17],
+    palette: [Ink; 17],
 
     /// The video mode used to generate the pixels
     current_mode: VideoMode,
     /// The automata that generate the 8 pixel per byte
     pixel_automata: PixelAutomata,
     /// Lastly generated pixel
-    rgb: (f32,f32, f32)
+    rgb: (f32, f32, f32),
 }
 
 impl Default for GateArray {
-    fn default()-> Self {
-    GateArray {
-        clock: 0,
-        pins: (0,0),
+    fn default() -> Self {
+        GateArray {
+            clock: 0,
+            pins: (0, 0),
 
-        penr: PENR(0b000_00000),
-        inkr: INKR(0b010_00000),
-        rmr: RMR(0b111_00000),
+            penr: PENR(0b000_00000),
+            inkr: INKR(0b010_00000),
+            rmr: RMR(0b111_00000),
 
-        palette: [
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-            Ink(0),
-        ],
+            palette: [
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+                Ink(0),
+            ],
 
-        current_mode: VideoMode::Mode0,
-        pixel_automata: PixelAutomata::default(),
-        rgb: RGB_PERCENTAGE_LEVELS_PER_INK[0]
+            current_mode: VideoMode::Mode0,
+            pixel_automata: PixelAutomata::default(),
+            rgb: RGB_PERCENTAGE_LEVELS_PER_INK[0],
+        }
     }
-}
 }
 
 impl DataChip for GateArray {
@@ -547,12 +529,8 @@ impl GateArray {
     /// Set the video memory byte that serves the the next 8 RGB signal generation
     fn set_memory_byte(&mut self, b: u8) {
         assert!(self.pixel_automata.is_done());
-        self.pixel_automata = PixelAutomata::AvailablePixel(
-            0,
-            b,
-            self.active_video_mode(),
-            self.palette.clone()
-        );
+        self.pixel_automata =
+            PixelAutomata::AvailablePixel(0, b, self.active_video_mode(), self.palette.clone());
     }
 
     /// Properly setup the pins for the video signal
@@ -567,14 +545,11 @@ impl GateArray {
 
         if self.get_pin(GateArrayPin::HSYNC) {
             self.rgb = RGB_PERCENTAGE_LEVELS_PER_INK[0];
+        } else {
+            self.rgb = self
+                .pixel_automata
+                .generate_pixel(self.get_pin(GateArrayPin::HSYNC), false);
         }
-        else {
-            self.rgb = self.pixel_automata.generate_pixel(
-                self.get_pin(GateArrayPin::HSYNC),
-                false
-            );
-        }
-
     }
 
     delegate! {
@@ -594,7 +569,6 @@ impl GateArray {
             pub fn is_border(&self) -> bool ;
         }
     }
-
 }
 
 impl Chip for GateArray {
@@ -606,7 +580,6 @@ impl Chip for GateArray {
 
     /// Change the screen mode when hsync is set
     fn pre_tick(&mut self) {
-
         if self.get_pin(GateArrayPin::HSYNC) {
             self.current_mode = self.next_video_mode();
         }
@@ -620,12 +593,10 @@ impl Chip for GateArray {
 
         if PENR::is_addressed(command) {
             self.penr = PENR(command);
-        }
-        else if INKR::is_addressed(command) {
+        } else if INKR::is_addressed(command) {
             // TODO pay attention to delaÿ the change of the color palette
             self.inkr = INKR(command);
-        }
-        else if RMR::is_addressed(command){
+        } else if RMR::is_addressed(command) {
             self.rmr = RMR(command);
         }
     }
@@ -656,15 +627,11 @@ mod test {
         ga.tick();
     }
 
-
     #[test]
     fn test_video_mode_consistency() {
         let mut ga = GateArray::default();
         ga.set_memory_byte(0x0);
-        assert_eq!(
-            ga.active_video_mode(),
-            VideoMode::Mode0
-        );
+        assert_eq!(ga.active_video_mode(), VideoMode::Mode0);
 
         ga.set_data_on_pins(0x8d); // Mode 1
         ga.set_pin(GateArrayPin::A15, false);
@@ -672,45 +639,20 @@ mod test {
         assert!(ga.must_execute_tick());
         ga.tick();
 
-        assert_eq!(
-            ga.active_video_mode(),
-            VideoMode::Mode0
-        );
-        assert_eq!(
-            ga.next_video_mode(),
-            VideoMode::Mode1
-        );
-        assert_eq!(
-            ga.lower_rom_pagging(),
-            Flag::Disable
-        );
-        assert_eq!(
-            ga.upper_rom_pagging(),
-            Flag::Disable
-        );
+        assert_eq!(ga.active_video_mode(), VideoMode::Mode0);
+        assert_eq!(ga.next_video_mode(), VideoMode::Mode1);
+        assert_eq!(ga.lower_rom_pagging(), Flag::Disable);
+        assert_eq!(ga.upper_rom_pagging(), Flag::Disable);
         ga.set_data_on_pins(0x8e); // Mode 2
         ga.set_pin(GateArrayPin::A15, false);
         ga.set_pin(GateArrayPin::A14, true);
         ga.set_pin(GateArrayPin::HSYNC, true);
         ga.tick();
 
-
-        assert_eq!(
-            ga.active_video_mode(),
-            VideoMode::Mode1
-        );
-        assert_eq!(
-            ga.next_video_mode(),
-            VideoMode::Mode2
-        );
-        assert_eq!(
-            ga.lower_rom_pagging(),
-            Flag::Disable
-        );
-        assert_eq!(
-            ga.upper_rom_pagging(),
-            Flag::Disable
-        );
+        assert_eq!(ga.active_video_mode(), VideoMode::Mode1);
+        assert_eq!(ga.next_video_mode(), VideoMode::Mode2);
+        assert_eq!(ga.lower_rom_pagging(), Flag::Disable);
+        assert_eq!(ga.upper_rom_pagging(), Flag::Disable);
     }
 
     #[test]
@@ -720,10 +662,9 @@ mod test {
         ga.palette[1] = Ink(1);
         ga.set_memory_byte(0b01010101);
 
-
         assert_eq!(ga.pixel_automata.step(), Some(0));
         assert_eq!(ga.pixel_automata.mode(), Some(VideoMode::Mode2));
-        
+
         ga.tick();
         let rgb = dbg!(ga.rgb());
         assert!((rgb.0 - 0.0).abs() < 0.0001);
