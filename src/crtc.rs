@@ -98,7 +98,7 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
     CrtcPin::CCLK,
 ];
 
-#[derive(Default)]
+#[derive(Debug)]
 /// https://www.grimware.org/doku.php/documentations/devices/crtc
 /// https://neuro-sys.github.io/2019/10/01/amstrad-cpc-crtc.html
 pub struct Crtc {
@@ -145,8 +145,6 @@ pub struct Crtc {
     /// Vertical Line Counter (Raster address)
     vlc: u8,
 
-    /// Memory Adress to put on the pins
-    ma: u16,
     /// Base address (corresponds to bufferised R12/R13)
     base: u16,
 
@@ -156,7 +154,43 @@ pub struct Crtc {
     vsync_counter: u8,
 }
 
-#[derive(PartialEq)]
+impl Default for Crtc {
+    fn default() -> Self {
+        let mut crtc = Crtc {
+            pins: Default::default(),
+            ar: Default::default(),
+            sr: Default::default(),
+            r0: Default::default(),
+            r1: Default::default(),
+            r2: Default::default(),
+            r3: Default::default(),
+            r4: Default::default(),
+            r5: Default::default(),
+            r6: Default::default(),
+            r7: Default::default(),
+            r8: Default::default(),
+            r9: Default::default(),
+            r10: Default::default(),
+            r11: Default::default(),
+            r12: Default::default(),
+            r13: Default::default(),
+            r14: Default::default(),
+            r15: Default::default(),
+            r16: Default::default(),
+            r17: Default::default(),
+            hcc: Default::default(),
+            vcc: Default::default(),
+            vlc: Default::default(),
+            base: Default::default(),
+            crtc_type: Default::default(),
+            hsync_counter: Default::default(),
+            vsync_counter: Default::default(),
+        };
+        crtc.reset();
+        crtc
+    }
+}
+#[derive(PartialEq, Debug)]
 pub enum CrtcType {
     Crtc0,
     Crtc1,
@@ -469,16 +503,16 @@ impl Crtc {
         self.set_pin(CrtcPin::VS, self.vsync_counter != 0); // Activate Vsync if needed
 
         self.trigger_new_screen_if_needed();
-        self.set_ma_ra_on_pins();
+        self.set_address_on_pins();
     }
 
     /// MA and RA are variables manipulated during the process
     /// they are directly wired to the pin; this fonction replicate them here
-    fn set_ma_ra_on_pins(&mut self) {
-        self.ma = self.vcc as u16 * self.r0 as u16 + self.hcc as u16 + self.base;
+    fn set_address_on_pins(&mut self) {
+        let address = self.vcc as u16 * self.r1 as u16 + self.hcc as u16 + self.base;
 
         self.set_value_in_pins(
-            self.ma & ((1 << 15) - 1),
+            address & ((1 << 15) - 1),
             &[
                 CrtcPin::MA13,
                 CrtcPin::MA12,
@@ -539,11 +573,11 @@ impl Chip for Crtc {
     /// Execute the CRTC stuff command
     /// TODO use buffered values
     fn pre_tick(&mut self) {
-        //  self.set_ma_ra_on_pins(); // For the CCLK change to ensure get_address works properly
+        //  self.set_address_on_pins(); // For the CCLK change to ensure get_address works properly
     }
 
     fn reset(&mut self) {
-        self.ma = 0;
+        self.base = 0;
 
         self.r0 = 63;
         self.r1 = 40;
@@ -568,6 +602,10 @@ impl Chip for Crtc {
         self.vcc = self.r4;
         self.vlc = self.r9;
         self.hcc = self.r0;
+
+        self.set_pin(CrtcPin::DE, true);
+        self.set_pin(CrtcPin::HS, false);
+        self.set_pin(CrtcPin::VS, false);
     }
 }
 
@@ -623,15 +661,87 @@ mod test {
         crtc.vlc = 0;
         crtc.hcc = 0;
         crtc.base = 0x3000;
-        crtc.set_ma_ra_on_pins();
+        crtc.set_address_on_pins();
 
         let address1 = crtc.get_address_from_pins();
 
         crtc.set_pin(CrtcPin::CCLK, false);
-        crtc.set_ma_ra_on_pins();
+        crtc.set_address_on_pins();
 
         let address2 = crtc.get_address_from_pins();
 
         assert_eq!((0xc000, 0xc001), (address1, address2));
+    }
+
+    /// Test the inner working of crtc for a standard screen
+    #[test]
+    fn test_standard_crtc() {
+        let mut crtc = Crtc::default();
+    
+    
+        for char_line in 0..=crtc.r4 {
+            for scan_line in 0..=crtc.r9 {
+                for char in 0..=crtc.r0 {
+                    crtc.set_pin(CrtcPin::CCLK, true);
+
+                    assert!(crtc.is_activated());
+                    assert!(crtc.must_execute_tick());
+
+                    // execute the CRTC address computation
+                    crtc.tick();
+
+                    dbg!(char_line, scan_line, char, &crtc);
+
+                    // Check that main internal counter are correct
+                    assert!(crtc.vcc<= crtc.r4);
+                    assert!(crtc.vlc<= crtc.r9);
+                    assert!(crtc.hcc<= crtc.r0);
+
+                    assert!(crtc.vcc == char_line);
+                    assert!(crtc.vlc == scan_line);
+                    assert!(crtc.hcc == char);
+
+                    // Test for border
+                    if crtc.hcc >= crtc.r1 || crtc.vcc >= crtc.r6 {
+                        assert!(!crtc.get_pin(CrtcPin::DE));
+                    }
+                    else {
+                        assert!(crtc.get_pin(CrtcPin::DE));
+                    }
+
+                    // Test for hsync
+                    if crtc.hcc >= crtc.r2 && crtc.hcc < crtc.r2+crtc.hsync_width() {
+                        assert!(crtc.get_pin(CrtcPin::HS));
+                    }
+                    else {
+                        assert!(!crtc.get_pin(CrtcPin::HS));
+                    }
+
+                    // Test for vsync
+                    if crtc.vcc >= crtc.r7 && crtc.vcc < crtc.r7+crtc.vsync_height() {
+                        assert!(crtc.get_pin(CrtcPin::VS));
+                    }
+                    else {
+                        assert!(!crtc.get_pin(CrtcPin::VS));
+                    }
+
+                    // test for address
+                    if crtc.get_pin(CrtcPin::DE) {
+                        let expected = 0xc000 + 0x800*(scan_line as u16) + 80*(char_line as u16) + 2*(char as u16);
+                        let collected = crtc.get_address_from_pins();
+
+                        assert_eq!(
+                            expected,
+                            collected,
+                            "0x{:x}!=0x{:x}", expected,collected
+                        );
+                    }
+
+                    crtc.set_pin(CrtcPin::CCLK, false);
+                }
+            }
+        }
+
+
     }
 }

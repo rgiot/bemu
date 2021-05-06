@@ -219,7 +219,7 @@ impl MonitorState {
     }
 }
 
-struct Monitor {
+pub struct Monitor {
     /// Monitor state
     state: MonitorState,
     /// Maximal Vertical Hold value (button on real monitor)
@@ -261,7 +261,8 @@ impl Default for Monitor {
 
 impl Monitor {
 
-    fn debug() -> Self {
+    /// Generate a debug monitor that color vbl and vsync
+    pub fn debug() -> Self {
         Monitor {
             state: Default::default(),
             vhold: Default::default(),
@@ -281,6 +282,11 @@ impl Monitor {
     /// This function is called when a new frame starts (i.e., the gun beam is released from the top of screen)
     fn new_frame(&mut self) {
         self.full_texture = Default::default();
+    }
+
+    /// Provide the image of the current frame
+    pub fn image(&self) -> &RgbImage {
+        &self.full_texture.0
     }
 
 
@@ -428,14 +434,14 @@ mod test {
         let r7 = 0;
         let r4 = 38;
         let r9 = 7;
-        let r1 = 64;
+        let r0 = 64;
         let r2 = 46;
 
         for char_line in 0..=r4 {
             for scan_line in 0..=r9 {
                 let vsync = (char_line*8 + scan_line) < 16; 
 
-                for char in 0..=r1 {
+                for char in 0..=r0 {
                     let hsync = char >= r2 && char < 60;
                     for pixel in 0..16 { // ga cycles
 
@@ -445,7 +451,7 @@ mod test {
                         else {
                             monitor.receive(
                                 (char_line+1) as f32 / r4 as f32, 
-                                (char+1) as f32 / r1 as f32,
+                                (char+1) as f32 / r0 as f32,
                                 (scan_line+1) as f32 / r9 as f32, 
                                 vsync, hsync );
                         }
