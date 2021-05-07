@@ -114,7 +114,7 @@ impl Default for Pen {
 impl From<u8> for Pen {
     fn from(b: u8) -> Pen {
         match b {
-            0..17 => Pen::Pen(b),
+            0..16 => Pen::Pen(b),
             16 => Pen::Border,
             _ => unreachable!(),
         }
@@ -143,7 +143,7 @@ impl Pen {
     fn value(&self) -> u8 {
         match self {
             Pen::Pen(nb) => *nb,
-            Pen::Border => 17,
+            Pen::Border => 16,
         }
     }
 }
@@ -339,10 +339,7 @@ impl PixelAutomata {
 
     /// XXX Can only be called in a valid state;
     /// TODO manage the border
-    pub fn generate_pixel(&mut self, hsync: bool, border: bool) -> (f32, f32, f32) {
-        if hsync {
-            return (0.0, 0.0, 0.0);
-        }
+    pub fn generate_pixel(&mut self,  border: bool) -> (f32, f32, f32) {
 
         let pen = if border {
             Pen::Border
@@ -570,12 +567,13 @@ impl GateArray {
     fn generate_pixel(&mut self) {
         assert!(!self.pixel_automata.is_done());
 
-        if self.get_pin(GateArrayPin::HSYNC) {
-            self.rgb = RGB_PERCENTAGE_LEVELS_PER_INK[0];
+        if self.get_pin(GateArrayPin::HSYNC)
+            || self.get_pin(GateArrayPin::VSYNC){
+            self.rgb = (0., 0., 0.);
         } else {
             self.rgb = self
                 .pixel_automata
-                .generate_pixel(self.get_pin(GateArrayPin::HSYNC), false);
+                .generate_pixel(!self.get_pin(GateArrayPin::DISPEN));
         }
     }
 
