@@ -160,7 +160,8 @@ pub trait Activable: Chip {
     /// Currently activation is done with the font of the chip. it means that we executae the behavior of the chip in one row
     /// even if it takes several cycles of the Gate array chip that is emulated independnetly
     fn is_activated(&self) -> bool {
-        self.is_front(Self::clock_pin())
+       self.is_front(Self::clock_pin())
+       //self.get_pin(Self::clock_pin())
     }
 }
 

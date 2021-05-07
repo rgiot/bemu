@@ -139,19 +139,19 @@ pub struct Crtc {
     r17: u8,
 
     /// Horizontal Char Counter
-    hcc: u8,
+    pub hcc: u8,
     /// Vertical Char Counter
-    vcc: u8,
+    pub vcc: u8,
     /// Vertical Line Counter (Raster address)
-    vlc: u8,
+    pub vlc: u8,
 
     /// Base address (corresponds to bufferised R12/R13)
-    base: u16,
+    pub base: u16,
 
     crtc_type: CrtcType,
 
-    hsync_counter: u8,
-    vsync_counter: u8,
+    pub hsync_counter: u8,
+    pub vsync_counter: u8,
 }
 
 impl Default for Crtc {
@@ -206,6 +206,9 @@ impl Default for CrtcType {
 }
 
 impl CrtcType {
+
+
+
     /// Provides the mask to keep the bit depending on the CRTC when reading the value
     pub fn read_register_mask(&self, r: u8) -> u8 {
         match r {
@@ -317,6 +320,66 @@ impl CrtcType {
 }
 
 impl Crtc {
+
+
+    pub fn get_r0(&self) -> u8 {
+        self.r0
+    }
+    pub fn get_r1(&self) -> u8 {
+        self.r1
+    }
+    pub fn get_r2(&self) -> u8 {
+        self.r2
+    }
+    pub fn get_r3(&self) -> u8 {
+        self.r3
+    }
+    pub fn get_r4(&self) -> u8 {
+        self.r4
+    }
+    pub fn get_r5(&self) -> u8 {
+        self.r5
+    }
+    pub fn get_r6(&self) -> u8 {
+        self.r6 
+    }
+    pub fn get_r7(&self) -> u8 {
+        self.r7
+    }
+    pub fn get_r8(&self) -> u8 {
+        self.r8
+    }
+    pub fn get_r9(&self) -> u8 {
+        self.r9
+    }
+    pub fn get_r10(&self) -> u8 {
+        self.r10
+    }
+    pub fn get_r11(&self) -> u8 {
+        self.r11
+    }
+    pub fn get_r12(&self) -> u8 {
+        self.r12
+    }
+    pub fn get_r13(&self) -> u8 {
+        self.r13
+    }
+    pub fn get_r14(&self) -> u8 {
+        self.r14
+    }
+    pub fn get_r15(&self) -> u8 {
+        self.r15
+    }
+    pub fn get_r16(&self) -> u8 {
+        self.r16
+    }
+    pub fn get_r17(&self) -> u8 {
+        self.r17
+    }
+
+
+
+
     /// Execute the CRTC register selection
     pub fn select_crtc_register(&mut self) {
         let reg = self.get_data_from_pins();
@@ -451,7 +514,6 @@ impl Crtc {
     }
 
     fn update_memory_address(&mut self) {
-        dbg!(&self.hcc, &self.vcc, &self.vlc);
 
         // decrease hsync counter if any
         if self.hsync_counter != 0 {
@@ -503,12 +565,13 @@ impl Crtc {
         self.set_pin(CrtcPin::VS, self.vsync_counter != 0); // Activate Vsync if needed
 
         self.trigger_new_screen_if_needed();
-        self.set_address_on_pins();
+        self.set_address_on_pins(); // set the address in the pins
     }
 
     /// MA and RA are variables manipulated during the process
     /// they are directly wired to the pin; this fonction replicate them here
-    fn set_address_on_pins(&mut self) {
+    /// should not be called outside of Crtc. Public only for test reasons
+    pub fn set_address_on_pins(&mut self) {
         let address = self.vcc as u16 * self.r1 as u16 + self.hcc as u16 + self.base;
 
         self.set_value_in_pins(
@@ -555,7 +618,7 @@ impl Chip for Crtc {
     }
 
     fn must_execute_tick(&self) -> bool {
-        self.get_pin(CrtcPin::CCLK) && !self.get_pin(CrtcPin::CS)
+        !self.get_pin(CrtcPin::CS)
     }
 
     /// Execute the requested command from the CPU
@@ -570,11 +633,6 @@ impl Chip for Crtc {
         self.update_memory_address();
     }
 
-    /// Execute the CRTC stuff command
-    /// TODO use buffered values
-    fn pre_tick(&mut self) {
-        //  self.set_address_on_pins(); // For the CCLK change to ensure get_address works properly
-    }
 
     fn reset(&mut self) {
         self.base = 0;
@@ -641,7 +699,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_address_generation() {
+    fn test_address_generation_0xc000() {
         let mut crtc = Crtc::default();
         crtc.reset();
 
@@ -671,6 +729,39 @@ mod test {
         let address2 = crtc.get_address_from_pins();
 
         assert_eq!((0xc000, 0xc001), (address1, address2));
+    }
+
+    #[test]
+    fn test_address_generation_0x0000() {
+        let mut crtc = Crtc::default();
+        crtc.reset();
+
+        assert_eq!(crtc.r1, 40);
+        assert_eq!(crtc.r4, 38);
+        assert_eq!(crtc.r9, 7);
+
+        crtc.set_pin(CrtcPin::CCLK, true);
+        crtc.set_pin(CrtcPin::CS, false);
+        crtc.set_pin(CrtcPin::RW, false);
+        crtc.set_pin(CrtcPin::RS, false);
+        crtc.set_pin(CrtcPin::EN, false);
+
+        crtc.r12 = 0x00;
+        crtc.r13 = 0x00;
+        crtc.vcc = 0;
+        crtc.vlc = 0;
+        crtc.hcc = 0;
+        crtc.base = 0x0000;
+        crtc.set_address_on_pins();
+
+        let address1 = crtc.get_address_from_pins();
+
+        crtc.set_pin(CrtcPin::CCLK, false);
+        crtc.set_address_on_pins();
+
+        let address2 = crtc.get_address_from_pins();
+
+        assert_eq!((0x0000, 0x0001), (address1, address2));
     }
 
     /// Test the inner working of crtc for a standard screen

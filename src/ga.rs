@@ -56,14 +56,8 @@ pub enum GateArrayPin {
     /// Reset of the GA
     RESET = 1 << 23,
 
-    /// Red component of the video signal
-    R = 1 << 24,
     GND = 1 << 25,
-    /// Green component of the video signal
-    G = 1 << 26,
     VCC3 = 1 << 27,
-    /// Blue component of the video signal
-    B = 1 << 28,
 
     D7 = 1 << 29,
     D6 = 1 << 30,
@@ -158,6 +152,13 @@ impl Pen {
 struct INKR(u8);
 #[derive(Debug, Copy, Clone)]
 pub struct Ink(u8);
+
+impl From<u8> for Ink {
+    fn from(b: u8) -> Ink {
+        assert!(b<27);
+        Ink(b)
+    }
+}
 
 // https://www.grimware.org/doku.php/documentations/devices/gatearray
 const RGB_PERCENTAGE_LEVELS_PER_INK: [(f32, f32, f32); 32] = [
@@ -291,6 +292,11 @@ impl RMR {
 
     fn video_mode(&self) -> VideoMode {
         (self.0 & 0b000_00011).into()
+    }
+
+    fn set_video_mode(&mut self, mode: VideoMode) {
+        let b = mode as u8;
+        self.0 = (self.0 &0b111_11100) | b;
     }
 }
 
@@ -458,7 +464,7 @@ pub struct GateArray {
 
 impl Default for GateArray {
     fn default() -> Self {
-        GateArray {
+        let mut ga = GateArray {
             clock: 0,
             pins: (0, 0),
 
@@ -489,7 +495,9 @@ impl Default for GateArray {
             current_mode: VideoMode::Mode0,
             pixel_automata: PixelAutomata::default(),
             rgb: RGB_PERCENTAGE_LEVELS_PER_INK[0],
-        }
+        };
+        ga.sync_clocks();
+        ga
     }
 }
 
@@ -506,10 +514,13 @@ impl GateArray {
     /// Gate array works at 16Mhz and divide it to generate signals for other chips.
     /// CPU is at 4 Mhz
     pub fn manage_clocks(&mut self) {
-        self.set_pin(GateArrayPin::NCPU, (self.clock / 4) & 1 != 0);
-        self.set_pin(GateArrayPin::CCLK, (self.clock / 16) & 1 != 0);
+        self.clock = self.clock.wrapping_add(1);
+        self.sync_clocks();
+    }
 
-        self.clock.wrapping_add(1);
+    pub fn sync_clocks(&mut self) {
+        self.set_pin(GateArrayPin::NCPU, (self.clock % 4)  >= 2);
+        self.set_pin(GateArrayPin::CCLK, (self.clock% 16) >=  8);
     }
 
     /// get the active video mode
@@ -526,11 +537,27 @@ impl GateArray {
         self.rgb
     }
 
+    pub fn need_memory_byte(&self) -> bool {
+        self.pixel_automata.is_done()
+    }
+
     /// Set the video memory byte that serves the the next 8 RGB signal generation
-    fn set_memory_byte(&mut self, b: u8) {
+    pub fn set_memory_byte(&mut self, b: u8) {
         assert!(self.pixel_automata.is_done());
         self.pixel_automata =
             PixelAutomata::AvailablePixel(0, b, self.active_video_mode(), self.palette.clone());
+    }
+
+    pub fn set_ink(&mut self, pen: Pen, ink: Ink) {
+        self.palette[pen.value() as usize] = ink;
+    }
+
+    pub fn set_palette(&mut self, palette: [Ink;17]) {
+        self.palette = palette;
+    }
+
+    pub fn set_video_mode(&mut self, mode: VideoMode) {
+        self.rmr.set_video_mode(mode);
     }
 
     /// Properly setup the pins for the video signal
@@ -616,6 +643,44 @@ impl Chip for GateArray {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_clock() {
+        let mut ga = GateArray::default();
+
+        for i in 0..16 {
+            println!("{} {} {}", 
+            ga.clock,
+            ga.get_pin(GateArrayPin::CCLK), 
+            ga.get_pin(GateArrayPin::NCPU));
+
+            if i == 0 {
+                assert_eq!(
+                    ga.get_pin(GateArrayPin::CCLK),
+                    false
+                );
+                assert_eq! (
+                    ga.need_memory_byte(),
+                    true
+                );
+            }
+            
+            if i < 8 {
+                assert_eq!(
+                    ga.get_pin(GateArrayPin::CCLK),
+                    false
+                );
+            }
+            if i == 8 {
+                assert_eq!(
+                    ga.get_pin(GateArrayPin::CCLK),
+                    true
+                );
+            }
+         
+            ga.manage_clocks();
+        }
+    }
 
     #[test]
     fn run_ga() {

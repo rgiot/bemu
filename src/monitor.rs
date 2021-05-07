@@ -278,6 +278,13 @@ impl Monitor {
         }
     }
 
+    /// Generate a debug monitor that waits the vsync
+    pub fn wait_vsync() -> Self {
+        let mut monitor = Self::debug();
+        monitor.state = MonitorState::WaitVerticalSynchronization(monitor.vhold);
+        monitor
+    }
+
 
     /// This function is called when a new frame starts (i.e., the gun beam is released from the top of screen)
     fn new_frame(&mut self) {
