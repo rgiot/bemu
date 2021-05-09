@@ -28,6 +28,7 @@ fn beginning_steps(ga: &mut GateArray, crtc: &mut Crtc) {
 }
 
 fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
+    let is_border = !ga.get_pin(GateArrayPin::DISPEN);
     // ga cycles
     ga.tick();
     if crtc.is_activated(){
@@ -35,19 +36,40 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
 
     }
 
-    let rgb = ga.rgb();
-    let palette = ga.palette();
+    let rgb = dbg!(ga.rgb());
+    let palette = dbg!(ga.palette()); 
+    dbg!(palette[0].to_rgb_levels());
 
-    // check mode 1
-    assert!(
-        rgb == palette[0].to_rgb_levels() 
-        || rgb == palette[1].to_rgb_levels() 
-        || rgb == palette[2].to_rgb_levels() 
-        || rgb == palette[3].to_rgb_levels()
-    );
+
     let vsync = ga.get_pin(GateArrayPin::VSYNC);
     let hsync = ga.get_pin(GateArrayPin::HSYNC);
 
+    if !vsync && !hsync {
+        if is_border {
+            assert_eq!(
+                rgb,
+                palette[16].to_rgb_levels()
+            )
+        }
+        else {
+            // check mode 1 colors
+        assert!(
+            rgb == palette[0].to_rgb_levels() 
+            || rgb == palette[1].to_rgb_levels() 
+            || rgb == palette[2].to_rgb_levels() 
+            || rgb == palette[3].to_rgb_levels()
+        );
+        }
+        
+    } else {
+        assert_eq!(
+            RgbLevels::from((0., 0., 0.)),
+            rgb
+        );
+    }
+
+
+   // let rgb : RgbLevels= palette[1].to_rgb_levels();
     monitor.receive(
         rgb,
         vsync,
@@ -135,7 +157,6 @@ fn generate_screen(bank: &[u8;0x4000], fname: &str, palette: [Ink;17], mode: Vid
 
 
     monitor.image().save(fname).unwrap();
-
 
 }
 

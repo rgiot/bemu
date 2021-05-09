@@ -386,7 +386,7 @@ impl Monitor {
     /// Compute the RGB color from the received intensities
     fn compute_rgb(&self, rgb: RgbLevels) -> Rgb<u8> {
         /// TODO play with luminance to update the brightness
-        let to_u8 = |v: f32| -> u8 { (v * 255f32).min(255f32) as u8 };
+        let to_u8 = |v: f32| -> u8 { (v * 255f32/100.0).min(255f32) as u8 };
 
         Rgb([
             to_u8(rgb.r()), 
