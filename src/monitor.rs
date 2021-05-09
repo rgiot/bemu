@@ -438,7 +438,7 @@ mod test {
         );
 
         assert_eq!(
-            mon.compute_rgb( (1., 1., 1.).into()),
+            mon.compute_rgb( (100., 100., 100.).into()),
             Rgb([255, 255, 255])
         );
     }
