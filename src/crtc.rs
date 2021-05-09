@@ -509,8 +509,16 @@ impl Crtc {
     }
 
     /// To set 0 is problematic (for non CTM I would say)
+    /// Hsync with in chars
     fn hsync_width(&self) -> u8 {
-        self.r3 & 0b00001111
+        let width = self.r3 & 0b00001111;
+        if width != 0 {
+            width
+        } else if self.crtc_type.is_crtc2() {
+            16 // widht of 16 chars for crtc 2
+        } else {
+            0 // no hsync for other crtcs
+        }
     }
 
     fn update_memory_address(&mut self) {
