@@ -522,6 +522,23 @@ impl Crtc {
         }
     }
 
+    /// Return the delay to display the border.
+    /// it depends on r8 for CRTC 0 3 & 4,
+    fn reg8_delay_border(&self) -> u8 {
+        match self.crtc_type {
+            CrtcType::Crtc0 | CrtcType::Crtc3 | CrtcType::Crtc4 => {
+                match self.r8 & 0b110000 {
+                    0b000000 => 0,
+                    0b010000 => 1, // 1 char delay
+                    0b100000 => 2, // 2 chars delay
+                    0b110000 => self.r1 - self.hcc, // ugly trick to force border
+                    _ => unreachable!()
+                }
+            },
+            _ => 0
+        }
+    }
+
     fn update_memory_address(&mut self) {
 
         // decrease hsync counter if any
@@ -553,7 +570,7 @@ impl Crtc {
             }
         }
 
-        if self.hcc >= self.r1 || self.vcc >= self.r6 {
+        if self.hcc.wrapping_add(self.reg8_delay_border()) >= self.r1 || self.vcc >= self.r6 {
             self.set_pin(CrtcPin::DE, false); // Activate Border
         } else {
             // TODO handle the special case of CRTC1 that is unable to leave this state at some point
