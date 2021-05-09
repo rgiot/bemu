@@ -841,19 +841,24 @@ mod test {
     #[test]
     fn test_mode2_pixels_generation() {
         let mut ga = GateArray::default();
+        ga.set_pin(GateArrayPin::DISPEN, true);
         ga.current_mode = VideoMode::Mode2;
+        ga.force_active_video_mode(VideoMode::Mode2);
         ga.palette[1] = Ink(1);
-        ga.set_memory_byte(0b01010101);
+        let byte = 0b01010101;
+
+        ga.set_memory_byte(byte);
+        let pens = dbg!(BYTE_TO_MODE2_PENS[byte as usize]);
 
         assert_eq!(ga.pixel_automata.step().cloned(), Some(PixelOrder::Pixel1));
         assert_eq!(ga.pixel_automata.mode(), Some(VideoMode::Mode2));
-
         ga.tick();
         let rgb = ga.rgb();
         assert!((rgb.r() - 0.0).abs() < 0.0001);
         assert!((rgb.g() - 0.9615).abs() < 0.0001);
         assert!((rgb.b() - 0.4808).abs() < 0.0001);
 
+        dbg!(&ga.pixel_automata);
         assert_eq!(ga.pixel_automata.step().cloned(), Some(PixelOrder::Pixel2));
         ga.tick();
         let rgb = dbg!(ga.rgb());
