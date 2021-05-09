@@ -28,8 +28,12 @@ pub enum GateArrayPin {
     VCC2 = 1 << 8,
     /// Request the CPU to interrupt
     INTERRUPT = 1 << 9,
+
+    /*
     /// Synchronization for screen
     SYNC = 1 << 10,
+    */
+
     /// Access to ROM
     ROMEN = 1 << 11,
     /// Request data send to CPU
@@ -538,6 +542,13 @@ impl PixelAutomata {
 
 }
 
+/// Synchronization information comes from a specific pin SYNC. I guess it contains (how?) both vsync and hsync information. Anyway, CTM has no access at all to VSYNC and HSYNC of CRTC
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct Sync {
+    pub hsync: bool,
+    pub vsync: bool
+}
+
 /// GateArray emulation of the CPC.
 /// Version 40010 is targeted; it suffers of a shift in pixel rendering for mode 2
 pub struct GateArray {
@@ -554,8 +565,11 @@ pub struct GateArray {
     current_mode: VideoMode,
     /// The automata that generate the 8 pixel per byte
     pixel_automata: PixelAutomata,
+
     /// Lastly generated pixel (to be retreived for monitor)
     rgb: RgbLevels,
+    /// Synchronization information for the monitor
+    sync: Sync
 }
 
 impl Default for GateArray {
@@ -591,6 +605,7 @@ impl Default for GateArray {
             current_mode: VideoMode::Mode0,
             pixel_automata: PixelAutomata::default(),
             rgb: RGB_PERCENTAGE_LEVELS_PER_INK[0],
+            sync: Sync{vsync: false, hsync: false}
         };
         ga.sync_clocks();
         ga
@@ -642,6 +657,10 @@ impl GateArray {
         self.rgb
     }
 
+    pub fn Sync(&self) -> Sync {
+        self.sync
+    }
+
     pub fn need_memory_byte(&self) -> bool {
         self.pixel_automata.is_done()
     }
@@ -689,6 +708,15 @@ impl GateArray {
         }
     }
 
+    /// Generate the synchronization data for the CTM
+    /// TODO understand/find how it is really done
+    fn generate_sync(&mut self) {
+        self.sync = Sync {
+            vsync: self.get_pin(GateArrayPin::VSYNC),
+            hsync: self.get_pin(GateArrayPin::HSYNC)
+        }
+    }
+
     /// When the hsync ends, the GA update video mode and manage the interruption counter
     /// TODO manage the interruption counter
     fn manage_hsync_end(&mut self) {
@@ -727,7 +755,8 @@ impl Chip for GateArray {
             self.manage_hsync_end();
         }
 
-        self.generate_pixel()
+        self.generate_pixel();
+        self.generate_sync();
     }
 
     /// React to the port addressing of the CPU

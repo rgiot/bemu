@@ -72,8 +72,8 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
    // let rgb : RgbLevels= palette[1].to_rgb_levels();
     monitor.receive(
         rgb,
-        vsync,
-        hsync
+        Sync{vsync,
+        hsync}
     );
 
     ga.manage_clocks();
