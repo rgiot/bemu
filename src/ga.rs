@@ -828,6 +828,8 @@ mod test {
         ga.set_pin(GateArrayPin::A15, false);
         ga.set_pin(GateArrayPin::A14, true);
         ga.set_pin(GateArrayPin::HSYNC, true);
+        ga.save_pins_state();
+        ga.set_pin(GateArrayPin::HSYNC, false);
         ga.tick();
 
         assert_eq!(ga.active_video_mode(), VideoMode::Mode1);
