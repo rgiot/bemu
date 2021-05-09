@@ -52,8 +52,8 @@ pub trait Chip {
         0 != (current & pin)
     }
 
-    /// Check if the pin is in a front state
-    fn is_front(&self, pin: Self::PinType) -> bool {
+    /// Check if the pin is in a up front state
+    fn is_upfront(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
         use std::ops::Not;
         assert_eq!(pin.count_ones(), 1);
@@ -64,6 +64,20 @@ pub trait Chip {
         let previous = 0 != (previous & pin);
 
         previous == false && current == true
+    }
+
+    /// Check if the pin is in a down front state
+    fn is_downfront(&self, pin: Self::PinType) -> bool {
+        let pin: u64 = pin.into();
+        use std::ops::Not;
+        assert_eq!(pin.count_ones(), 1);
+
+        let (ref previous, ref current) = self.pins_buffer();
+
+        let current = 0 != (current & pin);
+        let previous = 0 != (previous & pin);
+
+        previous == true && current == false
     }
 
     /// Force to save all the bits of the current state to test is_front and so on
@@ -160,7 +174,7 @@ pub trait Activable: Chip {
     /// Currently activation is done with the font of the chip. it means that we executae the behavior of the chip in one row
     /// even if it takes several cycles of the Gate array chip that is emulated independnetly
     fn is_activated(&self) -> bool {
-       self.is_front(Self::clock_pin())
+       self.is_upfront(Self::clock_pin())
        //self.get_pin(Self::clock_pin())
     }
 }
@@ -264,6 +278,12 @@ mod test {
         assert_ne!(chip.pins.0, chip.pins.1);
 
         dbg!(&chip);
-        assert!(chip.is_front(MyChipPin::A));
+        assert!(chip.is_upfront(MyChipPin::A));
+
+
+        chip.save_pins_state();
+        chip.set_pin(MyChipPin::A, false);
+        assert!(chip.is_downfront(MyChipPin::A));
+
     }
 }
