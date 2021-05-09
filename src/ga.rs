@@ -689,6 +689,12 @@ impl GateArray {
         }
     }
 
+    /// When the hsync ends, the GA update video mode and manage the interruption counter
+    /// TODO manage the interruption counter
+    fn manage_hsync_end(&mut self) {
+        self.current_mode = self.next_video_mode();
+    }
+
     delegate! {
         // Delegate all methods EXCEPT video mode as it is bufferized
         to self.rmr {
@@ -717,8 +723,8 @@ impl Chip for GateArray {
 
     /// Change the screen mode when hsync is set
     fn pre_tick(&mut self) {
-        if self.get_pin(GateArrayPin::HSYNC) {
-            self.current_mode = self.next_video_mode();
+        if self.is_downfront(GateArrayPin::HSYNC) {
+            self.manage_hsync_end();
         }
 
         self.generate_pixel()
