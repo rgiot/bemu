@@ -499,10 +499,11 @@ impl Crtc {
         }
     }
 
+    /// VSync in lines
     fn vsync_height(&self) -> u8 {
         let val = (self.r3 & 0b11110000) >> 4;
-        if val == 0 {
-            16 // raster line ?
+        if val == 0 || self.crtc_type.is_crtc2() || self.crtc_type.is_crtc1(){
+            16 
         } else {
             val
         }
