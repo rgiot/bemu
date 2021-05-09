@@ -1,6 +1,9 @@
 use crate::chip::*;
 use crate::memory::Flag;
+use tuple_map::*;
 use delegate::delegate;
+use lazy_static::*;
+use array_init::*;
 
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -148,9 +151,32 @@ impl Pen {
     }
 }
 
+lazy_static!{
+    /// LUT to retreive the pens in a given byte in mode 0
+    static ref BYTE_TO_MODE0_PENS: [(Pen, Pen); 256] = 
+        array_init(|byte|{
+            let pens = cpclib::pixels::mode0::byte_to_pens(byte as u8);
+            pens.map(|p| Pen::from(p))
+        });
+
+    /// LUT to retreive the pens in a given byte in mode 1
+    static ref BYTE_TO_MODE1_PENS: [(Pen, Pen, Pen, Pen); 256] = 
+    array_init(|byte|{
+        let pens = cpclib::pixels::mode1::byte_to_pens(byte as u8);
+        pens.map(|p| Pen::from(p))
+    });
+
+    /// LUT to retreive the pens in a given byte in mode 2
+    static ref BYTE_TO_MODE2_PENS: [(Pen, Pen, Pen, Pen, Pen, Pen, Pen, Pen); 256] = 
+    array_init(|byte|{
+        let pens = cpclib::pixels::mode2::byte_to_pens(byte as u8);
+        pens.map(|p| Pen::from(p))
+    });
+}
+
 /// Content of the INKR register
 struct INKR(u8);
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Ink(u8);
 
 impl From<u8> for Ink {
@@ -160,41 +186,75 @@ impl From<u8> for Ink {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct RgbLevels((f32, f32, f32));
+impl RgbLevels {
+    pub fn r(&self)  -> f32{self.0.0}
+    pub fn g(&self)  -> f32{self.0.1}
+    pub fn b(&self)  -> f32{self.0.2}
+}
+
+impl From<(f32,f32,f32)> for RgbLevels {
+    fn from(rgb: (f32, f32, f32)) -> Self {
+        RgbLevels(rgb)
+    }
+}
+
+
+impl From<Ink> for RgbLevels {
+    fn from(ink: Ink) -> Self {
+        ink.to_rgb_levels()
+    }
+}
+
+
 // https://www.grimware.org/doku.php/documentations/devices/gatearray
-const RGB_PERCENTAGE_LEVELS_PER_INK: [(f32, f32, f32); 32] = [
-    (0.0000, 0.9615, 0.4808),
-    (0.0000, 0.9615, 41.8269),
-    (4.8077, 0.9615, 95.6731),
-    (42.3077, 0.9615, 0.4808),
-    (41.3462, 0.9615, 40.8654),
-    (42.3077, 0.9615, 94.7115),
-    (95.1923, 1.9231, 2.4038),
-    (94.2308, 0.9615, 40.8654),
-    (95.1923, 0.9615, 95.6731),
-    (0.9615, 47.1154, 0.4808),
-    (0.0000, 47.1154, 40.8654),
-    (4.8077, 48.0769, 95.6731),
-    (43.2692, 48.0769, 0.4808),
-    (43.2692, 49.0385, 41.8269),
-    (43.2692, 48.0769, 96.6346),
-    (95.1923, 49.0385, 5.2885),
-    (95.1923, 49.0385, 41.8269),
-    (98.0769, 50.0000, 97.5962),
-    (0.9615, 94.2308, 0.4808),
-    (0.0000, 95.1923, 41.8269),
-    (5.7692, 95.1923, 94.7115),
-    (44.2308, 96.1538, 1.4423),
-    (44.2308, 95.1923, 41.8269),
-    (44.2308, 95.1923, 95.6731),
-    (95.1923, 95.1923, 5.2885),
-    (95.1923, 95.1923, 42.7885),
-    (100.000, 95.1923, 97.5962),
-    (43.2692, 48.0769, 42.7885),
-    (95.1923, 0.9615, 40.8654),
-    (95.1923, 95.1923, 41.8269),
-    (0.0000, 0.9615, 40.8654),
-    (0.9615, 95.1923, 41.8269),
+const RGB_PERCENTAGE_LEVELS_PER_INK: [RgbLevels; 32] = [
+    RgbLevels((0.0000, 0.9615, 0.4808)),
+    RgbLevels((0.0000, 0.9615, 41.8269)),
+    RgbLevels((4.8077, 0.9615, 95.6731)),
+    RgbLevels((42.3077, 0.9615, 0.4808)),
+    RgbLevels((41.3462, 0.9615, 40.8654)),
+    RgbLevels((42.3077, 0.9615, 94.7115)),
+    RgbLevels((95.1923, 1.9231, 2.4038)),
+    RgbLevels((94.2308, 0.9615, 40.8654)),
+    RgbLevels((95.1923, 0.9615, 95.6731)),
+    RgbLevels((0.9615, 47.1154, 0.4808)),
+    RgbLevels((0.0000, 47.1154, 40.8654)),
+    RgbLevels((4.8077, 48.0769, 95.6731)),
+    RgbLevels((43.2692, 48.0769, 0.4808)),
+    RgbLevels((43.2692, 49.0385, 41.8269)),
+    RgbLevels((43.2692, 48.0769, 96.6346)),
+    RgbLevels((95.1923, 49.0385, 5.2885)),
+    RgbLevels((95.1923, 49.0385, 41.8269)),
+    RgbLevels((98.0769, 50.0000, 97.5962)),
+    RgbLevels((0.9615, 94.2308, 0.4808)),
+    RgbLevels((0.0000, 95.1923, 41.8269)),
+    RgbLevels((5.7692, 95.1923, 94.7115)),
+    RgbLevels((44.2308, 96.1538, 1.4423)),
+    RgbLevels((44.2308, 95.1923, 41.8269)),
+    RgbLevels((44.2308, 95.1923, 95.6731)),
+    RgbLevels((95.1923, 95.1923, 5.2885)),
+    RgbLevels((95.1923, 95.1923, 42.7885)),
+    RgbLevels((100.000, 95.1923, 97.5962)),
+    RgbLevels((43.2692, 48.0769, 42.7885)),
+    RgbLevels((95.1923, 0.9615, 40.8654)),
+    RgbLevels((95.1923, 95.1923, 41.8269)),
+    RgbLevels((0.0000, 0.9615, 40.8654)),
+    RgbLevels((0.9615, 95.1923, 41.8269)),
 ];
+
+/// Specific trait to allow ink to provide their RGB voltage level
+pub trait ToRGBLevels {
+    /// Returne the RGB levels for the given ink
+    fn to_rgb_levels(&self) -> RgbLevels;
+}
+
+impl ToRGBLevels for Ink {
+    fn to_rgb_levels(&self) -> RgbLevels {
+        RGB_PERCENTAGE_LEVELS_PER_INK[self.0 as usize]
+    }
+}
 
 /// Content of the RMR register
 struct RMR(u8);
@@ -300,9 +360,44 @@ impl RMR {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum PixelOrder {
+    Pixel1,
+    Pixel2,
+    Pixel3,
+    Pixel4,
+    Pixel5,
+    Pixel6,
+    Pixel7,
+    Pixel8,
+}
+
+impl PixelOrder {
+    fn next(self) -> Self {
+        match self {
+            PixelOrder::Pixel1 => PixelOrder::Pixel2,
+            PixelOrder::Pixel2 => PixelOrder::Pixel3,
+            PixelOrder::Pixel3 => PixelOrder::Pixel4,
+            PixelOrder::Pixel4 => PixelOrder::Pixel5,
+            PixelOrder::Pixel5 => PixelOrder::Pixel6,
+            PixelOrder::Pixel6 => PixelOrder::Pixel7,
+            PixelOrder::Pixel7 => PixelOrder::Pixel8,
+            PixelOrder::Pixel8 => PixelOrder::Pixel1,            
+        }
+    }
+
+    fn is_last(&self) -> bool {
+        match self {
+            PixelOrder::Pixel8 => true,
+            _ => false
+        }
+    }
+}
+
 /// This is this strcuture that has the responsibility to produce the colors
+#[derive(Debug)]
 pub enum PixelAutomata {
-    AvailablePixel(u8, u8, VideoMode, [Ink; 17]),
+    AvailablePixel(PixelOrder, u8, VideoMode, [Ink; 17]),
     NeedToReadMemory,
 }
 
@@ -313,10 +408,12 @@ impl Default for PixelAutomata {
 }
 
 impl PixelAutomata {
+    /// The new automaton depends on the byte to display, its video mode and the palette
     pub fn new(b: u8, m: VideoMode, p: [Ink; 17]) -> Self {
-        PixelAutomata::AvailablePixel(0, b, m, p)
+        PixelAutomata::AvailablePixel(PixelOrder::Pixel1, b, m, p)
     }
 
+    /// Automaton is over when pixel 8 is produced
     pub fn is_done(&self) -> bool {
         match self {
             PixelAutomata::NeedToReadMemory => true,
@@ -324,13 +421,14 @@ impl PixelAutomata {
         }
     }
 
+    /// Select the next step (no computation is involved there)
     fn next_state(&mut self) {
         *self = match self {
             PixelAutomata::AvailablePixel(s, b, m, p) => {
-                if *s == 7 {
+                if s.is_last() {
                     PixelAutomata::NeedToReadMemory
                 } else {
-                    PixelAutomata::AvailablePixel(*s + 1, *b, *m, *p)
+                    PixelAutomata::AvailablePixel(s.next(), *b, *m, *p)
                 }
             }
             PixelAutomata::NeedToReadMemory => PixelAutomata::NeedToReadMemory,
@@ -338,8 +436,7 @@ impl PixelAutomata {
     }
 
     /// XXX Can only be called in a valid state;
-    /// TODO manage the border
-    pub fn generate_pixel(&mut self,  border: bool) -> (f32, f32, f32) {
+    pub fn generate_pixel(&mut self,  border: bool) -> RgbLevels {
 
         let pen = if border {
             Pen::Border
@@ -355,18 +452,18 @@ impl PixelAutomata {
 
         let ink = self.palette().unwrap()[pen.value() as usize];
         self.next_state();
-        Self::rgb(ink)
+        ink.into()
     }
+
+
 
     pub fn get_mode0_pen(&mut self) -> Pen {
         match (self.step(), self.byte(), self.palette()) {
             (Some(step), Some(byte), Some(pal)) => {
-                let pens = cpclib::pixels::mode0::byte_to_pens(byte);
-                let step = step / 4; // The same pixel is generated 4 times
+                let pens = BYTE_TO_MODE0_PENS[byte as usize];
                 match step {
-                    0 => pens.0.into(),
-                    1 => pens.1.into(),
-                    _ => unreachable!(),
+                    PixelOrder::Pixel1 | PixelOrder::Pixel2 | PixelOrder::Pixel3 | PixelOrder::Pixel4 => pens.0,
+                    PixelOrder::Pixel5 | PixelOrder::Pixel6 | PixelOrder::Pixel7 | PixelOrder::Pixel8 => pens.1,
                 }
             }
             _ => unreachable!(),
@@ -375,14 +472,12 @@ impl PixelAutomata {
     pub fn get_mode1_pen(&mut self) -> Pen {
         match (self.step(), self.byte(), self.palette()) {
             (Some(step), Some(byte), Some(pal)) => {
-                let pens = cpclib::pixels::mode1::byte_to_pens(byte);
-                let step = step / 2; // The same pixel is generated 2 times
+                let pens = BYTE_TO_MODE1_PENS[byte as usize];
                 match step {
-                    0 => pens.0.into(),
-                    1 => pens.1.into(),
-                    2 => pens.2.into(),
-                    3 => pens.3.into(),
-                    _ => unreachable!(),
+                    PixelOrder::Pixel1 | PixelOrder::Pixel2 => pens.0,
+                    PixelOrder::Pixel3 | PixelOrder::Pixel4 => pens.1,
+                    PixelOrder::Pixel5 | PixelOrder::Pixel6 => pens.2,
+                    PixelOrder::Pixel7 | PixelOrder::Pixel8 => pens.3,
                 }
             }
             _ => unreachable!(),
@@ -392,10 +487,16 @@ impl PixelAutomata {
     pub fn get_mode2_pen(&mut self) -> Pen {
         match (self.step(), self.byte(), self.palette()) {
             (Some(step), Some(byte), Some(pal)) => {
-                if byte & (1 << (7 - step)) != 0 {
-                    Pen::Pen(1)
-                } else {
-                    Pen::Pen(0)
+                let pens = BYTE_TO_MODE2_PENS[byte as usize];
+                match step {
+                    PixelOrder::Pixel1 => pens.0,
+                    PixelOrder::Pixel2 => pens.1,
+                    PixelOrder::Pixel3 => pens.2,
+                    PixelOrder::Pixel4 => pens.3,
+                    PixelOrder::Pixel5 => pens.4,
+                    PixelOrder::Pixel6 => pens.5,
+                    PixelOrder::Pixel7 => pens.6,
+                    PixelOrder::Pixel8 => pens.7,
                 }
             }
             _ => unreachable!(),
@@ -406,9 +507,9 @@ impl PixelAutomata {
         (mode0_pen.value() & 0b11).into()
     }
 
-    pub fn step(&self) -> Option<u8> {
+    pub fn step(&self) -> Option<&PixelOrder> {
         match self {
-            PixelAutomata::AvailablePixel(s, _, _, _) => Some(*s),
+            PixelAutomata::AvailablePixel(s, _, _, _) => Some(s),
             PixelAutomata::NeedToReadMemory => None,
         }
     }
@@ -427,6 +528,7 @@ impl PixelAutomata {
         }
     }
 
+    /// Return the palette needed to display the byte
     pub fn palette(&self) -> Option<&[Ink; 17]> {
         match self {
             PixelAutomata::AvailablePixel(_, _, _, p) => Some(p),
@@ -434,9 +536,6 @@ impl PixelAutomata {
         }
     }
 
-    fn rgb(ink: Ink) -> (f32, f32, f32) {
-        RGB_PERCENTAGE_LEVELS_PER_INK[ink.0 as usize]
-    }
 }
 
 /// GateArray emulation of the CPC.
@@ -455,8 +554,8 @@ pub struct GateArray {
     current_mode: VideoMode,
     /// The automata that generate the 8 pixel per byte
     pixel_automata: PixelAutomata,
-    /// Lastly generated pixel
-    rgb: (f32, f32, f32),
+    /// Lastly generated pixel (to be retreived for monitor)
+    rgb: RgbLevels,
 }
 
 impl Default for GateArray {
@@ -508,6 +607,10 @@ impl ReadDataChip for GateArray {}
 impl WriteDataChip for GateArray {}
 
 impl GateArray {
+
+    pub fn palette(&self) -> &[Ink;17] {
+        &self.palette
+    }
     /// Gate array works at 16Mhz and divide it to generate signals for other chips.
     /// CPU is at 4 Mhz
     pub fn manage_clocks(&mut self) {
@@ -525,12 +628,17 @@ impl GateArray {
         self.current_mode
     }
 
+    /// Force the active video mode (test purposes)
+    pub fn force_active_video_mode(&mut self, mode: VideoMode) {
+        self.current_mode = mode;
+    }
+
     /// Get the video mode for the next line
     pub fn next_video_mode(&self) -> VideoMode {
         self.rmr.video_mode()
     }
 
-    pub fn rgb(&self) -> (f32, f32, f32) {
+    pub fn rgb(&self) -> RgbLevels {
         self.rgb
     }
 
@@ -540,9 +648,13 @@ impl GateArray {
 
     /// Set the video memory byte that serves the the next 8 RGB signal generation
     pub fn set_memory_byte(&mut self, b: u8) {
-        assert!(self.pixel_automata.is_done());
+       // assert!(self.pixel_automata.is_done()); may be false in tests
         self.pixel_automata =
-            PixelAutomata::AvailablePixel(0, b, self.active_video_mode(), self.palette.clone());
+            PixelAutomata::AvailablePixel(
+                PixelOrder::Pixel1, 
+                b, 
+                self.active_video_mode(), 
+                self.palette.clone());
     }
 
     pub fn set_ink(&mut self, pen: Pen, ink: Ink) {
@@ -569,7 +681,7 @@ impl GateArray {
 
         if self.get_pin(GateArrayPin::HSYNC)
             || self.get_pin(GateArrayPin::VSYNC){
-            self.rgb = (0., 0., 0.);
+            self.rgb = (0., 0., 0.).into();
         } else {
             self.rgb = self
                 .pixel_automata
@@ -725,21 +837,21 @@ mod test {
         ga.palette[1] = Ink(1);
         ga.set_memory_byte(0b01010101);
 
-        assert_eq!(ga.pixel_automata.step(), Some(0));
+        assert_eq!(ga.pixel_automata.step().cloned(), Some(PixelOrder::Pixel1));
         assert_eq!(ga.pixel_automata.mode(), Some(VideoMode::Mode2));
 
         ga.tick();
-        let rgb = dbg!(ga.rgb());
-        assert!((rgb.0 - 0.0).abs() < 0.0001);
-        assert!((rgb.1 - 0.9615).abs() < 0.0001);
-        assert!((rgb.2 - 0.4808).abs() < 0.0001);
+        let rgb = ga.rgb();
+        assert!((rgb.r() - 0.0).abs() < 0.0001);
+        assert!((rgb.g() - 0.9615).abs() < 0.0001);
+        assert!((rgb.b() - 0.4808).abs() < 0.0001);
 
-        assert_eq!(ga.pixel_automata.step(), Some(1));
+        assert_eq!(ga.pixel_automata.step().cloned(), Some(PixelOrder::Pixel2));
         ga.tick();
         let rgb = dbg!(ga.rgb());
-        assert!((rgb.0 - 0.0).abs() < 0.0001);
-        assert!((rgb.1 - 0.9615).abs() < 0.0001);
-        assert!((rgb.2 - 41.8269).abs() < 0.0001);
+        assert!((rgb.r() - 0.0).abs() < 0.0001);
+        assert!((rgb.g() - 0.9615).abs() < 0.0001);
+        assert!((rgb.b() - 41.8269).abs() < 0.0001);
 
         ga.tick();
         ga.tick();
@@ -749,5 +861,123 @@ mod test {
         ga.tick();
 
         assert!(ga.pixel_automata.is_done());
+    }
+
+    #[test]
+    /// We want to check that pixels are generated in black
+    fn test_pixels_1() {
+        let mode = VideoMode::Mode1;
+        let palette: [Ink;17]= [
+            0.into(),
+            8.into(),
+            13.into(),
+            18.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+            0.into(),
+        ];
+        let byte = 0b10001000;
+
+
+        let mut ga = GateArray::default();
+        ga.set_palette(palette);
+        ga.set_video_mode(mode);
+        ga.force_active_video_mode(mode);
+        ga.set_pin(GateArrayPin::HSYNC, false); // no vsync
+        ga.set_pin(GateArrayPin::VSYNC, false); // no hsync
+        ga.set_pin(GateArrayPin::DISPEN, true); // no border
+
+        /*
+        assert_eq!(ga.active_video_mode(), VideoMode::Mode1);
+        ga.set_memory_byte(0);
+        check_expected_inks(&mut ga, &[
+            Ink::from(0),
+            Ink::from(0),
+            Ink::from(0),
+            Ink::from(0),
+            Ink::from(0),
+            Ink::from(0),
+            Ink::from(0),
+            Ink::from(0),
+        ]);
+*/
+
+        ga.set_memory_byte(byte);
+        assert_eq!(
+            VideoMode::Mode1,
+            ga.pixel_automata.mode().unwrap()
+        );
+        let pens = BYTE_TO_MODE1_PENS[byte as usize];
+        println!("List of pens to use {:?}", &pens);
+
+        let automata_palette =  ga.pixel_automata.palette().unwrap();
+        assert_eq!(
+            automata_palette,
+            &palette
+        );
+        let inks  = [
+            automata_palette[pens.0.value() as usize],
+            automata_palette[pens.1.value() as usize],
+            automata_palette[pens.2.value() as usize],
+            automata_palette[pens.3.value() as usize],
+        ];
+        println!("List of inks to use. {:?}", inks);
+
+        let values = [
+            inks[0].to_rgb_levels(),
+            inks[1].to_rgb_levels(),
+            inks[2].to_rgb_levels(),
+            inks[3].to_rgb_levels()
+        ];
+        println!("List of levels to generate. {:?}", values);
+
+
+        check_expected_inks(&mut ga, &[
+            Ink::from(18).to_rgb_levels(),
+            Ink::from(18).to_rgb_levels(),
+            Ink::from(0).to_rgb_levels(),
+            Ink::from(0).to_rgb_levels(),
+            Ink::from(0).to_rgb_levels(),
+            Ink::from(0).to_rgb_levels(),
+            Ink::from(0).to_rgb_levels(),
+            Ink::from(0).to_rgb_levels(),
+        ]);
+
+    }
+
+    fn check_expected_inks( ga: &mut GateArray, expected: &[RgbLevels;8]) {
+        assert!(!ga.pixel_automata.is_done());
+        let obtained =  (0..8).into_iter().map(|i|  {
+            ga.tick();
+            let rgb = ga.rgb/*()*/; // not yet on the pins
+            println!("{}, {:?}, {:?}", i, ga.pixel_automata, rgb);
+            rgb
+        }).collect::<Vec<RgbLevels>>();
+
+        for i in 0..8 {
+            println!("{}", i);
+            println!("Expected: {:?}", expected[i]);
+            println!("Obtained: {:?}", obtained[i]);
+        }
+
+        for i in 0..8 {
+            println!("pixel {}", i);
+            assert_eq!(
+                expected[i],
+                obtained[i]
+            );
+        }
+
+
     }
 }

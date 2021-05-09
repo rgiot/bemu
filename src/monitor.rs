@@ -4,6 +4,7 @@
 
 use derive_more::{Add, AddAssign, From, Into, Sub, SubAssign};
 use image::*;
+use crate::ga::{RgbLevels, ToRGBLevels};
 
 /// This is the total duration to trat a line
 const RASTER_LINE_LENGTH: usize = 64 * 8 * 2; // (1024) In fact it is far smaller
@@ -298,7 +299,7 @@ impl Monitor {
 
 
     /// Handle the information send from the CPC
-    pub fn receive(&mut self, r: f32, g: f32, b: f32, vsync: bool, hsync: bool) {
+    pub fn receive(&mut self, rgb: RgbLevels, vsync: bool, hsync: bool) {
         if self.state.is_in_vertical_retrace() {
             // Gun is moving from bottom right to top left
             let step = self.state.vertical_retrace_step_mut().unwrap();
@@ -351,7 +352,7 @@ impl Monitor {
 
         if self.state.is_displaying() {
             // really make the pixel display
-            let rgb = self.compute_rgb(r, g, b);
+            let rgb = self.compute_rgb(rgb);
             let gun = self.state.gun_mut().unwrap();
 
             if vsync {
@@ -383,11 +384,15 @@ impl Monitor {
     }
 
     /// Compute the RGB color from the received intensities
-    fn compute_rgb(&self, r: f32, g: f32, b: f32) -> Rgb<u8> {
+    fn compute_rgb(&self, rgb: RgbLevels) -> Rgb<u8> {
         /// TODO play with luminance to update the brightness
         let to_u8 = |v: f32| -> u8 { (v * 255f32).min(255f32) as u8 };
 
-        Rgb([to_u8(r), to_u8(g), to_u8(b)])
+        Rgb([
+            to_u8(rgb.r()), 
+            to_u8(rgb.g()), 
+            to_u8(rgb.b())
+        ])
     }
 }
 
@@ -402,7 +407,7 @@ mod test {
 
         for i in (0.. usize::from(VHold::default())) {
             assert!(mon.state.is_waiting_vsync());
-            mon.receive(0.5, 0.5, 0.5, false, false);
+            mon.receive( (0.5, 0.5, 0.5).into(), false, false);
         }
 
         assert!(!mon.state.is_waiting_vsync());
@@ -415,11 +420,11 @@ mod test {
 
         for i in (0..2) {
             assert!(mon.state.is_waiting_vsync());
-            mon.receive(0.5, 0.5, 0.5, false, false);
+            mon.receive( (0.5, 0.5, 0.5).into(), false, false);
         }
 
         assert!(mon.state.is_waiting_vsync());
-        mon.receive(0.5, 0.5, 0.5, true, false);
+        mon.receive( (0.5, 0.5, 0.5).into(), true, false);
         assert!(!mon.state.is_waiting_vsync());
     }
 
@@ -427,12 +432,12 @@ mod test {
     fn test_color() {
         let mut mon = Monitor::default();
         assert_eq!(
-            mon.compute_rgb(0., 0., 0.),
+            mon.compute_rgb( (0., 0., 0.).into()),
             Rgb([0, 0, 0])
         );
 
         assert_eq!(
-            mon.compute_rgb(1., 1., 1.),
+            mon.compute_rgb( (1., 1., 1.).into()),
             Rgb([255, 255, 255])
         );
     }
@@ -453,13 +458,13 @@ mod test {
                     for pixel in 0..16 { // ga cycles
 
                         if hsync || vsync {
-                            monitor.receive(0., 0., 0., vsync, hsync );
+                            monitor.receive((0., 0., 0.).into(), vsync, hsync );
                         }
                         else {
                             monitor.receive(
-                                (char_line+1) as f32 / r4 as f32, 
+                                ((char_line+1) as f32 / r4 as f32, 
                                 (char+1) as f32 / r0 as f32,
-                                (scan_line+1) as f32 / r9 as f32, 
+                                (scan_line+1) as f32 / r9 as f32).into(), 
                                 vsync, hsync );
                         }
                     }

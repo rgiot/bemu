@@ -36,13 +36,20 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     }
 
     let rgb = ga.rgb();
+    let palette = ga.palette();
+
+    // check mode 1
+    assert!(
+        rgb == palette[0].to_rgb_levels() 
+        || rgb == palette[1].to_rgb_levels() 
+        || rgb == palette[2].to_rgb_levels() 
+        || rgb == palette[3].to_rgb_levels()
+    );
     let vsync = ga.get_pin(GateArrayPin::VSYNC);
     let hsync = ga.get_pin(GateArrayPin::HSYNC);
 
     monitor.receive(
-        rgb.0,
-        rgb.1,
-        rgb.2,
+        rgb,
         vsync,
         hsync
     );
@@ -68,6 +75,7 @@ fn generate_screen(bank: &[u8;0x4000], fname: &str, palette: [Ink;17], mode: Vid
 
     let mut ga = GateArray::default();
     ga.set_palette(palette);
+    ga.force_active_video_mode(mode);
     ga.set_video_mode(mode);
     ga.set_pin(GateArrayPin::CCLK, false);
 
