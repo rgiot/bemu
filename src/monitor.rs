@@ -21,7 +21,11 @@ const MONITOR_HORIZONTAL_START_RETRACE: usize = MONITOR_ACTIVE_PIXELS;
 const MONITOR_HORIZONTAL_RETRACE_DURATION: usize = (RASTER_LINE_LENGTH-MONITOR_HORIZONTAL_START_RETRACE) * 80 / 100;
 const MONITOR_VERTICAL_START_RETRACE: usize = 312;
 
-const MONITOR_HOLD: usize = RASTER_LINE_LENGTH - MONITOR_HORIZONTAL_START_RETRACE - MONITOR_HORIZONTAL_RETRACE_DURATION;
+// No idea if it is correct
+const MONITOR_HORIZONTAL_HOLD: usize = RASTER_LINE_LENGTH - MONITOR_HORIZONTAL_START_RETRACE - MONITOR_HORIZONTAL_RETRACE_DURATION;
+
+// No idea if it is correct
+const MONITOR_VERTICAL_HOLD: usize = 20;
 
 const HSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 128, 255]);
 const VSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 64, 255]);
@@ -44,7 +48,7 @@ struct VerticalPosition(usize);
 struct HorizontalPosition(usize);
 
 /// Electron gun
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Gun {
     x: HorizontalPosition,
     y: VerticalPosition,
@@ -62,7 +66,7 @@ impl Gun {
 struct VHold(usize);
 impl Default for VHold {
     fn default() -> Self {
-        VHold(16 * (MONITOR_HORIZONTAL_START_RETRACE + MONITOR_HORIZONTAL_START_RETRACE * 3 / 10))
+        VHold(MONITOR_VERTICAL_HOLD)
     }
 }
 
@@ -70,7 +74,7 @@ impl Default for VHold {
 struct HHold(usize);
 impl Default for HHold {
     fn default() -> Self {
-        HHold(MONITOR_HOLD)
+        HHold(MONITOR_HORIZONTAL_HOLD)
     }
 }
 
@@ -119,12 +123,78 @@ impl Texture {
     }
 }
 
+
+/// No idea if it is the good approach...
+/// But we wait VSYNC by waiting a certain amount of lines
+#[derive(Debug)]
+enum WaitVerticalSynchronization {
+    /// We simulate the gun display of the screen
+    GunSimulation(VHold, HorizontalPosition),
+    /// We simulate the horizontal retrace of the screen
+    HorizontalRetraceSimulation(VHold, HRetrace),
+    /// We wait the next line (until we get vsync or delay elapsed)
+    WaitHorizontalSynchronization(VHold, HHold),
+    /// Symbolize maximum alloted time to wait the vsync as elapsed
+    Done
+}
+
+impl WaitVerticalSynchronization {
+
+    fn new(vhold: VHold)-> Self {
+        Self::GunSimulation(vhold, 0.into())
+    }
+
+    /// One additional step when waiting the vsync.
+    fn step(&mut self, hsync: bool) {
+        match self {
+            Self::GunSimulation(ref vhold, pos) => {
+                *pos += 1.into();
+                if *pos  == MONITOR_HORIZONTAL_START_RETRACE.into() {
+                    *self = Self::HorizontalRetraceSimulation(*vhold, HRetrace::default());
+                }
+            },
+
+            Self::HorizontalRetraceSimulation(ref vhold, hretrace) => {
+                *hretrace -= 1.into();
+                if *hretrace == 0.into() {
+                    *self = Self::WaitHorizontalSynchronization(*vhold, HHold::default());
+                }
+
+            },
+
+            Self::WaitHorizontalSynchronization(vhold, hhold) =>  {
+                *hhold -= 1.into();
+                if *hhold == 0.into() || hsync {
+                    *vhold -= 1.into();
+                    if *vhold == 0.into() {
+                        *self = Self::Done;
+                    }
+                    else {
+                        *self = Self::GunSimulation(*vhold, 0.into());
+                    }
+                }
+            },
+
+            Done => unreachable!()
+        };
+    }
+
+    /// REturns true when we cannot wait more
+    fn is_done(&self) -> bool {
+        match self {
+            Self::Done => true,
+            _ => false
+        }
+    }
+}
+
 /// The monitor can be waiting the vsync signal for a horizontal synchronisation
 /// or displaying the bytes.
 /// I am not 100% sure if it is necessary to model these states as they must accor faster than the GA reaction
+#[derive(Debug)]
 enum MonitorState {
     /// Counter for vsync
-    WaitVerticalSynchronization(VHold),
+    WaitVerticalSynchronization(WaitVerticalSynchronization),
     /// Counter for hsync wait (next line, duration)
     WaitHorizontalSynchronization(VerticalPosition, HHold),
     /// Move to the beginning of next line with showing anything (next line)
@@ -137,7 +207,7 @@ enum MonitorState {
 
 impl Default for MonitorState {
     fn default() -> Self {
-        MonitorState::WaitVerticalSynchronization(VHold::default())
+        MonitorState::Display(Gun::default())
     }
 }
 
@@ -182,12 +252,21 @@ impl MonitorState {
         }
     }
 
-    pub fn wait_vsync_counter_mut(&mut self) -> Option<&mut VHold> {
+    pub fn vsync_wait_done(&self) -> bool {
         match self {
-            MonitorState::WaitVerticalSynchronization(h) => Some(h),
-            _ => None,
+            MonitorState::WaitVerticalSynchronization(wait) => wait.is_done(),
+           _  => panic!("Incompatible state")
+        }    
+    }
+
+    pub fn vsync_wait_step(&mut self, hsync: bool) {
+        match self {
+            MonitorState::WaitVerticalSynchronization(wait) => wait.step(hsync),
+            _ => panic!("Incompatible state")
         }
     }
+
+
 
     pub fn is_waiting_hsync(&self) -> bool {
         match self {
@@ -210,12 +289,13 @@ impl MonitorState {
         }
     }
 
-    pub fn get_vertical_position(&self) -> Option<VerticalPosition> {
+    pub fn get_vertical_position(&self) -> VerticalPosition {
         match self {
-            Self::Display(g) => Some(g.y),
-            Self::HorizontalRetrace(ref y, _) => Some(*y),
-            Self::WaitHorizontalSynchronization(ref y, _) => Some(*y),
-            _ => None,
+            Self::Display(g) => g.y,
+            Self::HorizontalRetrace(ref y, _) => *y,
+            Self::WaitHorizontalSynchronization(ref y, _) => *y,
+            Self::WaitVerticalSynchronization(_) => VerticalPosition(0),
+            Self::VerticalRetrace(ref r) => VerticalPosition(0) // fake
         }
     }
 }
@@ -282,7 +362,7 @@ impl Monitor {
     /// Generate a debug monitor that waits the vsync
     pub fn wait_vsync() -> Self {
         let mut monitor = Self::debug();
-        monitor.state = MonitorState::WaitVerticalSynchronization(monitor.vhold);
+        monitor.state = MonitorState::WaitVerticalSynchronization(WaitVerticalSynchronization::new(monitor.vhold));
         monitor
     }
 
@@ -305,7 +385,7 @@ impl Monitor {
             // Gun is moving from bottom right to top left
             let step = self.state.vertical_retrace_step_mut().unwrap();
             if *step <= 1.into() {
-                self.state = MonitorState::WaitVerticalSynchronization(self.vhold);
+                self.state = MonitorState::WaitVerticalSynchronization(WaitVerticalSynchronization::new(self.vhold));
             }
             else {
                 *step -= 1.into();
@@ -317,7 +397,7 @@ impl Monitor {
             let step = self.state.horizontal_retrace_step_mut().unwrap();
             if *step <= 1.into() {
                 self.state = MonitorState::WaitHorizontalSynchronization(
-                    self.state.get_vertical_position().unwrap(),
+                    self.state.get_vertical_position(),
                     self.hhold,
                 );
             }
@@ -327,11 +407,9 @@ impl Monitor {
         }
 
         if self.state.is_waiting_vsync() {
-            // Gun waits for vertical synchronization
-            let wait = self.state.wait_vsync_counter_mut().unwrap();
-            *wait -= 1.into();
+            self.state.vsync_wait_step(hsync);
 
-            if *wait == 0.into() || vsync {
+            if self.state.vsync_wait_done() || vsync {
                 self.state = MonitorState::Display(Gun::default());
                 self.new_frame();
             }
@@ -347,7 +425,7 @@ impl Monitor {
 
             if (*wait == 0.into() && !hsync) || (!hsync && self.previous_hsync) {
                 self.state =
-                    MonitorState::Display(Gun::at(self.state.get_vertical_position().unwrap()));
+                    MonitorState::Display(Gun::at(self.state.get_vertical_position()));
             }
         }
 
@@ -404,20 +482,26 @@ mod test {
 
     #[test]
     fn test_wait_vsync_delay() {
-        let mut mon = Monitor::default();
+        let mut mon = Monitor::wait_vsync();
 
-        for i in (0.. usize::from(VHold::default())) {
-            assert!(mon.state.is_waiting_vsync());
-            mon.receive( (0.5, 0.5, 0.5).into(), Sync{vsync:false, hsync:false});
+        for i in 0..usize::from(VHold::default()) {
+            dbg!(i, &mon.state);
+
+            for j in 0..(RASTER_LINE_LENGTH + usize::from(HHold::default())) {
+
+                assert!(mon.state.is_waiting_vsync());
+                mon.receive( (0.5, 0.5, 0.5).into(), Sync{vsync:false, hsync:false});
+            }
         }
-
+        mon.receive( (0.5, 0.5, 0.5).into(), Sync{vsync:false, hsync:false});
+        dbg!(&mon.state);
         assert!(!mon.state.is_waiting_vsync());
     }
 
 
     #[test]
     fn test_wait_vsync_no_delay() {
-        let mut mon = Monitor::default();
+        let mut mon = Monitor::wait_vsync();
 
         for i in (0..2) {
             assert!(mon.state.is_waiting_vsync());
