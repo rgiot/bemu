@@ -284,7 +284,7 @@ impl From<&DataAccess> for DataSource {
     }
 }
 
-/// Simulate the Cycles of hte CPU. No need to simulate the pipeline stuff however
+/// Simulate the Cycles of the CPU. No need to simulate the pipeline stuff however
 #[derive(Debug, PartialEq)]
 enum MCycle {
     /// M1 (State, byte number, opcode prefix)
@@ -306,6 +306,11 @@ impl Default for MCycle {
 }
 
 impl MCycle {
+    /// Test if we are handling a new opcode
+    fn is_new_opcode(&self) -> bool {
+        *self == MCycle::default()
+    }
+
     fn inc_state(&mut self) {
         *self = match self {
             MCycle::FetchOpcode(TState::T1, nb, prefix) => {

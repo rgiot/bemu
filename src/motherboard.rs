@@ -31,10 +31,15 @@ impl Motherboard {
         self.sync_chips_pins();
     }
 
-    /// Execute one tick on all the components of the motherboard
-    pub fn tick(&mut self) {
+    /// Execute one tick on all the components of the motherboard and returns the 
+    /// corresponding gate array information
+    /// TODO check if it must be generated before or after
+    pub fn tick(&mut self) -> (RgbLevels, Sync) {
         // Divides and distribute the 16Mhz clock
         self.ga.manage_clocks();
+
+        /// fill bus with memory data if needed
+        self.handle_memory_access();
 
         // Keep this order to avoid side effect mixing previous state and current state
         if self.crtc.is_activated() {
@@ -47,7 +52,33 @@ impl Motherboard {
             self.cpu.tick(); // Virtually uses 4 cycles
         }
 
+        let ga_output = (self.ga.rgb(), self.ga.sync());
+
         self.sync_chips_pins();
+
+        ga_output
+    }
+
+
+    /// manage the memory accesses (read/write cpu ; read ga)
+    pub fn handle_memory_access(&mut self) {
+        unimplemented!()
+    }
+
+    /// Completly execute an opcode and returns the set of video information associated
+    pub fn execute_next_opcode(&mut self) -> Vec<(RgbLevels, Sync)> {
+        let mut video = Vec::new();
+        assert!(self.cpu.next_state.is_new_opcode(), "We have to start by a new opcode");
+
+        /// execute the whole stuff as soon as it is necessary
+        loop {
+            video.push(self.tick());
+            if self.cpu.next_state.is_new_opcode() {
+                break;
+            }
+        }
+
+        video
     }
 
     /// Make the appropriate copy between some pins of some chips to other (we simulate the various buses here)
@@ -156,7 +187,7 @@ impl Motherboard {
     }
 
     /// Provides the memory configuration for a proper access
-    fn memory_config(&self) -> MemoryConfig {
+    pub fn memory_config(&self) -> MemoryConfig {
         MemoryConfig(
             RomConfig {
                 lower_rom: self.ga.lower_rom_pagging(),
@@ -183,5 +214,29 @@ mod test {
     #[test]
     fn test_chips_activation() {
         unimplemented!();
+    }
+
+
+    #[test]
+    fn test_nop_execution() {
+        let mut motherboard = motherboard::default();
+        let memory_config = motherboard.memory_config();
+        
+        // install the program
+        motherboard.cpu.reg16_mut(Register16::PC).set(0x4000);
+        motherboard.memory.write(0x4000, 0x00, &memory_config);
+
+        // execute it
+        let video = motherboard.execute_next_opcode();
+
+        assert_eq!(
+            motherboard.cpu.reg16(Register16::Pc).value(),
+            0x40001
+        );
+
+        assert_eq!(
+            video.len(),
+            4
+        );
     }
 }
