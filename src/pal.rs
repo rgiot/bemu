@@ -64,6 +64,7 @@ pub struct MMR(u8);
 impl MMR {
     pub fn set(&mut self, b: u8) {
         assert_eq!(0b11000000 & b, 0b11000000);
+        eprintln!("Change MMR wiht {:x}", b);
         self.0 = b
     }
 
@@ -195,7 +196,7 @@ impl Chip for Pal {
     }
 
     fn reset(&mut self) {
-        unimplemented!();
+        self.mmr = MMR(0xc0);
     }
 }
 

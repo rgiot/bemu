@@ -16,7 +16,7 @@ use regex::Regex;
 /// Possible states for a cycle
 /// Warning: Wait state does not count
 #[derive(Debug, PartialEq)]
-enum TState {
+pub (crate) enum TState {
     T1,
     T2,
     T3,
@@ -32,7 +32,7 @@ impl Default for TState {
 /// This enumeration aims at helping to treat the
 /// prefixed operations
 #[derive(Debug, PartialEq, Copy, Clone)]
-enum OpcodePrefix {
+pub (crate) enum OpcodePrefix {
     None,
     Dd,
     Fd,
@@ -64,7 +64,7 @@ lazy_static! {
 /// Contains all the informations needed to drive the next
 /// cycles of the instruction
 #[derive(Debug, PartialEq)]
-struct OpcodeInformation {
+pub (crate) struct OpcodeInformation {
     /// Prefix for the current opcode
     prefix: OpcodePrefix,
     /// Number of bytes of the opcode that need to be fetched
@@ -105,7 +105,14 @@ impl OpcodePrefix {
         let repr = self.disassembling_table()[opcode];
         let read_address = self.read_address_source(opcode);
         let write_address = self.write_address_source(opcode);
-        let token = cpclib_asm::parser::parse_token(repr).unwrap().1;
+        let token = cpclib_asm::parser::parse_token(
+            if repr.is_empty() {
+                "NOP"
+            }
+            else {
+                repr
+            }
+        ).unwrap().1;
 
         let nb_additional_bytes_to_read = match read_address {
             AddressSource::None => 0,
@@ -151,14 +158,14 @@ impl OpcodePrefix {
     /// Serve to generate lookup tables at start
     fn opcode_bytes_to_read(self, i: usize) -> u8 {
         lazy_static! {
-            static ref height_bits: Regex = Regex::new(r"([^n]nn[^n])|([^n]nn$)").unwrap();
-            static ref sixteen_bits: Regex = Regex::new(r"[^n]nnnn[^n]").unwrap();
+            static ref HEIGHT_BITS: Regex = Regex::new(r"([^n]nn[^n])|([^n]nn$)").unwrap();
+            static ref SIXTEEN_BITS: Regex = Regex::new(r"[^n]nnnn[^n]|([^n]nnnn$)").unwrap();
         }
 
         let repr = self.disassembling_table()[i];
 
-        let nb_height_bits_args = height_bits.captures_iter(repr).count();
-        let nb_sixteen_bits_args = sixteen_bits.captures_iter(repr).count();
+        let nb_height_bits_args = HEIGHT_BITS.captures_iter(repr).count();
+        let nb_sixteen_bits_args = SIXTEEN_BITS.captures_iter(repr).count();
 
         (nb_height_bits_args + 2 * nb_sixteen_bits_args) as u8
     }
@@ -279,14 +286,15 @@ impl From<&DataAccess> for DataSource {
             DataAccess::IndexRegister8(reg) => DataSource::IndexRegister8(*reg),
             DataAccess::Register16(reg) => DataSource::Register16(*reg),
             DataAccess::Register8(reg) => DataSource::Register8(*reg),
-            _ => panic!("{} unimplemented", d),
+            DataAccess::Expression(_) => DataSource::Immediate, // to be read
+            _ => panic!("{:?} unimplemented", d),
         }
     }
 }
 
 /// Simulate the Cycles of the CPU. No need to simulate the pipeline stuff however
 #[derive(Debug, PartialEq)]
-enum MCycle {
+pub (crate) enum MCycle {
     /// M1 (State, byte number, opcode prefix)
     /// - T1: request the reading of a byte
     /// - T2: read the byte
@@ -306,8 +314,8 @@ impl Default for MCycle {
 }
 
 impl MCycle {
-    /// Test if we are handling a new opcode
-    fn is_new_opcode(&self) -> bool {
+    /// Test if we are handling a new opcode in the next cycle
+    pub fn is_new_opcode(&self) -> bool {
         *self == MCycle::default()
     }
 
@@ -584,19 +592,25 @@ impl HasValue for Register16 {
 }
 
 impl Register16 {
-    fn low(&self) -> &Register8 {
+    pub fn new(val: u16) -> Self {
+        let mut r = Register16::default();
+        r.set(val);
+        r
+    }
+
+    pub fn low(&self) -> &Register8 {
         &self.low
     }
 
-    fn high(&self) -> &Register8 {
+    pub fn high(&self) -> &Register8 {
         &self.high
     }
 
-    fn low_mut(&mut self) -> &mut Register8 {
+    pub fn low_mut(&mut self) -> &mut Register8 {
         &mut self.low
     }
 
-    fn high_mut(&mut self) -> &mut Register8 {
+    pub fn high_mut(&mut self) -> &mut Register8 {
         &mut self.high
     }
 }
@@ -787,44 +801,48 @@ impl Into<Reg16> for &cpclib_asm::preamble::IndexRegister16 {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 /// https://gist.github.com/drhelius/8497817
 pub struct Z80 {
     /// Encoding of the 40 Z80Pin
     pins: PinsBuffer,
     /// State of the Z80 state-machine
-    next_state: MCycle,
+    pub (crate) next_state: MCycle,
 
-    pc: Register16,
-    sp: Register16,
+    pub (crate) pc: Register16,
+    pub (crate) sp: Register16,
 
-    af: Register16,
-    af2: Register16,
+    pub (crate) af: Register16,
+    pub (crate) af2: Register16,
 
-    hl: Register16,
-    bc: Register16,
-    de: Register16,
+    pub (crate) hl: Register16,
+    pub (crate) bc: Register16,
+    pub (crate) de: Register16,
 
-    hl2: Register16,
-    bc2: Register16,
-    de2: Register16,
+    pub (crate) hl2: Register16,
+    pub (crate) bc2: Register16,
+    pub (crate) de2: Register16,
 
-    ix: Register16,
-    iy: Register16,
-    wz: Register16,
+    pub (crate) ix: Register16,
+    pub (crate) iy: Register16,
+    pub (crate) wz: Register16,
 
-    i: Register8,
-    r: Register8,
+    pub (crate) i: Register8,
+    pub (crate) r: Register8,
 
     /// Instruction Register / contains the opcode of interest
-    ir: Register8,
+    pub (crate) ir: Register8,
+
+    pub (crate) iff1: Register16,
+    pub (crate) iff2: Register16,
+    pub (crate) im: u8,
 
     /// Refresh adr
     /// XXX Not handled at all by the emulator
-    refresh_addr: u16,
+    pub (crate) refresh_addr: u16,
 
     /// Information for the current opcode - Setup after fetching the very first byte
-    opcode_information: Option<OpcodeInformation>,
+    pub (crate) opcode_information: Option<OpcodeInformation>,
 }
 
 impl Z80 {
@@ -984,11 +1002,18 @@ impl Z80 {
                         let left: Reg8 = reg.into();
                         let right = self.get_available_8bits_value(arg2.unwrap());
                         self.reg8_mut(left).set(right);
+                    },
+
+                    DataAccess::Register16(reg) => {
+                        let left: Reg16 = reg.into();
+                        let right = self.get_available_16bits_value(arg2.unwrap());
+                        self.reg16_mut(left).set(right);
                     }
 
                     DataAccess::Memory(_) => {
                         // we have nothing to do because CPU has already executed everything
-                    }
+                    },
+
 
                     _ => unimplemented!(),
                 }
@@ -1025,6 +1050,32 @@ impl Z80 {
                 return expr.eval().unwrap() as u8; // cannot fail as the value has been disassembled
             }
             DataAccess::Memory(_) => return self.reg8(Reg8::Z).get(),
+            _ => {
+                panic!("{:?} unhandled", data);
+            }
+        }
+    }
+
+    /// Retreive the 16 bits that corresponds to the data choice
+    fn get_available_16bits_value(&self, data: &DataAccess) -> u16 {
+        match data {
+            DataAccess::Register16(reg) => {
+                let reg: Reg16 = dbg!(reg.into());
+                return self.reg16(reg).get();
+            }
+            DataAccess::IndexRegister16(reg) => {
+                let reg: Reg16 = reg.into();
+                return self.reg16(reg).get();
+            }
+            DataAccess::MemoryRegister16(_reg) => {
+                // Here we do not care at all of which register is used for memory reading
+                // Because the CPU has already read the information
+                return self.reg16(Reg16::Wz).get();
+            }
+            DataAccess::Expression(expr) => {
+                return expr.eval().unwrap() as u16; // cannot fail as the value has been disassembled
+            }
+            DataAccess::Memory(_) => return self.reg16(Reg16::Wz).get(),
             _ => {
                 panic!("{:?} unhandled", data);
             }
@@ -1126,8 +1177,6 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
-        dbg!(&self.next_state);
-        dbg!(&self.opcode_information);
 
         match self.next_state {
             // First state of the fetch process
@@ -1285,6 +1334,7 @@ impl Chip for Z80 {
 
             _ => unimplemented!(),
         }
+
     }
 
     fn reset(&mut self) {
@@ -1297,7 +1347,13 @@ impl Chip for Z80 {
         self.set_pin(Z80Pin::Neg_WR, true);
 
         self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
-        self.pc.set(0);
+
+        self.sp.set(0xffff);
+        self.pc.set(0x0000);
+        self.af.set(0xffff);
+        self.iff1.set(0);
+        self.iff2.set(0);
+        self.im = 0;
     }
 }
 
@@ -2029,6 +2085,43 @@ mod test {
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
+        );
+    }
+
+
+    #[test]
+    fn registers_operation() {
+        let mut r16 = crate::z80::Register16::default();
+        assert_eq!(
+            r16.value(),
+            0
+        );
+
+        r16.set(0xffff);
+        assert_eq!(
+            r16.value(),
+            0xffff
+        );
+
+        r16.add(1);
+        assert_eq!(
+            r16.value(),
+            0
+        );
+
+        r16.inc();
+        assert_eq!(
+            r16.value(),
+            1
+        );
+    }
+
+    #[test]
+    fn lookup_checks () {
+        // ld hl, xxxx
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX[0x21]).nb_additional_opcode_bytes,
+            2
         );
     }
 }

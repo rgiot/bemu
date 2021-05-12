@@ -307,7 +307,7 @@ impl MemoryConfig {
         self.0.upper_rom.is_enabled() && addr >= 0xc000
     }
 
-    /// Return the Bank configuration for the given address
+    /// Return the RAM Bank configuration for the given address
     pub fn bank_at(&self, addr: u16) -> &BankConfig {
         match addr {
             0x0000..0x4000 => &self.1 .0[0],
@@ -345,6 +345,17 @@ impl Memory {
 
         // and read it
         memory.read(MemoryConfig::relative_address_at(addr))
+    }
+
+    /// Write a byte according to the memory configuration
+    /// write is done on RAM even if ROMs are activated
+    pub fn write(&mut self, addr: u16, val: u8, conf: &MemoryConfig) {
+        /// Retreive the right bank
+        let memory = self.bank(addr, conf);
+
+        // and read it
+        let bank = self.ram_bank_mut(conf.bank_at(addr));
+        bank.write(MemoryConfig::relative_address_at(addr), val);
     }
 
     /// Get the appropriate bank to read for the given configuration

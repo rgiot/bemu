@@ -80,6 +80,16 @@ pub trait Chip {
         previous == true && current == false
     }
 
+    /// Force the pin to be in front_down state (workaround because of the difference of speec d between chips)
+    fn force_front_down(&mut self, pin: Self::PinType) {
+        let pin: u64 = pin.into();
+
+        let (ref mut previous, ref mut current) = self.pins_buffer_mut();
+
+        *previous = *previous | pin;
+        *current = *current & ! pin;
+    }
+
     /// Force to save all the bits of the current state to test is_front and so on
     /// (this is call at the syncing step in the motherboard code)
     fn save_pins_state(&mut self) {
