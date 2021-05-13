@@ -71,14 +71,16 @@ pub (crate) struct OpcodeInformation {
     nb_additional_opcode_bytes: u8,
     /// Location of the reading address
     read_address: AddressSource,
-    /// Location of the write address
+    /// Location of the write address (memory or output)
     write_address: AddressSource,
-    /// Write address destination
+    /// Write address data
     write_data: DataSource,
     /// Number of bytes to read from the address
     nb_additional_bytes_to_read: u8,
-    /// Number of the byte the instruction request to write
+    /// Number of bytes the instruction request to write (in memory)
     nb_bytes_to_write: u8,
+    /// Number of bytes the instruction request to output to a another chip
+    nb_bytes_to_output: u8,
     /// String representation
     repr: &'static str,
     //   /// Token just in case it is usefull (to be removed if not)
@@ -103,8 +105,6 @@ impl OpcodePrefix {
         let opcode = opcode as usize;
 
         let repr = self.disassembling_table()[opcode];
-        let read_address = self.read_address_source(opcode);
-        let write_address = self.write_address_source(opcode);
         let token = cpclib_asm::parser::parse_token(
             if repr.is_empty() {
                 "NOP"
@@ -114,21 +114,46 @@ impl OpcodePrefix {
             }
         ).unwrap().1;
 
+        let read_address = if token.is_input_opcode() {
+            self.input_address_source(opcode)
+        } else {
+            self.read_address_source(opcode)
+        };
+
+        let write_address = if token.is_output_opcode() {
+            self.output_address_source(opcode)
+        } else {
+            self.write_address_source(opcode)
+        };
+        
+
         let nb_additional_bytes_to_read = match read_address {
             AddressSource::None => 0,
             _ => 1, // TODO really set the right value
         };
 
-        let write_data: DataSource = {
+        let write_data: DataSource = if token.is_output_opcode() {
+            token.mnemonic_arg2().unwrap().into()
+        }
+        else {
             if write_address == AddressSource::None {
                 DataSource::None
             } else {
                 token.mnemonic_arg2().unwrap().into()
             }
         };
+
         let nb_bytes_to_write = match write_data {
             DataSource::None => 0,
-            _ => 1, // TODO really set the right value
+            _ => 1, // TODO really set the right value (especially for 16 bits data)
+        };
+
+        let nb_bytes_to_output = if token.is_output_opcode() {
+            assert_eq!(nb_bytes_to_write, 0);
+            1
+        }
+        else {
+            0
         };
 
         OpcodeInformation {
@@ -139,6 +164,7 @@ impl OpcodePrefix {
             write_data,
             nb_additional_bytes_to_read,
             nb_bytes_to_write,
+            nb_bytes_to_output,
             repr, //, token
         }
     }
@@ -208,6 +234,26 @@ impl OpcodePrefix {
         }
     }
 
+    fn input_address_source(self, token: &Token) -> AddressSource  {
+        if !token.is_input_opcode() {
+            return AddressSource::None;
+        }
+        unimplemented!()
+    }
+
+    /// Provide the location that contains the address to write in the address bus to access a chip
+    fn output_address_source(self, token: &Token) -> AddressSource  {
+        if !token.is_output_opcode() {
+            return AddressSource::None;
+        }
+
+        match token.mnemonic_arg1().unwrap() {
+            DataAccess::PortC => AddressSource::Register16(Reg16::Bc),
+            _ => unimplemented!()
+        }
+    }
+
+    /// Provide the location of the address to put on the address bus to write in memory
     fn write_address_source(self, i: usize) -> AddressSource {
         lazy_static! {
             static ref INDEXED_IY: Regex = Regex::new(r"\(IY\+nn\)[^$]").unwrap();
@@ -2208,6 +2254,28 @@ mod test {
         assert_eq!(
             dbg!(&OPCODE_PREFIX[0x21]).nb_additional_opcode_bytes,
             2
+        );
+
+        // out(c), a
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX_ED[0x79]).nb_additional_opcode_bytes,
+            0
+        );
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX_ED[0x79]).nb_bytes_to_write,
+            0
+        );
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX_ED[0x79]).nb_bytes_to_output,
+            1
+        );
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX_ED[0x79]).write_address,
+            AddressSource::Register16(Reg16::Bc)
+        );
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX_ED[0x79]).write_data,
+            DataSource::Register8(Reg8::A)
         );
     }
 }
