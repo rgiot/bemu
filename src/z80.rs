@@ -77,10 +77,10 @@ pub (crate) struct OpcodeInformation {
     write_data: DataSource,
     /// Number of bytes to read from the address
     nb_additional_bytes_to_read: u8,
-    /// Number of bytes the instruction request to write (in memory)
+    /// Number of bytes the instruction request to write (in memory or chip)
     nb_bytes_to_write: u8,
-    /// Number of bytes the instruction request to output to a another chip
-    nb_bytes_to_output: u8,
+    /// allow to difference memory and port addressing
+    addresses_memory: bool,
     /// String representation
     repr: &'static str,
     //   /// Token just in case it is usefull (to be removed if not)
@@ -113,27 +113,55 @@ impl OpcodePrefix {
                 repr
             }
         ).unwrap().1;
+        let addresses_memory = !(token.is_input_opcode() | token.is_output_opcode());
 
+        // For instructions reading from memory, get the location of the address
         let read_address = if token.is_input_opcode() {
-            self.input_address_source(opcode)
-        } else {
+            self.input_address_source(&token)
+        } else if addresses_memory {
             self.read_address_source(opcode)
+        } else {
+            AddressSource::None
         };
 
+        // For instructions writting ot memory, get the location of address
         let write_address = if token.is_output_opcode() {
-            self.output_address_source(opcode)
-        } else {
+            self.output_address_source(&token)
+        } else if addresses_memory {
             self.write_address_source(opcode)
+        } else {
+            AddressSource::None
         };
         
 
-        let nb_additional_bytes_to_read = match read_address {
-            AddressSource::None => 0,
-            _ => 1, // TODO really set the right value
-        };
+        // get the number of bytes needed to build the complete opcode
+        let nb_additional_bytes_to_read = if token.is_output_opcode() {
+            if let Some(DataAccess::PortC) = token.mnemonic_arg1() {
+                0
+            } else {
+                1 // port n belongs to the opcode
+            }
+        }
+        else if token.is_input_opcode() {
+            if let Some( DataAccess::PortC) = token.mnemonic_arg2() {
+                0
+            } else {
+                1 // port n
+            }
+        }
+        else {
+            match read_address {
+                AddressSource::None => 0,
+                _ => 1, // TODO really set the right value
+            }
+    };
 
+        /// Location of the byte to write on data
         let write_data: DataSource = if token.is_output_opcode() {
-            token.mnemonic_arg2().unwrap().into()
+            match token.mnemonic_arg2() {
+                Some(position) => position.into(),
+                None => DataSource::MemoryRegister16(cpclib_asm::preamble::Register16::Hl) // the address is in hl
+            }
         }
         else {
             if write_address == AddressSource::None {
@@ -145,16 +173,14 @@ impl OpcodePrefix {
 
         let nb_bytes_to_write = match write_data {
             DataSource::None => 0,
-            _ => 1, // TODO really set the right value (especially for 16 bits data)
+            DataSource::Register16(_) => 2,
+            DataSource::IndexRegister16(_) => 2,
+            DataSource::Register8(_) => 1,
+            DataSource::IndexRegister8(_) => 1,
+            DataSource::Immediate => 1, // XXX not sure of that
+            DataSource::MemoryRegister16(_) => 0, // XXX not sure of that
         };
 
-        let nb_bytes_to_output = if token.is_output_opcode() {
-            assert_eq!(nb_bytes_to_write, 0);
-            1
-        }
-        else {
-            0
-        };
 
         OpcodeInformation {
             prefix: self.clone(),
@@ -164,8 +190,9 @@ impl OpcodePrefix {
             write_data,
             nb_additional_bytes_to_read,
             nb_bytes_to_write,
-            nb_bytes_to_output,
-            repr, //, token
+            repr, 
+            addresses_memory
+            //, token
         }
     }
 
@@ -238,7 +265,13 @@ impl OpcodePrefix {
         if !token.is_input_opcode() {
             return AddressSource::None;
         }
-        unimplemented!()
+
+
+        match token.mnemonic_arg2() {
+            Some(DataAccess::PortC) | None => AddressSource::Register16(cpclib_asm::preamble::Register16::Bc),
+            Some(DataAccess::PortN(_)) => AddressSource::Immediate,
+            _ => unreachable!("{:?}", token)
+        }
     }
 
     /// Provide the location that contains the address to write in the address bus to access a chip
@@ -247,9 +280,10 @@ impl OpcodePrefix {
             return AddressSource::None;
         }
 
-        match token.mnemonic_arg1().unwrap() {
-            DataAccess::PortC => AddressSource::Register16(Reg16::Bc),
-            _ => unimplemented!()
+        match token.mnemonic_arg1(){
+            Some(DataAccess::PortC) | None => AddressSource::Register16(cpclib_asm::preamble::Register16::Bc),
+            Some(DataAccess::PortN(_)) => AddressSource::Immediate,
+            _ => unreachable!("{:?}", token)
         }
     }
 
@@ -323,6 +357,8 @@ enum DataSource {
     IndexRegister16(cpclib_asm::preamble::IndexRegister16),
     /// The value is in a 8 bits indexed regiser
     IndexRegister8(cpclib_asm::preamble::IndexRegister8),
+    /// The value msut be read from memory and tḧe address is in the register
+    MemoryRegister16(cpclib_asm::preamble::Register16)  
 }
 
 impl From<&DataAccess> for DataSource {
@@ -385,6 +421,10 @@ impl MCycle {
             MCycle::Write(TState::T1, nb) => MCycle::Write(TState::T2, *nb),
             MCycle::Write(TState::T2, nb) => MCycle::Write(TState::T3, *nb),
             MCycle::Write(TState::T3, nb) => panic!("Ambigous"),
+
+            MCycle::Output(TState::T1, nb) => MCycle::Output(TState::T2, *nb),
+            MCycle::Output(TState::T2, nb) => MCycle::Output(TState::T3, *nb),
+            MCycle::Output(TState::T3, nb) => panic!("Ambigous"),
 
             _ => unimplemented!(),
         }
@@ -662,7 +702,7 @@ impl Register16 {
 }
 
 /// Identifiers for any 16 bits registers
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Reg16 {
     Af,
     Af2,
@@ -680,7 +720,7 @@ pub enum Reg16 {
 }
 
 /// Identifiers for any 8 bits registers
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Reg8 {
     A,
     A2,
@@ -1078,15 +1118,27 @@ impl Z80 {
                 let opcode_information = self.opcode_information.as_ref().unwrap();
 
                 if opcode_information.fetch_finished() {
-                    self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
-                    return true;
+                    if opcode_information.nb_bytes_to_write != 0 {
+                        if opcode_information.addresses_memory {
+                            self.next_state = MCycle::Write(TState::T1, 0);
+                        }
+                        else {
+                            self.next_state = MCycle::Output(TState::T1, 0);
+                        }
+                        return false;
+                    }
+                    else if opcode_information.expect_read() {
+                        self.next_state = MCycle::Read(TState::T1, 0);
+                        return false;
+                    }
+                    else {
+                        self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
+                        return true;
+                    }
                 } else if opcode_information.nb_additional_opcode_bytes != 0 {
                     self.next_state = MCycle::FetchOpcode(TState::T1, 1, current_prefix);
                     return false;
-                } else if opcode_information.expect_read() {
-                    self.next_state = MCycle::Read(TState::T1, 0);
-                    return false;
-                } else {
+                }  else {
                     unimplemented!()
                 }
             }
@@ -1102,6 +1154,11 @@ impl Z80 {
         arg2: Option<&DataAccess>,
     ) {
         match opcode {
+            Mnemonic::Nop |
+            Mnemonic::Out => {
+                // nothing to do because everything has been handled by cpu
+            }
+
             Mnemonic::Add => {
                 match arg1.unwrap() {
                     DataAccess::Register8(_) => {
@@ -1119,14 +1176,36 @@ impl Z80 {
             },
 
             Mnemonic::Inc => {
-                let ovf = match arg1.unwrap() {
+                let mut update_flags = true; // disable only for 16 bits
+                let mut val = 0;
+                match arg1.unwrap() {
+                    DataAccess::Register8(reg) => {
+                        let left: Reg8 = reg.into();
+                        self.reg8_mut(left).inc();
+                        val = self.reg8(left).value();
+                    }
                     DataAccess::IndexRegister8(reg) => {
                         let left: Reg8 = reg.into();
-                        self.reg8_mut(left).inc()
+                        self.reg8_mut(left).inc();
+                        val = self.reg8(left).value();
+
                     }
                     _ => unimplemented!(),
-                };
+                }
+
+                if update_flags {
+                    let f = &mut self.reg8_mut(Reg8::F).val;
+                    Z80Flags::S.set(val==0, f);
+                    Z80Flags::Z.set(val&1<<7 != 0, f);
+                    Z80Flags::Y.set(val&1<<5 != 0, f);
+                    // TODO handle H flag
+                    Z80Flags::X.set(val&1<<3 != 0, f);
+                    // TODO handle P flag
+                    Z80Flags::N.set_off(f);
+                }
             }
+
+
             Mnemonic::Ld => {
                 match arg1.unwrap() {
                     DataAccess::Register8(reg) => {
@@ -1150,12 +1229,11 @@ impl Z80 {
                     _ => unimplemented!(),
                 }
             }
-            Mnemonic::Nop => {}
             Mnemonic::Xor => {
                 let right = dbg!(self.get_available_8bits_value(arg1.unwrap()));
                 self.reg8_mut(Reg8::A).xor(right);
             }
-            _ => unimplemented!(),
+            _ => unimplemented!("{:?}, {:?}, {:?}", opcode, arg1, arg2),
         }
     }
 
@@ -1364,11 +1442,14 @@ impl Chip for Z80 {
                 self.set_pin(Z80Pin::Neg_RFSH, true);
 
                 if nb == 0 {
-                    let execute = self.decode_step(); // setup next state
+                    let execute = dbg!(self.decode_step()); // setup next state
                     if execute {
                         // nothing is required for the execution
                         // TODO check if input or memory cycle is required
                         self.execute_step();
+                    }
+                    else {
+                        // nothing to do ; the cpu is already in the right state
                     }
                 } else {
                     let opcode_information = self.opcode_information.as_ref().unwrap();
@@ -1376,7 +1457,12 @@ impl Chip for Z80 {
                         if 0 != opcode_information.nb_additional_bytes_to_read {
                             self.next_state = MCycle::Read(TState::T1, 0);
                         } else if 0 != opcode_information.nb_bytes_to_write {
-                            self.next_state = MCycle::Write(TState::T1, 0);
+                            if opcode_information.addresses_memory {
+                                self.next_state = MCycle::Write(TState::T1, 0);
+                            }
+                            else {
+                                self.next_state = MCycle::Output(TState::T1, 0);
+                            }
                         } else {
                             self.next_state =
                                 MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); // go back for a new instruction
@@ -1410,15 +1496,16 @@ impl Chip for Z80 {
                 self.next_state.inc_state();
             }
             MCycle::Read(TState::T3, nb) => {
-                if nb + 1
-                    == self
-                        .opcode_information
-                        .as_ref()
-                        .unwrap()
-                        .nb_additional_bytes_to_read
+                let opcode_info = self.opcode_information.as_ref().unwrap();
+                if nb + 1 == opcode_info.nb_additional_bytes_to_read
                 {
-                    if 0 != self.opcode_information.as_ref().unwrap().nb_bytes_to_write {
-                        self.next_state = MCycle::Write(TState::T1, 0);
+                    if 0 != opcode_info.nb_bytes_to_write {
+                        if opcode_info.addresses_memory {
+                            self.next_state = MCycle::Write(TState::T1, 0);
+                        }
+                        else {
+                            self.next_state = MCycle::Output(TState::T1, 0);
+                        }
                     } else {
                         // TODO take into account those that do a write after the read (if that exists)
                         self.execute_step();
@@ -1431,28 +1518,32 @@ impl Chip for Z80 {
                 }
             }
 
+
+
             MCycle::Write(TState::T1, nb) => {
                 let address = self.get_write_address_from_opcode_information();
                 self.set_address_on_pins(address);
-                self.set_pin(Z80Pin::Neg_MREQ, false);
-                self.set_pin(Z80Pin::Neg_WR, false);
+
                 self.next_state.inc_state();
             }
             MCycle::Write(TState::T2, nb) => {
-                self.set_pin(Z80Pin::Neg_WR, true);
-                self.set_pin(Z80Pin::Neg_MREQ, true);
+                self.set_pin(Z80Pin::Neg_MREQ, false);
+                self.set_pin(Z80Pin::Neg_WR, false);
+
+
 
                 let byte = match nb {
-                    0 => (self.get_write_address_from_opcode_information() & 0xff) as u8,
-                    1 => ((self.get_write_address_from_opcode_information() & 0xff00) >> 8) as u8,
-                    2 => self.get_byte_to_write_from_opcode_information(),
-                    _ => unimplemented!(),
+                    0 => self.get_byte_to_write_from_opcode_information(),
+                    _ => unimplemented!("{} {:?}", nb, self.opcode_information),
                 };
 
                 self.set_data_on_pins(byte);
                 self.next_state.inc_state();
             }
             MCycle::Write(TState::T3, nb) => {
+                self.set_pin(Z80Pin::Neg_WR, true);
+                self.set_pin(Z80Pin::Neg_MREQ, true);
+
                 if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write + 2 - 1 {
                     // TODO take into account those that do a write after the read (if that exists)
                     self.execute_step();
@@ -1464,6 +1555,48 @@ impl Chip for Z80 {
                 }
             }
 
+
+            MCycle::Output(TState::T1, nb) => {
+                let address = self.get_write_address_from_opcode_information();
+                self.set_address_on_pins(address);
+                assert!(self.get_pin(Z80Pin::Neg_IORQ));
+                assert!(self.get_pin(Z80Pin::Neg_WR));
+
+
+                self.next_state.inc_state();
+            }
+            MCycle::Output(TState::T2, nb) => {
+
+                self.set_pin(Z80Pin::Neg_IORQ, false);
+                self.set_pin(Z80Pin::Neg_WR, false);
+
+
+
+                let byte = self.get_byte_to_write_from_opcode_information();
+                assert_eq!(
+                    self.opcode_information.as_ref().unwrap().nb_bytes_to_write,
+                    1
+                );
+
+                self.set_data_on_pins(byte);
+                self.next_state.inc_state();
+            }
+            MCycle::Output(TState::T3, nb) => {
+                self.set_pin(Z80Pin::Neg_IORQ, true);
+                self.set_pin(Z80Pin::Neg_WR, true);
+
+                if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write- 1 {
+                    // TODO take into account those that do a write after the read (if that exists)
+                    self.execute_step();
+                    self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
+                // go back for a new instruction
+                } else {
+                    // go to write the next byte
+                    self.next_state = MCycle::Output(TState::T1, nb + 1);
+                }
+            }
+
+
             _ => unimplemented!(),
         }
 
@@ -1473,10 +1606,11 @@ impl Chip for Z80 {
         self.pins = (0, 0);
 
         self.set_pin(Z80Pin::Neg_MREQ, true);
+        self.set_pin(Z80Pin::Neg_IORQ, true);
+        self.set_pin(Z80Pin::Neg_WR, true);
         self.set_pin(Z80Pin::Neg_RD, true);
         self.set_pin(Z80Pin::Neg_M1, true);
         self.set_pin(Z80Pin::Neg_RFSH, true);
-        self.set_pin(Z80Pin::Neg_WR, true);
 
         self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
 
@@ -2259,23 +2393,31 @@ mod test {
         // out(c), a
         assert_eq!(
             dbg!(&OPCODE_PREFIX_ED[0x79]).nb_additional_opcode_bytes,
-            0
+            0 // ed is the already additional
         );
         assert_eq!(
             dbg!(&OPCODE_PREFIX_ED[0x79]).nb_bytes_to_write,
-            0
-        );
-        assert_eq!(
-            dbg!(&OPCODE_PREFIX_ED[0x79]).nb_bytes_to_output,
             1
         );
         assert_eq!(
+            dbg!(&OPCODE_PREFIX_ED[0x79]).addresses_memory,
+            false
+        );
+        assert_eq!(
             dbg!(&OPCODE_PREFIX_ED[0x79]).write_address,
-            AddressSource::Register16(Reg16::Bc)
+            AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
         );
         assert_eq!(
             dbg!(&OPCODE_PREFIX_ED[0x79]).write_data,
-            DataSource::Register8(Reg8::A)
+            DataSource::Register8(cpclib_asm::preamble::Register8::A)
         );
+
+
+        // out (n), a
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX[0xd3]).nb_additional_opcode_bytes,
+            1 //n
+        );
+    
     }
 }

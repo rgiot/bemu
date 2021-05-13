@@ -22,3 +22,16 @@ delegate = "0.5.1"
 derive_more = "0.99.13"
 image = "0.23.14"
 tuple-map = "0.4.0"
+
+
+[patch.crates-io]
+cpclib = {path = "../rust.cpclib/cpclib/"}
+cpclib-asm = {path = "../rust.cpclib/cpclib-asm/"}
+cpclib-basic = {path = "../rust.cpclib/cpclib-basic/"}
+cpclib-disc = {path = "../rust.cpclib/cpclib-disc/"}
+cpclib-macros = {path = "../rust.cpclib/cpclib-macros/"}
+cpclib-sna = {path = "../rust.cpclib/cpclib-sna/"}#
+cpclib-tokens = {path = "../rust.cpclib/cpclib-tokens/"}
+cpclib-xfer = {path = "../rust.cpclib/cpclib-xfer/"}
+cpclib-xfertool = {path = "../rust.cpclib/cpclib-xfertool/"}
+cpclib-z80emu = {path = "../rust.cpclib/cpclib-z80emu/"}

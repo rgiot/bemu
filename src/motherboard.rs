@@ -131,7 +131,6 @@ impl Motherboard {
     /// manage the memory accesses (read/write cpu ; read ga)
     /// TODO implement orchestration between chips
     pub fn handle_memory_access(&mut self) {
-
         if self.cpu_request_byte_read() && !self.ga_request_read() {
             let addr = self.cpu.get_address_from_pins();
             let memory_cfg = self.memory_config();
@@ -151,6 +150,7 @@ impl Motherboard {
             self.cpu.set_pin(Z80Pin::Neg_WR, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
         }
     }
+
 
     #[inline]
     fn cpu_request_byte_read(&self) -> bool {
