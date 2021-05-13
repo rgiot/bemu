@@ -9,13 +9,12 @@ use crate::z80::*;
 /// Some component are emulated at the lowest level as possible (Z80/CRTC) while
 /// some others are partially emulated (GA/PAL) or totally ignored (RAM)
 /// http://www.cpcwiki.eu/index.php/Default_I/O_Port_Summary
-struct Motherboard {
+pub struct Motherboard {
     cpu: Z80,
     crtc: Crtc,
     ga: GateArray,
     pal: Pal,
     rom_selector: UpperRomSelector,
-
     memory: Memory,
 }
 
@@ -27,18 +26,54 @@ impl Default for Motherboard {
             ga: Default::default(),
             pal: Default::default(),
             rom_selector: Default::default(),
-            memory: Default::default()
+            memory: Default::default(),
         };
-        motherboard.reset();
-        while !motherboard.cpu.is_activated() {
-            motherboard.ga.manage_clocks();
-            motherboard.sync_chips_pins(); // just to get the front stuff
-        }
+        motherboard.stabilize_run();
         motherboard
     }
 }
 
+/// TODO add the other kinds of varitions
+#[derive(Default, Clone, Copy)]
+pub struct MotherboardBuilder {
+    crtc_type: Option<CrtcType>
+}
+
+impl MotherboardBuilder {
+    pub fn set_crtc(&mut self, crtc_type: CrtcType) -> &mut Self {
+        self.crtc_type = Some(crtc_type);
+        self
+    }
+
+    pub fn build(self) -> Motherboard {
+        let crtc_type = self.crtc_type.unwrap_or_default();
+
+        let mut motherboard = Motherboard {
+            crtc: crtc_type.into(),
+            ..Default::default()
+        };
+        motherboard.stabilize_run();
+        motherboard
+    }
+}
+
+// Fields access
 impl Motherboard {
+    pub fn cpu(&self) -> &Z80 {
+        &self.cpu
+    }
+}
+
+impl Motherboard {
+
+    fn stabilize_run(&mut self) {
+        self.reset();
+        while !self.cpu.is_activated() {
+            self.ga.manage_clocks();
+            self.sync_chips_pins(); // just to get the front stuff
+        }
+    }
+
     /// Reset all the components of the motherboard
     pub fn reset(&mut self) {
         self.crtc.reset();
@@ -257,6 +292,11 @@ impl Motherboard {
             ],
         );
     }
+}
+
+
+// Block for the memory related functions
+impl Motherboard {
 
     /// Provides the memory configuration for a proper access
     pub fn memory_config(&self) -> MemoryConfig {
@@ -268,6 +308,22 @@ impl Motherboard {
             },
             self.pal.get_ram_configuration(),
         )
+    }
+
+    /// Write the databuffer in memory according to the memory configuration
+    pub fn write_buffer(&mut self, mut addr: u16, buffer: &[u8]) {
+        let config = self.memory_config();
+        for byte in buffer.iter() {
+            self.memory.write(addr, *byte, &config);
+            addr = addr.wrapping_add(1);
+        }
+    }
+
+    /// Read one memory byte according to the memory configuration
+    #[inline]
+    pub fn read_byte(&self, addr: u16) -> u8 {
+        let memory_cfg = self.memory_config();
+        self.memory.read(addr, &memory_cfg)
     }
 }
 

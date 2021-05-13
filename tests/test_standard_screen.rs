@@ -1,4 +1,4 @@
-/// This test aims at chcking the behavior of GA/monitor for a standard screen
+/// This test aims at checking the behavior of GA/monitor for a standard screen
 use amsrust::crtc::*;
 use amsrust::ga::*;
 use amsrust::monitor::*;

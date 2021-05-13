@@ -617,7 +617,7 @@ impl Register16 {
 
 /// Identifiers for any 16 bits registers
 #[derive(Debug)]
-enum Reg16 {
+pub enum Reg16 {
     Af,
     Af2,
     Hl,
@@ -635,7 +635,7 @@ enum Reg16 {
 
 /// Identifiers for any 8 bits registers
 #[derive(Debug)]
-enum Reg8 {
+pub enum Reg8 {
     A,
     A2,
     H,
@@ -1109,7 +1109,7 @@ impl Z80 {
     /// - Inside a register / straightworard to obtain
     /// - In memory / the cpu has read it and stored it in XXX
     /// - In chip / the cpu has read it and stored it in XXX
-    fn get_available_8bits_value(&self, data: &DataAccess) -> u8 {
+    pub fn get_available_8bits_value(&self, data: &DataAccess) -> u8 {
         match data {
             DataAccess::Register8(reg) => {
                 let reg: Reg8 = dbg!(reg.into());
@@ -1135,7 +1135,7 @@ impl Z80 {
     }
 
     /// Retreive the 16 bits that corresponds to the data choice
-    fn get_available_16bits_value(&self, data: &DataAccess) -> u16 {
+    pub fn get_available_16bits_value(&self, data: &DataAccess) -> u16 {
         match data {
             DataAccess::Register16(reg) => {
                 let reg: Reg16 = dbg!(reg.into());
@@ -1161,7 +1161,7 @@ impl Z80 {
     }
 
     /// Get the appropriate (inner) 16bits register in a mutable state
-    fn reg16_mut(&mut self, reg: Reg16) -> &mut Register16 {
+    pub fn reg16_mut(&mut self, reg: Reg16) -> &mut Register16 {
         match reg {
             Reg16::Af => &mut self.af,
             Reg16::Hl => &mut self.hl,
@@ -1181,7 +1181,7 @@ impl Z80 {
         }
     }
 
-    fn reg16(&self, reg: Reg16) -> &Register16 {
+    pub fn reg16(&self, reg: Reg16) -> &Register16 {
         match reg {
             Reg16::Af => &self.af,
             Reg16::Hl => &self.hl,
@@ -1201,7 +1201,7 @@ impl Z80 {
         }
     }
 
-    fn reg8_mut(&mut self, reg: Reg8) -> &mut Register8 {
+    pub fn reg8_mut(&mut self, reg: Reg8) -> &mut Register8 {
         let r16 = self.reg16_mut(reg.full());
         if reg.is_high() {
             r16.high_mut()
@@ -1210,7 +1210,7 @@ impl Z80 {
         }
     }
 
-    fn reg8(&self, reg: Reg8) -> &Register8 {
+    pub fn reg8(&self, reg: Reg8) -> &Register8 {
         let r16 = self.reg16(reg.full());
         if reg.is_high() {
             r16.high()

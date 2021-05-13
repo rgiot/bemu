@@ -158,45 +158,68 @@ impl Default for Crtc {
     fn default() -> Self {
         let mut crtc = Crtc {
             pins: Default::default(),
-            ar: Default::default(),
-            sr: Default::default(),
-            r0: Default::default(),
-            r1: Default::default(),
-            r2: Default::default(),
-            r3: Default::default(),
-            r4: Default::default(),
-            r5: Default::default(),
-            r6: Default::default(),
-            r7: Default::default(),
-            r8: Default::default(),
-            r9: Default::default(),
-            r10: Default::default(),
-            r11: Default::default(),
-            r12: Default::default(),
-            r13: Default::default(),
-            r14: Default::default(),
-            r15: Default::default(),
-            r16: Default::default(),
-            r17: Default::default(),
-            hcc: Default::default(),
-            vcc: Default::default(),
-            vlc: Default::default(),
-            base: Default::default(),
-            crtc_type: Default::default(),
-            hsync_counter: Default::default(),
-            vsync_counter: Default::default(),
+            ar:  Default::default(),
+            sr:  Default::default(),
+            r0:  Default::default(),
+            r1:  Default::default(),
+            r2:  Default::default(),
+            r3:  Default::default(),
+            r4:  Default::default(),
+            r5:  Default::default(),
+            r6:  Default::default(),
+            r7:  Default::default(),
+            r8:  Default::default(),
+            r9:  Default::default(),
+            r10:  Default::default(),
+            r11:  Default::default(),
+            r12:  Default::default(),
+            r13:  Default::default(),
+            r14:  Default::default(),
+            r15:  Default::default(),
+            r16:  Default::default(),
+            r17:  Default::default(),
+             hcc:  Default::default(),
+             vcc:  Default::default(),
+             vlc:  Default::default(),
+             base:  Default::default(),
+            crtc_type:  Default::default(),
+             hsync_counter:  Default::default(),
+             vsync_counter:  Default::default(),
         };
         crtc.reset();
         crtc
     }
 }
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone,Copy)]
+#[repr(u8)]
 pub enum CrtcType {
-    Crtc0,
-    Crtc1,
-    Crtc2,
-    Crtc3,
-    Crtc4,
+    Crtc0 = 0,
+    Crtc1 = 1,
+    Crtc2 = 2,
+    Crtc3 = 3,
+    Crtc4 = 4,
+}
+
+impl From<&CrtcType> for Crtc {
+    fn from(from: &CrtcType) -> Self {
+        let mut crtc = Crtc {
+            crtc_type: *from, 
+            ..Default::default() 
+        };
+        crtc.reset();
+        crtc
+    }
+}
+
+impl From<CrtcType> for Crtc {
+    fn from(from: CrtcType) -> Self {
+        let mut crtc = Crtc {
+            crtc_type: from,
+            ..Default::default()
+        };
+        crtc.reset();
+        crtc
+    }
 }
 
 impl Default for CrtcType {
