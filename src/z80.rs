@@ -172,36 +172,36 @@ impl OpcodePrefix {
 
     fn read_address_source(self, i: usize) -> AddressSource {
         lazy_static! {
-            static ref indexed_iy: Regex = Regex::new(r"\(IY\+nn\)$").unwrap();
-            static ref indexed_ix: Regex = Regex::new(r"\(IX\+nn\)$").unwrap();
-            static ref in_hl: Regex = Regex::new(r"\(HL\)$").unwrap();
-            static ref in_bc: Regex = Regex::new(r"\(BC\)$").unwrap();
-            static ref in_de: Regex = Regex::new(r"\(DE\)$").unwrap();
-            static ref in_af: Regex = Regex::new(r"\(AF\)$").unwrap();
-            static ref in_ix: Regex = Regex::new(r"\(IX\)$").unwrap();
-            static ref in_iy: Regex = Regex::new(r"\(IY\)$").unwrap();
-            static ref immediate: Regex = Regex::new(r"\(nnnn\)$").unwrap();
+            static ref INDEXED_IY: Regex = Regex::new(r"\(IY\+nn\)$").unwrap();
+            static ref INDEXED_IX: Regex = Regex::new(r"\(IX\+nn\)$").unwrap();
+            static ref IN_HL: Regex = Regex::new(r"\(HL\)$").unwrap();
+            static ref IN_BC: Regex = Regex::new(r"\(BC\)$").unwrap();
+            static ref IN_DE: Regex = Regex::new(r"\(DE\)$").unwrap();
+            static ref IN_AF: Regex = Regex::new(r"\(AF\)$").unwrap();
+            static ref IN_IX: Regex = Regex::new(r"\(IX\)$").unwrap();
+            static ref IN_IY: Regex = Regex::new(r"\(IY\)$").unwrap();
+            static ref IMMEDIATE: Regex = Regex::new(r"\(nnnn\)$").unwrap();
         }
 
         let repr = self.disassembling_table()[i];
 
-        if indexed_iy.is_match(repr) {
+        if INDEXED_IY.is_match(repr) {
             AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Iy)
-        } else if indexed_ix.is_match(repr) {
+        } else if INDEXED_IX.is_match(repr) {
             AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Ix)
-        } else if in_af.is_match(repr) {
+        } else if IN_AF.is_match(repr) {
             AddressSource::Register16(cpclib_asm::preamble::Register16::Af)
-        } else if in_hl.is_match(repr) {
+        } else if IN_HL.is_match(repr) {
             AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
-        } else if in_de.is_match(repr) {
+        } else if IN_DE.is_match(repr) {
             AddressSource::Register16(cpclib_asm::preamble::Register16::De)
-        } else if in_bc.is_match(repr) {
+        } else if IN_BC.is_match(repr) {
             AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
-        } else if in_ix.is_match(repr) {
+        } else if IN_IX.is_match(repr) {
             AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Ix)
-        } else if in_iy.is_match(repr) {
+        } else if IN_IY.is_match(repr) {
             AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Iy)
-        } else if immediate.is_match(repr) {
+        } else if IMMEDIATE.is_match(repr) {
             AddressSource::Immediate
         } else {
             AddressSource::None
@@ -210,36 +210,36 @@ impl OpcodePrefix {
 
     fn write_address_source(self, i: usize) -> AddressSource {
         lazy_static! {
-            static ref indexed_iy: Regex = Regex::new(r"\(IY\+nn\)[^$]").unwrap();
-            static ref indexed_ix: Regex = Regex::new(r"\(IX\+nn\)[^$]").unwrap();
-            static ref in_hl: Regex = Regex::new(r"\(HL\)[^$]").unwrap();
-            static ref in_bc: Regex = Regex::new(r"\(BC\)[^$]").unwrap();
-            static ref in_de: Regex = Regex::new(r"\(DE\)[^$]").unwrap();
-            static ref in_af: Regex = Regex::new(r"\(AF\)[^$]").unwrap();
-            static ref in_ix: Regex = Regex::new(r"\(IX\)[^$]").unwrap();
-            static ref in_iy: Regex = Regex::new(r"\(IY\)[^$]").unwrap();
-            static ref immediate: Regex = Regex::new(r"\(nnnn\)[^$]").unwrap();
+            static ref INDEXED_IY: Regex = Regex::new(r"\(IY\+nn\)[^$]").unwrap();
+            static ref INDEXED_IX: Regex = Regex::new(r"\(IX\+nn\)[^$]").unwrap();
+            static ref IN_HL: Regex = Regex::new(r"\(HL\)[^$]").unwrap();
+            static ref IN_BC: Regex = Regex::new(r"\(BC\)[^$]").unwrap();
+            static ref IN_DE: Regex = Regex::new(r"\(DE\)[^$]").unwrap();
+            static ref IN_AF: Regex = Regex::new(r"\(AF\)[^$]").unwrap();
+            static ref IN_IX: Regex = Regex::new(r"\(IX\)[^$]").unwrap();
+            static ref IN_IY: Regex = Regex::new(r"\(IY\)[^$]").unwrap();
+            static ref IMMEDIATE: Regex = Regex::new(r"\(nnnn\)[^$]").unwrap();
         }
 
         let repr = self.disassembling_table()[i];
 
-        if indexed_iy.is_match(repr) {
+        if INDEXED_IY.is_match(repr) {
             AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Iy)
-        } else if indexed_ix.is_match(repr) {
+        } else if INDEXED_IX.is_match(repr) {
             AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Ix)
-        } else if in_af.is_match(repr) {
+        } else if IN_AF.is_match(repr) {
             AddressSource::Register16(cpclib_asm::preamble::Register16::Af)
-        } else if in_hl.is_match(repr) {
+        } else if IN_HL.is_match(repr) {
             AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
-        } else if in_de.is_match(repr) {
+        } else if IN_DE.is_match(repr) {
             AddressSource::Register16(cpclib_asm::preamble::Register16::De)
-        } else if in_bc.is_match(repr) {
+        } else if IN_BC.is_match(repr) {
             AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
-        } else if in_ix.is_match(repr) {
+        } else if IN_IX.is_match(repr) {
             AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Ix)
-        } else if in_iy.is_match(repr) {
+        } else if IN_IY.is_match(repr) {
             AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Iy)
-        } else if immediate.is_match(repr) {
+        } else if IMMEDIATE.is_match(repr) {
             AddressSource::Immediate
         } else {
             AddressSource::None
