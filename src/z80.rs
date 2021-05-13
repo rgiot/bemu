@@ -801,6 +801,68 @@ impl Into<Reg16> for &cpclib_asm::preamble::IndexRegister16 {
     }
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Z80Flags {
+    // Set if the 2-complement value is negative. It’s simply a copy of the most significant bit.
+    S = 1<<7,
+    // Set if the result is zero.
+    Z = 1<<6,
+    // A copy of bit 5 of the result
+    Y = 1<<5,
+    // The half-carry of an addition/subtraction (from bit 3 to 4). Needed for BCD correctionwithDAA.
+    H = 1<<4,
+    // A copy of bit 3 of the result
+    X = 1<<3,
+    // This flag can either be the parity of the result (PF), or the2-compliment signed overflow (VF): set if 2-compliment value doesn’t fit in the register
+    P = 1<<2,
+    // Shows whether the last operation was an addition (0) or an subtraction (1).  Thisinformation is needed forDAA.
+    N = 1<<1,
+    // The carry flag, set if there was a carry after the most significant bit.
+    C = 1<<0,
+
+}
+
+impl Z80Flags {
+    /// Properly set the flag to the given byte
+    #[inline]
+    pub fn set(&self, value: bool, byte: &mut u8) {
+        let mask = *self as u8;
+
+        if value {
+            *byte = *byte | mask;
+        }
+        else {
+            *byte = *byte & !mask;
+        }
+    }
+
+    /// activate the flag
+    #[inline]
+    pub fn set_on(&self, byte: &mut u8) {
+        self.set(true, byte);
+    }
+
+    /// deactivate the flag
+    #[inline]
+    pub fn set_off(&self, byte: &mut u8) {
+        self.set(false, byte);
+    }
+
+    /// Check if the flag is set
+    #[inline]
+    pub fn is_on(&self, byte: u8) -> bool {
+        let mask = *self as u8;
+
+        byte & mask != 0
+    }
+
+    #[inline]
+    pub fn is_off(&self, byte: u8) -> bool {
+        !self.is_on(byte)
+    }
+}
+
 #[derive(Default, Debug)]
 /// https://gist.github.com/drhelius/8497817
 pub struct Z80 {
@@ -846,6 +908,22 @@ pub struct Z80 {
 }
 
 impl Z80 {
+    /// Update qll the flags after an add/substract operation
+    #[inline]
+    fn update_all_flags(&mut self, res: u8, half_carry: bool, pv: bool, overflow: bool, substraction: bool) {
+        let f = &mut self.af.low_mut().val;
+
+        Z80Flags::S.set((res & 1<<7) != 0, f);
+        Z80Flags::Z.set(res == 0, f);
+        Z80Flags::Y.set((res & 1<<5) != 0, f);
+        Z80Flags::H.set(half_carry, f);
+        Z80Flags::Y.set((res & 1<<3) != 0, f);
+        Z80Flags::P.set(pv, f);
+        Z80Flags::N.set(substraction, f);
+        Z80Flags::N.set(overflow, f);
+
+    }
+
     /// Get the adress where to write based on what as been collected at fetch step
     fn get_write_address_from_opcode_information(&self) -> u16 {
         self.get_address_from_address_source(
