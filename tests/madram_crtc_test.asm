@@ -13,18 +13,18 @@ R12            equ    #30     ; Valeur arbitraire non nulle.
 ; -  les tests 3 et 6 s'appuient sur la connaissance de la valeur du registre 12.
 ; -  le test 5 présuppose un écran à 50 Hz et une largeur h-syncde 14.
 ; Au besoin, vous placerez ici et avec profit votre propre initialisation
-; CRTC, en prenant garde au point suivant : pour r2=50, il faut fixer
+; CRTC, en prenant garde au point suivant : pour R2=50, il faut fixer
 ; r3 à 13, et modifier le test 5 de façon à provoquer le bug en remettant r3 à 14.
 ;
 	ld     hl,crtclist+12
 	ld     bc,#bc0c
-	setcrtc    out    (c) ,a
+setcrtc    out    (c) ,a
 	inc    b
 	inc    b
 	outd
 	dec    b
 	dec    c
-	jp     p,setcrtc
+	jp     p, setcrtc
 	; 5 bits à 1, pour chaque type en lice :
 	ld       d,#1f
 	; départage (1 ou 2) / autres types :
@@ -56,7 +56,7 @@ test3
 	; Si 0, ce n'est pas (0, 3 ou 4)
 	ld       e,%00110
 	jr       z,t3_ok
-	cp       r12
+	cp       R12
 	; On sait que ce n'est pas (1 ou 2)
 	ld       e,%11001
 	jr       z,t3_ok
@@ -98,7 +98,7 @@ test5
 	call  wait_vs
 	; On attend 311 lignes:
 	ld       bc,#145b
-t5__tmp      dec     c
+t5_tmp      dec     c
 	jr        nz,t5_tmp
 	djnz   t5_tmp
 	; On provoque le bug CRTC2 :
@@ -114,7 +114,7 @@ t5__tmp      dec     c
 	ld       a, #f5
 	in        a,(#db)
 	; On remet un peu les choses en ordre :
-	ld       c,r2
+	ld       c,R2
 	out      (c) , C
 	and    1     ; Si Vsync, pas CRTC 2.
 	dec     a
@@ -127,12 +127,12 @@ test6
 	; 3 & 4 renvoient la valeur registre 12.
 	; 0 1 & 2 renvoient 0.
 	ld       bc,#bc04
-	out      (c) rc
+	out      (c), c
 	ld       b,#bf
 	in       a,(c)
 	ld       e,%00111 ; Si 0, ce n'est pas (3 ou 4)
 	jr       z,t6_ok
-	cp       r12
+	cp       R12
 	ld       e,%11000
 	; On sait que ce n'est pas (0, 1 ou 2)
 	jr       z , t6_ok
@@ -150,8 +150,8 @@ conlp  inc    a
 	srl     d
 	jr      c,con_fin
 	jr      nz,conlp
-	in (a),     c             ; Si aucun bit à 1, émulateur.
-con__fin   ret     z
+	in a,     (c)             ; Si aucun bit à 1, émulateur.
+con_fin   ret     z
 ; Venant de la boucle, nz si autre bit à 1.
 	ld      a,5
 	ret
@@ -162,7 +162,7 @@ wvs     in  a, (c)
 	jr      nc, wvs
 	ret
 crtclist
-defb   #3f, 40, r2, #3e
-defb   38, 0, 25, 30
-defb   0, 7, 0, 0
-defb   R12
+	defb   #3f, 40, R2, #3e
+	defb   38, 0, 25, 30
+	defb   0, 7, 0, 0
+	defb   R12

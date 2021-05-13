@@ -29,7 +29,7 @@ impl CrtcTest {
 	fn test(&self) -> (&[u8], u16) {
 		match self {
 			CrtcTest::MadramAmslive => (
-				cpclib_macros::assemble!("madram_crtc_test.asm"),
+				cpclib_macros::assemble!(fname:"tests/madram_crtc_test.asm"),
 				self.address()
 			),
 			_ => unimplemented!()
@@ -47,17 +47,26 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
 
 	// build the test
 	let (test, addr) = crtc_test.test();
+
+	assert!(!test.is_empty());
 	let end_pattern = cpclib_macros::assemble!(" jr $");
 
 	// inject it in memory
-	motherboard.write_buffer(addr, &test);
+	motherboard.write_buffer(dbg!(addr), dbg!(&test));
+	motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr);
+
 
 	// execute it until it is finished
 	loop {
+		let previous_pc = motherboard.cpu().reg16(Reg16::Pc).value();
 		motherboard.execute_next_opcode();
+		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
+
+		assert!(
+			previous_pc < pc
+		);
 
 		// detect if it is the end
-		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 		let current_pattern = [
 			motherboard.read_byte(pc + 0),
 			motherboard.read_byte(pc + 1)

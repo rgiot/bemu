@@ -62,6 +62,10 @@ impl Motherboard {
     pub fn cpu(&self) -> &Z80 {
         &self.cpu
     }
+
+    pub fn cpu_mut(&mut self) -> &mut Z80 {
+        &mut self.cpu
+    }
 }
 
 impl Motherboard {
@@ -72,6 +76,7 @@ impl Motherboard {
             self.ga.manage_clocks();
             self.sync_chips_pins(); // just to get the front stuff
         }
+        self.cpu.set_pin(Z80Pin::Neg_WAIT, true); // delegate that to GA !!
     }
 
     /// Reset all the components of the motherboard
@@ -414,7 +419,6 @@ mod test {
         let memory_config = motherboard.memory_config();
         
         // setup pins
-        motherboard.cpu.set_pin(Z80Pin::Neg_WAIT, true); // delegate that to GA !!
         // install the program
         motherboard.cpu.pc.set(0x4000);
         motherboard.cpu.hl.set(0xff);

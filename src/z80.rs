@@ -905,6 +905,9 @@ pub struct Z80 {
 
     /// Information for the current opcode - Setup after fetching the very first byte
     pub (crate) opcode_information: Option<OpcodeInformation>,
+
+    /// Flag to know if the cpu is accepting interruptions
+    pub (crate) interruption_disabled: bool
 }
 
 impl Z80 {
@@ -1063,7 +1066,12 @@ impl Z80 {
                     }
                     _ => unimplemented!(),
                 }
-            }
+            },
+
+            Mnemonic::Di => {
+                self.interruption_disabled = true;
+            },
+
             Mnemonic::Inc => {
                 let ovf = match arg1.unwrap() {
                     DataAccess::IndexRegister8(reg) => {
