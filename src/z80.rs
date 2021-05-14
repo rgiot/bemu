@@ -73,7 +73,7 @@ pub (crate) struct OpcodeInformation {
     read_address: AddressSource,
     /// Location of the write address (memory or output)
     write_address: AddressSource,
-    /// Write address data
+    /// Write data
     write_data: DataSource,
     /// Number of bytes to read from the address
     nb_additional_bytes_to_read: u8,
@@ -118,6 +118,15 @@ impl OpcodePrefix {
         // For instructions reading from memory, get the location of the address
         let read_address = if token.is_input_opcode() {
             self.input_address_source(&token)
+        } 
+        else if token.is_output_opcode() {
+            if token.mnemonic_arg1().is_none() {
+                // The instructions with no arg are those that read from memory
+                AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
+            }
+            else {
+                AddressSource::None
+            }
         } else if addresses_memory {
             self.read_address_source(opcode)
         } else {
@@ -131,6 +140,21 @@ impl OpcodePrefix {
             self.write_address_source(opcode)
         } else {
             AddressSource::None
+        };
+
+                /// Location of the byte to write on data
+        let write_data: DataSource = if token.is_output_opcode() {
+            match token.mnemonic_arg2() {
+                Some(position) => position.into(),
+                None => DataSource::Pins // the address is already on the pins
+            }
+        }
+        else {
+            if write_address == AddressSource::None {
+                DataSource::None
+            } else {
+                token.mnemonic_arg2().unwrap().into()
+            }
         };
         
 
@@ -156,20 +180,7 @@ impl OpcodePrefix {
             }
     };
 
-        /// Location of the byte to write on data
-        let write_data: DataSource = if token.is_output_opcode() {
-            match token.mnemonic_arg2() {
-                Some(position) => position.into(),
-                None => DataSource::MemoryRegister16(cpclib_asm::preamble::Register16::Hl) // the address is in hl
-            }
-        }
-        else {
-            if write_address == AddressSource::None {
-                DataSource::None
-            } else {
-                token.mnemonic_arg2().unwrap().into()
-            }
-        };
+
 
         let nb_bytes_to_write = match write_data {
             DataSource::None => 0,
@@ -178,7 +189,8 @@ impl OpcodePrefix {
             DataSource::Register8(_) => 1,
             DataSource::IndexRegister8(_) => 1,
             DataSource::Immediate => 1, // XXX not sure of that
-            DataSource::MemoryRegister16(_) => 0, // XXX not sure of that
+            DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
+            DataSource::Pins => 1 // the byte is already on the pins
         };
 
 
@@ -349,6 +361,8 @@ enum DataSource {
     None,
     /// The data value has been read by the CPU and is stored in extra bytes
     Immediate,
+    /// Data stays on the pins
+    Pins,
     /// The value is in a 8 bit register
     Register8(cpclib_asm::preamble::Register8),
     /// The value is in a 16 bit register
@@ -360,6 +374,8 @@ enum DataSource {
     /// The value msut be read from memory and tḧe address is in the register
     MemoryRegister16(cpclib_asm::preamble::Register16)  
 }
+
+type DataDestination = DataSource;
 
 impl From<&DataAccess> for DataSource {
     fn from(d: &DataAccess) -> DataSource {
@@ -1229,6 +1245,14 @@ impl Z80 {
                     _ => unimplemented!(),
                 }
             }
+
+            Mnemonic::Outd => {
+                todo!("REmove this comment once the real handling is done");
+                let f = &mut self.reg8_mut(Reg8::F).val;
+                Z80Flags::Z.set(self.reg8(Reg8::B).value() == 0, f);
+                Z80Flags::N.set_on(f);
+            }
+
             Mnemonic::Xor => {
                 let right = dbg!(self.get_available_8bits_value(arg1.unwrap()));
                 self.reg8_mut(Reg8::A).xor(right);
@@ -2383,12 +2407,16 @@ mod test {
     }
 
     #[test]
-    fn lookup_checks () {
+    fn lookup_checks_hl () {
         // ld hl, xxxx
         assert_eq!(
             dbg!(&OPCODE_PREFIX[0x21]).nb_additional_opcode_bytes,
             2
         );
+    }
+
+    #[test]
+    fn lookup_checks_out () {
 
         // out(c), a
         assert_eq!(
@@ -2418,6 +2446,30 @@ mod test {
             dbg!(&OPCODE_PREFIX[0xd3]).nb_additional_opcode_bytes,
             1 //n
         );
+
+        // outd
+        let desc = dbg!(&OPCODE_PREFIX_ED[0xab]);
+        assert_eq!(
+            desc.nb_bytes_to_write,
+            1
+        );
+        assert_eq!(
+            desc.nb_additional_opcode_bytes,
+            0
+        );
+        assert_eq!(
+            desc.read_address,
+            AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
+        );
+        assert_eq!(
+            desc.write_address,
+            AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
+        );
+        assert_eq!(
+            desc.write_data,
+            DataSource::Pins // we assume data are already on the pins because they have been read one cycle before
+        );
+
     
     }
 }
