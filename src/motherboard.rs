@@ -66,6 +66,14 @@ impl Motherboard {
     pub fn cpu_mut(&mut self) -> &mut Z80 {
         &mut self.cpu
     }
+
+    pub fn ga(&self) -> &GateArray {
+        &self.ga
+    }
+
+    pub fn ga_mut(&mut self) -> &mut GateArray {
+        &mut self.ga
+    }
 }
 
 impl Motherboard {

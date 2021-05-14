@@ -3,7 +3,7 @@
 use amsrust::crtc::{Crtc, CrtcType};
 use amsrust::motherboard::Motherboard;
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
-
+use amsrust::ga::{VideoMode};
 
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
 /// Attention, do not put the code in area where ROMs are activated ...
@@ -16,6 +16,16 @@ fn execute_program(addr: u16, test: &[u8]) -> Motherboard {
 
 
     let mut motherboard = Motherboard::default();
+
+	assert_eq!(
+		VideoMode::Mode0,
+		motherboard.ga().active_video_mode()
+	);
+	assert_eq!(
+		VideoMode::Mode0,
+		motherboard.ga().next_video_mode()
+	);
+
     motherboard.write_buffer(addr, test);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr);
 
@@ -44,20 +54,41 @@ fn execute_ld() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x4000
-		ld bc, 0x7f8e
+		ld bc, 0x7f8d
 		jr $ ; end of test
 	"));
 
 	let motherboard = execute_program(0x4000, code);
 
 	assert_eq!(
-		0x7f8e,
+		0x7f8d,
 		motherboard.cpu().reg16(Reg16::Bc).value()
 	);
 
+	
 }
 
 #[test]
-fn execute_outd() {
+fn execute_out() {
+
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld bc, 0x7f8e
+		jr $ ; end of test
+	"));
+
+	// wait (too much) to be sure screen mode changed
+	let mut motherboard = execute_program(0x4000, code);
+
+	assert_eq!(
+		VideoMode::Mode0,
+		motherboard.ga().active_video_mode()
+	);
+	assert_eq!(
+		VideoMode::Mode2,
+		motherboard.ga().next_video_mode()
+	);
+
 
 }
