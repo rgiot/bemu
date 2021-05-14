@@ -6,6 +6,7 @@ use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
 
 
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
+/// Attention, do not put the code in area where ROMs are activated ...
 fn execute_program(addr: u16, test: &[u8]) -> Motherboard {
 	dbg!(
 		cpclib_asm::disass::disassemble(test)
@@ -42,17 +43,18 @@ fn execute_program(addr: u16, test: &[u8]) -> Motherboard {
 fn execute_ld() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
-		org 0x100
+		org 0x4000
 		ld bc, 0x7f8e
 		jr $ ; end of test
 	"));
 
-	let motherboard = execute_program(0x100, code);
+	let motherboard = execute_program(0x4000, code);
 
 	assert_eq!(
-		0x7f82,
+		0x7f8e,
 		motherboard.cpu().reg16(Reg16::Bc).value()
-	)
+	);
+
 }
 
 #[test]
