@@ -1220,6 +1220,10 @@ impl Z80 {
                 }
             }
 
+            Mnemonic::Jr => {
+                self.pc.sub(2);
+            }
+
             Mnemonic::Ld => {
                 match arg1.unwrap() {
                     DataAccess::Register8(reg) => {
