@@ -16,7 +16,7 @@ use regex::Regex;
 /// Possible states for a cycle
 /// Warning: Wait state does not count
 #[derive(Debug, PartialEq)]
-pub (crate) enum TState {
+pub(crate) enum TState {
     T1,
     T2,
     T3,
@@ -32,7 +32,7 @@ impl Default for TState {
 /// This enumeration aims at helping to treat the
 /// prefixed operations
 #[derive(Debug, PartialEq, Copy, Clone)]
-pub (crate) enum OpcodePrefix {
+pub(crate) enum OpcodePrefix {
     None,
     Dd,
     Fd,
@@ -64,7 +64,7 @@ lazy_static! {
 /// Contains all the informations needed to drive the next
 /// cycles of the instruction
 #[derive(Debug, PartialEq)]
-pub (crate) struct OpcodeInformation {
+pub(crate) struct OpcodeInformation {
     /// Prefix for the current opcode
     prefix: OpcodePrefix,
     /// Number of bytes of the opcode that need to be fetched
@@ -84,26 +84,24 @@ pub (crate) struct OpcodeInformation {
     /// String representation
     repr: &'static str,
     //   /// Token just in case it is usefull (to be removed if not)
-    token: cpclib_asm::preamble::Token
+    token: cpclib_asm::preamble::Token,
 }
 
 impl OpcodeInformation {
     /// Fetch is finished for opcode of 1 byte with no memory/port access
     fn fetch_finished(&self) -> bool {
-        self.nb_additional_opcode_bytes == 0 
+        self.nb_additional_opcode_bytes == 0
     }
 
     /// Check if CPU as to read from bus
     fn expect_read(&self) -> bool {
-       self.nb_additional_bytes_to_read != 0
+        self.nb_additional_bytes_to_read != 0
     }
 
     /// Check if CPU as to write in bus
     fn expect_write(&self) -> bool {
         self.nb_bytes_to_write != 0
     }
-
-
 }
 
 impl OpcodePrefix {
@@ -112,26 +110,19 @@ impl OpcodePrefix {
         let opcode = opcode as usize;
 
         let repr = self.disassembling_table()[opcode];
-        let token = cpclib_asm::parser::parse_token(
-            if repr.is_empty() {
-                "NOP"
-            }
-            else {
-                repr
-            }
-        ).unwrap().1;
+        let token = cpclib_asm::parser::parse_token(if repr.is_empty() { "NOP" } else { repr })
+            .unwrap()
+            .1;
         let addresses_memory = !(token.is_input_opcode() | token.is_output_opcode());
 
         // For instructions reading from memory, get the location of the address
         let read_address = if token.is_input_opcode() {
             self.input_address_source(&token)
-        } 
-        else if token.is_output_opcode() {
+        } else if token.is_output_opcode() {
             if token.mnemonic_arg1().is_none() {
                 // The instructions with no arg are those that read from memory
                 AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
-            }
-            else {
+            } else {
                 AddressSource::None
             }
         } else if addresses_memory {
@@ -149,21 +140,19 @@ impl OpcodePrefix {
             AddressSource::None
         };
 
-                /// Location of the byte to write on data
+        /// Location of the byte to write on data
         let write_data: DataSource = if token.is_output_opcode() {
             match token.mnemonic_arg2() {
                 Some(position) => position.into(),
-                None => DataSource::Pins // the address is already on the pins
+                None => DataSource::Pins, // the address is already on the pins
             }
-        }
-        else {
+        } else {
             if write_address == AddressSource::None {
                 DataSource::None
             } else {
                 token.mnemonic_arg2().unwrap().into()
             }
         };
-        
 
         // get the number of bytes needed to build the complete opcode
         let nb_additional_bytes_to_read = if token.is_output_opcode() {
@@ -172,22 +161,18 @@ impl OpcodePrefix {
             } else {
                 1 // port n belongs to the opcode
             }
-        }
-        else if token.is_input_opcode() {
-            if let Some( DataAccess::PortC) = token.mnemonic_arg2() {
+        } else if token.is_input_opcode() {
+            if let Some(DataAccess::PortC) = token.mnemonic_arg2() {
                 0
             } else {
                 1 // port n
             }
-        }
-        else {
+        } else {
             match read_address {
                 AddressSource::None => 0,
                 _ => 1, // TODO really set the right value
             }
-    };
-
-
+        };
 
         let nb_bytes_to_write = match write_data {
             DataSource::None => 0,
@@ -195,11 +180,10 @@ impl OpcodePrefix {
             DataSource::IndexRegister16(_) => 2,
             DataSource::Register8(_) => 1,
             DataSource::IndexRegister8(_) => 1,
-            DataSource::Immediate => 1, // XXX not sure of that
+            DataSource::Immediate => 1,           // XXX not sure of that
             DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
-            DataSource::Pins => 1 // the byte is already on the pins
+            DataSource::Pins => 1,                // the byte is already on the pins
         };
-
 
         OpcodeInformation {
             prefix: self.clone(),
@@ -209,9 +193,9 @@ impl OpcodePrefix {
             write_data,
             nb_additional_bytes_to_read,
             nb_bytes_to_write,
-            repr, 
+            repr,
             addresses_memory,
-            token
+            token,
         }
     }
 
@@ -280,29 +264,32 @@ impl OpcodePrefix {
         }
     }
 
-    fn input_address_source(self, token: &Token) -> AddressSource  {
+    fn input_address_source(self, token: &Token) -> AddressSource {
         if !token.is_input_opcode() {
             return AddressSource::None;
         }
 
-
         match token.mnemonic_arg2() {
-            Some(DataAccess::PortC) | None => AddressSource::Register16(cpclib_asm::preamble::Register16::Bc),
+            Some(DataAccess::PortC) | None => {
+                AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
+            }
             Some(DataAccess::PortN(_)) => AddressSource::Immediate,
-            _ => unreachable!("{:?}", token)
+            _ => unreachable!("{:?}", token),
         }
     }
 
     /// Provide the location that contains the address to write in the address bus to access a chip
-    fn output_address_source(self, token: &Token) -> AddressSource  {
+    fn output_address_source(self, token: &Token) -> AddressSource {
         if !token.is_output_opcode() {
             return AddressSource::None;
         }
 
-        match token.mnemonic_arg1(){
-            Some(DataAccess::PortC) | None => AddressSource::Register16(cpclib_asm::preamble::Register16::Bc),
+        match token.mnemonic_arg1() {
+            Some(DataAccess::PortC) | None => {
+                AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
+            }
             Some(DataAccess::PortN(_)) => AddressSource::Immediate,
-            _ => unreachable!("{:?}", token)
+            _ => unreachable!("{:?}", token),
         }
     }
 
@@ -379,7 +366,7 @@ enum DataSource {
     /// The value is in a 8 bits indexed regiser
     IndexRegister8(cpclib_asm::preamble::IndexRegister8),
     /// The value msut be read from memory and tḧe address is in the register
-    MemoryRegister16(cpclib_asm::preamble::Register16)  
+    MemoryRegister16(cpclib_asm::preamble::Register16),
 }
 
 type DataDestination = DataSource;
@@ -399,7 +386,7 @@ impl From<&DataAccess> for DataSource {
 
 /// Simulate the Cycles of the CPU. No need to simulate the pipeline stuff however
 #[derive(Debug, PartialEq)]
-pub (crate) enum MCycle {
+pub(crate) enum MCycle {
     /// M1 (State, byte number, opcode prefix)
     /// - T1: request the reading of a byte
     /// - T2: read the byte
@@ -914,22 +901,21 @@ impl Into<Reg16> for &cpclib_asm::preamble::IndexRegister16 {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Z80Flags {
     // Set if the 2-complement value is negative. It’s simply a copy of the most significant bit.
-    S = 1<<7,
+    S = 1 << 7,
     // Set if the result is zero.
-    Z = 1<<6,
+    Z = 1 << 6,
     // A copy of bit 5 of the result
-    Y = 1<<5,
+    Y = 1 << 5,
     // The half-carry of an addition/subtraction (from bit 3 to 4). Needed for BCD correctionwithDAA.
-    H = 1<<4,
+    H = 1 << 4,
     // A copy of bit 3 of the result
-    X = 1<<3,
+    X = 1 << 3,
     // This flag can either be the parity of the result (PF), or the2-compliment signed overflow (VF): set if 2-compliment value doesn’t fit in the register
-    P = 1<<2,
+    P = 1 << 2,
     // Shows whether the last operation was an addition (0) or an subtraction (1).  Thisinformation is needed forDAA.
-    N = 1<<1,
+    N = 1 << 1,
     // The carry flag, set if there was a carry after the most significant bit.
-    C = 1<<0,
-
+    C = 1 << 0,
 }
 
 impl Z80Flags {
@@ -940,8 +926,7 @@ impl Z80Flags {
 
         if value {
             *byte = *byte | mask;
-        }
-        else {
+        } else {
             *byte = *byte & !mask;
         }
     }
@@ -978,62 +963,68 @@ pub struct Z80 {
     /// Encoding of the 40 Z80Pin
     pins: PinsBuffer,
     /// State of the Z80 state-machine
-    pub (crate) next_state: MCycle,
+    pub(crate) next_state: MCycle,
 
-    pub (crate) pc: Register16,
-    pub (crate) sp: Register16,
+    pub(crate) pc: Register16,
+    pub(crate) sp: Register16,
 
-    pub (crate) af: Register16,
-    pub (crate) af2: Register16,
+    pub(crate) af: Register16,
+    pub(crate) af2: Register16,
 
-    pub (crate) hl: Register16,
-    pub (crate) bc: Register16,
-    pub (crate) de: Register16,
+    pub(crate) hl: Register16,
+    pub(crate) bc: Register16,
+    pub(crate) de: Register16,
 
-    pub (crate) hl2: Register16,
-    pub (crate) bc2: Register16,
-    pub (crate) de2: Register16,
+    pub(crate) hl2: Register16,
+    pub(crate) bc2: Register16,
+    pub(crate) de2: Register16,
 
-    pub (crate) ix: Register16,
-    pub (crate) iy: Register16,
-    pub (crate) wz: Register16,
+    pub(crate) ix: Register16,
+    pub(crate) iy: Register16,
+    pub(crate) wz: Register16,
 
-    pub (crate) i: Register8,
-    pub (crate) r: Register8,
+    pub(crate) i: Register8,
+    pub(crate) r: Register8,
 
     /// Instruction Register / contains the opcode of interest
-    pub (crate) ir: Register8,
+    pub(crate) ir: Register8,
 
-    pub (crate) iff1: Register16,
-    pub (crate) iff2: Register16,
-    pub (crate) im: u8,
+    pub(crate) iff1: Register16,
+    pub(crate) iff2: Register16,
+    pub(crate) im: u8,
 
     /// Refresh adr
     /// XXX Not handled at all by the emulator
-    pub (crate) refresh_addr: u16,
+    pub(crate) refresh_addr: u16,
 
     /// Information for the current opcode - Setup after fetching the very first byte
-    pub (crate) opcode_information: Option<OpcodeInformation>,
+    pub(crate) opcode_information: Option<OpcodeInformation>,
 
     /// Flag to know if the cpu is accepting interruptions
-    pub (crate) interruption_disabled: bool
+    pub(crate) interruption_disabled: bool,
 }
 
 impl Z80 {
     /// Update qll the flags after an add/substract operation
     #[inline]
-    fn update_all_flags(&mut self, res: u8, half_carry: bool, pv: bool, overflow: bool, substraction: bool) {
+    fn update_all_flags(
+        &mut self,
+        res: u8,
+        half_carry: bool,
+        pv: bool,
+        overflow: bool,
+        substraction: bool,
+    ) {
         let f = &mut self.af.low_mut().val;
 
-        Z80Flags::S.set((res & 1<<7) != 0, f);
+        Z80Flags::S.set((res & 1 << 7) != 0, f);
         Z80Flags::Z.set(res == 0, f);
-        Z80Flags::Y.set((res & 1<<5) != 0, f);
+        Z80Flags::Y.set((res & 1 << 5) != 0, f);
         Z80Flags::H.set(half_carry, f);
-        Z80Flags::Y.set((res & 1<<3) != 0, f);
+        Z80Flags::Y.set((res & 1 << 3) != 0, f);
         Z80Flags::P.set(pv, f);
         Z80Flags::N.set(substraction, f);
         Z80Flags::N.set(overflow, f);
-
     }
 
     /// Get the adress where to write based on what as been collected at fetch step
@@ -1080,7 +1071,10 @@ impl Z80 {
         match src {
             DataSource::Register8(reg) => self.reg8(reg.into()).get(),
             DataSource::Pins => self.get_data_from_pins(),
-            _ => panic!("{:?} contains a 16 bits value. Find another way to handle that", src),
+            _ => panic!(
+                "{:?} contains a 16 bits value. Find another way to handle that",
+                src
+            ),
         }
     }
 
@@ -1145,17 +1139,14 @@ impl Z80 {
                     if opcode_information.expect_read() {
                         self.next_state = MCycle::Read(TState::T1, 0);
                         return false;
-                    }
-                    else if opcode_information.expect_write() {
+                    } else if opcode_information.expect_write() {
                         if opcode_information.addresses_memory {
                             self.next_state = MCycle::Write(TState::T1, 0);
-                        }
-                        else {
+                        } else {
                             self.next_state = MCycle::Output(TState::T1, 0);
                         }
                         return false;
-                    }
-                    else {
+                    } else {
                         // Start a new opcode
                         self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
                         return true;
@@ -1164,14 +1155,13 @@ impl Z80 {
                     // continue to read the bytes for the current opcode
                     self.next_state = MCycle::FetchOpcode(TState::T1, 1, current_prefix);
                     return false;
-                }  else {
+                } else {
                     unimplemented!("{:?}", opcode_information)
                 }
             }
         }
     }
 
-    
     /// Execute the end of the instration (everything related to memory or ports has already been handled).
     /// Here we take care of registers modifications and flags configuration
     fn execute_opcode(
@@ -1181,8 +1171,7 @@ impl Z80 {
         arg2: Option<&DataAccess>,
     ) {
         match opcode {
-            Mnemonic::Nop |
-            Mnemonic::Out => {
+            Mnemonic::Nop | Mnemonic::Out => {
                 // nothing to do because everything has been handled by cpu
             }
 
@@ -1196,11 +1185,11 @@ impl Z80 {
                     }
                     _ => unimplemented!(),
                 }
-            },
+            }
 
             Mnemonic::Di => {
                 self.interruption_disabled = true;
-            },
+            }
 
             Mnemonic::Inc => {
                 let mut update_flags = true; // disable only for 16 bits
@@ -1215,23 +1204,21 @@ impl Z80 {
                         let left: Reg8 = reg.into();
                         self.reg8_mut(left).inc();
                         val = self.reg8(left).value();
-
                     }
                     _ => unimplemented!(),
                 }
 
                 if update_flags {
                     let f = &mut self.reg8_mut(Reg8::F).val;
-                    Z80Flags::S.set(val==0, f);
-                    Z80Flags::Z.set(val&1<<7 != 0, f);
-                    Z80Flags::Y.set(val&1<<5 != 0, f);
+                    Z80Flags::S.set(val == 0, f);
+                    Z80Flags::Z.set(val & 1 << 7 != 0, f);
+                    Z80Flags::Y.set(val & 1 << 5 != 0, f);
                     // TODO handle H flag
-                    Z80Flags::X.set(val&1<<3 != 0, f);
+                    Z80Flags::X.set(val & 1 << 3 != 0, f);
                     // TODO handle P flag
                     Z80Flags::N.set_off(f);
                 }
             }
-
 
             Mnemonic::Ld => {
                 match arg1.unwrap() {
@@ -1240,7 +1227,7 @@ impl Z80 {
                         let left: Reg8 = reg.into();
                         let right = self.get_available_8bits_value(arg2.unwrap());
                         self.reg8_mut(left).set(right);
-                    },
+                    }
 
                     DataAccess::Register16(reg) => {
                         let left: Reg16 = reg.into();
@@ -1250,8 +1237,7 @@ impl Z80 {
 
                     DataAccess::Memory(_) => {
                         // we have nothing to do because CPU has already executed everything
-                    },
-
+                    }
 
                     _ => unimplemented!(),
                 }
@@ -1390,14 +1376,14 @@ impl Z80 {
 // Opcode specific code
 impl Z80 {
     /// Manage the specific treatment after the read_instruction
-    pub fn post_read_action(&mut self ) {
+    pub fn post_read_action(&mut self) {
         let opcode_info = self.opcode_information.as_ref().unwrap();
 
         match opcode_info.token.mnemonic() {
             Some(Mnemonic::Outd) => {
                 self.reg16_mut(Reg16::Hl).dec();
                 self.reg8_mut(Reg8::B).dec();
-            },
+            }
 
             _ => {
                 // by default, there is nothing to
@@ -1441,7 +1427,6 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
-
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
@@ -1501,8 +1486,7 @@ impl Chip for Z80 {
                         // nothing is required for the execution
                         // TODO check if input or memory cycle is required
                         self.execute_step();
-                    }
-                    else {
+                    } else {
                         // nothing to do ; the cpu is already in the right state
                     }
                 } else {
@@ -1513,8 +1497,7 @@ impl Chip for Z80 {
                         } else if 0 != opcode_information.nb_bytes_to_write {
                             if opcode_information.addresses_memory {
                                 self.next_state = MCycle::Write(TState::T1, 0);
-                            }
-                            else {
+                            } else {
                                 self.next_state = MCycle::Output(TState::T1, 0);
                             }
                         } else {
@@ -1553,13 +1536,11 @@ impl Chip for Z80 {
                 self.post_read_action();
 
                 let opcode_info = self.opcode_information.as_ref().unwrap();
-                if nb + 1 == opcode_info.nb_additional_bytes_to_read
-                {
+                if nb + 1 == opcode_info.nb_additional_bytes_to_read {
                     if 0 != opcode_info.nb_bytes_to_write {
                         if opcode_info.addresses_memory {
                             self.next_state = MCycle::Write(TState::T1, 0);
-                        }
-                        else {
+                        } else {
                             self.next_state = MCycle::Output(TState::T1, 0);
                         }
                     } else {
@@ -1574,8 +1555,6 @@ impl Chip for Z80 {
                 }
             }
 
-
-
             MCycle::Write(TState::T1, nb) => {
                 let address = self.get_write_address_from_opcode_information();
                 self.set_address_on_pins(address);
@@ -1585,8 +1564,6 @@ impl Chip for Z80 {
             MCycle::Write(TState::T2, nb) => {
                 self.set_pin(Z80Pin::Neg_MREQ, false);
                 self.set_pin(Z80Pin::Neg_WR, false);
-
-
 
                 let byte = match nb {
                     0 => self.get_byte_to_write_from_opcode_information(),
@@ -1611,22 +1588,17 @@ impl Chip for Z80 {
                 }
             }
 
-
             MCycle::Output(TState::T1, nb) => {
                 let address = self.get_write_address_from_opcode_information();
                 self.set_address_on_pins(address);
                 assert!(self.get_pin(Z80Pin::Neg_IORQ));
                 assert!(self.get_pin(Z80Pin::Neg_WR));
 
-
                 self.next_state.inc_state();
             }
             MCycle::Output(TState::T2, nb) => {
-
                 self.set_pin(Z80Pin::Neg_IORQ, false);
                 self.set_pin(Z80Pin::Neg_WR, false);
-
-
 
                 let byte = self.get_byte_to_write_from_opcode_information();
                 assert_eq!(
@@ -1641,7 +1613,7 @@ impl Chip for Z80 {
                 self.set_pin(Z80Pin::Neg_IORQ, true);
                 self.set_pin(Z80Pin::Neg_WR, true);
 
-                if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write- 1 {
+                if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write - 1 {
                     // TODO take into account those that do a write after the read (if that exists)
                     self.execute_step();
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
@@ -1652,10 +1624,8 @@ impl Chip for Z80 {
                 }
             }
 
-
             _ => unimplemented!(),
         }
-
     }
 
     fn reset(&mut self) {
@@ -2410,59 +2380,36 @@ mod test {
         );
     }
 
-
     #[test]
     fn registers_operation() {
         let mut r16 = crate::z80::Register16::default();
-        assert_eq!(
-            r16.value(),
-            0
-        );
+        assert_eq!(r16.value(), 0);
 
         r16.set(0xffff);
-        assert_eq!(
-            r16.value(),
-            0xffff
-        );
+        assert_eq!(r16.value(), 0xffff);
 
         r16.add(1);
-        assert_eq!(
-            r16.value(),
-            0
-        );
+        assert_eq!(r16.value(), 0);
 
         r16.inc();
-        assert_eq!(
-            r16.value(),
-            1
-        );
+        assert_eq!(r16.value(), 1);
     }
 
     #[test]
-    fn lookup_checks_hl () {
+    fn lookup_checks_hl() {
         // ld hl, xxxx
-        assert_eq!(
-            dbg!(&OPCODE_PREFIX[0x21]).nb_additional_opcode_bytes,
-            2
-        );
+        assert_eq!(dbg!(&OPCODE_PREFIX[0x21]).nb_additional_opcode_bytes, 2);
     }
 
     #[test]
-    fn lookup_checks_out () {
-
+    fn lookup_checks_out() {
         // out(c), a
         assert_eq!(
             dbg!(&OPCODE_PREFIX_ED[0x79]).nb_additional_opcode_bytes,
             0 // ed is the already additional
         );
-        assert_eq!(
-            dbg!(&OPCODE_PREFIX_ED[0x79]).nb_bytes_to_write,
-            1
-        );
-        assert_eq!(
-            dbg!(&OPCODE_PREFIX_ED[0x79]).addresses_memory,
-            false
-        );
+        assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).nb_bytes_to_write, 1);
+        assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).addresses_memory, false);
         assert_eq!(
             dbg!(&OPCODE_PREFIX_ED[0x79]).write_address,
             AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
@@ -2472,7 +2419,6 @@ mod test {
             DataSource::Register8(cpclib_asm::preamble::Register8::A)
         );
 
-
         // out (n), a
         assert_eq!(
             dbg!(&OPCODE_PREFIX[0xd3]).nb_additional_opcode_bytes,
@@ -2481,14 +2427,8 @@ mod test {
 
         // outd
         let desc = dbg!(&OPCODE_PREFIX_ED[0xab]);
-        assert_eq!(
-            desc.nb_bytes_to_write,
-            1
-        );
-        assert_eq!(
-            desc.nb_additional_opcode_bytes,
-            0
-        );
+        assert_eq!(desc.nb_bytes_to_write, 1);
+        assert_eq!(desc.nb_additional_opcode_bytes, 0);
         assert_eq!(
             desc.read_address,
             AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
@@ -2501,7 +2441,5 @@ mod test {
             desc.write_data,
             DataSource::Pins // we assume data are already on the pins because they have been read one cycle before
         );
-
-    
     }
 }

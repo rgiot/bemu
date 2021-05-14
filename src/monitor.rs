@@ -1,28 +1,29 @@
+use crate::ga::{RgbLevels, Sync};
 /// https://www.cpcwiki.eu/forum/amstrad-cpc-hardware/cpc-max-screen-resolution/
 /// https://en.wikipedia.org/wiki/PAL
 /// http://martin.hinner.info/vga/pal.html
-
 use derive_more::{Add, AddAssign, From, Into, Sub, SubAssign};
 use image::*;
-use crate::ga::{RgbLevels, Sync};
 
 /// This is the total duration to trat a line
 const RASTER_LINE_LENGTH: usize = 64 * 8 * 2; // (1024) In fact it is far smaller
 /// This is the amount of visible pixels before retracing
-const MONITOR_ACTIVE_PIXELS: usize = 52*8*2; // (832)
+const MONITOR_ACTIVE_PIXELS: usize = 52 * 8 * 2; // (832)
 const MONITOR_HEIGHT: usize = 312; //.5
 
-const MINIUM_HSYNC_SIZE: u32 = 8*8*2;
+const MINIUM_HSYNC_SIZE: u32 = 8 * 8 * 2;
 
 const MONITOR_VISIBLE_LINES: usize = 288;
 const MONITOR_VISIBLE_PIXELS: usize = 768;
 
 const MONITOR_HORIZONTAL_START_RETRACE: usize = MONITOR_ACTIVE_PIXELS;
-const MONITOR_HORIZONTAL_RETRACE_DURATION: usize = (RASTER_LINE_LENGTH-MONITOR_HORIZONTAL_START_RETRACE) * 80 / 100;
+const MONITOR_HORIZONTAL_RETRACE_DURATION: usize =
+    (RASTER_LINE_LENGTH - MONITOR_HORIZONTAL_START_RETRACE) * 80 / 100;
 const MONITOR_VERTICAL_START_RETRACE: usize = 312;
 
 // No idea if it is correct
-const MONITOR_HORIZONTAL_HOLD: usize = RASTER_LINE_LENGTH - MONITOR_HORIZONTAL_START_RETRACE - MONITOR_HORIZONTAL_RETRACE_DURATION;
+const MONITOR_HORIZONTAL_HOLD: usize =
+    RASTER_LINE_LENGTH - MONITOR_HORIZONTAL_START_RETRACE - MONITOR_HORIZONTAL_RETRACE_DURATION;
 
 // No idea if it is correct
 const MONITOR_VERTICAL_HOLD: usize = 20;
@@ -37,7 +38,10 @@ const VSYNC_COLOR: Rgb<u8> = Rgb([0, 0, 0]);
 pub struct Texture(RgbImage);
 impl Default for Texture {
     fn default() -> Self {
-        Self(RgbImage::new(RASTER_LINE_LENGTH as u32, MONITOR_HEIGHT as u32 *2))
+        Self(RgbImage::new(
+            RASTER_LINE_LENGTH as u32,
+            MONITOR_HEIGHT as u32 * 2,
+        ))
     }
 }
 
@@ -60,8 +64,6 @@ impl Gun {
     }
 }
 
-
-
 #[derive(Clone, Copy, Debug, Sub, SubAssign, From, Into, PartialEq)]
 struct VHold(usize);
 impl Default for VHold {
@@ -83,8 +85,8 @@ impl Default for HHold {
 struct VRetrace(usize);
 impl Default for VRetrace {
     fn default() -> Self {
-       // Self(MONITOR_VERTICAL_START_RETRACE * 3 / 10 -1)
-       Self(0)
+        // Self(MONITOR_VERTICAL_START_RETRACE * 3 / 10 -1)
+        Self(0)
     }
 }
 
@@ -109,20 +111,18 @@ impl Default for Brightness {
 impl Texture {
     /// Set the pixel in the texture. Remember each pixels is drawn on two lines to properly simulates mode 2
     pub fn set(&mut self, y: usize, x: usize, pixel: Rgb<u8>) {
-
         let x = x as u32;
         let y = y as u32;
 
-        self.0.put_pixel(x, y*2+0, pixel);
-        self.0.put_pixel(x, y*2+1, pixel);
+        self.0.put_pixel(x, y * 2 + 0, pixel);
+        self.0.put_pixel(x, y * 2 + 1, pixel);
     }
 
     /// Save the texture in file p
-    pub fn save<P:AsRef<std::path::Path>>(&self, p: P) -> Result<(), ImageError> {
+    pub fn save<P: AsRef<std::path::Path>>(&self, p: P) -> Result<(), ImageError> {
         self.0.save(p.as_ref())
     }
 }
-
 
 /// No idea if it is the good approach...
 /// But we wait VSYNC by waiting a certain amount of lines
@@ -135,12 +135,11 @@ enum WaitVerticalSynchronization {
     /// We wait the next line (until we get vsync or delay elapsed)
     WaitHorizontalSynchronization(VHold, HHold),
     /// Symbolize maximum alloted time to wait the vsync as elapsed
-    Done
+    Done,
 }
 
 impl WaitVerticalSynchronization {
-
-    fn new(vhold: VHold)-> Self {
+    fn new(vhold: VHold) -> Self {
         Self::GunSimulation(vhold, 0.into())
     }
 
@@ -149,33 +148,31 @@ impl WaitVerticalSynchronization {
         match self {
             Self::GunSimulation(ref vhold, pos) => {
                 *pos += 1.into();
-                if *pos  == MONITOR_HORIZONTAL_START_RETRACE.into() {
+                if *pos == MONITOR_HORIZONTAL_START_RETRACE.into() {
                     *self = Self::HorizontalRetraceSimulation(*vhold, HRetrace::default());
                 }
-            },
+            }
 
             Self::HorizontalRetraceSimulation(ref vhold, hretrace) => {
                 *hretrace -= 1.into();
                 if *hretrace == 0.into() {
                     *self = Self::WaitHorizontalSynchronization(*vhold, HHold::default());
                 }
+            }
 
-            },
-
-            Self::WaitHorizontalSynchronization(vhold, hhold) =>  {
+            Self::WaitHorizontalSynchronization(vhold, hhold) => {
                 *hhold -= 1.into();
                 if *hhold == 0.into() || hsync {
                     *vhold -= 1.into();
                     if *vhold == 0.into() {
                         *self = Self::Done;
-                    }
-                    else {
+                    } else {
                         *self = Self::GunSimulation(*vhold, 0.into());
                     }
                 }
-            },
+            }
 
-            Done => unreachable!()
+            Done => unreachable!(),
         };
     }
 
@@ -183,7 +180,7 @@ impl WaitVerticalSynchronization {
     fn is_done(&self) -> bool {
         match self {
             Self::Done => true,
-            _ => false
+            _ => false,
         }
     }
 }
@@ -255,18 +252,16 @@ impl MonitorState {
     pub fn vsync_wait_done(&self) -> bool {
         match self {
             MonitorState::WaitVerticalSynchronization(wait) => wait.is_done(),
-           _  => panic!("Incompatible state")
-        }    
+            _ => panic!("Incompatible state"),
+        }
     }
 
     pub fn vsync_wait_step(&mut self, hsync: bool) {
         match self {
             MonitorState::WaitVerticalSynchronization(wait) => wait.step(hsync),
-            _ => panic!("Incompatible state")
+            _ => panic!("Incompatible state"),
         }
     }
-
-
 
     pub fn is_waiting_hsync(&self) -> bool {
         match self {
@@ -295,7 +290,7 @@ impl MonitorState {
             Self::HorizontalRetrace(ref y, _) => *y,
             Self::WaitHorizontalSynchronization(ref y, _) => *y,
             Self::WaitVerticalSynchronization(_) => VerticalPosition(0),
-            Self::VerticalRetrace(ref r) => VerticalPosition(0) // fake
+            Self::VerticalRetrace(ref r) => VerticalPosition(0), // fake
         }
     }
 }
@@ -321,7 +316,6 @@ pub struct Monitor {
     previous_hsync: bool,
 }
 
-
 impl Default for Monitor {
     fn default() -> Self {
         Monitor {
@@ -335,13 +329,12 @@ impl Default for Monitor {
             vsync_color: VSYNC_COLOR,
             hsync_color: HSYNC_COLOR,
 
-            previous_hsync: false
+            previous_hsync: false,
         }
     }
 }
 
 impl Monitor {
-
     /// Generate a debug monitor that color vbl and vsync
     pub fn debug() -> Self {
         Monitor {
@@ -355,17 +348,18 @@ impl Monitor {
             vsync_color: VSYNC_DEBUG_COLOR,
             hsync_color: HSYNC_DEBUG_COLOR,
 
-            previous_hsync: false
+            previous_hsync: false,
         }
     }
 
     /// Generate a debug monitor that waits the vsync
     pub fn wait_vsync() -> Self {
         let mut monitor = Self::debug();
-        monitor.state = MonitorState::WaitVerticalSynchronization(WaitVerticalSynchronization::new(monitor.vhold));
+        monitor.state = MonitorState::WaitVerticalSynchronization(
+            WaitVerticalSynchronization::new(monitor.vhold),
+        );
         monitor
     }
-
 
     /// This function is called when a new frame starts (i.e., the gun beam is released from the top of screen)
     fn new_frame(&mut self) {
@@ -377,17 +371,16 @@ impl Monitor {
         &self.full_texture.0
     }
 
-
     /// Handle the information send from the CPC by the GA
-    pub fn receive(&mut self, rgb: RgbLevels, Sync{vsync, hsync}: Sync) {
-
+    pub fn receive(&mut self, rgb: RgbLevels, Sync { vsync, hsync }: Sync) {
         if self.state.is_in_vertical_retrace() {
             // Gun is moving from bottom right to top left
             let step = self.state.vertical_retrace_step_mut().unwrap();
             if *step <= 1.into() {
-                self.state = MonitorState::WaitVerticalSynchronization(WaitVerticalSynchronization::new(self.vhold));
-            }
-            else {
+                self.state = MonitorState::WaitVerticalSynchronization(
+                    WaitVerticalSynchronization::new(self.vhold),
+                );
+            } else {
                 *step -= 1.into();
             }
         }
@@ -400,8 +393,7 @@ impl Monitor {
                     self.state.get_vertical_position(),
                     self.hhold,
                 );
-            }
-            else {
+            } else {
                 *step -= 1.into();
             }
         }
@@ -424,8 +416,7 @@ impl Monitor {
             }
 
             if (*wait == 0.into() && !hsync) || (!hsync && self.previous_hsync) {
-                self.state =
-                    MonitorState::Display(Gun::at(self.state.get_vertical_position()));
+                self.state = MonitorState::Display(Gun::at(self.state.get_vertical_position()));
             }
         }
 
@@ -435,12 +426,12 @@ impl Monitor {
             let gun = self.state.gun_mut().unwrap();
 
             if vsync {
-                self.full_texture.set(gun.y.into(), gun.x.into(), self.vsync_color);
-            }
-            else if hsync {
-                self.full_texture.set(gun.y.into(), gun.x.into(), self.hsync_color);
-            }
-            else {
+                self.full_texture
+                    .set(gun.y.into(), gun.x.into(), self.vsync_color);
+            } else if hsync {
+                self.full_texture
+                    .set(gun.y.into(), gun.x.into(), self.hsync_color);
+            } else {
                 self.full_texture.set(gun.y.into(), gun.x.into(), rgb);
             }
 
@@ -465,16 +456,11 @@ impl Monitor {
     /// Compute the RGB color from the received intensities
     fn compute_rgb(&self, rgb: RgbLevels) -> Rgb<u8> {
         /// TODO play with luminance to update the brightness
-        let to_u8 = |v: f32| -> u8 { (v * 255f32/100.0).min(255f32) as u8 };
+        let to_u8 = |v: f32| -> u8 { (v * 255f32 / 100.0).min(255f32) as u8 };
 
-        Rgb([
-            to_u8(rgb.r()), 
-            to_u8(rgb.g()), 
-            to_u8(rgb.b())
-        ])
+        Rgb([to_u8(rgb.r()), to_u8(rgb.g()), to_u8(rgb.b())])
     }
 }
-
 
 #[cfg(test)]
 mod test {
@@ -488,16 +474,26 @@ mod test {
             dbg!(i, &mon.state);
 
             for j in 0..(RASTER_LINE_LENGTH + usize::from(HHold::default())) {
-
                 assert!(mon.state.is_waiting_vsync());
-                mon.receive( (0.5, 0.5, 0.5).into(), Sync{vsync:false, hsync:false});
+                mon.receive(
+                    (0.5, 0.5, 0.5).into(),
+                    Sync {
+                        vsync: false,
+                        hsync: false,
+                    },
+                );
             }
         }
-        mon.receive( (0.5, 0.5, 0.5).into(), Sync{vsync:false, hsync:false});
+        mon.receive(
+            (0.5, 0.5, 0.5).into(),
+            Sync {
+                vsync: false,
+                hsync: false,
+            },
+        );
         dbg!(&mon.state);
         assert!(!mon.state.is_waiting_vsync());
     }
-
 
     #[test]
     fn test_wait_vsync_no_delay() {
@@ -505,24 +501,33 @@ mod test {
 
         for i in (0..2) {
             assert!(mon.state.is_waiting_vsync());
-            mon.receive( (0.5, 0.5, 0.5).into(), Sync{vsync:false, hsync:false});
+            mon.receive(
+                (0.5, 0.5, 0.5).into(),
+                Sync {
+                    vsync: false,
+                    hsync: false,
+                },
+            );
         }
 
         assert!(mon.state.is_waiting_vsync());
-        mon.receive( (0.5, 0.5, 0.5).into(), Sync{vsync:true, hsync:false});
+        mon.receive(
+            (0.5, 0.5, 0.5).into(),
+            Sync {
+                vsync: true,
+                hsync: false,
+            },
+        );
         assert!(!mon.state.is_waiting_vsync());
     }
 
     #[test]
     fn test_color() {
         let mut mon = Monitor::default();
-        assert_eq!(
-            mon.compute_rgb( (0., 0., 0.).into()),
-            Rgb([0, 0, 0])
-        );
+        assert_eq!(mon.compute_rgb((0., 0., 0.).into()), Rgb([0, 0, 0]));
 
         assert_eq!(
-            mon.compute_rgb( (100., 100., 100.).into()),
+            mon.compute_rgb((100., 100., 100.).into()),
             Rgb([255, 255, 255])
         );
     }
@@ -536,27 +541,30 @@ mod test {
 
         for char_line in 0..=r4 {
             for scan_line in 0..=r9 {
-                let vsync = (char_line*8 + scan_line) < 16; 
+                let vsync = (char_line * 8 + scan_line) < 16;
 
                 for char in 0..=r0 {
                     let hsync = char >= r2 && char < 60;
-                    for pixel in 0..16 { // ga cycles
+                    for pixel in 0..16 {
+                        // ga cycles
 
                         if hsync || vsync {
-                            monitor.receive((0., 0., 0.).into(), Sync{vsync, hsync});
-                        }
-                        else {
+                            monitor.receive((0., 0., 0.).into(), Sync { vsync, hsync });
+                        } else {
                             monitor.receive(
-                                ((char_line+1) as f32 / r4 as f32, 
-                                (char+1) as f32 / r0 as f32,
-                                (scan_line+1) as f32 / r9 as f32).into(), 
-                                Sync{vsync, hsync} );
+                                (
+                                    (char_line + 1) as f32 / r4 as f32,
+                                    (char + 1) as f32 / r0 as f32,
+                                    (scan_line + 1) as f32 / r9 as f32,
+                                )
+                                    .into(),
+                                Sync { vsync, hsync },
+                            );
                         }
                     }
                 }
             }
         }
-
     }
 
     #[test]
@@ -564,27 +572,36 @@ mod test {
         let mut monitor = Monitor::debug();
 
         exec_one_frame(&mut monitor);
-        monitor.full_texture.save("test_monitor_standard_screen.png").unwrap();
+        monitor
+            .full_texture
+            .save("test_monitor_standard_screen.png")
+            .unwrap();
     }
-
 
     #[test]
     fn test_standard_screen_catch_vsync() {
         let mut monitor = Monitor::debug();
 
-        monitor.state = MonitorState::Display(Gun{x:100.into(), y:200.into()});
+        monitor.state = MonitorState::Display(Gun {
+            x: 100.into(),
+            y: 200.into(),
+        });
 
         exec_one_frame(&mut monitor);
         // this image is buggy as vsync is not properly placed
-        monitor.full_texture.save("test_standard_screen_catch_vsync1.png").unwrap();
-    
-    
+        monitor
+            .full_texture
+            .save("test_standard_screen_catch_vsync1.png")
+            .unwrap();
+
         for i in 0..300 {
             exec_one_frame(&mut monitor);
         }
 
         // monitor is supposed to be good
-        monitor.full_texture.save("test_standard_screen_catch_vsync2.png").unwrap();
-
+        monitor
+            .full_texture
+            .save("test_standard_screen_catch_vsync2.png")
+            .unwrap();
     }
 }

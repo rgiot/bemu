@@ -20,7 +20,7 @@ pub struct Motherboard {
 
 impl Default for Motherboard {
     fn default() -> Self {
-        let mut motherboard = Motherboard { 
+        let mut motherboard = Motherboard {
             cpu: Default::default(),
             crtc: Default::default(),
             ga: Default::default(),
@@ -36,7 +36,7 @@ impl Default for Motherboard {
 /// TODO add the other kinds of varitions
 #[derive(Default, Clone, Copy)]
 pub struct MotherboardBuilder {
-    crtc_type: Option<CrtcType>
+    crtc_type: Option<CrtcType>,
 }
 
 impl MotherboardBuilder {
@@ -69,7 +69,6 @@ impl Motherboard {
 }
 
 impl Motherboard {
-
     fn stabilize_run(&mut self) {
         self.reset();
         while !self.cpu.is_activated() {
@@ -89,11 +88,10 @@ impl Motherboard {
         self.sync_chips_pins();
     }
 
-    /// Execute one tick on all the components of the motherboard and returns the 
+    /// Execute one tick on all the components of the motherboard and returns the
     /// corresponding gate array information
     /// TODO check if it must be generated before or after
     pub fn tick(&mut self) -> (RgbLevels, Sync) {
-
         dbg!(
             self.cpu.get_pin(Z80::clock_pin()),
             self.crtc.get_pin(Crtc::clock_pin())
@@ -115,7 +113,6 @@ impl Motherboard {
 
         let ga_output = (self.ga.rgb(), self.ga.sync());
 
-
         // Divides and distribute the 16Mhz clock for next round
         self.ga.manage_clocks();
 
@@ -123,10 +120,8 @@ impl Motherboard {
         // TODO replace that by a real bus abstraction
         self.sync_chips_pins();
 
-
         ga_output
     }
-
 
     /// manage the memory accesses (read/write cpu ; read ga)
     /// TODO implement orchestration between chips
@@ -136,21 +131,18 @@ impl Motherboard {
             let memory_cfg = self.memory_config();
             eprintln!("Want at 0x{:x} with {:?}", addr, memory_cfg);
             let byte = self.memory.read(addr, &memory_cfg);
-            eprintln!("Read 0x{:x} at 0x{:x} with {:?}", byte, addr, memory_cfg) ;
+            eprintln!("Read 0x{:x} at 0x{:x} with {:?}", byte, addr, memory_cfg);
             self.cpu.set_data_on_pins(byte);
             self.cpu.set_pin(Z80Pin::Neg_RD, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
-        }
-
-        else if self.cpu_request_byte_write() && !self.ga_request_read() {
+        } else if self.cpu_request_byte_write() && !self.ga_request_read() {
             let addr = self.cpu.get_address_from_pins();
             let data = self.cpu.get_data_from_pins();
             let memory_cfg = self.memory_config();
-            println!("Write 0x{:x} at 0x{:x}", data, addr) ;
+            println!("Write 0x{:x} at 0x{:x}", data, addr);
             self.memory.write(addr, data, &memory_cfg);
             self.cpu.set_pin(Z80Pin::Neg_WR, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
         }
     }
-
 
     #[inline]
     fn cpu_request_byte_read(&self) -> bool {
@@ -171,7 +163,10 @@ impl Motherboard {
     /// Completly execute an opcode and returns the set of video information associated
     pub fn execute_next_opcode(&mut self) -> Vec<(RgbLevels, Sync)> {
         let mut video = Vec::new();
-        assert!(self.cpu.next_state.is_new_opcode(), "We have to start by a new opcode");
+        assert!(
+            self.cpu.next_state.is_new_opcode(),
+            "We have to start by a new opcode"
+        );
 
         let mut has_executed_first_state = false;
 
@@ -179,13 +174,17 @@ impl Motherboard {
         loop {
             video.push(self.tick());
 
-            has_executed_first_state = has_executed_first_state | !self.cpu.next_state.is_new_opcode();
+            has_executed_first_state =
+                has_executed_first_state | !self.cpu.next_state.is_new_opcode();
 
             if self.cpu.is_activated() {
                 dbg!(&self.cpu.next_state);
             }
 
-            if self.cpu.is_activated() && self.cpu.next_state.is_new_opcode() && has_executed_first_state {
+            if self.cpu.is_activated()
+                && self.cpu.next_state.is_new_opcode()
+                && has_executed_first_state
+            {
                 break;
             }
         }
@@ -299,10 +298,8 @@ impl Motherboard {
     }
 }
 
-
 // Block for the memory related functions
 impl Motherboard {
-
     /// Provides the memory configuration for a proper access
     pub fn memory_config(&self) -> MemoryConfig {
         MemoryConfig(
@@ -344,80 +341,82 @@ mod test {
         assert_eq!(motherboard.ga.get_data_from_pins(), 0xfe);
     }
 
-
     #[test]
     fn test_nop_execution() {
         let mut motherboard = Motherboard::default();
         let memory_config = motherboard.memory_config();
-        
+
         // setup pins
         motherboard.cpu.set_pin(Z80Pin::Neg_WAIT, true); // delegate that to GA !!
-        // install the program
+                                                         // install the program
         motherboard.cpu.pc.set(0x4000);
         motherboard.memory.write(0x4000, 0x00, &memory_config);
 
-        assert!(motherboard.cpu.next_state.is_new_opcode(), "We have to start by a new opcode");
+        assert!(
+            motherboard.cpu.next_state.is_new_opcode(),
+            "We have to start by a new opcode"
+        );
         assert!(motherboard.cpu.is_activated());
 
-        
         // execute it
         let video = motherboard.execute_next_opcode();
 
         assert_eq!(
-              video.len(),           16 // 4 t-states for 4 mcycles
+            video.len(),
+            16 // 4 t-states for 4 mcycles
         );
 
         assert_eq!(
             motherboard.cpu.pc.value(),
             0x4001,
-            "{:x} != {:x} ", motherboard.cpu.pc.value(), 0x4001
+            "{:x} != {:x} ",
+            motherboard.cpu.pc.value(),
+            0x4001
         );
-
     }
-
 
     #[test]
     fn test_xor_a_execution() {
         let mut motherboard = Motherboard::default();
         let memory_config = motherboard.memory_config();
-        
+
         // setup pins
         motherboard.cpu.set_pin(Z80Pin::Neg_WAIT, true); // delegate that to GA !!
-        // install the program
+                                                         // install the program
         motherboard.cpu.pc.set(0x4000);
         motherboard.cpu.af.set(0xffff);
         motherboard.memory.write(0x4000, 0xaf, &memory_config);
 
-        assert!(motherboard.cpu.next_state.is_new_opcode(), "We have to start by a new opcode");
+        assert!(
+            motherboard.cpu.next_state.is_new_opcode(),
+            "We have to start by a new opcode"
+        );
         assert!(motherboard.cpu.is_activated());
 
-        
         // execute it
         let video = motherboard.execute_next_opcode();
 
         assert_eq!(
-              video.len(),           16 // 4 t-states for 4 mcycles
+            video.len(),
+            16 // 4 t-states for 4 mcycles
         );
 
         assert_eq!(
             motherboard.cpu.pc.value(),
             0x4001,
-            "{:x} != {:x} ", motherboard.cpu.pc.value(), 0x4001
+            "{:x} != {:x} ",
+            motherboard.cpu.pc.value(),
+            0x4001
         );
 
-        assert_eq!(
-            motherboard.cpu.af.high().value(),
-            0
-        );
-
+        assert_eq!(motherboard.cpu.af.high().value(), 0);
     }
-
 
     #[test]
     fn test_hl_dead_execution() {
         let mut motherboard = Motherboard::default();
         let memory_config = motherboard.memory_config();
-        
+
         // setup pins
         // install the program
         motherboard.cpu.pc.set(0x4000);
@@ -426,45 +425,44 @@ mod test {
         motherboard.memory.write(0x4001, 0xad, &memory_config);
         motherboard.memory.write(0x4002, 0xde, &memory_config);
 
-        assert!(motherboard.cpu.next_state.is_new_opcode(), "We have to start by a new opcode");
+        assert!(
+            motherboard.cpu.next_state.is_new_opcode(),
+            "We have to start by a new opcode"
+        );
         assert!(motherboard.cpu.is_activated());
 
-        
         // execute it
         let video = motherboard.execute_next_opcode();
 
-        assert_eq!(
-            motherboard.cpu.hl.value(),
-            0xdead
-        );
+        assert_eq!(motherboard.cpu.hl.value(), 0xdead);
 
         assert_eq!(
             motherboard.cpu.pc.value(),
             0x4003,
-            "{:x} != {:x} ", motherboard.cpu.pc.value(), 0x4003
+            "{:x} != {:x} ",
+            motherboard.cpu.pc.value(),
+            0x4003
         );
 
-
-
-        assert_eq!(
-            video.len(), 
-            4*3*4
-      );
-
+        assert_eq!(video.len(), 4 * 3 * 4);
     }
-
 
     #[test]
     fn test_chips_activation() {
         let mut motherboard = Motherboard::default();
-        
+
         // setup pins
-        motherboard.cpu.set_pin(Z80Pin::Neg_WAIT, true); // delegate that to GA 
+        motherboard.cpu.set_pin(Z80Pin::Neg_WAIT, true); // delegate that to GA
 
         let mut count_cpu = 0;
         let mut count_crtc = 0;
         for i in 0..32 {
-            println!("{},{},{}", true, motherboard.cpu.is_activated(), motherboard.crtc.is_activated());
+            println!(
+                "{},{},{}",
+                true,
+                motherboard.cpu.is_activated(),
+                motherboard.crtc.is_activated()
+            );
 
             if motherboard.cpu.is_activated() {
                 count_cpu += 1;
@@ -476,17 +474,10 @@ mod test {
 
             motherboard.ga.manage_clocks();
             motherboard.sync_chips_pins();
-
         }
 
-        assert_eq!(
-            count_cpu,
-            32/4
-        );
+        assert_eq!(count_cpu, 32 / 4);
 
-        assert_eq!(
-            count_crtc,
-            32/16
-        );
+        assert_eq!(count_crtc, 32 / 16);
     }
 }

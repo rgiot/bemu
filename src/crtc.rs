@@ -158,39 +158,39 @@ impl Default for Crtc {
     fn default() -> Self {
         let mut crtc = Crtc {
             pins: Default::default(),
-            ar:  Default::default(),
-            sr:  Default::default(),
-            r0:  Default::default(),
-            r1:  Default::default(),
-            r2:  Default::default(),
-            r3:  Default::default(),
-            r4:  Default::default(),
-            r5:  Default::default(),
-            r6:  Default::default(),
-            r7:  Default::default(),
-            r8:  Default::default(),
-            r9:  Default::default(),
-            r10:  Default::default(),
-            r11:  Default::default(),
-            r12:  Default::default(),
-            r13:  Default::default(),
-            r14:  Default::default(),
-            r15:  Default::default(),
-            r16:  Default::default(),
-            r17:  Default::default(),
-             hcc:  Default::default(),
-             vcc:  Default::default(),
-             vlc:  Default::default(),
-             base:  Default::default(),
-            crtc_type:  Default::default(),
-             hsync_counter:  Default::default(),
-             vsync_counter:  Default::default(),
+            ar: Default::default(),
+            sr: Default::default(),
+            r0: Default::default(),
+            r1: Default::default(),
+            r2: Default::default(),
+            r3: Default::default(),
+            r4: Default::default(),
+            r5: Default::default(),
+            r6: Default::default(),
+            r7: Default::default(),
+            r8: Default::default(),
+            r9: Default::default(),
+            r10: Default::default(),
+            r11: Default::default(),
+            r12: Default::default(),
+            r13: Default::default(),
+            r14: Default::default(),
+            r15: Default::default(),
+            r16: Default::default(),
+            r17: Default::default(),
+            hcc: Default::default(),
+            vcc: Default::default(),
+            vlc: Default::default(),
+            base: Default::default(),
+            crtc_type: Default::default(),
+            hsync_counter: Default::default(),
+            vsync_counter: Default::default(),
         };
         crtc.reset();
         crtc
     }
 }
-#[derive(PartialEq, Debug, Clone,Copy)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum CrtcType {
     Crtc0 = 0,
@@ -203,8 +203,8 @@ pub enum CrtcType {
 impl From<&CrtcType> for Crtc {
     fn from(from: &CrtcType) -> Self {
         let mut crtc = Crtc {
-            crtc_type: *from, 
-            ..Default::default() 
+            crtc_type: *from,
+            ..Default::default()
         };
         crtc.reset();
         crtc
@@ -229,9 +229,6 @@ impl Default for CrtcType {
 }
 
 impl CrtcType {
-
-
-
     /// Provides the mask to keep the bit depending on the CRTC when reading the value
     pub fn read_register_mask(&self, r: u8) -> u8 {
         match r {
@@ -343,8 +340,6 @@ impl CrtcType {
 }
 
 impl Crtc {
-
-
     pub fn get_r0(&self) -> u8 {
         self.r0
     }
@@ -364,7 +359,7 @@ impl Crtc {
         self.r5
     }
     pub fn get_r6(&self) -> u8 {
-        self.r6 
+        self.r6
     }
     pub fn get_r7(&self) -> u8 {
         self.r7
@@ -399,9 +394,6 @@ impl Crtc {
     pub fn get_r17(&self) -> u8 {
         self.r17
     }
-
-
-
 
     /// Execute the CRTC register selection
     pub fn select_crtc_register(&mut self) {
@@ -525,8 +517,8 @@ impl Crtc {
     /// VSync in lines
     fn vsync_height(&self) -> u8 {
         let val = (self.r3 & 0b11110000) >> 4;
-        if val == 0 || self.crtc_type.is_crtc2() || self.crtc_type.is_crtc1(){
-            16 
+        if val == 0 || self.crtc_type.is_crtc2() || self.crtc_type.is_crtc1() {
+            16
         } else {
             val
         }
@@ -552,18 +544,17 @@ impl Crtc {
             CrtcType::Crtc0 | CrtcType::Crtc3 | CrtcType::Crtc4 => {
                 match self.r8 & 0b110000 {
                     0b000000 => 0,
-                    0b010000 => 1, // 1 char delay
-                    0b100000 => 2, // 2 chars delay
+                    0b010000 => 1,                  // 1 char delay
+                    0b100000 => 2,                  // 2 chars delay
                     0b110000 => self.r1 - self.hcc, // ugly trick to force border
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
-            },
-            _ => 0
+            }
+            _ => 0,
         }
     }
 
     fn update_memory_address(&mut self) {
-
         // decrease hsync counter if any
         if self.hsync_counter != 0 {
             self.hsync_counter -= 1;
@@ -681,7 +672,6 @@ impl Chip for Crtc {
 
         self.update_memory_address();
     }
-
 
     fn reset(&mut self) {
         self.base = 0;
@@ -817,8 +807,7 @@ mod test {
     #[test]
     fn test_standard_crtc() {
         let mut crtc = Crtc::default();
-    
-    
+
         for char_line in 0..=crtc.r4 {
             for scan_line in 0..=crtc.r9 {
                 for char in 0..=crtc.r0 {
@@ -833,9 +822,9 @@ mod test {
                     dbg!(char_line, scan_line, char, &crtc);
 
                     // Check that main internal counter are correct
-                    assert!(crtc.vcc<= crtc.r4);
-                    assert!(crtc.vlc<= crtc.r9);
-                    assert!(crtc.hcc<= crtc.r0);
+                    assert!(crtc.vcc <= crtc.r4);
+                    assert!(crtc.vlc <= crtc.r9);
+                    assert!(crtc.hcc <= crtc.r0);
 
                     assert!(crtc.vcc == char_line);
                     assert!(crtc.vlc == scan_line);
@@ -844,44 +833,38 @@ mod test {
                     // Test for border
                     if crtc.hcc >= crtc.r1 || crtc.vcc >= crtc.r6 {
                         assert!(!crtc.get_pin(CrtcPin::DE));
-                    }
-                    else {
+                    } else {
                         assert!(crtc.get_pin(CrtcPin::DE));
                     }
 
                     // Test for hsync
-                    if crtc.hcc >= crtc.r2 && crtc.hcc < crtc.r2+crtc.hsync_width() {
+                    if crtc.hcc >= crtc.r2 && crtc.hcc < crtc.r2 + crtc.hsync_width() {
                         assert!(crtc.get_pin(CrtcPin::HS));
-                    }
-                    else {
+                    } else {
                         assert!(!crtc.get_pin(CrtcPin::HS));
                     }
 
                     // Test for vsync
-                    if crtc.vcc >= crtc.r7 && crtc.vcc < crtc.r7+crtc.vsync_height() {
+                    if crtc.vcc >= crtc.r7 && crtc.vcc < crtc.r7 + crtc.vsync_height() {
                         assert!(crtc.get_pin(CrtcPin::VS));
-                    }
-                    else {
+                    } else {
                         assert!(!crtc.get_pin(CrtcPin::VS));
                     }
 
                     // test for address
                     if crtc.get_pin(CrtcPin::DE) {
-                        let expected = 0xc000 + 0x800*(scan_line as u16) + 80*(char_line as u16) + 2*(char as u16);
+                        let expected = 0xc000
+                            + 0x800 * (scan_line as u16)
+                            + 80 * (char_line as u16)
+                            + 2 * (char as u16);
                         let collected = crtc.get_address_from_pins();
 
-                        assert_eq!(
-                            expected,
-                            collected,
-                            "0x{:x}!=0x{:x}", expected,collected
-                        );
+                        assert_eq!(expected, collected, "0x{:x}!=0x{:x}", expected, collected);
                     }
 
                     crtc.set_pin(CrtcPin::CCLK, false);
                 }
             }
         }
-
-
     }
 }
