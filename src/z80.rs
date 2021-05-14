@@ -84,7 +84,7 @@ pub (crate) struct OpcodeInformation {
     /// String representation
     repr: &'static str,
     //   /// Token just in case it is usefull (to be removed if not)
-    //   token: cpclib_asm::preamble::Token
+    token: cpclib_asm::preamble::Token
 }
 
 impl OpcodeInformation {
@@ -102,6 +102,8 @@ impl OpcodeInformation {
     fn expect_write(&self) -> bool {
         self.nb_bytes_to_write != 0
     }
+
+
 }
 
 impl OpcodePrefix {
@@ -208,8 +210,8 @@ impl OpcodePrefix {
             nb_additional_bytes_to_read,
             nb_bytes_to_write,
             repr, 
-            addresses_memory
-            //, token
+            addresses_memory,
+            token
         }
     }
 
@@ -1077,7 +1079,8 @@ impl Z80 {
     fn get_byte_from_data_source(&self, src: &DataSource) -> u8 {
         match src {
             DataSource::Register8(reg) => self.reg8(reg.into()).get(),
-            _ => panic!("{:?} contains a 16 bits value. Find another way to handle that"),
+            DataSource::Pins => self.get_data_from_pins(),
+            _ => panic!("{:?} contains a 16 bits value. Find another way to handle that", src),
         }
     }
 
@@ -1168,8 +1171,9 @@ impl Z80 {
         }
     }
 
-    /// The complete opcode has been fetched and pc has been properly incremented.
-    /// This function then execute the opcode
+    
+    /// Execute the end of the instration (everything related to memory or ports has already been handled).
+    /// Here we take care of registers modifications and flags configuration
     fn execute_opcode(
         &mut self,
         opcode: &Mnemonic,
@@ -1254,9 +1258,9 @@ impl Z80 {
             }
 
             Mnemonic::Outd => {
-                todo!("REmove this comment once the real handling is done");
+                let b_is_zero = self.reg8(Reg8::B).value() == 0;
                 let f = &mut self.reg8_mut(Reg8::F).val;
-                Z80Flags::Z.set(self.reg8(Reg8::B).value() == 0, f);
+                Z80Flags::Z.set(b_is_zero, f);
                 Z80Flags::N.set_on(f);
             }
 
@@ -1379,6 +1383,25 @@ impl Z80 {
             r16.high()
         } else {
             r16.low()
+        }
+    }
+}
+
+// Opcode specific code
+impl Z80 {
+    /// Manage the specific treatment after the read_instruction
+    pub fn post_read_action(&mut self ) {
+        let opcode_info = self.opcode_information.as_ref().unwrap();
+
+        match opcode_info.token.mnemonic() {
+            Some(Mnemonic::Outd) => {
+                self.reg16_mut(Reg16::Hl).dec();
+                self.reg8_mut(Reg8::B).dec();
+            },
+
+            _ => {
+                // by default, there is nothing to
+            }
         }
     }
 }
@@ -1527,6 +1550,8 @@ impl Chip for Z80 {
                 self.next_state.inc_state();
             }
             MCycle::Read(TState::T3, nb) => {
+                self.post_read_action();
+
                 let opcode_info = self.opcode_information.as_ref().unwrap();
                 if nb + 1 == opcode_info.nb_additional_bytes_to_read
                 {
