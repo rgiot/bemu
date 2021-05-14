@@ -90,12 +90,17 @@ pub (crate) struct OpcodeInformation {
 impl OpcodeInformation {
     /// Fetch is finished for opcode of 1 byte with no memory/port access
     fn fetch_finished(&self) -> bool {
-        self.nb_additional_opcode_bytes == 0 && self.read_address == AddressSource::None
+        self.nb_additional_opcode_bytes == 0 
     }
 
-    /// Check if CPU as to read from memory
+    /// Check if CPU as to read from bus
     fn expect_read(&self) -> bool {
-        AddressSource::None != self.read_address
+       self.nb_additional_bytes_to_read != 0
+    }
+
+    /// Check if CPU as to write in bus
+    fn expect_write(&self) -> bool {
+        self.nb_bytes_to_write != 0
     }
 }
 
@@ -1134,7 +1139,11 @@ impl Z80 {
                 let opcode_information = self.opcode_information.as_ref().unwrap();
 
                 if opcode_information.fetch_finished() {
-                    if opcode_information.nb_bytes_to_write != 0 {
+                    if opcode_information.expect_read() {
+                        self.next_state = MCycle::Read(TState::T1, 0);
+                        return false;
+                    }
+                    else if opcode_information.expect_write() {
                         if opcode_information.addresses_memory {
                             self.next_state = MCycle::Write(TState::T1, 0);
                         }
@@ -1143,19 +1152,17 @@ impl Z80 {
                         }
                         return false;
                     }
-                    else if opcode_information.expect_read() {
-                        self.next_state = MCycle::Read(TState::T1, 0);
-                        return false;
-                    }
                     else {
+                        // Start a new opcode
                         self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
                         return true;
                     }
                 } else if opcode_information.nb_additional_opcode_bytes != 0 {
+                    // continue to read the bytes for the current opcode
                     self.next_state = MCycle::FetchOpcode(TState::T1, 1, current_prefix);
                     return false;
                 }  else {
-                    unimplemented!()
+                    unimplemented!("{:?}", opcode_information)
                 }
             }
         }
