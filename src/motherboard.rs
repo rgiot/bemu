@@ -100,11 +100,6 @@ impl Motherboard {
     /// corresponding gate array information
     /// TODO check if it must be generated before or after
     pub fn tick(&mut self) -> (RgbLevels, Sync) {
-        dbg!(
-            self.cpu.get_pin(Z80::clock_pin()),
-            self.crtc.get_pin(Crtc::clock_pin())
-        );
-
         // fill bus with memory data if needed
         self.handle_memory_access();
 
@@ -137,16 +132,16 @@ impl Motherboard {
         if self.cpu_request_byte_read() && !self.ga_request_read() {
             let addr = self.cpu.get_address_from_pins();
             let memory_cfg = self.memory_config();
-            eprintln!("Want at 0x{:x} with {:?}", addr, memory_cfg);
+         //   eprintln!("Want at 0x{:x} with {:?}", addr, memory_cfg);
             let byte = self.memory.read(addr, &memory_cfg);
-            eprintln!("Read 0x{:x} at 0x{:x} with {:?}", byte, addr, memory_cfg);
+        //    eprintln!("Read 0x{:x} at 0x{:x} with {:?}", byte, addr, memory_cfg);
             self.cpu.set_data_on_pins(byte);
             self.cpu.set_pin(Z80Pin::Neg_RD, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
         } else if self.cpu_request_byte_write() && !self.ga_request_read() {
             let addr = self.cpu.get_address_from_pins();
             let data = self.cpu.get_data_from_pins();
             let memory_cfg = self.memory_config();
-            println!("Write 0x{:x} at 0x{:x}", data, addr);
+        //    println!("Write 0x{:x} at 0x{:x}", data, addr);
             self.memory.write(addr, data, &memory_cfg);
             self.cpu.set_pin(Z80Pin::Neg_WR, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
         }
@@ -186,7 +181,7 @@ impl Motherboard {
                 has_executed_first_state | !self.cpu.next_state.is_new_opcode();
 
             if self.cpu.is_activated() {
-                dbg!(&self.cpu.next_state);
+                &self.cpu.next_state;
             }
 
             if self.cpu.is_activated()
@@ -233,9 +228,15 @@ impl Motherboard {
         );
         sync_pins(
             &self.cpu,
-            &[Z80Pin::A14, Z80Pin::A15],
+            &[
+                Z80Pin::A14, Z80Pin::A15,
+                Z80Pin::Neg_IORQ, Z80Pin::Neg_RD
+            ],
             &mut self.ga,
-            &[GateArrayPin::A14, GateArrayPin::A15],
+            &[
+                GateArrayPin::A14, GateArrayPin::A15,
+                GateArrayPin::IORQ, GateArrayPin::RD
+            ],
         );
 
         // CPU to PAL

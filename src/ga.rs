@@ -706,7 +706,7 @@ impl GateArray {
     /// We assume that the automata is in a valid state
     fn generate_pixel(&mut self) {
         if self.pixel_automata.is_done() {
-            dbg!("Here some pixel are expected, but we do not know what as to be produced...");
+       //     dbg!("Here some pixel are expected, but we do not know what as to be produced...");
             self.rgb = (0., 0., 0.).into();
         } else {
             if self.get_pin(GateArrayPin::HSYNC) || self.get_pin(GateArrayPin::VSYNC) {
@@ -757,7 +757,8 @@ impl Chip for GateArray {
     type PinType = GateArrayPin;
 
     fn must_execute_tick(&self) -> bool {
-        !self.get_pin(GateArrayPin::A15) && self.get_pin(GateArrayPin::A14)
+        !self.get_pin(GateArrayPin::A15) && self.get_pin(GateArrayPin::A14) &&
+        !self.get_pin(GateArrayPin::IORQ)
     }
 
     /// Change the screen mode when hsync is set
@@ -772,16 +773,23 @@ impl Chip for GateArray {
 
     /// React to the port addressing of the CPU
     fn execute_tick(&mut self) {
-        let command = self.get_data_from_pins();
+        if self.get_pin(GateArrayPin::RD) {
+            let command = dbg!(self.get_data_from_pins());
 
-        if PENR::is_addressed(command) {
-            self.penr = PENR(command);
-        } else if INKR::is_addressed(command) {
-            // TODO pay attention to delaÿ the change of the color palette
-            self.inkr = INKR(command);
-        } else if RMR::is_addressed(command) {
-            self.rmr = RMR(command);
+            if PENR::is_addressed(command) {
+                self.penr = PENR(command);
+            } else if INKR::is_addressed(command) {
+                // TODO pay attention to delaÿ the change of the color palette
+                self.inkr = INKR(command);
+            } else if RMR::is_addressed(command) {
+                self.rmr = RMR(command);
+            }
         }
+        else 
+        {
+            unimplemented!("Read on GA not implemented");
+        }
+
     }
 
     fn pins_buffer_mut(&mut self) -> &mut PinsBuffer {

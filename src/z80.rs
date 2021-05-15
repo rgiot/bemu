@@ -1221,12 +1221,26 @@ impl Z80 {
             }
 
             Mnemonic::Jr => {
+                assert!(arg1.is_none(), "to be implemented");
+                
                 let mut sym = SymbolsTableCaseDependent::default();
                 sym.set_symbol_to_value("$", -2);
 
                 let expr = arg2.unwrap().expr().unwrap();
-                let displacement = (expr.resolve(&sym).unwrap() & 0xffff) as u16;
-                self.pc.add(displacement);
+                let displacement = expr.relative_delta().unwrap();
+
+                dbg!(displacement);
+                
+                // the very same value is also here
+             //   let displacement = self.wz.low().value() as i8 as i16 as u16;
+
+
+                if displacement > 0 {
+                    self.pc.add(displacement as u16);
+                }
+                else {
+                    self.pc.sub(-displacement as u16);
+                }
 /*
                 // convert the 8bit number in a 16 bits value
                 let full = if displacement & 1<<7 != 0 {

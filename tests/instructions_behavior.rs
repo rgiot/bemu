@@ -3,11 +3,11 @@
 use amsrust::crtc::{Crtc, CrtcType};
 use amsrust::motherboard::Motherboard;
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
-use amsrust::ga::{VideoMode};
+use amsrust::ga::{VideoMode, Ink};
 
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
 /// Attention, do not put the code in area where ROMs are activated ...
-fn execute_program(addr: u16, test: &[u8]) -> Motherboard {
+fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 	dbg!(
 		cpclib_asm::disass::disassemble(test)
 	);
@@ -26,8 +26,8 @@ fn execute_program(addr: u16, test: &[u8]) -> Motherboard {
 		motherboard.ga().next_video_mode()
 	);
 
-    motherboard.write_buffer(addr, test);
-    motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr);
+    motherboard.write_buffer(load, test);
+    motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(exec);
 
 	// execute it until it is finished
 	loop {
@@ -56,7 +56,7 @@ fn execute_ld() {
 		jr $ ; end of test
 	"));
 
-	let motherboard = execute_program(0x4000, code); 
+	let motherboard = execute_program(0x4000, 0x4000, code); 
 
 	assert_eq!(
 		0x7f8d,
@@ -65,8 +65,7 @@ fn execute_ld() {
 }
 
 #[test]
-// TODO add more test for negative displacement
-fn execute_jr() {
+fn execute_jr1() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x4000
@@ -74,7 +73,7 @@ fn execute_jr() {
 		jr $ ; end of test
 	"));
 
-	let motherboard = execute_program(0x4000, code);
+	let motherboard = execute_program(0x4000, 0x4000, code);
 
 	assert_eq!(
 		0x4000,
@@ -84,7 +83,68 @@ fn execute_jr() {
 
 
 #[test]
-fn execute_out() {
+fn execute_jr2() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		jr 0x4010 ; real jr
+		org 0x4010
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code);
+
+	assert_eq!(
+		0x4010,
+		motherboard.cpu().reg16(Reg16::Pc).value()
+	);
+}
+
+#[test]
+/// This test currently ... I have to find if it comes from assembler or disassembler
+fn execute_jr3() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x3ff0
+label
+		jr $ ; end of test
+
+		org 0x4000
+		jr label ; real jr
+	"));
+
+	let motherboard = execute_program(0x3ff0, 0x4000, code);
+
+	assert_eq!(
+		0x3ff0,
+		motherboard.cpu().reg16(Reg16::Pc).value(),
+
+		"{:x} != {:x}", 0x3ff0,motherboard.cpu().reg16(Reg16::Pc).value()
+	);
+}
+
+
+#[test]
+fn execute_out1() {
+
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		jr $ ; end of test
+	"));
+
+	// wait (too much) to be sure screen mode changed
+	let mut motherboard = execute_program(0x4000,0x4000, code);
+
+	assert_eq!(
+		VideoMode::Mode0,
+		motherboard.ga().active_video_mode()
+	);
+	assert_eq!(
+		VideoMode::Mode0,
+		motherboard.ga().next_video_mode()
+	);
+
 
 	let code = dbg!(cpclib_macros::assemble!(
 		"
@@ -94,7 +154,28 @@ fn execute_out() {
 	"));
 
 	// wait (too much) to be sure screen mode changed
-	let mut motherboard = execute_program(0x4000, code);
+	let mut motherboard = execute_program(0x4000,0x4000, code);
+
+	assert_eq!(
+		VideoMode::Mode0,
+		motherboard.ga().active_video_mode()
+	);
+	assert_eq!(
+		VideoMode::Mode0,
+		motherboard.ga().next_video_mode()
+	);
+
+
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld bc, 0x7f8e
+		out (c), c
+		jr $ ; end of test
+	"));
+
+	// wait (too much) to be sure screen mode changed
+	let mut motherboard = execute_program(0x4000,0x4000, code);
 
 	assert_eq!(
 		VideoMode::Mode0,
@@ -104,6 +185,30 @@ fn execute_out() {
 		VideoMode::Mode2,
 		motherboard.ga().next_video_mode()
 	);
+}
 
 
+
+#[test]
+fn execute_outd() {
+
+	let code = cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld bc, 0x7f00
+		out (c), c ; select pen 0
+
+		ld b, 0x7f + 1
+		outd ; put white ink
+
+		jr $ ; end of test
+table
+		db 0x4b
+	");
+
+	let mut motherboard = execute_program(0x4000,0x4000, code);
+	assert_eq!(
+		Ink::from(26),
+		motherboard.ga().palette()[0]
+	);
 }
