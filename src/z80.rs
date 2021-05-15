@@ -1187,6 +1187,35 @@ impl Z80 {
                 }
             }
 
+            Mnemonic::Dec => {
+                let mut update_flags = true; // disable only for 16 bits
+                let mut val = 0;
+                match arg1.unwrap() {
+                    DataAccess::Register8(reg) => {
+                        let left: Reg8 = reg.into();
+                        self.reg8_mut(left).dec();
+                        val = self.reg8(left).value();
+                    }
+                    DataAccess::IndexRegister8(reg) => {
+                        let left: Reg8 = reg.into();
+                        self.reg8_mut(left).dec();
+                        val = self.reg8(left).value();
+                    }
+                    _ => unimplemented!(),
+                }
+
+                if update_flags {
+                    let f = &mut self.reg8_mut(Reg8::F).val;
+                    Z80Flags::S.set(val == 0, f);
+                    Z80Flags::Z.set(val & 1 << 7 != 0, f);
+                    Z80Flags::Y.set(val & 1 << 5 != 0, f);
+                    // TODO handle H flag
+                    Z80Flags::X.set(val & 1 << 3 != 0, f);
+                    // TODO handle P flag
+                    Z80Flags::N.set_on(f);
+                }
+            }
+
             Mnemonic::Di => {
                 self.interruption_disabled = true;
             }

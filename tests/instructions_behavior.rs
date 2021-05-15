@@ -47,6 +47,27 @@ fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 
 }
 
+
+
+#[test]
+fn execute_dec() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld bc, 0x7f8d
+		dec b
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0x7e,
+		motherboard.cpu().reg8(Reg8::B).value()
+	);
+}
+
+
 #[test]
 fn execute_ld() {
 	let code = dbg!(cpclib_macros::assemble!(
