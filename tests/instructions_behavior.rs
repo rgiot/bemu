@@ -188,6 +188,31 @@ fn execute_out1() {
 }
 
 
+#[test]
+// Test a palette change
+fn execute_out2() {
+
+	let code = cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld bc, 0x7f00
+		out (c), c ; select pen 0
+
+		ld bc, 0x7f4b
+		out (c), c ; select ink white
+
+		nop
+		jr $
+		");
+
+	let mut motherboard = execute_program(0x4000, 0x4000, code);
+	assert_eq!(
+		Ink::from(26),
+		motherboard.ga().palette()[0]
+	);
+}
+
+
 
 #[test]
 fn execute_outd() {
@@ -201,12 +226,14 @@ fn execute_outd() {
 		ld b, 0x7f + 1
 		outd ; put white ink
 
+		nop ; we want to be sure it is taken into account
+
 		jr $ ; end of test
 table
 		db 0x4b
 	");
 
-	let mut motherboard = execute_program(0x4000,0x4000, code);
+	let mut motherboard = execute_program(0x4000, 0x4000, code);
 	assert_eq!(
 		Ink::from(26),
 		motherboard.ga().palette()[0]

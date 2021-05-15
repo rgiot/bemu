@@ -5,6 +5,9 @@ use delegate::delegate;
 use lazy_static::*;
 use tuple_map::*;
 
+// https://www.cpc-power.com/cpcarchives/index.php?page=articles&num=47
+// https://www.grimware.org/doku.php/documentations/devices/gatearray
+
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(u64)]
@@ -189,6 +192,14 @@ impl From<u8> for Ink {
     }
 }
 
+
+impl From<cpclib::ga::Ink> for Ink {
+    fn from(i: cpclib::ga::Ink) -> Ink {
+        Ink(i.number())
+    }
+}
+
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RgbLevels((f32, f32, f32));
 impl RgbLevels {
@@ -332,7 +343,8 @@ impl PENR {
 
 impl INKR {
     fn ink(&self) -> Ink {
-        Ink(self.0 & 0b000_11111)
+        let hard = self.0 & 0b000_11111;
+        cpclib::ga::Ink::from_hardware_color_number(hard).into()
     }
 }
 
@@ -556,6 +568,8 @@ pub struct Sync {
 
 /// GateArray emulation of the CPC.
 /// Version 40010 is targeted; it suffers of a shift in pixel rendering for mode 2
+/// TODO ensure the following sentence is applied
+/// The effect of an INKR command appears almost immediatly always with the same timings, but the change is not in sync with the character display of the CRTC so the new color appears somehow in the middle of a character (the CRTC display unit). 
 pub struct GateArray {
     clock: u64,
     pins: PinsBuffer,
@@ -757,6 +771,11 @@ impl Chip for GateArray {
     type PinType = GateArrayPin;
 
     fn must_execute_tick(&self) -> bool {
+        dbg!(
+            !self.get_pin(GateArrayPin::A15),
+            self.get_pin(GateArrayPin::A14),
+            !self.get_pin(GateArrayPin::IORQ)
+        );
         !self.get_pin(GateArrayPin::A15) && self.get_pin(GateArrayPin::A14) &&
         !self.get_pin(GateArrayPin::IORQ)
     }
@@ -779,8 +798,8 @@ impl Chip for GateArray {
             if PENR::is_addressed(command) {
                 self.penr = PENR(command);
             } else if INKR::is_addressed(command) {
-                // TODO pay attention to delaÿ the change of the color palette
                 self.inkr = INKR(command);
+                self.set_ink(self.pen(), self.ink());
             } else if RMR::is_addressed(command) {
                 self.rmr = RMR(command);
             }

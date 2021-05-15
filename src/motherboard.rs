@@ -100,6 +100,8 @@ impl Motherboard {
     /// corresponding gate array information
     /// TODO check if it must be generated before or after
     pub fn tick(&mut self) -> (RgbLevels, Sync) {
+        if self.crtc.is_activated() {dbg!(&self.cpu().next_state);}
+
         // fill bus with memory data if needed
         self.handle_memory_access();
 
