@@ -54,8 +54,6 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
         motherboard.execute_next_opcode();
         let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 
-        assert!(previous_pc < pc);
-
         // detect if it is the end
         let current_pattern = [motherboard.read_byte(pc + 0), motherboard.read_byte(pc + 1)];
 
