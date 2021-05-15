@@ -1312,6 +1312,7 @@ impl Z80 {
                 };
 
                 if do_jump {
+                    dbg!("The implementation is incorrect. An additional mcycle must handle the operation");
                     
                     let mut sym = SymbolsTableCaseDependent::default();
                     sym.set_symbol_to_value("$", -2);
