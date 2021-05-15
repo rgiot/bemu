@@ -224,6 +224,7 @@ fn execute_outd() {
 		out (c), c ; select pen 0
 
 		ld b, 0x7f + 1
+		ld hl, table
 		outd ; put white ink
 
 		nop ; we want to be sure it is taken into account
