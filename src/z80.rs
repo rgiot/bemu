@@ -1004,6 +1004,7 @@ pub struct Z80 {
     pub(crate) interruption_disabled: bool,
 }
 
+// Flags related code
 impl Z80 {
     /// Update qll the flags after an add/substract operation
     #[inline]
@@ -1024,8 +1025,31 @@ impl Z80 {
         Z80Flags::Y.set((res & 1 << 3) != 0, f);
         Z80Flags::P.set(pv, f);
         Z80Flags::N.set(substraction, f);
-        Z80Flags::N.set(overflow, f);
+        Z80Flags::C.set(overflow, f);
     }
+
+
+    /// Check if the flag test is successfull
+    #[inline]
+    fn test_flag(&self, flag_test: FlagTest) -> bool {
+        let flag = self.reg8(Reg8::F).value();
+        match flag_test {
+            FlagTest::NZ => Z80Flags::Z.is_off(flag),
+            FlagTest::Z  => Z80Flags::Z.is_on(flag),
+
+            FlagTest::NC => Z80Flags::C.is_off(flag),
+            FlagTest::C  => Z80Flags::C.is_on(flag),
+
+            FlagTest::PO => Z80Flags::P.is_off(flag),
+            FlagTest::PE => Z80Flags::P.is_on(flag),
+
+            FlagTest::P  => Z80Flags::S.is_off(flag),
+            FlagTest::M  => Z80Flags::S.is_on(flag),
+        }
+    }
+}
+
+impl Z80 {
 
     /// Get the adress where to write based on what as been collected at fetch step
     fn get_write_address_from_opcode_information(&self) -> u16 {
@@ -1249,36 +1273,74 @@ impl Z80 {
                 }
             }
 
+            Mnemonic::Jp => {
+                let do_jump = match arg1 {
+                    None => true,
+                    Some(DataAccess::FlagTest(flag_test)) => self.test_flag(*flag_test),
+                    _ => unreachable!()
+                };
+
+                if do_jump {
+                   
+                  let adr =  match arg2.unwrap() {
+                        DataAccess::Expression(expr) => {
+                            expr.eval().unwrap() as u16
+                        }
+
+                        DataAccess::MemoryRegister16(reg) => {
+                            self.reg16(reg.into()).value()
+                        }
+
+                        DataAccess::MemoryIndexRegister16(reg) => {
+                            self.reg16(reg.into()).value()
+                        },
+
+                        _ => unreachable!()
+                    };
+
+                    self.pc.set(adr);
+
+                }
+
+            }
+
             Mnemonic::Jr => {
-                assert!(arg1.is_none(), "to be implemented");
-                
-                let mut sym = SymbolsTableCaseDependent::default();
-                sym.set_symbol_to_value("$", -2);
+                let do_jump = match arg1 {
+                    None => true,
+                    Some(DataAccess::FlagTest(flag_test)) => self.test_flag(*flag_test),
+                    _ => unreachable!()
+                };
 
-                let expr = arg2.unwrap().expr().unwrap();
-                let displacement = expr.relative_delta().unwrap();
+                if do_jump {
+                    
+                    let mut sym = SymbolsTableCaseDependent::default();
+                    sym.set_symbol_to_value("$", -2);
 
-                dbg!(displacement);
-                
-                // the very same value is also here
-             //   let displacement = self.wz.low().value() as i8 as i16 as u16;
+                    let expr = arg2.unwrap().expr().unwrap();
+                    let displacement = expr.relative_delta().unwrap();
+
+                    dbg!(displacement);
+                    
+                    // the very same value is also here
+                //   let displacement = self.wz.low().value() as i8 as i16 as u16;
 
 
-                if displacement > 0 {
-                    self.pc.add(displacement as u16);
-                }
-                else {
-                    self.pc.sub(-displacement as u16);
-                }
-/*
-                // convert the 8bit number in a 16 bits value
-                let full = if displacement & 1<<7 != 0 {
-                    0xff00
-                } else {
-                    0x0000
-                } | displacement as u16;
-                self.pc.add(full);
-                */
+                    if displacement > 0 {
+                        self.pc.add(displacement as u16);
+                    }
+                    else {
+                        self.pc.sub(-displacement as u16);
+                    }
+    /*
+                    // convert the 8bit number in a 16 bits value
+                    let full = if displacement & 1<<7 != 0 {
+                        0xff00
+                    } else {
+                        0x0000
+                    } | displacement as u16;
+                    self.pc.add(full);
+                    */
+              }
                 
             }
 
