@@ -299,6 +299,7 @@ impl Z80 {
         )
     }
 
+    /// src encodes the place where to find an address. This fonction directly returns the corresponding address
     fn get_address_from_address_source(&self, src: &AddressSource) -> u16 {
         match src {
             // Impossible case
@@ -306,14 +307,21 @@ impl Z80 {
             // As already been loaded in Wz
             AddressSource::Immediate => self.reg16(Reg16::Wz).get(),
             // Is stored withing a 16 bits register
-            AddressSource::Register16(ref reg) => self.reg16(reg.into()).get(),
-            AddressSource::IndexRegister16(ref reg) => self.reg16(reg.into()).get(),
+            AddressSource::Register16(ref reg) |  AddressSource::IndexRegister16(ref reg) => self.reg16(*reg).get(),
             // Corresponds to an indexed address
             AddressSource::Indexed(ref reg) => {
                 // by definition, delta is within the first byte
                 panic!("BUG for negative delta value or to be checked");
-                self.reg16(reg.into()).get() + (((self.reg8(Reg8::Z).get() as i8) as i32) as u16)
+                self.reg16(*reg).get() + (((self.reg8(Reg8::Z).get() as i8) as i32) as u16)
                 //
+            }
+            // We want to make an operation on the stack
+            AddressSource::Stack(delta) => {
+                let stack = self.sp.value();
+                match delta {
+                    StackDelta::Zero => stack,
+                    StackDelta::MinusTwo => stack.wrapping_sub(2)
+                }
             }
         }
     }
@@ -326,7 +334,7 @@ impl Z80 {
     /// Returns the appropriate byte
     fn get_byte_from_data_source(&self, src: &DataSource) -> u8 {
         match src {
-            DataSource::Register8(reg) => self.reg8(reg.into()).get(),
+            DataSource::Register8(reg) => self.reg8(*reg).get(),
             DataSource::Pins => self.get_data_from_pins(),
             _ => panic!(
                 "{:?} contains a 16 bits value. Find another way to handle that",
@@ -1753,51 +1761,4 @@ mod test {
         assert_eq!(r16.value(), 1);
     }
 
-    #[test]
-    fn lookup_checks_hl() {
-        // ld hl, xxxx
-        assert_eq!(dbg!(&OPCODE_PREFIX[0x21]).nb_additional_opcode_bytes, 2);
-    }
-
-    #[test]
-    fn lookup_checks_out() {
-        // out(c), a
-        assert_eq!(
-            dbg!(&OPCODE_PREFIX_ED[0x79]).nb_additional_opcode_bytes,
-            0 // ed is the already additional
-        );
-        assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).nb_bytes_to_write, 1);
-        assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).addresses_memory, false);
-        assert_eq!(
-            dbg!(&OPCODE_PREFIX_ED[0x79]).write_address,
-            AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
-        );
-        assert_eq!(
-            dbg!(&OPCODE_PREFIX_ED[0x79]).write_data,
-            DataSource::Register8(cpclib_asm::preamble::Register8::A)
-        );
-
-        // out (n), a
-        assert_eq!(
-            dbg!(&OPCODE_PREFIX[0xd3]).nb_additional_opcode_bytes,
-            1 //n
-        );
-
-        // outd
-        let desc = dbg!(&OPCODE_PREFIX_ED[0xab]);
-        assert_eq!(desc.nb_bytes_to_write, 1);
-        assert_eq!(desc.nb_additional_opcode_bytes, 0);
-        assert_eq!(
-            desc.read_address,
-            AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
-        );
-        assert_eq!(
-            desc.write_address,
-            AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
-        );
-        assert_eq!(
-            desc.write_data,
-            DataSource::Pins // we assume data are already on the pins because they have been read one cycle before
-        );
-    }
 }

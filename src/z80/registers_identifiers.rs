@@ -1,6 +1,6 @@
 
 /// Identifiers for any 16 bits registers
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Reg16 {
     Af,
     Af2,
@@ -18,7 +18,7 @@ pub enum Reg16 {
 }
 
 /// Identifiers for any 8 bits registers
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Reg8 {
     A,
     A2,

@@ -2,7 +2,9 @@
 
 use lazy_static::lazy_static;
 use regex::Regex;
-use cpclib_asm::preamble::*;
+//use cpclib_asm::preamble::*;
+use cpclib_asm::preamble::{DataAccess, Token};
+use super::{Reg16, Reg8};
 
 
 // Generate the various lookup tables needed to control the opcodes execution
@@ -31,13 +33,6 @@ pub(crate) enum TState {
     T4,
 }
 
-impl Default for TState {
-    fn default() -> Self {
-        TState::T1
-    }
-}
-
-
 
 /// This enumeration aims at helping to treat the
 /// prefixed operations
@@ -50,11 +45,7 @@ pub(crate) enum OpcodePrefix {
     Ed,
 }
 
-impl Default for OpcodePrefix {
-    fn default() -> Self {
-        OpcodePrefix::None
-    }
-}
+
 
 
 /// Contains all the informations needed to drive the next
@@ -80,8 +71,52 @@ pub(crate) struct OpcodeInformation {
     /// String representation
     pub(crate) repr: &'static str,
     //   /// Token just in case it is usefull (to be removed if not)
-    pub(crate) token: cpclib_asm::preamble::Token,
+    pub(crate) token: Token,
 }
+
+
+
+/// Where the CPU searches the address information to be put on the address line
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub(crate) enum AddressSource {
+    /// No address handled by the opcode
+    None,
+    /// The address has been read by the CPU and is stored in extra bytes
+    Immediate,
+    /// The address is contained inside a 16 bits register
+    Register16(Reg16),
+    /// The address is contained in a 16 bits indexed regiser
+    IndexRegister16(Reg16),
+    /// The delta has already been read by the CPU
+    Indexed(Reg16),
+	/// We are doing an operation on the stack / thus address is SP
+	Stack(StackDelta)
+}
+
+// Some operations use a modified value of the the SP register
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum StackDelta {
+	/// Use the stack value
+	Zero,
+	/// Use the stack value - 2
+	MinusTwo
+}
+
+impl Default for TState {
+    fn default() -> Self {
+        TState::T1
+    }
+}
+
+
+
+impl Default for OpcodePrefix {
+    fn default() -> Self {
+        OpcodePrefix::None
+    }
+}
+
+
 
 impl OpcodeInformation {
     /// Fetch is finished for opcode of 1 byte with no memory/port access
@@ -117,7 +152,7 @@ impl OpcodePrefix {
         } else if token.is_output_opcode() {
             if token.mnemonic_arg1().is_none() {
                 // The instructions with no arg are those that read from memory
-                AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
+                AddressSource::Register16(Reg16::Hl)
             } else {
                 AddressSource::None
             }
@@ -136,7 +171,7 @@ impl OpcodePrefix {
             AddressSource::None
         };
 
-        /// Location of the byte to write on data
+        // Location of the byte to write on data
         let write_data: DataSource = if token.is_output_opcode() {
             match token.mnemonic_arg2() {
                 Some(position) => position.into(),
@@ -222,6 +257,8 @@ impl OpcodePrefix {
         (nb_height_bits_args + 2 * nb_sixteen_bits_args) as u8
     }
 
+	/// Obtain the address source from general instructions. Some specific ones are handled somewhere manually.
+	/// TODO : merge the two places ...
     fn read_address_source(self, i: usize) -> AddressSource {
         lazy_static! {
             static ref INDEXED_IY: Regex = Regex::new(r"\(IY\+nn\)$").unwrap();
@@ -238,21 +275,21 @@ impl OpcodePrefix {
         let repr = self.disassembling_table()[i];
 
         if INDEXED_IY.is_match(repr) {
-            AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Iy)
+            AddressSource::Indexed(Reg16::Iy)
         } else if INDEXED_IX.is_match(repr) {
-            AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Ix)
+            AddressSource::Indexed(Reg16::Ix)
         } else if IN_AF.is_match(repr) {
-            AddressSource::Register16(cpclib_asm::preamble::Register16::Af)
+            AddressSource::Register16(Reg16::Af)
         } else if IN_HL.is_match(repr) {
-            AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
+            AddressSource::Register16(Reg16::Hl)
         } else if IN_DE.is_match(repr) {
-            AddressSource::Register16(cpclib_asm::preamble::Register16::De)
+            AddressSource::Register16(Reg16::De)
         } else if IN_BC.is_match(repr) {
-            AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
+            AddressSource::Register16(Reg16::Bc)
         } else if IN_IX.is_match(repr) {
-            AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Ix)
+            AddressSource::IndexRegister16(Reg16::Ix)
         } else if IN_IY.is_match(repr) {
-            AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Iy)
+            AddressSource::IndexRegister16(Reg16::Iy)
         } else if IMMEDIATE.is_match(repr) {
             AddressSource::Immediate
         } else {
@@ -267,7 +304,7 @@ impl OpcodePrefix {
 
         match token.mnemonic_arg2() {
             Some(DataAccess::PortC) | None => {
-                AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
+                AddressSource::Register16(Reg16::Bc)
             }
             Some(DataAccess::PortN(_)) => AddressSource::Immediate,
             _ => unreachable!("{:?}", token),
@@ -282,14 +319,15 @@ impl OpcodePrefix {
 
         match token.mnemonic_arg1() {
             Some(DataAccess::PortC) | None => {
-                AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
+                AddressSource::Register16(Reg16::Bc)
             }
             Some(DataAccess::PortN(_)) => AddressSource::Immediate,
             _ => unreachable!("{:?}", token),
         }
     }
 
-    /// Provide the location of the address to put on the address bus to write in memory
+    /// Provide the location of the address to put on the address bus to write in memory  from general instructions. Some specific ones are handled somewhere manually.
+	/// TODO : merge the two places ...
     fn write_address_source(self, i: usize) -> AddressSource {
         lazy_static! {
             static ref INDEXED_IY: Regex = Regex::new(r"\(IY\+nn\)[^$]").unwrap();
@@ -306,21 +344,21 @@ impl OpcodePrefix {
         let repr = self.disassembling_table()[i];
 
         if INDEXED_IY.is_match(repr) {
-            AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Iy)
+            AddressSource::Indexed(Reg16::Iy)
         } else if INDEXED_IX.is_match(repr) {
-            AddressSource::Indexed(cpclib_asm::preamble::IndexRegister16::Ix)
+            AddressSource::Indexed(Reg16::Ix)
         } else if IN_AF.is_match(repr) {
-            AddressSource::Register16(cpclib_asm::preamble::Register16::Af)
+            AddressSource::Register16(Reg16::Af)
         } else if IN_HL.is_match(repr) {
-            AddressSource::Register16(cpclib_asm::preamble::Register16::Hl)
+            AddressSource::Register16(Reg16::Hl)
         } else if IN_DE.is_match(repr) {
-            AddressSource::Register16(cpclib_asm::preamble::Register16::De)
+            AddressSource::Register16(Reg16::De)
         } else if IN_BC.is_match(repr) {
-            AddressSource::Register16(cpclib_asm::preamble::Register16::Bc)
+            AddressSource::Register16(Reg16::Bc)
         } else if IN_IX.is_match(repr) {
-            AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Ix)
+            AddressSource::IndexRegister16(Reg16::Ix)
         } else if IN_IY.is_match(repr) {
-            AddressSource::IndexRegister16(cpclib_asm::preamble::IndexRegister16::Iy)
+            AddressSource::IndexRegister16(Reg16::Iy)
         } else if IMMEDIATE.is_match(repr) {
             AddressSource::Immediate
         } else {
@@ -329,20 +367,6 @@ impl OpcodePrefix {
     }
 }
 
-/// Where the CPU searches the address information to be put on the address line
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub(crate) enum AddressSource {
-    /// No address handled by the opcode
-    None,
-    /// The address has been read by the CPU and is stored in extra bytes
-    Immediate,
-    /// The address is contained inside a 16 bits register
-    Register16(cpclib_asm::preamble::Register16),
-    /// The address is contained in a 16 bits indexed regiser
-    IndexRegister16(cpclib_asm::preamble::IndexRegister16),
-    /// The delta has already been read by the CPU
-    Indexed(cpclib_asm::preamble::IndexRegister16),
-}
 
 /// Where the CPU searches the information to link with the data bus
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -354,14 +378,14 @@ pub(crate) enum DataSource {
     /// Data stays on the pins
     Pins,
     /// The value is in a 8 bit register
-    Register8(cpclib_asm::preamble::Register8),
+    Register8(Reg8),
     /// The value is in a 16 bit register
-    Register16(cpclib_asm::preamble::Register16),
-    /// The value is in a 16 bits indexed regiser
-    IndexRegister16(cpclib_asm::preamble::IndexRegister16),
-    /// The value is in a 8 bits indexed regiser
-    IndexRegister8(cpclib_asm::preamble::IndexRegister8),
-    /// The value msut be read from memory and tḧe address is in the register
+    Register16(Reg16),
+    /// The value is in a 16 bits indexed register
+    IndexRegister16(Reg16),
+    /// The value is in a 8 bits indexed register
+    IndexRegister8(Reg8),
+    /// The value must be read from memory and tḧe address is in the register
     MemoryRegister16(cpclib_asm::preamble::Register16),
 }
 
@@ -370,10 +394,10 @@ pub(crate) type DataDestination = DataSource;
 impl From<&DataAccess> for DataSource {
     fn from(d: &DataAccess) -> DataSource {
         match d {
-            DataAccess::IndexRegister16(reg) => DataSource::IndexRegister16(*reg),
-            DataAccess::IndexRegister8(reg) => DataSource::IndexRegister8(*reg),
-            DataAccess::Register16(reg) => DataSource::Register16(*reg),
-            DataAccess::Register8(reg) => DataSource::Register8(*reg),
+            DataAccess::IndexRegister16(reg) => DataSource::IndexRegister16(reg.into()),
+            DataAccess::IndexRegister8(reg) => DataSource::IndexRegister8(reg.into()),
+            DataAccess::Register16(reg) => DataSource::Register16(reg.into()),
+            DataAccess::Register8(reg) => DataSource::Register8(reg.into()),
             DataAccess::Expression(_) => DataSource::Immediate, // to be read
             _ => panic!("{:?} unimplemented", d),
         }
@@ -441,5 +465,67 @@ impl MCycle {
             MCycle::FetchOpcode(_, _, prefix) => *prefix,
             _ => unreachable!(),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+    #[test]
+    fn lookup_checks_hl() {
+        // ld hl, xxxx
+        assert_eq!(dbg!(&OPCODE_PREFIX[0x21]).nb_additional_opcode_bytes, 2);
+    }
+
+	#[test]
+    fn lookup_checks_call() {
+		// call pq
+		let call = dbg!(&OPCODE_PREFIX[0xcd]);
+        assert_eq!(call.nb_additional_opcode_bytes, 2);
+        assert_eq!(call.write_address, AddressSource::Stack(StackDelta::MinusTwo)); // we want to write on the stack
+		assert_eq!(call.write_data, DataSource::Register16(Reg16::Pc)); // we want to write PC
+    }
+
+    #[test]
+    fn lookup_checks_out() {
+        // out(c), a
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX_ED[0x79]).nb_additional_opcode_bytes,
+            0 // ed is the already additional
+        );
+        assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).nb_bytes_to_write, 1);
+        assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).addresses_memory, false);
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX_ED[0x79]).write_address,
+            AddressSource::Register16(Reg16::Bc)
+        );
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX_ED[0x79]).write_data,
+            DataSource::Register8(Reg8::A)
+        );
+
+        // out (n), a
+        assert_eq!(
+            dbg!(&OPCODE_PREFIX[0xd3]).nb_additional_opcode_bytes,
+            1 //n
+        );
+
+        // outd
+        let desc = dbg!(&OPCODE_PREFIX_ED[0xab]);
+        assert_eq!(desc.nb_bytes_to_write, 1);
+        assert_eq!(desc.nb_additional_opcode_bytes, 0);
+        assert_eq!(
+            desc.read_address,
+            AddressSource::Register16(Reg16::Hl)
+        );
+        assert_eq!(
+            desc.write_address,
+            AddressSource::Register16(Reg16::Bc)
+        );
+        assert_eq!(
+            desc.write_data,
+            DataSource::Pins // we assume data are already on the pins because they have been read one cycle before
+        );
     }
 }
