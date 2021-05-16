@@ -468,6 +468,14 @@ impl MCycle {
         *self == MCycle::default()
     }
 
+	pub fn is_input(&self) -> bool {
+        match self {
+			Self::Input(_, _) => true,
+			_ => false
+		}
+    }
+
+
     pub(crate) fn inc_state(&mut self) {
         *self = match self {
             MCycle::FetchOpcode(TState::T1, nb, prefix) => {
@@ -492,6 +500,10 @@ impl MCycle {
             MCycle::Output(TState::T1, nb) => MCycle::Output(TState::T2, *nb),
             MCycle::Output(TState::T2, nb) => MCycle::Output(TState::T3, *nb),
             MCycle::Output(TState::T3, nb) => panic!("Ambigous"),
+
+			MCycle::Input(TState::T1, nb) => MCycle::Input(TState::T2, *nb),
+            MCycle::Input(TState::T2, nb) => MCycle::Input(TState::T3, *nb),
+            MCycle::Input(TState::T3, nb) => panic!("Ambigous"),
 
             _ => unimplemented!(),
         }

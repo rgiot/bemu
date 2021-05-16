@@ -420,7 +420,12 @@ impl Z80 {
 
                 if opcode_information.fetch_finished() {
                     if opcode_information.expect_read() {
-                        self.next_state = MCycle::Read(TState::T1, 0);
+                        if opcode_information.addresses_memory {
+                            self.next_state = MCycle::Read(TState::T1, 0);
+                        }
+                        else {
+                            self.next_state = MCycle::Input(TState::T1, 0);
+                        }
                         return false;
                     } else if opcode_information.expect_write() {
                         if opcode_information.addresses_memory {
@@ -447,6 +452,7 @@ impl Z80 {
 
     /// Execute the end of the instration (everything related to memory or ports has already been handled).
     /// Here we take care of registers modifications and flags configuration
+    /// We can consider that here we play the latest t-state
     fn execute_opcode(
         &mut self,
         opcode: &Mnemonic,
@@ -454,7 +460,7 @@ impl Z80 {
         arg2: Option<&DataAccess>,
     ) {
         match opcode {
-            Mnemonic::Nop | Mnemonic::Out => {
+            Mnemonic::Nop | Mnemonic::Out | Mnemonic::In => {
                 // nothing to do because everything has been handled by cpu
             }
 
@@ -775,6 +781,7 @@ impl Z80 {
 // Opcode specific code
 impl Z80 {
     /// Manage the specific treatment after the read_instruction
+    /// TODO check if it does not belong to another tstate !!!
     pub fn post_read_action(&mut self) {
         let opcode_info = self.opcode_information.as_ref().unwrap();
 
@@ -891,8 +898,14 @@ impl Chip for Z80 {
                 } else {
                     let opcode_information = self.opcode_information.as_ref().unwrap();
                     if nb == opcode_information.nb_additional_opcode_bytes {
+                        // We have finished to read the opcode
                         if 0 != opcode_information.nb_bytes_to_read {
-                            self.next_state = MCycle::Read(TState::T1, 0);
+                            if opcode_information.addresses_memory {
+                                self.next_state = MCycle::Read(TState::T1, 0);
+                            }
+                            else {
+                                self.next_state = MCycle::Input(TState::T1, 0);
+                            }
                         } else if 0 != opcode_information.nb_bytes_to_write {
                             if opcode_information.addresses_memory {
                                 self.next_state = MCycle::Write(TState::T1, 0);
@@ -900,8 +913,9 @@ impl Chip for Z80 {
                                 self.next_state = MCycle::Output(TState::T1, 0);
                             }
                         } else {
+                            // go back for a new instruction
                             self.next_state =
-                                MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); // go back for a new instruction
+                                MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); 
                             self.execute_step();
                         }
                     } else {
@@ -911,16 +925,28 @@ impl Chip for Z80 {
                 }
             }
 
-            MCycle::Read(TState::T1, nb) => {
+
+
+            MCycle::Read(TState::T1, nb) | MCycle::Input(TState::T1, nb) => {
                 let address = self.get_read_address_from_opcode_information();
                 self.set_address_on_pins(address);
-                self.set_pin(Z80Pin::Neg_MREQ, false);
+                if self.next_state.is_input() {
+                    self.set_pin(Z80Pin::Neg_MREQ, false);
+                }
+                else {
+                    self.set_pin(Z80Pin::Neg_IORQ, false);
+                }
                 self.set_pin(Z80Pin::Neg_RD, false);
                 self.next_state.inc_state();
             }
-            MCycle::Read(TState::T2, nb) => {
+            MCycle::Read(TState::T2, nb)  | MCycle::Input(TState::T2, nb) => {
+                if self.next_state.is_input() {
+                    self.set_pin(Z80Pin::Neg_MREQ, true);
+                }
+                else {
+                    self.set_pin(Z80Pin::Neg_IORQ, true);
+                }
                 self.set_pin(Z80Pin::Neg_RD, true);
-                self.set_pin(Z80Pin::Neg_MREQ, true);
                 let byte = self.get_data_from_pins();
                 if nb == 0 {
                     self.reg8_mut(Reg8::Z).set(byte);
@@ -931,7 +957,7 @@ impl Chip for Z80 {
                 }
                 self.next_state.inc_state();
             }
-            MCycle::Read(TState::T3, nb) => {
+            MCycle::Read(TState::T3, nb) | MCycle::Input(TState::T3, nb)=> {
                 self.post_read_action();
 
                 let opcode_info = self.opcode_information.as_ref().unwrap();
@@ -953,6 +979,8 @@ impl Chip for Z80 {
                     self.next_state = MCycle::Read(TState::T1, nb + 1);
                 }
             }
+
+
 
             MCycle::Write(TState::T1, nb) => {
                 let address = self.get_write_address_from_opcode_information();

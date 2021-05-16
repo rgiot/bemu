@@ -91,6 +91,25 @@ fn execute_dec() {
 
 
 #[test]
+fn execute_in1() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld bc, 0xf5
+		in a, (c)
+		jr $ ; end of test
+	"));
+
+	// wait (too much) to be sure screen mode changed
+	let mut motherboard = execute_program(0x4000,0x4000, code);
+
+
+	// TODO add the tests to check the machinery really work
+}
+
+
+
+#[test]
 fn execute_ld() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
