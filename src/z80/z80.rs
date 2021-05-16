@@ -976,20 +976,33 @@ impl Chip for Z80 {
                     }
                 } else {
                     // go to read the next byte
-                    self.next_state = MCycle::Read(TState::T1, nb + 1);
+                    if self.next_state.is_input() {
+                        self.next_state = MCycle::Input(TState::T1, nb + 1);
+                    }
+                    else {
+                        self.next_state = MCycle::Read(TState::T1, nb + 1);
+                    }
                 }
             }
 
 
 
-            MCycle::Write(TState::T1, nb) => {
+            MCycle::Write(TState::T1, nb) | MCycle::Output(TState::T1, nb) => {
                 let address = self.get_write_address_from_opcode_information();
                 self.set_address_on_pins(address);
 
+                assert!(self.get_pin(Z80Pin::Neg_IORQ));
+                assert!(self.get_pin(Z80Pin::Neg_WR));
+
                 self.next_state.inc_state();
             }
-            MCycle::Write(TState::T2, nb) => {
-                self.set_pin(Z80Pin::Neg_MREQ, false);
+            MCycle::Write(TState::T2, nb) | MCycle::Output(TState::T2, nb) => {
+                if self.next_state.is_output() {
+                    self.set_pin(Z80Pin::Neg_IORQ, false);
+                }
+                else {
+                    self.set_pin(Z80Pin::Neg_MREQ, false);
+                }
                 self.set_pin(Z80Pin::Neg_WR, false);
 
                 let byte =self.get_byte_to_write_from_opcode_information(nb);
@@ -997,9 +1010,14 @@ impl Chip for Z80 {
                 self.set_data_on_pins(byte);
                 self.next_state.inc_state();
             }
-            MCycle::Write(TState::T3, nb) => {
+            MCycle::Write(TState::T3, nb) | MCycle::Output(TState::T3, nb) => {
+                if self.next_state.is_output() {
+                    self.set_pin(Z80Pin::Neg_IORQ, true);
+                }
+                else {
+                    self.set_pin(Z80Pin::Neg_MREQ, true);
+                }
                 self.set_pin(Z80Pin::Neg_WR, true);
-                self.set_pin(Z80Pin::Neg_MREQ, true);
 
                 if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write -1 {
                     // TODO take into account those that do a write after the read (if that exists)
@@ -1008,27 +1026,16 @@ impl Chip for Z80 {
                 // go back for a new instruction
                 } else {
                     // go to write the next byte
-                    self.next_state = MCycle::Write(TState::T1, nb + 1);
+                    if self.next_state.is_output() {
+                        self.next_state = MCycle::Output(TState::T1, nb + 1);
+                    }
+                    else {
+                        self.next_state = MCycle::Write(TState::T1, nb + 1);
+                    }
                 }
             }
 
-            MCycle::Output(TState::T1, nb) => {
-                let address = self.get_write_address_from_opcode_information();
-                self.set_address_on_pins(address);
-                assert!(self.get_pin(Z80Pin::Neg_IORQ));
-                assert!(self.get_pin(Z80Pin::Neg_WR));
 
-                self.next_state.inc_state();
-            }
-            MCycle::Output(TState::T2, nb) => {
-                self.set_pin(Z80Pin::Neg_IORQ, false);
-                self.set_pin(Z80Pin::Neg_WR, false);
-
-                let byte = self.get_byte_to_write_from_opcode_information(nb);
-
-                self.set_data_on_pins(byte);
-                self.next_state.inc_state();
-            }
             MCycle::Output(TState::T3, nb) => {
                 self.set_pin(Z80Pin::Neg_IORQ, true);
                 self.set_pin(Z80Pin::Neg_WR, true);

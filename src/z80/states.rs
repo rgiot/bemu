@@ -475,6 +475,12 @@ impl MCycle {
 		}
     }
 
+	pub fn is_output(&self) -> bool {
+        match self {
+			Self::Output(_, _) => true,
+			_ => false
+		}
+    }
 
     pub(crate) fn inc_state(&mut self) {
         *self = match self {
