@@ -148,7 +148,7 @@ impl Motherboard {
             self.t_state_counter.inc();
 
             // By definition it is a new opcode because the previous one has been executed
-            if self.cpu.next_state.is_new_opcode() {
+            if self.t_state_counter.value() % 4 == 0  {
                 self.nops_counter.inc();
             }
         }
