@@ -50,6 +50,28 @@ fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 
 
 #[test]
+fn execute_call() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		call end
+		jr $ ; never reached if not buggy
+
+		org 0x5000
+end
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0x5000,
+		motherboard.cpu().reg16(Reg16::Pc).value()
+	);
+}
+
+
+#[test]
 fn execute_dec() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
@@ -247,8 +269,6 @@ fn execute_outd() {
 		ld b, 0x7f + 1
 		ld hl, table
 		outd ; put white ink
-
-		nop ; we want to be sure it is taken into account
 
 		jr $ ; end of test
 table

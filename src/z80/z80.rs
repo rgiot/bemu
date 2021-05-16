@@ -327,19 +327,37 @@ impl Z80 {
     }
 
     /// Returns the byte that needs to be written
-    fn get_byte_to_write_from_opcode_information(&self) -> u8 {
-        self.get_byte_from_data_source(&self.opcode_information.as_ref().unwrap().write_data)
+    fn get_byte_to_write_from_opcode_information(&self, step: u8) -> u8 {
+        self.get_byte_from_data_source(&self.opcode_information.as_ref().unwrap().write_data, step)
     }
 
     /// Returns the appropriate byte
-    fn get_byte_from_data_source(&self, src: &DataSource) -> u8 {
-        match src {
-            DataSource::Register8(reg) => self.reg8(*reg).get(),
-            DataSource::Pins => self.get_data_from_pins(),
-            _ => panic!(
-                "{:?} contains a 16 bits value. Find another way to handle that",
-                src
-            ),
+    fn get_byte_from_data_source(&self, src: &DataSource, step: u8) -> u8 {
+        // Retreive the 16 bits value
+        let value = match src {
+            DataSource::Register8(reg) => {
+                assert_eq!(step, 0);
+                self.reg8(*reg).get() as u16
+            },
+            DataSource::Pins => {
+                assert_eq!(step, 0);
+                self.get_data_from_pins() as u16
+            },
+            DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
+                self.reg16(*reg).value()
+            }
+            _ => unimplemented!("{:?}", src)
+        };
+
+        // And output the appropriate 8 bits one
+        if step == 0 {
+            (value & 0xff) as u8
+        }
+        else if step == 1 {
+            ((value & 0xff00) >> 8) as u8
+        }
+        else {
+            unreachable!()
         }
     }
 
@@ -450,6 +468,21 @@ impl Z80 {
                     }
                     _ => unimplemented!(),
                 }
+            }
+
+            Mnemonic::Call => {
+                assert!(arg1.is_none(), "Need to handle BEFORE the conditional case");
+
+                let addr = match arg2 {
+                    Some(DataAccess::Expression(exp)) => {
+                        exp.eval().unwrap() as u16
+                    },
+
+                    _ => unreachable!()
+                };
+
+                self.pc.set(addr);
+                self.sp.dec(); self.sp.dec();
             }
 
             Mnemonic::Dec => {
@@ -931,10 +964,7 @@ impl Chip for Z80 {
                 self.set_pin(Z80Pin::Neg_MREQ, false);
                 self.set_pin(Z80Pin::Neg_WR, false);
 
-                let byte = match nb {
-                    0 => self.get_byte_to_write_from_opcode_information(),
-                    _ => unimplemented!("{} {:?}", nb, self.opcode_information),
-                };
+                let byte =self.get_byte_to_write_from_opcode_information(nb);
 
                 self.set_data_on_pins(byte);
                 self.next_state.inc_state();
@@ -943,7 +973,7 @@ impl Chip for Z80 {
                 self.set_pin(Z80Pin::Neg_WR, true);
                 self.set_pin(Z80Pin::Neg_MREQ, true);
 
-                if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write + 2 - 1 {
+                if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write -1 {
                     // TODO take into account those that do a write after the read (if that exists)
                     self.execute_step();
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
@@ -966,11 +996,7 @@ impl Chip for Z80 {
                 self.set_pin(Z80Pin::Neg_IORQ, false);
                 self.set_pin(Z80Pin::Neg_WR, false);
 
-                let byte = self.get_byte_to_write_from_opcode_information();
-                assert_eq!(
-                    self.opcode_information.as_ref().unwrap().nb_bytes_to_write,
-                    1
-                );
+                let byte = self.get_byte_to_write_from_opcode_information(nb);
 
                 self.set_data_on_pins(byte);
                 self.next_state.inc_state();
