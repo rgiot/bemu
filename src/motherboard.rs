@@ -20,6 +20,9 @@ pub struct Motherboard {
     rom_selector: UpperRomSelector,
     memory: Memory,
 
+    // Counter of t-states (to be removed later)
+    t_state_counter: Counter,
+    // Counter of nops
     nops_counter: Counter
 }
 
@@ -44,6 +47,7 @@ impl Default for Motherboard {
             rom_selector: Default::default(),
             memory: Default::default(),
 
+            t_state_counter: Default::default(),
             nops_counter: Default::default()
         };
         motherboard.stabilize_run();
@@ -94,6 +98,10 @@ impl Motherboard {
     }
 
 
+    pub fn t_state_counter(&self) -> &Counter {
+        &self. t_state_counter
+    }
+
     pub fn nops_counter(&self) -> &Counter {
         &self. nops_counter
     }
@@ -137,7 +145,12 @@ impl Motherboard {
 
         if self.cpu.is_activated() {
             self.cpu.tick(); // Virtually uses 4 cycles
-            self.nops_counter.inc();
+            self.t_state_counter.inc();
+
+            // By definition it is a new opcode because the previous one has been executed
+            if self.cpu.next_state.is_new_opcode() {
+                self.nops_counter.inc();
+            }
         }
 
         let ga_output = (self.ga.rgb(), self.ga.sync());
@@ -197,22 +210,24 @@ impl Motherboard {
             "We have to start by a new opcode"
         );
 
-        let mut has_executed_first_state = false;
+        let mut has_executed_first_state_counter = false;
+        let mut has_finished_z80_execution = false;
 
         /// execute the whole stuff as soon as it is necessary
         loop {
             video.push(self.tick());
 
-            has_executed_first_state =
-                has_executed_first_state | !self.cpu.next_state.is_new_opcode();
+            has_executed_first_state_counter =
+                has_executed_first_state_counter | !self.cpu.next_state.is_new_opcode();
 
-            if self.cpu.is_activated() {
-                &self.cpu.next_state;
+            if has_executed_first_state_counter && self.cpu.is_downfront(Z80::clock_pin()) {
+                has_finished_z80_execution = true;
             }
 
             if self.cpu.is_activated()
                 && self.cpu.next_state.is_new_opcode()
-                && has_executed_first_state
+                && has_executed_first_state_counter
+                && has_finished_z80_execution
             {
                 break;
             }
