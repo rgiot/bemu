@@ -1,3 +1,5 @@
+use std::ops::Add;
+
 ///! This module contains all that can help to manage the variuous states of the CPU
 
 use lazy_static::lazy_static;
@@ -178,11 +180,12 @@ impl OpcodePrefix {
                 None => DataSource::Pins, // the address is already on the pins
             }
         } else {
-            if write_address == AddressSource::None {
-                DataSource::None
-            } else {
-                token.mnemonic_arg2().unwrap().into()
-            }
+			// opcode that is not an output
+			match write_address {
+             AddressSource::None => DataSource::None,
+			 AddressSource::Stack(_) => DataSource::Register16(Reg16::Pc),
+			_ => token.mnemonic_arg2().unwrap().into()
+			}
         };
 
         // get the number of bytes needed to build the complete opcode
@@ -339,11 +342,15 @@ impl OpcodePrefix {
             static ref IN_IX: Regex = Regex::new(r"\(IX\)[^$]").unwrap();
             static ref IN_IY: Regex = Regex::new(r"\(IY\)[^$]").unwrap();
             static ref IMMEDIATE: Regex = Regex::new(r"\(nnnn\)[^$]").unwrap();
+            static ref CALL: Regex = Regex::new(r"^CALL").unwrap();
         }
 
         let repr = self.disassembling_table()[i];
 
-        if INDEXED_IY.is_match(repr) {
+		if CALL.is_match(repr) {
+			AddressSource::Stack(StackDelta::MinusTwo)
+		}
+        else if INDEXED_IY.is_match(repr) {
             AddressSource::Indexed(Reg16::Iy)
         } else if INDEXED_IX.is_match(repr) {
             AddressSource::Indexed(Reg16::Ix)
