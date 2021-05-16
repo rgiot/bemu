@@ -607,10 +607,18 @@ pub trait HasValue {
 }
 
 /// Represents an 8 bit register
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct Register8 {
     /// The 8 bit value of the register
     val: u8,
+}
+
+impl fmt::Debug for Register8 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Register8")
+         .field(&format!("0x{:X}", self.value()))
+         .finish()
+    }
 }
 
 /// By default a Register8 is set to 0
@@ -668,9 +676,11 @@ pub struct Register16 {
     high: Register8,
 }
 
-impl Debug for Register16 {
+impl fmt::Debug for Register16 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({:?}, {:?})", &self.high, &self.low)
+        f.debug_tuple("Register16")
+         .field(&format!("0x{:X}", self.value()))
+         .finish()
     }
 }
 
