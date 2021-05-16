@@ -891,7 +891,7 @@ impl Chip for Z80 {
                 } else {
                     let opcode_information = self.opcode_information.as_ref().unwrap();
                     if nb == opcode_information.nb_additional_opcode_bytes {
-                        if 0 != opcode_information.nb_additional_bytes_to_read {
+                        if 0 != opcode_information.nb_bytes_to_read {
                             self.next_state = MCycle::Read(TState::T1, 0);
                         } else if 0 != opcode_information.nb_bytes_to_write {
                             if opcode_information.addresses_memory {
@@ -935,7 +935,7 @@ impl Chip for Z80 {
                 self.post_read_action();
 
                 let opcode_info = self.opcode_information.as_ref().unwrap();
-                if nb + 1 == opcode_info.nb_additional_bytes_to_read {
+                if nb + 1 == opcode_info.nb_bytes_to_read {
                     if 0 != opcode_info.nb_bytes_to_write {
                         if opcode_info.addresses_memory {
                             self.next_state = MCycle::Write(TState::T1, 0);
@@ -1254,7 +1254,7 @@ mod test {
         // ld a, (nnnn)
         let desc = dbg!(OpcodePrefix::None.opcode_information(0b00111010));
         assert_eq!(desc.nb_additional_opcode_bytes, 2);
-        assert_eq!(desc.nb_additional_bytes_to_read, 1);
+        assert_eq!(desc.nb_bytes_to_read, 1);
 
         // ld l, nn
         let desc = dbg!(OpcodePrefix::None.opcode_information(0x2e));

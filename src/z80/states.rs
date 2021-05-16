@@ -67,12 +67,10 @@ pub(crate) struct OpcodeInformation {
 	///Read data
     pub(crate) read_data: DataDestination,
     /// Number of bytes to read from the address
-    pub(crate) nb_additional_bytes_to_read: u8,
+    pub(crate) nb_bytes_to_read: u8,
     /// Number of bytes the instruction request to write (in memory or chip)
     pub(crate) nb_bytes_to_write: u8,
     /// Number of bytes the instruction request to read (from memory or chip)
-    pub(crate) nb_bytes_to_read: u8,
-    /// allow to difference memory and port addressing
     pub(crate) addresses_memory: bool,
     /// String representation
     pub(crate) repr: &'static str,
@@ -132,7 +130,7 @@ impl OpcodeInformation {
 
     /// Check if CPU as to read from bus
     pub fn expect_read(&self) -> bool {
-        self.nb_additional_bytes_to_read != 0
+        self.nb_bytes_to_read != 0
     }
 
     /// Check if CPU as to write in bus
@@ -201,9 +199,9 @@ impl OpcodePrefix {
 		} else {
 			DataSource::None // TODO implement the other ones
 		};
-
+/*
         // get the number of bytes needed to build the complete opcode
-        let nb_additional_bytes_to_read = if token.is_output_opcode() {
+        let nb_bytes_to_read = if token.is_output_opcode() {
             if let Some(DataAccess::PortC) = token.mnemonic_arg1() {
                 0
             } else {
@@ -221,7 +219,7 @@ impl OpcodePrefix {
                 _ => 1, // TODO really set the right value
             }
         };
-
+*/
         let nb_bytes_to_write = match write_data {
             DataSource::None => 0,
             DataSource::Register16(_) => 2,
@@ -233,7 +231,13 @@ impl OpcodePrefix {
             DataSource::Pins => 1,                // the byte is already on the pins
         };
 
-		let nb_bytes_to_read = match read_data {
+		let nb_bytes_to_read = if token.is_output_opcode() {
+            if let Some(DataAccess::PortC) = token.mnemonic_arg1() {
+                0
+            } else {
+                1 // port n belongs to the opcode
+            }
+        } else {match read_data {
             DataSource::None => 0,
             DataSource::Register16(_) => 2,
             DataSource::IndexRegister16(_) => 2,
@@ -242,7 +246,7 @@ impl OpcodePrefix {
             DataSource::Immediate => 1,           // XXX not sure of that
             DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
             DataSource::Pins => 1,                // the byte is already on the pins
-        };
+        }};
 
         OpcodeInformation {
             prefix: self.clone(),
@@ -251,9 +255,8 @@ impl OpcodePrefix {
             write_address,
             write_data,
 			read_data,
-            nb_additional_bytes_to_read,
-            nb_bytes_to_write,
             nb_bytes_to_read,
+            nb_bytes_to_write,
             repr,
             addresses_memory,
             token,
@@ -558,6 +561,7 @@ mod test {
         // outd
         let desc = dbg!(&OPCODE_PREFIX_ED[0xab]);
         assert_eq!(desc.nb_bytes_to_write, 1);
+        assert_eq!(desc.nb_bytes_to_read, 1);
         assert_eq!(desc.nb_additional_opcode_bytes, 0);
         assert_eq!(
             desc.read_address,
