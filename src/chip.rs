@@ -1,7 +1,25 @@
 use num::cast::ToPrimitive;
+use std::fmt;
 
 /// Previous and current state to be able to compute the front and decrease
-pub type PinsBuffer = (u64, u64);
+
+#[derive(Default, Copy, Clone, PartialEq)]
+pub struct  PinsBuffer(u64, u64);
+
+impl fmt::Debug for PinsBuffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PinsBuffer")
+         .field("prev.", &format!("{:b}", &self.0))
+         .field("curr.", &format!("{:b}", &self.1))
+         .finish()
+    }
+}
+
+impl From<(u64, u64)> for PinsBuffer {
+    fn from(from: (u64, u64)) -> Self {
+        Self(from.0, from.1)
+    }
+}
 
 /// Each chip of the machine must implement this trait
 pub trait Chip {
@@ -58,7 +76,7 @@ pub trait Chip {
         use std::ops::Not;
         assert_eq!(pin.count_ones(), 1);
 
-        let (ref previous, ref current) = self.pins_buffer();
+        let &PinsBuffer(ref previous, ref current) = self.pins_buffer();
 
         let current = 0 != (current & pin);
         let previous = 0 != (previous & pin);
@@ -72,7 +90,7 @@ pub trait Chip {
         use std::ops::Not;
         assert_eq!(pin.count_ones(), 1);
 
-        let (ref previous, ref current) = self.pins_buffer();
+        let &PinsBuffer(ref previous, ref current) = self.pins_buffer();
 
         let current = 0 != (current & pin);
         let previous = 0 != (previous & pin);
@@ -84,7 +102,7 @@ pub trait Chip {
     fn force_front_down(&mut self, pin: Self::PinType) {
         let pin: u64 = pin.into();
 
-        let (ref mut previous, ref mut current) = self.pins_buffer_mut();
+        let &mut PinsBuffer(ref mut previous, ref mut current) = self.pins_buffer_mut();
 
         *previous = *previous | pin;
         *current = *current & !pin;

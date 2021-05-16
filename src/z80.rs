@@ -1754,7 +1754,7 @@ impl Chip for Z80 {
     }
 
     fn reset(&mut self) {
-        self.pins = (0, 0);
+        self.pins = (0, 0).into();
 
         self.set_pin(Z80Pin::Neg_MREQ, true);
         self.set_pin(Z80Pin::Neg_IORQ, true);

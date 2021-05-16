@@ -4,6 +4,9 @@ use crate::ga::*;
 use crate::memory::*;
 use crate::pal::*;
 use crate::z80::*;
+use crate::counter::*;
+
+use std::fmt;
 
 /// Motherboard of the AMstrad CPC
 /// Some component are emulated at the lowest level as possible (Z80/CRTC) while
@@ -16,6 +19,19 @@ pub struct Motherboard {
     pal: Pal,
     rom_selector: UpperRomSelector,
     memory: Memory,
+
+    nops_counter: Counter
+}
+
+impl fmt::Debug for Motherboard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Motherboard")
+         .field("cpu", &self.cpu)
+         .field("crtc", &self.crtc)
+         .field("ga", &self.ga)
+         .field("pal", &self.pal)
+         .finish()
+    }
 }
 
 impl Default for Motherboard {
@@ -27,6 +43,8 @@ impl Default for Motherboard {
             pal: Default::default(),
             rom_selector: Default::default(),
             memory: Default::default(),
+
+            nops_counter: Default::default()
         };
         motherboard.stabilize_run();
         motherboard
@@ -74,6 +92,11 @@ impl Motherboard {
     pub fn ga_mut(&mut self) -> &mut GateArray {
         &mut self.ga
     }
+
+
+    pub fn nops_counter(&self) -> &Counter {
+        &self. nops_counter
+    }
 }
 
 impl Motherboard {
@@ -114,6 +137,7 @@ impl Motherboard {
 
         if self.cpu.is_activated() {
             self.cpu.tick(); // Virtually uses 4 cycles
+            self.nops_counter.inc();
         }
 
         let ga_output = (self.ga.rgb(), self.ga.sync());

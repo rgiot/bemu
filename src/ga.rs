@@ -108,6 +108,7 @@ const GA_PIN_DATA_BUS: [GateArrayPin; 8] = [
 ];
 
 /// Content of the PENR register
+#[derive(Debug)]
 struct PENR(u8);
 #[derive(Debug, Copy, Clone)]
 pub enum Pen {
@@ -181,6 +182,7 @@ lazy_static! {
 }
 
 /// Content of the INKR register
+#[derive(Debug)]
 struct INKR(u8);
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Ink(u8);
@@ -275,6 +277,7 @@ impl ToRGBLevels for Ink {
 }
 
 /// Content of the RMR register
+#[derive(Debug)]
 struct RMR(u8);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -570,6 +573,7 @@ pub struct Sync {
 /// Version 40010 is targeted; it suffers of a shift in pixel rendering for mode 2
 /// TODO ensure the following sentence is applied
 /// The effect of an INKR command appears almost immediatly always with the same timings, but the change is not in sync with the character display of the CRTC so the new color appears somehow in the middle of a character (the CRTC display unit). 
+#[derive(Debug)]
 pub struct GateArray {
     clock: u64,
     pins: PinsBuffer,
@@ -595,7 +599,7 @@ impl Default for GateArray {
     fn default() -> Self {
         let mut ga = GateArray {
             clock: 0,
-            pins: (0, 0),
+            pins: (0, 0).into(),
 
             penr: PENR(0b000_00000),
             inkr: INKR(0b010_00000),

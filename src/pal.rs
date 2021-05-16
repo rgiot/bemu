@@ -59,6 +59,7 @@ const PAL_PIN_DATA_BUS: [PalPin; 8] = [
 ];
 
 /// MMR register that contains the RAM memory configuration
+#[derive(Debug)]
 pub struct MMR(u8);
 
 impl MMR {
@@ -151,6 +152,7 @@ impl MMR {
 /// Pal manages the memory selection.
 /// On a real CPC it does not have access to bit 3-5 of the data.
 /// Here, we take the liberty to do it
+#[derive(Debug)]
 pub struct Pal {
     pins: PinsBuffer,
     mmr: MMR,
@@ -167,7 +169,7 @@ impl ReadDataChip for Pal {}
 impl Default for Pal {
     fn default() -> Self {
         Pal {
-            pins: (0, 0),
+            pins: (0, 0).into(),
             mmr: MMR(0xc0),
         }
     }

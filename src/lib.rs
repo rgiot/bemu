@@ -14,3 +14,5 @@ pub mod memory;
 pub mod monitor;
 
 pub mod motherboard;
+
+pub mod counter;
