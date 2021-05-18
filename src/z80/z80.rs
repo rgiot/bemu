@@ -9,7 +9,18 @@ use std::fmt::Debug;
 
 use cpclib_asm::preamble::{FlagTest, Mnemonic, DataAccess,ExprEvaluationExt, SymbolsTableCaseDependent};
 
-
+macro_rules! inner_8bits_sub {
+    ($a:ident,$b:ident,$f:ident) => {{
+        let (res, ovf) = $a.overflowing_sub($b);
+    
+        Z80Flags::Z.set(res == 0, $f);
+        Z80Flags::C.set(ovf, $f);
+        // TODO manage signed stuff
+        Z80Flags::Y.set(res & 1 <<5 != 0, $f);
+        Z80Flags::X.set(res & 1 <<3 != 0, $f);
+        res
+      }};
+}
 
 
 // http://www.z80.info/zinout.htm#Z80CPU
@@ -491,6 +502,16 @@ impl Z80 {
                 self.sp.dec(); self.sp.dec();
             }
 
+            Mnemonic::Cp => {
+                let left = self.reg8(Reg8::A).value();
+                let right = self.get_available_8bits_value(arg1.unwrap());
+                let f = &mut self.reg8_mut(Reg8::F).val;
+                inner_8bits_sub!(left, right, f);
+                // override bit 5 and 3
+                Z80Flags::Y.set(right & 1 <<5 != 0, f);
+                Z80Flags::X.set(right & 1 <<3 != 0, f);
+            }
+
             Mnemonic::Dec => {
                 let mut update_flags = true; // disable only for 16 bits
                 let mut val = 0;
@@ -646,6 +667,26 @@ impl Z80 {
 
                     _ => unimplemented!(),
                 }
+            }
+
+
+            Mnemonic::Sub => {
+                match arg1 {
+                    Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)) | None => {
+                        let left = self.reg8(Reg8::A).value();
+                        let right = self.get_available_8bits_value(arg1.unwrap());
+                        let f = &mut self.reg8_mut(Reg8::F).val;
+                        let res = inner_8bits_sub!(left, right, f);
+                        // override bit 5 and 3
+                        Z80Flags::Y.set(right & 1 <<5 != 0, f);
+                        Z80Flags::X.set(right & 1 <<3 != 0, f);
+
+                        self.reg8_mut(Reg8::A).set(res);
+
+                    },
+                    _ => unimplemented!()
+                }
+
             }
 
             Mnemonic::Outd => {

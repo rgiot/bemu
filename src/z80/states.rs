@@ -264,7 +264,7 @@ impl OpcodePrefix {
     }
 
     /// Return the disassembling LUT table depending on the prefix
-    pub fn disassembling_table(&self) -> &[&'static str; 256] {
+    pub const fn disassembling_table(&self) -> &[&'static str; 256] {
         // the decoding table depends on the prefix
         match self {
             OpcodePrefix::None => &cpclib_asm::disass::TABINSTR,
