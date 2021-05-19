@@ -160,7 +160,10 @@ impl OpcodePrefix {
             } else {
                 AddressSource::None
             }
-        } else if addresses_memory {
+        } 
+		else if token.is_retlike_opcode() {
+			AddressSource::Stack(StackDelta::Zero)
+		} else if addresses_memory {
             self.read_address_source(opcode)
         } else {
             AddressSource::None
@@ -196,6 +199,8 @@ impl OpcodePrefix {
                 Some(position) => position.into(),
 				None => DataSource::Pins
 			}
+		} else if token.is_retlike_opcode() { // stack content is stored in PC
+			DataSource::Register16(Reg16::Pc)
 		} else {
 			DataSource::None // TODO implement the other ones
 		};
@@ -540,6 +545,15 @@ mod test {
         assert_eq!(call.nb_additional_opcode_bytes, 2);
         assert_eq!(call.write_address, AddressSource::Stack(StackDelta::MinusTwo)); // we want to write on the stack
 		assert_eq!(call.write_data, DataSource::Register16(Reg16::Pc)); // we want to write PC
+    }
+
+	#[test]
+    fn lookup_checks_ret() {
+		// call pq
+		let ret = dbg!(&OPCODE_PREFIX[0xc9]);
+        assert_eq!(ret.nb_additional_opcode_bytes, 0);
+        assert_eq!(ret.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
+		assert_eq!(ret.read_data, DataSource::Register16(Reg16::Pc)); // we want to override PC
     }
 
 	#[test]
