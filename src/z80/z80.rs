@@ -200,6 +200,28 @@ impl Z80Flags {
     pub fn is_off(&self, byte: u8) -> bool {
         !self.is_on(byte)
     }
+
+    #[inline] 
+    /// Update using the standard rule for the given flags
+    pub fn auto_update_from(&self, byte: &mut u8, res: u8){
+        match self {
+            Self::S => self.set(res & 1<<7 != 0,byte),
+            Self::X => self.set(res & 1<<3 != 0,byte),
+            Self::Y => self.set(res & 1<<5 != 0,byte),
+            Self::Z => self.set(res == 0,byte),
+            Self::P => self.set(res.count_ones() %2 == 0,byte),
+
+            _ => unreachable!()
+        }
+    }
+
+    #[inline]
+    /// Update using the standard rule of each provided flag
+    pub fn auto_update(flags: &[Self], byte: &mut u8, res: u8) {
+        flags.iter()
+            .for_each(|f| f.auto_update_from(byte, res));
+    }
+
 }
 
 #[derive(Default, Debug)]
@@ -494,13 +516,14 @@ impl Z80 {
                 self.reg8_mut(Reg8::A).set(res);
 
                 let f = &mut self.reg8_mut(Reg8::F).val;
-                Z80Flags::S.set(res & 1 <<7 != 0, f);
-                Z80Flags::Z.set(res == 0, f);
+                Z80Flags::auto_update(
+                    &[Z80Flags::S, Z80Flags::Z, Z80Flags::P, Z80Flags::X, Z80Flags::Y],
+                    f,
+                    res
+                );
                 Z80Flags::H.set_on( f);
                 Z80Flags::N.set_off( f);
                 Z80Flags::C.set_off( f);
-                Z80Flags::Y.set(res & 1 <<5 != 0, f);
-                Z80Flags::X.set(res & 1 <<3 != 0, f);
             }
 
             Mnemonic::Call => {
