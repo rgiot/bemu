@@ -736,6 +736,12 @@ impl Z80 {
                 Z80Flags::N.set_on(f);
             }
 
+            Mnemonic::Ret => {
+                // PC is already properly setup
+                self.sp.dec();
+                self.sp.dec();
+            }
+
             Mnemonic::Xor => {
                 let right = dbg!(self.get_available_8bits_value(arg1.unwrap()));
                 self.reg8_mut(Reg8::A).xor(right);

@@ -349,3 +349,28 @@ table
 		motherboard.ga().palette()[0]
 	);
 }
+
+
+#[test]
+fn execute_ret() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		call end
+return
+		assert return == 0x4000 + 3
+		jr $ ; really the final destination
+
+		org 0x5000
+end
+		ret
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0x4000+3,
+		motherboard.cpu().reg16(Reg16::Pc).value()
+	);
+}
