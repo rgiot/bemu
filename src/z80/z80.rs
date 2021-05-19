@@ -12,13 +12,16 @@ use cpclib_asm::preamble::{FlagTest, Mnemonic, DataAccess,ExprEvaluationExt, Sym
 macro_rules! inner_8bits_sub {
     ($a:ident,$b:ident,$f:ident) => {{
         let (res, ovf) = $a.overflowing_sub($b);
+
+        Z80Flags::auto_update(
+            &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
+            $f,
+            res
+        );
     
-        Z80Flags::S.set(res & 1 <<7 != 0, $f);
-        Z80Flags::Z.set(res == 0, $f);
         Z80Flags::C.set(ovf, $f);
+        Z80Flags::N.set_off($f);
         // TODO manage signed stuff
-        Z80Flags::Y.set(res & 1 <<5 != 0, $f);
-        Z80Flags::X.set(res & 1 <<3 != 0, $f);
         res
       }};
 }
@@ -547,34 +550,35 @@ impl Z80 {
                 let f = &mut self.reg8_mut(Reg8::F).val;
                 inner_8bits_sub!(left, right, f);
                 // override bit 5 and 3
-                Z80Flags::Y.set(right & 1 <<5 != 0, f);
-                Z80Flags::X.set(right & 1 <<3 != 0, f);
+                Z80Flags::X.auto_update_from(f, right);
+                Z80Flags::Y.auto_update_from(f, right);
             }
 
             Mnemonic::Dec => {
                 let mut update_flags = true; // disable only for 16 bits
-                let mut val = 0;
+                let mut res = 0;
                 match arg1.unwrap() {
                     DataAccess::Register8(reg) => {
                         let left: Reg8 = reg.into();
                         self.reg8_mut(left).dec();
-                        val = self.reg8(left).value();
+                        res = self.reg8(left).value();
                     }
                     DataAccess::IndexRegister8(reg) => {
                         let left: Reg8 = reg.into();
                         self.reg8_mut(left).dec();
-                        val = self.reg8(left).value();
+                        res = self.reg8(left).value();
                     }
                     _ => unimplemented!(),
                 }
 
                 if update_flags {
                     let f = &mut self.reg8_mut(Reg8::F).val;
-                    Z80Flags::S.set(val == 0, f);
-                    Z80Flags::Z.set(val & 1 << 7 != 0, f);
-                    Z80Flags::Y.set(val & 1 << 5 != 0, f);
+                    Z80Flags::auto_update(
+                        &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
+                        f,
+                        res
+                    );
                     // TODO handle H flag
-                    Z80Flags::X.set(val & 1 << 3 != 0, f);
                     // TODO handle P flag
                     Z80Flags::N.set_on(f);
                 }
@@ -586,29 +590,31 @@ impl Z80 {
 
             Mnemonic::Inc => {
                 let mut update_flags = true; // disable only for 16 bits
-                let mut val = 0;
+                let mut res = 0;
                 match arg1.unwrap() {
                     DataAccess::Register8(reg) => {
                         let left: Reg8 = reg.into();
                         self.reg8_mut(left).inc();
-                        val = self.reg8(left).value();
+                        res = self.reg8(left).value();
                     }
                     DataAccess::IndexRegister8(reg) => {
                         let left: Reg8 = reg.into();
                         self.reg8_mut(left).inc();
-                        val = self.reg8(left).value();
+                        res = self.reg8(left).value();
                     }
                     _ => unimplemented!(),
                 }
 
                 if update_flags {
                     let f = &mut self.reg8_mut(Reg8::F).val;
-                    Z80Flags::S.set(val == 0, f);
-                    Z80Flags::Z.set(val & 1 << 7 != 0, f);
-                    Z80Flags::Y.set(val & 1 << 5 != 0, f);
+                    Z80Flags::auto_update(
+                        &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
+                        f,
+                        res
+                    );
                     // TODO handle H flag
-                    Z80Flags::X.set(val & 1 << 3 != 0, f);
                     // TODO handle P flag
+                    // TODO handle C flag
                     Z80Flags::N.set_off(f);
                 }
             }
@@ -716,12 +722,7 @@ impl Z80 {
                         let right = self.get_available_8bits_value(arg1.unwrap());
                         let f = &mut self.reg8_mut(Reg8::F).val;
                         let res = inner_8bits_sub!(left, right, f);
-                        // override bit 5 and 3
-                        Z80Flags::Y.set(right & 1 <<5 != 0, f);
-                        Z80Flags::X.set(right & 1 <<3 != 0, f);
-
                         self.reg8_mut(Reg8::A).set(res);
-
                     },
                     _ => unimplemented!()
                 }
