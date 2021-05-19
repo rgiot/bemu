@@ -2,7 +2,7 @@
 
 use amsrust::crtc::{Crtc, CrtcType};
 use amsrust::motherboard::Motherboard;
-use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
+use amsrust::z80::{HasValue, Reg16, Reg8, Z80, Z80Flags};
 use amsrust::ga::{VideoMode, Ink};
 
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
@@ -89,6 +89,55 @@ fn execute_dec() {
 	);
 }
 
+
+#[test]
+fn execute_and1() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld a, 0xff
+		and 0
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	let a = motherboard.cpu().reg8(Reg8::A).value();
+	let f = motherboard.cpu().reg8(Reg8::F).value();
+	assert_eq!(
+		0x0,
+		a
+	);
+
+	assert!(
+		Z80Flags::Z.is_on(f)
+	);
+}
+
+
+#[test]
+fn execute_and2() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld a, 0xff
+		and 0b01
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	let a = motherboard.cpu().reg8(Reg8::A).value();
+	let f = motherboard.cpu().reg8(Reg8::F).value();
+	assert_eq!(
+		0x01,
+		a
+	);
+
+	assert!(
+		Z80Flags::Z.is_off(f)
+	);
+}
 
 #[test]
 fn execute_in1() {
