@@ -13,6 +13,7 @@ macro_rules! inner_8bits_sub {
     ($a:ident,$b:ident,$f:ident) => {{
         let (res, ovf) = $a.overflowing_sub($b);
     
+        Z80Flags::S.set(res & 1 <<7 != 0, $f);
         Z80Flags::Z.set(res == 0, $f);
         Z80Flags::C.set(ovf, $f);
         // TODO manage signed stuff
@@ -485,6 +486,21 @@ impl Z80 {
                     }
                     _ => unimplemented!(),
                 }
+            }
+
+            Mnemonic::And => {
+                let right = self.get_available_8bits_value(arg1.unwrap());
+                let res = self.reg8(Reg8::A).value() & right;
+                self.reg8_mut(Reg8::A).set(res);
+
+                let f = &mut self.reg8_mut(Reg8::F).val;
+                Z80Flags::S.set(res & 1 <<7 != 0, f);
+                Z80Flags::Z.set(res == 0, f);
+                Z80Flags::H.set_on( f);
+                Z80Flags::N.set_off( f);
+                Z80Flags::C.set_off( f);
+                Z80Flags::Y.set(res & 1 <<5 != 0, f);
+                Z80Flags::X.set(res & 1 <<3 != 0, f);
             }
 
             Mnemonic::Call => {
