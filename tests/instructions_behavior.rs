@@ -4,6 +4,7 @@ use amsrust::crtc::{Crtc, CrtcType};
 use amsrust::motherboard::Motherboard;
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80, Z80Flags};
 use amsrust::ga::{VideoMode, Ink};
+use amsrust::debug::Monitor;
 
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
 /// Attention, do not put the code in area where ROMs are activated ...
@@ -13,9 +14,11 @@ fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 	);
 
     let end_pattern = cpclib_macros::assemble!(" jr $");
-
+	const MAX_OPERATIONS: usize = 10;
+	let mut nb_operations = 0;
 
     let mut motherboard = Motherboard::default();
+	Monitor::monitor(&motherboard);
 
 	assert_eq!(
 		VideoMode::Mode0,
@@ -28,17 +31,22 @@ fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 
     motherboard.write_buffer(load, test);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(exec);
+    motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(0x8000);
 
 	// execute it until it is finished
 	loop {
 		let previous_pc = motherboard.cpu().reg16(Reg16::Pc).value();
 		motherboard.execute_next_opcode();
+		Monitor::monitor(&motherboard);
+
 		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 
 		// detect if it is the end
 		let current_pattern = [motherboard.read_byte(pc + 0), motherboard.read_byte(pc + 1)];
 
-		if current_pattern == *end_pattern {
+		nb_operations += 1;
+
+		if current_pattern == *end_pattern || nb_operations == MAX_OPERATIONS {
 			break;
 		}
 	}
@@ -47,47 +55,29 @@ fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 
 }
 
-
-
-#[test]
-fn execute_call() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
-		org 0x4000
-		call end
-		jr $ ; never reached if not buggy
-
-		org 0x5000
-end
-		jr $ ; end of test
-	"));
-
-	let motherboard = execute_program(0x4000, 0x4000, code); 
-
-	assert_eq!(
-		0x5000,
-		motherboard.cpu().reg16(Reg16::Pc).value()
+/// Program is in 0x4000 stack is in 0x8000
+fn execute_single_instruction(test: &[u8]) -> Motherboard {
+	dbg!(
+		cpclib_asm::disass::disassemble(test)
 	);
+
+
+
+    let mut motherboard = Motherboard::default();
+	Monitor::monitor(&motherboard);
+
+    motherboard.write_buffer(0x4000, test);
+    motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x4000);
+    motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(0x8000);
+
+	motherboard.execute_next_opcode();
+	Monitor::monitor(&motherboard);
+
+	motherboard
+
 }
 
 
-#[test]
-fn execute_dec() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
-		org 0x4000
-		ld bc, 0x7f8d
-		dec b
-		jr $ ; end of test
-	"));
-
-	let motherboard = execute_program(0x4000, 0x4000, code); 
-
-	assert_eq!(
-		0x7e,
-		motherboard.cpu().reg8(Reg8::B).value()
-	);
-}
 
 
 #[test]
@@ -137,7 +127,71 @@ fn execute_and2() {
 	assert!(
 		Z80Flags::Z.is_off(f)
 	);
+
 }
+
+
+#[test]
+fn execute_call() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4012
+		call end
+		jr $ ; never reached if not buggy
+
+		org 0x5000
+end
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4012, 0x4012, code); 
+
+
+	assert_eq!(
+		0x12+3,
+		motherboard.read_byte(0x8000-2)
+	);
+
+	assert_eq!(
+		0x40,
+		motherboard.read_byte(0x8000-1)
+	);
+
+	assert_eq!(
+		0x4012+3,
+		motherboard.read_word(0x8000-2)
+	);
+
+	assert_eq!(
+		0x5000,
+		motherboard.cpu().reg16(Reg16::Pc).value()
+	);
+
+	assert_eq!(
+		motherboard.cpu().reg16(Reg16::Sp).value(),
+		0x8000 - 2
+	);
+}
+
+
+#[test]
+fn execute_dec() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld bc, 0x7f8d
+		dec b
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0x7e,
+		motherboard.cpu().reg8(Reg8::B).value()
+	);
+}
+
 
 #[test]
 fn execute_in1() {
@@ -159,7 +213,7 @@ fn execute_in1() {
 
 
 #[test]
-fn execute_ld() {
+fn execute_ld1() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x4000
@@ -172,6 +226,22 @@ fn execute_ld() {
 	assert_eq!(
 		0x7f8d,
 		motherboard.cpu().reg16(Reg16::Bc).value()
+	);
+}
+
+
+#[test]
+fn execute_ld_sp() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		ld sp, 0xdead
+	"));
+
+	let motherboard = execute_single_instruction( code); 
+
+	assert_eq!(
+		0xdead,
+		motherboard.cpu().reg16(Reg16::Sp).value()
 	);
 }
 
@@ -351,8 +421,49 @@ table
 }
 
 
+
 #[test]
-fn execute_ret() {
+fn execute_push1() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		push hl
+	"));
+
+	let motherboard = execute_single_instruction( code); 
+
+	assert_eq!(
+		0x8000-2,
+		motherboard.cpu().reg16(Reg16::Sp).value()
+	);
+}
+
+#[test]
+fn execute_ret1() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld sp, stack
+		ret
+stack
+		dw back
+
+back
+		assert back == 0x4000 + 6
+		jr $
+
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0x4000+6,
+		motherboard.cpu().reg16(Reg16::Pc).value()
+	);
+}
+
+
+#[test]
+fn execute_ret2() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x4000
@@ -361,7 +472,7 @@ return
 		assert return == 0x4000 + 3
 		jr $ ; really the final destination
 
-		org 0x5000
+		org 0x4010
 end
 		ret
 		jr $ ; end of test

@@ -109,7 +109,7 @@ const GA_PIN_DATA_BUS: [GateArrayPin; 8] = [
 
 /// Content of the PENR register
 #[derive(Debug)]
-struct PENR(u8);
+pub struct PENR(u8);
 #[derive(Debug, Copy, Clone)]
 pub enum Pen {
     Pen(u8),
@@ -150,7 +150,7 @@ impl Into<u8> for Pen {
 }
 
 impl Pen {
-    fn value(&self) -> u8 {
+    pub fn value(&self) -> u8 {
         match self {
             Pen::Pen(nb) => *nb,
             Pen::Border => 16,
@@ -183,7 +183,7 @@ lazy_static! {
 
 /// Content of the INKR register
 #[derive(Debug)]
-struct INKR(u8);
+pub struct INKR(u8);
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Ink(u8);
 
@@ -278,7 +278,7 @@ impl ToRGBLevels for Ink {
 
 /// Content of the RMR register
 #[derive(Debug)]
-struct RMR(u8);
+pub struct RMR(u8);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VideoMode {
@@ -775,11 +775,11 @@ impl Chip for GateArray {
     type PinType = GateArrayPin;
 
     fn must_execute_tick(&self) -> bool {
-        dbg!(
+        /*dbg!(
             !self.get_pin(GateArrayPin::A15),
             self.get_pin(GateArrayPin::A14),
             !self.get_pin(GateArrayPin::IORQ)
-        );
+        );*/
         !self.get_pin(GateArrayPin::A15) && self.get_pin(GateArrayPin::A14) &&
         !self.get_pin(GateArrayPin::IORQ)
     }

@@ -321,6 +321,10 @@ impl Z80 {
 
 impl Z80 {
 
+ fn opcode_information(&self) -> Option<&OpcodeInformation>
+ {
+     self.opcode_information.as_ref()
+ }
     /// Get the adress where to write based on what as been collected at fetch step
     fn get_write_address_from_opcode_information(&self) -> u16 {
         self.get_address_from_address_source(
@@ -386,15 +390,35 @@ impl Z80 {
             _ => unimplemented!("{:?}", src)
         };
 
+        let mut first = (value & 0xff) as u8;
+        let mut second = ((value & 0xff00) >> 8) as u8;
+
+        if self.opcode_information().unwrap().write_on_stack() {
+            std::mem::swap(&mut first, &mut second);
+        }
         // And output the appropriate 8 bits one
         if step == 0 {
-            (value & 0xff) as u8
+            first
         }
         else if step == 1 {
-            ((value & 0xff00) >> 8) as u8
+            second
         }
         else {
             unreachable!()
+        }
+    }
+
+
+    /// Stuff has been read and is not yet stored at the right place
+    fn apply_read(&mut self) {
+        let opcode_info = self.opcode_information.as_ref().unwrap();
+        match opcode_info.read_data {
+            DataDestination::Register16(reg) => {
+                let val = self.reg16(Reg16::Wz).value();
+                self.reg16_mut(reg).set(val);
+            },
+
+            _ => unimplemented!()
         }
     }
 
@@ -497,7 +521,9 @@ impl Z80 {
         arg2: Option<&DataAccess>,
     ) {
         match opcode {
-            Mnemonic::Nop | Mnemonic::Out | Mnemonic::In => {
+            Mnemonic::Nop 
+            | Mnemonic::Out | Mnemonic::In 
+            | Mnemonic::Ret => {
                 // nothing to do because everything has been handled by cpu
             }
 
@@ -1056,7 +1082,7 @@ impl Chip for Z80 {
                             self.next_state = MCycle::Output(TState::T1, 0);
                         }
                     } else {
-                        // TODO take into account those that do a write after the read (if that exists)
+                        self.apply_read();
                         self.execute_step();
                         self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
                         // go back for a new instruction
@@ -1075,7 +1101,18 @@ impl Chip for Z80 {
 
 
             MCycle::Write(TState::T1, nb) | MCycle::Output(TState::T1, nb) => {
-                let address = self.get_write_address_from_opcode_information();
+                // Get the real address to put on the pins
+                let address = if self.opcode_information().unwrap().write_on_stack() {
+                    let base = self.get_write_address_from_opcode_information();
+                    match nb {
+                        0 => base + 1,
+                        1 => base,
+                        _ => unreachable!()
+                    }
+                } else {
+                    self.get_write_address_from_opcode_information()
+                };
+
                 self.set_address_on_pins(address);
 
                 assert!(self.get_pin(Z80Pin::Neg_IORQ));

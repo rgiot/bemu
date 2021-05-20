@@ -377,6 +377,16 @@ impl Motherboard {
         let memory_cfg = self.memory_config();
         self.memory.read(addr, &memory_cfg)
     }
+
+    #[inline]
+    pub fn read_word(&self, addr: u16) -> u16 {
+        let memory_cfg = self.memory_config();
+        
+        let low = self.memory.read(addr, &memory_cfg) as u16;
+        let high = self.memory.read(addr.wrapping_add(1), &memory_cfg) as u16;
+
+        256*high + low
+    }
 }
 
 #[cfg(test)]

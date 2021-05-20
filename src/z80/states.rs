@@ -123,6 +123,10 @@ impl Default for OpcodePrefix {
 
 
 impl OpcodeInformation {
+	pub fn write_on_stack(&self) -> bool {
+		self.write_address
+		== AddressSource::Stack(StackDelta::MinusTwo)
+	}
     /// Fetch is finished for opcode of 1 byte with no memory/port access
     pub fn fetch_finished(&self) -> bool {
         self.nb_additional_opcode_bytes == 0
@@ -553,8 +557,17 @@ mod test {
 		let ret = dbg!(&OPCODE_PREFIX[0xc9]);
         assert_eq!(ret.nb_additional_opcode_bytes, 0);
         assert_eq!(ret.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
+        assert_eq!(ret.nb_bytes_to_read, 2);
 		assert_eq!(ret.read_data, DataSource::Register16(Reg16::Pc)); // we want to override PC
     }
+
+	#[test]
+    fn lookup_checks_ld_sp() {
+		// call pq
+		let call = dbg!(&OPCODE_PREFIX[0x31]);
+        assert_eq!(call.nb_additional_opcode_bytes, 2);
+    }
+
 
 	#[test]
     fn lookup_checks_in() {

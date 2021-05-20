@@ -16,3 +16,4 @@ pub mod monitor;
 pub mod motherboard;
 
 pub mod counter;
+pub mod debug;
