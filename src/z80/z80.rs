@@ -1041,14 +1041,10 @@ impl Chip for Z80 {
 
 
             MCycle::Read(TState::T1, nb) | MCycle::Input(TState::T1, nb) => {
-                let address = self.get_read_address_from_opcode_information();
+                let address = self.get_read_address_from_opcode_information() + nb as u16;
                 self.set_address_on_pins(address);
-                if self.next_state.is_input() {
-                    self.set_pin(Z80Pin::Neg_MREQ, false);
-                }
-                else {
-                    self.set_pin(Z80Pin::Neg_IORQ, false);
-                }
+
+                self.set_pin(self.next_state.read_pin().unwrap(), false);
                 self.set_pin(Z80Pin::Neg_RD, false);
                 self.next_state.inc_state();
             }
@@ -1161,7 +1157,12 @@ impl Chip for Z80 {
 
 
             MCycle::Output(TState::T3, nb) => {
-                self.set_pin(Z80Pin::Neg_IORQ, true);
+                if self.next_state.is_output() {
+                    self.set_pin(Z80Pin::Neg_IORQ, true);
+                }
+                else {
+                    self.set_pin(Z80Pin::Neg_MREQ, true);
+                }
                 self.set_pin(Z80Pin::Neg_WR, true);
 
                 if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write - 1 {

@@ -780,7 +780,8 @@ impl Chip for GateArray {
             self.get_pin(GateArrayPin::A14),
             !self.get_pin(GateArrayPin::IORQ)
         );*/
-        !self.get_pin(GateArrayPin::A15) && self.get_pin(GateArrayPin::A14) &&
+        !self.get_pin(GateArrayPin::A15) && 
+        self.get_pin(GateArrayPin::A14) &&
         !self.get_pin(GateArrayPin::IORQ)
     }
 

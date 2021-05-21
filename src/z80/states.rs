@@ -1,12 +1,13 @@
 use std::ops::Add;
 
+use cpclib::z80emu::Z80;
 ///! This module contains all that can help to manage the variuous states of the CPU
 
 use lazy_static::lazy_static;
 use regex::Regex;
 //use cpclib_asm::preamble::*;
 use cpclib_asm::preamble::{DataAccess, Token};
-use super::{Reg16, Reg8};
+use super::{Reg16, Reg8, Z80Pin};
 
 
 // Generate the various lookup tables needed to control the opcodes execution
@@ -530,6 +531,22 @@ impl MCycle {
             _ => unreachable!(),
         }
     }
+
+	pub fn read_pin(&self) -> Option<Z80Pin> {
+		match self {
+			Self::Input(_, _) => Some(Z80Pin::Neg_IORQ),
+			Self::Read(_, _) => Some(Z80Pin::Neg_MREQ),
+			_ => unreachable!()
+		}
+	}
+
+	pub fn write_pin(&self) -> Option<Z80Pin> {
+		match self {
+			Self::Output(_, _) => Some(Z80Pin::Neg_IORQ),
+			Self::Write(_, _) => Some(Z80Pin::Neg_MREQ),
+			_ => unreachable!()
+		}
+	}
 }
 
 #[cfg(test)]
