@@ -762,6 +762,10 @@ impl Z80 {
                 Z80Flags::N.set_on(f);
             }
 
+            Mnemonic::Push => {
+                self.sp.dec(); self.sp.dec();
+            }
+
             Mnemonic::Ret => {
                 // PC is already properly setup
                 self.sp.dec();

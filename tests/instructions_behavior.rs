@@ -435,6 +435,7 @@ fn execute_push1() {
 		0x8000-2,
 		motherboard.cpu().reg16(Reg16::Sp).value()
 	);
+
 }
 
 #[test]

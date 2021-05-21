@@ -6,7 +6,7 @@ use cpclib::z80emu::Z80;
 use lazy_static::lazy_static;
 use regex::Regex;
 //use cpclib_asm::preamble::*;
-use cpclib_asm::preamble::{DataAccess, Token};
+use cpclib_asm::preamble::{DataAccess, Token, Mnemonic};
 use super::{Reg16, Reg8, Z80Pin};
 
 
@@ -193,7 +193,13 @@ impl OpcodePrefix {
 			// opcode that is not an output
 			match write_address {
              AddressSource::None => DataSource::None,
-			 AddressSource::Stack(_) => DataSource::Register16(Reg16::Pc),
+			 AddressSource::Stack(_) => {
+				 match token.mnemonic() {
+				 	Some(Mnemonic::Call) => DataSource::Register16(Reg16::Pc),
+					Some(Mnemonic::Push) => DataSource::Register16(token.mnemonic_arg1().unwrap().get_register16().unwrap().into()),
+					_ => unreachable!()
+				 }
+			 },
 			_ => token.mnemonic_arg2().unwrap().into()
 			}
         };
@@ -383,11 +389,12 @@ impl OpcodePrefix {
             static ref IN_IY: Regex = Regex::new(r"\(IY\)[^$]").unwrap();
             static ref IMMEDIATE: Regex = Regex::new(r"\(nnnn\)[^$]").unwrap();
             static ref CALL: Regex = Regex::new(r"^CALL").unwrap();
+            static ref PUSH: Regex = Regex::new(r"^PUSH").unwrap();
         }
 
         let repr = self.disassembling_table()[i];
 
-		if CALL.is_match(repr) {
+		if CALL.is_match(repr) || PUSH.is_match(repr) {
 			AddressSource::Stack(StackDelta::MinusTwo)
 		}
         else if INDEXED_IY.is_match(repr) {
@@ -637,5 +644,15 @@ mod test {
             desc.write_data,
             DataSource::Pins // we assume data are already on the pins because they have been read one cycle before
         );
+    }
+
+
+	#[test]
+    fn lookup_checks_push_hl() {
+		// call pq
+		let call = dbg!(&OPCODE_PREFIX[0xe5]);
+        assert_eq!(call.nb_additional_opcode_bytes, 0);
+        assert_eq!(call.write_address, AddressSource::Stack(StackDelta::MinusTwo)); // we want to write on the stack
+		assert_eq!(call.write_data, DataSource::Register16(Reg16::Hl)); 
     }
 }
