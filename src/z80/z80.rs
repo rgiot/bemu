@@ -1115,18 +1115,14 @@ impl Chip for Z80 {
 
                 self.set_address_on_pins(address);
 
-                assert!(self.get_pin(Z80Pin::Neg_IORQ));
+                assert!(self.get_pin(self.next_state.write_pin().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_WR));
 
                 self.next_state.inc_state();
             }
             MCycle::Write(TState::T2, nb) | MCycle::Output(TState::T2, nb) => {
-                if self.next_state.is_output() {
-                    self.set_pin(Z80Pin::Neg_IORQ, false);
-                }
-                else {
-                    self.set_pin(Z80Pin::Neg_MREQ, false);
-                }
+
+                self.set_pin(self.next_state.write_pin().unwrap(), false);
                 self.set_pin(Z80Pin::Neg_WR, false);
 
                 let byte =self.get_byte_to_write_from_opcode_information(nb);
@@ -1135,12 +1131,7 @@ impl Chip for Z80 {
                 self.next_state.inc_state();
             }
             MCycle::Write(TState::T3, nb) | MCycle::Output(TState::T3, nb) => {
-                if self.next_state.is_output() {
-                    self.set_pin(Z80Pin::Neg_IORQ, true);
-                }
-                else {
-                    self.set_pin(Z80Pin::Neg_MREQ, true);
-                }
+                self.set_pin(self.next_state.write_pin().unwrap(), true);
                 self.set_pin(Z80Pin::Neg_WR, true);
 
                 if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write -1 {

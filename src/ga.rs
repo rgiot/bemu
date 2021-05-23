@@ -775,13 +775,9 @@ impl Chip for GateArray {
     type PinType = GateArrayPin;
 
     fn must_execute_tick(&self) -> bool {
-        /*dbg!(
-            !self.get_pin(GateArrayPin::A15),
-            self.get_pin(GateArrayPin::A14),
-            !self.get_pin(GateArrayPin::IORQ)
-        );*/
-        !self.get_pin(GateArrayPin::A15) && 
-        self.get_pin(GateArrayPin::A14) &&
+
+        !self.get_pin(GateArrayPin::A15) &&
+         self.get_pin(GateArrayPin::A14) &&
         !self.get_pin(GateArrayPin::IORQ)
     }
 
@@ -797,7 +793,7 @@ impl Chip for GateArray {
 
     /// React to the port addressing of the CPU
     fn execute_tick(&mut self) {
-        if self.get_pin(GateArrayPin::RD) {
+        if !self.get_pin(GateArrayPin::RD) {
             let command = dbg!(self.get_data_from_pins());
 
             if PENR::is_addressed(command) {
