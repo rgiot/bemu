@@ -245,7 +245,6 @@ fn execute_ld1() {
 	);
 }
 
-
 #[test]
 fn execute_ld_sp() {
 	let code = dbg!(cpclib_macros::assemble!(
