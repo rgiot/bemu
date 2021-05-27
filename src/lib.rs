@@ -7,7 +7,7 @@ pub mod crtc;
 pub mod ga;
 pub mod pal;
 pub mod z80;
-//pub mod ppi;
+pub mod ppi;
 
 pub mod memory;
 
