@@ -233,14 +233,16 @@ fn execute_ld1() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x4000
-		ld bc, 0x7f8d
+		ld bc, 0x7f00
+		ld bc, 0x7f00
+		ld bc, 0x7f00
 		jr $ ; end of test
 	"));
 
 	let motherboard = execute_program(0x4000, 0x4000, code); 
 
 	assert_eq!(
-		0x7f8d,
+		0x7f00,
 		motherboard.cpu().reg16(Reg16::Bc).value()
 	);
 }
