@@ -44,6 +44,15 @@ pub trait Chip {
     /// Handle the appropriate treatment for the given tick
     fn execute_tick(&mut self);
 
+    /// The buffer that encodes the current state of the pin (previous, current) (writeable)
+    fn pins_buffer_mut(&mut self) -> &mut PinsBuffer;
+    /// The buffer that encodes the current state of the pin (previous, current) (readable)
+    fn pins_buffer(&self) -> &PinsBuffer;
+
+    /// Reset pins and counter
+    fn reset(&mut self);
+
+
     /// Set the boolean value to the selected pin of the chip
     /// panic if the pin does not exists
     /// panic if the pin is read only
@@ -115,13 +124,6 @@ pub trait Chip {
         buffer.0 = buffer.1;
     }
 
-    /// The buffer that encodes the current state of the pin (previous, current) (writeable)
-    fn pins_buffer_mut(&mut self) -> &mut PinsBuffer;
-    /// The buffer that encodes the current state of the pin (previous, current) (readable)
-    fn pins_buffer(&self) -> &PinsBuffer;
-
-    /// Reset pins and counter
-    fn reset(&mut self);
 
     /// Set the provided value in the provided list of pins. Pin index corresponds to the reversed number [bn, bn-1, ... b1, b0]
     /// panic if the number is larger
