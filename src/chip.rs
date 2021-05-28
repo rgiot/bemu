@@ -200,11 +200,20 @@ pub trait Activable: Chip {
     /// Get the id of the pin that contains the clock
     fn clock_pin() -> Self::PinType;
 
+    fn activated_at_up_front() -> bool {
+        true
+    }
+
     /// Return true if the chip is activated (and thus its specific logic expect the wired pins one has to be executed)
     /// Currently activation is done with the font of the chip. it means that we executae the behavior of the chip in one row
     /// even if it takes several cycles of the Gate array chip that is emulated independnetly
     fn is_activated(&self) -> bool {
-        self.is_upfront(Self::clock_pin())
+        if Self::activated_at_up_front() {
+            self.is_upfront(Self::clock_pin())
+        }
+        else {
+            self.is_downfront(Self::clock_pin())
+        }
         //self.get_pin(Self::clock_pin())
     }
 }

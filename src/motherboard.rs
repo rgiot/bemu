@@ -5,6 +5,7 @@ use crate::memory::*;
 use crate::pal::*;
 use crate::z80::*;
 use crate::counter::*;
+use crate::ppi::*;
 
 use std::fmt;
 
@@ -17,6 +18,7 @@ pub struct Motherboard {
     crtc: Crtc,
     ga: GateArray,
     pal: Pal,
+    ppi: Ppi,
     rom_selector: UpperRomSelector,
     memory: Memory,
 
@@ -44,6 +46,7 @@ impl Default for Motherboard {
             crtc: Default::default(),
             ga: Default::default(),
             pal: Default::default(),
+            ppi: Default::default(),
             rom_selector: Default::default(),
             memory: Default::default(),
 
@@ -139,6 +142,9 @@ impl Motherboard {
         // Keep this order to avoid side effect mixing previous state and current state
         if self.crtc.is_activated() {
             self.crtc.tick(); // Virtually uses 16 cycles
+        }
+        if self.ppi.is_activated(){
+            self.ppi.tick();
         }
         self.ga.tick();
         self.pal.tick();
@@ -244,6 +250,11 @@ impl Motherboard {
         self.crtc.save_pins_state();
         self.cpu.save_pins_state();
 
+        // Make some pins associattions
+        let Neg_IOWR = self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
+        let Neg_IORD = self.cpu.get_pin(Z80Pin::Neg_RD) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
+
+
         // GA to CPU
         sync_pins(
             &self.ga,
@@ -311,7 +322,7 @@ impl Motherboard {
         );
         self.pal.set_pin(
             PalPin::IOWR,
-            !self.cpu.get_pin(Z80Pin::Neg_WR) && !self.cpu.get_pin(Z80Pin::Neg_IORQ),
+            !Neg_IOWR,
         );
 
         // CPU to CRTC
@@ -345,6 +356,28 @@ impl Motherboard {
                 UpperRomSelectorPin::WR,
             ],
         );
+
+        // CPU to ppi
+        sync_pins(
+            &self.cpu,
+            Z80::pins_data(),
+            &mut self.ppi,
+            Ppi::pins_data(),
+        );
+        sync_pins(
+            &self.cpu,
+            &[Z80Pin::A11, Z80Pin::A9, Z80Pin::A8],
+            &mut self.ppi,
+            &[
+                PpiPin::Neg_CS,
+                PpiPin::A9,
+                PpiPin::A8,
+            ],
+        );
+        self.ppi.set_pin(PpiPin::Neg_RD, Neg_IORD);
+        self.ppi.set_pin(PpiPin::Neg_WR, Neg_IOWR);
+        // CRTC to ppi
+        self.ppi.set_pin(PpiPin::B0, self.crtc.get_pin(CrtcPin::VS));
     }
 }
 

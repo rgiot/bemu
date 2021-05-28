@@ -37,7 +37,7 @@ impl Monitor {
 	pub fn monitor_z80(cpu: &Z80) {
 		use Reg16::*;
 		for reg in [Af, Hl, De, Bc, Ix, Iy, Af2, Hl2, De2, Bc2, Pc, Sp, Wz].into_iter() {
-			print!("{:#?}=0x{:04X} ", reg, cpu.reg16(*reg).value())
+			print!("{:#?}=0x{:04X} ", reg, cpu.reg16(reg).value())
 		}
 		println!();
 	}
