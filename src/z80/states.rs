@@ -205,15 +205,17 @@ impl OpcodePrefix {
         };
 
 		// Location where to store the data to read
-		let read_data: DataSource = if token.is_input_opcode() {
+		let read_data: DataDestination = if token.is_input_opcode() {
 			match token.mnemonic_arg1() {
                 Some(position) => position.into(),
-				None => DataSource::Pins
+				None => DataDestination::Pins
 			}
 		} else if token.is_retlike_opcode() { // stack content is stored in PC
-			DataSource::Register16(Reg16::Pc)
-		} else {
-			DataSource::None // TODO implement the other ones
+			DataDestination::Register16(Reg16::Pc)
+		} else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register16(reg)), Some(DataAccess::Memory(_)))= token {
+            DataDestination::Register16(reg.into())
+        } else {
+			DataDestination::None // TODO implement the other ones
 		};
 /*
         // get the number of bytes needed to build the complete opcode
@@ -539,7 +541,7 @@ impl MCycle {
         }
     }
 
-	pub fn read_pin(&self) -> Option<Z80Pin> {
+	pub fn read_pin_type(&self) -> Option<Z80Pin> {
 		match self {
 			Self::Input(_, _) => Some(Z80Pin::Neg_IORQ),
 			Self::Read(_, _) => Some(Z80Pin::Neg_MREQ),
@@ -547,7 +549,7 @@ impl MCycle {
 		}
 	}
 
-	pub fn write_pin(&self) -> Option<Z80Pin> {
+	pub fn write_pin_type(&self) -> Option<Z80Pin> {
 		match self {
 			Self::Output(_, _) => Some(Z80Pin::Neg_IORQ),
 			Self::Write(_, _) => Some(Z80Pin::Neg_MREQ),
@@ -590,6 +592,18 @@ mod test {
 		// call pq
 		let call = dbg!(&OPCODE_PREFIX[0x31]);
         assert_eq!(call.nb_additional_opcode_bytes, 2);
+    }
+
+
+    #[test]
+    fn lookup_checks_ld_hl_mem() {
+		// call pq
+		let ld = dbg!(&OPCODE_PREFIX[0x2a]);
+        assert_eq!(ld.nb_additional_opcode_bytes, 2);
+        assert_eq!(ld.nb_bytes_to_read, 2);
+        assert_eq!(ld.read_address, AddressSource::Immediate); 
+		assert_eq!(ld.read_data, DataDestination::Register16(Reg16::Hl)); 
+
     }
 
 
