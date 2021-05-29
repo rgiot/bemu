@@ -418,7 +418,15 @@ impl Z80 {
                 self.reg8_mut(reg).set(byte);
             },
             DataSource::Register16(reg)  | DataSource::IndexRegister16(reg) => {
+                let reg = if reg == Reg16::Pc {
+                    Reg16::Wz
+                }
+                else {
+                    reg
+                };
+               
                 let reg = if nb == 0 {
+                    
                     reg.low()
                 }
                 else {
@@ -533,7 +541,7 @@ impl Z80 {
             Mnemonic::Nop 
             | Mnemonic::Out | Mnemonic::In 
             | Mnemonic::Ret => {
-                // nothing to do because everything has been handled by cpu
+                self.pc = self.wz;
             }
 
             Mnemonic::Add => {

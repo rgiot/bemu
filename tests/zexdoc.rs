@@ -56,7 +56,7 @@ fn zexdoc() {
         let cpu = motherboard.cpu();
 
         nb_instructions += 1;
-        if nb_instructions == 12 {
+        if nb_instructions == 13 {
             break;
         } // execute few just to test
 
