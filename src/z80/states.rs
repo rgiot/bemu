@@ -214,7 +214,9 @@ impl OpcodePrefix {
 			DataDestination::Register16(Reg16::Pc)
 		} else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register16(reg)), Some(DataAccess::Memory(_)))= token {
             DataDestination::Register16(reg.into())
-        } else {
+        } else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register8(ref reg)), Some(DataAccess::Memory(_)))= token {
+            DataDestination::Register8(reg.into())
+        }else {
 			DataDestination::None // TODO implement the other ones
 		};
 /*
