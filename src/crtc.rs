@@ -560,7 +560,7 @@ impl Crtc {
             self.hsync_counter -= 1;
         }
 
-        self.hcc += 1;
+        self.hcc = self.hcc.wrapping_add(1); // XXX check if there is a bit limit in the counter
 
         if self.hcc == self.r0 + 1 {
             // This is the end of the line, we have to trigger all the other stuffs

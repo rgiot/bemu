@@ -9,9 +9,9 @@ use amsrust::debug::Monitor;
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
 /// Attention, do not put the code in area where ROMs are activated ...
 fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
-	dbg!(
+/*	dbg!(
 		cpclib_asm::disass::disassemble(test)
-	);
+	);*/
 
     let end_pattern = cpclib_macros::assemble!(" jr $");
 	const MAX_OPERATIONS: usize = 10;
@@ -248,7 +248,28 @@ fn execute_ld1() {
 }
 
 #[test]
-fn execute_ld_sp() {
+fn ld_hl_mem() {
+let code = dbg!(cpclib_macros::assemble!(
+	"
+	org 0x4000
+	ld hl, (mem)
+	jr $ ; end of test
+mem
+	db 0xad
+	db 0xde
+"));
+
+let motherboard = execute_program(0x4000, 0x4000, code); 
+
+assert_eq!(
+	0xdead,
+	motherboard.cpu().reg16(Reg16::Hl).value(),
+	"{:x} != {:x}", 0xdead, motherboard.cpu().reg16(Reg16::Hl).value()
+);
+}
+
+#[test]
+fn execute_ld_sp1() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		ld sp, 0xdead
@@ -262,6 +283,25 @@ fn execute_ld_sp() {
 	);
 }
 
+
+#[test]
+fn execute_ld_sp2() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld sp, 0
+		ld hl, 0xdead
+		ld sp, hl
+		jp $
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0xdead,
+		motherboard.cpu().reg16(Reg16::Sp).value()
+	);
+}
 #[test]
 fn execute_jr1() {
 	let code = dbg!(cpclib_macros::assemble!(

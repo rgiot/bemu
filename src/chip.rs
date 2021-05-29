@@ -68,6 +68,13 @@ pub trait Chip {
         }
     }
 
+    fn off(&mut self, pin: Self::PinType) {
+        self.set_pin(pin, false);
+    }
+    fn on(&mut self, pin: Self::PinType) {
+        self.set_pin(pin, true);
+    }
+
     /// Get the boolean value of the selected pin of the chip
     /// panic if the pin does not exists
     fn get_pin(&self, pin: Self::PinType) -> bool {

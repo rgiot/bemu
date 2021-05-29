@@ -364,6 +364,16 @@ impl RMR {
         }
     }
 
+    fn force_upper_rom_pagging(&mut self, flag: Flag) {
+        let val = self.0 & 0b111_10111;
+        self.0 = if flag.is_enabled() {
+            val
+        } else {
+            val | 0b000_01000 
+        };
+    }       
+
+
     fn lower_rom_pagging(&self) -> Flag {
         if self.0 & 0b000_00100 == 0 {
             Flag::Enable
@@ -371,6 +381,15 @@ impl RMR {
             Flag::Disable
         }
     }
+
+    fn force_lower_rom_pagging(&mut self, flag: Flag) {
+        let val = self.0 & 0b111_11011;
+        self.0 = if flag.is_enabled() {
+            val
+        } else {
+            val | 0b000_00100 
+        };
+    }       
 
     fn video_mode(&self) -> VideoMode {
         (self.0 & 0b000_00011).into()
@@ -757,6 +776,10 @@ impl GateArray {
         to self.rmr {
             pub fn upper_rom_pagging(&self) -> Flag;
             pub fn lower_rom_pagging(&self) -> Flag;
+
+            pub fn force_upper_rom_pagging(&mut self, flag: Flag);
+            pub fn force_lower_rom_pagging(&mut self, flag: Flag);
+
             pub fn interrupt_counter(&self) -> bool;
         }
 

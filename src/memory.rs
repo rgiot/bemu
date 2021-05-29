@@ -90,7 +90,7 @@ impl Default for Flag {
 }
 
 impl Flag {
-    fn is_enabled(&self) -> bool {
+    pub fn is_enabled(&self) -> bool {
         match self {
             Flag::Enable => true,
             Flag::Disable => false,
@@ -104,6 +104,7 @@ pub struct RomConfig {
     pub upper_rom: Flag,
     pub rom_number: u8,
 }
+
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct MemoryConfig(pub RomConfig, pub RamConfig);
@@ -252,6 +253,10 @@ impl Chip for UpperRomSelector {
 impl UpperRomSelector {
     pub fn upper_rom_number(&self) -> u8 {
         self.rom_number
+    }
+
+    pub fn force_upper_rom_number(&mut self, nb: u8) {
+        self.rom_number = nb;
     }
 }
 

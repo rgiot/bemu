@@ -134,7 +134,7 @@ impl Motherboard {
     /// corresponding gate array information
     /// TODO check if it must be generated before or after
     pub fn tick(&mut self) -> (RgbLevels, Sync) {
-        if self.crtc.is_activated() {dbg!(&self.cpu().next_state);}
+       // if self.crtc.is_activated() {dbg!(&self.cpu().next_state);}
 
         // fill bus with memory data if needed
         self.handle_memory_access();
@@ -395,6 +395,13 @@ impl Motherboard {
         )
     }
 
+    /// Changes the rom configuration of the machine
+    pub fn force_rom_config(&mut self, config: RomConfig) {
+        self.ga.force_lower_rom_pagging(config.lower_rom);
+        self.ga.force_upper_rom_pagging(config.upper_rom);
+        self.rom_selector.force_upper_rom_number(config.rom_number);
+    }
+
     /// Write the databuffer in memory according to the memory configuration
     pub fn write_buffer(&mut self, mut addr: u16, buffer: &[u8]) {
         let config = self.memory_config();
@@ -403,6 +410,22 @@ impl Motherboard {
             addr = addr.wrapping_add(1);
         }
     }
+
+        /// Write one memory byte according to the memory configuration
+        #[inline]
+        pub fn write_byte(&mut self, addr: u16, byte: u8) {
+            let memory_cfg = self.memory_config();
+            self.memory.write(addr, byte, &memory_cfg);
+        }
+
+        pub fn write_word(&mut self, addr: u16, word: u16) {
+            let memory_cfg = self.memory_config();
+            let low = (word & 0xff) as u8;
+            let high = ((word & 0xff00) >> 8) as u8;
+            self.memory.write(addr, low, &memory_cfg);
+            self.memory.write(addr.wrapping_add(1), high, &memory_cfg);
+        }
+    
 
     /// Read one memory byte according to the memory configuration
     #[inline]

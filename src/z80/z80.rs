@@ -408,19 +408,28 @@ impl Z80 {
         }
     }
 
-
-    /// Stuff has been read and is not yet stored at the right place
-    fn apply_read(&mut self) {
-        let opcode_info = self.opcode_information.as_ref().unwrap();
-        match opcode_info.read_data {
-            DataDestination::Register16(reg) => {
-                let val = self.reg16(Reg16::Wz).value();
-                self.reg16_mut(reg).set(val);
+    /// CPU has read a value and must store it directly in the right registers
+    fn store_currently_read_byte(&mut self, byte: u8, nb: u8) {
+        let src = self.opcode_information()
+                                    .unwrap().read_data;
+        match src {
+            DataSource::Register8(reg) | DataSource::IndexRegister8(reg)  => {
+                assert!(nb == 0);
+                self.reg8_mut(reg).set(byte);
             },
-
-            _ => unimplemented!()
+            DataSource::Register16(reg)  | DataSource::IndexRegister16(reg) => {
+                let reg = if nb == 0 {
+                    reg.low()
+                }
+                else {
+                    reg.high()
+                };
+                self.reg8_mut(reg).set(byte);
+            },
+            _ => {unimplemented!("{:?}", src)}
         }
     }
+
 
     /// Execute the instruction ; all necessary stuffs has already been collected
     fn execute_step(&mut self) {
@@ -594,7 +603,12 @@ impl Z80 {
                         self.reg8_mut(left).dec();
                         res = self.reg8(left).value();
                     }
-                    _ => unimplemented!(),
+                    DataAccess::Register16(reg) => {
+                        let left: Reg16 = reg.into();
+                        self.reg16_mut(left).dec();
+                        update_flags = false;
+                    }
+                    _ => unimplemented!("{:?}", arg1),
                 }
 
                 if update_flags {
@@ -627,6 +641,11 @@ impl Z80 {
                         let left: Reg8 = reg.into();
                         self.reg8_mut(left).inc();
                         res = self.reg8(left).value();
+                    }
+                    DataAccess::Register16(reg) => {
+                        let left: Reg16 = reg.into();
+                        self.reg16_mut(left).inc();
+                        update_flags = false;
                     }
                     _ => unimplemented!(),
                 }
@@ -727,9 +746,17 @@ impl Z80 {
                     }
 
                     DataAccess::Register16(reg) => {
-                        let left: Reg16 = reg.into();
-                        let right = self.get_available_16bits_value(arg2.unwrap());
-                        self.reg16_mut(left).set(right);
+
+                        match arg2 {
+                            Some(DataAccess::Memory(_)) => {
+                                // nothing to do it is already done
+                            },
+                            _ => {
+                                let left: Reg16 = reg.into();
+                                let right = self.get_available_16bits_value(arg2.unwrap());
+                                self.reg16_mut(left).set(right);
+                            }
+                        }
                     }
 
                     DataAccess::Memory(_) => {
@@ -743,14 +770,14 @@ impl Z80 {
 
             Mnemonic::Sub => {
                 match arg1 {
-                    Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)) | None => {
+                    Some(DataAccess::Register8(reg8)) => {
                         let left = self.reg8(Reg8::A).value();
                         let right = self.get_available_8bits_value(arg1.unwrap());
                         let f = &mut self.reg8_mut(Reg8::F).val;
                         let res = inner_8bits_sub!(left, right, f);
                         self.reg8_mut(Reg8::A).set(res);
                     },
-                    _ => unimplemented!()
+                    _ => unimplemented!("{:?}, {:?}", arg1, arg2)
                 }
 
             }
@@ -950,6 +977,7 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
+      //  dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
@@ -999,12 +1027,12 @@ impl Chip for Z80 {
             }
 
             MCycle::FetchOpcode(TState::T4, nb, prefix) => {
-                self.set_pin(Z80Pin::Neg_MREQ, false);
+                self.set_pin(Z80Pin::Neg_MREQ, true);
                 self.set_pin(Z80Pin::Neg_M1, false);
                 self.set_pin(Z80Pin::Neg_RFSH, true);
 
                 if nb == 0 {
-                    let execute = dbg!(self.decode_step()); // setup next state
+                    let execute = self.decode_step(); // setup next state
                     if execute {
                         // nothing is required for the execution
                         // TODO check if input or memory cycle is required
@@ -1045,29 +1073,26 @@ impl Chip for Z80 {
 
 
             MCycle::Read(TState::T1, nb) | MCycle::Input(TState::T1, nb) => {
-                let address = self.get_read_address_from_opcode_information() + nb as u16;
+                let address = self.get_read_address_from_opcode_information() + nb as u16 ;
+                eprintln!("Read at {:x}", address);
                 self.set_address_on_pins(address);
 
-                self.set_pin(self.next_state.read_pin().unwrap(), false);
-                self.set_pin(Z80Pin::Neg_RD, false);
+                assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
+                assert!(self.get_pin(Z80Pin::Neg_RD));
+                assert!(self.get_pin(Z80Pin::Neg_WR));
+
+
+                self.off(self.next_state.read_pin_type().unwrap());
+                self.off(Z80Pin::Neg_RD);
                 self.next_state.inc_state();
             }
             MCycle::Read(TState::T2, nb)  | MCycle::Input(TState::T2, nb) => {
-                if self.next_state.is_input() {
-                    self.set_pin(Z80Pin::Neg_MREQ, true);
-                }
-                else {
-                    self.set_pin(Z80Pin::Neg_IORQ, true);
-                }
-                self.set_pin(Z80Pin::Neg_RD, true);
-                let byte = self.get_data_from_pins();
-                if nb == 0 {
-                    self.reg8_mut(Reg8::Z).set(byte);
-                } else
-                /*if nb == 1*/
-                {
-                    self.reg8_mut(Reg8::W).set(byte);
-                }
+
+                let byte = dbg!(self.get_data_from_pins());
+                self.store_currently_read_byte(byte, nb);
+
+                self.on(self.next_state.read_pin_type().unwrap());
+                self.on(Z80Pin::Neg_RD);
                 self.next_state.inc_state();
             }
             MCycle::Read(TState::T3, nb) | MCycle::Input(TState::T3, nb)=> {
@@ -1082,7 +1107,6 @@ impl Chip for Z80 {
                             self.next_state = MCycle::Output(TState::T1, 0);
                         }
                     } else {
-                        self.apply_read();
                         self.execute_step();
                         self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
                         // go back for a new instruction
@@ -1112,27 +1136,27 @@ impl Chip for Z80 {
                 } else {
                     self.get_write_address_from_opcode_information()
                 };
-
                 self.set_address_on_pins(address);
 
-                assert!(self.get_pin(self.next_state.write_pin().unwrap()));
+                assert!(self.get_pin(self.next_state.write_pin_type().unwrap()));
+                assert!(self.get_pin(Z80Pin::Neg_RD));
                 assert!(self.get_pin(Z80Pin::Neg_WR));
+
 
                 self.next_state.inc_state();
             }
             MCycle::Write(TState::T2, nb) | MCycle::Output(TState::T2, nb) => {
-
-                self.set_pin(self.next_state.write_pin().unwrap(), false);
-                self.set_pin(Z80Pin::Neg_WR, false);
+                self.off(self.next_state.write_pin_type().unwrap());
+                self.off(Z80Pin::Neg_WR);
 
                 let byte =self.get_byte_to_write_from_opcode_information(nb);
-
                 self.set_data_on_pins(byte);
+
                 self.next_state.inc_state();
             }
             MCycle::Write(TState::T3, nb) | MCycle::Output(TState::T3, nb) => {
-                self.set_pin(self.next_state.write_pin().unwrap(), true);
-                self.set_pin(Z80Pin::Neg_WR, true);
+                self.on(self.next_state.write_pin_type().unwrap());
+                self.on(Z80Pin::Neg_WR);
 
                 if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write -1 {
                     // TODO take into account those that do a write after the read (if that exists)
@@ -1150,26 +1174,6 @@ impl Chip for Z80 {
                 }
             }
 
-
-            MCycle::Output(TState::T3, nb) => {
-                if self.next_state.is_output() {
-                    self.set_pin(Z80Pin::Neg_IORQ, true);
-                }
-                else {
-                    self.set_pin(Z80Pin::Neg_MREQ, true);
-                }
-                self.set_pin(Z80Pin::Neg_WR, true);
-
-                if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write - 1 {
-                    // TODO take into account those that do a write after the read (if that exists)
-                    self.execute_step();
-                    self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
-                // go back for a new instruction
-                } else {
-                    // go to write the next byte
-                    self.next_state = MCycle::Output(TState::T1, nb + 1);
-                }
-            }
 
             _ => unimplemented!(),
         }
