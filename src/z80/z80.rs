@@ -320,6 +320,10 @@ impl Z80 {
 }
 
 impl Z80 {
+    fn must_execute_instruction_in_middle(&self) -> bool {
+        let info = self.opcode_information().unwrap();
+        info.read_data == DataSource::Pins && info.write_data == DataSource::Pins
+    }
 
  fn opcode_information(&self) -> Option<&OpcodeInformation>
  {
@@ -434,7 +438,10 @@ impl Z80 {
                 };
                 self.reg8_mut(reg).set(byte);
             },
-            _ => {unimplemented!("{:?}", src)}
+            DataSource::Pins => {
+                // we do nothing there as the data is already on the pins
+            },
+            _ => {unimplemented!("{:?}/ {:?}", src, self.opcode_information )}
         }
     }
 
@@ -443,6 +450,7 @@ impl Z80 {
     fn execute_step(&mut self) {
         let prefix = &self.opcode_information.as_ref().unwrap().prefix;
 
+        // Get the two additional bytes needed for the instruction
         let memory = [self.reg8(Reg8::Z).get(), self.reg8(Reg8::W).get()];
 
         // By construction, it cannot fail
@@ -460,7 +468,9 @@ impl Z80 {
         );
 
         // reset the various buffers
-        self.opcode_information = None;
+        if !self.must_execute_instruction_in_middle() {
+            self.opcode_information = None;
+        }
     }
 
     /// Check how many bytes have to be read yet and set up appropriately the next state
@@ -528,7 +538,7 @@ impl Z80 {
         }
     }
 
-    /// Execute the end of the instration (everything related to memory or ports has already been handled).
+    /// Execute the end of the instruction  (everything related to memory or ports has already been handled for most instruction except for thouse that read and write from memory).
     /// Here we take care of registers modifications and flags configuration
     /// We can consider that here we play the latest t-state
     fn execute_opcode(
@@ -643,6 +653,21 @@ impl Z80 {
                 let mut update_flags = true; // disable only for 16 bits
                 let mut res = 0;
                 match arg1.unwrap() {
+                    DataAccess::MemoryRegister16(_) => {
+                        // read and write directly in pins (shoudl be launched before writting the results)
+                        let left = self.get_data_from_pins();
+                        let left = left.wrapping_add(1);
+                        self.set_data_on_pins(left);
+
+                        assert_eq!(
+                            self.opcode_information().unwrap().read_data,
+                            DataDestination::Pins
+                        );
+                        assert_eq!(
+                            self.opcode_information().unwrap().write_data,
+                            DataDestination::Pins
+                        );
+                    }
                     DataAccess::Register8(reg) => {
                         let left: Reg8 = reg.into();
                         self.reg8_mut(left).inc();
@@ -1113,9 +1138,12 @@ impl Chip for Z80 {
             MCycle::Read(TState::T3, nb) | MCycle::Input(TState::T3, nb)=> {
                 self.post_read_action();
 
-                let opcode_info = self.opcode_information.as_ref().unwrap();
+                let opcode_info = self.opcode_information.as_ref().unwrap().clone();
                 if nb + 1 == opcode_info.nb_bytes_to_read {
                     if 0 != opcode_info.nb_bytes_to_write {
+                        if self.must_execute_instruction_in_middle() {
+                            self.execute_step();
+                        }
                         if opcode_info.addresses_memory {
                             self.next_state = MCycle::Write(TState::T1, 0);
                         } else {
@@ -1175,7 +1203,11 @@ impl Chip for Z80 {
 
                 if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write -1 {
                     // TODO take into account those that do a write after the read (if that exists)
-                    self.execute_step();
+                    if !self.must_execute_instruction_in_middle() {               
+                        self.execute_step();
+                    } else {
+                        self.opcode_information = None;
+                    }
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
                 // go back for a new instruction
                 } else {

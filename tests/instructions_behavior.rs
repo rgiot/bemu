@@ -193,6 +193,31 @@ fn execute_dec() {
 }
 
 
+
+#[test]
+fn execute_inc_mem_hl() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld hl, data
+		inc (hl)
+		jr $ ; end of test
+data
+		db 3
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	let address = motherboard.cpu().reg16(Reg16::Hl).value();
+	let value = motherboard.read_byte(address);
+
+	assert_eq!(
+		value,
+		4
+	);
+}
+
+
 #[test]
 fn execute_in1() {
 	let code = dbg!(cpclib_macros::assemble!(
