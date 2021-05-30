@@ -506,6 +506,7 @@ fn execute_pop() {
 		jr $
 stack
 		dw 0xdead
+		assert stack == 0x4000 + 6
 	"));
 
 	let motherboard = execute_program(0x4000, 0x4000,code); 
@@ -516,6 +517,11 @@ stack
 		"{:x} != {:x}", 0xdead, motherboard.cpu().reg16(Reg16::Hl).value()
 	);
 
+
+	assert_eq!(
+		0x4000 + 6 + 2,
+		motherboard.cpu().reg16(Reg16::Sp).value()
+	);
 }
 
 #[test]

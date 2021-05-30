@@ -777,7 +777,8 @@ impl Z80 {
             }
 
             Mnemonic::Pop => {
-                // everything already done
+                self.sp.inc();
+                self.sp.inc();
             }
 
             Mnemonic::Sub => {

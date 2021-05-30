@@ -50,12 +50,12 @@ fn zexdoc() {
         );
         
         let cpu = motherboard.cpu();
-
+/*
         nb_instructions += 1;
-        if nb_instructions == 13 {
+        if nb_instructions == 20 {
             break;
         } // execute few just to test
-
+*/
         match cpu.reg16(Reg16::Pc).value() {
             0x0005 => { cpm_bdos(&motherboard); },
             0x0000 => { break; },
