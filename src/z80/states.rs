@@ -216,7 +216,9 @@ impl OpcodePrefix {
             DataDestination::Register16(reg.into())
         } else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register8(ref reg)), Some(DataAccess::Memory(_)))= token {
             DataDestination::Register8(reg.into())
-        }else {
+        } else if let Token::OpCode(Mnemonic::Pop, Some(DataAccess::Register16(reg)), _) = token {
+            DataDestination::Register16(reg.into())
+        } else {
 			DataDestination::None // TODO implement the other ones
 		};
 /*
@@ -323,11 +325,15 @@ impl OpcodePrefix {
             static ref IN_IX: Regex = Regex::new(r"\(IX\)$").unwrap();
             static ref IN_IY: Regex = Regex::new(r"\(IY\)$").unwrap();
             static ref IMMEDIATE: Regex = Regex::new(r"\(nnnn\)$").unwrap();
+            static ref POP: Regex = Regex::new(r"^POP").unwrap();
+
         }
 
         let repr = self.disassembling_table()[i];
 
-        if INDEXED_IY.is_match(repr) {
+        if POP.is_match(repr) {
+            AddressSource::Stack(StackDelta::Zero)
+        } else if INDEXED_IY.is_match(repr) {
             AddressSource::Indexed(Reg16::Iy)
         } else if INDEXED_IX.is_match(repr) {
             AddressSource::Indexed(Reg16::Ix)
@@ -670,5 +676,15 @@ mod test {
         assert_eq!(call.nb_additional_opcode_bytes, 0);
         assert_eq!(call.write_address, AddressSource::Stack(StackDelta::MinusTwo)); // we want to write on the stack
 		assert_eq!(call.write_data, DataSource::Register16(Reg16::Hl)); 
+    }
+
+
+	#[test]
+    fn lookup_checks_pop_hl() {
+		// call pq
+		let pop = dbg!(&OPCODE_PREFIX[0xe1]);
+        assert_eq!(pop.nb_additional_opcode_bytes, 0);
+        assert_eq!(pop.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
+		assert_eq!(pop.read_data, DataSource::Register16(Reg16::Hl)); 
     }
 }

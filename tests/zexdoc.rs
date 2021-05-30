@@ -22,10 +22,6 @@ fn zexdoc() {
         prg[0]
     );
 
-    dbg!(
-        motherboard.memory_config()
-    );
-
     motherboard.write_buffer(0x100, prg);
     motherboard.write_byte(5, 0xc9); // need to return from cpm call
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
@@ -45,7 +41,7 @@ fn zexdoc() {
     let mut nb_instructions = 0;
 
     loop {
-        dbg!(motherboard.cpu().reg16(Reg16::Pc));
+      //  dbg!(motherboard.cpu().reg16(Reg16::Pc));
         motherboard.execute_next_opcode();
 
         assert_eq!(
