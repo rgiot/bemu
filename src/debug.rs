@@ -22,7 +22,7 @@ impl Monitor {
 	pub fn monitor_stack(motherboard: &Motherboard, size: u16) {
 		let sp = motherboard.cpu().reg16(Reg16::Sp).value();
 		(0..size).for_each(|i|{
-			let addr = sp.wrapping_sub(2*i);
+			let addr = sp.wrapping_add(2*i);
 			print!(
 				"0x{:04X}=0x{:04X} ",
 				addr,

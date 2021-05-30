@@ -543,6 +543,8 @@ impl Z80 {
             
             | Mnemonic::Ret => {
                 self.pc = self.wz;
+                self.sp.inc();
+                self.sp.inc();
             }
 
             Mnemonic::Add => {

@@ -1,10 +1,12 @@
 use amsrust::motherboard::{MotherboardBuilder, Motherboard};
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
 use amsrust::memory::*;
+use amsrust::debug::Monitor;
 
 /// Took inspiration from https://floooh.github.io/2016/07/12/z80-rust-ms1.html
 #[test]
 fn zexdoc() {
+    const verbose : bool = false;
     let mut motherboard = MotherboardBuilder::default().build();
     motherboard.force_rom_config(
         RomConfig{
@@ -43,6 +45,9 @@ fn zexdoc() {
     loop {
       //  dbg!(motherboard.cpu().reg16(Reg16::Pc));
         motherboard.execute_next_opcode();
+        if verbose {
+            Monitor::monitor(&motherboard);
+        }
 
         assert_eq!(
             0xc9,
@@ -50,12 +55,12 @@ fn zexdoc() {
         );
         
         let cpu = motherboard.cpu();
-/*
+
         nb_instructions += 1;
-        if nb_instructions == 20 {
+        if nb_instructions == 50 {
             break;
         } // execute few just to test
-*/
+
         match cpu.reg16(Reg16::Pc).value() {
             0x0005 => { cpm_bdos(&motherboard); },
             0x0000 => { break; },
