@@ -540,6 +540,7 @@ impl Z80 {
         match opcode {
             Mnemonic::Nop 
             | Mnemonic::Out | Mnemonic::In 
+            
             | Mnemonic::Ret => {
                 self.pc = self.wz;
             }
@@ -775,6 +776,9 @@ impl Z80 {
                 }
             }
 
+            Mnemonic::Pop => {
+                // everything already done
+            }
 
             Mnemonic::Sub => {
                 match arg1 {
