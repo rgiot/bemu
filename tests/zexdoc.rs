@@ -58,7 +58,7 @@ fn zexdoc() {
 
         nb_instructions += 1;
         if nb_instructions == 50 {
-            break;
+   //         break;
         } // execute few just to test
 
         match cpu.reg16(Reg16::Pc).value() {

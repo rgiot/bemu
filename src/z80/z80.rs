@@ -268,7 +268,7 @@ pub struct Z80 {
     pub(crate) refresh_addr: u16,
 
     /// Information for the current opcode - Setup after fetching the very first byte
-    pub(crate) opcode_information: Option<OpcodeInformation>,
+    pub(crate) opcode_information: Option<&'static OpcodeInformation>,
 
     /// Flag to know if the cpu is accepting interruptions
     pub(crate) interruption_disabled: bool,
@@ -323,7 +323,7 @@ impl Z80 {
 
  fn opcode_information(&self) -> Option<&OpcodeInformation>
  {
-     self.opcode_information.as_ref()
+     self.opcode_information.clone()
  }
     /// Get the adress where to write based on what as been collected at fetch step
     fn get_write_address_from_opcode_information(&self) -> u16 {
@@ -992,7 +992,7 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
-      //  dbg!(&self.next_state);
+        dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {

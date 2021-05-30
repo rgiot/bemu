@@ -14,15 +14,15 @@ use super::{Reg16, Reg8, Z80Pin};
 // rust is currently unable to do that in a static way
 lazy_static! {
     pub(crate) static ref OPCODE_PREFIX: [OpcodeInformation; 256] =
-        array_init::array_init(|i| OpcodePrefix::None.opcode_information(i as u8));
+        array_init::array_init(|i| OpcodePrefix::None.build_opcode_information(i as u8));
     pub(crate) static ref OPCODE_PREFIX_CB: [OpcodeInformation; 256] =
-        array_init::array_init(|i| OpcodePrefix::Cb.opcode_information(i as u8));
+        array_init::array_init(|i| OpcodePrefix::Cb.build_opcode_information(i as u8));
     pub(crate) static ref OPCODE_PREFIX_DD: [OpcodeInformation; 256] =
-        array_init::array_init(|i| OpcodePrefix::Dd.opcode_information(i as u8));
+        array_init::array_init(|i| OpcodePrefix::Dd.build_opcode_information(i as u8));
     pub(crate) static ref OPCODE_PREFIX_ED: [OpcodeInformation; 256] =
-        array_init::array_init(|i| OpcodePrefix::Ed.opcode_information(i as u8));
+        array_init::array_init(|i| OpcodePrefix::Ed.build_opcode_information(i as u8));
     pub(crate) static ref OPCODE_PREFIX_FD: [OpcodeInformation; 256] =
-        array_init::array_init(|i| OpcodePrefix::Fd.opcode_information(i as u8));
+        array_init::array_init(|i| OpcodePrefix::Fd.build_opcode_information(i as u8));
 }
 
 
@@ -144,9 +144,21 @@ impl OpcodeInformation {
     }
 }
 
-impl OpcodePrefix {
+impl OpcodePrefix { 
+    /// Get the opcode information from the LUT
+    pub fn opcode_information(&self, opcode: u8) -> &'static OpcodeInformation {
+       let table : &[OpcodeInformation; 256] = match self {
+            Self::None => &OPCODE_PREFIX,
+            Self::Cb => &OPCODE_PREFIX_CB,
+            Self::Dd => &OPCODE_PREFIX_DD,
+            Self::Ed => &OPCODE_PREFIX_ED,
+            Self::Fd => &OPCODE_PREFIX_FD,
+        };
+        &table[opcode as usize]
+    }
+
     /// Retreive all the information needed to data collection for the current opcode
-    pub fn opcode_information(&self, opcode: u8) -> OpcodeInformation {
+    fn build_opcode_information(&self, opcode: u8) -> OpcodeInformation {
         let opcode = opcode as usize;
 
         let repr = self.disassembling_table()[opcode];
@@ -252,6 +264,14 @@ impl OpcodePrefix {
             DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
             DataSource::Pins => 1,                // the byte is already on the pins
         };
+
+        if read_address != AddressSource::None {
+            assert!( read_data != DataSource::None,
+            
+            "{:?} / {:?} expect read_data to be filled",
+            token, read_address
+            );
+        }
 
 		let nb_bytes_to_read = if token.is_output_opcode() {
             if let Some(DataAccess::PortC) = token.mnemonic_arg1() {
@@ -686,5 +706,15 @@ mod test {
         assert_eq!(pop.nb_additional_opcode_bytes, 0);
         assert_eq!(pop.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
 		assert_eq!(pop.read_data, DataSource::Register16(Reg16::Hl)); 
+    }
+
+
+    #[test]
+    fn lookup_or_mem_hl() {
+		// call pq
+		let pop = dbg!(&OPCODE_PREFIX[0xb6]);
+        assert_eq!(pop.nb_additional_opcode_bytes, 0);
+        assert_eq!(pop.read_address, AddressSource::Register16(Reg16::Hl)); // we want to write on the stack
+		assert_eq!(pop.read_data, DataSource::None); // ie Z
     }
 }
