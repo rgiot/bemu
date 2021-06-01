@@ -391,7 +391,7 @@ impl Z80 {
             DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
                 self.reg16(*reg).value()
             }
-            _ => unimplemented!("{:?}", src)
+            _ => unimplemented!("{:?} / {:?}", src, self.opcode_information)
         };
 
         let mut first = (value & 0xff) as u8;
@@ -550,7 +550,6 @@ impl Z80 {
         match opcode {
             Mnemonic::Nop 
             | Mnemonic::Out | Mnemonic::In 
-            
             | Mnemonic::Ret => {
                 self.pc = self.wz;
                 self.sp.inc();
@@ -559,12 +558,20 @@ impl Z80 {
 
             Mnemonic::Add => {
                 match arg1.unwrap() {
-                    DataAccess::Register8(_) => {
+                    DataAccess::Register8(cpclib_asm::preamble::Register8::A) => {
                         // this MUST be A register
                         // 8bits version
                         let right = self.get_available_8bits_value(arg2.unwrap());
                         let ovf = self.reg8_mut(Reg8::A).add(right); // TODO manage the flags
-                    }
+                    },
+
+                    DataAccess::Register16(reg) => {
+                        let right = self.get_available_16bits_value(arg2.unwrap());
+                        let left = self.reg16_mut(reg.into());
+                        let ovf = left.add(right); // TODO manage the flags
+                    },
+
+
                     _ => unimplemented!(),
                 }
             }
@@ -647,6 +654,35 @@ impl Z80 {
 
             Mnemonic::Di => {
                 self.interruption_disabled = true;
+            }
+
+            Mnemonic::ExAf => {
+                std::mem::swap(
+                    &mut self.af,
+                    &mut self.af2
+                );
+            }
+
+            Mnemonic::ExHlDe => {
+                std::mem::swap(
+                    &mut self.hl,
+                    &mut self.de
+                );
+            }
+
+            Mnemonic::Exx => {
+                std::mem::swap(
+                    &mut self.bc,
+                    &mut self.bc2
+                );
+                std::mem::swap(
+                    &mut self.de,
+                    &mut self.de2
+                );
+                std::mem::swap(
+                    &mut self.hl,
+                    &mut self.hl2
+                );
             }
 
             Mnemonic::Inc => {
@@ -801,6 +837,23 @@ impl Z80 {
 
                     _ => unimplemented!(),
                 }
+            }
+
+
+            Mnemonic::Or => {
+                let right = self.get_available_8bits_value(arg1.unwrap());
+                let res = self.reg8(Reg8::A).value() | right;
+                self.reg8_mut(Reg8::A).set(res);
+
+                let f = &mut self.reg8_mut(Reg8::F).val;
+                Z80Flags::auto_update(
+                    &[Z80Flags::S, Z80Flags::Z, Z80Flags::P, Z80Flags::X, Z80Flags::Y],
+                    f,
+                    res
+                );
+                Z80Flags::H.set_on( f);
+                Z80Flags::N.set_off( f);
+                Z80Flags::C.set_off( f);
             }
 
             Mnemonic::Pop => {
