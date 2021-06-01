@@ -391,6 +391,9 @@ impl Z80 {
             DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
                 self.reg16(*reg).value()
             }
+            DataSource::Immediate => {
+                self.reg16(Reg16::Wz).value()
+            }
             _ => unimplemented!("{:?} / {:?}", src, self.opcode_information)
         };
 
