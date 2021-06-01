@@ -219,6 +219,8 @@ impl OpcodePrefix {
 			}
         };
 
+        let mnemonic = token.mnemonic().unwrap() ;
+
 		// Location where to store the data to read
 		let read_data: DataDestination = if token.is_input_opcode() {
 			match token.mnemonic_arg1() {
@@ -242,7 +244,10 @@ impl OpcodePrefix {
         } else if let Token::OpCode(_, Some(DataAccess::MemoryRegister16(_)), None) = token {
             DataDestination::Pins
         }
-        
+        else if mnemonic == &Mnemonic::Outi || mnemonic == &Mnemonic::Otir 
+            || mnemonic == &Mnemonic::Outd || mnemonic == &Mnemonic::Otdr    {
+                DataDestination::Pins
+        }
         else {
             assert_eq!(
                 AddressSource::None,
