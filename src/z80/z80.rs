@@ -834,11 +834,13 @@ impl Z80 {
                         }
                     }
 
-                    DataAccess::Memory(_) => {
+                    DataAccess::Memory(_) | DataAccess::MemoryRegister16(_)=> {
                         // we have nothing to do because CPU has already executed everything
                     }
 
-                    _ => unimplemented!(),
+                    
+
+                    _ => unimplemented!("{:?}", arg1),
                 }
             }
 
