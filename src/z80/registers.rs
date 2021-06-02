@@ -119,7 +119,10 @@ impl Register8 {
 
     pub fn rlc(&mut self) -> bool {
         let bit7 = self.value() & 1<< 7 != 0;
-        self.set(self.value()<<1 | bit7 as u8);
+        self.set(self.value()<<1);
+        if bit7 {
+            self.set_bit(0);
+        }
         bit7
     }
 }
