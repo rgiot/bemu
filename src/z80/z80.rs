@@ -844,6 +844,10 @@ impl Z80 {
                 }
             }
 
+            Mnemonic::Ldir { // TODO manage the extra delay and this step must be done elsewhere
+                self.handle_repetitive_mnemonic();
+            }
+
 
             Mnemonic::Or => {
                 let right = self.get_available_8bits_value(arg1.unwrap());
@@ -902,6 +906,17 @@ impl Z80 {
                 self.reg8_mut(Reg8::A).xor(right);
             }
             _ => unimplemented!("{:?}, {:?}, {:?}", opcode, arg1, arg2),
+        }
+    }
+
+    /// We are playing with an instruction that decrements B and reexecute itself if
+    /// B is different that zero.
+    /// All these instructions use 2 bytes
+    fn handle_repetitive_mnemonic(&mut self) {
+        self.b.dec();
+        if self.b.value() != 0 { // start again the loop
+            self.pc.dec();
+            self.pc.dec();
         }
     }
 

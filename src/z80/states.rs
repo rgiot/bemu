@@ -754,4 +754,9 @@ mod test {
         assert_eq!(pop.write_address, AddressSource::Register16(Reg16::Hl)); // we want to write on the stack
 		assert_eq!(pop.write_data, DataSource::Pins); 
     }
+
+    #[test]
+    fn lookup_ldir() {
+        todo!()
+    }
 }
