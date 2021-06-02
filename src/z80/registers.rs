@@ -125,6 +125,15 @@ impl Register8 {
         }
         bit7
     }
+
+    pub fn rrc(&mut self) -> bool {
+        let bit0 = self.value() & 1<< 0 != 0;
+        self.set(self.value()>>1);
+        if bit0 {
+            self.set_bit(0);
+        }
+        bit0
+    }
 }
 
 /// Represents a 16 bits register by decomposing it in 2 8 bits registers

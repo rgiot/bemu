@@ -317,6 +317,23 @@ impl Z80 {
             FlagTest::M  => Z80Flags::S.is_on(flag),
         }
     }
+
+    #[inline]
+    fn set_flag(&mut self, flag: Z80Flags, val: bool) {
+        let f = &mut self.reg8_mut(Reg8::F).val;
+        flag.set(val, f);
+    }
+
+    #[inline]
+    fn set_flag_on(&mut self, flag: Z80Flags) {
+        self.set_flag(flag, true);
+    }
+
+    #[inline]
+    fn set_flag_off(&mut self, flag: Z80Flags) {
+        self.set_flag(flag, false);
+    }
+    
 }
 
 impl Z80 {
@@ -873,12 +890,19 @@ impl Z80 {
             Mnemonic::Rlca => {
                 let c = self.reg8_mut(Reg8::A).rlc();
 
-                let f = &mut self.reg8_mut(Reg8::F).val;
-                Z80Flags::H.set_off(f);
-                Z80Flags::N.set_off(f);
-                Z80Flags::C.set(c, f);
-
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag(Z80Flags::C, c);
             }
+
+            Mnemonic::Rrca => {
+                let c = self.reg8_mut(Reg8::A).rrc();
+
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag(Z80Flags::C, c);
+            }
+
             Mnemonic::Sub => {
                 match arg1 {
                     Some(DataAccess::Register8(reg8)) => {
