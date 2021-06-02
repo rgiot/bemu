@@ -175,6 +175,65 @@ end
 
 
 #[test]
+fn execute_call_conditionnal_1(){
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4012
+		xor a
+		or a
+		call z, end
+		jr $ ; never reached if not buggy
+
+		org 0x5000
+end
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4012, 0x4012, code); 
+
+	assert_eq!(
+		0x5000,
+		motherboard.cpu().reg16(Reg16::Pc).value()
+	);
+
+	assert_eq!(
+		motherboard.cpu().reg16(Reg16::Sp).value(),
+		0x8000 - 2
+	);
+}
+
+
+#[test]
+fn execute_call_conditionnal_2(){
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4012
+		ld a, 0xff
+		or a 
+		call z, end
+		jr $ ; never reached if not buggy
+
+		org 0x5000
+end
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4012, 0x4012, code); 
+
+	let dest = 0x4012+2+1+3;
+	assert_eq!(
+		dest,
+		motherboard.cpu().reg16(Reg16::Pc).value(),
+		"{} != {}", dest, motherboard.cpu().reg16(Reg16::Pc).value()
+	);
+
+	assert_eq!(
+		motherboard.cpu().reg16(Reg16::Sp).value(),
+		0x8000
+	);
+}
+
+#[test]
 fn execute_dec() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
@@ -365,6 +424,7 @@ fn execute_jr2() {
 
 #[test]
 /// This test currently ... I have to find if it comes from assembler or disassembler
+/// TODO debug the assembler that compute a wrong value
 fn execute_jr3() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
@@ -374,6 +434,31 @@ label
 
 		org 0x4000
 		jr label ; real jr
+	"));
+
+	let motherboard = execute_program(0x3ff0, 0x4000, code);
+
+	assert_eq!(
+		0x3ff0,
+		motherboard.cpu().reg16(Reg16::Pc).value(),
+
+		"{:x} != {:x}", 0x3ff0,motherboard.cpu().reg16(Reg16::Pc).value()
+	);
+}
+
+#[test]
+fn execute_jr3_assembler_bypassed() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x3ff0
+label
+		jr $ ; end of test
+
+		org 0x4000
+		db 0x18 ; jr
+	;	db after-label ; still buggy on the assembler side
+	 ;	db -18 ; here also...
+after
 	"));
 
 	let motherboard = execute_program(0x3ff0, 0x4000, code);

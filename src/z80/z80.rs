@@ -626,7 +626,12 @@ impl Z80 {
             }
 
             Mnemonic::Call => {
-                assert!(arg1.is_none(), "Need to handle BEFORE the conditional case");
+                #[cfg(test)]{
+                    // conditional call where condition is not met MUST not arrive there
+                    if arg1.is_some() {
+                        assert!(self.instruction_allowed());
+                    }
+                }
 
                 let addr = match arg2 {
                     Some(DataAccess::Expression(exp)) => {
