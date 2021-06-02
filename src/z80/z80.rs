@@ -844,7 +844,7 @@ impl Z80 {
                 }
             }
 
-            Mnemonic::Ldir { // TODO manage the extra delay and this step must be done elsewhere
+            Mnemonic::Ldir => { // TODO manage the extra delay and this step must be done elsewhere
                 self.handle_repetitive_mnemonic();
             }
 
@@ -870,6 +870,15 @@ impl Z80 {
                 self.sp.inc();
             }
 
+            Mnemonic::Rlca => {
+                let c = self.reg8_mut(Reg8::A).rlc();
+
+                let f = &mut self.reg8_mut(Reg8::F).val;
+                Z80Flags::H.set_off(f);
+                Z80Flags::N.set_off(f);
+                Z80Flags::C.set(c, f);
+
+            }
             Mnemonic::Sub => {
                 match arg1 {
                     Some(DataAccess::Register8(reg8)) => {
@@ -913,8 +922,8 @@ impl Z80 {
     /// B is different that zero.
     /// All these instructions use 2 bytes
     fn handle_repetitive_mnemonic(&mut self) {
-        self.b.dec();
-        if self.b.value() != 0 { // start again the loop
+        self.reg8_mut(Reg8::B).dec();
+        if self.reg8(Reg8::B).value() != 0 { // start again the loop
             self.pc.dec();
             self.pc.dec();
         }

@@ -84,6 +84,14 @@ impl HasValue for Register8 {
 }
 
 impl Register8 {
+    pub fn new(val: u8) -> Self {
+        Register8{
+            val
+        }
+    }
+}
+
+impl Register8 {
     pub fn res_bit(&mut self, bit: u8) {
         let new = self.value() & (!(1 << bit));
         self.set(new);
@@ -107,6 +115,12 @@ impl Register8 {
     pub fn xor(&mut self, value: u8) {
         let new = self.value() ^ value;
         self.set(new);
+    }
+
+    pub fn rlc(&mut self) -> bool {
+        let bit7 = self.value() & 1<< 7 != 0;
+        self.set(self.value()<<1 | bit7 as u8);
+        bit7
     }
 }
 
@@ -159,5 +173,21 @@ impl Register16 {
 
     pub fn high_mut(&mut self) -> &mut Register8 {
         &mut self.high
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn rlc() {  
+        let mut r = Register8{val: 0b11000000};
+        let c = r.rlc();
+
+        assert!(c);
+        assert_eq!(
+            r.value(),
+            0b10000001
+        );
     }
 }
