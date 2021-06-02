@@ -75,6 +75,8 @@ pub(crate) struct OpcodeInformation {
     pub(crate) addresses_memory: bool,
     /// String representation
     pub(crate) repr: &'static str,
+    /// Flag test for conditional execution of instruction
+    pub(crate) flag_test: Option<cpclib_asm::preamble::FlagTest>,
     //   /// Token just in case it is usefull (to be removed if not)
     pub(crate) token: Token,
 }
@@ -313,6 +315,11 @@ impl OpcodePrefix {
             DataSource::Pins => 1,                // the byte is already on the pins
         }};
 
+        let flag_test = match token.mnemonic_arg1() {
+            Some(DataAccess::FlagTest(f)) => Some(*f),
+            _ => None
+        };
+
         OpcodeInformation {
             prefix: self.clone(),
             nb_additional_opcode_bytes: self.opcode_bytes_to_read(opcode),
@@ -325,6 +332,7 @@ impl OpcodePrefix {
             repr,
             addresses_memory,
             token,
+            flag_test
         }
     }
 
@@ -629,6 +637,20 @@ mod test {
         assert_eq!(call.nb_additional_opcode_bytes, 2);
         assert_eq!(call.write_address, AddressSource::Stack(StackDelta::MinusTwo)); // we want to write on the stack
 		assert_eq!(call.write_data, DataSource::Register16(Reg16::Pc)); // we want to write PC
+    }
+
+	#[test]
+    fn lookup_checks_call_conditional() {
+        use cpclib_asm::preamble::FlagTest;
+		// call pq
+		let call = dbg!(&OPCODE_PREFIX[0b11000100]);
+        assert_eq!(call.nb_additional_opcode_bytes, 2);
+        assert_eq!(call.write_address, AddressSource::Stack(StackDelta::MinusTwo)); // we want to write on the stack
+		assert_eq!(call.write_data, DataSource::Register16(Reg16::Pc)); // we want to write PC
+        assert_eq!(
+            call.flag_test,
+            Some(FlagTest::NZ)
+        )
     }
 
 	#[test]
