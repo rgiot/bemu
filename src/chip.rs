@@ -142,7 +142,7 @@ pub trait Chip {
             self.set_pin(pin.clone(), value.is_odd());
             value = value.div_floor(&V::from_u8(2).unwrap());
         }
-        assert!(value.to_usize().unwrap() == 0);
+      //  assert!(value.to_usize().unwrap() == 0);
     }
 
     fn get_value_from_pins(&self, pins: &[Self::PinType]) -> u16 {

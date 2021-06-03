@@ -494,7 +494,7 @@ impl Crtc {
             13 => self.r13,
             14 => self.r14,
             15 => self.r15,
-            _ => panic!(),
+            _ => 0xff // request to a wrong register,
         };
         let m = self.crtc_type.read_register_mask(r);
         v & m
@@ -510,10 +510,9 @@ impl Crtc {
         };
 
         if trigger && self.hcc == 0 {
-            self.base = (self.r12 as u16) << 8 + self.r13 as u16;
+            self.base = ((self.r12 as u16) << 8).wrapping_add(self.r13 as u16);
         }
     }
-
     /// VSync in lines
     fn vsync_height(&self) -> u8 {
         let val = (self.r3 & 0b11110000) >> 4;
@@ -570,7 +569,7 @@ impl Crtc {
             // This is the end of a char line
             if self.vlc == self.r9 + 1 {
                 self.vlc = 0;
-                self.vcc += 1;
+                self.vcc = self.vcc.wrapping_add(1);
 
                 // decrease vsync counter if any
                 if self.vsync_counter != 0 {
@@ -612,7 +611,9 @@ impl Crtc {
     /// they are directly wired to the pin; this fonction replicate them here
     /// should not be called outside of Crtc. Public only for test reasons
     pub fn set_address_on_pins(&mut self) {
-        let address = self.vcc as u16 * self.r1 as u16 + self.hcc as u16 + self.base;
+        let address = (self.vcc as u16).wrapping_mul(self.r1 as u16)
+                                .wrapping_add(self.hcc as u16)
+                                .wrapping_add(self.base);
 
         self.set_value_in_pins(
             address & ((1 << 15) - 1),

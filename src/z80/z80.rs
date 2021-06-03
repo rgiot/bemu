@@ -487,12 +487,12 @@ impl Z80 {
         let memory = [self.reg8(Reg8::Z).get(), self.reg8(Reg8::W).get()];
 
         // By construction, it cannot fail
-        let (opcode, rest) = dbg!(cpclib_asm::disass::disassemble_with_potential_argument(
+        let (opcode, rest) = cpclib_asm::disass::disassemble_with_potential_argument(
             self.ir.get(),
             &prefix.disassembling_table(),
             &memory
         )
-        .unwrap());
+        .unwrap();
         assert!(opcode.is_opcode());
         self.execute_opcode(
             opcode.mnemonic().unwrap(),
@@ -1141,7 +1141,6 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
-        dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
@@ -1248,7 +1247,6 @@ impl Chip for Z80 {
 
             MCycle::Read(TState::T1, nb) | MCycle::Input(TState::T1, nb) => {
                 let address = self.get_read_address_from_opcode_information() + nb as u16 ;
-                eprintln!("Read at {:x}", address);
                 self.set_address_on_pins(address);
 
                 assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
@@ -1262,7 +1260,7 @@ impl Chip for Z80 {
             }
             MCycle::Read(TState::T2, nb)  | MCycle::Input(TState::T2, nb) => {
 
-                let byte = dbg!(self.get_data_from_pins());
+                let byte = self.get_data_from_pins();
                 self.store_currently_read_byte(byte, nb);
 
                 self.on(self.next_state.read_pin_type().unwrap());
