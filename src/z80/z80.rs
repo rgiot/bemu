@@ -541,7 +541,7 @@ impl Z80 {
                 let opcode_information = self.opcode_information.as_ref().unwrap();
 
 
-                dbg!(opcode_information);
+                //dbg!(opcode_information);
 
                 if opcode_information.fetch_finished() {
                     if opcode_information.expect_read() {
@@ -981,7 +981,7 @@ impl Z80 {
     pub fn get_available_8bits_value(&self, data: &DataAccess) -> u8 {
         match data {
             DataAccess::Register8(reg) => {
-                let reg: Reg8 = dbg!(reg.into());
+                let reg: Reg8 = reg.into();
                 return self.reg8(reg).get();
             }
             DataAccess::IndexRegister8(reg) => {
@@ -1007,7 +1007,7 @@ impl Z80 {
     pub fn get_available_16bits_value(&self, data: &DataAccess) -> u16 {
         match data {
             DataAccess::Register16(reg) => {
-                let reg: Reg16 = dbg!(reg.into());
+                let reg: Reg16 = reg.into();
                 return self.reg16(reg).get();
             }
             DataAccess::IndexRegister16(reg) => {
@@ -1015,16 +1015,17 @@ impl Z80 {
                 return self.reg16(reg).get();
             }
             DataAccess::MemoryRegister16(_reg) => {
+                panic!("Cannot be used / it is done directly during cpu execution");
                 // Here we do not care at all of which register is used for memory reading
                 // Because the CPU has already read the information
-                return self.reg16(Reg16::Wz).get();
+              //  return self.reg16(Reg16::Wz).get();
             }
             DataAccess::Expression(expr) => {
                 return expr.eval().unwrap() as u16; // cannot fail as the value has been disassembled
             }
             DataAccess::Memory(_) => return self.reg16(Reg16::Wz).get(),
             _ => {
-                panic!("{:?} unhandled", data);
+                panic!("Cannot be used / it is done directly during cpu execution");
             }
         }
     }
@@ -1144,15 +1145,13 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
-        dbg!(&self.next_state);
+        //dbg!(&self.next_state);
         match  self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
                 self.set_address_on_pins(self.pc.get());
                 // pc is incremented in T2 in a real CPU
                 self.pc.inc();
-
-                dbg!(self.pc);
 
                 self.set_pin(Z80Pin::Neg_MREQ, false);
                 self.set_pin(Z80Pin::Neg_RD, false);

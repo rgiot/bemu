@@ -233,13 +233,16 @@ impl OpcodePrefix {
 			DataDestination::Register16(Reg16::Pc)
 		} else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register16(reg)), Some(DataAccess::Memory(_)))= token {
             DataDestination::Register16(reg.into())
-        } else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register8(ref reg)), Some(DataAccess::Memory(_)))= token {
+        } else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::IndexRegister16(reg)), Some(DataAccess::Memory(_)))= token {
+            DataDestination::IndexRegister16(reg.into())
+        }  else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register8(ref reg)), Some(DataAccess::Memory(_)))= token {
             DataDestination::Register8(reg.into())
-        } else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register8(ref reg)), Some(DataAccess::MemoryRegister16(_)))= token {
+        }       
+        else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register8(ref reg)), Some(DataAccess::MemoryRegister16(_)))= token {
             DataDestination::Register8(reg.into())
         } else if let Token::OpCode(Mnemonic::Pop, Some(DataAccess::Register16(reg)), _) = token {
             DataDestination::Register16(reg.into())
-        } else if let Token::OpCode(Mnemonic::Inc | Mnemonic::Dec, Some(DataAccess::MemoryRegister16(_)), _) = token {
+        } else if let Token::OpCode(Mnemonic::Inc | Mnemonic::Dec, Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_,_)), _) = token {
             DataDestination::Pins // here we read/write on the data pins
         } else if let Token::OpCode(_, _, Some(DataAccess::MemoryRegister16(_))) = token {
             DataDestination::Pins

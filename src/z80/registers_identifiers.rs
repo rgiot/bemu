@@ -197,3 +197,12 @@ impl Into<Reg16> for &cpclib_asm::preamble::IndexRegister16 {
         }
     }
 }
+
+impl Into<Reg16> for cpclib_asm::preamble::IndexRegister16 {
+    fn into(self) -> Reg16 {
+        match self {
+            cpclib_asm::preamble::IndexRegister16::Ix => Reg16::Ix,
+            cpclib_asm::preamble::IndexRegister16::Iy => Reg16::Iy,
+        }
+    }
+}
