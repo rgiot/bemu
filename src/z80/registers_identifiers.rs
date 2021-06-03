@@ -1,4 +1,3 @@
-
 /// Identifiers for any 16 bits registers
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Reg16 {
@@ -187,7 +186,6 @@ impl Into<Reg16> for cpclib_asm::preamble::Register16 {
         }
     }
 }
-
 
 impl Into<Reg16> for &cpclib_asm::preamble::IndexRegister16 {
     fn into(self) -> Reg16 {

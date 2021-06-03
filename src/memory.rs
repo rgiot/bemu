@@ -105,7 +105,6 @@ pub struct RomConfig {
     pub rom_number: u8,
 }
 
-
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct MemoryConfig(pub RomConfig, pub RamConfig);
 

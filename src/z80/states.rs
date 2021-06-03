@@ -2,13 +2,11 @@ use std::ops::Add;
 
 use cpclib::z80emu::Z80;
 ///! This module contains all that can help to manage the variuous states of the CPU
-
 use lazy_static::lazy_static;
 use regex::Regex;
 //use cpclib_asm::preamble::*;
-use cpclib_asm::preamble::{DataAccess, Token, Mnemonic};
 use super::{Reg16, Reg8, Z80Pin};
-
+use cpclib_asm::preamble::{DataAccess, Mnemonic, Token};
 
 // Generate the various lookup tables needed to control the opcodes execution
 // rust is currently unable to do that in a static way
@@ -25,7 +23,6 @@ lazy_static! {
         array_init::array_init(|i| OpcodePrefix::Fd.build_opcode_information(i as u8));
 }
 
-
 /// Possible states for a cycle
 /// Warning: Wait state does not count
 #[derive(Debug, PartialEq)]
@@ -35,7 +32,6 @@ pub(crate) enum TState {
     T3,
     T4,
 }
-
 
 /// This enumeration aims at helping to treat the
 /// prefixed operations
@@ -47,9 +43,6 @@ pub(crate) enum OpcodePrefix {
     Cb,
     Ed,
 }
-
-
-
 
 /// Contains all the informations needed to drive the next
 /// cycles of the instruction
@@ -65,7 +58,7 @@ pub(crate) struct OpcodeInformation {
     pub(crate) write_address: AddressSource,
     /// Write data
     pub(crate) write_data: DataSource,
-	///Read data
+    ///Read data
     pub(crate) read_data: DataDestination,
     /// Number of bytes to read from the address
     pub(crate) nb_bytes_to_read: u8,
@@ -81,8 +74,6 @@ pub(crate) struct OpcodeInformation {
     pub(crate) token: Token,
 }
 
-
-
 /// Where the CPU searches the address information to be put on the address line
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub(crate) enum AddressSource {
@@ -96,17 +87,17 @@ pub(crate) enum AddressSource {
     IndexRegister16(Reg16),
     /// The delta has already been read by the CPU
     Indexed(Reg16),
-	/// We are doing an operation on the stack / thus address is SP
-	Stack(StackDelta)
+    /// We are doing an operation on the stack / thus address is SP
+    Stack(StackDelta),
 }
 
 // Some operations use a modified value of the the SP register
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum StackDelta {
-	/// Use the stack value
-	Zero,
-	/// Use the stack value - 2
-	MinusTwo
+    /// Use the stack value
+    Zero,
+    /// Use the stack value - 2
+    MinusTwo,
 }
 
 impl Default for TState {
@@ -115,21 +106,16 @@ impl Default for TState {
     }
 }
 
-
-
 impl Default for OpcodePrefix {
     fn default() -> Self {
         OpcodePrefix::None
     }
 }
 
-
-
 impl OpcodeInformation {
-	pub fn write_on_stack(&self) -> bool {
-		self.write_address
-		== AddressSource::Stack(StackDelta::MinusTwo)
-	}
+    pub fn write_on_stack(&self) -> bool {
+        self.write_address == AddressSource::Stack(StackDelta::MinusTwo)
+    }
     /// Fetch is finished for opcode of 1 byte with no memory/port access
     pub fn fetch_finished(&self) -> bool {
         self.nb_additional_opcode_bytes == 0
@@ -146,10 +132,10 @@ impl OpcodeInformation {
     }
 }
 
-impl OpcodePrefix { 
+impl OpcodePrefix {
     /// Get the opcode information from the LUT
     pub fn opcode_information(&self, opcode: u8) -> &'static OpcodeInformation {
-       let table : &[OpcodeInformation; 256] = match self {
+        let table: &[OpcodeInformation; 256] = match self {
             Self::None => &OPCODE_PREFIX,
             Self::Cb => &OPCODE_PREFIX_CB,
             Self::Dd => &OPCODE_PREFIX_DD,
@@ -179,10 +165,9 @@ impl OpcodePrefix {
             } else {
                 AddressSource::None
             }
-        } 
-		else if token.is_retlike_opcode() {
-			AddressSource::Stack(StackDelta::Zero)
-		} else if addresses_memory {
+        } else if token.is_retlike_opcode() {
+            AddressSource::Stack(StackDelta::Zero)
+        } else if addresses_memory {
             self.read_address_source(opcode)
         } else {
             AddressSource::None
@@ -204,84 +189,111 @@ impl OpcodePrefix {
                 None => DataSource::Pins, // the data is already on the pins
             }
         } else {
-			// opcode that is not an output
-			match write_address {
-             AddressSource::None => DataSource::None,
-			 AddressSource::Stack(_) => {
-				 match token.mnemonic() {
-				 	Some(Mnemonic::Call) => DataSource::Register16(Reg16::Pc),
-					Some(Mnemonic::Push) => DataSource::Register16(token.mnemonic_arg1().unwrap().get_register16().unwrap().into()),
-					_ => unreachable!()
-				 }
-			 },
-			_ => match token.mnemonic_arg2(){
-                Some(stuff) => stuff.into(),
-                None => DataDestination::Pins
-                }
-			}
+            // opcode that is not an output
+            match write_address {
+                AddressSource::None => DataSource::None,
+                AddressSource::Stack(_) => match token.mnemonic() {
+                    Some(Mnemonic::Call) => DataSource::Register16(Reg16::Pc),
+                    Some(Mnemonic::Push) => DataSource::Register16(
+                        token
+                            .mnemonic_arg1()
+                            .unwrap()
+                            .get_register16()
+                            .unwrap()
+                            .into(),
+                    ),
+                    _ => unreachable!(),
+                },
+                _ => match token.mnemonic_arg2() {
+                    Some(stuff) => stuff.into(),
+                    None => DataDestination::Pins,
+                },
+            }
         };
 
-        let mnemonic = token.mnemonic().unwrap() ;
+        let mnemonic = token.mnemonic().unwrap();
 
-		// Location where to store the data to read
-		let read_data: DataDestination = if token.is_input_opcode() {
-			match token.mnemonic_arg1() {
+        // Location where to store the data to read
+        let read_data: DataDestination = if token.is_input_opcode() {
+            match token.mnemonic_arg1() {
                 Some(position) => position.into(),
-				None => DataDestination::Pins
-			}
-		} else if token.is_retlike_opcode() { // stack content is stored in PC
-			DataDestination::Register16(Reg16::Pc)
-		} else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register16(reg)), Some(DataAccess::Memory(_)))= token {
+                None => DataDestination::Pins,
+            }
+        } else if token.is_retlike_opcode() {
+            // stack content is stored in PC
+            DataDestination::Register16(Reg16::Pc)
+        } else if let Token::OpCode(
+            Mnemonic::Ld,
+            Some(DataAccess::Register16(reg)),
+            Some(DataAccess::Memory(_)),
+        ) = token
+        {
             DataDestination::Register16(reg.into())
-        } else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::IndexRegister16(reg)), Some(DataAccess::Memory(_)))= token {
+        } else if let Token::OpCode(
+            Mnemonic::Ld,
+            Some(DataAccess::IndexRegister16(reg)),
+            Some(DataAccess::Memory(_)),
+        ) = token
+        {
             DataDestination::IndexRegister16(reg.into())
-        }  else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register8(ref reg)), Some(DataAccess::Memory(_)))= token {
+        } else if let Token::OpCode(
+            Mnemonic::Ld,
+            Some(DataAccess::Register8(ref reg)),
+            Some(DataAccess::Memory(_)),
+        ) = token
+        {
             DataDestination::Register8(reg.into())
-        }       
-        else if let Token::OpCode(Mnemonic::Ld, Some(DataAccess::Register8(ref reg)), Some(DataAccess::MemoryRegister16(_)))= token {
+        } else if let Token::OpCode(
+            Mnemonic::Ld,
+            Some(DataAccess::Register8(ref reg)),
+            Some(DataAccess::MemoryRegister16(_)),
+        ) = token
+        {
             DataDestination::Register8(reg.into())
         } else if let Token::OpCode(Mnemonic::Pop, Some(DataAccess::Register16(reg)), _) = token {
             DataDestination::Register16(reg.into())
-        } else if let Token::OpCode(Mnemonic::Inc | Mnemonic::Dec, Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_,_)), _) = token {
+        } else if let Token::OpCode(
+            Mnemonic::Inc | Mnemonic::Dec,
+            Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)),
+            _,
+        ) = token
+        {
             DataDestination::Pins // here we read/write on the data pins
         } else if let Token::OpCode(_, _, Some(DataAccess::MemoryRegister16(_))) = token {
             DataDestination::Pins
         } else if let Token::OpCode(_, Some(DataAccess::MemoryRegister16(_)), None) = token {
             DataDestination::Pins
-        }
-        else if mnemonic == &Mnemonic::Outi || mnemonic == &Mnemonic::Otir 
-            || mnemonic == &Mnemonic::Outd || mnemonic == &Mnemonic::Otdr    {
-                DataDestination::Pins
-        }
-        else {
-            assert_eq!(
-                AddressSource::None,
-                read_address,
-                "{:?}", token
-            );
-			DataDestination::None // TODO implement the other ones
-		};
-/*
-        // get the number of bytes needed to build the complete opcode
-        let nb_bytes_to_read = if token.is_output_opcode() {
-            if let Some(DataAccess::PortC) = token.mnemonic_arg1() {
-                0
-            } else {
-                1 // port n belongs to the opcode
-            }
-        } else if token.is_input_opcode() {
-            if let Some(DataAccess::PortC) = token.mnemonic_arg2() {
-                0
-            } else {
-                1 // port n
-            }
+        } else if mnemonic == &Mnemonic::Outi
+            || mnemonic == &Mnemonic::Otir
+            || mnemonic == &Mnemonic::Outd
+            || mnemonic == &Mnemonic::Otdr
+        {
+            DataDestination::Pins
         } else {
-            match read_address {
-                AddressSource::None => 0,
-                _ => 1, // TODO really set the right value
-            }
+            assert_eq!(AddressSource::None, read_address, "{:?}", token);
+            DataDestination::None // TODO implement the other ones
         };
-*/
+        /*
+                // get the number of bytes needed to build the complete opcode
+                let nb_bytes_to_read = if token.is_output_opcode() {
+                    if let Some(DataAccess::PortC) = token.mnemonic_arg1() {
+                        0
+                    } else {
+                        1 // port n belongs to the opcode
+                    }
+                } else if token.is_input_opcode() {
+                    if let Some(DataAccess::PortC) = token.mnemonic_arg2() {
+                        0
+                    } else {
+                        1 // port n
+                    }
+                } else {
+                    match read_address {
+                        AddressSource::None => 0,
+                        _ => 1, // TODO really set the right value
+                    }
+                };
+        */
         let nb_bytes_to_write = match write_data {
             DataSource::None => 0,
             DataSource::Register16(_) => 2,
@@ -294,33 +306,36 @@ impl OpcodePrefix {
         };
 
         if read_address != AddressSource::None {
-            assert!( read_data != DataSource::None,
-            
-            "{:?} / {:?} expect read_data to be filled",
-            token, read_address
+            assert!(
+                read_data != DataSource::None,
+                "{:?} / {:?} expect read_data to be filled",
+                token,
+                read_address
             );
         }
 
-		let nb_bytes_to_read = if token.is_output_opcode() {
+        let nb_bytes_to_read = if token.is_output_opcode() {
             if let Some(DataAccess::PortC) = token.mnemonic_arg1() {
                 0
             } else {
                 1 // port n belongs to the opcode
             }
-        } else {match read_data {
-            DataSource::None => 0,
-            DataSource::Register16(_) => 2,
-            DataSource::IndexRegister16(_) => 2,
-            DataSource::Register8(_) => 1,
-            DataSource::IndexRegister8(_) => 1,
-            DataSource::Immediate => 1,           // XXX not sure of that
-            DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
-            DataSource::Pins => 1,                // the byte is already on the pins
-        }};
+        } else {
+            match read_data {
+                DataSource::None => 0,
+                DataSource::Register16(_) => 2,
+                DataSource::IndexRegister16(_) => 2,
+                DataSource::Register8(_) => 1,
+                DataSource::IndexRegister8(_) => 1,
+                DataSource::Immediate => 1, // XXX not sure of that
+                DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
+                DataSource::Pins => 1,      // the byte is already on the pins
+            }
+        };
 
         let flag_test = match token.mnemonic_arg1() {
             Some(DataAccess::FlagTest(f)) => Some(*f),
-            _ => None
+            _ => None,
         };
 
         OpcodeInformation {
@@ -329,13 +344,13 @@ impl OpcodePrefix {
             read_address,
             write_address,
             write_data,
-			read_data,
+            read_data,
             nb_bytes_to_read,
             nb_bytes_to_write,
             repr,
             addresses_memory,
             token,
-            flag_test
+            flag_test,
         }
     }
 
@@ -366,8 +381,8 @@ impl OpcodePrefix {
         (nb_height_bits_args + 2 * nb_sixteen_bits_args) as u8
     }
 
-	/// Obtain the address source from general instructions. Some specific ones are handled somewhere manually.
-	/// TODO : merge the two places ...
+    /// Obtain the address source from general instructions. Some specific ones are handled somewhere manually.
+    /// TODO : merge the two places ...
     fn read_address_source(self, i: usize) -> AddressSource {
         lazy_static! {
             static ref INDEXED_IY: Regex = Regex::new(r"\(IY\+nn\)$").unwrap();
@@ -380,7 +395,6 @@ impl OpcodePrefix {
             static ref IN_IY: Regex = Regex::new(r"\(IY\)$").unwrap();
             static ref IMMEDIATE: Regex = Regex::new(r"\(nnnn\)$").unwrap();
             static ref POP: Regex = Regex::new(r"^POP").unwrap();
-
         }
 
         let repr = self.disassembling_table()[i];
@@ -416,9 +430,7 @@ impl OpcodePrefix {
         }
 
         match token.mnemonic_arg2() {
-            Some(DataAccess::PortC) | None => {
-                AddressSource::Register16(Reg16::Bc)
-            }
+            Some(DataAccess::PortC) | None => AddressSource::Register16(Reg16::Bc),
             Some(DataAccess::PortN(_)) => AddressSource::Immediate,
             _ => unreachable!("{:?}", token),
         }
@@ -431,16 +443,14 @@ impl OpcodePrefix {
         }
 
         match token.mnemonic_arg1() {
-            Some(DataAccess::PortC) | None => {
-                AddressSource::Register16(Reg16::Bc)
-            }
+            Some(DataAccess::PortC) | None => AddressSource::Register16(Reg16::Bc),
             Some(DataAccess::PortN(_)) => AddressSource::Immediate,
             _ => unreachable!("{:?}", token),
         }
     }
 
     /// Provide the location of the address to put on the address bus to write in memory  from general instructions. Some specific ones are handled somewhere manually.
-	/// TODO : merge the two places ...
+    /// TODO : merge the two places ...
     fn write_address_source(self, i: usize) -> AddressSource {
         lazy_static! {
             static ref INDEXED_IY: Regex = Regex::new(r"\(IY\+nn\)[^$]").unwrap();
@@ -460,11 +470,9 @@ impl OpcodePrefix {
 
         if repr == "INC (HL)" || repr == "DEC (HL)" {
             AddressSource::Register16(Reg16::Hl)
-        }
-		else if CALL.is_match(repr) || PUSH.is_match(repr) {
-			AddressSource::Stack(StackDelta::MinusTwo)
-		}
-        else if INDEXED_IY.is_match(repr) {
+        } else if CALL.is_match(repr) || PUSH.is_match(repr) {
+            AddressSource::Stack(StackDelta::MinusTwo)
+        } else if INDEXED_IY.is_match(repr) {
             AddressSource::Indexed(Reg16::Iy)
         } else if INDEXED_IX.is_match(repr) {
             AddressSource::Indexed(Reg16::Ix)
@@ -487,7 +495,6 @@ impl OpcodePrefix {
         }
     }
 }
-
 
 /// Where the CPU searches the information to link with the data bus
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -552,18 +559,18 @@ impl MCycle {
         *self == MCycle::default()
     }
 
-	pub fn is_input(&self) -> bool {
+    pub fn is_input(&self) -> bool {
         match self {
-			Self::Input(_, _) => true,
-			_ => false
-		}
+            Self::Input(_, _) => true,
+            _ => false,
+        }
     }
 
-	pub fn is_output(&self) -> bool {
+    pub fn is_output(&self) -> bool {
         match self {
-			Self::Output(_, _) => true,
-			_ => false
-		}
+            Self::Output(_, _) => true,
+            _ => false,
+        }
     }
 
     pub(crate) fn inc_state(&mut self) {
@@ -591,7 +598,7 @@ impl MCycle {
             MCycle::Output(TState::T2, nb) => MCycle::Output(TState::T3, *nb),
             MCycle::Output(TState::T3, nb) => panic!("Ambigous"),
 
-			MCycle::Input(TState::T1, nb) => MCycle::Input(TState::T2, *nb),
+            MCycle::Input(TState::T1, nb) => MCycle::Input(TState::T2, *nb),
             MCycle::Input(TState::T2, nb) => MCycle::Input(TState::T3, *nb),
             MCycle::Input(TState::T3, nb) => panic!("Ambigous"),
 
@@ -606,26 +613,26 @@ impl MCycle {
         }
     }
 
-	pub fn read_pin_type(&self) -> Option<Z80Pin> {
-		match self {
-			Self::Input(_, _) => Some(Z80Pin::Neg_IORQ),
-			Self::Read(_, _) => Some(Z80Pin::Neg_MREQ),
-			_ => unreachable!()
-		}
-	}
+    pub fn read_pin_type(&self) -> Option<Z80Pin> {
+        match self {
+            Self::Input(_, _) => Some(Z80Pin::Neg_IORQ),
+            Self::Read(_, _) => Some(Z80Pin::Neg_MREQ),
+            _ => unreachable!(),
+        }
+    }
 
-	pub fn write_pin_type(&self) -> Option<Z80Pin> {
-		match self {
-			Self::Output(_, _) => Some(Z80Pin::Neg_IORQ),
-			Self::Write(_, _) => Some(Z80Pin::Neg_MREQ),
-			_ => unreachable!()
-		}
-	}
+    pub fn write_pin_type(&self) -> Option<Z80Pin> {
+        match self {
+            Self::Output(_, _) => Some(Z80Pin::Neg_IORQ),
+            Self::Write(_, _) => Some(Z80Pin::Neg_MREQ),
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
-	use super::*;
+    use super::*;
 
     #[test]
     fn lookup_checks_hl() {
@@ -633,77 +640,77 @@ mod test {
         assert_eq!(dbg!(&OPCODE_PREFIX[0x21]).nb_additional_opcode_bytes, 2);
     }
 
-	#[test]
+    #[test]
     fn lookup_checks_call() {
-		// call pq
-		let call = dbg!(&OPCODE_PREFIX[0xcd]);
+        // call pq
+        let call = dbg!(&OPCODE_PREFIX[0xcd]);
         assert_eq!(call.nb_additional_opcode_bytes, 2);
-        assert_eq!(call.write_address, AddressSource::Stack(StackDelta::MinusTwo)); // we want to write on the stack
-		assert_eq!(call.write_data, DataSource::Register16(Reg16::Pc)); // we want to write PC
+        assert_eq!(
+            call.write_address,
+            AddressSource::Stack(StackDelta::MinusTwo)
+        ); // we want to write on the stack
+        assert_eq!(call.write_data, DataSource::Register16(Reg16::Pc)); // we want to write PC
     }
 
-	#[test]
+    #[test]
     fn lookup_checks_call_conditional() {
         use cpclib_asm::preamble::FlagTest;
-		// call pq
-		let call = dbg!(&OPCODE_PREFIX[0b11000100]);
+        // call pq
+        let call = dbg!(&OPCODE_PREFIX[0b11000100]);
         assert_eq!(call.nb_additional_opcode_bytes, 2);
-        assert_eq!(call.write_address, AddressSource::Stack(StackDelta::MinusTwo)); // we want to write on the stack
-		assert_eq!(call.write_data, DataSource::Register16(Reg16::Pc)); // we want to write PC
         assert_eq!(
-            call.flag_test,
-            Some(FlagTest::NZ)
-        )
+            call.write_address,
+            AddressSource::Stack(StackDelta::MinusTwo)
+        ); // we want to write on the stack
+        assert_eq!(call.write_data, DataSource::Register16(Reg16::Pc)); // we want to write PC
+        assert_eq!(call.flag_test, Some(FlagTest::NZ))
     }
 
-	#[test]
+    #[test]
     fn lookup_checks_ret() {
-		// call pq
-		let ret = dbg!(&OPCODE_PREFIX[0xc9]);
+        // call pq
+        let ret = dbg!(&OPCODE_PREFIX[0xc9]);
         assert_eq!(ret.nb_additional_opcode_bytes, 0);
         assert_eq!(ret.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
         assert_eq!(ret.nb_bytes_to_read, 2);
-		assert_eq!(ret.read_data, DataSource::Register16(Reg16::Pc)); // we want to override PC
+        assert_eq!(ret.read_data, DataSource::Register16(Reg16::Pc)); // we want to override PC
     }
 
-	#[test]
+    #[test]
     fn lookup_checks_ld_sp() {
-		// call pq
-		let call = dbg!(&OPCODE_PREFIX[0x31]);
+        // call pq
+        let call = dbg!(&OPCODE_PREFIX[0x31]);
         assert_eq!(call.nb_additional_opcode_bytes, 2);
     }
 
-
     #[test]
     fn lookup_checks_ld_hl_mem() {
-		// call pq
-		let ld = dbg!(&OPCODE_PREFIX[0x2a]);
+        // call pq
+        let ld = dbg!(&OPCODE_PREFIX[0x2a]);
         assert_eq!(ld.nb_additional_opcode_bytes, 2);
         assert_eq!(ld.nb_bytes_to_read, 2);
-        assert_eq!(ld.read_address, AddressSource::Immediate); 
-		assert_eq!(ld.read_data, DataDestination::Register16(Reg16::Hl)); 
-
+        assert_eq!(ld.read_address, AddressSource::Immediate);
+        assert_eq!(ld.read_data, DataDestination::Register16(Reg16::Hl));
     }
 
     #[test]
     fn lookup_checks_ld_a_mem_bc() {
-		// call pq
-		let ld = dbg!(&OPCODE_PREFIX[0x0a]);
+        // call pq
+        let ld = dbg!(&OPCODE_PREFIX[0x0a]);
         assert_eq!(ld.nb_additional_opcode_bytes, 0);
         assert_eq!(ld.nb_bytes_to_read, 1);
-        assert_eq!(ld.read_address, AddressSource::Register16(Reg16::Bc)); 
-		assert_eq!(ld.read_data, DataDestination::Register8(Reg8::A)); 
-
+        assert_eq!(ld.read_address, AddressSource::Register16(Reg16::Bc));
+        assert_eq!(ld.read_data, DataDestination::Register8(Reg8::A));
     }
 
-	#[test]
+    #[test]
     fn lookup_checks_in() {
-		// call pq
-		let call = dbg!(&OPCODE_PREFIX_ED[0b01111000]);
+        // call pq
+        let call = dbg!(&OPCODE_PREFIX_ED[0b01111000]);
         assert_eq!(call.nb_additional_opcode_bytes, 0);
         assert_eq!(call.nb_bytes_to_read, 1);
         assert_eq!(call.read_address, AddressSource::Register16(Reg16::Bc));
-		assert_eq!(call.read_data, DataSource::Register8(Reg8::A)); // we want to write PC
+        assert_eq!(call.read_data, DataSource::Register8(Reg8::A)); // we want to write PC
     }
 
     #[test]
@@ -735,59 +742,53 @@ mod test {
         assert_eq!(desc.nb_bytes_to_write, 1);
         assert_eq!(desc.nb_bytes_to_read, 1);
         assert_eq!(desc.nb_additional_opcode_bytes, 0);
-        assert_eq!(
-            desc.read_address,
-            AddressSource::Register16(Reg16::Hl)
-        );
-        assert_eq!(
-            desc.write_address,
-            AddressSource::Register16(Reg16::Bc)
-        );
+        assert_eq!(desc.read_address, AddressSource::Register16(Reg16::Hl));
+        assert_eq!(desc.write_address, AddressSource::Register16(Reg16::Bc));
         assert_eq!(
             desc.write_data,
             DataSource::Pins // we assume data are already on the pins because they have been read one cycle before
         );
     }
 
-
-	#[test]
+    #[test]
     fn lookup_checks_push_hl() {
-		// call pq
-		let call = dbg!(&OPCODE_PREFIX[0xe5]);
+        // call pq
+        let call = dbg!(&OPCODE_PREFIX[0xe5]);
         assert_eq!(call.nb_additional_opcode_bytes, 0);
-        assert_eq!(call.write_address, AddressSource::Stack(StackDelta::MinusTwo)); // we want to write on the stack
-		assert_eq!(call.write_data, DataSource::Register16(Reg16::Hl)); 
+        assert_eq!(
+            call.write_address,
+            AddressSource::Stack(StackDelta::MinusTwo)
+        ); // we want to write on the stack
+        assert_eq!(call.write_data, DataSource::Register16(Reg16::Hl));
     }
 
-
-	#[test]
+    #[test]
     fn lookup_checks_pop_hl() {
-		// call pq
-		let pop = dbg!(&OPCODE_PREFIX[0xe1]);
+        // call pq
+        let pop = dbg!(&OPCODE_PREFIX[0xe1]);
         assert_eq!(pop.nb_additional_opcode_bytes, 0);
         assert_eq!(pop.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
-		assert_eq!(pop.read_data, DataSource::Register16(Reg16::Hl)); 
+        assert_eq!(pop.read_data, DataSource::Register16(Reg16::Hl));
     }
-
 
     #[test]
     fn lookup_or_mem_hl() {
-		// call pq
-		let pop = dbg!(&OPCODE_PREFIX[0xb6]);
+        // call pq
+        let pop = dbg!(&OPCODE_PREFIX[0xb6]);
         assert_eq!(pop.nb_additional_opcode_bytes, 0);
         assert_eq!(pop.read_address, AddressSource::Register16(Reg16::Hl)); // we want to write on the stack
-		assert_eq!(pop.read_data, DataSource::Pins); // ie Z
+        assert_eq!(pop.read_data, DataSource::Pins); // ie Z
     }
 
     #[test]
     fn lookup_inc_mem_hl() {
-		// call pq
-		let pop = dbg!(&OPCODE_PREFIX[0x34]);
+        // call pq
+        let pop = dbg!(&OPCODE_PREFIX[0x34]);
         assert_eq!(pop.nb_additional_opcode_bytes, 0);
         assert_eq!(pop.read_address, AddressSource::Register16(Reg16::Hl)); // we want to write on the stack
-		assert_eq!(pop.read_data, DataSource::Pins); 
+        assert_eq!(pop.read_data, DataSource::Pins);
         assert_eq!(pop.write_address, AddressSource::Register16(Reg16::Hl)); // we want to write on the stack
-		assert_eq!(pop.write_data, DataSource::Pins); 
+        assert_eq!(pop.write_data, DataSource::Pins);
     }
 
     #[test]

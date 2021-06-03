@@ -1,11 +1,11 @@
 use crate::chip::*;
+use crate::counter::*;
 use crate::crtc::*;
 use crate::ga::*;
 use crate::memory::*;
 use crate::pal::*;
-use crate::z80::*;
-use crate::counter::*;
 use crate::ppi::*;
+use crate::z80::*;
 
 use std::fmt;
 
@@ -25,17 +25,17 @@ pub struct Motherboard {
     // Counter of t-states (to be removed later)
     t_state_counter: Counter,
     // Counter of nops
-    nops_counter: Counter
+    nops_counter: Counter,
 }
 
 impl fmt::Debug for Motherboard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Motherboard")
-         .field("cpu", &self.cpu)
-         .field("crtc", &self.crtc)
-         .field("ga", &self.ga)
-         .field("pal", &self.pal)
-         .finish()
+            .field("cpu", &self.cpu)
+            .field("crtc", &self.crtc)
+            .field("ga", &self.ga)
+            .field("pal", &self.pal)
+            .finish()
     }
 }
 
@@ -51,7 +51,7 @@ impl Default for Motherboard {
             memory: Default::default(),
 
             t_state_counter: Default::default(),
-            nops_counter: Default::default()
+            nops_counter: Default::default(),
         };
         motherboard.stabilize_run();
         motherboard
@@ -100,13 +100,12 @@ impl Motherboard {
         &mut self.ga
     }
 
-
     pub fn t_state_counter(&self) -> &Counter {
-        &self. t_state_counter
+        &self.t_state_counter
     }
 
     pub fn nops_counter(&self) -> &Counter {
-        &self. nops_counter
+        &self.nops_counter
     }
 }
 
@@ -134,7 +133,7 @@ impl Motherboard {
     /// corresponding gate array information
     /// TODO check if it must be generated before or after
     pub fn tick(&mut self) -> (RgbLevels, Sync) {
-       // if self.crtc.is_activated() {dbg!(&self.cpu().next_state);}
+        // if self.crtc.is_activated() {dbg!(&self.cpu().next_state);}
 
         // fill bus with memory data if needed
         self.handle_memory_access();
@@ -143,7 +142,7 @@ impl Motherboard {
         if self.crtc.is_activated() {
             self.crtc.tick(); // Virtually uses 16 cycles
         }
-        if self.ppi.is_activated(){
+        if self.ppi.is_activated() {
             self.ppi.tick();
         }
         self.ga.tick();
@@ -154,7 +153,7 @@ impl Motherboard {
             self.t_state_counter.inc();
 
             // By definition it is a new opcode because the previous one has been executed
-            if self.t_state_counter.value() % 4 == 0  {
+            if self.t_state_counter.value() % 4 == 0 {
                 self.nops_counter.inc();
             }
         }
@@ -177,16 +176,16 @@ impl Motherboard {
         if self.cpu_request_byte_read() && !self.ga_request_read() {
             let addr = self.cpu.get_address_from_pins();
             let memory_cfg = self.memory_config();
-         //   eprintln!("Want at 0x{:x} with {:?}", addr, memory_cfg);
+            //   eprintln!("Want at 0x{:x} with {:?}", addr, memory_cfg);
             let byte = self.memory.read(addr, &memory_cfg);
-        //    eprintln!("Read 0x{:x} at 0x{:x} with {:?}", byte, addr, memory_cfg);
+            //    eprintln!("Read 0x{:x} at 0x{:x} with {:?}", byte, addr, memory_cfg);
             self.cpu.set_data_on_pins(byte);
             self.cpu.set_pin(Z80Pin::Neg_RD, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
         } else if self.cpu_request_byte_write() && !self.ga_request_read() {
             let addr = self.cpu.get_address_from_pins();
             let data = self.cpu.get_data_from_pins();
             let memory_cfg = self.memory_config();
-        //    println!("Write 0x{:x} at 0x{:x}", data, addr);
+            //    println!("Write 0x{:x} at 0x{:x}", data, addr);
             self.memory.write(addr, data, &memory_cfg);
             self.cpu.set_pin(Z80Pin::Neg_WR, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
         }
@@ -254,7 +253,6 @@ impl Motherboard {
         let Neg_IOWR = self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
         let Neg_IORD = self.cpu.get_pin(Z80Pin::Neg_RD) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
 
-
         // GA to CPU
         sync_pins(
             &self.ga,
@@ -280,14 +278,13 @@ impl Motherboard {
         );
         sync_pins(
             &self.cpu,
-            &[
-                Z80Pin::A14, Z80Pin::A15,
-                Z80Pin::Neg_IORQ, Z80Pin::Neg_RD
-            ],
+            &[Z80Pin::A14, Z80Pin::A15, Z80Pin::Neg_IORQ, Z80Pin::Neg_RD],
             &mut self.ga,
             &[
-                GateArrayPin::A14, GateArrayPin::A15,
-                GateArrayPin::IORQ, GateArrayPin::RD
+                GateArrayPin::A14,
+                GateArrayPin::A15,
+                GateArrayPin::IORQ,
+                GateArrayPin::RD,
             ],
         );
 
@@ -320,10 +317,7 @@ impl Motherboard {
             PalPin::D6_and_D7,
             self.cpu.get_pin(Z80Pin::D6) && self.cpu.get_pin(Z80Pin::D7),
         );
-        self.pal.set_pin(
-            PalPin::IOWR,
-            !Neg_IOWR,
-        );
+        self.pal.set_pin(PalPin::IOWR, !Neg_IOWR);
 
         // CPU to CRTC
         self.crtc.set_pin(
@@ -358,21 +352,12 @@ impl Motherboard {
         );
 
         // CPU to ppi
-        sync_pins(
-            &self.cpu,
-            Z80::pins_data(),
-            &mut self.ppi,
-            Ppi::pins_data(),
-        );
+        sync_pins(&self.cpu, Z80::pins_data(), &mut self.ppi, Ppi::pins_data());
         sync_pins(
             &self.cpu,
             &[Z80Pin::A11, Z80Pin::A9, Z80Pin::A8],
             &mut self.ppi,
-            &[
-                PpiPin::Neg_CS,
-                PpiPin::A9,
-                PpiPin::A8,
-            ],
+            &[PpiPin::Neg_CS, PpiPin::A9, PpiPin::A8],
         );
         self.ppi.set_pin(PpiPin::Neg_RD, Neg_IORD);
         self.ppi.set_pin(PpiPin::Neg_WR, Neg_IOWR);
@@ -411,21 +396,20 @@ impl Motherboard {
         }
     }
 
-        /// Write one memory byte according to the memory configuration
-        #[inline]
-        pub fn write_byte(&mut self, addr: u16, byte: u8) {
-            let memory_cfg = self.memory_config();
-            self.memory.write(addr, byte, &memory_cfg);
-        }
+    /// Write one memory byte according to the memory configuration
+    #[inline]
+    pub fn write_byte(&mut self, addr: u16, byte: u8) {
+        let memory_cfg = self.memory_config();
+        self.memory.write(addr, byte, &memory_cfg);
+    }
 
-        pub fn write_word(&mut self, addr: u16, word: u16) {
-            let memory_cfg = self.memory_config();
-            let low = (word & 0xff) as u8;
-            let high = ((word & 0xff00) >> 8) as u8;
-            self.memory.write(addr, low, &memory_cfg);
-            self.memory.write(addr.wrapping_add(1), high, &memory_cfg);
-        }
-    
+    pub fn write_word(&mut self, addr: u16, word: u16) {
+        let memory_cfg = self.memory_config();
+        let low = (word & 0xff) as u8;
+        let high = ((word & 0xff00) >> 8) as u8;
+        self.memory.write(addr, low, &memory_cfg);
+        self.memory.write(addr.wrapping_add(1), high, &memory_cfg);
+    }
 
     /// Read one memory byte according to the memory configuration
     #[inline]
@@ -437,11 +421,11 @@ impl Motherboard {
     #[inline]
     pub fn read_word(&self, addr: u16) -> u16 {
         let memory_cfg = self.memory_config();
-        
+
         let low = self.memory.read(addr, &memory_cfg) as u16;
         let high = self.memory.read(addr.wrapping_add(1), &memory_cfg) as u16;
 
-        256*high + low
+        256 * high + low
     }
 }
 

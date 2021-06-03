@@ -5,7 +5,6 @@ use num::One;
 
 use std::fmt;
 
-
 /// Common trait for handling Register 8 and 16 bits
 /// TODO provide Carry related information
 pub trait HasValue {
@@ -57,8 +56,8 @@ pub struct Register8 {
 impl fmt::Debug for Register8 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Register8")
-         .field(&format!("0x{:X}", self.value()))
-         .finish()
+            .field(&format!("0x{:X}", self.value()))
+            .finish()
     }
 }
 
@@ -85,9 +84,7 @@ impl HasValue for Register8 {
 
 impl Register8 {
     pub fn new(val: u8) -> Self {
-        Register8{
-            val
-        }
+        Register8 { val }
     }
 }
 
@@ -118,8 +115,8 @@ impl Register8 {
     }
 
     pub fn rlc(&mut self) -> bool {
-        let bit7 = self.value() & 1<< 7 != 0;
-        self.set(self.value()<<1);
+        let bit7 = self.value() & 1 << 7 != 0;
+        self.set(self.value() << 1);
         if bit7 {
             self.set_bit(0);
         }
@@ -127,8 +124,8 @@ impl Register8 {
     }
 
     pub fn rrc(&mut self) -> bool {
-        let bit0 = self.value() & 1<< 0 != 0;
-        self.set(self.value()>>1);
+        let bit0 = self.value() & 1 << 0 != 0;
+        self.set(self.value() >> 1);
         if bit0 {
             self.set_bit(0);
         }
@@ -146,8 +143,8 @@ pub struct Register16 {
 impl fmt::Debug for Register16 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Register16")
-         .field(&format!("0x{:X}", self.value()))
-         .finish()
+            .field(&format!("0x{:X}", self.value()))
+            .finish()
     }
 }
 
@@ -192,14 +189,11 @@ impl Register16 {
 mod test {
     use super::*;
     #[test]
-    fn rlc() {  
-        let mut r = Register8{val: 0b11000000};
+    fn rlc() {
+        let mut r = Register8 { val: 0b11000000 };
         let c = r.rlc();
 
         assert!(c);
-        assert_eq!(
-            r.value(),
-            0b10000001
-        );
+        assert_eq!(r.value(), 0b10000001);
     }
 }

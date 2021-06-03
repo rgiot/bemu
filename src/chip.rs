@@ -4,14 +4,14 @@ use std::fmt;
 /// Previous and current state to be able to compute the front and decrease
 
 #[derive(Default, Copy, Clone, PartialEq)]
-pub struct  PinsBuffer(u64, u64);
+pub struct PinsBuffer(u64, u64);
 
 impl fmt::Debug for PinsBuffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PinsBuffer")
-         .field("prev.", &format!("{:b}", &self.0))
-         .field("curr.", &format!("{:b}", &self.1))
-         .finish()
+            .field("prev.", &format!("{:b}", &self.0))
+            .field("curr.", &format!("{:b}", &self.1))
+            .finish()
     }
 }
 
@@ -51,7 +51,6 @@ pub trait Chip {
 
     /// Reset pins and counter
     fn reset(&mut self);
-
 
     /// Set the boolean value to the selected pin of the chip
     /// panic if the pin does not exists
@@ -131,7 +130,6 @@ pub trait Chip {
         buffer.0 = buffer.1;
     }
 
-
     /// Set the provided value in the provided list of pins. Pin index corresponds to the reversed number [bn, bn-1, ... b1, b0]
     /// panic if the number is larger
     fn set_value_in_pins<V>(&mut self, mut value: V, pins: &[Self::PinType])
@@ -142,7 +140,7 @@ pub trait Chip {
             self.set_pin(pin.clone(), value.is_odd());
             value = value.div_floor(&V::from_u8(2).unwrap());
         }
-      //  assert!(value.to_usize().unwrap() == 0);
+        //  assert!(value.to_usize().unwrap() == 0);
     }
 
     fn get_value_from_pins(&self, pins: &[Self::PinType]) -> u16 {
@@ -217,8 +215,7 @@ pub trait Activable: Chip {
     fn is_activated(&self) -> bool {
         if Self::activated_at_up_front() {
             self.is_upfront(Self::clock_pin())
-        }
-        else {
+        } else {
             self.is_downfront(Self::clock_pin())
         }
         //self.get_pin(Self::clock_pin())

@@ -494,7 +494,7 @@ impl Crtc {
             13 => self.r13,
             14 => self.r14,
             15 => self.r15,
-            _ => 0xff // request to a wrong register,
+            _ => 0xff, // request to a wrong register,
         };
         let m = self.crtc_type.read_register_mask(r);
         v & m
@@ -611,9 +611,10 @@ impl Crtc {
     /// they are directly wired to the pin; this fonction replicate them here
     /// should not be called outside of Crtc. Public only for test reasons
     pub fn set_address_on_pins(&mut self) {
-        let address = (self.vcc as u16).wrapping_mul(self.r1 as u16)
-                                .wrapping_add(self.hcc as u16)
-                                .wrapping_add(self.base);
+        let address = (self.vcc as u16)
+            .wrapping_mul(self.r1 as u16)
+            .wrapping_add(self.hcc as u16)
+            .wrapping_add(self.base);
 
         self.set_value_in_pins(
             address & ((1 << 15) - 1),

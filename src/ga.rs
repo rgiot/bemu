@@ -194,13 +194,11 @@ impl From<u8> for Ink {
     }
 }
 
-
 impl From<cpclib::ga::Ink> for Ink {
     fn from(i: cpclib::ga::Ink) -> Ink {
         Ink(i.number())
     }
 }
-
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RgbLevels((f32, f32, f32));
@@ -369,10 +367,9 @@ impl RMR {
         self.0 = if flag.is_enabled() {
             val
         } else {
-            val | 0b000_01000 
+            val | 0b000_01000
         };
-    }       
-
+    }
 
     fn lower_rom_pagging(&self) -> Flag {
         if self.0 & 0b000_00100 == 0 {
@@ -387,9 +384,9 @@ impl RMR {
         self.0 = if flag.is_enabled() {
             val
         } else {
-            val | 0b000_00100 
+            val | 0b000_00100
         };
-    }       
+    }
 
     fn video_mode(&self) -> VideoMode {
         (self.0 & 0b000_00011).into()
@@ -591,7 +588,7 @@ pub struct Sync {
 /// GateArray emulation of the CPC.
 /// Version 40010 is targeted; it suffers of a shift in pixel rendering for mode 2
 /// TODO ensure the following sentence is applied
-/// The effect of an INKR command appears almost immediatly always with the same timings, but the change is not in sync with the character display of the CRTC so the new color appears somehow in the middle of a character (the CRTC display unit). 
+/// The effect of an INKR command appears almost immediatly always with the same timings, but the change is not in sync with the character display of the CRTC so the new color appears somehow in the middle of a character (the CRTC display unit).
 #[derive(Debug)]
 pub struct GateArray {
     clock: u64,
@@ -743,7 +740,7 @@ impl GateArray {
     /// We assume that the automata is in a valid state
     fn generate_pixel(&mut self) {
         if self.pixel_automata.is_done() {
-       //     dbg!("Here some pixel are expected, but we do not know what as to be produced...");
+            //     dbg!("Here some pixel are expected, but we do not know what as to be produced...");
             self.rgb = (0., 0., 0.).into();
         } else {
             if self.get_pin(GateArrayPin::HSYNC) || self.get_pin(GateArrayPin::VSYNC) {
@@ -798,10 +795,9 @@ impl Chip for GateArray {
     type PinType = GateArrayPin;
 
     fn must_execute_tick(&self) -> bool {
-
-        !self.get_pin(GateArrayPin::A15) &&
-         self.get_pin(GateArrayPin::A14) &&
-        !self.get_pin(GateArrayPin::IORQ)
+        !self.get_pin(GateArrayPin::A15)
+            && self.get_pin(GateArrayPin::A14)
+            && !self.get_pin(GateArrayPin::IORQ)
     }
 
     /// Change the screen mode when hsync is set
@@ -827,12 +823,9 @@ impl Chip for GateArray {
             } else if RMR::is_addressed(command) {
                 self.rmr = RMR(command);
             }
-        }
-        else 
-        {
+        } else {
             unimplemented!("Read on GA not implemented");
         }
-
     }
 
     fn pins_buffer_mut(&mut self) -> &mut PinsBuffer {
