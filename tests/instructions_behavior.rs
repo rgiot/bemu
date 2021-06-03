@@ -351,6 +351,27 @@ assert_eq!(
 	"{:x} != {:x}", 0xdead, motherboard.cpu().reg16(Reg16::Hl).value()
 );
 }
+#[test]
+fn ld_a_mem_hl() {
+let code = dbg!(cpclib_macros::assemble!(
+	"
+	org 0x4000
+	ld hl, mem
+	ld a, (hl)
+	jr $ ; end of test
+mem
+	db 0xad
+	db 0xde
+"));
+
+let motherboard = execute_program(0x4000, 0x4000, code); 
+
+assert_eq!(
+	0xad,
+	motherboard.cpu().reg8(Reg8::A).value(),
+	"{:x} != {:x}", 0xad, motherboard.cpu().reg8(Reg8::A).value()
+);
+}
 
 #[test]
 fn execute_ld_sp1() {

@@ -682,6 +682,16 @@ mod test {
 
     }
 
+    #[test]
+    fn lookup_checks_ld_a_mem_bc() {
+		// call pq
+		let ld = dbg!(&OPCODE_PREFIX[0x0a]);
+        assert_eq!(ld.nb_additional_opcode_bytes, 0);
+        assert_eq!(ld.nb_bytes_to_read, 1);
+        assert_eq!(ld.read_address, AddressSource::Register16(Reg16::Bc)); 
+		assert_eq!(ld.read_data, DataDestination::Register8(Reg8::A)); 
+
+    }
 
 	#[test]
     fn lookup_checks_in() {

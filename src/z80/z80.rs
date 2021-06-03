@@ -447,9 +447,10 @@ impl Z80 {
 
     /// CPU has read a value and must store it directly in the right registers
     fn store_currently_read_byte(&mut self, byte: u8, nb: u8) {
-        let src = self.opcode_information()
+        let dst = self.opcode_information()
                                     .unwrap().read_data;
-        match src {
+
+        match dst {
             DataSource::Register8(reg) | DataSource::IndexRegister8(reg)  => {
                 assert!(nb == 0);
                 self.reg8_mut(reg).set(byte);
@@ -474,7 +475,7 @@ impl Z80 {
             DataSource::Pins => {
                 // we do nothing there as the data is already on the pins
             },
-            _ => {unimplemented!("{:?}/ {:?}", src, self.opcode_information )}
+            _ => {unimplemented!("{:?}/ {:?}", dst, self.opcode_information )}
         }
     }
 
@@ -538,6 +539,9 @@ impl Z80 {
                 // Get the number of additional bytes to read as well as the information for the next cycles
                 self.opcode_information = Some(current_prefix.opcode_information(self.ir.get()));
                 let opcode_information = self.opcode_information.as_ref().unwrap();
+
+
+                dbg!(opcode_information);
 
                 if opcode_information.fetch_finished() {
                     if opcode_information.expect_read() {
@@ -847,35 +851,34 @@ impl Z80 {
             }
 
             Mnemonic::Ld => {
-                match arg1.unwrap() {
-                    DataAccess::Register8(reg) => {
-                        // 8bits version
-                        let left: Reg8 = reg.into();
-                        let right = self.get_available_8bits_value(arg2.unwrap());
-                        self.reg8_mut(left).set(right);
-                    }
+                let arg1 = arg1.unwrap();
+                let arg2 = arg2.unwrap();
 
-                    DataAccess::Register16(reg) => {
-
-                        match arg2 {
-                            Some(DataAccess::Memory(_)) => {
-                                // nothing to do it is already done
-                            },
-                            _ => {
-                                let left: Reg16 = reg.into();
-                                let right = self.get_available_16bits_value(arg2.unwrap());
-                                self.reg16_mut(left).set(right);
-                            }
+                let from_memory = matches!(arg2, DataAccess::Memory(_))
+                                | matches!(arg2, DataAccess::MemoryIndexRegister16(_))
+                                | matches!(arg2, DataAccess::MemoryRegister16(_));
+                let to_memory = matches!(arg1, DataAccess::Memory(_))
+                                | matches!(arg1, DataAccess::MemoryIndexRegister16(_))
+                                | matches!(arg1, DataAccess::MemoryRegister16(_));
+                if ! (from_memory | to_memory) {
+                    match arg1 {
+                        DataAccess::Register8(reg) => {
+                            // 8bits version
+                            let left: Reg8 = reg.into();
+                            let right = self.get_available_8bits_value(arg2);
+                            self.reg8_mut(left).set(right);
                         }
-                    }
 
-                    DataAccess::Memory(_) | DataAccess::MemoryRegister16(_)=> {
-                        // we have nothing to do because CPU has already executed everything
-                    }
-
+                        DataAccess::Register16(reg) => {
+                            let left: Reg16 = reg.into();
+                            let right = self.get_available_16bits_value(arg2);
+                            self.reg16_mut(left).set(right);
                     
+                            
+                        }
 
-                    _ => unimplemented!("{:?}", arg1),
+                        _ => unimplemented!("{:?}", arg1),
+                    }
                 }
             }
 

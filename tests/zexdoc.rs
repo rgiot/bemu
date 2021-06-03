@@ -6,7 +6,7 @@ use amsrust::debug::Monitor;
 /// Took inspiration from https://floooh.github.io/2016/07/12/z80-rust-ms1.html
 #[test]
 fn zexdoc() {
-    const verbose : bool = false;
+    const verbose : bool = true;
     let mut motherboard = MotherboardBuilder::default().build();
     motherboard.force_rom_config(
         RomConfig{
@@ -47,6 +47,8 @@ fn zexdoc() {
         motherboard.execute_next_opcode();
         if verbose {
             Monitor::monitor(&motherboard);
+            let mut line = String::new();
+            let b1 = std::io::stdin().read_line(&mut line).unwrap();
         }
 
         assert_eq!(
@@ -58,7 +60,7 @@ fn zexdoc() {
 
         nb_instructions += 1;
         if nb_instructions == 50 {
-   //         break;
+      //      break;
         } // execute few just to test
 
         match cpu.reg16(Reg16::Pc).value() {
