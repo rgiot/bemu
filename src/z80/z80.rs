@@ -1144,12 +1144,15 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
-        match self.next_state {
+        dbg!(&self.next_state);
+        match  self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
                 self.set_address_on_pins(self.pc.get());
                 // pc is incremented in T2 in a real CPU
                 self.pc.inc();
+
+                dbg!(self.pc);
 
                 self.set_pin(Z80Pin::Neg_MREQ, false);
                 self.set_pin(Z80Pin::Neg_RD, false);
@@ -1199,7 +1202,7 @@ impl Chip for Z80 {
 
                 if nb == 0 {
                     let execute = self.decode_step(); // setup next state
-                    // by definition there is no conditionnal instruction there
+                    // by definition there is no conditional instruction there
                     if execute {
                         // nothing is required for the execution
                         // TODO check if input or memory cycle is required
@@ -1210,39 +1213,39 @@ impl Chip for Z80 {
                 } else {
                     let opcode_information = self.opcode_information.as_ref().unwrap();
 
-                    if ! self.instruction_allowed() {
-                        // nothing happens there we can read the next instruction without executing anything
-                        // serve for call/jp/jr
-                        // TODO check if it must serve for loop based instruction
-                        self.next_state = Default::default(); 
-                    }
-                    else {
-                        if nb == opcode_information.nb_additional_opcode_bytes {
-                            // We have finished to read the opcode
-                            if 0 != opcode_information.nb_bytes_to_read {
-                                if opcode_information.addresses_memory {
-                                    self.next_state = MCycle::Read(TState::T1, 0);
-                                }
-                                else {
-                                    self.next_state = MCycle::Input(TState::T1, 0);
-                                }
-                            } else if 0 != opcode_information.nb_bytes_to_write {
-                                if opcode_information.addresses_memory {
-                                    self.next_state = MCycle::Write(TState::T1, 0);
-                                } else {
-                                    self.next_state = MCycle::Output(TState::T1, 0);
-                                }
+
+                    if nb == opcode_information.nb_additional_opcode_bytes {
+                        // We have finished to read the opcode
+                        if ! self.instruction_allowed() {
+                            // nothing happens there we can read the next instruction without executing anything
+                            // serve for call/jp/jr
+                            // TODO check if it must serve for loop based instruction
+                            self.next_state = Default::default(); 
+                        }
+                        else if 0 != opcode_information.nb_bytes_to_read {
+                            if opcode_information.addresses_memory {
+                                self.next_state = MCycle::Read(TState::T1, 0);
+                            }
+                            else {
+                                self.next_state = MCycle::Input(TState::T1, 0);
+                            }
+                        } else if 0 != opcode_information.nb_bytes_to_write {
+                            if opcode_information.addresses_memory {
+                                self.next_state = MCycle::Write(TState::T1, 0);
                             } else {
-                                // go back for a new instruction
-                                self.next_state =
-                                    MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); 
-                                self.execute_step();
+                                self.next_state = MCycle::Output(TState::T1, 0);
                             }
                         } else {
-                            // we still need to read something
-                            self.next_state = MCycle::FetchOpcode(TState::T1, nb + 1, prefix);
+                            // go back for a new instruction
+                            self.next_state =
+                                MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None); 
+                            self.execute_step();
                         }
+                    } else {
+                        // we still need to read something
+                        self.next_state = MCycle::FetchOpcode(TState::T1, nb + 1, prefix);
                     }
+                
                 }
             }
 
