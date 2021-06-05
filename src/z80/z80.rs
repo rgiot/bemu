@@ -437,6 +437,7 @@ impl Z80 {
     }
 
     /// CPU has read a value and must store it directly in the right registers
+    /// Warning when the recipients are PC or SP, Wz is used instead
     fn store_currently_read_byte(&mut self, byte: u8, nb: u8) {
         let dst = self.opcode_information().unwrap().read_data;
 
@@ -446,8 +447,8 @@ impl Z80 {
                 self.reg8_mut(reg).set(byte);
             }
             DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
-                let reg = if reg == Reg16::Pc { Reg16::Wz } else { reg };
-
+                let reg = if reg == Reg16::Pc || reg == Reg16::Sp { Reg16::Wz } else { reg };
+                dbg!(&self.opcode_information);
                 let reg = if nb == 0 { reg.low() } else { reg.high() };
                 self.reg8_mut(reg).set(byte);
             }
@@ -520,7 +521,7 @@ impl Z80 {
                 self.opcode_information = Some(current_prefix.opcode_information(self.ir.get()));
                 let opcode_information = self.opcode_information.as_ref().unwrap();
 
-                //dbg!(opcode_information);
+                dbg!(opcode_information);
 
                 if opcode_information.fetch_finished() {
                     if opcode_information.expect_read() {
@@ -1058,6 +1059,13 @@ impl Z80 {
             Some(Mnemonic::Outd) => {
                 self.reg16_mut(Reg16::Hl).dec();
                 self.reg8_mut(Reg8::B).dec();
+            }
+
+            Some(Mnemonic::Ld) => {
+                if let Some(DataAccess::Register16(cpclib_asm::preamble::Register16::Sp)) = opcode_info.token.mnemonic_arg1() { // arg2 is a memory read operation by definition
+                    self.sp = dbg!(self.wz.clone());
+                    self.wz.inc();
+                }
             }
 
             _ => {

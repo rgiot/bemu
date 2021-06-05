@@ -1,12 +1,18 @@
+use cpclib_asm::preamble::Token;
+use smallvec::SmallVec;
+use smallvec::smallvec;
+
 use crate::chip::*;
 use crate::counter::*;
 use crate::crtc::*;
+use crate::debug::DisassembledInstruction;
 use crate::ga::*;
 use crate::memory::*;
 use crate::pal::*;
 use crate::ppi::*;
 use crate::z80::*;
 
+use std::convert::TryFrom;
 use std::fmt;
 
 /// Motherboard of the AMstrad CPC
@@ -363,6 +369,53 @@ impl Motherboard {
         self.ppi.set_pin(PpiPin::Neg_WR, Neg_IOWR);
         // CRTC to ppi
         self.ppi.set_pin(PpiPin::B0, self.crtc.get_pin(CrtcPin::VS));
+    }
+}
+
+// Block for disassembling related functions
+impl Motherboard {
+    /// TODO delegate that to another component
+    pub fn disassemble_next_instruction(&self) -> DisassembledInstruction
+    {
+        let  mut pc= self.cpu.pc.value();
+        let mut read = || {
+            let byte = self.read_byte(pc);
+            pc += 1;
+            byte
+        };
+        
+        let (prefix, ir) = {
+            let current = read();
+            let prefix = OpcodePrefix::from(current);
+            if let OpcodePrefix::None = prefix {
+                (prefix, current)
+            } else {
+               (prefix, read())
+           }
+        };
+
+        let opcode_info = prefix.opcode_information(ir);
+        let mut memory: SmallVec<[u8;3]> = if let OpcodePrefix::None = prefix{
+            smallvec![ir]
+        } else {
+            smallvec![prefix as u8, ir]
+        };
+        
+        for _i in 0..opcode_info.nb_additional_opcode_bytes  {
+           memory.push(read());
+        };
+
+        let token = cpclib_asm::disass::disassemble_with_potential_argument(
+            ir,
+            &prefix.disassembling_table(),
+            &memory[1..],
+        )
+        .unwrap().0;
+
+        DisassembledInstruction{
+             token, memory,
+             address: self.cpu.pc.value()
+        }
     }
 }
 

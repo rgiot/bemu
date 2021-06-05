@@ -24,7 +24,7 @@ delegate = "0.5.1"
 derive_more = "0.99.13"
 image = "0.23.14"
 tuple-map = "0.4.0"
-
+smallvec = "1.6.1"
 
 [patch.crates-io]
 cpclib = {path = "../rust.cpclib/cpclib/"}

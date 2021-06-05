@@ -1,3 +1,6 @@
+use cpclib_asm::preamble::Token;
+use smallvec::SmallVec;
+
 use crate::ga::*;
 use crate::motherboard::Motherboard;
 use crate::z80::{HasValue, Reg16, Z80};
@@ -41,5 +44,23 @@ impl Monitor {
             ga.lower_rom_pagging(),
             ga.palette()
         );
+    }
+}
+
+
+pub struct DisassembledInstruction {
+    pub token: Token,
+    pub address: u16,
+    pub memory: SmallVec<[u8;3]>
+}
+
+impl ToString for DisassembledInstruction {
+    fn to_string(&self) -> String {
+        format!(
+            "0x{:04x} {} {:02x?}", 
+            self.address,
+            self.token, 
+            self.memory
+        )
     }
 }

@@ -45,12 +45,16 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
     let end_pattern = cpclib_macros::assemble!(" jr $");
 
     // inject it in memory
-    motherboard.write_buffer(dbg!(addr), dbg!(&test));
+    motherboard.write_buffer(addr, &test);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr);
 
     // execute it until it is finished
     loop {
-        let previous_pc = motherboard.cpu().reg16(Reg16::Pc).value();
+        {
+            let instruction  = motherboard.disassemble_next_instruction();
+            println!("{}", instruction.to_string());
+        }
+
         motherboard.execute_next_opcode();
         let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 
