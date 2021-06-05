@@ -2,6 +2,7 @@
 ///
 ///
 use amsrust::crtc::{Crtc, CrtcType};
+use amsrust::debug::Monitor;
 use amsrust::motherboard::MotherboardBuilder;
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
 
@@ -40,6 +41,7 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
 
     // build the test
     let (test, addr) = crtc_test.test();
+    eprintln!("{:x?}", test);
 
     assert!(!test.is_empty());
     let end_pattern = cpclib_macros::assemble!(" jr $");
@@ -51,8 +53,7 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
     // execute it until it is finished
     loop {
         {
-            let instruction  = motherboard.disassemble_next_instruction();
-            println!("{}", instruction.to_string());
+            Monitor::monitor(&motherboard);
         }
 
         motherboard.execute_next_opcode();

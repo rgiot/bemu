@@ -17,6 +17,9 @@ impl Monitor {
 
         print!("ga: ");
         Monitor::monitor_ga(motherboard.ga());
+
+        print!("next: ");
+        Monitor::monitor_next_instruction(&motherboard)
     }
 
     pub fn monitor_stack(motherboard: &Motherboard, size: u16) {
@@ -44,6 +47,10 @@ impl Monitor {
             ga.lower_rom_pagging(),
             ga.palette()
         );
+    }
+
+    pub fn monitor_next_instruction(motherboard: &Motherboard) {
+        println!("{}", motherboard.disassemble_next_instruction().to_string());
     }
 }
 

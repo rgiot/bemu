@@ -564,10 +564,8 @@ impl Z80 {
         arg2: Option<&DataAccess>,
     ) {
         match opcode {
-            Mnemonic::Nop | Mnemonic::Out | Mnemonic::In | Mnemonic::Ret => {
-                self.pc = self.wz;
-                self.sp.inc();
-                self.sp.inc();
+            Mnemonic::Nop | Mnemonic::Out | Mnemonic::In => {
+                
             }
 
             Mnemonic::Add => {
@@ -867,6 +865,12 @@ impl Z80 {
                 self.sp.inc();
             }
 
+            Mnemonic::Ret => {
+                self.pc = self.wz;
+                self.sp.inc();
+                self.sp.inc();
+            }
+            
             Mnemonic::Rlca => {
                 let c = self.reg8_mut(Reg8::A).rlc();
 
