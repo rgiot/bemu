@@ -881,6 +881,9 @@ impl Chip for GateArray {
                 self.set_ink(self.pen(), self.ink());
             } else if RMR::is_addressed(command) {
                 self.rmr = RMR(command);
+                if self.interrupt_counter() {
+                    self.r52.reset();
+                }
             }
         } else {
             unimplemented!("Read on GA not implemented");
