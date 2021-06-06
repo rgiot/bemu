@@ -1,3 +1,4 @@
+use crate::bits::BitMax6;
 use crate::chip::*;
 use crate::memory::Flag;
 use array_init::*;
@@ -585,6 +586,19 @@ pub struct Sync {
     pub vsync: bool,
 }
 
+/// Handle the vsync information to generate interrupt
+/// two lines after vsync
+#[derive(Debug)]
+pub enum VSyncCounter {
+    NoVsync,
+    VSync(usize)
+}
+
+impl Default for VSyncCounter {
+    fn default() -> Self {
+        VSyncCounter::NoVsync
+    }
+}
 /// GateArray emulation of the CPC.
 /// Version 40010 is targeted; it suffers of a shift in pixel rendering for mode 2
 /// TODO ensure the following sentence is applied
@@ -593,6 +607,8 @@ pub struct Sync {
 pub struct GateArray {
     clock: u64,
     pins: PinsBuffer,
+
+    vsync_counter: VSyncCounter,
 
     rmr: RMR,
     penr: PENR,
@@ -609,6 +625,9 @@ pub struct GateArray {
     rgb: RgbLevels,
     /// Synchronization information for the monitor
     sync: Sync,
+
+    /// hsync counter
+    r52: BitMax6
 }
 
 impl Default for GateArray {
@@ -616,6 +635,8 @@ impl Default for GateArray {
         let mut ga = GateArray {
             clock: 0,
             pins: (0, 0).into(),
+
+            vsync_counter: VSyncCounter::NoVsync,
 
             penr: PENR(0b000_00000),
             inkr: INKR(0b010_00000),
@@ -648,6 +669,8 @@ impl Default for GateArray {
                 vsync: false,
                 hsync: false,
             },
+
+            r52: Default::default()
         };
         ga.sync_clocks();
         ga
@@ -762,12 +785,43 @@ impl GateArray {
         }
     }
 
-    /// When the hsync ends, the GA update video mode and manage the interruption counter
-    /// TODO manage the interruption counter
+    /// When the hsync ends, the GA update video mode and manage the interruption counter.
+    /// it also manage a counter for the interuptions and generate one when it reaches 52
+    /// TODO check who disable the interrupt (GA or z80?)
     fn manage_hsync_end(&mut self) {
         self.current_mode = self.next_video_mode();
+        self.r52.inc();
+        if self.r52 == 52.into() {
+            self.r52.reset();
+            self.request_interrupt();
+        }
+        else {
+            match self.vsync_counter {
+                VSyncCounter::VSync(ref mut count) => {
+                    *count += 1; 
+                    if *count == 2 {
+                        // 2 lines after vsync counter is reseted.
+                        if self.r52.bit(5) {
+                            self.r52.reset();
+                        }
+                        else {
+                            // and an interruption could occur
+                            self.r52.reset();
+                            self.request_interrupt();
+                        }
+                    }
+                }
+                _ => {
+                    // nothing to do when there is no vsync
+                }
+            }
+        }
     }
 
+    fn request_interrupt(&mut self) {
+        self.request_interrupt();
+        self.set_pin(GateArrayPin::INTERRUPT, false);//activate when low
+    }
     delegate! {
         // Delegate all methods EXCEPT video mode as it is bufferized
         to self.rmr {
@@ -802,7 +856,12 @@ impl Chip for GateArray {
 
     /// Change the screen mode when hsync is set
     fn pre_tick(&mut self) {
+        if self.is_upfront(GateArrayPin::VSYNC) {
+            //vsync occured
+            self.vsync_counter = VSyncCounter::VSync(0);
+        }
         if self.is_downfront(GateArrayPin::HSYNC) {
+            // hsync occured
             self.manage_hsync_end();
         }
 
