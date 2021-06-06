@@ -44,6 +44,7 @@ fn zexdoc() {
 
     loop {
       //  dbg!(motherboard.cpu().reg16(Reg16::Pc));
+            Monitor::monitor(&motherboard);
         motherboard.execute_next_opcode();
         if verbose {
             Monitor::monitor(&motherboard);
