@@ -599,6 +599,14 @@ impl Default for VSyncCounter {
         VSyncCounter::NoVsync
     }
 }
+
+/// Handle the interruption generation
+#[derive(Debug)]
+pub enum InterruptionSignal {
+    NoSignal,
+    Signal(usize)
+}
+
 /// GateArray emulation of the CPC.
 /// Version 40010 is targeted; it suffers of a shift in pixel rendering for mode 2
 /// TODO ensure the following sentence is applied
@@ -609,6 +617,7 @@ pub struct GateArray {
     pins: PinsBuffer,
 
     vsync_counter: VSyncCounter,
+inter_sign: InterruptionSignal,
 
     rmr: RMR,
     penr: PENR,
@@ -637,6 +646,7 @@ impl Default for GateArray {
             pins: (0, 0).into(),
 
             vsync_counter: VSyncCounter::NoVsync,
+            inter_sign: InterruptionSignal::NoSignal,
 
             penr: PENR(0b000_00000),
             inkr: INKR(0b010_00000),
@@ -819,7 +829,7 @@ impl GateArray {
     }
 
     fn request_interrupt(&mut self) {
-        self.request_interrupt();
+        self.inter_sign = InterruptionSignal::Signal(0);
         self.set_pin(GateArrayPin::INTERRUPT, false);//activate when low
     }
     delegate! {
@@ -863,6 +873,14 @@ impl Chip for GateArray {
         if self.is_downfront(GateArrayPin::HSYNC) {
             // hsync occured
             self.manage_hsync_end();
+        }
+        if let InterruptionSignal::Signal(ref mut count) = self.inter_sign {
+            // cut the signal after 1.4 micro seconds
+            *count += 1;
+            if *count == (1.4 * 32f64 / 2f64) as usize {
+                self.inter_sign = InterruptionSignal::NoSignal;
+                self.set_pin(GateArrayPin::INTERRUPT, true);
+            }
         }
 
         self.generate_pixel();
