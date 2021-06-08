@@ -224,6 +224,18 @@ impl Z80Flags {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum InterruptMode {
+    Mode0,
+    Mode1,
+    Mode2
+}
+impl Default for InterruptMode {
+    fn default() -> Self {
+        Self::Mode1
+    }
+}
+
 #[derive(Default, Debug)]
 /// https://gist.github.com/drhelius/8497817
 pub struct Z80 {
@@ -256,9 +268,13 @@ pub struct Z80 {
     /// Instruction Register / contains the opcode of interest
     pub(crate) ir: Register8,
 
-    pub(crate) iff1: Register16,
-    pub(crate) iff2: Register16,
-    pub(crate) im: u8,
+    pub(crate) iff1: Register8,
+    pub(crate) iff2: Register8,
+    pub(crate) im: InterruptMode,
+
+
+    /// Flag set when CPU received an interrupt
+    interrupt_received: bool,
 
     /// Refresh adr
     /// XXX Not handled at all by the emulator
@@ -267,8 +283,6 @@ pub struct Z80 {
     /// Information for the current opcode - Setup after fetching the very first byte
     pub(crate) opcode_information: Option<&'static OpcodeInformation>,
 
-    /// Flag to know if the cpu is accepting interruptions
-    pub(crate) interruption_disabled: bool,
 }
 
 // Flags related code
@@ -448,7 +462,6 @@ impl Z80 {
             }
             DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
                 let reg = if reg == Reg16::Pc || reg == Reg16::Sp { Reg16::Wz } else { reg };
-                dbg!(&self.opcode_information);
                 let reg = if nb == 0 { reg.low() } else { reg.high() };
                 self.reg8_mut(reg).set(byte);
             }
@@ -486,6 +499,8 @@ impl Z80 {
         if !self.must_execute_instruction_in_middle() {
             self.opcode_information = None;
         }
+
+        self.instruction_finished();
     }
 
     /// Check how many bytes have to be read yet and set up appropriately the next state
@@ -521,7 +536,7 @@ impl Z80 {
                 self.opcode_information = Some(current_prefix.opcode_information(self.ir.get()));
                 let opcode_information = self.opcode_information.as_ref().unwrap();
 
-                dbg!(opcode_information);
+                //dbg!(opcode_information);
 
                 if opcode_information.fetch_finished() {
                     if opcode_information.expect_read() {
@@ -675,7 +690,13 @@ impl Z80 {
             }
 
             Mnemonic::Di => {
-                self.interruption_disabled = true;
+                self.iff1.set(0);
+                self.iff2.set(0);
+            }
+
+            Mnemonic::Ei => {
+                self.iff1.set(1);
+                self.iff2.set(1);
             }
 
             Mnemonic::ExAf => {
@@ -870,7 +891,7 @@ impl Z80 {
                 self.sp.inc();
                 self.sp.inc();
             }
-            
+
             Mnemonic::Rlca => {
                 let c = self.reg8_mut(Reg8::A).rlc();
 
@@ -917,7 +938,7 @@ impl Z80 {
             }
 
             Mnemonic::Xor => {
-                let right = dbg!(self.get_available_8bits_value(arg1.unwrap()));
+                let right = self.get_available_8bits_value(arg1.unwrap());
                 self.reg8_mut(Reg8::A).xor(right);
             }
             _ => unimplemented!("{:?}, {:?}, {:?}", opcode, arg1, arg2),
@@ -1067,7 +1088,7 @@ impl Z80 {
 
             Some(Mnemonic::Ld) => {
                 if let Some(DataAccess::Register16(cpclib_asm::preamble::Register16::Sp)) = opcode_info.token.mnemonic_arg1() { // arg2 is a memory read operation by definition
-                    self.sp = dbg!(self.wz.clone());
+                    self.sp = self.wz.clone();
                     self.wz.inc();
                 }
             }
@@ -1078,6 +1099,47 @@ impl Z80 {
         }
     }
 }
+
+// Everything that is related to interruptions
+impl Z80 {
+    /// Handle interruption if any
+    // must be called only at the end of an instruction
+    fn instruction_finished(&mut self) {
+        // manage the flipflip for interruption
+        if !self.get_pin(Z80Pin::Neg_INT) 
+            && self.iff1.value() == 1
+            && !matches!(self.next_state, MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None))
+        {
+
+            assert_eq!(false, self.interrupt_received);
+
+            self.interrupt_received = true;
+            self.iff1.set(0);
+            self.iff2.set(0);
+
+        assert_eq!(self.im, InterruptMode::Mode1,
+            "Interruption {:?} unimplemented", self.im);
+
+            self.simulate_call_0x38_after_fetch();
+        }
+        else {
+                self.next_state = Default::default();
+                return;
+        }
+
+
+
+    }
+
+
+    /// Handcraft a call to let the CPU jump in 0x38
+    /// TODO manage a Fake M1 cycle
+    fn simulate_call_0x38_after_fetch(&mut self) {
+        self.opcode_information = Some(&OPCODE_PREFIX[0xcd]);
+        self.next_state = MCycle::Write(TState::T1, 0);
+    }
+}
+
 
 impl AddressChip for Z80 {
     fn pins_address() -> &'static [Self::PinType; 16] {
@@ -1187,7 +1249,7 @@ impl Chip for Z80 {
                             // nothing happens there we can read the next instruction without executing anything
                             // serve for call/jp/jr
                             // TODO check if it must serve for loop based instruction
-                            self.next_state = Default::default();
+                            self.instruction_finished();
                         } else if 0 != opcode_information.nb_bytes_to_read {
                             if opcode_information.addresses_memory {
                                 self.next_state = MCycle::Read(TState::T1, 0);
@@ -1202,8 +1264,6 @@ impl Chip for Z80 {
                             }
                         } else {
                             // go back for a new instruction
-                            self.next_state =
-                                MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
                             self.execute_step();
                         }
                     } else {
@@ -1335,7 +1395,7 @@ impl Chip for Z80 {
         self.af.set(0xffff);
         self.iff1.set(0);
         self.iff2.set(0);
-        self.im = 0;
+        self.im = InterruptMode::Mode1;
     }
 }
 

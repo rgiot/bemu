@@ -262,9 +262,9 @@ impl Motherboard {
         // GA to CPU
         sync_pins(
             &self.ga,
-            &[GateArrayPin::NCPU],
+            &[GateArrayPin::NCPU, GateArrayPin::INTERRUPT],
             &mut self.cpu,
-            &[Z80Pin::Neg_CLK],
+            &[Z80Pin::Neg_CLK, Z80Pin::Neg_INT],
         );
 
         // GA to CRTC
