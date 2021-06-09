@@ -37,7 +37,10 @@ impl CrtcTest {
 
 fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
     // build the CPC motherboard
-    let mut motherboard = MotherboardBuilder::default().set_crtc(crtc_type).build();
+    let mut motherboard = MotherboardBuilder::default()
+                                        .set_crtc(crtc_type)
+                                        .enable_interruptions()
+                                        .build();
 
     // build the test
     let (test, addr) = crtc_test.test();
@@ -45,9 +48,15 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
 
     assert!(!test.is_empty());
     let end_pattern = cpclib_macros::assemble!(" jr $");
+    let inter_code = cpclib_macros::assemble!(" ei : ret");
+    assert_eq!(
+        inter_code,
+        &[0xfb, 0xc9]
+    );
 
     // inject it in memory
     motherboard.write_buffer(addr, &test);
+    motherboard.write_buffer(0x38, inter_code);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr);
 
     // execute it until it is finished

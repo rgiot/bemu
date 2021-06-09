@@ -67,12 +67,32 @@ impl Default for Motherboard {
 /// TODO add the other kinds of varitions
 #[derive(Default, Clone, Copy)]
 pub struct MotherboardBuilder {
+    /// The type of CRTC in the motherboard
     crtc_type: Option<CrtcType>,
+    /// If interruption are allowed
+    enable_interruptions: bool, // false by default
+    disable_lower_rom: bool, // false by default
+    disable_upper_rom: bool, // false by defualt
 }
 
 impl MotherboardBuilder {
     pub fn set_crtc(&mut self, crtc_type: CrtcType) -> &mut Self {
         self.crtc_type = Some(crtc_type);
+        self
+    }
+
+    pub fn enable_interruptions(&mut self) -> &mut Self {
+        self.enable_interruptions = true;
+        self
+    }
+
+    pub fn disable_lower_rom(&mut self) -> &mut Self {
+        self.disable_lower_rom = true;
+        self
+    }
+
+    pub fn disable_upper_rom(&mut self) -> &mut Self {
+        self.disable_lower_rom = true;
         self
     }
 
@@ -83,6 +103,16 @@ impl MotherboardBuilder {
             crtc: crtc_type.into(),
             ..Default::default()
         };
+        if self.enable_interruptions {
+            motherboard.cpu.iff1.set(1);
+            motherboard.cpu.im = InterruptMode::Mode1;
+        }
+        if self.disable_lower_rom {
+            motherboard.disable_lower_rom();
+        }
+        if self.disable_upper_rom {
+            motherboard.disable_upper_rom();
+        }
         motherboard.stabilize_run();
         motherboard
     }
@@ -438,6 +468,14 @@ impl Motherboard {
         self.ga.force_lower_rom_pagging(config.lower_rom);
         self.ga.force_upper_rom_pagging(config.upper_rom);
         self.rom_selector.force_upper_rom_number(config.rom_number);
+    }
+
+    pub fn disable_lower_rom(&mut self) {
+        self.ga.force_lower_rom_pagging(Flag::Disable);
+    }
+
+    pub fn disable_upper_rom(&mut self) {
+        self.ga.force_lower_rom_pagging(Flag::Disable);
     }
 
     /// Write the databuffer in memory according to the memory configuration
