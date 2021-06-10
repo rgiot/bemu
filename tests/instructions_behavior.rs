@@ -534,7 +534,7 @@ label
 }
 
 #[test]
-fn execute_jr3_assembler_bypassed() {
+fn execute_jr3_assembler_bypassed1() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x3ff0
@@ -543,12 +543,71 @@ label
 
 		org 0x4000
 		db 0x18 ; jr
-	;	db after-label ; still buggy on the assembler side
-	 ;	db -18 ; here also...
+		db 18 ; here also...
 after
 	"));
 
 	let motherboard = execute_program(0x3ff0, 0x4000, code);
+
+
+
+	let instruction = dbg!(motherboard.disassemble_instruction_at(0x4000));
+	assert_eq!(
+		instruction.address,
+		0x4000
+	);
+	assert_eq!(
+		instruction.token,
+		Token::OpCode(
+			Mnemonic::Jr,
+			None,
+			Some(DataAccess::Expression(Expr::RelativeDelta(
+				((0x3ff0 - (0x4000+2)) & 0xff) as i8
+			)))
+		)
+	);
+
+	assert_eq!(
+		0x3ff0,
+		motherboard.cpu().reg16(Reg16::Pc).value(),
+
+		"{:x} != {:x}", 0x3ff0,motherboard.cpu().reg16(Reg16::Pc).value()
+	);
+}
+#[test]
+fn execute_jr3_assembler_bypassed2() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x3ff0
+label
+		jr $ ; end of test
+
+		org 0x4000
+		db 0x18 ; jr
+		db label-after
+
+after
+	"));
+
+	let motherboard = execute_program(0x3ff0, 0x4000, code);
+
+
+
+	let instruction = dbg!(motherboard.disassemble_instruction_at(0x4000));
+	assert_eq!(
+		instruction.address,
+		0x4000
+	);
+	assert_eq!(
+		instruction.token,
+		Token::OpCode(
+			Mnemonic::Jr,
+			None,
+			Some(DataAccess::Expression(Expr::RelativeDelta(
+				((0x3ff0 - (0x4000+2)) & 0xff) as i8
+			)))
+		)
+	);
 
 	assert_eq!(
 		0x3ff0,
