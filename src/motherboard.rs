@@ -404,10 +404,16 @@ impl Motherboard {
 
 // Block for disassembling related functions
 impl Motherboard {
-    /// TODO delegate that to another component
+    /// Return the opcode that will be executed
     pub fn disassemble_next_instruction(&self) -> DisassembledInstruction
     {
-        let  mut pc= self.cpu.pc.value();
+        self.disassemble_instruction_at(self.cpu.pc.value())
+    }
+
+    /// Disassemble the instruction at the given address
+    pub fn disassemble_instruction_at(&self, mut pc: u16)  -> DisassembledInstruction {
+        let address = pc;
+        
         let mut read = || {
             let byte = self.read_byte(pc);
             pc += 1;
@@ -444,7 +450,7 @@ impl Motherboard {
 
         DisassembledInstruction{
              token, memory,
-             address: self.cpu.pc.value()
+             address
         }
     }
 }

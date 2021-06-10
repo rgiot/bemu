@@ -1,10 +1,11 @@
 ///! This file contains some tests that aim at chacking the impact of the execution of an instraction on the machine
 
 use amsrust::crtc::{Crtc, CrtcType};
-use amsrust::motherboard::Motherboard;
+use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80, Z80Flags};
 use amsrust::ga::{VideoMode, Ink};
 use amsrust::debug::Monitor;
+use cpclib_asm::preamble::{DataAccess, Expr, Mnemonic, Token};
 
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
 /// Attention, do not put the code in area where ROMs are activated ...
@@ -17,8 +18,10 @@ fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 	const MAX_OPERATIONS: usize = 10;
 	let mut nb_operations = 0;
 
-    let mut motherboard = Motherboard::default();
-	Monitor::monitor(&motherboard);
+    let mut motherboard = MotherboardBuilder::default()
+													.disable_lower_rom()
+													.disable_upper_rom()
+													.build();
 
 	assert_eq!(
 		VideoMode::Mode0,
@@ -35,9 +38,8 @@ fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 
 	// execute it until it is finished
 	loop {
-		let previous_pc = motherboard.cpu().reg16(Reg16::Pc).value();
-		motherboard.execute_next_opcode();
 		Monitor::monitor(&motherboard);
+		motherboard.execute_next_opcode();
 
 		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 
@@ -46,7 +48,14 @@ fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 
 		nb_operations += 1;
 
-		if current_pattern == *end_pattern || nb_operations == MAX_OPERATIONS {
+		// erroneous end
+		if nb_operations == MAX_OPERATIONS {
+			eprintln!("Maximum number of operations executed");
+			break;
+		}
+
+		// normal end
+		if current_pattern == *end_pattern {
 			break;
 		}
 	}
@@ -481,6 +490,40 @@ label
 	"));
 
 	let motherboard = execute_program(0x3ff0, 0x4000, code);
+
+	let instruction = dbg!(motherboard.disassemble_instruction_at(0x4000));
+	assert_eq!(
+		instruction.address,
+		0x4000
+	);
+	assert_eq!(
+		instruction.token,
+		Token::OpCode(
+			Mnemonic::Jr,
+			None,
+			Some(DataAccess::Expression(Expr::RelativeDelta(
+				((0x3ff0 - (0x4000+2)) & 0xff) as i8
+			)))
+		)
+	);
+
+	let instruction = dbg!(motherboard.disassemble_instruction_at(0x3ff0));
+	assert_eq!(
+		instruction.address,
+		0x3ff0
+	);
+	assert_eq!(
+		instruction.token,
+		Token::OpCode(
+			Mnemonic::Jr,
+			None,
+			Some(DataAccess::Expression(Expr::RelativeDelta(
+				((-2) & 0xff) as i8
+			)))
+		)
+	);
+
+
 
 	assert_eq!(
 		0x3ff0,

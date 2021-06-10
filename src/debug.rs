@@ -54,7 +54,7 @@ impl Monitor {
     }
 }
 
-
+#[derive(Debug)]
 pub struct DisassembledInstruction {
     pub token: Token,
     pub address: u16,
