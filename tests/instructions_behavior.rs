@@ -543,8 +543,7 @@ label
 
 		org 0x4000
 		db 0x18 ; jr
-		db 18 ; here also...
-after
+		db -18 
 	"));
 
 	let motherboard = execute_program(0x3ff0, 0x4000, code);
