@@ -62,7 +62,9 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
     // execute it until it is finished
     loop {
         {
-            Monitor::monitor(&motherboard);
+          //  Monitor::monitor(&motherboard);
+          println!("{}", motherboard.disassemble_next_instruction().to_string());
+          Monitor::monitor_stack(&mut motherboard, 2, 6);
         }
 
         motherboard.execute_next_opcode();

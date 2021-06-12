@@ -13,7 +13,7 @@ impl Monitor {
         Monitor::monitor_z80(motherboard.cpu());
 
         print!("stack: ");
-        Monitor::monitor_stack(motherboard, 10);
+        Monitor::monitor_stack(motherboard, 2, 8);
 
         print!("ga: ");
         Monitor::monitor_ga(motherboard.ga());
@@ -22,11 +22,22 @@ impl Monitor {
         Monitor::monitor_next_instruction(&motherboard)
     }
 
-    pub fn monitor_stack(motherboard: &Motherboard, size: u16) {
-        let sp = motherboard.cpu().reg16(Reg16::Sp).value();
+    pub fn monitor_stack(motherboard: &Motherboard, before: u16, after: u16) {
+        let sp = motherboard.cpu().reg16(Reg16::Sp).value().wrapping_sub(after*2);
+        let size = after + before;
+
         (0..size).for_each(|i| {
             let addr = sp.wrapping_add(2 * i);
-            print!("0x{:04X}=0x{:04X} ", addr, motherboard.read_word(addr))
+            let is_top = i == before;
+            if is_top {
+                print!("<<");
+            }
+            print!("0x{:04X}=0x{:04X}", addr, motherboard.read_word(addr));
+            if is_top {
+                print!(">> ");
+            } else {
+                print!(" ");
+            }
         });
         println!();
     }

@@ -92,7 +92,7 @@ impl MotherboardBuilder {
     }
 
     pub fn disable_upper_rom(&mut self) -> &mut Self {
-        self.disable_lower_rom = true;
+        self.disable_upper_rom = true;
         self
     }
 
@@ -481,7 +481,7 @@ impl Motherboard {
     }
 
     pub fn disable_upper_rom(&mut self) {
-        self.ga.force_lower_rom_pagging(Flag::Disable);
+        self.ga.force_upper_rom_pagging(Flag::Disable);
     }
 
     /// Write the databuffer in memory according to the memory configuration
@@ -517,7 +517,7 @@ impl Motherboard {
 
     #[inline]
     pub fn read_word(&self, addr: u16) -> u16 {
-        let memory_cfg = self.memory_config();
+        let memory_cfg = dbg!(self.memory_config());
 
         let low = self.memory.read(addr, &memory_cfg) as u16;
         let high = self.memory.read(addr.wrapping_add(1), &memory_cfg) as u16;
@@ -607,6 +607,62 @@ mod test {
         );
 
         assert_eq!(motherboard.cpu.af.high().value(), 0);
+    }
+
+    #[test]
+    fn test_rom_config() {
+        let mut motherboard = Motherboard::default();
+
+        let memory_config = motherboard.memory_config();
+        assert_eq!(
+            memory_config.0.lower_rom,  
+            Flag::Enable
+        );
+        assert_eq!(
+            memory_config.0.upper_rom,  
+            Flag::Enable
+        );
+
+        motherboard.disable_lower_rom();
+        let memory_config = motherboard.memory_config();
+        assert_eq!(
+            memory_config.0.lower_rom,  
+            Flag::Disable
+        );
+        assert_eq!(
+            memory_config.0.upper_rom,  
+            Flag::Enable
+        );
+
+        motherboard.disable_upper_rom();
+        let memory_config = motherboard.memory_config();
+        assert_eq!(
+            memory_config.0.lower_rom,  
+            Flag::Disable
+        );
+        assert_eq!(
+            memory_config.0.upper_rom,  
+            Flag::Disable
+        );        
+    }
+
+    #[test]
+    fn test_motherboard_builder() {
+        let  motherboard = MotherboardBuilder::default()
+													.disable_lower_rom()
+													.disable_upper_rom()
+													.build();
+        let memory_config = motherboard.memory_config();
+                                                    assert_eq!(
+                                                        memory_config.0.lower_rom,  
+                                                        Flag::Disable
+                                                    );
+                                                    assert_eq!(
+                                                        memory_config.0.upper_rom,  
+                                                        Flag::Disable
+                                                    );                                                 
+                                                
+                                                
     }
 
     #[test]

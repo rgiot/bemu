@@ -59,7 +59,7 @@ fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 			break;
 		}
 	}
-
+	Monitor::monitor(&motherboard);
 	motherboard
 
 }

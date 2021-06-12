@@ -693,6 +693,23 @@ impl Z80 {
                 self.iff1.set(0);
                 self.iff2.set(0);
             }
+            
+            Mnemonic::Djnz => {
+                self.reg8_mut(Reg8::B).dec();
+                if self.reg8(Reg8::B).value() != 0 {
+
+                    let mut sym = SymbolsTableCaseDependent::default();
+                    sym.set_symbol_to_value("$", -2);
+
+                    let expr = arg1.unwrap().expr().unwrap();
+                    let displacement = expr.relative_delta().unwrap();
+                    if displacement > 0 {
+                        self.pc.add(displacement as u16);
+                    } else {
+                        self.pc.sub(-displacement as u16);
+                    }
+                }
+            }
 
             Mnemonic::Ei => {
                 self.iff1.set(1);
@@ -855,7 +872,7 @@ impl Z80 {
             }
 
             Mnemonic::Ldir => {
-                // TODO manage the extra delay and this step must be done elsewhere
+
                 self.handle_repetitive_mnemonic();
             }
 
@@ -948,6 +965,7 @@ impl Z80 {
     /// We are playing with an instruction that decrements B and reexecute itself if
     /// B is different that zero.
     /// All these instructions use 2 bytes
+    /// TODO Add a cycle for that
     fn handle_repetitive_mnemonic(&mut self) {
         self.reg8_mut(Reg8::B).dec();
         if self.reg8(Reg8::B).value() != 0 {
