@@ -23,12 +23,13 @@ impl Monitor {
     }
 
     pub fn monitor_stack(motherboard: &Motherboard, before: u16, after: u16) {
-        let sp = motherboard.cpu().reg16(Reg16::Sp).value().wrapping_sub(after*2);
+        let sp_orig = motherboard.cpu().reg16(Reg16::Sp).value();
+        let sp = sp_orig.wrapping_sub(after*2);
         let size = after + before;
 
-        (0..size).for_each(|i| {
+        (0..size).rev().for_each(|i| {
             let addr = sp.wrapping_add(2 * i);
-            let is_top = i == before;
+            let is_top = addr == sp_orig;
             if is_top {
                 print!("<<");
             }

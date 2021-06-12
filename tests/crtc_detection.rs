@@ -40,6 +40,8 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
     let mut motherboard = MotherboardBuilder::default()
                                         .set_crtc(crtc_type)
                                         .enable_interruptions()
+                                        .disable_lower_rom()
+                                        .disable_upper_rom()
                                         .build();
 
     // build the test

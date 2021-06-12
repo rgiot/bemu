@@ -211,18 +211,13 @@ impl Motherboard {
     pub fn handle_memory_access(&mut self) {
         if self.cpu_request_byte_read() && !self.ga_request_read() {
             let addr = self.cpu.get_address_from_pins();
-            let memory_cfg = self.memory_config();
-            //   eprintln!("Want at 0x{:x} with {:?}", addr, memory_cfg);
-            let byte = self.memory.read(addr, &memory_cfg);
-            //    eprintln!("Read 0x{:x} at 0x{:x} with {:?}", byte, addr, memory_cfg);
+            let byte = self.read_byte(addr);
             self.cpu.set_data_on_pins(byte);
             self.cpu.set_pin(Z80Pin::Neg_RD, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
         } else if self.cpu_request_byte_write() && !self.ga_request_read() {
             let addr = self.cpu.get_address_from_pins();
-            let data = self.cpu.get_data_from_pins();
-            let memory_cfg = self.memory_config();
-            //    println!("Write 0x{:x} at 0x{:x}", data, addr);
-            self.memory.write(addr, data, &memory_cfg);
+            let byte = self.cpu.get_data_from_pins();
+            self.write_byte(addr, byte);
             self.cpu.set_pin(Z80Pin::Neg_WR, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
         }
     }
@@ -517,7 +512,7 @@ impl Motherboard {
 
     #[inline]
     pub fn read_word(&self, addr: u16) -> u16 {
-        let memory_cfg = dbg!(self.memory_config());
+        let memory_cfg = self.memory_config();
 
         let low = self.memory.read(addr, &memory_cfg) as u16;
         let high = self.memory.read(addr.wrapping_add(1), &memory_cfg) as u16;
