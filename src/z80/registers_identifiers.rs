@@ -58,6 +58,11 @@ impl Into<Reg8> for &cpclib_asm::preamble::Register8 {
         }
     }
 }
+impl Into<Reg8> for cpclib_asm::preamble::Register8 {
+    fn into(self) -> Reg8 {
+        (&self).into()
+    }
+}
 
 impl Into<Reg8> for &cpclib_asm::preamble::IndexRegister8 {
     fn into(self) -> Reg8 {
@@ -67,6 +72,11 @@ impl Into<Reg8> for &cpclib_asm::preamble::IndexRegister8 {
             cpclib_asm::preamble::IndexRegister8::Iyh => Reg8::Iyh,
             cpclib_asm::preamble::IndexRegister8::Iyl => Reg8::Iyl,
         }
+    }
+}
+impl Into<Reg8> for cpclib_asm::preamble::IndexRegister8 {
+    fn into(self) -> Reg8 {
+        (&self).into()
     }
 }
 

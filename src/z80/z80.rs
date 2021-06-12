@@ -917,12 +917,43 @@ impl Z80 {
                 self.set_flag(Z80Flags::C, c);
             }
 
+            Mnemonic::Rr => {  
+                let prev_c = self.test_flag(FlagTest::C);
+                let c = self.reg8_mut(arg1.unwrap().get_register8().unwrap().into()).rr(prev_c);
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag(Z80Flags::C, c);
+            }
+
+            Mnemonic::Rra => {  
+                let prev_c = self.test_flag(FlagTest::C);
+                let c = self.reg8_mut(Reg8::A).rr(prev_c);
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag(Z80Flags::C, c);
+            }
+
             Mnemonic::Rrca => {
                 let c = self.reg8_mut(Reg8::A).rrc();
 
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
+            }
+
+            Mnemonic::Set => {
+                let bit = arg1.unwrap().expr().unwrap()
+                            .eval().unwrap() as u8;
+
+                match arg2.unwrap() {
+                    DataAccess::Register8(reg8) => {
+                        self.reg8_mut(reg8.into()).set_bit(bit);
+                    },
+
+                    other => {
+                        unimplemented!("{:?}", other);
+                    }
+                }
             }
 
             Mnemonic::Sub => match arg1 {

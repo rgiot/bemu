@@ -827,3 +827,22 @@ end
 		motherboard.cpu().reg16(Reg16::Pc).value()
 	);
 }
+
+#[test]
+fn execute_set() {
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, data
+	set 7, (hl)
+	jr $
+	org 0x4010
+data db 1
+	");
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0b10000001,
+		motherboard.read_byte(0x4010)
+	);
+}

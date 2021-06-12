@@ -123,6 +123,14 @@ impl Register8 {
         bit7
     }
 
+    pub fn rr(&mut self, c: bool) -> bool {
+        let bit0 = self.value() & 1<<0 != 0;
+        self.set(self.value() >> 1);
+        if c {
+            self.set_bit(7);
+        }
+        bit0
+    }
     pub fn rrc(&mut self) -> bool {
         let bit0 = self.value() & 1 << 0 != 0;
         self.set(self.value() >> 1);
