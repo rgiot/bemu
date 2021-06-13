@@ -1,8 +1,10 @@
 use cpclib_asm::preamble::Token;
 use smallvec::SmallVec;
 
+use crate::chip::Chip;
 use crate::ga::*;
 use crate::motherboard::Motherboard;
+use crate::z80::Z80Pin;
 use crate::z80::{HasValue, Reg16, Z80};
 
 pub struct Monitor {}
@@ -11,12 +13,14 @@ impl Monitor {
     pub fn monitor(motherboard: &Motherboard) {
         print!("z80: ");
         Monitor::monitor_z80(motherboard.cpu());
+        Monitor::monitor_z80_pins(motherboard.cpu());
 
         print!("stack: ");
         Monitor::monitor_stack(motherboard, 2, 8);
 
         print!("ga: ");
         Monitor::monitor_ga(motherboard.ga());
+        Monitor::monitor_ga_pins(motherboard.ga());
 
         print!("next: ");
         Monitor::monitor_next_instruction(&motherboard)
@@ -51,6 +55,17 @@ impl Monitor {
         println!();
     }
 
+    pub fn monitor_z80_pins(cpu: &Z80) {
+        println!("MREQ:{} IOREQ:{} WR:{} RD:{} M1:{} RFSH:{}",
+            cpu.get_pin(Z80Pin::Neg_MREQ),
+            cpu.get_pin(Z80Pin::Neg_IORQ),
+            cpu.get_pin(Z80Pin::Neg_WR),
+            cpu.get_pin(Z80Pin::Neg_RD),
+            cpu.get_pin(Z80Pin::Neg_M1),
+            cpu.get_pin(Z80Pin::Neg_RFSH)
+        );
+    }
+
     pub fn monitor_ga(ga: &GateArray) {
         println!(
             "Pen: {:#?}  UR: {:?}  LR: {:?} Palette {:?}",
@@ -58,6 +73,13 @@ impl Monitor {
             ga.upper_rom_pagging(),
             ga.lower_rom_pagging(),
             ga.palette()
+        );
+    }
+    pub fn monitor_ga_pins(cpu: &GateArray) {
+        println!("A15:{} A14:{} IORQ:{}",
+            cpu.get_pin(GateArrayPin::A15),
+            cpu.get_pin(GateArrayPin::A14),
+            cpu.get_pin(GateArrayPin::IORQ),
         );
     }
 
