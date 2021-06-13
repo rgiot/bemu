@@ -5,6 +5,8 @@ use num::One;
 
 use std::fmt;
 
+use super::arithmetic::*;
+
 /// Common trait for handling Register 8 and 16 bits
 /// TODO provide Carry related information
 pub trait HasValue {
@@ -90,55 +92,38 @@ impl Register8 {
 
 impl Register8 {
     pub fn res_bit(&mut self, bit: u8) {
-        let new = self.value() & (!(1 << bit));
-        self.set(new);
+        res_bit(&mut self.val, bit)
     }
 
     pub fn set_bit(&mut self, bit: u8) {
-        let new = self.value() | (1 << bit);
-        self.set(new);
+        set_bit(&mut self.val, bit)
     }
 
     pub fn and(&mut self, value: u8) {
-        let new = self.value() & value;
-        self.set(new);
+        and(&mut self.val, value)
     }
 
     pub fn or(&mut self, value: u8) {
-        let new = self.value() | value;
-        self.set(new);
+        or(&mut self.val, value)
     }
 
     pub fn xor(&mut self, value: u8) {
-        let new = self.value() ^ value;
-        self.set(new);
+        xor(&mut self.val, value)
     }
 
     pub fn rlc(&mut self) -> bool {
-        let bit7 = self.value() & 1 << 7 != 0;
-        self.set(self.value() << 1);
-        if bit7 {
-            self.set_bit(0);
-        }
-        bit7
+        rlc(&mut self.val)
     }
 
     pub fn rr(&mut self, c: bool) -> bool {
-        let bit0 = self.value() & 1<<0 != 0;
-        self.set(self.value() >> 1);
-        if c {
-            self.set_bit(7);
-        }
-        bit0
+        rr(&mut self.val, c)
     }
     pub fn rrc(&mut self) -> bool {
-        let bit0 = self.value() & 1 << 0 != 0;
-        self.set(self.value() >> 1);
-        if bit0 {
-            self.set_bit(0);
-        }
-        bit0
+        rrc(&mut self.val)
     }
+
+
+
 }
 
 /// Represents a 16 bits register by decomposing it in 2 8 bits registers

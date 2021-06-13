@@ -484,19 +484,26 @@ impl OpcodePrefix {
             static ref INDEXED_IY: Regex = Regex::new(r"\(IY\+nn\)[^$]").unwrap();
             static ref INDEXED_IX: Regex = Regex::new(r"\(IX\+nn\)[^$]").unwrap();
             static ref IN_HL: Regex = Regex::new(r"\(HL\)[^$]").unwrap();
+            static ref IN_HL_END: Regex = Regex::new(r"\(HL\)$").unwrap();
             static ref IN_BC: Regex = Regex::new(r"\(BC\)[^$]").unwrap();
             static ref IN_DE: Regex = Regex::new(r"\(DE\)[^$]").unwrap();
             static ref IN_AF: Regex = Regex::new(r"\(AF\)[^$]").unwrap();
             static ref IN_IX: Regex = Regex::new(r"\(IX\)[^$]").unwrap();
             static ref IN_IY: Regex = Regex::new(r"\(IY\)[^$]").unwrap();
             static ref IMMEDIATE: Regex = Regex::new(r"\(nnnn\)[^$]").unwrap();
+
             static ref CALL: Regex = Regex::new(r"^CALL").unwrap();
             static ref PUSH: Regex = Regex::new(r"^PUSH").unwrap();
+            static ref SET: Regex = Regex::new(r"^SET").unwrap();
+            static ref INC: Regex = Regex::new(r"^INC").unwrap();
+            static ref DEC: Regex = Regex::new(r"^DEC").unwrap();
         }
 
         let repr = self.disassembling_table()[i];
 
-        if repr == "INC (HL)" || repr == "DEC (HL)" {
+        if IN_HL_END.is_match(repr) &&
+           (SET.is_match(repr) || INC.is_match(repr) || DEC.is_match(repr))
+         {
             AddressSource::Register16(Reg16::Hl)
         } else if CALL.is_match(repr) || PUSH.is_match(repr) {
             AddressSource::Stack(StackDelta::MinusTwo)
@@ -555,6 +562,7 @@ impl From<&DataAccess> for DataSource {
             DataAccess::Register16(reg) => DataSource::Register16(reg.into()),
             DataAccess::Register8(reg) => DataSource::Register8(reg.into()),
             DataAccess::Expression(_) => DataSource::Immediate, // to be read
+            DataAccess::MemoryRegister16(_) => DataSource::Pins, // what has bin read is stored in the pins
             _ => panic!("{:?} unimplemented", d),
         }
     }
@@ -832,5 +840,15 @@ mod test {
     #[test]
     fn lookup_ldir() {
         todo!()
+    }
+
+    #[test]
+    fn lookup_set_mem_hl() {
+        let set = dbg!(&OPCODE_PREFIX_CB[0b11111110]);
+        assert_eq!(set.nb_additional_opcode_bytes, 0);
+        assert_eq!(set.read_address, AddressSource::Register16(Reg16::Hl)); // 
+        assert_eq!(set.read_data, DataSource::Pins);
+        assert_eq!(set.write_address, AddressSource::Register16(Reg16::Hl)); // we want to write on the stack
+        assert_eq!(set.write_data, DataSource::Pins);
     }
 }
