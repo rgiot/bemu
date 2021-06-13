@@ -1,5 +1,6 @@
 use crate::chip::*;
 
+use crate::z80::arithmetic::set_bit;
 use crate::z80::registers::*;
 use crate::z80::registers_identifiers::*;
 use crate::z80::states::*;
@@ -949,6 +950,14 @@ impl Z80 {
                     DataAccess::Register8(reg8) => {
                         self.reg8_mut(reg8.into()).set_bit(bit);
                     },
+
+                    DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)
+                    => {
+                        // data is on the pins
+                        let mut data = self.get_data_from_pins();
+                        set_bit(&mut data, bit);
+                        self.set_data_on_pins(data);
+                    }
 
                     other => {
                         unimplemented!("{:?}", other);
