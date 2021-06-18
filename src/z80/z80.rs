@@ -949,6 +949,10 @@ impl Z80 {
                 self.set_flag(Z80Flags::C, c);
             }
 
+            Mnemonic::Scf => {
+                self.set_flag_on(Z80Flags::C);
+            }
+
             Mnemonic::Set => {
                 let bit = arg1.unwrap().expr().unwrap()
                             .eval().unwrap() as u8;
