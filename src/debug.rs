@@ -4,6 +4,7 @@ use smallvec::SmallVec;
 use crate::chip::Chip;
 use crate::ga::*;
 use crate::motherboard::Motherboard;
+use crate::z80::Z80Flags;
 use crate::z80::Z80Pin;
 use crate::z80::{HasValue, Reg16, Z80};
 
@@ -13,6 +14,7 @@ impl Monitor {
     pub fn monitor(motherboard: &Motherboard) {
         print!("z80: ");
         Monitor::monitor_z80(motherboard.cpu());
+        Monitor::monitor_z80_flags(motherboard.cpu());
         Monitor::monitor_z80_pins(motherboard.cpu());
 
         print!("stack: ");
@@ -65,6 +67,58 @@ impl Monitor {
             cpu.get_pin(Z80Pin::Neg_M1),
             cpu.get_pin(Z80Pin::Neg_RFSH)
         );
+    }
+
+    pub fn monitor_z80_flags(cpu: &Z80) {   
+        if cpu.flag(Z80Flags::S) {
+            print!("S");
+        } else {
+            print!("-");
+        }
+
+        if cpu.flag(Z80Flags::Z) {
+            print!("Z");
+        } else {
+            print!("-");
+        }
+
+        if cpu.flag(Z80Flags::Y) {
+            print!("Y");
+        } else {
+            print!("-");
+        }
+
+        if cpu.flag(Z80Flags::H) {
+            print!("H");
+        } else {
+            print!("-");
+        }
+
+        if cpu.flag(Z80Flags::X) {
+            print!("X");
+        } else {
+            print!("-");
+        }
+
+        if cpu.flag(Z80Flags::P) {
+            print!("P");
+        } else {
+            print!("-");
+        }
+
+        if cpu.flag(Z80Flags::N) {
+            print!("N");
+        } else {
+            print!("-");
+        }
+      
+
+        if cpu.flag(Z80Flags::C) {
+            print!("C");
+        } else {
+            print!("-");
+        }
+        println!();
     }
 
     pub fn monitor_ga(ga: &GateArray) {

@@ -342,6 +342,12 @@ impl Z80 {
     fn set_flag_off(&mut self, flag: Z80Flags) {
         self.set_flag(flag, false);
     }
+
+    #[inline]
+    pub fn flag(&self, flag: Z80Flags) -> bool {
+        let flags = self.reg8(Reg8::F).value();
+        flag.is_on(flags)
+    }
 }
 
 /// Conditionnaly related code
