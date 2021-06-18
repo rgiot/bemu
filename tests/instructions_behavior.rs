@@ -828,6 +828,50 @@ end
 	);
 }
 
+
+
+#[test]
+fn execute_rra1() {
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, 0x0100
+	push hl
+	pop af
+
+	rra
+	");
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0,
+		motherboard.a()
+	);
+
+	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+}
+
+#[test]
+fn execute_rra2() {
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, 0x0200
+	push hl
+	pop af
+
+	rra
+	");
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		1,
+		motherboard.a()
+	);
+
+	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::NC));
+}
+
 #[test]
 fn execute_set() {
 	let code = cpclib_macros::assemble!("

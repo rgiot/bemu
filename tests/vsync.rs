@@ -1,4 +1,4 @@
-use amsrust::{chip::{Chip, ReadDataChip}, ga::GateArrayPin, motherboard::MotherboardBuilder, ppi::{Ppi, PpiPin}};
+use amsrust::{chip::{Activable, Chip, ReadDataChip}, debug::Monitor, ga::GateArrayPin, motherboard::MotherboardBuilder, ppi::{Ppi, PpiPin}};
 
 /// CRTC module is supposed to generate properly the vsync
 /// This file aims at testing all the wirings related to CRTC signal
@@ -157,7 +157,7 @@ fn test_z80_vsync() {
 	}	
 
 	// inject vsync test codec
-	let prog = cpclib_macros::assemble!("
+	let prog = dbg!(cpclib_macros::assemble!("
 		org 0x4000
 		ld b, 0xf5
 loop
@@ -165,15 +165,21 @@ loop
 		rra
 		jr nc, loop
 end
-	assert end == 0x4000 + (3+1+1+2)
-	");
+	assert end == 0x4000 + (2+2+1+2)
+	"));
 	motherboard.set_pc(0x4000);
-	motherboard.set_pc(0x4000);
+	motherboard.set_sp(0x4000);
 	motherboard.write_buffer(0x4000, prog);
 	
 
 	// wait the detection of vsync by the z80 code
-	while motherboard.pc() != 0x4000 + (3+1+1+2) {
+	// even if z80 timings are wrong the test shall pass as we are sticked with the ticks
+	while motherboard.pc() != 0x4000 + (2+2+1+2) {
+		if motherboard.cpu().is_activated() &&  motherboard.is_aligned_with_new_instruction(){
+			println!();
+			Monitor::monitor(&motherboard);
+		}
+
 		nb_ticks += 1;
 		motherboard.tick();
 
@@ -182,6 +188,10 @@ end
 	}
 	
 
+	assert_eq!(
+		motherboard.pc(),
+		0x4000 + (3+1+1+2) 
+	);
 
 	// assume one frame as elapsed
 	assert_eq!(

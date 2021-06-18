@@ -573,6 +573,17 @@ impl Motherboard {
             pub fn iy(&self) -> u16;
 
 
+    pub fn a(&self) -> u8;
+    pub fn b(&self) -> u8;
+    pub fn d(&self) -> u8;
+    pub fn h(&self) -> u8;
+    pub fn ixh(&self) -> u8;
+    pub fn iyh(&self) -> u8;
+    pub fn c(&self) -> u8;
+    pub fn e(&self) -> u8;
+    pub fn l(&self) -> u8;
+    pub fn x(&self) -> u8;
+    pub fn y(&self) -> u8;
 
             pub fn set_pc(&mut self, value: u16);
             pub fn set_sp(&mut self, value: u16);
@@ -582,6 +593,8 @@ impl Motherboard {
             pub fn set_hl(&mut self, value: u16);
             pub fn set_ix(&mut self, value: u16);
             pub fn set_iy(&mut self, value: u16);
+
+            pub fn is_aligned_with_new_instruction(&self) -> bool;
         }
     }
 }

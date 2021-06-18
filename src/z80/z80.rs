@@ -286,7 +286,7 @@ pub struct Z80 {
 
 }
 
-// Flags related code
+/// Flags related code
 impl Z80 {
     /// Update qll the flags after an add/substract operation
     #[inline]
@@ -312,7 +312,7 @@ impl Z80 {
 
     /// Check if the flag test is successfull
     #[inline]
-    fn test_flag(&self, flag_test: FlagTest) -> bool {
+    pub fn test_flag(&self, flag_test: FlagTest) -> bool {
         let flag = self.reg8(Reg8::F).value();
         match flag_test {
             FlagTest::NZ => Z80Flags::Z.is_off(flag),
@@ -346,10 +346,10 @@ impl Z80 {
     }
 }
 
-// Conditionnaly related code
+/// Conditionnaly related code
 impl Z80 {
     /// instruction is allowed if it is not conditional or if condition is met
-    fn instruction_allowed(&self) -> bool {
+    fn is_condition_met(&self) -> bool {
         let info = self.opcode_information().unwrap();
         match info.flag_test {
             Some(f) => self.test_flag(f),
@@ -359,11 +359,18 @@ impl Z80 {
 }
 
 impl Z80 {
+    /// Check if at the next tick the CPU will start the very beginning of an instruction
+    pub fn is_aligned_with_new_instruction(&self) -> bool {
+        self.next_state == Default::default()
+    }
+
+    /// Check if some operations has to be handled in the middle of the instructions (i.e. read / operation / write) 
     fn must_execute_instruction_in_middle(&self) -> bool {
         let info = self.opcode_information().unwrap();
         info.read_data == DataSource::Pins && info.write_data == DataSource::Pins
     }
 
+    /// Provide the information for the current instruction to execute
     fn opcode_information(&self) -> Option<&OpcodeInformation> {
         self.opcode_information.clone()
     }
@@ -630,7 +637,7 @@ impl Z80 {
                 {
                     // conditional call where condition is not met MUST not arrive there
                     if arg1.is_some() {
-                        assert!(self.instruction_allowed());
+                        assert!(self.is_condition_met());
                     }
                 }
 
@@ -1131,7 +1138,7 @@ impl Z80 {
     }
 }
 
-// Opcode specific code
+/// Opcode specific code
 impl Z80 {
     /// Manage the specific treatment after the read_instruction
     /// TODO check if it does not belong to another tstate !!!
@@ -1158,7 +1165,7 @@ impl Z80 {
     }
 }
 
-// Everything that is related to interruptions
+/// Everything that is related to interruptions
 impl Z80 {
     /// Handle interruption if any
     // must be called only at the end of an instruction
@@ -1198,7 +1205,7 @@ impl Z80 {
     }
 }
 
-// Get registers value
+/// Get registers value
 impl Z80 {
     pub fn pc(&self) -> u16 {
         self.reg16(Reg16::Pc).value()
@@ -1224,9 +1231,49 @@ impl Z80 {
     pub fn iy(&self) -> u16 {
         self.reg16(Reg16::Iy).value()
     }
+
+
+
+
+    pub fn a(&self) -> u8 {
+        self.reg8(Reg8::A).value()
+    }
+    pub fn b(&self) -> u8 {
+        self.reg8(Reg8::B).value()
+    }
+    pub fn d(&self) -> u8 {
+        self.reg8(Reg8::D).value()
+    }
+    pub fn h(&self) -> u8 {
+        self.reg8(Reg8::H).value()
+    }
+    pub fn ixh(&self) -> u8 {
+        self.reg8(Reg8::Ixh).value()
+    }
+    pub fn iyh(&self) -> u8 {
+        self.reg8(Reg8::Iyh).value()
+    }
+
+
+
+    pub fn c(&self) -> u8 {
+        self.reg8(Reg8::C).value()
+    }
+    pub fn e(&self) -> u8 {
+        self.reg8(Reg8::E).value()
+    }
+    pub fn l(&self) -> u8 {
+        self.reg8(Reg8::L).value()
+    }
+    pub fn x(&self) -> u8 {
+        self.reg8(Reg8::Ixl).value()
+    }
+    pub fn y(&self) -> u8 {
+        self.reg8(Reg8::Iyl).value()
+    }
 }
 
-
+/// Set registers value
 impl Z80 {
     pub fn set_pc(&mut self, value: u16) {
         self.reg16_mut(Reg16::Pc).set(value)
@@ -1359,7 +1406,7 @@ impl Chip for Z80 {
 
                     if nb == opcode_information.nb_additional_opcode_bytes {
                         // We have finished to read the opcode
-                        if !self.instruction_allowed() {
+                        if !self.is_condition_met() {
                             // nothing happens there we can read the next instruction without executing anything
                             // serve for call/jp/jr
                             // TODO check if it must serve for loop based instruction
