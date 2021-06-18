@@ -128,6 +128,14 @@ impl Motherboard {
         &mut self.cpu
     }
 
+    pub fn crtc(&self) -> &Crtc {
+        &self.crtc
+    }
+
+    pub fn crtc_mut(&mut self) -> &mut Crtc {
+        &mut self.crtc
+    }
+
     pub fn ga(&self) -> &GateArray {
         &self.ga
     }
@@ -269,6 +277,18 @@ impl Motherboard {
             }
         }
 
+        video
+    }
+
+    pub fn execute_ticks(&mut self, ticks: usize) -> Vec<(RgbLevels, Sync)>{
+        let mut video = Vec::new();
+
+        loop {
+            video.append(&mut self.execute_next_opcode());
+            if video.len() >= ticks {
+                break;
+            }
+        }
         video
     }
 
