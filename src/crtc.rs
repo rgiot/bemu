@@ -649,7 +649,6 @@ impl Crtc {
     }
 }
 
-
 impl Crtc {
     /// Check if the CRTC as generated a VSYNC
     pub fn vsync(&self) -> bool {
@@ -836,7 +835,7 @@ mod test {
                     // execute the CRTC address computation
                     crtc.tick();
 
-                  //  dbg!(char_line, scan_line, char, &crtc);
+                    //  dbg!(char_line, scan_line, char, &crtc);
 
                     // Check that main internal counter are correct
                     assert!(crtc.vcc <= crtc.r4);
@@ -888,73 +887,55 @@ mod test {
     #[test]
     fn test_hsync() {
         let mut crtc = Crtc::default();
-        
+
         crtc.update_memory_address();
-        
+
         // ensure hsync is not present
         while !crtc.hsync() | crtc.vsync() {
             crtc.update_memory_address();
         }
-        
+
         for i in 0..2 {
-            
-            
             let mut hsync_duration = 0;
             while crtc.hsync() {
                 hsync_duration += 1;
                 crtc.update_memory_address();
             }
-            assert_eq!(
-                hsync_duration,
-                crtc.hsync_width()
-            );
-            
+            assert_eq!(hsync_duration, crtc.hsync_width());
+
             let mut hsync_wait = 0;
             while !crtc.hsync() {
                 hsync_wait += 1;
                 crtc.update_memory_address();
             }
-            assert_eq!(
-                hsync_duration + hsync_wait,
-                64
-            );
+            assert_eq!(hsync_duration + hsync_wait, 64);
         }
-        
     }
-
-
 
     #[test]
     fn test_vsync() {
         let mut crtc = Crtc::default();
-        
+
         crtc.update_memory_address();
-        
+
         // ensure hsync is not present
         while !crtc.vsync() {
             crtc.update_memory_address();
         }
-        
+
         for i in 0..2 {
-            
-            
             let mut vsync_duration = 0;
             while crtc.vsync() {
                 vsync_duration += 1;
                 crtc.update_memory_address();
             }
-            
+
             let mut vsync_wait = 0;
             while !crtc.vsync() {
-                vsync_wait+= 1;
+                vsync_wait += 1;
                 crtc.update_memory_address();
             }
-            assert_eq!(
-                vsync_duration + vsync_wait,
-                19968
-            );
+            assert_eq!(vsync_duration + vsync_wait, 19968);
         }
-        
     }
-    
 }

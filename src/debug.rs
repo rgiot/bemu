@@ -28,7 +28,7 @@ impl Monitor {
 
     pub fn monitor_stack(motherboard: &Motherboard, before: u16, after: u16) {
         let sp_orig = motherboard.cpu().reg16(Reg16::Sp).value();
-        let sp = sp_orig.wrapping_sub(after*2);
+        let sp = sp_orig.wrapping_sub(after * 2);
         let size = after + before;
 
         (0..size).rev().for_each(|i| {
@@ -56,7 +56,8 @@ impl Monitor {
     }
 
     pub fn monitor_z80_pins(cpu: &Z80) {
-        println!("MREQ:{} IOREQ:{} WR:{} RD:{} M1:{} RFSH:{}",
+        println!(
+            "MREQ:{} IOREQ:{} WR:{} RD:{} M1:{} RFSH:{}",
             cpu.get_pin(Z80Pin::Neg_MREQ),
             cpu.get_pin(Z80Pin::Neg_IORQ),
             cpu.get_pin(Z80Pin::Neg_WR),
@@ -76,7 +77,8 @@ impl Monitor {
         );
     }
     pub fn monitor_ga_pins(cpu: &GateArray) {
-        println!("A15:{} A14:{} IORQ:{}",
+        println!(
+            "A15:{} A14:{} IORQ:{}",
             cpu.get_pin(GateArrayPin::A15),
             cpu.get_pin(GateArrayPin::A14),
             cpu.get_pin(GateArrayPin::IORQ),
@@ -92,16 +94,11 @@ impl Monitor {
 pub struct DisassembledInstruction {
     pub token: Token,
     pub address: u16,
-    pub memory: SmallVec<[u8;3]>
+    pub memory: SmallVec<[u8; 3]>,
 }
 
 impl ToString for DisassembledInstruction {
     fn to_string(&self) -> String {
-        format!(
-            "0x{:04x} {} {:02x?}", 
-            self.address,
-            self.token, 
-            self.memory
-        )
+        format!("0x{:04x} {} {:02x?}", self.address, self.token, self.memory)
     }
 }

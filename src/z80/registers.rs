@@ -121,9 +121,6 @@ impl Register8 {
     pub fn rrc(&mut self) -> bool {
         rrc(&mut self.val)
     }
-
-
-
 }
 
 /// Represents a 16 bits register by decomposing it in 2 8 bits registers

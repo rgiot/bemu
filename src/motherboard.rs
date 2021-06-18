@@ -1,6 +1,6 @@
 use cpclib_asm::preamble::Token;
-use smallvec::SmallVec;
 use smallvec::smallvec;
+use smallvec::SmallVec;
 
 use crate::chip::*;
 use crate::counter::*;
@@ -144,7 +144,6 @@ impl Motherboard {
         &mut self.ga
     }
 
-
     pub fn ppi(&self) -> &Ppi {
         &self.ppi
     }
@@ -152,7 +151,6 @@ impl Motherboard {
     pub fn ppi_mut(&mut self) -> &mut Ppi {
         &mut self.ppi
     }
-
 
     pub fn t_state_counter(&self) -> &Counter {
         &self.t_state_counter
@@ -290,7 +288,7 @@ impl Motherboard {
         video
     }
 
-    pub fn execute_ticks(&mut self, ticks: usize) -> Vec<(RgbLevels, Sync)>{
+    pub fn execute_ticks(&mut self, ticks: usize) -> Vec<(RgbLevels, Sync)> {
         let mut video = Vec::new();
 
         loop {
@@ -427,10 +425,14 @@ impl Motherboard {
 
         // Sync CRTC to gate array
         sync_pins(
-            &self.crtc, 
-            &[CrtcPin::VS, CrtcPin::HS, CrtcPin::DE], 
-            &mut self.ga, 
-            &[GateArrayPin::VSYNC, GateArrayPin::HSYNC, GateArrayPin::DISPEN]
+            &self.crtc,
+            &[CrtcPin::VS, CrtcPin::HS, CrtcPin::DE],
+            &mut self.ga,
+            &[
+                GateArrayPin::VSYNC,
+                GateArrayPin::HSYNC,
+                GateArrayPin::DISPEN,
+            ],
         );
     }
 }
@@ -438,52 +440,53 @@ impl Motherboard {
 // Block for disassembling related functions
 impl Motherboard {
     /// Return the opcode that will be executed
-    pub fn disassemble_next_instruction(&self) -> DisassembledInstruction
-    {
+    pub fn disassemble_next_instruction(&self) -> DisassembledInstruction {
         self.disassemble_instruction_at(self.cpu.pc.value())
     }
 
     /// Disassemble the instruction at the given address
-    pub fn disassemble_instruction_at(&self, mut pc: u16)  -> DisassembledInstruction {
+    pub fn disassemble_instruction_at(&self, mut pc: u16) -> DisassembledInstruction {
         let address = pc;
-        
+
         let mut read = || {
             let byte = self.read_byte(pc);
             pc += 1;
             byte
         };
-        
+
         let (prefix, ir) = {
             let current = read();
             let prefix = OpcodePrefix::from(current);
             if let OpcodePrefix::None = prefix {
                 (prefix, current)
             } else {
-               (prefix, read())
-           }
+                (prefix, read())
+            }
         };
 
         let opcode_info = prefix.opcode_information(ir);
-        let mut memory: SmallVec<[u8;3]> = if let OpcodePrefix::None = prefix{
+        let mut memory: SmallVec<[u8; 3]> = if let OpcodePrefix::None = prefix {
             smallvec![ir]
         } else {
             smallvec![prefix as u8, ir]
         };
-        
-        for _i in 0..opcode_info.nb_additional_opcode_bytes  {
-           memory.push(read());
-        };
+
+        for _i in 0..opcode_info.nb_additional_opcode_bytes {
+            memory.push(read());
+        }
 
         let token = cpclib_asm::disass::disassemble_with_potential_argument(
             ir,
             &prefix.disassembling_table(),
             &memory[1..],
         )
-        .unwrap().0;
+        .unwrap()
+        .0;
 
-        DisassembledInstruction{
-             token, memory,
-             address
+        DisassembledInstruction {
+            token,
+            memory,
+            address,
         }
     }
 }
@@ -558,7 +561,6 @@ impl Motherboard {
         256 * high + low
     }
 }
-
 
 impl Motherboard {
     delegate::delegate! {
@@ -687,55 +689,29 @@ mod test {
         let mut motherboard = Motherboard::default();
 
         let memory_config = motherboard.memory_config();
-        assert_eq!(
-            memory_config.0.lower_rom,  
-            Flag::Enable
-        );
-        assert_eq!(
-            memory_config.0.upper_rom,  
-            Flag::Enable
-        );
+        assert_eq!(memory_config.0.lower_rom, Flag::Enable);
+        assert_eq!(memory_config.0.upper_rom, Flag::Enable);
 
         motherboard.disable_lower_rom();
         let memory_config = motherboard.memory_config();
-        assert_eq!(
-            memory_config.0.lower_rom,  
-            Flag::Disable
-        );
-        assert_eq!(
-            memory_config.0.upper_rom,  
-            Flag::Enable
-        );
+        assert_eq!(memory_config.0.lower_rom, Flag::Disable);
+        assert_eq!(memory_config.0.upper_rom, Flag::Enable);
 
         motherboard.disable_upper_rom();
         let memory_config = motherboard.memory_config();
-        assert_eq!(
-            memory_config.0.lower_rom,  
-            Flag::Disable
-        );
-        assert_eq!(
-            memory_config.0.upper_rom,  
-            Flag::Disable
-        );        
+        assert_eq!(memory_config.0.lower_rom, Flag::Disable);
+        assert_eq!(memory_config.0.upper_rom, Flag::Disable);
     }
 
     #[test]
     fn test_motherboard_builder() {
-        let  motherboard = MotherboardBuilder::default()
-													.disable_lower_rom()
-													.disable_upper_rom()
-													.build();
+        let motherboard = MotherboardBuilder::default()
+            .disable_lower_rom()
+            .disable_upper_rom()
+            .build();
         let memory_config = motherboard.memory_config();
-                                                    assert_eq!(
-                                                        memory_config.0.lower_rom,  
-                                                        Flag::Disable
-                                                    );
-                                                    assert_eq!(
-                                                        memory_config.0.upper_rom,  
-                                                        Flag::Disable
-                                                    );                                                 
-                                                
-                                                
+        assert_eq!(memory_config.0.lower_rom, Flag::Disable);
+        assert_eq!(memory_config.0.upper_rom, Flag::Disable);
     }
 
     #[test]

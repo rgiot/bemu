@@ -229,7 +229,7 @@ impl Z80Flags {
 pub enum InterruptMode {
     Mode0,
     Mode1,
-    Mode2
+    Mode2,
 }
 impl Default for InterruptMode {
     fn default() -> Self {
@@ -273,7 +273,6 @@ pub struct Z80 {
     pub(crate) iff2: Register8,
     pub(crate) im: InterruptMode,
 
-
     /// Flag set when CPU received an interrupt
     interrupt_received: bool,
 
@@ -283,7 +282,6 @@ pub struct Z80 {
 
     /// Information for the current opcode - Setup after fetching the very first byte
     pub(crate) opcode_information: Option<&'static OpcodeInformation>,
-
 }
 
 /// Flags related code
@@ -364,7 +362,7 @@ impl Z80 {
         self.next_state == Default::default()
     }
 
-    /// Check if some operations has to be handled in the middle of the instructions (i.e. read / operation / write) 
+    /// Check if some operations has to be handled in the middle of the instructions (i.e. read / operation / write)
     fn must_execute_instruction_in_middle(&self) -> bool {
         let info = self.opcode_information().unwrap();
         info.read_data == DataSource::Pins && info.write_data == DataSource::Pins
@@ -469,7 +467,11 @@ impl Z80 {
                 self.reg8_mut(reg).set(byte);
             }
             DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
-                let reg = if reg == Reg16::Pc || reg == Reg16::Sp { Reg16::Wz } else { reg };
+                let reg = if reg == Reg16::Pc || reg == Reg16::Sp {
+                    Reg16::Wz
+                } else {
+                    reg
+                };
                 let reg = if nb == 0 { reg.low() } else { reg.high() };
                 self.reg8_mut(reg).set(byte);
             }
@@ -587,9 +589,7 @@ impl Z80 {
         arg2: Option<&DataAccess>,
     ) {
         match opcode {
-            Mnemonic::Nop | Mnemonic::Out | Mnemonic::In => {
-                
-            }
+            Mnemonic::Nop | Mnemonic::Out | Mnemonic::In => {}
 
             Mnemonic::Add => {
                 match arg1.unwrap() {
@@ -701,11 +701,10 @@ impl Z80 {
                 self.iff1.set(0);
                 self.iff2.set(0);
             }
-            
+
             Mnemonic::Djnz => {
                 self.reg8_mut(Reg8::B).dec();
                 if self.reg8(Reg8::B).value() != 0 {
-
                     let mut sym = SymbolsTableCaseDependent::default();
                     sym.set_symbol_to_value("$", -2);
 
@@ -880,7 +879,6 @@ impl Z80 {
             }
 
             Mnemonic::Ldir => {
-
                 self.handle_repetitive_mnemonic();
             }
 
@@ -925,15 +923,17 @@ impl Z80 {
                 self.set_flag(Z80Flags::C, c);
             }
 
-            Mnemonic::Rr => {  
+            Mnemonic::Rr => {
                 let prev_c = self.test_flag(FlagTest::C);
-                let c = self.reg8_mut(arg1.unwrap().get_register8().unwrap().into()).rr(prev_c);
+                let c = self
+                    .reg8_mut(arg1.unwrap().get_register8().unwrap().into())
+                    .rr(prev_c);
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
             }
 
-            Mnemonic::Rra => {  
+            Mnemonic::Rra => {
                 let prev_c = self.test_flag(FlagTest::C);
                 let c = self.reg8_mut(Reg8::A).rr(prev_c);
                 self.set_flag_off(Z80Flags::H);
@@ -954,16 +954,15 @@ impl Z80 {
             }
 
             Mnemonic::Set => {
-                let bit = arg1.unwrap().expr().unwrap()
-                            .eval().unwrap() as u8;
+                let bit = arg1.unwrap().expr().unwrap().eval().unwrap() as u8;
 
                 match arg2.unwrap() {
                     DataAccess::Register8(reg8) => {
                         self.reg8_mut(reg8.into()).set_bit(bit);
-                    },
+                    }
 
-                    DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)
-                    => {
+                    DataAccess::MemoryRegister16(_)
+                    | DataAccess::IndexRegister16WithIndex(_, _) => {
                         // data is on the pins
                         let mut data = self.get_data_from_pins();
                         set_bit(&mut data, bit);
@@ -1156,7 +1155,10 @@ impl Z80 {
             }
 
             Some(Mnemonic::Ld) => {
-                if let Some(DataAccess::Register16(cpclib_asm::preamble::Register16::Sp)) = opcode_info.token.mnemonic_arg1() { // arg2 is a memory read operation by definition
+                if let Some(DataAccess::Register16(cpclib_asm::preamble::Register16::Sp)) =
+                    opcode_info.token.mnemonic_arg1()
+                {
+                    // arg2 is a memory read operation by definition
                     self.sp = self.wz.clone();
                     self.wz.inc();
                 }
@@ -1175,31 +1177,32 @@ impl Z80 {
     // must be called only at the end of an instruction
     fn instruction_finished(&mut self) {
         // manage the flipflip for interruption
-        if !self.get_pin(Z80Pin::Neg_INT) 
+        if !self.get_pin(Z80Pin::Neg_INT)
             && self.iff1.value() == 1
-            && !matches!(self.next_state, MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None))
+            && !matches!(
+                self.next_state,
+                MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
+            )
         {
-
             assert_eq!(false, self.interrupt_received);
 
             self.interrupt_received = true;
             self.iff1.set(0);
             self.iff2.set(0);
 
-        assert_eq!(self.im, InterruptMode::Mode1,
-            "Interruption {:?} unimplemented", self.im);
+            assert_eq!(
+                self.im,
+                InterruptMode::Mode1,
+                "Interruption {:?} unimplemented",
+                self.im
+            );
 
             self.simulate_call_0x38_after_fetch();
+        } else {
+            self.next_state = Default::default();
+            return;
         }
-        else {
-                self.next_state = Default::default();
-                return;
-        }
-
-
-
     }
-
 
     /// Handcraft a call to let the CPU jump in 0x38
     /// TODO manage a Fake M1 cycle
@@ -1236,9 +1239,6 @@ impl Z80 {
         self.reg16(Reg16::Iy).value()
     }
 
-
-
-
     pub fn a(&self) -> u8 {
         self.reg8(Reg8::A).value()
     }
@@ -1257,8 +1257,6 @@ impl Z80 {
     pub fn iyh(&self) -> u8 {
         self.reg8(Reg8::Iyh).value()
     }
-
-
 
     pub fn c(&self) -> u8 {
         self.reg8(Reg8::C).value()
@@ -1304,7 +1302,6 @@ impl Z80 {
         self.reg16_mut(Reg16::Iy).set(value)
     }
 }
-
 
 impl AddressChip for Z80 {
     fn pins_address() -> &'static [Self::PinType; 16] {

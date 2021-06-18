@@ -591,7 +591,7 @@ pub struct Sync {
 #[derive(Debug)]
 pub enum VSyncCounter {
     NoVsync,
-    VSync(usize)
+    VSync(usize),
 }
 
 impl Default for VSyncCounter {
@@ -604,7 +604,7 @@ impl Default for VSyncCounter {
 #[derive(Debug)]
 pub enum InterruptionSignal {
     NoSignal,
-    Signal(usize)
+    Signal(usize),
 }
 
 /// GateArray emulation of the CPC.
@@ -617,7 +617,7 @@ pub struct GateArray {
     pins: PinsBuffer,
 
     vsync_counter: VSyncCounter,
-inter_sign: InterruptionSignal,
+    inter_sign: InterruptionSignal,
 
     rmr: RMR,
     penr: PENR,
@@ -636,7 +636,7 @@ inter_sign: InterruptionSignal,
     sync: Sync,
 
     /// hsync counter
-    r52: BitMax6
+    r52: BitMax6,
 }
 
 impl Default for GateArray {
@@ -680,7 +680,7 @@ impl Default for GateArray {
                 hsync: false,
             },
 
-            r52: Default::default()
+            r52: Default::default(),
         };
         ga.sync_clocks();
         ga
@@ -804,17 +804,15 @@ impl GateArray {
         if self.r52 == 52.into() {
             self.r52.reset();
             self.request_interrupt();
-        }
-        else {
+        } else {
             match self.vsync_counter {
                 VSyncCounter::VSync(ref mut count) => {
-                    *count += 1; 
+                    *count += 1;
                     if *count == 2 {
                         // 2 lines after vsync counter is reseted.
                         if self.r52.bit(5) {
                             self.r52.reset();
-                        }
-                        else {
+                        } else {
                             // and an interruption could occur
                             self.r52.reset();
                             self.request_interrupt();
@@ -830,7 +828,7 @@ impl GateArray {
 
     fn request_interrupt(&mut self) {
         self.inter_sign = InterruptionSignal::Signal(0);
-        self.set_pin(GateArrayPin::INTERRUPT, false);//activate when low
+        self.set_pin(GateArrayPin::INTERRUPT, false); //activate when low
     }
     delegate! {
         // Delegate all methods EXCEPT video mode as it is bufferized

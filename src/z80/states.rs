@@ -39,10 +39,10 @@ pub(crate) enum TState {
 /// TODO modify for multiprefix opcodes
 pub(crate) enum OpcodePrefix {
     None = 0x00,
-    Dd= 0xdd,
-    Fd=0xfd,
-    Cb=0xcb,
-    Ed=0xed,
+    Dd = 0xdd,
+    Fd = 0xfd,
+    Cb = 0xcb,
+    Ed = 0xed,
 }
 
 /// Contains all the informations needed to drive the next
@@ -133,20 +133,18 @@ impl OpcodeInformation {
     }
 }
 
-
 impl From<u8> for OpcodePrefix {
-    fn from(value: u8) -> Self{
+    fn from(value: u8) -> Self {
         match value {
             0xcb => Self::Cb,
             0xdd => Self::Dd,
             0xed => Self::Ed,
             0xfd => Self::Fd,
-            _ => Self::None
+            _ => Self::None,
         }
     }
 }
 impl OpcodePrefix {
-
     /// Get the opcode information from the LUT
     pub fn opcode_information(&self, opcode: u8) -> &'static OpcodeInformation {
         let table: &[OpcodeInformation; 256] = match self {
@@ -209,13 +207,13 @@ impl OpcodePrefix {
                 AddressSource::Stack(_) => match token.mnemonic() {
                     Some(Mnemonic::Call) => DataSource::Register16(Reg16::Pc),
                     Some(Mnemonic::Push) => {
-                        let reg:Reg16 = match token.mnemonic_arg1() {
-                            Some(DataAccess::Register16(reg)) =>reg.into(),
+                        let reg: Reg16 = match token.mnemonic_arg1() {
+                            Some(DataAccess::Register16(reg)) => reg.into(),
                             Some(DataAccess::IndexRegister16(reg)) => reg.into(),
-                            _ => unreachable!()
+                            _ => unreachable!(),
                         };
                         DataSource::Register16(reg)
-                    },
+                    }
                     _ => unreachable!(),
                 },
                 _ => match token.mnemonic_arg2() {
@@ -491,7 +489,6 @@ impl OpcodePrefix {
             static ref IN_IX: Regex = Regex::new(r"\(IX\)[^$]").unwrap();
             static ref IN_IY: Regex = Regex::new(r"\(IY\)[^$]").unwrap();
             static ref IMMEDIATE: Regex = Regex::new(r"\(nnnn\)[^$]").unwrap();
-
             static ref CALL: Regex = Regex::new(r"^CALL").unwrap();
             static ref PUSH: Regex = Regex::new(r"^PUSH").unwrap();
             static ref SET: Regex = Regex::new(r"^SET").unwrap();
@@ -501,9 +498,9 @@ impl OpcodePrefix {
 
         let repr = self.disassembling_table()[i];
 
-        if IN_HL_END.is_match(repr) &&
-           (SET.is_match(repr) || INC.is_match(repr) || DEC.is_match(repr))
-         {
+        if IN_HL_END.is_match(repr)
+            && (SET.is_match(repr) || INC.is_match(repr) || DEC.is_match(repr))
+        {
             AddressSource::Register16(Reg16::Hl)
         } else if CALL.is_match(repr) || PUSH.is_match(repr) {
             AddressSource::Stack(StackDelta::MinusTwo)
@@ -846,7 +843,7 @@ mod test {
     fn lookup_set_mem_hl() {
         let set = dbg!(&OPCODE_PREFIX_CB[0b11111110]);
         assert_eq!(set.nb_additional_opcode_bytes, 0);
-        assert_eq!(set.read_address, AddressSource::Register16(Reg16::Hl)); // 
+        assert_eq!(set.read_address, AddressSource::Register16(Reg16::Hl)); //
         assert_eq!(set.read_data, DataSource::Pins);
         assert_eq!(set.write_address, AddressSource::Register16(Reg16::Hl)); // we want to write on the stack
         assert_eq!(set.write_data, DataSource::Pins);
