@@ -144,6 +144,16 @@ impl Motherboard {
         &mut self.ga
     }
 
+
+    pub fn ppi(&self) -> &Ppi {
+        &self.ppi
+    }
+
+    pub fn ppi_mut(&mut self) -> &mut Ppi {
+        &mut self.ppi
+    }
+
+
     pub fn t_state_counter(&self) -> &Counter {
         &self.t_state_counter
     }
