@@ -649,6 +649,18 @@ impl Crtc {
     }
 }
 
+
+impl Crtc {
+    /// Check if the CRTC as generated a VSYNC
+    pub fn vsync(&self) -> bool {
+        self.get_pin(CrtcPin::VS)
+    }
+
+    /// Check if the CRTC as generated a HSYNC
+    pub fn hsync(&self) -> bool {
+        self.get_pin(CrtcPin::HS)
+    }
+}
 impl Chip for Crtc {
     type PinType = CrtcPin;
 
@@ -671,7 +683,10 @@ impl Chip for Crtc {
             (true, false) => self.status_register(),
             (true, true) => self.read_crtc_register(),
         };
+    }
 
+    /// Execute the normal CRTC address behavior
+    fn pre_tick(&mut self) {
         self.update_memory_address();
     }
 
@@ -821,7 +836,7 @@ mod test {
                     // execute the CRTC address computation
                     crtc.tick();
 
-                    dbg!(char_line, scan_line, char, &crtc);
+                  //  dbg!(char_line, scan_line, char, &crtc);
 
                     // Check that main internal counter are correct
                     assert!(crtc.vcc <= crtc.r4);
@@ -868,5 +883,37 @@ mod test {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_hsync() {
+        let mut crtc = Crtc::default();
+
+        crtc.update_memory_address();
+
+        // ensure hsync is not present
+        while !crtc.hsync() | crtc.vsync() {
+            crtc.update_memory_address();
+        }
+
+        let mut hsync_duration = 0;
+        while crtc.hsync() {
+            hsync_duration += 1;
+            crtc.update_memory_address();
+        }
+        assert_eq!(
+            hsync_duration,
+            crtc.hsync_width()
+        );
+
+        let mut hsync_wait = 0;
+        while !crtc.hsync() {
+            hsync_duration += 1;
+            crtc.update_memory_address();
+        }
+        assert_eq!(
+            hsync_duration + hsync_wait,
+           64
+        );
     }
 }
