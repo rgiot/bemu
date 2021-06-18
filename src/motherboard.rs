@@ -559,6 +559,33 @@ impl Motherboard {
     }
 }
 
+
+impl Motherboard {
+    delegate::delegate! {
+        to self.cpu {
+            pub fn pc(&self) -> u16;
+            pub fn sp(&self) -> u16;
+            pub fn af(&self) -> u16;
+            pub fn bc(&self) -> u16;
+            pub fn de(&self) -> u16;
+            pub fn hl(&self) -> u16;
+            pub fn ix(&self) -> u16;
+            pub fn iy(&self) -> u16;
+
+
+
+            pub fn set_pc(&mut self, value: u16);
+            pub fn set_sp(&mut self, value: u16);
+            pub fn set_af(&mut self, value: u16);
+            pub fn set_bc(&mut self, value: u16);
+            pub fn set_de(&mut self, value: u16);
+            pub fn set_hl(&mut self, value: u16);
+            pub fn set_ix(&mut self, value: u16);
+            pub fn set_iy(&mut self, value: u16);
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

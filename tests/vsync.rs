@@ -69,7 +69,24 @@ fn test_ppi_vsync_test() {
 												.build();
 	;
 
-	let test_vsync = |ppi: &mut Ppi| {
+;
+
+
+	while !motherboard.crtc().vsync() {
+		motherboard.tick();
+	}
+	assert!(check_vsync_from_ppi(motherboard.ppi_mut()));
+
+
+	while motherboard.crtc().vsync() {
+		motherboard.tick();
+	}
+	assert!(!check_vsync_from_ppi(motherboard.ppi_mut()));
+
+
+}
+
+fn check_vsync_from_ppi(ppi: &mut Ppi) -> bool {
 		// request in 0xf5
 		ppi.off(PpiPin::Neg_CS);
 		ppi.on(PpiPin::Neg_WR);
@@ -85,19 +102,90 @@ fn test_ppi_vsync_test() {
 
 		// check that vsync value is set
 		val & 1 != 0
-	};
+	}
 
+#[test]
+fn test_ppi_vsync_timing() {
+	let mut motherboard = MotherboardBuilder::default()
+												.disable_lower_rom()
+												.disable_upper_rom()	
+												.build();	
 
-	while !motherboard.crtc().vsync() {
+	while !check_vsync_from_ppi(motherboard.ppi_mut()) {
 		motherboard.tick();
 	}
-	assert!(test_vsync(motherboard.ppi_mut()));
+
+	let mut nb_ticks = 0;
+	// consume time within the vsync signal
+	while check_vsync_from_ppi(motherboard.ppi_mut()) {
+		nb_ticks += 1;
+		motherboard.tick();
+	}	
+
+	// consume time when vysnc is not generated
+	while !check_vsync_from_ppi(motherboard.ppi_mut()) {
+		nb_ticks += 1;
+		motherboard.tick();
+	}		
+
+	// assume one frame as elapsed
+	assert_eq!(
+		nb_ticks,
+		19968*16
+	);
+}
 
 
-	while motherboard.crtc().vsync() {
+#[test]
+fn test_z80_vsync() {
+	let mut motherboard = MotherboardBuilder::default()
+	.disable_lower_rom()
+	.disable_upper_rom()	
+	.build();	
+
+	// Wait new vsync
+	while !check_vsync_from_ppi(motherboard.ppi_mut()) {
 		motherboard.tick();
 	}
-	assert!(!test_vsync(motherboard.ppi_mut()));
+	
+	// Wait its end
+	let mut nb_ticks = 0;
+	// consume time within the vsync signal
+	while check_vsync_from_ppi(motherboard.ppi_mut()) {
+		nb_ticks += 1;
+		motherboard.tick();
+	}	
+
+	// inject vsync test codec
+	let prog = cpclib_macros::assemble!("
+		org 0x4000
+		ld b, 0xf5
+loop
+		in a, (c)
+		rra
+		jr nc, loop
+end
+	assert end == 0x4000 + (3+1+1+2)
+	");
+	motherboard.set_pc(0x4000);
+	motherboard.set_pc(0x4000);
+	motherboard.write_buffer(0x4000, prog);
+	
+
+	// wait the detection of vsync by the z80 code
+	while motherboard.pc() != 0x4000 + (3+1+1+2) {
+		nb_ticks += 1;
+		motherboard.tick();
+
+		// safe guard to not indefinitively loop
+		assert!(nb_ticks < (19968 + 64 *2)*16);
+	}
+	
 
 
+	// assume one frame as elapsed
+	assert_eq!(
+		nb_ticks,
+		19968*16
+	);
 }

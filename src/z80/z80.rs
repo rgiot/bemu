@@ -1198,6 +1198,62 @@ impl Z80 {
     }
 }
 
+// Get registers value
+impl Z80 {
+    pub fn pc(&self) -> u16 {
+        self.reg16(Reg16::Pc).value()
+    }
+    pub fn sp(&self) -> u16 {
+        self.reg16(Reg16::Sp).value()
+    }
+    pub fn af(&self) -> u16 {
+        self.reg16(Reg16::Af).value()
+    }
+    pub fn bc(&self) -> u16 {
+        self.reg16(Reg16::Bc).value()
+    }
+    pub fn de(&self) -> u16 {
+        self.reg16(Reg16::De).value()
+    }
+    pub fn hl(&self) -> u16 {
+        self.reg16(Reg16::Hl).value()
+    }
+    pub fn ix(&self) -> u16 {
+        self.reg16(Reg16::Ix).value()
+    }
+    pub fn iy(&self) -> u16 {
+        self.reg16(Reg16::Iy).value()
+    }
+}
+
+
+impl Z80 {
+    pub fn set_pc(&mut self, value: u16) {
+        self.reg16_mut(Reg16::Pc).set(value)
+    }
+    pub fn set_sp(&mut self, value: u16) {
+        self.reg16_mut(Reg16::Sp).set(value)
+    }
+    pub fn set_af(&mut self, value: u16) {
+        self.reg16_mut(Reg16::Af).set(value)
+    }
+    pub fn set_bc(&mut self, value: u16) {
+        self.reg16_mut(Reg16::Bc).set(value)
+    }
+    pub fn set_de(&mut self, value: u16) {
+        self.reg16_mut(Reg16::De).set(value)
+    }
+    pub fn set_hl(&mut self, value: u16) {
+        self.reg16_mut(Reg16::Hl).set(value)
+    }
+    pub fn set_ix(&mut self, value: u16) {
+        self.reg16_mut(Reg16::Ix).set(value)
+    }
+    pub fn set_iy(&mut self, value: u16) {
+        self.reg16_mut(Reg16::Iy).set(value)
+    }
+}
+
 
 impl AddressChip for Z80 {
     fn pins_address() -> &'static [Self::PinType; 16] {
