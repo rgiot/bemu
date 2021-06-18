@@ -418,7 +418,7 @@ impl Motherboard {
             &self.cpu,
             &[Z80Pin::A11, Z80Pin::A9, Z80Pin::A8],
             &mut self.ppi,
-            &[PpiPin::Neg_CS, PpiPin::A9, PpiPin::A8],
+            &[PpiPin::Neg_CS, PpiPin::InA1, PpiPin::InA0],
         );
         self.ppi.set_pin(PpiPin::Neg_RD, Neg_IORD);
         self.ppi.set_pin(PpiPin::Neg_WR, Neg_IOWR);
