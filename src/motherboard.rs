@@ -414,6 +414,14 @@ impl Motherboard {
         self.ppi.set_pin(PpiPin::Neg_WR, Neg_IOWR);
         // CRTC to ppi
         self.ppi.set_pin(PpiPin::B0, self.crtc.get_pin(CrtcPin::VS));
+
+        // Sync CRTC to gate array
+        sync_pins(
+            &self.crtc, 
+            &[CrtcPin::VS, CrtcPin::HS, CrtcPin::DE], 
+            &mut self.ga, 
+            &[GateArrayPin::VSYNC, GateArrayPin::HSYNC, GateArrayPin::DISPEN]
+        );
     }
 }
 
