@@ -1,4 +1,4 @@
-use crate::bits::BitMax6;
+use crate::bits::*;
 use crate::chip::*;
 use crate::memory::Flag;
 use array_init::*;
@@ -636,7 +636,7 @@ pub struct GateArray {
     sync: Sync,
 
     /// hsync counter
-    r52: BitMax6,
+    r52: Bit8Max6,
 }
 
 impl Default for GateArray {
@@ -801,7 +801,7 @@ impl GateArray {
     fn manage_hsync_end(&mut self) {
         self.current_mode = self.next_video_mode();
         self.r52.inc();
-        if self.r52 == 52.into() {
+        if self.r52 == 52 {
             self.r52.reset();
             self.request_interrupt();
         } else {

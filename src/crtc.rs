@@ -1,3 +1,4 @@
+use crate::bits::*;
 use crate::chip::*;
 
 use num_enum::IntoPrimitive;
@@ -141,9 +142,9 @@ pub struct Crtc {
     ///  	The Horizontal Character Counter (an internal CRTC register). Keeps track of the current horizontal character number. When this value equals R1 of the CRTC (horizontal displayed) display output is disabled for the rest of the current line. When this value equals R0 of the CRTC (horizontal total), display output is enabled and this value is reset to zero. When this value equals R2 of the CRTC (horizontal sync position) a new scan line may be started depending on the current HSYNC position of the monitor.
     pub hcc: u8,
     /// The Vertical Character Counter (an internal CRTC register). Keeps track of the current vertical character number. When this value equals R6 of the CRTC (vertical displayed), display output is disabled. When this value equals R4 of the CRTC (vertical total), display output is enabled and the display base address is reset. When this value equals R7 of the CRTC (vertical sync position) a Vertical Sync occurs, the display will start drawing from the top if the current VDUR value is within a threshold range.
-    pub vcc: u8,
+    pub vcc: Bit8Max7,
     ///  	The Vertical Line Counter (an internal CRTC register). Keeps track of the current raster line within the character. When this equals R9 (maximum scan line) of the CRTC the VCC will be incremented next line.
-    pub vlc: u8,
+    pub vlc: Bit8Max5,
     ///  	The Vertical Sync counter (an internal emulator register). When a Vertical Sync occurs this register is set to zero. When a frame flyback is active this will be displayed in light blue and count the lines in the frame flyback period.
     pub vsc: u8,
     /// The Horizontal Display Counter shows the current horizontal position on the monitor being drawn.
@@ -153,8 +154,8 @@ pub struct Crtc {
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
     pub hsc: u8,
 
-    /// Base address (corresponds to bufferised R12/R13)
-    pub base: u16,
+    ///  The MA is reloaded with the value from R12 and R13 when VCC=0 and VLC=0 (that's when a new CRTC screen begin). However, CRTC Type 1 keep updating the MA on every new scanline while VCC=0 (and VLC=<R9)
+    pub ma: u16,
 
     crtc_type: CrtcType,
 }
@@ -190,7 +191,7 @@ impl Default for Crtc {
             hsc: 0, // meaningless when no hsync is present
             hdc: 0,
             vtac: 0,
-            base: Default::default(),
+            ma: Default::default(),
             crtc_type: Default::default(),
         };
         crtc.reset();
@@ -517,7 +518,7 @@ impl Crtc {
         };
 
         if trigger && self.hcc == 0 {
-            self.base = ((self.r12 as u16) << 8).wrapping_add(self.r13 as u16);
+            self.ma = ((self.r12 as u16) << 8).wrapping_add(self.r13 as u16);
         }
     }
     /// VSync in lines
@@ -579,8 +580,8 @@ impl Crtc {
 
             // This is the end of a char line
             if self.vlc == self.r9 + 1 {
-                self.vlc = 0;
-                self.vcc = self.vcc.wrapping_add(1);
+                self.vlc.reset();
+                self.vcc += 1;
 
                 // handle the end of vsync if any
                 if self.vsync() {
@@ -593,7 +594,7 @@ impl Crtc {
                 if self.vcc == self.r4 + 1 {
                     assert_eq!(self.r5, 0, "Need to handle vtac");
                     // This is the end of the screen
-                    self.vcc = 0;
+                    self.vcc.reset();
                 }
             }
         }
@@ -626,10 +627,10 @@ impl Crtc {
     /// they are directly wired to the pin; this fonction replicate them here
     /// should not be called outside of Crtc. Public only for test reasons
     pub fn set_address_on_pins(&mut self) {
-        let address = (self.vcc as u16)
+        let address = (self.vcc.value() as u16)
             .wrapping_mul(self.r1 as u16)
             .wrapping_add(self.hcc as u16)
-            .wrapping_add(self.base);
+            .wrapping_add(self.ma);
 
         self.set_value_in_pins(
             address & ((1 << 15) - 1),
@@ -652,7 +653,7 @@ impl Crtc {
         );
 
         self.set_value_in_pins(
-            self.vlc & 0b11111,
+            self.vlc.value(),
             &[
                 CrtcPin::RA4,
                 CrtcPin::RA3,
@@ -710,7 +711,7 @@ impl Chip for Crtc {
     }
 
     fn reset(&mut self) {
-        self.base = 0;
+        self.ma = 0;
 
         self.r0 = 63;
         self.r1 = 40;
@@ -732,8 +733,8 @@ impl Chip for Crtc {
         self.r17 = 0;
 
         // Set the counters to the limits
-        self.vcc = self.r4;
-        self.vlc = self.r9;
+        self.vcc = self.r4.into();
+        self.vlc = self.r9.into();
         self.hcc = self.r0;
 
         self.set_pin(CrtcPin::DE, true);
@@ -792,10 +793,10 @@ mod test {
 
         crtc.r12 = 0x30;
         crtc.r13 = 0x00;
-        crtc.vcc = 0;
-        crtc.vlc = 0;
+        crtc.vcc.reset();
+        crtc.vlc.reset();
         crtc.hcc = 0;
-        crtc.base = 0x3000;
+        crtc.ma = 0x3000;
         crtc.set_address_on_pins();
 
         let address1 = crtc.get_address_from_pins();
@@ -825,10 +826,10 @@ mod test {
 
         crtc.r12 = 0x00;
         crtc.r13 = 0x00;
-        crtc.vcc = 0;
-        crtc.vlc = 0;
+        crtc.vcc.reset();
+        crtc.vlc.reset();
         crtc.hcc = 0;
-        crtc.base = 0x0000;
+        crtc.ma = 0x0000;
         crtc.set_address_on_pins();
 
         let address1 = crtc.get_address_from_pins();
@@ -861,11 +862,11 @@ mod test {
 
                     // Check that main internal counter are correct
                     assert!(crtc.vcc <= crtc.r4);
-                    assert!(crtc.vlc <= crtc.r9);
+                    assert!(crtc.vlc.value() <= crtc.r9);
                     assert!(crtc.hcc <= crtc.r0);
 
                     assert!(crtc.vcc == char_line);
-                    assert!(crtc.vlc == scan_line);
+                    assert!(crtc.vlc.value() == scan_line);
                     assert!(crtc.hcc == char);
 
                     // Test for border

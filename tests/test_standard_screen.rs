@@ -65,10 +65,10 @@ fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: V
     let mut crtc = Crtc::default();
     crtc.do_write_register(12, 0x30);
     crtc.do_write_register(13, 0x00);
-    crtc.vlc = 7;
-    crtc.vcc = 29;
+    crtc.vlc = 7.into();
+    crtc.vcc = 29.into();
     crtc.hcc = 63;
-    crtc.base = 0x3000;
+    crtc.ma = 0x3000;
     crtc.set_address_on_pins();
 
     // Configure the monitor in a wait state (not a big deal, it happens one char too soon)
@@ -193,10 +193,10 @@ fn test_raster() {
     crtc.do_write_register(13, 0x00);
     crtc.do_write_register(1, 0);
 
-    crtc.vlc = 7;
-    crtc.vcc = 29;
+    crtc.vlc = 7.into();
+    crtc.vcc = 29.into();
     crtc.hcc = 63;
-    crtc.base = 0x3000;
+    crtc.ma = 0x3000;
     crtc.set_address_on_pins();
 
     // Configure the monitor in a wait state (not a big deal, it happens one char too soon)

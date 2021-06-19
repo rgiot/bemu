@@ -57,8 +57,8 @@ impl Monitor {
             "VSC:{}{} VCC:{} VLC:{} VTAC:{} | HVSC:{}{} HDC:{} HCC:{} | VMA:{}", 
             if crtc.vsync(){"*"}else{""},
             crtc.vsc,
-            crtc.vcc,
-            crtc.vlc,
+            crtc.vcc.value(),
+            crtc.vlc.value(),
             crtc.vtac,
 
             if crtc.hsync(){"*"}else{""},

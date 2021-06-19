@@ -1,4 +1,4 @@
-use std::ops::{AddAssign, BitAnd, Deref, Shl, Sub, SubAssign};
+pub use std::ops::{AddAssign, BitAnd, Deref, Shl, Sub, SubAssign};
 
 use num::{
     traits::{WrappingAdd, WrappingSub},
@@ -10,7 +10,7 @@ use num::{
 /**
  * Number stored with a maximum number of bits
  */
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, PartialOrd)]
 pub struct BitMax<T, const C: usize>(T);
 
 impl<T, const C: usize> BitMax<T, C>
@@ -135,7 +135,35 @@ where
     }
 }
 
-pub type BitMax6 = BitMax<u8, 6>;
+
+impl<T, const C: usize> PartialEq<T> for BitMax<T, C> 
+where BitMax<T, C>:From<T> ,
+T: PartialEq + Clone
+{
+    fn eq(&self, other: &T) -> bool {
+        self.value() == *other    
+    }
+}
+
+
+impl<T, const C: usize> PartialOrd<T> for BitMax<T, C> 
+where BitMax<T, C>:From<T> ,
+T: PartialOrd + Clone {
+    fn partial_cmp(&self, other: &T) -> Option<std::cmp::Ordering> {
+        self.value().partial_cmp(other)
+    }
+}
+
+
+
+pub type Bit8Max5 = BitMax<u8, 5>;
+pub type Bit8Max6 = BitMax<u8, 6>;
+pub type Bit8Max7 = BitMax<u8, 7>;
+
+pub enum Bit8MaxVarying {
+    Bit8Max6(Bit8Max6),
+    Bit8Max7(Bit8Max7)
+}
 
 #[cfg(test)]
 mod test_super {
@@ -143,9 +171,9 @@ mod test_super {
 
     #[test]
     fn test_b6() {
-        assert_eq!(BitMax6::mask(), 0b111111);
+        assert_eq!(Bit8Max6::mask(), 0b111111);
 
-        let mut c = BitMax6::from(0);
+        let mut c = Bit8Max6::from(0);
 
         assert_eq!(0, c.value());
 
