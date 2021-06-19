@@ -192,7 +192,10 @@ impl Motherboard {
 
         // Keep this order to avoid side effect mixing previous state and current state
         if self.crtc.is_activated() {
+        //    println!("*");
             self.crtc.tick(); // Virtually uses 16 cycles
+        } else {
+       //     println!(".");
         }
         if self.ppi.is_activated() {
             self.ppi.tick();

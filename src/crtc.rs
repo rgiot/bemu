@@ -577,19 +577,22 @@ impl Crtc {
             // This is the end of the line, we have to trigger all the other stuffs
             self.hcc = 0;
             self.vlc += 1;
+            
+            
+            
+            // handle the end of vsync if any
+            if self.vsync() {
+                self.vsc += 1;
+                if self.vsc == self.vsync_height() {
+                    self.off(CrtcPin::VS);
+                }
+            }
 
             // This is the end of a char line
             if self.vlc == self.r9 + 1 {
                 self.vlc.reset();
                 self.vcc += 1;
 
-                // handle the end of vsync if any
-                if self.vsync() {
-                    self.vsc += 1;
-                    if self.vsc == self.vsync_height() {
-                        self.off(CrtcPin::VS);
-                    }
-                }
 
                 if self.vcc == self.r4 + 1 {
                     assert_eq!(self.r5, 0, "Need to handle vtac");
@@ -614,7 +617,7 @@ impl Crtc {
         }
 
         // Request a vsync if needed
-        if self.vcc == self.r7 {
+        if self.vcc == self.r7 && !self.get_pin(CrtcPin::VS){
             self.vsc = 0;
             self.on(CrtcPin::VS); // Activate Vsync
         }

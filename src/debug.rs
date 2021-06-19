@@ -54,7 +54,7 @@ impl Monitor {
     }
     pub fn monitor_crtc_counters(crtc: &Crtc) {
         println!(
-            "VSC:{}{} VCC:{} VLC:{} VTAC:{} | HVSC:{}{} HDC:{} HCC:{} | VMA:{}", 
+            "VSC:{}{} VCC:{} VLC:{} VTAC:{} | HSC:{}{} HDC:{} HCC:{} | VMA:0x{:x}", 
             if crtc.vsync(){"*"}else{""},
             crtc.vsc,
             crtc.vcc.value(),

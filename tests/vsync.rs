@@ -147,8 +147,14 @@ fn test_z80_vsync_activated() {
 	while !check_vsync_from_ppi(motherboard.ppi_mut()) {
 		motherboard.tick();
 	}
-	assert!(check_vsync_from_ppi(motherboard.ppi_mut()), "PPI does not provide vsync");
-	assert!(motherboard.crtc().get_pin(CrtcPin::VS));
+
+	// The next 128  nops, we still have a vsync
+	for _ in 0..2*64*16 {
+		motherboard.tick();
+		assert!(check_vsync_from_ppi(motherboard.ppi_mut()), "PPI does not provide vsync");
+		assert!(motherboard.crtc().get_pin(CrtcPin::VS));
+		Monitor::monitor_crtc_counters(motherboard.crtc());
+	}
 
 	let mut motherboard = MotherboardBuilder::default()
 		.disable_lower_rom()
