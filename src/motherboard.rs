@@ -237,7 +237,7 @@ impl Motherboard {
             self.write_byte(addr, byte);
             self.cpu.set_pin(Z80Pin::Neg_WR, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
         } else if self.cpu_request_byte_output() {
-            unimplemented!()
+            // there is nothing to do there as the pin syncing method already did everything
         }
     }
 
