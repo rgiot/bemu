@@ -204,19 +204,19 @@ impl Default for Ppi {
 }
 
 impl Ppi {
-    fn is_port_a_addressed(&self) -> bool {
+    pub fn is_port_a_addressed(&self) -> bool {
         !self.get_pin(PpiPin::InA1) && !self.get_pin(PpiPin::InA0)
     }
 
-    fn is_port_b_addressed(&self) -> bool {
+    pub fn is_port_b_addressed(&self) -> bool {
         !self.get_pin(PpiPin::InA1) && self.get_pin(PpiPin::InA0)
     }
 
-    fn is_port_c_addressed(&self) -> bool {
+    pub fn is_port_c_addressed(&self) -> bool {
         self.get_pin(PpiPin::InA1) && !self.get_pin(PpiPin::InA0)
     }
 
-    fn is_control_addressed(&self) -> bool {
+    pub fn is_control_addressed(&self) -> bool {
         self.get_pin(PpiPin::InA1) && self.get_pin(PpiPin::InA0)
     }
 }
@@ -225,21 +225,21 @@ impl Ppi {
     fn set_data_a_on_pins(&mut self, value: u8) {
         self.set_value_in_pins(value, &PPI_PIN_DATA_A_BUS)
     }
-    fn get_data_a_from_pins(&mut self) -> u8 {
+    pub fn get_data_a_from_pins(& self) -> u8 {
         self.get_8bit_value_from_pins(&PPI_PIN_DATA_A_BUS)
     }
 
     fn set_data_b_on_pins(&mut self, value: u8) {
         self.set_value_in_pins(value, &PPI_PIN_DATA_B_BUS)
     }
-    fn get_data_b_from_pins(&mut self) -> u8 {
+    pub fn get_data_b_from_pins(& self) -> u8 {
         self.get_8bit_value_from_pins(&PPI_PIN_DATA_B_BUS)
     }
 
     fn set_data_c_on_pins(&mut self, value: u8) {
         self.set_value_in_pins(value, &PPI_PIN_DATA_C_BUS)
     }
-    fn get_data_c_from_pins(&mut self) -> u8 {
+    pub fn get_data_c_from_pins(& self) -> u8 {
         self.get_8bit_value_from_pins(&PPI_PIN_DATA_C_BUS)
     }
 }
@@ -293,10 +293,13 @@ impl Chip for Ppi {
     type PinType = PpiPin;
 
     fn must_execute_tick(&self) -> bool {
-        !self.get_pin(PpiPin::Neg_CS)
+        !self.get_pin(PpiPin::Neg_CS) &
+        (!self.get_pin(PpiPin::Neg_RD) | !self.get_pin(PpiPin::Neg_WR))
     }
 
     fn execute_tick(&mut self) {
+
+      ///  dbg!(self.is_port_a_addressed() , self.is_port_b_addressed() , self.is_port_c_addressed());
         if self.is_port_a_addressed() && self.mode_a == PpiMode::Mode0 {
             if !self.get_pin(PpiPin::Neg_WR) && self.direction_a == PpiDirection::Output {
                 let byte = self.get_data_from_pins();
@@ -314,6 +317,8 @@ impl Chip for Ppi {
             } else if !self.get_pin(PpiPin::Neg_RD) && self.direction_b == PpiDirection::Input {
                 let byte = self.get_data_b_from_pins();
                 self.set_data_on_pins(byte);
+
+                assert_eq!(byte, self.get_data_from_pins());
             } else {
                 unimplemented!()
             }

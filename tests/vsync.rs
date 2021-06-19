@@ -1,4 +1,4 @@
-use amsrust::{chip::{Activable, Chip, ReadDataChip}, crtc::CrtcPin, debug::Monitor, ga::GateArrayPin, motherboard::MotherboardBuilder, ppi::{Ppi, PpiPin}};
+use amsrust::{chip::{Activable, Chip, ReadDataChip}, crtc::CrtcPin, debug::Monitor, ga::GateArrayPin, motherboard::{self, MotherboardBuilder}, ppi::{Ppi, PpiPin}};
 
 /// CRTC module is supposed to generate properly the vsync
 /// This file aims at testing all the wirings related to CRTC signal
@@ -172,10 +172,14 @@ end
 	while motherboard.pc() != 0x4000 + (2+2) {
 		Monitor::monitor(&motherboard);
 		motherboard.execute_next_opcode();
+		dbg!(motherboard.ppi().get_data_b_from_pins());
+		dbg!(motherboard.ppi().get_data_from_pins());
 	}
-
+	Monitor::monitor(&motherboard);
 	assert!(motherboard.crtc().get_pin(CrtcPin::VS), "Vsync stopped too soon");
 	assert!(motherboard.ppi().get_pin(PpiPin::B0));
+	assert!(motherboard.ppi().is_port_b_addressed());
+	assert_eq!(dbg!(motherboard.ppi().get_data_b_from_pins()) & 1, 1);
 	assert_eq!(dbg!(motherboard.cpu().a()) & 1, 1, "CPU did not get PPI sync signal");
 
 }

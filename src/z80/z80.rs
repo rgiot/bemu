@@ -1454,7 +1454,7 @@ impl Chip for Z80 {
                 self.next_state.inc_state();
             }
             MCycle::Read(TState::T2, nb) | MCycle::Input(TState::T2, nb) => {
-                let byte = self.get_data_from_pins();
+                let byte = dbg!(self.get_data_from_pins());
                 self.store_currently_read_byte(byte, nb);
 
                 self.on(self.next_state.read_pin_type().unwrap());

@@ -187,8 +187,7 @@ impl Motherboard {
     pub fn tick(&mut self) -> (RgbLevels, Sync) {
         // if self.crtc.is_activated() {dbg!(&self.cpu().next_state);}
 
-        // fill bus with memory data if needed
-        self.handle_memory_access();
+        self.handle_write_access();
 
         // Keep this order to avoid side effect mixing previous state and current state
         if self.crtc.is_activated() {
@@ -202,6 +201,8 @@ impl Motherboard {
         }
         self.ga.tick();
         self.pal.tick();
+
+        self.handle_read_access();
 
         if self.cpu.is_activated() {
             self.cpu.tick(); // Virtually uses 4 cycles
@@ -225,31 +226,60 @@ impl Motherboard {
         ga_output
     }
 
-    /// manage the memory accesses (read/write cpu ; read ga)
-    /// TODO implement orchestration between chips
-    pub fn handle_memory_access(&mut self) {
-        if self.cpu_request_byte_read() && !self.ga_request_read() {
-            let addr = self.cpu.get_address_from_pins();
-            let byte = self.read_byte(addr);
-            self.cpu.set_data_on_pins(byte);
-            self.cpu.set_pin(Z80Pin::Neg_RD, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
-        } else if self.cpu_request_byte_write() && !self.ga_request_read() {
-            let addr = self.cpu.get_address_from_pins();
-            let byte = self.cpu.get_data_from_pins();
+    // Manage the operations where CPU requests a write
+    pub fn handle_write_access(&mut self) {
+        let addr = self.cpu.get_address_from_pins();
+        let byte = self.cpu.get_data_from_pins();
+
+        if self.ga_request_read() {
+            unimplemented!();       
+        }  else if self.cpu_request_byte_write() {
             self.write_byte(addr, byte);
             self.cpu.set_pin(Z80Pin::Neg_WR, false); // TODO do the real stuff - but here I am sure to not play with the data bus ...
+        } else if self.cpu_request_byte_output() {
+            unimplemented!()
+        }
+    }
+
+    /// Manage the operations where CPU requests a read
+    pub fn handle_read_access(&mut self) {
+        let addr = self.cpu.get_address_from_pins();
+
+        if self.ga_request_read() {
+            unimplemented!();
+        
+        } else  if self.cpu_request_byte_read() {
+            let byte = self.read_byte(addr);
+            self.cpu.set_data_on_pins(byte);
+            self.cpu.set_pin(Z80Pin::Neg_RD, true); // TODO do the real stuff - but here I am sure to not play with the data bus ...
+        }else if self.cpu_request_byte_input() {
+            let byte = self.input_byte();
+            self.cpu.set_data_on_pins(byte);
+            self.cpu.set_pin(Z80Pin::Neg_RD, true);
         }
     }
 
     #[inline]
     fn cpu_request_byte_read(&self) -> bool {
-        !self.cpu.get_pin(Z80Pin::Neg_RD)
+        !self.cpu.get_pin(Z80Pin::Neg_RD) && !self.cpu.get_pin(Z80Pin::Neg_MREQ)
     }
 
     #[inline]
     fn cpu_request_byte_write(&self) -> bool {
-        !self.cpu.get_pin(Z80Pin::Neg_WR)
+        !self.cpu.get_pin(Z80Pin::Neg_WR)&& !self.cpu.get_pin(Z80Pin::Neg_MREQ)
     }
+
+    #[inline]
+    fn cpu_request_byte_input(&self) -> bool {
+        !self.cpu.get_pin(Z80Pin::Neg_RD) && !self.cpu.get_pin(Z80Pin::Neg_IORQ)
+    }
+
+    #[inline]
+    fn cpu_request_byte_output(&self) -> bool {
+        !self.cpu.get_pin(Z80Pin::Neg_WR)&& !self.cpu.get_pin(Z80Pin::Neg_IORQ)
+    }
+
+
 
     #[inline]
     /// TODO implement that aspect
@@ -314,6 +344,10 @@ impl Motherboard {
         // Make some pins associattions
         let Neg_IOWR = self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
         let Neg_IORD = self.cpu.get_pin(Z80Pin::Neg_RD) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
+
+        if !Neg_IORD {
+            assert!(!self.cpu.get_pin(Z80Pin::Neg_IORQ));
+        }
 
         // GA to CPU
         sync_pins(
@@ -414,7 +448,9 @@ impl Motherboard {
         );
 
         // CPU to ppi
-        sync_pins(&self.cpu, Z80::pins_data(), &mut self.ppi, Ppi::pins_data());
+        if !Neg_IOWR {
+            sync_pins(&self.cpu, Z80::pins_data(), &mut self.ppi, Ppi::pins_data());
+        }
         sync_pins(
             &self.cpu,
             &[Z80Pin::A11, Z80Pin::A9, Z80Pin::A8],
@@ -569,6 +605,22 @@ impl Motherboard {
         let high = self.memory.read(addr.wrapping_add(1), &memory_cfg) as u16;
 
         256 * high + low
+    }
+}
+
+impl Motherboard {
+    /// Return the byte read from a chip
+    /// TODO handle the case where there is a read conflict over several chips
+    fn input_byte(&self) -> u8 {
+        if self.ppi().must_execute_tick() {
+            dbg!(self.ppi().get_data_from_pins())
+        } else if self.ga().must_execute_tick() {
+            self.ga().get_data_from_pins()
+        } else if self.crtc().must_execute_tick() {
+            self.crtc().get_data_from_pins()
+        } else {
+            0xff
+        }
     }
 }
 
