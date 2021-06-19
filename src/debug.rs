@@ -2,6 +2,7 @@ use cpclib_asm::preamble::Token;
 use smallvec::SmallVec;
 
 use crate::chip::Chip;
+use crate::crtc::Crtc;
 use crate::ga::*;
 use crate::motherboard::Motherboard;
 use crate::z80::Z80Flags;
@@ -24,8 +25,49 @@ impl Monitor {
         Monitor::monitor_ga(motherboard.ga());
         Monitor::monitor_ga_pins(motherboard.ga());
 
+        print!("crtc: ");
+        Monitor::monitor_crtc_registers(motherboard.crtc());
+        Monitor::monitor_crtc_counters(motherboard.crtc());
+
         print!("next: ");
         Monitor::monitor_next_instruction(&motherboard)
+    }
+
+    pub fn monitor_crtc_registers(crtc: &Crtc) {
+        println!(
+            "R0:{} R1:{} R2:{} R3:{} R4:{} R5:{} R6:{} R7:{} R8:{} R9:{} R10:{} R11:{} R12:{} R13:{}",
+            crtc.get_r0(),
+            crtc.get_r1(),
+            crtc.get_r2(),
+            crtc.get_r3(),
+            crtc.get_r4(),
+            crtc.get_r5(),
+            crtc.get_r6(),
+            crtc.get_r7(),
+            crtc.get_r8(),
+            crtc.get_r9(),
+            crtc.get_r10(),
+            crtc.get_r11(),
+            crtc.get_r12(),
+            crtc.get_r13(),
+        )
+    }
+    pub fn monitor_crtc_counters(crtc: &Crtc) {
+        println!(
+            "VSC:{}{} VCC:{} VLC:{} VTAC:{} | HVSC:{}{} HDC:{} HCC:{} | VMA:{}", 
+            if crtc.vsync(){"*"}else{""},
+            crtc.vsc,
+            crtc.vcc,
+            crtc.vlc,
+            crtc.vtac,
+
+            if crtc.hsync(){"*"}else{""},
+            crtc.hsc,
+            crtc.hdc,
+            crtc.hcc,
+
+            crtc.vma()
+        );
     }
 
     pub fn monitor_stack(motherboard: &Motherboard, before: u16, after: u16) {
@@ -123,8 +165,10 @@ impl Monitor {
 
     pub fn monitor_ga(ga: &GateArray) {
         println!(
-            "Pen: {:#?}  UR: {:?}  LR: {:?} Palette {:?}",
+            "Pen: {:#?} Mode:{} R52: {} UR: {:?}  LR: {:?} Palette {:?}",
             ga.pen().value(),
+		    ga.current_mode() as u8,
+            ga.r52(),
             ga.upper_rom_pagging(),
             ga.lower_rom_pagging(),
             ga.palette()

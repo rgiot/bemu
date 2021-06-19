@@ -853,6 +853,16 @@ impl GateArray {
     }
 }
 
+/// Accessors
+impl GateArray {
+    pub fn current_mode(&self) -> VideoMode {
+        self.current_mode
+    }
+
+    pub fn r52(&self) -> u8 {
+        *self.r52.deref()
+    }
+}
 impl Chip for GateArray {
     type PinType = GateArrayPin;
 

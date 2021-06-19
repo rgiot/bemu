@@ -1,4 +1,4 @@
-use amsrust::{chip::{Activable, Chip, ReadDataChip}, debug::Monitor, ga::GateArrayPin, motherboard::MotherboardBuilder, ppi::{Ppi, PpiPin}};
+use amsrust::{chip::{Activable, Chip, ReadDataChip}, crtc::CrtcPin, debug::Monitor, ga::GateArrayPin, motherboard::MotherboardBuilder, ppi::{Ppi, PpiPin}};
 
 /// CRTC module is supposed to generate properly the vsync
 /// This file aims at testing all the wirings related to CRTC signal
@@ -137,7 +137,49 @@ fn test_ppi_vsync_timing() {
 
 
 #[test]
-fn test_z80_vsync() {
+fn test_z80_vsync_activated() {
+	let mut motherboard = MotherboardBuilder::default()
+	.disable_lower_rom()
+	.disable_upper_rom()	
+	.build();	
+
+	// Wait new vsync
+	while !check_vsync_from_ppi(motherboard.ppi_mut()) {
+		motherboard.tick();
+	}
+	assert!(check_vsync_from_ppi(motherboard.ppi_mut()), "PPI does not provide vsync");
+	assert!(motherboard.crtc().get_pin(CrtcPin::VS));
+
+	let mut motherboard = MotherboardBuilder::default()
+		.disable_lower_rom()
+		.disable_upper_rom()	
+		.build();	
+
+		let prog = dbg!(cpclib_macros::assemble!("
+		org 0x4000
+		ld b, 0xf5
+		in a, (c)
+		rra
+end
+	assert end == 0x4000 + (2+2+1)
+	"));
+	motherboard.set_pc(0x4000);
+	motherboard.set_sp(0x4000);
+	motherboard.write_buffer(0x4000, prog);
+
+	while motherboard.pc() != 0x4000 + (2+2+1) {
+		Monitor::monitor(&motherboard);
+		motherboard.execute_next_opcode();
+	}
+
+	assert!(motherboard.crtc().get_pin(CrtcPin::VS), "Vsync stopped too soon");
+	assert!(motherboard.ppi().get_pin(PpiPin::B0));
+	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C), "CPU has not retrieved the vsync signal");
+
+}
+
+#[test]
+fn test_z80_vsync_full_frame() {
 	let mut motherboard = MotherboardBuilder::default()
 	.disable_lower_rom()
 	.disable_upper_rom()	
@@ -174,10 +216,14 @@ end
 
 	// wait the detection of vsync by the z80 code
 	// even if z80 timings are wrong the test shall pass as we are sticked with the ticks
-	while motherboard.pc() != 0x4000 + (2+2+1+2) {
+	loop {
 		if motherboard.cpu().is_activated() &&  motherboard.is_aligned_with_new_instruction(){
 			println!();
 			Monitor::monitor(&motherboard);
+
+			if motherboard.pc() == 0x4000 + (2+2+1+2) {
+				break;
+			}
 		}
 
 		nb_ticks += 1;
@@ -190,7 +236,7 @@ end
 
 	assert_eq!(
 		motherboard.pc(),
-		0x4000 + (3+1+1+2) 
+		0x4000 + (2+2+1+2) 
 	);
 
 	// assume one frame as elapsed

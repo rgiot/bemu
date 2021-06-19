@@ -138,20 +138,25 @@ pub struct Crtc {
     r16: u8,
     r17: u8,
 
-    /// Horizontal Char Counter
+    ///  	The Horizontal Character Counter (an internal CRTC register). Keeps track of the current horizontal character number. When this value equals R1 of the CRTC (horizontal displayed) display output is disabled for the rest of the current line. When this value equals R0 of the CRTC (horizontal total), display output is enabled and this value is reset to zero. When this value equals R2 of the CRTC (horizontal sync position) a new scan line may be started depending on the current HSYNC position of the monitor.
     pub hcc: u8,
-    /// Vertical Char Counter
+    /// The Vertical Character Counter (an internal CRTC register). Keeps track of the current vertical character number. When this value equals R6 of the CRTC (vertical displayed), display output is disabled. When this value equals R4 of the CRTC (vertical total), display output is enabled and the display base address is reset. When this value equals R7 of the CRTC (vertical sync position) a Vertical Sync occurs, the display will start drawing from the top if the current VDUR value is within a threshold range.
     pub vcc: u8,
-    /// Vertical Line Counter (Raster address)
+    ///  	The Vertical Line Counter (an internal CRTC register). Keeps track of the current raster line within the character. When this equals R9 (maximum scan line) of the CRTC the VCC will be incremented next line.
     pub vlc: u8,
+    ///  	The Vertical Sync counter (an internal emulator register). When a Vertical Sync occurs this register is set to zero. When a frame flyback is active this will be displayed in light blue and count the lines in the frame flyback period.
+    pub vsc: u8,
+    /// The Horizontal Display Counter shows the current horizontal position on the monitor being drawn.
+    pub hdc: u8,
+    /// The Vertical Total Adjust Counter is shown in light blue when the end of the current CRTC frame is reached (after VCC = R4) and CRTC Register 5 has a value other than zero. This counts up to the value in CRTC register 5 before the next frame is started.
+    pub vtac: u8,
+    /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
+    pub hsc: u8,
 
     /// Base address (corresponds to bufferised R12/R13)
     pub base: u16,
 
     crtc_type: CrtcType,
-
-    pub hsync_counter: u8,
-    pub vsync_counter: u8,
 }
 
 impl Default for Crtc {
@@ -181,10 +186,12 @@ impl Default for Crtc {
             hcc: Default::default(),
             vcc: Default::default(),
             vlc: Default::default(),
+            vsc: 0, // meaningless when no vsync is present
+            hsc: 0, // meaningless when no hsync is present
+            hdc: 0,
+            vtac: 0,
             base: Default::default(),
             crtc_type: Default::default(),
-            hsync_counter: Default::default(),
-            vsync_counter: Default::default(),
         };
         crtc.reset();
         crtc
@@ -553,13 +560,17 @@ impl Crtc {
         }
     }
 
+    /// Run all the CRTC machinery that compute the next CRTC address
     fn update_memory_address(&mut self) {
-        // decrease hsync counter if any
-        if self.hsync_counter != 0 {
-            self.hsync_counter -= 1;
+        if self.hsync() {
+            self.hsc += 1;
+            if self.hsc == self.hsync_width() {
+                self.off(CrtcPin::HS);
+            }
         }
 
         self.hcc = self.hcc.wrapping_add(1); // XXX check if there is a bit limit in the counter
+        self.hdc += 1;
 
         if self.hcc == self.r0 + 1 {
             // This is the end of the line, we have to trigger all the other stuffs
@@ -571,12 +582,16 @@ impl Crtc {
                 self.vlc = 0;
                 self.vcc = self.vcc.wrapping_add(1);
 
-                // decrease vsync counter if any
-                if self.vsync_counter != 0 {
-                    self.vsync_counter -= 1;
+                // handle the end of vsync if any
+                if self.vsync() {
+                    self.vsc += 1;
+                    if self.vsc == self.vsync_height() {
+                        self.off(CrtcPin::VS);
+                    }
                 }
 
                 if self.vcc == self.r4 + 1 {
+                    assert_eq!(self.r5, 0, "Need to handle vtac");
                     // This is the end of the screen
                     self.vcc = 0;
                 }
@@ -592,16 +607,16 @@ impl Crtc {
 
         // Request an hsync if needed
         if self.hcc == self.r2 {
-            self.hsync_counter = self.hsync_width();
+            self.hsc = 0;
+            self.on(CrtcPin::HS);
+            self.hdc = 0; // XXX I am pretty sure I am not reseting it at the right place
         }
 
         // Request a vsync if needed
         if self.vcc == self.r7 {
-            self.vsync_counter = self.vsync_height();
+            self.vsc = 0;
+            self.on(CrtcPin::VS); // Activate Vsync
         }
-
-        self.set_pin(CrtcPin::HS, self.hsync_counter != 0); // Activate Hsync if needed
-        self.set_pin(CrtcPin::VS, self.vsync_counter != 0); // Activate Vsync if needed
 
         self.trigger_new_screen_if_needed();
         self.set_address_on_pins(); // set the address in the pins
@@ -658,6 +673,11 @@ impl Crtc {
     /// Check if the CRTC as generated a HSYNC
     pub fn hsync(&self) -> bool {
         self.get_pin(CrtcPin::HS)
+    }
+
+    ///  	The Video display address. This is derived from the MA register in the CRTC, the horizontal character count HCC and the current row address (RA) register in the CRTC. This is effectively the CPC memory address of the data displayed on the monitor.
+    pub fn vma(&self) -> u16 {
+        self.get_address_from_pins()
     }
 }
 impl Chip for Crtc {
@@ -721,6 +741,8 @@ impl Chip for Crtc {
         self.set_pin(CrtcPin::VS, false);
     }
 }
+
+
 
 impl DataChip for Crtc {
     fn pins_data() -> &'static [Self::PinType; 8] {
