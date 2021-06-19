@@ -163,6 +163,7 @@ fn test_z80_vsync_activated() {
 		in a, (c)
 end
 	assert end == 0x4000 + (2+2)
+		rra
 	"));
 	motherboard.set_pc(0x4000);
 	motherboard.set_sp(0x4000);
@@ -182,6 +183,34 @@ end
 	assert_eq!(dbg!(motherboard.ppi().get_data_b_from_pins()) & 1, 1);
 	assert_eq!(dbg!(motherboard.cpu().a()) & 1, 1, "CPU did not get PPI sync signal");
 
+
+	motherboard.execute_next_opcode();
+	assert_eq!(
+		motherboard.cpu().flag(amsrust::z80::Z80Flags::C),
+		true
+	);
+
+
+	// Wait end of vsync
+	while check_vsync_from_ppi(motherboard.ppi_mut()) {
+		motherboard.tick();
+	}
+
+	// redo the vsync test
+	motherboard.set_pc(0x4000);
+	while motherboard.pc() != 0x4000 + (2+2) {
+		Monitor::monitor(&motherboard);
+		motherboard.execute_next_opcode();
+		dbg!(motherboard.ppi().get_data_b_from_pins());
+		dbg!(motherboard.ppi().get_data_from_pins());
+	}
+	Monitor::monitor(&motherboard);
+
+	assert!(!motherboard.crtc().get_pin(CrtcPin::VS), "Vsync stopped too soon");
+	assert!(!motherboard.ppi().get_pin(PpiPin::B0));
+	assert!(motherboard.ppi().is_port_b_addressed());
+	assert_eq!(dbg!(motherboard.ppi().get_data_b_from_pins()) & 1, 0);
+	assert_eq!(dbg!(motherboard.cpu().a()) & 1, 0);
 }
 
 #[test]
