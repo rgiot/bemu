@@ -492,6 +492,13 @@ impl Motherboard {
             address,
         }
     }
+
+    /// Execute the right amount of ticks to be sure next CPU tick will be in the start of an instruction
+    pub fn tick_until_next_instruction(&mut self) {
+        while !self.is_aligned_with_new_instruction() {
+            self.tick();
+        }
+    }
 }
 
 // Block for the memory related functions

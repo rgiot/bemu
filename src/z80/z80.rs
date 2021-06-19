@@ -365,7 +365,7 @@ impl Z80 {
 impl Z80 {
     /// Check if at the next tick the CPU will start the very beginning of an instruction
     pub fn is_aligned_with_new_instruction(&self) -> bool {
-        self.next_state == Default::default()
+        self.next_state.is_new_opcode()
     }
 
     /// Check if some operations has to be handled in the middle of the instructions (i.e. read / operation / write)

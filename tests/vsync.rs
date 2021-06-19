@@ -156,31 +156,27 @@ fn test_z80_vsync_activated() {
 		Monitor::monitor_crtc_counters(motherboard.crtc());
 	}
 
-	let mut motherboard = MotherboardBuilder::default()
-		.disable_lower_rom()
-		.disable_upper_rom()	
-		.build();	
 
-		let prog = dbg!(cpclib_macros::assemble!("
+	let prog = dbg!(cpclib_macros::assemble!("
 		org 0x4000
 		ld b, 0xf5
 		in a, (c)
-		rra
 end
-	assert end == 0x4000 + (2+2+1)
+	assert end == 0x4000 + (2+2)
 	"));
 	motherboard.set_pc(0x4000);
 	motherboard.set_sp(0x4000);
 	motherboard.write_buffer(0x4000, prog);
 
-	while motherboard.pc() != 0x4000 + (2+2+1) {
+	motherboard.tick_until_next_instruction();
+	while motherboard.pc() != 0x4000 + (2+2) {
 		Monitor::monitor(&motherboard);
 		motherboard.execute_next_opcode();
 	}
 
 	assert!(motherboard.crtc().get_pin(CrtcPin::VS), "Vsync stopped too soon");
 	assert!(motherboard.ppi().get_pin(PpiPin::B0));
-	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C), "CPU has not retrieved the vsync signal");
+	assert_eq!(dbg!(motherboard.cpu().a()) & 1, 1, "CPU did not get PPI sync signal");
 
 }
 
