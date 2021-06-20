@@ -46,13 +46,13 @@ pub enum GateArrayPin {
     /// Vertical synchronisation from CRTC
     VSYNC = 1 << 14,
     /// The CPU request an input/output (ignored if does not match)
-    IORQ = 1 << 15,
+    Neg_IORQ = 1 << 15,
     /// CPU received an interruption signal
     M1 = 1 << 16,
     /// CPU wants to access the memory
     MERQ = 1 << 17,
     /// CPU wants to read the memory
-    RD = 1 << 18,
+    Neg_RD = 1 << 18,
 
     A15 = 1 << 19,
 
@@ -869,7 +869,7 @@ impl Chip for GateArray {
     fn must_execute_tick(&self) -> bool {
         !self.get_pin(GateArrayPin::A15)
             && self.get_pin(GateArrayPin::A14)
-            && !self.get_pin(GateArrayPin::IORQ)
+            && !self.get_pin(GateArrayPin::Neg_IORQ)
     }
 
     /// Change the screen mode when hsync is set
@@ -897,7 +897,8 @@ impl Chip for GateArray {
 
     /// React to the port addressing of the CPU
     fn execute_tick(&mut self) {
-        if !self.get_pin(GateArrayPin::RD) {
+        if self.get_pin(GateArrayPin::Neg_RD) {
+            // out expected
             let command = dbg!(self.get_data_from_pins());
 
             if PENR::is_addressed(command) {
@@ -912,6 +913,7 @@ impl Chip for GateArray {
                 }
             }
         } else {
+            // read expected
             unimplemented!("Read on GA not implemented");
         }
     }

@@ -35,21 +35,22 @@ impl Monitor {
 
     pub fn monitor_crtc_registers(crtc: &Crtc) {
         println!(
-            "R0:{} R1:{} R2:{} R3:{} R4:{} R5:{} R6:{} R7:{} R8:{} R9:{} R10:{} R11:{} R12:{} R13:{}",
-            crtc.get_r0(),
-            crtc.get_r1(),
-            crtc.get_r2(),
-            crtc.get_r3(),
-            crtc.get_r4(),
-            crtc.get_r5(),
-            crtc.get_r6(),
-            crtc.get_r7(),
-            crtc.get_r8(),
-            crtc.get_r9(),
-            crtc.get_r10(),
-            crtc.get_r11(),
-            crtc.get_r12(),
-            crtc.get_r13(),
+            "AR:{} R0:{} R1:{} R2:{} R3:{} R4:{} R5:{} R6:{} R7:{} R8:{} R9:{} R10:{} R11:{} R12:{} R13:{}",
+            crtc.ar(),
+            crtc.r0(),
+            crtc.r1(),
+            crtc.r2(),
+            crtc.r3(),
+            crtc.r4(),
+            crtc.r5(),
+            crtc.r6(),
+            crtc.r7(),
+            crtc.r8(),
+            crtc.r9(),
+            crtc.r10(),
+            crtc.r11(),
+            crtc.r12(),
+            crtc.r13(),
         )
     }
     pub fn monitor_crtc_counters(crtc: &Crtc) {
@@ -179,7 +180,7 @@ impl Monitor {
             "A15:{} A14:{} IORQ:{}",
             cpu.get_pin(GateArrayPin::A15),
             cpu.get_pin(GateArrayPin::A14),
-            cpu.get_pin(GateArrayPin::IORQ),
+            cpu.get_pin(GateArrayPin::Neg_IORQ),
         );
     }
 

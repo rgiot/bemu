@@ -108,9 +108,9 @@ fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: V
     let crtc_address = crtc.get_address_from_pins();
     println!("0x{:x}", crtc_address);
 
-    for char_line in 0..=crtc.get_r4() {
-        for scan_line in 0..=crtc.get_r9() {
-            for char in 0..=crtc.get_r0() {
+    for char_line in 0..=crtc.r4() {
+        for scan_line in 0..=crtc.r9() {
+            for char in 0..=crtc.r0() {
                 for pixel in 0..16 {
                     beginning_steps(&mut ga, &mut crtc);
 
@@ -236,9 +236,9 @@ fn test_raster() {
     let crtc_address = crtc.get_address_from_pins();
     println!("0x{:x}", crtc_address);
 
-    for char_line in 0..=crtc.get_r4() {
-        for scan_line in 0..=crtc.get_r9() {
-            for char in 0..=crtc.get_r0() {
+    for char_line in 0..=crtc.r4() {
+        for scan_line in 0..=crtc.r9() {
+            for char in 0..=crtc.r0() {
                 for pixel in 0..16 {
                     beginning_steps(&mut ga, &mut crtc);
 

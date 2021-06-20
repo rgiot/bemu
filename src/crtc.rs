@@ -348,60 +348,66 @@ impl CrtcType {
 }
 
 impl Crtc {
-    pub fn get_r0(&self) -> u8 {
+    pub fn r0(&self) -> u8 {
         self.r0
     }
-    pub fn get_r1(&self) -> u8 {
+    pub fn r1(&self) -> u8 {
         self.r1
     }
-    pub fn get_r2(&self) -> u8 {
+    pub fn r2(&self) -> u8 {
         self.r2
     }
-    pub fn get_r3(&self) -> u8 {
+    pub fn r3(&self) -> u8 {
         self.r3
     }
-    pub fn get_r4(&self) -> u8 {
+    pub fn r4(&self) -> u8 {
         self.r4
     }
-    pub fn get_r5(&self) -> u8 {
+    pub fn r5(&self) -> u8 {
         self.r5
     }
-    pub fn get_r6(&self) -> u8 {
+    pub fn r6(&self) -> u8 {
         self.r6
     }
-    pub fn get_r7(&self) -> u8 {
+    pub fn r7(&self) -> u8 {
         self.r7
     }
-    pub fn get_r8(&self) -> u8 {
+    pub fn r8(&self) -> u8 {
         self.r8
     }
-    pub fn get_r9(&self) -> u8 {
+    pub fn r9(&self) -> u8 {
         self.r9
     }
-    pub fn get_r10(&self) -> u8 {
+    pub fn r10(&self) -> u8 {
         self.r10
     }
-    pub fn get_r11(&self) -> u8 {
+    pub fn r11(&self) -> u8 {
         self.r11
     }
-    pub fn get_r12(&self) -> u8 {
+    pub fn r12(&self) -> u8 {
         self.r12
     }
-    pub fn get_r13(&self) -> u8 {
+    pub fn r13(&self) -> u8 {
         self.r13
     }
-    pub fn get_r14(&self) -> u8 {
+    pub fn r14(&self) -> u8 {
         self.r14
     }
-    pub fn get_r15(&self) -> u8 {
+    pub fn r15(&self) -> u8 {
         self.r15
     }
-    pub fn get_r16(&self) -> u8 {
+    pub fn r16(&self) -> u8 {
         self.r16
     }
-    pub fn get_r17(&self) -> u8 {
+    pub fn r17(&self) -> u8 {
         self.r17
     }
+    pub fn ar(&self) -> u8 {
+        self.ar
+    }
+}
+
+impl Crtc {
 
     /// Execute the CRTC register selection
     pub fn select_crtc_register(&mut self) {
@@ -695,11 +701,13 @@ impl Chip for Crtc {
     }
 
     fn must_execute_tick(&self) -> bool {
-        !self.get_pin(CrtcPin::CS)
+        !self.get_pin(CrtcPin::CS)  & !self.get_pin(CrtcPin::EN)
     }
 
     /// Execute the requested command from the CPU
     fn execute_tick(&mut self) {
+
+        unimplemented!();
         match (self.get_pin(CrtcPin::RW), self.get_pin(CrtcPin::RS)) {
             (false, false) => self.select_crtc_register(),
             (false, true) => self.write_crtc_register(),
@@ -778,6 +786,11 @@ impl Activable for Crtc {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_chip_selection() {
+        unimplemented!()
+    }
 
     #[test]
     fn test_address_generation_0xc000() {

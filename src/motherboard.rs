@@ -379,8 +379,8 @@ impl Motherboard {
             &[
                 GateArrayPin::A14,
                 GateArrayPin::A15,
-                GateArrayPin::IORQ,
-                GateArrayPin::RD,
+                GateArrayPin::Neg_IORQ,
+                GateArrayPin::Neg_RD,
             ],
         );
 
@@ -418,13 +418,12 @@ impl Motherboard {
         // CPU to CRTC
         self.crtc.set_pin(
             CrtcPin::EN,
-            !self.cpu.get_pin(Z80Pin::Neg_IORQ)
-                && (!self.cpu.get_pin(Z80Pin::Neg_RD) || !self.cpu.get_pin(Z80Pin::Neg_WR)),
+            (Neg_IORD & Neg_IOWR),
         );
 
         sync_pins(
             &self.cpu,
-            &[Z80Pin::A8, Z80Pin::A9, Z80Pin::A15],
+            &[Z80Pin::A8, Z80Pin::A9, Z80Pin::A14],
             &mut self.crtc,
             &[CrtcPin::RS, CrtcPin::RW, CrtcPin::CS],
         );

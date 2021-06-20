@@ -1,4 +1,4 @@
-use amsrust::{debug::Monitor, motherboard::MotherboardBuilder, z80::{HasValue, Reg16}};
+use amsrust::{debug::Monitor, motherboard::{self, MotherboardBuilder}, z80::{HasValue, Reg16}};
 use amsrust::crtc;
 
 #[test]
@@ -24,7 +24,7 @@ fn test_crtc_registers_modification(){
 
 	let end_pattern = cpclib_macros::assemble!(" jr $");
 	assert_eq!(
-		motherboard.crtc().get_r6(),
+		motherboard.crtc().r6(),
 		25
 	);
 	loop {
@@ -42,9 +42,13 @@ fn test_crtc_registers_modification(){
 	}
 	Monitor::monitor(&motherboard);
 	
+	assert_eq!(
+		motherboard.crtc().ar(),
+		6
+	);
 
 	assert_eq!(
-		motherboard.crtc().get_r6(),
+		motherboard.crtc().r6(),
 		0
 	);
 }
