@@ -1,7 +1,6 @@
 import pandas as pd
 import sys
 import matplotlib.pyplot as plt
-from matplotlib import gridspec
 
 fname = sys.argv[1]
 df = pd.read_csv(fname)
@@ -12,7 +11,9 @@ fig = plt.gcf()
 nb_sig = len(df.columns)
 for i, col in enumerate(df):
 	values = df[col].values
+	nb_events = len(values)
 
+	# Handle real data
 	plt.subplot(nb_sig,1,i+1)
 	plt.plot(values, 
 			drawstyle="steps", 

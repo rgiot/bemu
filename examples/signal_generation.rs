@@ -63,14 +63,14 @@ impl TickCollector {
 			.map(|d| d.1)
 			.join(",");
 
-		println!("{}", header);
+		println!("16MHz,{}", header);
 
 		for row in 0..self.len() {
 			let line = self.collected.iter()
 				.map(|d| d[row])
 				.map(|b| if b {"1"} else{"0"})
 				.join(",");
-			println!("{}", line)
+			println!("0,{}\n1,{}", line,line)
 		}
 	}
 
