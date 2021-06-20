@@ -1,19 +1,57 @@
 use std::pin::Pin;
 
-use amsrust::{chip::Chip, crtc::CrtcPin, ga::GateArrayPin, motherboard::*, z80::{Z80, Z80Pin}};
+use amsrust::{chip::{Chip, ReadAddressChip, ReadDataChip}, crtc::CrtcPin, ga::GateArrayPin, motherboard::*, z80::{Z80, Z80Pin}};
 use cpclib_macros::*;
 use itertools::Itertools;
 
 enum PinEnum {
 	Cpu(Z80Pin),
 	Ga(GateArrayPin),
-	Crtc(CrtcPin)
+	Crtc(CrtcPin),
+
+	CpuAddr,
+	CpuData,
+	CrtcAddr
+}
+
+enum PinData {
+	Bool(bool),
+	Value(u16)
+}
+
+impl From<bool> for PinData {
+	fn from(d: bool) -> Self {
+		Self::Bool(d)
+	}
+}
+impl From<u16> for PinData {
+	fn from(d: u16) -> Self {
+		Self::Value(d)
+	}
+}
+
+impl ToString for PinData {
+	fn to_string(&self) -> String {
+		match self {
+			Self::Bool(b) => {
+				if *b {
+					"1".to_owned()
+				}
+				else {
+					"0".to_owned()
+				}
+			},
+			Self::Value(v) => {
+				v.to_string()
+			}
+		}
+	}
 }
 
 
 struct  TickCollector {
 	/// List of collected bits
-	collected: Vec<Vec<bool>>,
+	collected: Vec<Vec<PinData>>,
 	/// List of pins to collect
 	pins: Vec<(PinEnum, &'static str)>
 }
@@ -30,8 +68,13 @@ impl Default for TickCollector {
 			(PinEnum::Cpu(Z80Pin::Neg_IORQ), "/IORQ"),
 			(PinEnum::Cpu(Z80Pin::Neg_MREQ), "/MREQ"),
 
+			(PinEnum::CpuAddr, "CPU ADDR"),
+			(PinEnum::CpuData, "CPU DATA"),
+
 			(PinEnum::Crtc(CrtcPin::CS), "CS"),
-			(PinEnum::Crtc(CrtcPin::EN), "EN")
+			(PinEnum::Crtc(CrtcPin::EN), "EN"),
+
+			(PinEnum::CrtcAddr, "SCREEN"),
 		];
 
 		let collected = pins.iter()
@@ -49,12 +92,18 @@ impl TickCollector {
 	fn collect(&mut self, motherboard: &Motherboard) {
 
 		for (idx, pin_data) in self.pins.iter().enumerate() {
-			let bit = match pin_data.0 {
-				PinEnum::Ga(pin) => motherboard.ga().get_pin(pin),
-				PinEnum::Cpu(pin) => motherboard.cpu().get_pin(pin),
-				PinEnum::Crtc(pin) => motherboard.crtc().get_pin(pin),
+
+			let data: PinData = match pin_data.0 {
+				PinEnum::Ga(pin) => motherboard.ga().get_pin(pin).into(),
+				PinEnum::Cpu(pin) => motherboard.cpu().get_pin(pin).into(),
+				PinEnum::Crtc(pin) => motherboard.crtc().get_pin(pin).into(),
+
+				PinEnum::CpuAddr => motherboard.cpu().get_address_from_pins().into(),
+				PinEnum::CpuData => (motherboard.cpu().get_data_from_pins() as u16).into(),
+
+				PinEnum::CrtcAddr => {motherboard.crtc().get_address_from_pins().into()}
 			};
-			self.collected[idx].push(bit);
+			self.collected[idx].push(data);
 		}
 	}
 
@@ -67,8 +116,8 @@ impl TickCollector {
 
 		for row in 0..self.len() {
 			let line = self.collected.iter()
-				.map(|d| d[row])
-				.map(|b| if b {"1"} else{"0"})
+				.map(|d| &d[row])
+				.map(|b| b.to_string())
 				.join(",");
 			println!("0,{}\n1,{}", line,line)
 		}
