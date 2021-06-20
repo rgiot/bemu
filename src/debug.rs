@@ -1,8 +1,8 @@
 use cpclib_asm::preamble::Token;
 use smallvec::SmallVec;
 
-use crate::chip::Chip;
-use crate::crtc::Crtc;
+use crate::chip::{Chip, ReadAddressChip, ReadDataChip};
+use crate::crtc::{Crtc, CrtcPin};
 use crate::ga::*;
 use crate::motherboard::Motherboard;
 use crate::z80::Z80Flags;
@@ -15,21 +15,27 @@ impl Monitor {
     pub fn monitor(motherboard: &Motherboard) {
         print!("z80: ");
         Monitor::monitor_z80(motherboard.cpu());
+        print!("\t");
         Monitor::monitor_z80_flags(motherboard.cpu());
+        print!("\t");
         Monitor::monitor_z80_pins(motherboard.cpu());
 
-        print!("stack: ");
+        print!("stack:\t");
         Monitor::monitor_stack(motherboard, 2, 8);
 
-        print!("ga: ");
+        print!("ga:\t");
         Monitor::monitor_ga(motherboard.ga());
+        print!("\t");
         Monitor::monitor_ga_pins(motherboard.ga());
 
-        print!("crtc: ");
+        print!("crtc:\t");
         Monitor::monitor_crtc_registers(motherboard.crtc());
+        print!("\t");
         Monitor::monitor_crtc_counters(motherboard.crtc());
+        print!("\t");
+        Monitor::monitor_crtc_pins(motherboard.crtc());
 
-        print!("next: ");
+        print!("next:\t");
         Monitor::monitor_next_instruction(&motherboard)
     }
 
@@ -53,6 +59,7 @@ impl Monitor {
             crtc.r13(),
         )
     }
+
     pub fn monitor_crtc_counters(crtc: &Crtc) {
         println!(
             "VSC:{}{} VCC:{} VLC:{} VTAC:{} | HSC:{}{} HDC:{} HCC:{} | VMA:0x{:x}", 
@@ -68,6 +75,17 @@ impl Monitor {
             crtc.hcc,
 
             crtc.vma()
+        );
+    }
+
+    pub fn monitor_crtc_pins(crtc: &Crtc) {
+        println!("CCLK:{} EN:{} A8/RS:{} A9/RW:{} A14/CS:{}, data: {}",
+            crtc.get_pin(CrtcPin::CCLK),
+            crtc.get_pin(CrtcPin::EN),
+            crtc.get_pin(CrtcPin::RS),
+            crtc.get_pin(CrtcPin::RW),
+            crtc.get_pin(CrtcPin::CS),
+            crtc.get_data_from_pins(),
         );
     }
 
@@ -102,13 +120,15 @@ impl Monitor {
 
     pub fn monitor_z80_pins(cpu: &Z80) {
         println!(
-            "MREQ:{} IOREQ:{} WR:{} RD:{} M1:{} RFSH:{}",
+            "MREQ:{} IOREQ:{} WR:{} RD:{} M1:{} RFSH:{} ADR:0x{:x} DATA:{}",
             cpu.get_pin(Z80Pin::Neg_MREQ),
             cpu.get_pin(Z80Pin::Neg_IORQ),
             cpu.get_pin(Z80Pin::Neg_WR),
             cpu.get_pin(Z80Pin::Neg_RD),
             cpu.get_pin(Z80Pin::Neg_M1),
-            cpu.get_pin(Z80Pin::Neg_RFSH)
+            cpu.get_pin(Z80Pin::Neg_RFSH),
+            cpu.get_address_from_pins(),
+            cpu.get_data_from_pins()
         );
     }
 

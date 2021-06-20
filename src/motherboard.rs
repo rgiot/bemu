@@ -334,6 +334,7 @@ impl Motherboard {
     }
 
     /// Make the appropriate copy between some pins of some chips to other (we simulate the various buses here)
+    /// TODO improve behavior by handling BUSACK BUSREQ
     fn sync_chips_pins(&mut self) {
         // Backup previous state
         self.ga.save_pins_state();

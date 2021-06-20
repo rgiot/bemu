@@ -708,8 +708,8 @@ impl GateArray {
     }
 
     pub fn sync_clocks(&mut self) {
-        self.set_pin(GateArrayPin::NCPU, (self.clock % 4) >= 2);
-        self.set_pin(GateArrayPin::CCLK, (self.clock % 16) >= 8);
+        self.set_pin(GateArrayPin::NCPU, ((self.clock + 1) % 4) >= 2); // this delay is needed to let time to CRTC to get cpu infos from pins
+        self.set_pin(GateArrayPin::CCLK, ((self.clock + 0) % 16) >= 8);
     }
 
     /// get the active video mode

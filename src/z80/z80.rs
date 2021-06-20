@@ -1344,7 +1344,7 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
-        //dbg!(&self.next_state);
+        dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
@@ -1512,7 +1512,7 @@ impl Chip for Z80 {
             }
             MCycle::Write(TState::T2, nb) | MCycle::Output(TState::T2, nb) => {
                 self.off(self.next_state.write_pin_type().unwrap());
-                self.off(Z80Pin::Neg_WR);
+                self.off(Z80Pin::Neg_WR); // or is it the writer that does that ?
 
                 let byte = self.get_byte_to_write_from_opcode_information(nb);
                 self.set_data_on_pins(byte);

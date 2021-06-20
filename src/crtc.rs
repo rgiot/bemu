@@ -706,8 +706,6 @@ impl Chip for Crtc {
 
     /// Execute the requested command from the CPU
     fn execute_tick(&mut self) {
-
-        unimplemented!();
         match (self.get_pin(CrtcPin::RW), self.get_pin(CrtcPin::RS)) {
             (false, false) => self.select_crtc_register(),
             (false, true) => self.write_crtc_register(),
