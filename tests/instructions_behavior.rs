@@ -767,6 +767,7 @@ fn execute_outd() {
 		outd ; put white ink
 
 		jr $ ; end of test
+		org 0x5000
 table
 		db 0x4b
 	");
@@ -779,6 +780,11 @@ table
 	assert_eq!(
 		motherboard.cpu().b(),
 		0x7f
+	);
+
+	assert_eq!(
+		motherboard.cpu().hl(),
+		0x5000-1
 	);
 }
 
