@@ -897,7 +897,11 @@ impl Chip for GateArray {
 
     /// React to the port addressing of the CPU
     fn execute_tick(&mut self) {
-        if self.get_pin(GateArrayPin::Neg_RD) {
+        if !self.get_pin(GateArrayPin::Neg_RD) {
+             // read expected
+             unimplemented!("Read on GA not implemented");
+        }
+        else {
             // out expected
             let command = dbg!(self.get_data_from_pins());
 
@@ -912,9 +916,6 @@ impl Chip for GateArray {
                     self.r52.reset();
                 }
             }
-        } else {
-            // read expected
-            unimplemented!("Read on GA not implemented");
         }
     }
 
