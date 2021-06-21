@@ -621,7 +621,7 @@ impl Motherboard {
     /// TODO handle the case where there is a read conflict over several chips
     fn input_byte(&self) -> u8 {
         if self.ppi().must_execute_tick() {
-            dbg!(self.ppi().get_data_from_pins())
+            self.ppi().get_data_from_pins()
         } else if self.ga().must_execute_tick() {
             self.ga().get_data_from_pins()
         } else if self.crtc().must_execute_tick() {

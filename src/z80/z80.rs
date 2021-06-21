@@ -824,7 +824,7 @@ impl Z80 {
                 };
 
                 if do_jump {
-                    dbg!("The implementation is incorrect. An additional mcycle must handle the operation");
+            //        dbg!("The implementation is incorrect. An additional mcycle must handle the operation");
 
                     let mut sym = SymbolsTableCaseDependent::default();
                     sym.set_symbol_to_value("$", -2);
@@ -832,7 +832,7 @@ impl Z80 {
                     let expr = arg2.unwrap().expr().unwrap();
                     let displacement = expr.relative_delta().unwrap();
 
-                    dbg!(displacement);
+       //             dbg!(displacement);
 
                     // the very same value is also here
                     //   let displacement = self.wz.low().value() as i8 as i16 as u16;
@@ -1349,7 +1349,7 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
-        dbg!(&self.next_state);
+    //    dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
@@ -1459,7 +1459,7 @@ impl Chip for Z80 {
                 self.next_state.inc_state();
             }
             MCycle::Read(TState::T2, nb) | MCycle::Input(TState::T2, nb) => {
-                let byte = dbg!(self.get_data_from_pins());
+                let byte = self.get_data_from_pins();
                 self.store_currently_read_byte(byte, nb);
 
                 self.on(self.next_state.read_pin_type().unwrap());
