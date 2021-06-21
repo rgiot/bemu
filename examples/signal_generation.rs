@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use amsrust::{chip::{Chip, ReadAddressChip, ReadDataChip}, crtc::CrtcPin, ga::GateArrayPin, motherboard::*, z80::{Z80, Z80Pin}};
+use amsrust::{chip::{Chip, ReadAddressChip, ReadDataChip}, crtc::CrtcPin, debug::Monitor, ga::GateArrayPin, motherboard::*, z80::{Z80, Z80Pin}};
 use cpclib_macros::*;
 use itertools::Itertools;
 
@@ -63,6 +63,8 @@ impl Default for TickCollector {
 			(PinEnum::Ga(GateArrayPin::NCPU), "NCPU"),
 
 			(PinEnum::Cpu(Z80Pin::Neg_M1), "/M1"),
+			(PinEnum::Cpu(Z80Pin::Neg_WAIT), "/WAIT"),
+			(PinEnum::Cpu(Z80Pin::Neg_RFSH), "/RFSH"),
 			(PinEnum::Cpu(Z80Pin::Neg_RD), "/RD"),
 			(PinEnum::Cpu(Z80Pin::Neg_WR), "/WR"),
 			(PinEnum::Cpu(Z80Pin::Neg_IORQ), "/IORQ"),
@@ -147,6 +149,31 @@ fn thirty_two_nops(motherboard: &mut Motherboard) {
 	follow_nticks(motherboard, 32);
 }
 
+fn execute_code(motherboard: &mut Motherboard, init: &[u8], code: &[u8]) {
+	let mut collector = TickCollector::default();
+
+	motherboard.write_buffer(0x4000, init);
+	motherboard.set_pc(0x4000);
+	motherboard.tick_until_next_instruction();
+	while motherboard.pc() != 0x4000 + init.len() as u16 {
+		motherboard.execute_next_opcode();
+	}
+
+
+	motherboard.write_buffer(0x4000, dbg!(code));
+	motherboard.set_pc(0x4000);
+
+
+//	Monitor::monitor(motherboard);
+
+	while  motherboard.pc() != 0x4000 + code.len() as u16 || !motherboard.is_aligned_with_new_instruction() {
+//	Monitor::monitor(motherboard);
+		collector.collect(&motherboard);
+		motherboard.tick();
+	}
+
+	collector.render();
+}
 
 fn main() {
 	let mut motherboard = MotherboardBuilder::default()
@@ -160,7 +187,21 @@ fn main() {
 		ret
 	"));
 
-	thirty_two_nops(&mut motherboard);
+
+	// TODO make a menu
+	//thirty_two_nops(&mut motherboard);
+	execute_code(
+		&mut motherboard,
+		assemble!("
+		org 0x4000
+		ld bc, 0xbc00 + 6
+		"),
+		assemble!("
+		org 0x4000
+		out (c), c
+		nop
+		")
+	)
 
 
 }	

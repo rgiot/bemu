@@ -335,6 +335,7 @@ impl Motherboard {
 
     /// Make the appropriate copy between some pins of some chips to other (we simulate the various buses here)
     /// TODO improve behavior by handling BUSACK BUSREQ
+    /// XXX as z80 timings are WRONG at them moment, it may change the signals too fast. As a workaround copy are made conditional for some chips
     fn sync_chips_pins(&mut self) {
         // Backup previous state
         self.ga.save_pins_state();
@@ -349,6 +350,8 @@ impl Motherboard {
         if !Neg_IORD {
             assert!(!self.cpu.get_pin(Z80Pin::Neg_IORQ));
         }
+
+        let chip_access = !Neg_IOWR | !Neg_IORD;
 
         // GA to CPU
         sync_pins(

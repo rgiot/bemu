@@ -1461,7 +1461,11 @@ impl Chip for Z80 {
                 self.on(Z80Pin::Neg_RD);
                 self.next_state.inc_state();
             }
+            /// simulate wait
             MCycle::Read(TState::T3, nb) | MCycle::Input(TState::T3, nb) => {
+                self.next_state.inc_state();
+            }
+            MCycle::Read(TState::T4, nb) | MCycle::Input(TState::T4, nb) => {
                 self.post_read_action();
 
                 let opcode_info = self.opcode_information.as_ref().unwrap().clone();
@@ -1519,7 +1523,13 @@ impl Chip for Z80 {
 
                 self.next_state.inc_state();
             }
+
+            // simulates a wait state
             MCycle::Write(TState::T3, nb) | MCycle::Output(TState::T3, nb) => {
+                self.next_state.inc_state();
+            }
+
+            MCycle::Write(TState::T4, nb) | MCycle::Output(TState::T4, nb) => {
                 self.on(self.next_state.write_pin_type().unwrap());
                 self.on(Z80Pin::Neg_WR);
 

@@ -621,19 +621,23 @@ impl MCycle {
 
             MCycle::Read(TState::T1, nb) => MCycle::Read(TState::T2, *nb),
             MCycle::Read(TState::T2, nb) => MCycle::Read(TState::T3, *nb),
-            MCycle::Read(TState::T3, nb) => panic!("Ambigous"),
+            MCycle::Read(TState::T3, nb) => MCycle::Read(TState::T4, *nb),
+            MCycle::Read(TState::T4, nb) => panic!("Ambigous"),
 
             MCycle::Write(TState::T1, nb) => MCycle::Write(TState::T2, *nb),
             MCycle::Write(TState::T2, nb) => MCycle::Write(TState::T3, *nb),
-            MCycle::Write(TState::T3, nb) => panic!("Ambigous"),
+            MCycle::Write(TState::T3, nb) => MCycle::Write(TState::T4, *nb),
+            MCycle::Write(TState::T4, nb) => panic!("Ambigous"),
 
             MCycle::Output(TState::T1, nb) => MCycle::Output(TState::T2, *nb),
             MCycle::Output(TState::T2, nb) => MCycle::Output(TState::T3, *nb),
-            MCycle::Output(TState::T3, nb) => panic!("Ambigous"),
+            MCycle::Output(TState::T3, nb) => MCycle::Output(TState::T4, *nb),
+            MCycle::Output(TState::T4, nb) => panic!("Ambigous"),
 
             MCycle::Input(TState::T1, nb) => MCycle::Input(TState::T2, *nb),
             MCycle::Input(TState::T2, nb) => MCycle::Input(TState::T3, *nb),
-            MCycle::Input(TState::T3, nb) => panic!("Ambigous"),
+            MCycle::Input(TState::T3, nb) => MCycle::Input(TState::T4, *nb),
+            MCycle::Input(TState::T4, nb) => panic!("Ambigous"),
 
             _ => unimplemented!(),
         }

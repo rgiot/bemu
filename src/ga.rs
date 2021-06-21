@@ -682,7 +682,7 @@ impl Default for GateArray {
 
             r52: Default::default(),
         };
-        ga.sync_clocks();
+        ga.divide_clock();
         ga
     }
 }
@@ -704,12 +704,12 @@ impl GateArray {
     /// CPU is at 4 Mhz
     pub fn manage_clocks(&mut self) {
         self.clock = self.clock.wrapping_add(1);
-        self.sync_clocks();
+        self.divide_clock();
     }
 
-    pub fn sync_clocks(&mut self) {
-        self.set_pin(GateArrayPin::NCPU, ((self.clock + 1) % 4) >= 2); // this delay is needed to let time to CRTC to get cpu infos from pins
-        self.set_pin(GateArrayPin::CCLK, ((self.clock + 0) % 16) >= 8);
+    pub fn divide_clock(&mut self) {
+        self.set_pin(GateArrayPin::NCPU, ((self.clock + 0) % 4) >= 2); // this delay is needed to let time to CRTC to get cpu infos from pins
+        self.set_pin(GateArrayPin::CCLK, ((self.clock + 1) % 16) >= 8);
     }
 
     /// get the active video mode

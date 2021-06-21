@@ -31,6 +31,7 @@ for i, col in enumerate(df):
 			if j % 2:
 				t = ""
 			plt.text(j, 0.5, t, rotation="vertical")
+	plt.xlim(-1, len(values))
 
 	plt.ylabel(col, rotation=0, fontweight="bold")
 
