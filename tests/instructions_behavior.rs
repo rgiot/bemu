@@ -776,6 +776,10 @@ table
 		Ink::from(26),
 		motherboard.ga().palette()[0]
 	);
+	assert_eq!(
+		motherboard.cpu().b(),
+		0x7f
+	);
 }
 
 
