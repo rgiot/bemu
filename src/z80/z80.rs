@@ -556,17 +556,17 @@ impl Z80 {
 
                 if opcode_information.fetch_finished() {
                     if opcode_information.expect_read() {
-                        if opcode_information.addresses_memory {
-                            self.next_state = MCycle::Read(TState::T1, 0);
-                        } else {
+                        if opcode_information.read_from_pins {
                             self.next_state = MCycle::Input(TState::T1, 0);
+                        } else {
+                            self.next_state = MCycle::Read(TState::T1, 0);
                         }
                         return false;
                     } else if opcode_information.expect_write() {
-                        if opcode_information.addresses_memory {
-                            self.next_state = MCycle::Write(TState::T1, 0);
-                        } else {
+                        if opcode_information.write_to_pins {
                             self.next_state = MCycle::Output(TState::T1, 0);
+                        } else {
+                            self.next_state = MCycle::Write(TState::T1, 0);
                         }
                         return false;
                     } else {
@@ -1424,16 +1424,16 @@ impl Chip for Z80 {
                             // TODO check if it must serve for loop based instruction
                             self.instruction_finished();
                         } else if 0 != opcode_information.nb_bytes_to_read {
-                            if opcode_information.addresses_memory {
-                                self.next_state = MCycle::Read(TState::T1, 0);
-                            } else {
+                            if opcode_information.read_from_pins {
                                 self.next_state = MCycle::Input(TState::T1, 0);
+                            } else {
+                                self.next_state = MCycle::Read(TState::T1, 0);
                             }
                         } else if 0 != opcode_information.nb_bytes_to_write {
-                            if opcode_information.addresses_memory {
-                                self.next_state = MCycle::Write(TState::T1, 0);
+                            if opcode_information.read_from_pins {
+                                self.next_state = MCycle::Input(TState::T1, 0);
                             } else {
-                                self.next_state = MCycle::Output(TState::T1, 0);
+                                self.next_state = MCycle::Read(TState::T1, 0);
                             }
                         } else {
                             // go back for a new instruction
@@ -1479,10 +1479,10 @@ impl Chip for Z80 {
                         if self.must_execute_instruction_in_middle() {
                             self.execute_step();
                         }
-                        if opcode_info.addresses_memory {
-                            self.next_state = MCycle::Write(TState::T1, 0);
-                        } else {
+                        if opcode_info.write_to_pins {
                             self.next_state = MCycle::Output(TState::T1, 0);
+                        } else {
+                            self.next_state = MCycle::Write(TState::T1, 0);
                         }
                     } else {
                         self.execute_step();

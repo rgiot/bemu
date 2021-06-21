@@ -1,6 +1,4 @@
-use std::{convert::TryFrom, ops::Add};
 
-use cpclib::z80emu::Z80;
 ///! This module contains all that can help to manage the variuous states of the CPU
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -65,8 +63,10 @@ pub struct OpcodeInformation {
     pub(crate) nb_bytes_to_read: u8,
     /// Number of bytes the instruction request to write (in memory or chip)
     pub(crate) nb_bytes_to_write: u8,
-    /// Number of bytes the instruction request to read (from memory or chip)
-    pub(crate) addresses_memory: bool,
+    /// Read in memory ? (otherwise chips) / No meaning when no read
+    pub(crate) read_from_pins: bool,
+    /// Write in memory ? (otherwise chip) / No meaning when no write
+    pub(crate) write_to_pins: bool,
     /// String representation
     pub(crate) repr: &'static str,
     /// Flag test for conditional execution of instruction
@@ -165,7 +165,10 @@ impl OpcodePrefix {
         let token = cpclib_asm::parser::parse_token(if repr.is_empty() { "NOP" } else { repr })
             .unwrap()
             .1;
-        let addresses_memory = !(token.is_input_opcode() | token.is_output_opcode());
+
+        let read_from_pins = token.is_input_opcode() ;
+        let write_to_pins = token.is_output_opcode();
+
 
         // For instructions reading from memory, get the location of the address
         let read_address = if token.is_input_opcode() {
@@ -179,7 +182,7 @@ impl OpcodePrefix {
             }
         } else if token.is_retlike_opcode() {
             AddressSource::Stack(StackDelta::Zero)
-        } else if addresses_memory {
+        } else if !read_from_pins {
             self.read_address_source(opcode)
         } else {
             AddressSource::None
@@ -188,7 +191,7 @@ impl OpcodePrefix {
         // For instructions writting ot memory, get the location of address
         let write_address = if token.is_output_opcode() {
             self.output_address_source(&token)
-        } else if addresses_memory {
+        } else if !write_to_pins {
             self.write_address_source(opcode)
         } else {
             AddressSource::None
@@ -374,7 +377,8 @@ impl OpcodePrefix {
             nb_bytes_to_read,
             nb_bytes_to_write,
             repr,
-            addresses_memory,
+            read_from_pins,
+            write_to_pins,
             token,
             flag_test,
         }
@@ -790,7 +794,7 @@ mod test {
             0 // ed is the already additional
         );
         assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).nb_bytes_to_write, 1);
-        assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).addresses_memory, false);
+        assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).write_to_pins, true);
         assert_eq!(
             dbg!(&OPCODE_PREFIX_ED[0x79]).write_address,
             AddressSource::Register16(Reg16::Bc)
@@ -813,6 +817,8 @@ mod test {
         assert_eq!(desc.nb_additional_opcode_bytes, 0);
         assert_eq!(desc.read_address, AddressSource::Register16(Reg16::Hl));
         assert_eq!(desc.write_address, AddressSource::Register16(Reg16::Bc));
+        assert_eq!(desc.write_to_pins, true);
+        assert_eq!(desc.read_from_pins, false);
         assert_eq!(
             desc.write_data,
             DataSource::Pins // we assume data are already on the pins because they have been read one cycle before
