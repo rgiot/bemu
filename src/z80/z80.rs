@@ -1218,6 +1218,11 @@ impl Z80 {
     }
 }
 
+impl Z80 {
+    pub fn next_state(&self) -> &MCycle {
+        &self.next_state
+    }
+}
 /// Get registers value
 impl Z80 {
     pub fn pc(&self) -> u16 {

@@ -431,7 +431,12 @@ impl Motherboard {
             &mut self.crtc,
             &[CrtcPin::RS, CrtcPin::RW, CrtcPin::CS],
         );
-
+        sync_pins(
+            &self.cpu,
+            Z80::pins_data(),
+            &mut self.crtc,
+            Crtc::pins_data(),
+        );
         // CPU to rom selection
         sync_pins(
             &self.cpu,

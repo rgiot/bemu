@@ -706,6 +706,7 @@ impl Chip for Crtc {
 
     /// Execute the requested command from the CPU
     fn execute_tick(&mut self) {
+
         match (self.get_pin(CrtcPin::RW), self.get_pin(CrtcPin::RS)) {
             (false, false) => self.select_crtc_register(),
             (false, true) => self.write_crtc_register(),
@@ -776,6 +777,10 @@ impl ReadAddressChip for Crtc {
 }
 // Does not implement the writable one because adress is generated
 impl Activable for Crtc {
+
+    fn activated_at_up_front() -> bool {
+        false
+    }
     fn clock_pin() -> Self::PinType {
         CrtcPin::CCLK
     }

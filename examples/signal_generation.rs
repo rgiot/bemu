@@ -11,12 +11,15 @@ enum PinEnum {
 
 	CpuAddr,
 	CpuData,
-	CrtcAddr
+	CrtcAddr,
+
+	CpuState,
 }
 
 enum PinData {
 	Bool(bool),
-	Value(u16)
+	Value(u16),
+	String(String)
 }
 
 impl From<bool> for PinData {
@@ -27,6 +30,12 @@ impl From<bool> for PinData {
 impl From<u16> for PinData {
 	fn from(d: u16) -> Self {
 		Self::Value(d)
+	}
+}
+
+impl From<String> for PinData {
+	fn from(s: String) -> Self {
+		Self::String(s)
 	}
 }
 
@@ -43,7 +52,8 @@ impl ToString for PinData {
 			},
 			Self::Value(v) => {
 				v.to_string()
-			}
+			},
+			Self::String(s)=> s.clone()
 		}
 	}
 }
@@ -62,6 +72,7 @@ impl Default for TickCollector {
 			(PinEnum::Ga(GateArrayPin::CCLK), "CCLK"),
 			(PinEnum::Ga(GateArrayPin::NCPU), "NCPU"),
 
+			(PinEnum::CpuState, "STATE"),
 			(PinEnum::Cpu(Z80Pin::Neg_M1), "/M1"),
 			(PinEnum::Cpu(Z80Pin::Neg_WAIT), "/WAIT"),
 			(PinEnum::Cpu(Z80Pin::Neg_RFSH), "/RFSH"),
@@ -104,6 +115,10 @@ impl TickCollector {
 				PinEnum::CpuData => (motherboard.cpu().get_data_from_pins() as u16).into(),
 
 				PinEnum::CrtcAddr => {motherboard.crtc().get_address_from_pins().into()}
+
+				PinEnum::CpuState => {
+					motherboard.cpu().next_state().to_string().into()
+				}
 			};
 			self.collected[idx].push(data);
 		}
@@ -157,6 +172,7 @@ fn execute_code(motherboard: &mut Motherboard, init: &[u8], code: &[u8]) {
 	motherboard.tick_until_next_instruction();
 	while motherboard.pc() != 0x4000 + init.len() as u16 {
 		motherboard.execute_next_opcode();
+		Monitor::monitor(motherboard);
 	}
 
 

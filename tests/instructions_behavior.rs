@@ -727,6 +727,32 @@ fn execute_out3() {
 	);
 }
 
+
+#[test]
+// Test a palette change
+fn execute_out4() {
+
+	let code = cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld bc, 0xbc00 + 6
+		out (c), c ; select register 6
+
+		ld bc, 0xbd00 + 10
+		out (c), c 
+
+		nop ; just to be sure it is taken into account to avoid false alarms due to wrong timings
+		jr $
+		");
+
+	let mut motherboard = execute_program(0x4000, 0x4000, code);
+	assert_eq!(
+		10,
+		motherboard.crtc().r6()
+	);
+}
+
+
 #[test]
 fn execute_outd() {
 

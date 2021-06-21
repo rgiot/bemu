@@ -17,7 +17,13 @@ for i, col in enumerate(df):
 	nb_events = len(values)
 	plt.subplot(nb_sig,1,i+1)
 
-	if col not in VALUED8_DATA and col not in VALUED16_DATA:
+	print(df[col].dtypes)
+	print(df.dtypes[col] == str)
+
+	if df.dtypes[col] == object:
+		for j, t in enumerate(values):
+			plt.text(j, 0.5, t, rotation="vertical")
+	elif col not in VALUED8_DATA and col not in VALUED16_DATA:
 		plt.plot(values, 
 				drawstyle="steps", 
 				linewidth=2,

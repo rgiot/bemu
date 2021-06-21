@@ -26,7 +26,7 @@ lazy_static! {
 /// Possible states for a cycle
 /// Warning: Wait state does not count
 #[derive(Debug, PartialEq)]
-pub(crate) enum TState {
+pub enum TState {
     T1,
     T2,
     T3,
@@ -37,7 +37,7 @@ pub(crate) enum TState {
 /// prefixed operations
 #[derive(Debug, PartialEq, Copy, Clone)]
 /// TODO modify for multiprefix opcodes
-pub(crate) enum OpcodePrefix {
+pub enum OpcodePrefix {
     None = 0x00,
     Dd = 0xdd,
     Fd = 0xfd,
@@ -48,7 +48,7 @@ pub(crate) enum OpcodePrefix {
 /// Contains all the informations needed to drive the next
 /// cycles of the instruction
 #[derive(Debug, PartialEq)]
-pub(crate) struct OpcodeInformation {
+pub struct OpcodeInformation {
     /// Prefix for the current opcode
     pub(crate) prefix: OpcodePrefix,
     /// Number of bytes of the opcode that need to be fetched
@@ -567,7 +567,7 @@ impl From<&DataAccess> for DataSource {
 
 /// Simulate the Cycles of the CPU. No need to simulate the pipeline stuff however
 #[derive(Debug, PartialEq)]
-pub(crate) enum MCycle {
+pub enum MCycle {
     /// M1 (State, byte number, opcode prefix)
     /// - T1: request the reading of a byte
     /// - T2: read the byte
@@ -583,6 +583,28 @@ pub(crate) enum MCycle {
 impl Default for MCycle {
     fn default() -> Self {
         MCycle::FetchOpcode(TState::default(), 0, OpcodePrefix::None)
+    }
+}
+impl ToString for MCycle {
+    fn to_string(&self) -> String {
+        let inner = match self {
+            Self::FetchOpcode(t, b , pr) => {
+                format!("F({:#?},{},{:#?})", t, b, pr)
+            },
+            Self::Read(t, b) => {
+                format!("R({:#?},{})", t, b)
+            },
+            Self::Write(t, b) => {
+                format!("W({:#?},{})", t, b)
+            },
+            Self::Input(t, b) => {
+                format!("I({:#?},{})", t, b)
+            },
+            Self::Output(t, b) => {
+                format!("O({:#?},{})", t, b)
+            }
+        };
+        format!("\"{}\"", inner)
     }
 }
 
