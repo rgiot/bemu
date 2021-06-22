@@ -641,11 +641,11 @@ impl Z80 {
     /// We can consider that here we play the latest t-state
     fn execute_opcode(
         &mut self,
-        opcode: &Mnemonic,
+        mnemonic: &Mnemonic,
         arg1: Option<&DataAccess>,
         arg2: Option<&DataAccess>,
     ) {
-        match opcode {
+        match mnemonic {
             Mnemonic::Nop | Mnemonic::Out | Mnemonic::In => {}
             
             Mnemonic::Add => {
@@ -719,6 +719,38 @@ impl Z80 {
                 Z80Flags::Y.auto_update_from(f, right);
             }
             
+            Mnemonic::Cpi | Mnemonic::Cpd => {
+                let left = self.reg8(Reg8::A).value();
+                let right = self.get_data_from_pins();
+                let f = &mut self.reg8_mut(Reg8::F).val;
+                inner_8bits_sub!(left, right, f);
+                Z80Flags::X.auto_update_from(f, right);
+                Z80Flags::Y.auto_update_from(f, right);
+
+                if *mnemonic == Mnemonic::Cpi || *mnemonic == Mnemonic::Cpir {
+                    self.hl.inc();
+                }
+                else {
+                    self.hl.dec();
+                }
+                self.bc.dec();
+                self.set_flag(Z80Flags::P, self.bc() == 0);
+
+                let jmp = if *mnemonic == Mnemonic::Cpi || *mnemonic == Mnemonic::Cpd {
+                    false
+                } else {
+                    self.bc() != 0 || self.flag(Z80Flags::Z)
+                };
+
+                if jmp {
+                    self.next_state = MCycle::new_fake(2);
+                    self.pc.dec();
+                    self.pc.dec();
+                }
+                else {
+                    self.next_state = MCycle::new_fake(1);
+                }
+            }
             Mnemonic::Dec => {
                 let mut update_flags = true; // disable only for 16 bits
                 let mut res = 0;
@@ -796,6 +828,7 @@ impl Z80 {
                 };
                 let val = self.wz.value();
                 self.reg16_mut(reg).set(val);
+                self.next_state = MCycle::new_fake(1);
             }
             
             Mnemonic::Exx => {
@@ -1147,7 +1180,7 @@ impl Z80 {
                 let right = self.get_available_8bits_value(arg1.unwrap());
                 self.reg8_mut(Reg8::A).xor(right);
             }
-            _ => unimplemented!("{:?}, {:?}, {:?}", opcode, arg1, arg2),
+            _ => unimplemented!("{:?}, {:?}, {:?}", mnemonic, arg1, arg2),
         }
     }
     /// Return the value for this data access
@@ -1507,7 +1540,7 @@ impl Chip for Z80 {
     }
     
     fn execute_tick(&mut self) {
-      //  dbg!(&self.next_state);
+        dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
@@ -1644,8 +1677,14 @@ impl Chip for Z80 {
                         }
                     } else {
                         self.execute_step();
-                        self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
-                        // go back for a new instruction
+
+                        if !matches!(
+                            self.next_state,
+                            MCycle::Fake(TState::T1, _)
+                        ){                      
+                            self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
+                            // go back for a new instruction
+                        }
                     }
                 } else {
                     // go to read the next byte

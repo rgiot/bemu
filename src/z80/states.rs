@@ -314,6 +314,8 @@ impl OpcodePrefix {
             | Mnemonic::Otir | Mnemonic::Otdr
             | Mnemonic::Ldi | Mnemonic::Ldd
             | Mnemonic::Ldir | Mnemonic::Lddr
+            | Mnemonic::Cpi | Mnemonic::Cpd
+            | Mnemonic::Cpir | Mnemonic::Cpdr
             
         )
         {
@@ -457,11 +459,12 @@ fn read_address_source(self, i: usize) -> AddressSource {
         static ref IMMEDIATE: Regex = Regex::new(r"\(nnnn\)$").unwrap();
         static ref POP: Regex = Regex::new(r"^POP").unwrap();
         static ref LDSTAR: Regex = Regex::new(r"(LDD)|(LDI)R?").unwrap();
+        static ref CPSTAR: Regex = Regex::new(r"(CPI)|(CPD)R?").unwrap();
     }
     
     let repr = self.disassembling_table()[i];
     
-    if LDSTAR.is_match(repr) {
+    if LDSTAR.is_match(repr) | CPSTAR.is_match(repr) {
         AddressSource::Register16(Reg16::Hl)
     }
     else if POP.is_match(repr) {
@@ -779,6 +782,13 @@ mod test {
         assert_eq!(call.write_data, DataSource::Register16(Reg16::Pc)); // we want to write PC
     }
     
+    #[test]
+    fn lookup_check_cpi() {
+        let cpi = dbg!(&OPCODE_PREFIX_ED[0xa1]);
+        assert_eq!(cpi.read_address, AddressSource::Register16(Reg16::Hl));
+        assert_eq!(cpi.read_data, DataSource::Pins);
+        assert_eq!(cpi.nb_bytes_to_read, 1);
+    }
     #[test]
     fn lookup_checks_call_conditional() {
         use cpclib_asm::preamble::FlagTest;

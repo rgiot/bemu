@@ -235,15 +235,12 @@ fn test_exchange() {
 	exx         |    D9 | ........ | 1
 	ex (sp),hl  |    E3 | ........ | 6   
 	ex (sp),ix  | DD E3 | ........ | 7   
-
 	ldi         | ED A0 | ..!0!!0. | 5   
 	ldd         | ED A8 | ..!0!!0. | 5  
 	ldir        | ED B0 | ..!0!00. | 11 
 	lddr        | ED B8 | ..!0!00. | 11 
-
 	cpi         | ED A1 | SZ!H!!1. | 4   
-	cpd         | ED A9 | SZ!H!!1. | 4  
-	";
+	cpd         | ED A9 | SZ!H!!1. | 4  	";
 
 	// not tested yet
 	"
