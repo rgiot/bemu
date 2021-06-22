@@ -234,7 +234,7 @@ impl Motherboard {
         if self.ga_request_read() {
             unimplemented!();       
         }  else if self.cpu_request_byte_write() {
-            eprintln!("0x{:x}=0x{:x}", addr, byte);
+        //    eprintln!("0x{:x}=0x{:x}", addr, byte);
             self.write_byte(addr, byte);
             self.cpu.set_pin(Z80Pin::Neg_WR, true); // TODO do the real stuff - but here I am sure to not play with the data bus ...
         } else if self.cpu_request_byte_output() {

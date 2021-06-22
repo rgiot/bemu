@@ -217,11 +217,31 @@ impl Z80Flags {
             _ => unreachable!(),
         }
     }
+
+
+    #[inline]
+    /// Update using the standard rule for the given flags
+    pub fn auto_update16_from(&self, byte: &mut u8, res: u16) {
+        match self {
+            Self::S => self.set(res & 1 << 15 != 0, byte),
+            Self::X => self.set(res & 1 << 3 != 0, byte), // XXX probably wrong
+            Self::Y => self.set(res & 1 << 5 != 0, byte), // XXX probably wrong
+            Self::Z => self.set(res == 0, byte),
+            Self::P => self.set(res.count_ones() % 2 == 0, byte),
+            
+            _ => unreachable!(),
+        }
+    }
+ 
     
     #[inline]
     /// Update using the standard rule of each provided flag
     pub fn auto_update(flags: &[Self], byte: &mut u8, res: u8) {
         flags.iter().for_each(|f| f.auto_update_from(byte, res));
+    }
+
+    pub fn auto_update16(flags: &[Self], byte: &mut u8, res: u16) {
+        flags.iter().for_each(|f| f.auto_update16_from(byte, res));
     }
 }
 
@@ -1030,6 +1050,40 @@ impl Z80 {
                         unimplemented!("{:?}", other);
                     }
                 }
+            }
+
+            Mnemonic::Sbc => {
+               match (arg1, arg2) {
+                   (
+                       Some(DataAccess::Register16(reg1)), // hl by definition
+                       Some(DataAccess::Register16(reg2))
+                    ) => {
+                        let reg1: Reg16 = reg1.into();
+                        let reg2: Reg16 = reg2.into();
+
+                        let other = {
+                            let mut other = self.reg16(reg2).value();
+                            if self.flag(Z80Flags::C){
+                                other = other.wrapping_add(1);
+                            }        
+                            other
+                        };
+                        let c = self.reg16_mut(reg1).sub(other);
+                        let value = self.reg16(reg1).value();
+
+                        // TODO manage H if borrow from bit 12
+                        Z80Flags::auto_update16(
+                            &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
+                            &mut self.reg8_mut(Reg8::F).val,
+                            value,
+                        );
+                        self.set_flag_on(Z80Flags::N);
+                        self.set_flag(Z80Flags::C, c);
+
+                   },
+
+                   _ => unimplemented!("{:?}, {:?}", arg1, arg2)
+               }
             }
             
             Mnemonic::Sub => match arg1 {

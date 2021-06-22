@@ -1073,6 +1073,46 @@ fn execute_rra3() {
 	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::NC));
 }
 
+
+#[test]
+fn execute_sbc1() {
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, 3
+	ld de, 2
+	or a
+	sbc hl, de
+	jr $
+	");
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		1,
+		motherboard.hl()
+	);
+}
+
+	#[test]
+	fn execute_sbc2() {
+		let code = cpclib_macros::assemble!("
+		org 0x4000
+		ld hl, 3
+		ld de, 2
+		scf
+		sbc hl, de
+		jr $
+		");
+	
+		let motherboard = execute_program(0x4000, 0x4000, code); 
+	
+		assert_eq!(
+			0,
+			motherboard.hl()
+		);
+	}
+
+
 #[test]
 fn execute_set() {
 	let code = cpclib_macros::assemble!("
