@@ -955,6 +955,8 @@ fn execute_push1() {
 
 	assert_eq!(
 		0x8000-2,
+		motherboard.cpu().reg16(Reg16::Sp).value(),
+		"{:x} != {:x}", 0x8000-2,
 		motherboard.cpu().reg16(Reg16::Sp).value()
 	);
 

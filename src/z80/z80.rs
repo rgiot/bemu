@@ -1011,14 +1011,24 @@ impl Z80 {
                 Z80Flags::N.set_off(f);
                 Z80Flags::C.set_off(f);
             }
-
+            
+            Mnemonic::Outd => {
+                let b_is_zero = self.reg8(Reg8::B).value() == 0;
+                let f = &mut self.reg8_mut(Reg8::F).val;
+                Z80Flags::Z.set(b_is_zero, f);
+                Z80Flags::N.set_on(f);
+            }
+            
             Mnemonic::Push => {
+                self.sp.dec();
+                self.sp.dec();
                 self.next_state = MCycle::new_fake(1);
             }
             
             Mnemonic::Pop => {
                 self.sp.inc();
                 self.sp.inc();
+                self.next_state = MCycle::new_fake(1);
             }
             
             Mnemonic::Ret => {
@@ -1131,24 +1141,7 @@ impl Z80 {
                 }
                 _ => unimplemented!("{:?}, {:?}", arg1, arg2),
             },
-            
-            Mnemonic::Outd => {
-                let b_is_zero = self.reg8(Reg8::B).value() == 0;
-                let f = &mut self.reg8_mut(Reg8::F).val;
-                Z80Flags::Z.set(b_is_zero, f);
-                Z80Flags::N.set_on(f);
-            }
-            
-            Mnemonic::Push => {
-                self.sp.dec();
-                self.sp.dec();
-            }
-            
-            Mnemonic::Ret => {
-                // PC is already properly setup
-                self.sp.dec();
-                self.sp.dec();
-            }
+
             
             Mnemonic::Xor => {
                 let right = self.get_available_8bits_value(arg1.unwrap());
