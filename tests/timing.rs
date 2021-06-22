@@ -195,6 +195,36 @@ fn test_8_load() {
 }
 
 
+#[test]
+fn test_any() {
+	let madram = "
+	";
+	check_madram_timing(madram);
+
+}
+
+#[test]
+fn test_16_load() {
+	let madram = "
+	ld bc,02    |    00rr0001 nn | ........ | 3 
+	ld ix,0xa042   | DD 00100001 nn | ........ | 4
+	ld hl,(03)  |    2a nn       | ........ | 5
+	ld ix,(03)  | DD 2a nn       | ........ | 6 
+	ld bc,(03)  | ED 01rr1011 nn | ........ | 6 
+	ld (03),hl  |    22 nn       | ........ | 5
+	ld (03),ix  | DD 22 nn       | ........ | 6 
+	ld (03),bc  | ED 01rr0011 nn | ........ | 6 
+	ld sp,hl    |    F9          | ........ | 2
+	ld sp,ix    | DD F9          | ........ | 3
+	push bc     |    11qq0101    | ........ | 4 
+	push ix     | DD 11100101    | ........ | 5
+	pop bc      |    11qq0001    | ........ | 3
+	pop ix      | DD 11100001    | ........ | 4";
+	check_madram_timing(madram);
+
+}
+
+
 fn check_madram_timing(content: &str) {
 	for (code, timing) in content.split("\n")
 		.skip(2) // skip header

@@ -938,10 +938,27 @@ impl Z80 {
                             let right = self.get_available_16bits_value(arg2);
                             self.reg16_mut(left).set(right);
                         }
+
+                        DataAccess::IndexRegister16(reg) => {
+                            let left: Reg16 = reg.into();
+                            let right = self.get_available_16bits_value(arg2);
+                            self.reg16_mut(left).set(right);
+                        }
                         
                         _ => unimplemented!("{:?}", arg1),
                     }
                 }
+
+                if matches!(
+                    (arg1,arg2),
+                    (
+                        DataAccess::Register16(cpclib_asm::preamble::Register16::Sp),
+                        DataAccess::Register16(cpclib_asm::preamble::Register16::Hl) | DataAccess::IndexRegister16(_)
+                    )
+                 ) {
+                        self.next_state = MCycle::new_fake(1);
+                    }
+
             }
             
             Mnemonic::Ldd => {
@@ -983,6 +1000,10 @@ impl Z80 {
                 Z80Flags::H.set_on(f);
                 Z80Flags::N.set_off(f);
                 Z80Flags::C.set_off(f);
+            }
+
+            Mnemonic::Push => {
+                self.next_state = MCycle::new_fake(1);
             }
             
             Mnemonic::Pop => {
@@ -1581,7 +1602,7 @@ impl Chip for Z80 {
             }
             
             MCycle::Read(TState::T1, nb) | MCycle::Input(TState::T1, nb) => {
-                let address = self.get_read_address_from_opcode_information() + nb as u16;
+                let address = self.get_read_address_from_opcode_information().wrapping_add(nb as u16);
                 self.set_address_on_pins(address);
                 
                 assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
