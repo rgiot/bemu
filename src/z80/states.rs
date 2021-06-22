@@ -591,9 +591,14 @@ pub enum MCycle {
     FetchOpcode(TState, u8, OpcodePrefix),
     /// Read state (state, byte index to read) opciode information is stored by CPU
     Read(TState, u8),
+    /// Write in memory
     Write(TState, u8),
+    /// Read from a chip
     Input(TState, u8),
+    /// Write to a chip
     Output(TState, u8),
+    /// Fake state to simulate additional computations
+    Fake(TState, u8)
 }
 
 impl Default for MCycle {
@@ -618,9 +623,18 @@ impl ToString for MCycle {
             },
             Self::Output(t, b) => {
                 format!("O({:#?},{})", t, b)
+            },
+            Self::Fake(t, c) => {
+                format!("F({:#?},{})", t, c)
             }
         };
         format!("\"{}\"", inner)
+    }
+}
+
+impl MCycle {
+    pub fn new_fake(duration: u8) -> Self {
+        MCycle::Fake(TState::T1, duration)
     }
 }
 
@@ -677,6 +691,10 @@ impl MCycle {
             MCycle::Input(TState::T3, nb) => MCycle::Input(TState::T4, *nb),
             MCycle::Input(TState::T4, nb) => panic!("Ambigous"),
 
+            MCycle::Fake(TState::T1, nb) => MCycle::Fake(TState::T2, *nb),
+            MCycle::Fake(TState::T2, nb) => MCycle::Fake(TState::T3, *nb),
+            MCycle::Fake(TState::T3, nb) => MCycle::Fake(TState::T4, *nb),
+            MCycle::Fake(TState::T4, nb) => MCycle::Fake(TState::T1, *nb - 1),
             _ => unimplemented!(),
         }
     }

@@ -14,13 +14,13 @@ use cpclib_asm::preamble::{
 macro_rules! inner_8bits_sub {
     ($a:ident,$b:ident,$f:ident) => {{
         let (res, ovf) = $a.overflowing_sub($b);
-
+        
         Z80Flags::auto_update(
             &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
             $f,
             res,
         );
-
+        
         Z80Flags::C.set(ovf, $f);
         Z80Flags::N.set_off($f);
         // TODO manage signed stuff
@@ -97,50 +97,50 @@ impl Into<u64> for Z80Pin {
 
 /// Set of Z80Pin for the data bus
 const Z80_PIN_DATA_BUS: [Z80Pin; 8] = [
-    Z80Pin::D7,
-    Z80Pin::D6,
-    Z80Pin::D5,
-    Z80Pin::D4,
-    Z80Pin::D3,
-    Z80Pin::D2,
-    Z80Pin::D1,
-    Z80Pin::D0,
+Z80Pin::D7,
+Z80Pin::D6,
+Z80Pin::D5,
+Z80Pin::D4,
+Z80Pin::D3,
+Z80Pin::D2,
+Z80Pin::D1,
+Z80Pin::D0,
 ];
 
 /// Set of Z80Pin for the address bus
 const PIN_ADDRESS_BUS: [Z80Pin; 16] = [
-    Z80Pin::A15,
-    Z80Pin::A14,
-    Z80Pin::A13,
-    Z80Pin::A12,
-    Z80Pin::A11,
-    Z80Pin::A10,
-    Z80Pin::A9,
-    Z80Pin::A8,
-    Z80Pin::A7,
-    Z80Pin::A6,
-    Z80Pin::A5,
-    Z80Pin::A4,
-    Z80Pin::A3,
-    Z80Pin::A2,
-    Z80Pin::A1,
-    Z80Pin::A0,
+Z80Pin::A15,
+Z80Pin::A14,
+Z80Pin::A13,
+Z80Pin::A12,
+Z80Pin::A11,
+Z80Pin::A10,
+Z80Pin::A9,
+Z80Pin::A8,
+Z80Pin::A7,
+Z80Pin::A6,
+Z80Pin::A5,
+Z80Pin::A4,
+Z80Pin::A3,
+Z80Pin::A2,
+Z80Pin::A1,
+Z80Pin::A0,
 ];
 
 const PIN_SYSTEM_CONTROL: [Z80Pin; 5] = [
-    Z80Pin::Neg_M1,
-    Z80Pin::Neg_MREQ,
-    Z80Pin::Neg_IORQ,
-    Z80Pin::Neg_RD,
-    Z80Pin::Neg_WR,
+Z80Pin::Neg_M1,
+Z80Pin::Neg_MREQ,
+Z80Pin::Neg_IORQ,
+Z80Pin::Neg_RD,
+Z80Pin::Neg_WR,
 ];
 
 const PIN_CPU_CONTROL: [Z80Pin; 5] = [
-    Z80Pin::Neg_HALT,
-    Z80Pin::Neg_WAIT,
-    Z80Pin::Neg_INT,
-    Z80Pin::Neg_NMI,
-    Z80Pin::Neg_RESET,
+Z80Pin::Neg_HALT,
+Z80Pin::Neg_WAIT,
+Z80Pin::Neg_INT,
+Z80Pin::Neg_NMI,
+Z80Pin::Neg_RESET,
 ];
 
 const PIN_CPU_BUS_CONTROL: [Z80Pin; 2] = [Z80Pin::Neg_BUSRQ, Z80Pin::Neg_BUSACK];
@@ -171,39 +171,39 @@ impl Z80Flags {
     #[inline]
     pub fn set(&self, value: bool, byte: &mut u8) {
         let mask = *self as u8;
-
+        
         if value {
             *byte = *byte | mask;
         } else {
             *byte = *byte & !mask;
         }
     }
-
+    
     /// activate the flag
     #[inline]
     pub fn set_on(&self, byte: &mut u8) {
         self.set(true, byte);
     }
-
+    
     /// deactivate the flag
     #[inline]
     pub fn set_off(&self, byte: &mut u8) {
         self.set(false, byte);
     }
-
+    
     /// Check if the flag is set
     #[inline]
     pub fn is_on(&self, byte: u8) -> bool {
         let mask = *self as u8;
-
+        
         byte & mask != 0
     }
-
+    
     #[inline]
     pub fn is_off(&self, byte: u8) -> bool {
         !self.is_on(byte)
     }
-
+    
     #[inline]
     /// Update using the standard rule for the given flags
     pub fn auto_update_from(&self, byte: &mut u8, res: u8) {
@@ -213,11 +213,11 @@ impl Z80Flags {
             Self::Y => self.set(res & 1 << 5 != 0, byte),
             Self::Z => self.set(res == 0, byte),
             Self::P => self.set(res.count_ones() % 2 == 0, byte),
-
+            
             _ => unreachable!(),
         }
     }
-
+    
     #[inline]
     /// Update using the standard rule of each provided flag
     pub fn auto_update(flags: &[Self], byte: &mut u8, res: u8) {
@@ -244,42 +244,42 @@ pub struct Z80 {
     pins: PinsBuffer,
     /// State of the Z80 state-machine
     pub(crate) next_state: MCycle,
-
+    
     pub(crate) pc: Register16,
     pub(crate) sp: Register16,
-
+    
     pub(crate) af: Register16,
     pub(crate) af2: Register16,
-
+    
     pub(crate) hl: Register16,
     pub(crate) bc: Register16,
     pub(crate) de: Register16,
-
+    
     pub(crate) hl2: Register16,
     pub(crate) bc2: Register16,
     pub(crate) de2: Register16,
-
+    
     pub(crate) ix: Register16,
     pub(crate) iy: Register16,
     pub(crate) wz: Register16,
-
+    
     pub(crate) i: Register8,
     pub(crate) r: Register8,
-
+    
     /// Instruction Register / contains the opcode of interest
     pub(crate) ir: Register8,
-
+    
     pub(crate) iff1: Register8,
     pub(crate) iff2: Register8,
     pub(crate) im: InterruptMode,
-
+    
     /// Flag set when CPU received an interrupt
     interrupt_received: bool,
-
+    
     /// Refresh adr
     /// XXX Not handled at all by the emulator
     pub(crate) refresh_addr: u16,
-
+    
     /// Information for the current opcode - Setup after fetching the very first byte
     pub(crate) opcode_information: Option<&'static OpcodeInformation>,
 }
@@ -297,7 +297,7 @@ impl Z80 {
         substraction: bool,
     ) {
         let f = &mut self.af.low_mut().val;
-
+        
         Z80Flags::S.set((res & 1 << 7) != 0, f);
         Z80Flags::Z.set(res == 0, f);
         Z80Flags::Y.set((res & 1 << 5) != 0, f);
@@ -307,7 +307,7 @@ impl Z80 {
         Z80Flags::N.set(substraction, f);
         Z80Flags::C.set(overflow, f);
     }
-
+    
     /// Check if the flag test is successfull
     #[inline]
     pub fn test_flag(&self, flag_test: FlagTest) -> bool {
@@ -315,34 +315,34 @@ impl Z80 {
         match flag_test {
             FlagTest::NZ => Z80Flags::Z.is_off(flag),
             FlagTest::Z => Z80Flags::Z.is_on(flag),
-
+            
             FlagTest::NC => Z80Flags::C.is_off(flag),
             FlagTest::C => Z80Flags::C.is_on(flag),
-
+            
             FlagTest::PO => Z80Flags::P.is_off(flag),
             FlagTest::PE => Z80Flags::P.is_on(flag),
-
+            
             FlagTest::P => Z80Flags::S.is_off(flag),
             FlagTest::M => Z80Flags::S.is_on(flag),
         }
     }
-
+    
     #[inline]
     fn set_flag(&mut self, flag: Z80Flags, val: bool) {
         let f = &mut self.reg8_mut(Reg8::F).val;
         flag.set(val, f);
     }
-
+    
     #[inline]
     fn set_flag_on(&mut self, flag: Z80Flags) {
         self.set_flag(flag, true);
     }
-
+    
     #[inline]
     fn set_flag_off(&mut self, flag: Z80Flags) {
         self.set_flag(flag, false);
     }
-
+    
     #[inline]
     pub fn flag(&self, flag: Z80Flags) -> bool {
         let flags = self.reg8(Reg8::F).value();
@@ -367,20 +367,20 @@ impl Z80 {
     pub fn is_aligned_with_new_instruction(&self) -> bool {
         self.next_state.is_new_opcode()
     }
-
+    
     /// Check if some operations has to be handled in the middle of the instructions (i.e. read / operation / write)
     fn must_execute_instruction_in_middle(&self) -> bool {
         let info = self.opcode_information().unwrap();
         info.read_data == DataSource::Pins 
-            && info.write_data == DataSource::Pins 
-            && !matches!(
-                info.token.mnemonic().unwrap(),
-                Mnemonic::Ldd | Mnemonic::Lddr
-                | Mnemonic::Ldi | Mnemonic::Ldir
-            )
+        && info.write_data == DataSource::Pins 
+        && !matches!(
+            info.token.mnemonic().unwrap(),
+            Mnemonic::Ldd | Mnemonic::Lddr
+            | Mnemonic::Ldi | Mnemonic::Ldir
+        )
         
     }
-
+    
     /// Provide the information for the current instruction to execute
     fn opcode_information(&self) -> Option<&OpcodeInformation> {
         self.opcode_information.clone()
@@ -391,7 +391,7 @@ impl Z80 {
             &self.opcode_information.as_ref().unwrap().write_address,
         )
     }
-
+    
     /// During the fetch cycle, the CPU collected the information to obtain the address to read/write
     /// This method obtains it
     fn get_read_address_from_opcode_information(&self) -> u16 {
@@ -399,7 +399,7 @@ impl Z80 {
             &self.opcode_information.as_ref().unwrap().read_address,
         )
     }
-
+    
     /// src encodes the place where to find an address. This fonction directly returns the corresponding address
     fn get_address_from_address_source(&self, src: &AddressSource) -> u16 {
         match src {
@@ -428,12 +428,12 @@ impl Z80 {
             }
         }
     }
-
+    
     /// Returns the byte that needs to be written
     fn get_byte_to_write_from_opcode_information(&self, step: u8) -> u8 {
         self.get_byte_from_data_source(&self.opcode_information.as_ref().unwrap().write_data, step)
     }
-
+    
     /// Returns the appropriate byte
     fn get_byte_from_data_source(&self, src: &DataSource, step: u8) -> u8 {
         // Retreive the 16 bits value
@@ -452,10 +452,10 @@ impl Z80 {
             DataSource::Immediate => self.reg16(Reg16::Wz).value(),
             _ => unimplemented!("{:?} / {:?}", src, self.opcode_information),
         };
-
+        
         let mut first = (value & 0xff) as u8;
         let mut second = ((value & 0xff00) >> 8) as u8;
-
+        
         if self.opcode_information().unwrap().write_on_stack() {
             std::mem::swap(&mut first, &mut second);
         }
@@ -468,12 +468,12 @@ impl Z80 {
             unreachable!()
         }
     }
-
+    
     /// CPU has read a value and must store it directly in the right registers
     /// Warning when the recipients are PC or SP, Wz is used instead
     fn store_currently_read_byte(&mut self, byte: u8, nb: u8) {
         let dst = self.opcode_information().unwrap().read_data;
-
+        
         match dst {
             DataSource::Register8(reg) | DataSource::IndexRegister8(reg) => {
                 assert!(nb == 0);
@@ -496,36 +496,62 @@ impl Z80 {
             }
         }
     }
-
+    
     /// Execute the instruction ; all necessary stuffs has already been collected
     fn execute_step(&mut self) {
-        let prefix = &self.opcode_information.as_ref().unwrap().prefix;
-
-        // Get the two additional bytes needed for the instruction
-        let memory = [self.reg8(Reg8::Z).get(), self.reg8(Reg8::W).get()];
-
-        // By construction, it cannot fail
-        let (opcode, rest) = cpclib_asm::disass::disassemble_with_potential_argument(
-            self.ir.get(),
-            &prefix.disassembling_table(),
-            &memory,
-        )
-        .unwrap();
-        assert!(opcode.is_opcode());
-        self.execute_opcode(
-            opcode.mnemonic().unwrap(),
-            opcode.mnemonic_arg1(),
-            opcode.mnemonic_arg2(),
+        assert!(
+            !matches!(
+                self.next_state,
+                MCycle::Fake(_, _)
+            ),
+            "We never call execute_state after fake timing"
         );
-
-        // reset the various buffers
-        if !self.must_execute_instruction_in_middle() {
-            self.opcode_information = None;
+        
+        
+        {
+            // this is the normal behavior
+            // we may add additional duration
+            let prefix = &self.opcode_information.as_ref().unwrap().prefix;
+            
+            // Get the two additional bytes needed for the instruction
+            let memory = [self.reg8(Reg8::Z).get(), self.reg8(Reg8::W).get()];
+            
+            // By construction, it cannot fail
+            let (opcode, rest) = cpclib_asm::disass::disassemble_with_potential_argument(
+                self.ir.get(),
+                &prefix.disassembling_table(),
+                &memory,
+            )
+            .unwrap();
+            assert!(opcode.is_opcode());
+            self.execute_opcode(
+                opcode.mnemonic().unwrap(),
+                opcode.mnemonic_arg1(),
+                opcode.mnemonic_arg2(),
+            );
+            
+            // reset the various buffers
+            if !self.must_execute_instruction_in_middle() {
+                self.opcode_information = None;
+            }
         }
-
-        self.instruction_finished();
+        
+        if matches!(
+            self.next_state,
+            MCycle::Fake(TState::T1, _)
+        ) {
+            // we do nothing because it is not the end of an instruction
+            // indeed we have artificially added time
+        }
+        else {
+            // here it is the normal behavior
+            // so we can test if there is an interruption
+            self.instruction_finished();
+        }
+        
+        
     }
-
+    
     /// Check how many bytes have to be read yet and set up appropriately the next state
     fn decode_step(&mut self) -> bool {
         // Check if current opcode is a prefix or a real one
@@ -553,14 +579,14 @@ impl Z80 {
                 assert!(current_prefix == OpcodePrefix::None, "Not implemented yet");
                 return false;
             }
-
+            
             _ => {
                 // Get the number of additional bytes to read as well as the information for the next cycles
                 self.opcode_information = Some(current_prefix.opcode_information(self.ir.get()));
                 let opcode_information = self.opcode_information.as_ref().unwrap();
-
+                
                 //dbg!(opcode_information);
-
+                
                 if opcode_information.fetch_finished() {
                     if opcode_information.expect_read() {
                         if opcode_information.read_from_pins {
@@ -589,7 +615,7 @@ impl Z80 {
             }
         }
     }
-
+    
     /// Execute the end of the instruction  (everything related to memory or ports has already been handled for most instruction except for thouse that read and write from memory).
     /// Here we take care of registers modifications and flags configuration
     /// We can consider that here we play the latest t-state
@@ -601,7 +627,7 @@ impl Z80 {
     ) {
         match opcode {
             Mnemonic::Nop | Mnemonic::Out | Mnemonic::In => {}
-
+            
             Mnemonic::Add => {
                 match arg1.unwrap() {
                     DataAccess::Register8(cpclib_asm::preamble::Register8::A) => {
@@ -610,30 +636,30 @@ impl Z80 {
                         let right = self.get_available_8bits_value(arg2.unwrap());
                         let ovf = self.reg8_mut(Reg8::A).add(right); // TODO manage the flags
                     }
-
+                    
                     DataAccess::Register16(reg) => {
                         let right = self.get_available_16bits_value(arg2.unwrap());
                         let left = self.reg16_mut(reg.into());
                         let ovf = left.add(right); // TODO manage the flags
                     }
-
+                    
                     _ => unimplemented!(),
                 }
             }
-
+            
             Mnemonic::And => {
                 let right = self.get_available_8bits_value(arg1.unwrap());
                 let res = self.reg8(Reg8::A).value() & right;
                 self.reg8_mut(Reg8::A).set(res);
-
+                
                 let f = &mut self.reg8_mut(Reg8::F).val;
                 Z80Flags::auto_update(
                     &[
-                        Z80Flags::S,
-                        Z80Flags::Z,
-                        Z80Flags::P,
-                        Z80Flags::X,
-                        Z80Flags::Y,
+                    Z80Flags::S,
+                    Z80Flags::Z,
+                    Z80Flags::P,
+                    Z80Flags::X,
+                    Z80Flags::Y,
                     ],
                     f,
                     res,
@@ -642,7 +668,7 @@ impl Z80 {
                 Z80Flags::N.set_off(f);
                 Z80Flags::C.set_off(f);
             }
-
+            
             Mnemonic::Call => {
                 #[cfg(test)]
                 {
@@ -651,18 +677,18 @@ impl Z80 {
                         assert!(self.is_condition_met());
                     }
                 }
-
+                
                 let addr = match arg2 {
                     Some(DataAccess::Expression(exp)) => exp.eval().unwrap() as u16,
-
+                    
                     _ => unreachable!(),
                 };
-
+                
                 self.pc.set(addr);
                 self.sp.dec();
                 self.sp.dec();
             }
-
+            
             Mnemonic::Cp => {
                 let left = self.reg8(Reg8::A).value();
                 let right = self.get_available_8bits_value(arg1.unwrap());
@@ -672,7 +698,7 @@ impl Z80 {
                 Z80Flags::X.auto_update_from(f, right);
                 Z80Flags::Y.auto_update_from(f, right);
             }
-
+            
             Mnemonic::Dec => {
                 let mut update_flags = true; // disable only for 16 bits
                 let mut res = 0;
@@ -694,7 +720,7 @@ impl Z80 {
                     }
                     _ => unimplemented!("{:?}", arg1),
                 }
-
+                
                 if update_flags {
                     let f = &mut self.reg8_mut(Reg8::F).val;
                     Z80Flags::auto_update(
@@ -707,18 +733,18 @@ impl Z80 {
                     Z80Flags::N.set_on(f);
                 }
             }
-
+            
             Mnemonic::Di => {
                 self.iff1.set(0);
                 self.iff2.set(0);
             }
-
+            
             Mnemonic::Djnz => {
                 self.reg8_mut(Reg8::B).dec();
                 if self.reg8(Reg8::B).value() != 0 {
                     let mut sym = SymbolsTableCaseDependent::default();
                     sym.set_symbol_to_value("$", -2);
-
+                    
                     let expr = arg1.unwrap().expr().unwrap();
                     let displacement = expr.relative_delta().unwrap();
                     if displacement > 0 {
@@ -728,26 +754,26 @@ impl Z80 {
                     }
                 }
             }
-
+            
             Mnemonic::Ei => {
                 self.iff1.set(1);
                 self.iff2.set(1);
             }
-
+            
             Mnemonic::ExAf => {
                 std::mem::swap(&mut self.af, &mut self.af2);
             }
-
+            
             Mnemonic::ExHlDe => {
                 std::mem::swap(&mut self.hl, &mut self.de);
             }
-
+            
             Mnemonic::Exx => {
                 std::mem::swap(&mut self.bc, &mut self.bc2);
                 std::mem::swap(&mut self.de, &mut self.de2);
                 std::mem::swap(&mut self.hl, &mut self.hl2);
             }
-
+            
             Mnemonic::Inc => {
                 let mut update_flags = true; // disable only for 16 bits
                 let mut res = 0;
@@ -757,7 +783,7 @@ impl Z80 {
                         let left = self.get_data_from_pins();
                         let left = left.wrapping_add(1);
                         self.set_data_on_pins(left);
-
+                        
                         assert_eq!(
                             self.opcode_information().unwrap().read_data,
                             DataDestination::Pins
@@ -784,7 +810,7 @@ impl Z80 {
                     }
                     _ => unimplemented!(),
                 }
-
+                
                 if update_flags {
                     let f = &mut self.reg8_mut(Reg8::F).val;
                     Z80Flags::auto_update(
@@ -798,50 +824,50 @@ impl Z80 {
                     Z80Flags::N.set_off(f);
                 }
             }
-
+            
             Mnemonic::Jp => {
                 let do_jump = match arg1 {
                     None => true,
                     Some(DataAccess::FlagTest(flag_test)) => self.test_flag(*flag_test),
                     _ => unreachable!(),
                 };
-
+                
                 if do_jump {
                     let adr = match arg2.unwrap() {
                         DataAccess::Expression(expr) => expr.eval().unwrap() as u16,
-
+                        
                         DataAccess::MemoryRegister16(reg) => self.reg16(reg.into()).value(),
-
+                        
                         DataAccess::MemoryIndexRegister16(reg) => self.reg16(reg.into()).value(),
-
+                        
                         _ => unreachable!(),
                     };
-
+                    
                     self.pc.set(adr);
                 }
             }
-
+            
             Mnemonic::Jr => {
                 let do_jump = match arg1 {
                     None => true,
                     Some(DataAccess::FlagTest(flag_test)) => self.test_flag(*flag_test),
                     _ => unreachable!(),
                 };
-
+                
                 if do_jump {
-            //        dbg!("The implementation is incorrect. An additional mcycle must handle the operation");
-
+                    //        dbg!("The implementation is incorrect. An additional mcycle must handle the operation");
+                    
                     let mut sym = SymbolsTableCaseDependent::default();
                     sym.set_symbol_to_value("$", -2);
-
+                    
                     let expr = arg2.unwrap().expr().unwrap();
                     let displacement = expr.relative_delta().unwrap();
-
-       //             dbg!(displacement);
-
+                    
+                    //             dbg!(displacement);
+                    
                     // the very same value is also here
                     //   let displacement = self.wz.low().value() as i8 as i16 as u16;
-
+                    
                     if displacement > 0 {
                         self.pc.add(displacement as u16);
                     } else {
@@ -858,7 +884,7 @@ impl Z80 {
                     */
                 }
             }
-
+            
             Mnemonic::Im => {
                 match arg1.unwrap().expr().unwrap().eval().unwrap() {
                     0 => self.im = InterruptMode::Mode0,
@@ -867,17 +893,17 @@ impl Z80 {
                     _ => unreachable!()
                 }
             }
-
+            
             Mnemonic::Ld => {
                 let arg1 = arg1.unwrap();
                 let arg2 = arg2.unwrap();
-
+                
                 let from_memory = matches!(arg2, DataAccess::Memory(_))
-                    | matches!(arg2, DataAccess::MemoryIndexRegister16(_))
-                    | matches!(arg2, DataAccess::MemoryRegister16(_));
+                | matches!(arg2, DataAccess::MemoryIndexRegister16(_))
+                | matches!(arg2, DataAccess::MemoryRegister16(_));
                 let to_memory = matches!(arg1, DataAccess::Memory(_))
-                    | matches!(arg1, DataAccess::MemoryIndexRegister16(_))
-                    | matches!(arg1, DataAccess::MemoryRegister16(_));
+                | matches!(arg1, DataAccess::MemoryIndexRegister16(_))
+                | matches!(arg1, DataAccess::MemoryRegister16(_));
                 if !(from_memory | to_memory) {
                     match arg1 {
                         DataAccess::Register8(reg) => {
@@ -886,18 +912,18 @@ impl Z80 {
                             let right = self.get_available_8bits_value(arg2);
                             self.reg8_mut(left).set(right);
                         }
-
+                        
                         DataAccess::Register16(reg) => {
                             let left: Reg16 = reg.into();
                             let right = self.get_available_16bits_value(arg2);
                             self.reg16_mut(left).set(right);
                         }
-
+                        
                         _ => unimplemented!("{:?}", arg1),
                     }
                 }
             }
-
+            
             Mnemonic::Ldd => {
                 self.inner_ldd()
             } 
@@ -906,25 +932,26 @@ impl Z80 {
             }
             Mnemonic::Lddr => {
                 self.inner_ldd();
-                unimplemented!()
-            }| Mnemonic::Ldir => {
-                self.inner_ldi();
-                unimplemented!()
+                self.inner_bc_loop();
             }
-
+            Mnemonic::Ldir => {
+                self.inner_ldi();
+                self.inner_bc_loop();
+            }
+            
             Mnemonic::Or => {
                 let right = self.get_available_8bits_value(arg1.unwrap());
                 let res = self.reg8(Reg8::A).value() | right;
                 self.reg8_mut(Reg8::A).set(res);
-
+                
                 let f = &mut self.reg8_mut(Reg8::F).val;
                 Z80Flags::auto_update(
                     &[
-                        Z80Flags::S,
-                        Z80Flags::Z,
-                        Z80Flags::P,
-                        Z80Flags::X,
-                        Z80Flags::Y,
+                    Z80Flags::S,
+                    Z80Flags::Z,
+                    Z80Flags::P,
+                    Z80Flags::X,
+                    Z80Flags::Y,
                     ],
                     f,
                     res,
@@ -933,36 +960,36 @@ impl Z80 {
                 Z80Flags::N.set_off(f);
                 Z80Flags::C.set_off(f);
             }
-
+            
             Mnemonic::Pop => {
                 self.sp.inc();
                 self.sp.inc();
             }
-
+            
             Mnemonic::Ret => {
                 self.pc = self.wz;
                 self.sp.inc();
                 self.sp.inc();
             }
-
+            
             Mnemonic::Rlca => {
                 let c = self.reg8_mut(Reg8::A).rlc();
-
+                
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
             }
-
+            
             Mnemonic::Rr => {
                 let prev_c = self.test_flag(FlagTest::C);
                 let c = self
-                    .reg8_mut(arg1.unwrap().get_register8().unwrap().into())
-                    .rr(prev_c);
+                .reg8_mut(arg1.unwrap().get_register8().unwrap().into())
+                .rr(prev_c);
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
             }
-
+            
             Mnemonic::Rra => {
                 let prev_c = self.test_flag(FlagTest::C);
                 let c = self.reg8_mut(Reg8::A).rr(prev_c);
@@ -970,27 +997,27 @@ impl Z80 {
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
             }
-
+            
             Mnemonic::Rrca => {
                 let c = self.reg8_mut(Reg8::A).rrc();
-
+                
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
             }
-
+            
             Mnemonic::Scf => {
                 self.set_flag_on(Z80Flags::C);
             }
-
+            
             Mnemonic::Set => {
                 let bit = arg1.unwrap().expr().unwrap().eval().unwrap() as u8;
-
+                
                 match arg2.unwrap() {
                     DataAccess::Register8(reg8) => {
                         self.reg8_mut(reg8.into()).set_bit(bit);
                     }
-
+                    
                     DataAccess::MemoryRegister16(_)
                     | DataAccess::IndexRegister16WithIndex(_, _) => {
                         // data is on the pins
@@ -998,13 +1025,13 @@ impl Z80 {
                         set_bit(&mut data, bit);
                         self.set_data_on_pins(data);
                     }
-
+                    
                     other => {
                         unimplemented!("{:?}", other);
                     }
                 }
             }
-
+            
             Mnemonic::Sub => match arg1 {
                 Some(DataAccess::Register8(reg8)) => {
                     let left = self.reg8(Reg8::A).value();
@@ -1015,25 +1042,25 @@ impl Z80 {
                 }
                 _ => unimplemented!("{:?}, {:?}", arg1, arg2),
             },
-
+            
             Mnemonic::Outd => {
                 let b_is_zero = self.reg8(Reg8::B).value() == 0;
                 let f = &mut self.reg8_mut(Reg8::F).val;
                 Z80Flags::Z.set(b_is_zero, f);
                 Z80Flags::N.set_on(f);
             }
-
+            
             Mnemonic::Push => {
                 self.sp.dec();
                 self.sp.dec();
             }
-
+            
             Mnemonic::Ret => {
                 // PC is already properly setup
                 self.sp.dec();
                 self.sp.dec();
             }
-
+            
             Mnemonic::Xor => {
                 let right = self.get_available_8bits_value(arg1.unwrap());
                 self.reg8_mut(Reg8::A).xor(right);
@@ -1069,7 +1096,7 @@ impl Z80 {
             }
         }
     }
-
+    
     /// Retreive the 16 bits that corresponds to the data choice
     pub fn get_available_16bits_value(&self, data: &DataAccess) -> u16 {
         match data {
@@ -1096,7 +1123,7 @@ impl Z80 {
             }
         }
     }
-
+    
     /// Get the appropriate (inner) 16bits register in a mutable state
     pub fn reg16_mut(&mut self, reg: Reg16) -> &mut Register16 {
         match reg {
@@ -1105,19 +1132,19 @@ impl Z80 {
             Reg16::De => &mut self.de,
             Reg16::Bc => &mut self.bc,
             Reg16::Wz => &mut self.wz,
-
+            
             Reg16::Af2 => &mut self.af2,
             Reg16::Hl2 => &mut self.hl2,
             Reg16::De2 => &mut self.de2,
             Reg16::Bc2 => &mut self.bc2,
-
+            
             Reg16::Ix => &mut self.ix,
             Reg16::Iy => &mut self.iy,
             Reg16::Pc => &mut self.pc,
             Reg16::Sp => &mut self.sp,
         }
     }
-
+    
     pub fn reg16(&self, reg: Reg16) -> &Register16 {
         match reg {
             Reg16::Af => &self.af,
@@ -1125,19 +1152,19 @@ impl Z80 {
             Reg16::De => &self.de,
             Reg16::Bc => &self.bc,
             Reg16::Wz => &self.wz,
-
+            
             Reg16::Af2 => &self.af2,
             Reg16::Hl2 => &self.hl2,
             Reg16::De2 => &self.de2,
             Reg16::Bc2 => &self.bc2,
-
+            
             Reg16::Ix => &self.ix,
             Reg16::Iy => &self.iy,
             Reg16::Pc => &self.pc,
             Reg16::Sp => &self.sp,
         }
     }
-
+    
     pub fn reg8_mut(&mut self, reg: Reg8) -> &mut Register8 {
         let r16 = self.reg16_mut(reg.full());
         if reg.is_high() {
@@ -1146,7 +1173,7 @@ impl Z80 {
             r16.low_mut()
         }
     }
-
+    
     pub fn reg8(&self, reg: Reg8) -> &Register8 {
         let r16 = self.reg16(reg.full());
         if reg.is_high() {
@@ -1163,24 +1190,24 @@ impl Z80 {
     /// TODO check if it does not belong to another Cycle (I'm pretty sure of that) !!!
     pub fn post_read_action(&mut self) {
         let opcode_info = self.opcode_information.as_ref().unwrap();
-
+        
         match opcode_info.token.mnemonic() {
             Some(Mnemonic::Outd) => {
                 self.reg16_mut(Reg16::Hl).dec();
                 self.reg8_mut(Reg8::B).dec();
             }
-
-
+            
+            
             Some(Mnemonic::Ld) => {
                 if let Some(DataAccess::Register16(cpclib_asm::preamble::Register16::Sp)) =
-                    opcode_info.token.mnemonic_arg1()
+                opcode_info.token.mnemonic_arg1()
                 {
                     // arg2 is a memory read operation by definition
                     self.sp = self.wz.clone();
                     self.wz.inc();
                 }
             }
-
+            
             _ => {
                 // by default, there is nothing to
             }
@@ -1189,24 +1216,36 @@ impl Z80 {
 }
 
 impl Z80 {
+    /// Handle the registers for LDD/LDDR
     fn inner_ldd(&mut self) {
         self.reg16_mut(Reg16::Hl).dec();
         self.reg16_mut(Reg16::De).dec();
         self.reg16_mut(Reg16::Bc).dec();
-
+        
         self.set_flag_off(Z80Flags::H);
         self.set_flag_off(Z80Flags::N);
         self.set_flag(Z80Flags::P, self.bc()!=0);
     }
-
+    
+    /// Handle the registers for LDI/LDIR
     fn inner_ldi(&mut self) {
         self.reg16_mut(Reg16::Hl).inc();
         self.reg16_mut(Reg16::De).inc();
         self.reg16_mut(Reg16::Bc).dec();
-
+        
         self.set_flag_off(Z80Flags::H);
         self.set_flag_off(Z80Flags::N);
         self.set_flag(Z80Flags::P, self.bc()!=0);
+    }
+    
+    /// Handle the loop for LDDR/LDIR
+    fn inner_bc_loop(&mut self) {
+        if self.bc() != 0 {
+            self.reg16_mut(Reg16::Pc).dec();
+            self.reg16_mut(Reg16::Pc).dec();
+        }
+        
+        self.next_state = MCycle::new_fake(1);
     }
 }
 
@@ -1217,32 +1256,32 @@ impl Z80 {
     fn instruction_finished(&mut self) {
         // manage the flipflip for interruption
         if !self.get_pin(Z80Pin::Neg_INT)
-            && self.iff1.value() == 1
-            && !matches!(
-                self.next_state,
-                MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
-            )
+        && self.iff1.value() == 1
+        && !matches!(
+            self.next_state,
+            MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
+        )
         {
             assert_eq!(false, self.interrupt_received);
-
+            
             self.interrupt_received = true;
             self.iff1.set(0);
             self.iff2.set(0);
-
+            
             assert_eq!(
                 self.im,
                 InterruptMode::Mode1,
                 "Interruption {:?} unimplemented",
                 self.im
             );
-
+            
             self.simulate_call_0x38_after_fetch();
         } else {
             self.next_state = Default::default();
             return;
         }
     }
-
+    
     /// Handcraft a call to let the CPU jump in 0x38
     /// TODO manage a Fake M1 cycle
     fn simulate_call_0x38_after_fetch(&mut self) {
@@ -1282,7 +1321,7 @@ impl Z80 {
     pub fn iy(&self) -> u16 {
         self.reg16(Reg16::Iy).value()
     }
-
+    
     pub fn a(&self) -> u8 {
         self.reg8(Reg8::A).value()
     }
@@ -1301,7 +1340,7 @@ impl Z80 {
     pub fn iyh(&self) -> u8 {
         self.reg8(Reg8::Iyh).value()
     }
-
+    
     pub fn c(&self) -> u8 {
         self.reg8(Reg8::C).value()
     }
@@ -1369,18 +1408,18 @@ impl ReadDataChip for Z80 {}
 
 impl Chip for Z80 {
     type PinType = Z80Pin;
-
+    
     fn pins_buffer_mut(&mut self) -> &mut PinsBuffer {
         &mut self.pins
     }
     fn pins_buffer(&self) -> &PinsBuffer {
         &self.pins
     }
-
+    
     fn must_execute_tick(&self) -> bool {
         self.get_pin(Z80Pin::Neg_CLK) && self.get_pin(Z80Pin::Neg_WAIT) // TODO do that only for Fetch/T2
     }
-
+    
     fn execute_tick(&mut self) {
         //dbg!(&self.next_state);
         match self.next_state {
@@ -1389,21 +1428,21 @@ impl Chip for Z80 {
                 self.set_address_on_pins(self.pc.get());
                 // pc is incremented in T2 in a real CPU
                 self.pc.inc();
-
+                
                 self.set_pin(Z80Pin::Neg_MREQ, false);
                 self.set_pin(Z80Pin::Neg_RD, false);
                 self.set_pin(Z80Pin::Neg_M1, false);
                 self.set_pin(Z80Pin::Neg_RFSH, true);
-
+                
                 self.next_state.inc_state();
             }
-
+            
             // Second step / may be delayed if wait is activated
             MCycle::FetchOpcode(TState::T2, nb, _) => {
                 self.set_pin(Z80Pin::Neg_RD, true);
                 self.set_pin(Z80Pin::Neg_MREQ, true);
                 self.set_pin(Z80Pin::Neg_M1, true);
-
+                
                 let byte = self.get_data_from_pins();
                 match nb {
                     0 => {
@@ -1423,22 +1462,22 @@ impl Chip for Z80 {
                 self.set_address_on_pins(self.refresh_addr);
                 self.next_state.inc_state();
             }
-
+            
             MCycle::FetchOpcode(TState::T3, _, _) => {
                 // we do nothing here
                 // but, IRL, the decoding appears there
                 self.next_state.inc_state();
                 self.set_pin(Z80Pin::Neg_MREQ, false);
             }
-
+            
             MCycle::FetchOpcode(TState::T4, nb, prefix) => {
                 self.set_pin(Z80Pin::Neg_MREQ, true);
                 self.set_pin(Z80Pin::Neg_M1, false);
                 self.set_pin(Z80Pin::Neg_RFSH, true);
-
+                
                 if nb == 0 {
                     let execute = self.decode_step(); // setup next state
-                                                      // by definition there is no conditional instruction there
+                    // by definition there is no conditional instruction there
                     if execute {
                         // nothing is required for the execution
                         // TODO check if input or memory cycle is required
@@ -1448,7 +1487,7 @@ impl Chip for Z80 {
                     }
                 } else {
                     let opcode_information = self.opcode_information.as_ref().unwrap();
-
+                    
                     if nb == opcode_information.nb_additional_opcode_bytes {
                         // We have finished to read the opcode
                         if !self.is_condition_met() {
@@ -1478,15 +1517,15 @@ impl Chip for Z80 {
                     }
                 }
             }
-
+            
             MCycle::Read(TState::T1, nb) | MCycle::Input(TState::T1, nb) => {
                 let address = self.get_read_address_from_opcode_information() + nb as u16;
                 self.set_address_on_pins(address);
-
+                
                 assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
                 assert!(self.get_pin(Z80Pin::Neg_WR));
-
+                
                 self.off(self.next_state.read_pin_type().unwrap());
                 self.off(Z80Pin::Neg_RD);
                 self.next_state.inc_state();
@@ -1494,7 +1533,7 @@ impl Chip for Z80 {
             MCycle::Read(TState::T2, nb) | MCycle::Input(TState::T2, nb) => {
                 let byte = self.get_data_from_pins();
                 self.store_currently_read_byte(byte, nb);
-
+                
                 self.on(self.next_state.read_pin_type().unwrap());
                 self.on(Z80Pin::Neg_RD);
                 self.next_state.inc_state();
@@ -1505,7 +1544,7 @@ impl Chip for Z80 {
             }
             MCycle::Read(TState::T4, nb) | MCycle::Input(TState::T4, nb) => {
                 self.post_read_action();
-
+                
                 let opcode_info = self.opcode_information.as_ref().unwrap().clone();
                 if nb + 1 == opcode_info.nb_bytes_to_read {
                     if 0 != opcode_info.nb_bytes_to_write {
@@ -1531,7 +1570,7 @@ impl Chip for Z80 {
                     }
                 }
             }
-
+            
             MCycle::Write(TState::T1, nb) | MCycle::Output(TState::T1, nb) => {
                 // Get the real address to put on the pins
                 let address = if self.opcode_information().unwrap().write_on_stack() {
@@ -1546,32 +1585,32 @@ impl Chip for Z80 {
                 };
                 //eprintln!("Write in 0x{:x}", address);
                 self.set_address_on_pins(address);
-
+                
                 assert!(self.get_pin(self.next_state.write_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
                 assert!(self.get_pin(Z80Pin::Neg_WR));
-
+                
                 self.next_state.inc_state();
             }
             MCycle::Write(TState::T2, nb) | MCycle::Output(TState::T2, nb) => {
                 self.off(self.next_state.write_pin_type().unwrap());
                 self.off(Z80Pin::Neg_WR); // or is it the writer that does that ?
-
+                
                 let byte = self.get_byte_to_write_from_opcode_information(nb);
                 self.set_data_on_pins(byte);
-
+                
                 self.next_state.inc_state();
             }
-
+            
             // simulates a wait state
             MCycle::Write(TState::T3, nb) | MCycle::Output(TState::T3, nb) => {
                 self.next_state.inc_state();
             }
-
+            
             MCycle::Write(TState::T4, nb) | MCycle::Output(TState::T4, nb) => {
                 self.on(self.next_state.write_pin_type().unwrap());
                 self.on(Z80Pin::Neg_WR);
-
+                
                 if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write - 1 {
                     // TODO take into account those that do a write after the read (if that exists)
                     if !self.must_execute_instruction_in_middle() {
@@ -1580,7 +1619,7 @@ impl Chip for Z80 {
                         self.opcode_information = None;
                     }
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
-                // go back for a new instruction
+                    // go back for a new instruction
                 } else {
                     // go to write the next byte
                     if self.next_state.is_output() {
@@ -1590,23 +1629,31 @@ impl Chip for Z80 {
                     }
                 }
             }
-
+            
+            MCycle::Fake(TState::T4, 1) => {
+                self.instruction_finished();
+            },
+            MCycle::Fake(_, _) => {
+                self.next_state.inc_state();
+            }
+            
+            
             _ => unimplemented!(),
         }
     }
-
+    
     fn reset(&mut self) {
         self.pins = (0, 0).into();
-
+        
         self.set_pin(Z80Pin::Neg_MREQ, true);
         self.set_pin(Z80Pin::Neg_IORQ, true);
         self.set_pin(Z80Pin::Neg_WR, true);
         self.set_pin(Z80Pin::Neg_RD, true);
         self.set_pin(Z80Pin::Neg_M1, true);
         self.set_pin(Z80Pin::Neg_RFSH, true);
-
+        
         self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
-
+        
         self.sp.set(0xffff);
         self.pc.set(0x0000);
         self.af.set(0xffff);
@@ -1625,81 +1672,81 @@ impl Activable for Z80 {
 #[cfg(test)]
 mod test {
     use super::*;
-
+    
     #[test]
     fn test_pins_indices() {
         assert_eq!(Z80Pin::A11 as u64, 1 << 0);
         assert_eq!(Z80Pin::A12 as u64, 1 << 1);
         assert_eq!(Z80Pin::A13 as u64, 1 << 2);
     }
-
+    
     #[test]
     fn test_pins() {
         let mut cpu = Z80::default();
         cpu.set_address_on_pins(0x7F00);
         assert_eq!(cpu.get_address_from_pins(), 0x7F00);
     }
-
+    
     #[test]
     fn test_registers() {
         let mut a = crate::z80::Register8::default();
         let mut b = crate::z80::Register8::default();
-
+        
         a.set(1);
         b.set(2);
-
+        
         assert_eq!(1, a.get());
         assert_eq!(2, b.get());
-
+        
         a.add(b.get());
         assert_eq!(3, a.get());
     }
-
+    
     #[test]
     fn test_registers_in_cpu() {
         let mut cpu = Z80::default();
         cpu.reg8_mut(Reg8::A).set(1);
         cpu.reg8_mut(Reg8::B).set(2);
-
+        
         assert_eq!(cpu.reg8(Reg8::A).get(), 1);
         assert_eq!(cpu.reg8(Reg8::B).get(), 2);
-
+        
         let val = cpu.reg8(Reg8::B).get();
         cpu.reg8_mut(Reg8::A).add(val);
         assert_eq!(cpu.reg8(Reg8::A).get(), 3);
     }
-
+    
     #[test]
     fn test_nop_FetchOpcode() {
         let mut cpu = Z80::default();
         cpu.pc.set(0x1234);
         test_byte_FetchOpcode(&mut cpu, 0x00);
     }
-
+    
     #[test]
     fn test_xora_FetchOpcode() {
         let mut cpu = Z80::default();
         cpu.pc.set(0x1234);
         cpu.reg8_mut(Reg8::A).set(0xff);
-
+        
         assert_eq!(cpu.reg8(Reg8::A).get(), 0xff);
         test_byte_FetchOpcode(&mut cpu, 0xaf);
         assert_eq!(cpu.reg8(Reg8::A).get(), 0x00);
     }
-
+    
     #[test]
     fn test_add_e_FetchOpcode() {
         let mut cpu = Z80::default();
         cpu.pc.set(0x1234);
         cpu.reg8_mut(Reg8::A).set(0x01);
         cpu.reg8_mut(Reg8::E).set(0x10);
-
+        
         assert_eq!(cpu.reg8(Reg8::A).get(), 0x01);
         assert_eq!(cpu.reg8(Reg8::E).get(), 0x10);
         test_byte_FetchOpcode(&mut cpu, 0x83);
         assert_eq!(cpu.reg8(Reg8::A).get(), 0x11);
     }
-
+    
     #[test]
     fn test_ld_l_1() {
         let mut cpu = Z80::default();
@@ -1708,13 +1755,13 @@ mod test {
         test_byte_FetchOpcode2(&mut cpu, 0x2e, 0x01);
         assert_eq!(cpu.reg8(Reg8::L).get(), 0x01);
     }
-
+    
     #[test]
     fn test_ld_nn_a() {
         let mut cpu = Z80::default();
         cpu.pc.set(0x1234);
         cpu.reg8_mut(Reg8::A).set(0xff);
-
+        
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -1722,7 +1769,7 @@ mod test {
         cpu.set_pin(Z80Pin::Neg_RFSH, true);
         cpu.set_pin(Z80Pin::Neg_IORQ, true);
         cpu.set_pin(Z80Pin::Neg_WR, true);
-
+        
         // Get opcode
         assert_eq!(
             cpu.next_state,
@@ -1733,25 +1780,25 @@ mod test {
         cpu.tick();
         cpu.tick();
         cpu.tick();
-
+        
         assert_eq!(
             &OpcodePrefix::None.opcode_information(0x32),
             cpu.opcode_information.as_ref().unwrap()
         );
-
+        
         assert_eq!(
             cpu.opcode_information
-                .as_ref()
-                .unwrap()
-                .nb_additional_opcode_bytes,
+            .as_ref()
+            .unwrap()
+            .nb_additional_opcode_bytes,
             2
         );
-
+        
         assert_eq!(
             cpu.opcode_information.as_ref().unwrap().nb_bytes_to_write,
             1
         );
-
+        
         // Get address
         assert_eq!(
             cpu.next_state,
@@ -1762,7 +1809,7 @@ mod test {
         cpu.tick();
         cpu.tick();
         cpu.tick();
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 2, OpcodePrefix::None)
@@ -1772,7 +1819,7 @@ mod test {
         cpu.tick();
         cpu.tick();
         cpu.tick();
-
+        
         // Write address
         assert_eq!(cpu.next_state, MCycle::Write(TState::T1, 0));
         cpu.tick();
@@ -1782,21 +1829,21 @@ mod test {
         cpu.tick();
         cpu.tick();
         cpu.tick();
-
+        
         // Really write byte
         assert_eq!(cpu.next_state, MCycle::Write(TState::T1, 2));
         cpu.tick();
         cpu.tick();
         cpu.tick();
-
+        
         //next opcode
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         );
     }
-
+    
     #[test]
     fn test_inc_ixl() {
         let mut cpu = Z80::default();
@@ -1805,47 +1852,47 @@ mod test {
         test_byte_FetchOpcode_prefix(&mut cpu, 0xdd, 0x2c);
         assert_eq!(cpu.reg8(Reg8::Ixl).get(), 0x00);
     }
-
+    
     #[test]
     fn test_xor_mem_hl_FetchOpcode() {
         let mut cpu = Z80::default();
         cpu.pc.set(0x1234);
         cpu.reg8_mut(Reg8::A).set(0xff);
-
+        
         assert_eq!(cpu.reg8(Reg8::A).get(), 0xff);
         test_byte_FetchOpcodeRead(&mut cpu, 0xae, 0xff);
         assert_eq!(cpu.reg8(Reg8::A).get(), 0x00);
     }
-
+    
     #[test]
     fn test_lut() {
         assert_eq!(
             OpcodePrefix::None
-                .opcode_information(0x00)
-                .nb_additional_opcode_bytes,
+            .opcode_information(0x00)
+            .nb_additional_opcode_bytes,
             0
         );
-
+        
         // ld a, (nnnn)
         let desc = dbg!(OpcodePrefix::None.opcode_information(0b00111010));
         assert_eq!(desc.nb_additional_opcode_bytes, 2);
         assert_eq!(desc.nb_bytes_to_read, 1);
-
+        
         // ld l, nn
         let desc = dbg!(OpcodePrefix::None.opcode_information(0x2e));
         assert_eq!(desc.nb_additional_opcode_bytes, 1);
-
+        
         // ld (nn), a
         let desc = dbg!(OpcodePrefix::None.opcode_information(0x32));
         assert_eq!(desc.nb_additional_opcode_bytes, 2);
         assert_eq!(desc.nb_bytes_to_write, 1);
     }
-
+    
     #[test]
     fn test_ld_a_mem_FetchOpcode() {
         let mut cpu = Z80::default();
         cpu.pc.set(0x1234);
-
+        
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -1853,52 +1900,52 @@ mod test {
         cpu.set_pin(Z80Pin::Neg_RFSH, true);
         cpu.set_pin(Z80Pin::Neg_IORQ, true);
         cpu.set_pin(Z80Pin::Neg_WR, true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         );
-
+        
         cpu.reg8_mut(Reg8::A).set(0x12);
         assert_eq!(cpu.reg8(Reg8::A).get(), 0x12);
-
+        
         cpu.tick();
         cpu.set_data_on_pins(0b00111010);
         cpu.tick();
         cpu.tick();
         cpu.tick();
-
+        
         cpu.tick();
         cpu.set_data_on_pins(0xff);
         cpu.tick();
         cpu.tick();
         cpu.tick();
-
+        
         cpu.tick();
         cpu.set_data_on_pins(0xff);
         cpu.tick();
         cpu.tick();
         cpu.tick();
-
+        
         cpu.tick();
         cpu.set_data_on_pins(0x34);
         cpu.tick();
         cpu.tick();
         cpu.tick();
-
+        
         assert_eq!(cpu.reg8(Reg8::A).get(), 0x34);
     }
-
+    
     fn force_front(cpu: &mut Z80) {
         cpu.set_pin(Z80Pin::Neg_CLK, false);
         cpu.save_pins_state();
         cpu.set_pin(Z80Pin::Neg_CLK, true);
     }
-
+    
     fn test_byte_FetchOpcode(cpu: &mut Z80, byte: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
         force_front(cpu);
-
+        
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -1906,7 +1953,7 @@ mod test {
         cpu.set_pin(Z80Pin::Neg_RFSH, true);
         cpu.set_pin(Z80Pin::Neg_IORQ, true);
         cpu.set_pin(Z80Pin::Neg_WR, true);
-
+        
         assert!(cpu.is_activated());
         assert_eq!(
             cpu.next_state,
@@ -1922,12 +1969,12 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None)
         );
-
+        
         // GA set wait
         cpu.set_pin(Z80Pin::Neg_WAIT, false);
         cpu.tick();
@@ -1942,7 +1989,7 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
         cpu.set_data_on_pins(byte);
@@ -1951,24 +1998,24 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T3, 0, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T4, 0, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         );
     }
-
+    
     fn test_byte_FetchOpcodeRead(cpu: &mut Z80, byte: u8, data: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
         force_front(cpu);
-
+        
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -1976,7 +2023,7 @@ mod test {
         cpu.set_pin(Z80Pin::Neg_RFSH, true);
         cpu.set_pin(Z80Pin::Neg_IORQ, true);
         cpu.set_pin(Z80Pin::Neg_WR, true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
@@ -1991,12 +2038,12 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None)
         );
-
+        
         // GA set wait
         cpu.set_pin(Z80Pin::Neg_WAIT, false);
         cpu.tick();
@@ -2011,7 +2058,7 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
         cpu.set_data_on_pins(byte);
@@ -2020,27 +2067,27 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T3, 0, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T4, 0, OpcodePrefix::None)
         );
-
+        
         cpu.tick(); // execute
         assert_eq!(cpu.next_state, MCycle::Read(TState::T1, 0));
-
+        
         ///TODO add assertions there
         cpu.tick();
         cpu.set_data_on_pins(data);
         cpu.tick();
         cpu.tick();
     }
-
+    
     fn test_byte_FetchOpcodeRead2(cpu: &mut Z80, byte: u8, data: u8, data2: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
         force_front(cpu);
-
+        
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -2048,7 +2095,7 @@ mod test {
         cpu.set_pin(Z80Pin::Neg_RFSH, true);
         cpu.set_pin(Z80Pin::Neg_IORQ, true);
         cpu.set_pin(Z80Pin::Neg_WR, true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
@@ -2063,12 +2110,12 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None)
         );
-
+        
         // GA set wait
         cpu.set_pin(Z80Pin::Neg_WAIT, false);
         cpu.tick();
@@ -2083,7 +2130,7 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
         cpu.set_data_on_pins(byte);
@@ -2092,33 +2139,33 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T3, 0, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T4, 0, OpcodePrefix::None)
         );
-
+        
         cpu.tick(); // execute
         assert_eq!(cpu.next_state, MCycle::Read(TState::T1, 0));
-
+        
         ///TODO add assertions there
         cpu.tick();
         cpu.set_data_on_pins(data);
         cpu.tick();
         cpu.tick();
-
+        
         ///TODO add assertions there
         cpu.tick();
         cpu.set_data_on_pins(data2);
         cpu.tick();
         cpu.tick();
     }
-
+    
     fn test_byte_FetchOpcode2(cpu: &mut Z80, byte1: u8, byte2: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
         force_front(cpu);
-
+        
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -2126,7 +2173,7 @@ mod test {
         cpu.set_pin(Z80Pin::Neg_RFSH, true);
         cpu.set_pin(Z80Pin::Neg_IORQ, true);
         cpu.set_pin(Z80Pin::Neg_WR, true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
@@ -2141,12 +2188,12 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None)
         );
-
+        
         // GA set wait
         cpu.set_pin(Z80Pin::Neg_WAIT, false);
         cpu.tick();
@@ -2161,7 +2208,7 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
         cpu.set_data_on_pins(byte1);
@@ -2170,19 +2217,19 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T3, 0, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T4, 0, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 1, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         let addr = cpu.get_address_from_pins();
         assert_eq!(addr, pc_base + 1);
@@ -2193,12 +2240,12 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 1, OpcodePrefix::None)
         );
-
+        
         // GA set wait
         cpu.set_pin(Z80Pin::Neg_WAIT, false);
         cpu.tick();
@@ -2213,7 +2260,7 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
         cpu.set_data_on_pins(byte2);
@@ -2222,29 +2269,29 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T3, 1, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T4, 1, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         );
     }
-
+    
     fn test_byte_FetchOpcode_prefix(cpu: &mut Z80, byte1: u8, byte2: u8) {
         let prefix = match byte1 {
             0xdd => OpcodePrefix::Dd,
             _ => unimplemented!(),
         };
-
+        
         let pc_base = cpu.reg16(Reg16::Pc).get();
         force_front(cpu);
-
+        
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -2252,7 +2299,7 @@ mod test {
         cpu.set_pin(Z80Pin::Neg_RFSH, true);
         cpu.set_pin(Z80Pin::Neg_IORQ, true);
         cpu.set_pin(Z80Pin::Neg_WR, true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
@@ -2267,12 +2314,12 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None)
         );
-
+        
         // GA set wait
         cpu.set_pin(Z80Pin::Neg_WAIT, false);
         cpu.tick();
@@ -2287,7 +2334,7 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
         cpu.set_data_on_pins(byte1);
@@ -2296,16 +2343,16 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T3, 0, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T4, 0, OpcodePrefix::None)
         );
-
+        
         cpu.tick();
         assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T1, 0, prefix));
-
+        
         cpu.tick();
         let addr = cpu.get_address_from_pins();
         assert_eq!(addr, pc_base + 1);
@@ -2316,9 +2363,9 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T2, 0, prefix));
-
+        
         // GA set wait
         cpu.set_pin(Z80Pin::Neg_WAIT, false);
         cpu.tick();
@@ -2330,34 +2377,34 @@ mod test {
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
-
+        
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
         cpu.set_data_on_pins(byte2);
         cpu.tick();
         assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T3, 0, prefix));
-
+        
         cpu.tick();
         assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T4, 0, prefix));
-
+        
         cpu.tick();
         assert_eq!(
             cpu.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         );
     }
-
+    
     #[test]
     fn registers_operation() {
         let mut r16 = crate::z80::Register16::default();
         assert_eq!(r16.value(), 0);
-
+        
         r16.set(0xffff);
         assert_eq!(r16.value(), 0xffff);
-
+        
         r16.add(1);
         assert_eq!(r16.value(), 0);
-
+        
         r16.inc();
         assert_eq!(r16.value(), 1);
     }
