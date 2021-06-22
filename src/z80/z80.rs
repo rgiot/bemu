@@ -751,6 +751,14 @@ impl Z80 {
                     self.next_state = MCycle::new_fake(1);
                 }
             }
+
+
+            Mnemonic::Cpl => {
+                self.reg8_mut(Reg8::A).cpl();
+                self.set_flag_on(Z80Flags::H);
+                self.set_flag_on(Z80Flags::N);
+
+            }
             Mnemonic::Dec => {
                 let mut update_flags = true; // disable only for 16 bits
                 let mut res = 0;
@@ -1540,7 +1548,7 @@ impl Chip for Z80 {
     }
     
     fn execute_tick(&mut self) {
-        dbg!(&self.next_state);
+     //   dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {

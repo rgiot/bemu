@@ -170,7 +170,7 @@ fn timing_ldir2() {
 // Several lines has been modified to allow an appropriate parsing
 
 #[test]
-fn test_8_load() {
+fn test_timing_8_load() {
 	let madram = "
 	; Mnemonic  | Opcodes       | SZ5H3VNC | NOPs  ; Notes
 	ld a,b     |    01rrr'''   | ........ | 1    
@@ -196,16 +196,9 @@ fn test_8_load() {
 }
 
 
-#[test]
-fn test_any() {
-	let madram = "
-	";
-	check_madram_timing(madram);
-
-}
 
 #[test]
-fn test_16_load() {
+fn test_timing_16_load() {
 	let madram = "
 	ld bc,02    |    00rr0001 nn | ........ | 3 
 	ld ix,0xa042   | DD 00100001 nn | ........ | 4
@@ -228,7 +221,7 @@ fn test_16_load() {
 
 
 #[test]
-fn test_exchange() {
+fn test_timing_exchange() {
 	let madram = "
 	ex de,hl    |    EB | ........ | 1
 	ex af,af'   |    08 | ........ | 1
@@ -246,6 +239,171 @@ fn test_exchange() {
 	"
 	cpir        | ED B1 | SZ!H!!1. | 6 / 4 for last iteration.
 	cpdr        | ED B9 | SZ!H!!1. | 6 / 4 for last iteration.
+	";
+	check_madram_timing(madram);
+
+}
+
+#[test]
+fn test_timing_artihmetic_logic() {
+	let madram = "
+
+	add b      |    10000rrr   | SZ5H3V0C | 1 
+	add (hl)   |    10000110   | SZ5H3V0C | 2
+	add (ix+2) | DD 10000110 n | SZ5H3V0C | 5
+	add 3      |    11000110 n | SZ5H3V0C | 2  
+	adc b      |    10001rrr   | SZ5H3V0C | 1 
+	sub b      |    10010rrr   | SZ5H3V1C | 1 
+	sbc b      |    10011rrr   | SZ5H3V1C | 1 
+	and b      |    10100rrr   | SZ5H3P00 | 1 
+	 or b      |    10101rrr   | SZ5H3P00 | 1 
+	xor b      |    10110rrr   | SZ5H3P00 | 1 
+	cp  b      |    10111rrr   | SZ5H3V1C | 1 
+	inc b      |    00rrr100   | SZ5H3V0. | 1 
+	inc (hl)   |    00110100   | SZ5H3V0. | 3
+	inc (ix+4) | DD 00110100 n | SZ5H3V0. | 6
+	dec b      |    00rrr101   | SZ5H3V1. | 1 
+	dec (hl)   |    00110101   | SZ5H3V1. | 3
+	dec (ix+5) | DD 00110101 n | SZ5H3V1. | 6";
+	check_madram_timing(madram);
+
+}
+
+
+
+#[test]
+fn test_timing_arithmetic16() {
+	let madram = "
+
+	add hl,bc   |    00rr1001 | ..!!!.0C | 3 
+add ix,bc   | DD 00rr1001 | ..!!!.0C | 4 ;                 
+adc hl,bc   | ED 01rr1010 | SZ!!!V0C | 4 ;                 
+sbc hl,bc   | ED 01rr0010 | SZ!!!V1C | 4 ;                 
+inc bc      |    00rr0011 | ........ | 2 ;                 
+inc bc      | DD 00100011 | ........ | 3 ;                 
+dec bc      |    00rr1011 | ........ | 2 ;                 
+dec ix      | DD 00101011 | ........ | 3 ;                 
+	";
+	check_madram_timing(madram);
+
+}
+
+
+#[test]
+fn test_timing_general_purpose() {
+	let madram = "
+
+	daa  |    27 | SZ5H3P.C | 1  
+	neg  | ED 44 | SZ5H3V1C | 2  
+	cpl  |    2F | ..513.1. | 1  
+	ccf  |    3F | ..!!!.0C | 1  
+	scf  |    37 | ..!0!.01 | 1
+	nop  |    00 | ........ | 1  
+	halt |    76 | ........ | 1  
+	di   |    F3 | ........ | 1  
+	ei   |    FB | ........ | 1      
+	im 0 | ED 46 | ........ | 2  
+	im 1 | ED 56 | ........ | 2 
+	im 2 | ED 5E | ........ | 2 ";
+	check_madram_timing(madram);
+
+}
+
+
+#[test]
+fn test_timing_rotate() {
+	let madram = "
+
+	rlca         |       00000111   | ..503.0C | 1  
+	rrca         |       00001111   | ..503.0C | 1  
+	rla          |       00010111   | ..503.0C | 1 
+	rra          |       00011111   | ..503.0C | 1  
+	rlc r        |    CB 00000rrr   | SZ503P0C | 2 
+	rlc (hl)     |    CB 00000110   | SZ503P0C | 4
+	rlc (ix+2)   | DD CB 00000110 n | SZ503P0C | 7
+	rlc (ix+2),b | DD CB 00000rrr n | SZ503P0C | 7 
+	rrc r        |    CB 00001rrr   | SZ503P0C | 2  
+	rl r         |    CB 00010rrr   | SZ503P0C | 2  
+	rr r         |    CB 00011rrr   | SZ503P0C | 2  
+	sla r        |    CB 00100rrr   | SZ503P0C | 2  
+	sra r        |    CB 00101rrr   | SZ503P0C | 2  
+	sl1 r        |    CB 00110rrr   | SZ503P0C | 2  
+	srl r        |    CB 00111rrr   | SZ503P0C | 2  
+	rld          |    ED 6F         | SZ503P0. | 5 
+	rrd          |    ED 67         | SZ503P0. | 5 ";
+	check_madram_timing(madram);
+
+}
+
+
+
+#[test]
+fn test_timing_bit() {
+	let madram = "
+
+	bit 2,c        |    CB   01bbbrrr | !Z513Z0. | 2 
+	bit 2,(hl)     |    CB   01bbb110 | !Z!1!Z0. | 3
+	bit 2,(ix+4)   | DD CB n 01bbb110 | !Z!1!Z0. | 6
+	res 2,c        |    CB   10bbbrrr | ........ | 
+	res 2,(hl)     |    CB   10bbb110 | ........ | 4
+	res 2,(ix+4)   | DD CB n 10bbb110 | ........ | 7
+	res 2,(ix+4),c | DD CB n 10bbbrrr | ........ | 7 
+	set 2,c        |    CB   11bbbrrr | ........ | 2
+	set 2,(hl)     |    CB   11bbb110 | ........ | 4
+	set 2,(ix+4)   | DD CB n 11bbb110 | ........ | 7
+	set 2,(ix+4),c | DD CB n 11bbbrrr | ........ | 7";
+	check_madram_timing(madram);
+
+}
+
+
+#[test]
+fn test_timing_jump() {
+	let madram = "
+
+	jp 11       |    11000011 nn  | ........ | 3
+	jp c,11   |    11ccc010 nn  | ........ | 3 
+	jp hl       |    E9           | ........ | 1 
+	jp ix       | DD E9           | ........ | 2	
+	jr 1        |    00011000 n-2 | ........ | 3 
+	jr c,1    |    001cc000 n-2 | ........ | 3 
+	djnz 1      |    00010000 n-2 | ........ | 4 
+	call 1     |    11001101 nn  | ........ | 5
+	call c,1 |    11ccc100 nn  | ........ | 5 
+	rst 0     |    11ttt111     | ........ | 4
+	ret         |    11001001     | ........ | 3
+	ret c     |    11ccc000     | ........ | 4
+	reti        | ED 4D           | ........ | 4 
+	retn        | ED 45           | ........ | 4 ";
+	check_madram_timing(madram);
+
+}
+
+#[test]
+fn test_timing_input() {
+	let madram = "
+
+	in a,(2)  |    11011011 n | ........ | 3 
+	in b,(C)  | ED 01rrr000   | SZ503P0. | 4 
+	in 0,(C)  | ED 01110000   | SZ503P0. | 4
+	ini       | ED A2         | !!!!!!!! | 5 
+	ind       | ED AA         | !!!!!!!! | 5 
+	inir      | ED B2         | !!!!!!!! | 11
+	indr      | ED BA         | !!!!!!!! | 11
+	out (n),a |    11010011 n | ........ | 3 
+	out (C),b | ED 01rrr001   | ........ | 4 
+	out (C),0 | ED 01110001   | ........ | 4 
+	outi      | ED A3         | !!!!!!!! | 5 
+	outd      | ED AB         | !!!!!!!! | 5 
+	outir     | ED B3         | !!!!!!!! | 11
+	outdr     | ED BB         | !!!!!!!! | 11";
+	check_madram_timing(madram);
+
+}
+
+#[test]
+fn test_timing_any() {
+	let madram = "
 	";
 	check_madram_timing(madram);
 
