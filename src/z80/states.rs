@@ -117,6 +117,7 @@ impl OpcodeInformation {
     pub fn write_on_stack(&self) -> bool {
         self.write_address == AddressSource::Stack(StackDelta::MinusTwo)
     }
+
     /// Fetch is finished for opcode of 1 byte with no memory/port access
     pub fn fetch_finished(&self) -> bool {
         self.nb_additional_opcode_bytes == 0
@@ -195,7 +196,7 @@ impl OpcodePrefix {
             self.output_address_source(&token)
         }
         else if let Some(Mnemonic::ExMemSp) = token.mnemonic() {
-            AddressSource::Stack(StackDelta::MinusTwo)
+            AddressSource::Stack(StackDelta::Zero)
         }
         else if !write_to_pins {
             self.write_address_source(opcode)
@@ -319,7 +320,7 @@ impl OpcodePrefix {
             DataDestination::Pins
         } 
         else if let Some(Mnemonic::ExMemSp) = token.mnemonic() {
-            DataDestination::Immediate
+            DataDestination::Register16(Reg16::Wz)
         }
         else {
             assert_eq!(AddressSource::None, read_address, "{:?}", token);
@@ -795,9 +796,9 @@ mod test {
     fn lookup_checks_ex_sp_hl() {
         let ex = dbg!(&OPCODE_PREFIX[0xe3]);
         assert_eq!(ex.read_address, AddressSource::Stack(StackDelta::Zero));
-        assert_eq!(ex.read_data, DataSource::Immediate); // wz expected
+        assert_eq!(ex.read_data, DataSource::Register16(Reg16::Wz)); // wz expected
         assert_eq!(ex.nb_bytes_to_read, 2);
-        assert_eq!(ex.write_address, AddressSource::Stack(StackDelta::MinusTwo));
+        assert_eq!(ex.write_address, AddressSource::Stack(StackDelta::Zero));
         assert_eq!(ex.write_data, DataSource::Register16(Reg16::Hl));
         assert_eq!(ex.nb_bytes_to_write, 2);
     }

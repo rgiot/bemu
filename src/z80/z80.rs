@@ -787,6 +787,16 @@ impl Z80 {
             Mnemonic::ExHlDe => {
                 std::mem::swap(&mut self.hl, &mut self.de);
             }
+
+            Mnemonic::ExMemSp => {
+                let reg = match arg1 {
+                    Some(DataAccess::Register16(reg)) => reg.into(),
+                    Some(DataAccess::IndexRegister16(reg)) => reg.into(),
+                    _ => unimplemented!()
+                };
+                let val = self.wz.value();
+                self.reg16_mut(reg).set(val);
+            }
             
             Mnemonic::Exx => {
                 std::mem::swap(&mut self.bc, &mut self.bc2);
@@ -1655,8 +1665,9 @@ impl Chip for Z80 {
             }
             
             MCycle::Write(TState::T1, nb) | MCycle::Output(TState::T1, nb) => {
+                let opcode_information = self.opcode_information().unwrap();
                 // Get the real address to put on the pins
-                let address = if self.opcode_information().unwrap().write_on_stack() {
+                let address = if opcode_information.write_on_stack()  {
                     let base = self.get_write_address_from_opcode_information();
                     match nb {
                         0 => base + 1,
@@ -1664,7 +1675,7 @@ impl Chip for Z80 {
                         _ => unreachable!(),
                     }
                 } else {
-                    self.get_write_address_from_opcode_information()
+                    self.get_write_address_from_opcode_information().wrapping_add(nb as u16)
                 };
                 //eprintln!("Write in 0x{:x}", address);
                 self.set_address_on_pins(address);

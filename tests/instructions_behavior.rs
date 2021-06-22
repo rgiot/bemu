@@ -261,6 +261,37 @@ fn execute_dec() {
 }
 
 
+#[test]
+fn execute_ex_mem_sp_hl() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld sp, stack
+		ld hl, 0xbeef
+		ex (sp), hl
+		jr $ ; end of test
+		org 0x4010
+
+stack
+		dw 0xdead
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0xdead,
+		motherboard.cpu().reg16(Reg16::Hl).value(),
+		"{:x} != {:x}", 0xdead,
+		motherboard.cpu().reg16(Reg16::Hl).value(),
+	);
+	assert_eq!(
+		0xbeef,
+		motherboard.read_word(0x4010),
+		"{:x} != {:x}",0xbeef,
+		motherboard.read_word(0x4010),
+	);
+}
+
 
 #[test]
 fn execute_inc_mem_hl() {
