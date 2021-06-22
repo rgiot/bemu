@@ -798,6 +798,17 @@ mod test {
        assert_eq!(ldd.write_data, DataSource::Pins);
     }
 
+    #[test]
+    fn lookup_check_ldir() {
+        let ldd = dbg!(&OPCODE_PREFIX_ED[0xb0]);
+        assert_eq!(ldd.nb_bytes_to_read, 1);
+        assert_eq!(ldd.nb_bytes_to_write, 1);
+        assert_eq!(ldd.read_address, AddressSource::Register16(Reg16::Hl));
+        assert_eq!(ldd.write_address, AddressSource::Register16(Reg16::De));
+        assert_eq!(ldd.read_data, DataDestination::Pins);
+        assert_eq!(ldd.write_data, DataSource::Pins);
+    }
+
 
     #[test]
     fn lookup_checks_in() {
@@ -889,10 +900,7 @@ mod test {
         assert_eq!(pop.write_data, DataSource::Pins);
     }
 
-    #[test]
-    fn lookup_ldir() {
-        todo!()
-    }
+
 
     #[test]
     fn lookup_set_mem_hl() {
