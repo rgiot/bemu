@@ -1157,13 +1157,19 @@ impl Z80 {
 /// Opcode specific code
 impl Z80 {
     /// Manage the specific treatment after the read_instruction
-    /// TODO check if it does not belong to another tstate !!!
+    /// TODO check if it does not belong to another Cycle (I'm pretty sure of that) !!!
     pub fn post_read_action(&mut self) {
         let opcode_info = self.opcode_information.as_ref().unwrap();
 
         match opcode_info.token.mnemonic() {
             Some(Mnemonic::Outd) => {
                 self.reg16_mut(Reg16::Hl).dec();
+                self.reg8_mut(Reg8::B).dec();
+            }
+
+            Some(Mnemonic::Ldd) => {
+                self.reg16_mut(Reg16::Hl).dec();
+                self.reg16_mut(Reg16::De).dec();
                 self.reg8_mut(Reg8::B).dec();
             }
 

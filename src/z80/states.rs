@@ -292,10 +292,14 @@ impl OpcodePrefix {
             DataDestination::Pins
         }
         // repetition 
-        else if mnemonic == &Mnemonic::Outi
-            || mnemonic == &Mnemonic::Otir
-            || mnemonic == &Mnemonic::Outd
-            || mnemonic == &Mnemonic::Otdr
+        else if matches!(
+                mnemonic, 
+                    Mnemonic::Outi | Mnemonic::Outd
+                    | Mnemonic::Otir | Mnemonic::Otdr
+                    | Mnemonic::Ldi | Mnemonic::Ldd
+                    | Mnemonic::Ldir | Mnemonic::Lddr
+            
+            )
         {
             DataDestination::Pins
         } else {
@@ -425,11 +429,15 @@ impl OpcodePrefix {
             static ref IN_IY: Regex = Regex::new(r"\(IY\)$").unwrap();
             static ref IMMEDIATE: Regex = Regex::new(r"\(nnnn\)$").unwrap();
             static ref POP: Regex = Regex::new(r"^POP").unwrap();
+            static ref LDSTAR: Regex = Regex::new(r"(LDD)|(LDI)R?").unwrap();
         }
 
         let repr = self.disassembling_table()[i];
 
-        if POP.is_match(repr) {
+        if LDSTAR.is_match(repr) {
+            AddressSource::Register16(Reg16::Hl)
+        }
+        else if POP.is_match(repr) {
             AddressSource::Stack(StackDelta::Zero)
         } else if INDEXED_IY.is_match(repr) {
             AddressSource::Indexed(Reg16::Iy)
@@ -498,11 +506,15 @@ impl OpcodePrefix {
             static ref SET: Regex = Regex::new(r"^SET").unwrap();
             static ref INC: Regex = Regex::new(r"^INC").unwrap();
             static ref DEC: Regex = Regex::new(r"^DEC").unwrap();
+            static ref LDSTAR: Regex = Regex::new(r"(LDD)|(LDI)R?").unwrap();
         }
 
         let repr = self.disassembling_table()[i];
 
-        if IN_HL_END.is_match(repr)
+        if LDSTAR.is_match(repr) {
+            AddressSource::Register16(Reg16::De)
+        }
+        else if IN_HL_END.is_match(repr)
             && (SET.is_match(repr) || INC.is_match(repr) || DEC.is_match(repr))
         {
             AddressSource::Register16(Reg16::Hl)
@@ -774,6 +786,18 @@ mod test {
         assert_eq!(ld.read_address, AddressSource::Register16(Reg16::Bc));
         assert_eq!(ld.read_data, DataDestination::Register8(Reg8::A));
     }
+
+    #[test]
+    fn lookup_check_ldd() {
+       let ldd = dbg!(&OPCODE_PREFIX_ED[0xA8]);
+       assert_eq!(ldd.nb_bytes_to_read, 1);
+       assert_eq!(ldd.nb_bytes_to_write, 1);
+       assert_eq!(ldd.read_address, AddressSource::Register16(Reg16::Hl));
+       assert_eq!(ldd.write_address, AddressSource::Register16(Reg16::De));
+       assert_eq!(ldd.read_data, DataDestination::Pins);
+       assert_eq!(ldd.write_data, DataSource::Pins);
+    }
+
 
     #[test]
     fn lookup_checks_in() {
