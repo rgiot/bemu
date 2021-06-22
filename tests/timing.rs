@@ -1,4 +1,4 @@
-use amsrust::{crtc::{Crtc, CrtcType}, motherboard};
+use amsrust::{crtc::{Crtc, CrtcType}, debug::Monitor, motherboard::{self, MotherboardBuilder}};
 use amsrust::motherboard::Motherboard;
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
 use amsrust::ga::{VideoMode, Sync, RgbLevels};
@@ -6,11 +6,6 @@ use amsrust::ga::{VideoMode, Sync, RgbLevels};
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
 /// Attention, do not put the code in area where ROMs are activated ...
 fn execute_instruction(load: u16, test: &[u8]) -> (Vec<(RgbLevels, Sync)> , Motherboard) {
-	dbg!(
-		cpclib_asm::disass::disassemble(test)
-	);
-
-
     let mut motherboard = Motherboard::default();
 
 	assert_eq!(
@@ -22,13 +17,26 @@ fn execute_instruction(load: u16, test: &[u8]) -> (Vec<(RgbLevels, Sync)> , Moth
 		motherboard.ga().next_video_mode()
 	);
 
+	let res = execute_instruction_in(&mut motherboard, load, test);
+	(res, motherboard)
+}
+
+fn execute_instruction_in(motherboard: &mut Motherboard, load: u16, test: &[u8]) -> Vec<(RgbLevels, Sync)> {
+	dbg!(
+		cpclib_asm::disass::disassemble(test)
+	);
     motherboard.write_buffer(load, test);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(load);
 
 	// execute it until it is finished
-	let output = motherboard.execute_next_opcode();
+	let mut output = Vec::new();
+	while motherboard.pc() == load {
+		Monitor::monitor(motherboard);
+		let mut res = motherboard.execute_next_opcode();
+		output.append(&mut res);
+	}
 
-	(output, motherboard)
+	output
 
 }
 
@@ -109,5 +117,47 @@ fn timing_ldd() {
 	assert_eq!(
 		motherboard.nops_counter().value(),
 		5
+	);
+}
+
+
+
+#[test]
+fn timing_ldir1() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		ldir
+	"));
+
+	let mut motherboard = MotherboardBuilder::default().build();
+	motherboard.set_bc(1);
+	let output  = execute_instruction_in(&mut motherboard, 0x4000, code);
+
+	dbg!(output.len(), motherboard.t_state_counter(), motherboard.nops_counter());
+
+	assert_eq!(
+		motherboard.nops_counter().value(),
+		5
+	);
+}
+
+
+
+#[test]
+fn timing_ldir2() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		ldir
+	"));
+
+	let mut motherboard = MotherboardBuilder::default().build();
+	motherboard.set_bc(2);
+	let output  = execute_instruction_in(&mut motherboard, 0x4000, code);
+
+	dbg!(output.len(), motherboard.t_state_counter(), motherboard.nops_counter());
+
+	assert_eq!(
+		motherboard.nops_counter().value(),
+		 6 + 5
 	);
 }

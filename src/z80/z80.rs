@@ -954,11 +954,13 @@ impl Z80 {
             }
             Mnemonic::Lddr => {
                 self.inner_ldd();
-                self.inner_bc_loop();
+                let jmp = self.inner_bc_loop();
+                self.next_state = MCycle::new_fake(if jmp {2} else {1});
             }
             Mnemonic::Ldir => {
                 self.inner_ldi();
-                self.inner_bc_loop();
+                let jmp = self.inner_bc_loop();
+                self.next_state = MCycle::new_fake(if jmp {2} else {1});
             }
             
             Mnemonic::Or => {
@@ -1295,13 +1297,17 @@ impl Z80 {
     }
     
     /// Handle the loop for LDDR/LDIR
-    fn inner_bc_loop(&mut self) {
+    /// Return true when pc is modified
+    fn inner_bc_loop(&mut self) -> bool {
         if self.bc() != 0 {
             self.reg16_mut(Reg16::Pc).dec();
             self.reg16_mut(Reg16::Pc).dec();
+            true
+        }
+        else {
+            false
         }
         
-        self.next_state = MCycle::new_fake(1);
     }
 }
 
@@ -1477,7 +1483,7 @@ impl Chip for Z80 {
     }
     
     fn execute_tick(&mut self) {
-        dbg!(&self.next_state);
+      //  dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
