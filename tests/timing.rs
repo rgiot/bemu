@@ -28,6 +28,7 @@ fn execute_instruction_in(motherboard: &mut Motherboard, load: u16, test: &[u8])
 	);
     motherboard.write_buffer(load, test);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(load);
+    motherboard.cpu_mut().reg16_mut(Reg16::Bc).set(2); // always to loops for sensitive instructions
 
 	// execute it until it is finished
 	let mut output = Vec::new();
@@ -224,6 +225,34 @@ fn test_16_load() {
 
 }
 
+
+
+#[test]
+fn test_exchange() {
+	let madram = "
+	ex de,hl    |    EB | ........ | 1
+	ex af,af'   |    08 | ........ | 1
+	exx         |    D9 | ........ | 1
+	ex (sp),hl  |    E3 | ........ | 6   
+	ex (sp),ix  | DD E3 | ........ | 7   
+
+	ldi         | ED A0 | ..!0!!0. | 5   
+	ldd         | ED A8 | ..!0!!0. | 5  
+	ldir        | ED B0 | ..!0!00. | 11 
+	lddr        | ED B8 | ..!0!00. | 11 
+
+	cpi         | ED A1 | SZ!H!!1. | 4   
+	cpd         | ED A9 | SZ!H!!1. | 4  
+	";
+
+	// not tested yet
+	"
+	cpir        | ED B1 | SZ!H!!1. | 6 / 4 for last iteration.
+	cpdr        | ED B9 | SZ!H!!1. | 6 / 4 for last iteration.
+	";
+	check_madram_timing(madram);
+
+}
 
 fn check_madram_timing(content: &str) {
 	for (code, timing) in content.split("\n")
