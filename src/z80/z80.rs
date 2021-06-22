@@ -574,13 +574,11 @@ impl Z80 {
                         self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
                         return true;
                     }
-                } else if opcode_information.nb_additional_opcode_bytes != 0 {
+                } {
                     // continue to read the bytes for the current opcode
                     self.next_state = MCycle::FetchOpcode(TState::T1, 1, current_prefix);
                     return false;
-                } else {
-                    unimplemented!("{:?}", opcode_information)
-                }
+                } 
             }
         }
     }
@@ -1358,7 +1356,7 @@ impl Chip for Z80 {
     }
 
     fn execute_tick(&mut self) {
-    //    dbg!(&self.next_state);
+        //dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
@@ -1432,17 +1430,17 @@ impl Chip for Z80 {
                             // serve for call/jp/jr
                             // TODO check if it must serve for loop based instruction
                             self.instruction_finished();
-                        } else if 0 != opcode_information.nb_bytes_to_read {
+                        } else if  opcode_information.expect_read() {
                             if opcode_information.read_from_pins {
                                 self.next_state = MCycle::Input(TState::T1, 0);
                             } else {
                                 self.next_state = MCycle::Read(TState::T1, 0);
                             }
-                        } else if 0 != opcode_information.nb_bytes_to_write {
+                        } else if opcode_information.expect_write() {
                             if opcode_information.read_from_pins {
-                                self.next_state = MCycle::Input(TState::T1, 0);
+                                self.next_state = MCycle::Output(TState::T1, 0);
                             } else {
-                                self.next_state = MCycle::Read(TState::T1, 0);
+                                self.next_state = MCycle::Write(TState::T1, 0);
                             }
                         } else {
                             // go back for a new instruction

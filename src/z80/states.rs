@@ -708,6 +708,11 @@ mod test {
         // call pq
         let call = dbg!(&OPCODE_PREFIX[0xcd]);
         assert_eq!(call.nb_additional_opcode_bytes, 2);
+        assert_eq!(call.read_from_pins, false);
+        assert_eq!(call.read_address, AddressSource::None);
+        assert_eq!(call.nb_bytes_to_read, 0);
+        assert_eq!(call.flag_test, None);
+        assert_eq!(call.expect_read(), false);
         assert_eq!(
             call.write_address,
             AddressSource::Stack(StackDelta::MinusTwo)
@@ -718,7 +723,6 @@ mod test {
     #[test]
     fn lookup_checks_call_conditional() {
         use cpclib_asm::preamble::FlagTest;
-        // call pq
         let call = dbg!(&OPCODE_PREFIX[0b11000100]);
         assert_eq!(call.nb_additional_opcode_bytes, 2);
         assert_eq!(
@@ -731,7 +735,6 @@ mod test {
 
     #[test]
     fn lookup_checks_ret() {
-        // call pq
         let ret = dbg!(&OPCODE_PREFIX[0xc9]);
         assert_eq!(ret.nb_additional_opcode_bytes, 0);
         assert_eq!(ret.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
@@ -741,14 +744,12 @@ mod test {
 
     #[test]
     fn lookup_checks_ld_sp() {
-        // call pq
         let call = dbg!(&OPCODE_PREFIX[0x31]);
         assert_eq!(call.nb_additional_opcode_bytes, 2);
     }
 
     #[test]
     fn lookup_checks_ld_hl_mem() {
-        // call pq
         let ld = dbg!(&OPCODE_PREFIX[0x2a]);
         assert_eq!(ld.nb_additional_opcode_bytes, 2);
         assert_eq!(ld.nb_bytes_to_read, 2);
@@ -758,7 +759,6 @@ mod test {
 
     #[test]
     fn lookup_checks_ld_sp_mem() {
-        // call pq
         let ld = dbg!(&OPCODE_PREFIX_ED[0x7b]);
         assert_eq!(ld.nb_additional_opcode_bytes, 2);
         assert_eq!(ld.nb_bytes_to_read, 2);
@@ -768,7 +768,6 @@ mod test {
 
     #[test]
     fn lookup_checks_ld_a_mem_bc() {
-        // call pq
         let ld = dbg!(&OPCODE_PREFIX[0x0a]);
         assert_eq!(ld.nb_additional_opcode_bytes, 0);
         assert_eq!(ld.nb_bytes_to_read, 1);
@@ -778,12 +777,12 @@ mod test {
 
     #[test]
     fn lookup_checks_in() {
-        // call pq
-        let call = dbg!(&OPCODE_PREFIX_ED[0b01111000]);
-        assert_eq!(call.nb_additional_opcode_bytes, 0);
-        assert_eq!(call.nb_bytes_to_read, 1);
-        assert_eq!(call.read_address, AddressSource::Register16(Reg16::Bc));
-        assert_eq!(call.read_data, DataSource::Register8(Reg8::A)); // we want to write PC
+
+        let ina = dbg!(&OPCODE_PREFIX_ED[0b01111000]);
+        assert_eq!(ina.nb_additional_opcode_bytes, 0);
+        assert_eq!(ina.nb_bytes_to_read, 1);
+        assert_eq!(ina.read_address, AddressSource::Register16(Reg16::Bc));
+        assert_eq!(ina.read_data, DataSource::Register8(Reg8::A)); // we want to write PC
     }
 
     #[test]
