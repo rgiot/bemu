@@ -560,7 +560,7 @@ impl Z80 {
             self.next_state,
             MCycle::Fake(TState::T1, _)
         ) {
-            // we do nothing because it is not the end of an instruction
+              // we do nothing because it is not the end of an instruction
             // indeed we have artificially added time
         }
         else {
@@ -945,10 +945,12 @@ impl Z80 {
             }
             
             Mnemonic::Ldd => {
-                self.inner_ldd()
+                self.inner_ldd();
+                self.next_state = MCycle::new_fake(1);
             } 
             Mnemonic::Ldi => {
                 self.inner_ldi();
+                self.next_state = MCycle::new_fake(1);
             }
             Mnemonic::Lddr => {
                 self.inner_ldd();
@@ -1475,7 +1477,7 @@ impl Chip for Z80 {
     }
     
     fn execute_tick(&mut self) {
-        //dbg!(&self.next_state);
+        dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
@@ -1672,7 +1674,13 @@ impl Chip for Z80 {
                     } else {
                         self.opcode_information = None;
                     }
-                    self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
+                    if !matches!(
+                        self.next_state,
+                        MCycle::Fake(TState::T1, _)
+                    ){
+                        self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
+                    }
+
                     // go back for a new instruction
                 } else {
                     // go to write the next byte

@@ -92,3 +92,22 @@ fn timing_call() {
 		5
 	);
 }
+
+
+
+#[test]
+fn timing_ldd() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		ldd
+	"));
+
+	let (output, motherboard) = execute_instruction(0x4000, code); 
+
+	dbg!(output.len(), motherboard.t_state_counter(), motherboard.nops_counter());
+
+	assert_eq!(
+		motherboard.nops_counter().value(),
+		5
+	);
+}
