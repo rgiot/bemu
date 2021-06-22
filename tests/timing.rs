@@ -2,6 +2,7 @@ use amsrust::{crtc::{Crtc, CrtcType}, debug::Monitor, motherboard::{self, Mother
 use amsrust::motherboard::Motherboard;
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
 use amsrust::ga::{VideoMode, Sync, RgbLevels};
+use itertools::Itertools;
 
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
 /// Attention, do not put the code in area where ROMs are activated ...
@@ -160,4 +161,53 @@ fn timing_ldir2() {
 		motherboard.nops_counter().value(),
 		 6 + 5
 	);
+}
+
+
+// Timing based on https://64nops.wordpress.com/2021/01/13/perfectly-accurate-z80-flags-and-cpc-timing/
+// Each unique instruction has been modified to reflect a real use
+// Several lines has been modified to allow an appropriate parsing
+
+#[test]
+fn test_8_load() {
+	let madram = "
+	; Mnemonic  | Opcodes       | SZ5H3VNC | NOPs  ; Notes
+	ld a,b     |    01rrr'''   | ........ | 1    
+	ld a,(hl)   |    01rrr110   | ........ | 2 
+	ld a,(ix+2) | DD 01rrr110 n | ........ | 5
+	ld a,10      |    00rrr110 n | ........ | 2 
+	ld (hl),b   |    01110rrr   | ........ | 2
+	ld (ix+2),b | DD 01110rrr n | ........ | 5
+	ld (hl),4   |    00110110 n | ........ | 3
+	ld a,(bc)   |    0A         | ........ | 2
+	ld a,(de)   |    1A         | ........ | 2
+	ld a,(nn)   |    3A nn      | ........ | 4
+	ld (bc),a   |    02         | ........ | 2
+	ld (de),a   |    12         | ........ | 2
+	ld (nn),a   |    32 nn      | ........ | 4
+	ld i,a      | ED 47         | ........ | 3
+	ld r,a      | ED 4F         | ........ | 3
+	ld a,i      | ED 57         | SZ503!0. | 3 
+	ld a,r      | ED 5F         | SZ503!0. | 3";
+
+	check_madram_timing(madram);
+
+}
+
+
+fn check_madram_timing(content: &str) {
+	for (code, timing) in content.split("\n")
+		.skip(2) // skip header
+		.map(|line|{
+			let fields = line.split("|").collect_vec();
+			(fields[0], fields[3].trim().parse::<usize>().unwrap())
+		}) {
+			println!("{} {}", code, timing);
+			let binary = cpclib_asm::assemble(&format!(" org 0x4000\n {}", code)).unwrap();
+			let output  = execute_instruction(0x4000, &binary);
+			assert_eq!(
+				output.1.nops_counter().value(),
+				timing
+			);
+		}
 }
