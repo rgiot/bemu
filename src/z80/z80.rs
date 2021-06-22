@@ -854,6 +854,15 @@ impl Z80 {
                 }
             }
 
+            Mnemonic::Im => {
+                match arg1.unwrap().expr().unwrap().eval().unwrap() {
+                    0 => self.im = InterruptMode::Mode0,
+                    1 => self.im = InterruptMode::Mode1,
+                    2 => self.im = InterruptMode::Mode2,
+                    _ => unreachable!()
+                }
+            }
+
             Mnemonic::Ld => {
                 let arg1 = arg1.unwrap();
                 let arg2 = arg2.unwrap();
