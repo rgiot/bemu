@@ -193,7 +193,7 @@ fn execute_code(motherboard: &mut Motherboard, init: &[u8], code: &[u8]) {
 
 fn test_out(motherboard: &mut Motherboard) {
 	execute_code(
-			board,
+			motherboard,
 		assemble!("
 		org 0x4000
 		ld bc, 0xbc00 + 6
@@ -221,6 +221,27 @@ fn test_outd(motherboard: &mut Motherboard) {
 		")
 	)
 }
+
+
+fn test_ldd(motherboard: &mut Motherboard) {
+	motherboard.write_byte(0x4010, 1);
+	motherboard.write_byte(0x4020, 2);
+	execute_code(
+		motherboard,
+	   assemble!("
+	   org 0x4000
+	   ld bc, 0
+	   ld hl, 0x4020
+	   ld de, 0x4010
+	   "),
+	   assemble!("
+	   org 0x4000
+	   ldd
+	   ")
+   )
+}
+
+
 fn main() {
 	let mut motherboard = MotherboardBuilder::default()
 										.disable_lower_rom()					.disable_upper_rom()
@@ -237,7 +258,8 @@ fn main() {
 	// TODO make a menu
 	//thirty_two_nops(&mut motherboard);a
 	//test_out(&mut motherboard);
-	test_outd(&mut motherboard);
+	//test_outd(&mut motherboard);
+	test_ldd(&mut motherboard);
 
 
 

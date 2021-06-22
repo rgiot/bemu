@@ -371,7 +371,14 @@ impl Z80 {
     /// Check if some operations has to be handled in the middle of the instructions (i.e. read / operation / write)
     fn must_execute_instruction_in_middle(&self) -> bool {
         let info = self.opcode_information().unwrap();
-        info.read_data == DataSource::Pins && info.write_data == DataSource::Pins
+        info.read_data == DataSource::Pins 
+            && info.write_data == DataSource::Pins 
+            && !matches!(
+                info.token.mnemonic().unwrap(),
+                Mnemonic::Ldd | Mnemonic::Lddr
+                | Mnemonic::Ldi | Mnemonic::Ldir
+            )
+        
     }
 
     /// Provide the information for the current instruction to execute
@@ -891,8 +898,18 @@ impl Z80 {
                 }
             }
 
-            Mnemonic::Ldir => {
-                self.handle_repetitive_mnemonic();
+            Mnemonic::Ldd => {
+                self.inner_ldd()
+            } 
+            Mnemonic::Ldi => {
+                self.inner_ldi();
+            }
+            Mnemonic::Lddr => {
+                self.inner_ldd();
+                unimplemented!()
+            }| Mnemonic::Ldir => {
+                self.inner_ldi();
+                unimplemented!()
             }
 
             Mnemonic::Or => {
@@ -1024,20 +1041,6 @@ impl Z80 {
             _ => unimplemented!("{:?}, {:?}, {:?}", opcode, arg1, arg2),
         }
     }
-
-    /// We are playing with an instruction that decrements B and reexecute itself if
-    /// B is different that zero.
-    /// All these instructions use 2 bytes
-    /// TODO Add a cycle for that
-    fn handle_repetitive_mnemonic(&mut self) {
-        self.reg8_mut(Reg8::B).dec();
-        if self.reg8(Reg8::B).value() != 0 {
-            // start again the loop
-            self.pc.dec();
-            self.pc.dec();
-        }
-    }
-
     /// Return the value for this data access
     /// - Inside a register / straightworard to obtain
     /// - In memory / the cpu has read it and stored it in XXX
@@ -1167,11 +1170,6 @@ impl Z80 {
                 self.reg8_mut(Reg8::B).dec();
             }
 
-            Some(Mnemonic::Ldd) => {
-                self.reg16_mut(Reg16::Hl).dec();
-                self.reg16_mut(Reg16::De).dec();
-                self.reg8_mut(Reg8::B).dec();
-            }
 
             Some(Mnemonic::Ld) => {
                 if let Some(DataAccess::Register16(cpclib_asm::preamble::Register16::Sp)) =
@@ -1187,6 +1185,28 @@ impl Z80 {
                 // by default, there is nothing to
             }
         }
+    }
+}
+
+impl Z80 {
+    fn inner_ldd(&mut self) {
+        self.reg16_mut(Reg16::Hl).dec();
+        self.reg16_mut(Reg16::De).dec();
+        self.reg16_mut(Reg16::Bc).dec();
+
+        self.set_flag_off(Z80Flags::H);
+        self.set_flag_off(Z80Flags::N);
+        self.set_flag(Z80Flags::P, self.bc()!=0);
+    }
+
+    fn inner_ldi(&mut self) {
+        self.reg16_mut(Reg16::Hl).inc();
+        self.reg16_mut(Reg16::De).inc();
+        self.reg16_mut(Reg16::Bc).dec();
+
+        self.set_flag_off(Z80Flags::H);
+        self.set_flag_off(Z80Flags::N);
+        self.set_flag(Z80Flags::P, self.bc()!=0);
     }
 }
 
@@ -1524,6 +1544,7 @@ impl Chip for Z80 {
                 } else {
                     self.get_write_address_from_opcode_information()
                 };
+                //eprintln!("Write in 0x{:x}", address);
                 self.set_address_on_pins(address);
 
                 assert!(self.get_pin(self.next_state.write_pin_type().unwrap()));

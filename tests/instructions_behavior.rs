@@ -405,6 +405,30 @@ assert_eq!(
 );
 }
 
+
+
+#[test]
+fn ld_mem_hl_a() {
+let code = dbg!(cpclib_macros::assemble!(
+	"
+	org 0x4000
+	ld hl, mem
+	ld a, 0xff
+	ld (hl), a
+	jr $ ; end of test
+	org 0x4010
+mem
+	db 0x00
+"));
+
+let motherboard = execute_program(0x4000, 0x4000, code); 
+
+assert_eq!(
+	0xff,
+	motherboard.read_byte(0x4010)
+);
+}
+
 #[test]
 fn execute_ld_sp1() {
 	let code = dbg!(cpclib_macros::assemble!(
@@ -616,6 +640,49 @@ after
 	);
 }
 
+#[test]
+fn execute_ldd() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld bc, 0
+		ld de, output
+		ld hl, input
+		ldd
+		jr $
+
+		org 0x4010
+output db 1
+
+		org 0x4020
+input db 2
+	"));
+
+	// wait (too much) to be sure screen mode changed
+	let mut motherboard = execute_program(0x4000,0x4000, code);
+
+	assert_eq!(
+		motherboard.bc(),
+		0xffff,
+		"0x{:x} != 0x{:x}", motherboard.bc(),	0xffff
+	);
+	assert_eq!(
+		motherboard.hl(),
+		0x4020-1
+	);
+	assert_eq!(
+		motherboard.de(),
+		0x4010-1
+	);
+	assert_eq!(
+		motherboard.read_byte(0x4010),
+		motherboard.read_byte(0x4020),
+	);
+	assert_eq!(
+		motherboard.read_byte(0x4010),
+		2,
+	);
+}
 
 #[test]
 fn execute_out1() {
