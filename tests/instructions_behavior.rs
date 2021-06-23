@@ -1146,6 +1146,24 @@ fn execute_sbc1() {
 	}
 
 
+
+	#[test]
+	fn execute_sub1() {
+		let code = cpclib_macros::assemble!("
+		org 0x4000
+		ld a, 0xff
+		sub 0xff
+		jr $
+		");
+	
+		let motherboard = execute_program(0x4000, 0x4000, code); 
+	
+		assert_eq!(
+			0,
+			motherboard.a()
+		);
+	}
+
 #[test]
 fn execute_set() {
 	let code = cpclib_macros::assemble!("

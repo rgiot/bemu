@@ -654,13 +654,23 @@ impl Z80 {
                         // this MUST be A register
                         // 8bits version
                         let right = self.get_available_8bits_value(arg2.unwrap());
-                        let ovf = self.reg8_mut(Reg8::A).add(right); // TODO manage the flags
+                        let ovf = self.reg8_mut(Reg8::A).add(right); 
+                        // TODO manage the flags
+                        self.set_flag(Z80Flags::C, ovf);
                     }
                     
-                    DataAccess::Register16(reg) => {
+                    DataAccess::Register16(_) | DataAccess::IndexRegister16(_)  => {
+                        let reg: Reg16 = match arg1.unwrap() {
+                            DataAccess::Register16(reg) => reg.into(),
+                            DataAccess::IndexRegister16(reg) => reg.into(),
+                            _ => unimplemented!()
+                        };
                         let right = self.get_available_16bits_value(arg2.unwrap());
-                        let left = self.reg16_mut(reg.into());
-                        let ovf = left.add(right); // TODO manage the flags
+                        let mut left = self.reg16_mut(reg);
+                       
+                        let ovf = left.add(right); 
+                        // TODO manage the other flags
+                        self.set_flag(Z80Flags::C, ovf);
                     }
                     
                     _ => unimplemented!(),
@@ -1168,18 +1178,45 @@ impl Z80 {
 
                    },
 
+                   (
+                       Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)),
+                       _
+                   ) => {
+                    let left = self.reg8(Reg8::A).value();
+                    let right = {
+                        let mut other = self.get_available_8bits_value(arg2.unwrap());
+                        if self.flag(Z80Flags::C){
+                            other = other.wrapping_add(1);
+                        }        
+                        other
+                    };
+
+                    let (value, c) = left.overflowing_sub(right);
+                    self.reg8_mut(Reg8::A).set(value);
+
+                    // TODO manage H if borrow from bit 12
+                    Z80Flags::auto_update(
+                        &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
+                        &mut self.reg8_mut(Reg8::F).val,
+                        value,
+                    );
+                    self.set_flag_on(Z80Flags::N);
+                    self.set_flag(Z80Flags::C, c);
+                   }
+
                    _ => unimplemented!("{:?}, {:?}", arg1, arg2)
                }
             }
             
             Mnemonic::Sub => match arg1 {
-                Some(DataAccess::Register8(reg8)) => {
+                Some(DataAccess::Register8(_) | DataAccess::Expression(_)) => {
                     let left = self.reg8(Reg8::A).value();
                     let right = self.get_available_8bits_value(arg1.unwrap());
                     let f = &mut self.reg8_mut(Reg8::F).val;
                     let res = inner_8bits_sub!(left, right, f);
                     self.reg8_mut(Reg8::A).set(res);
                 }
+
                 _ => unimplemented!("{:?}, {:?}", arg1, arg2),
             },
 
