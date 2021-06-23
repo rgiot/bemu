@@ -121,6 +121,9 @@ impl Register8 {
     pub fn rrc(&mut self) -> bool {
         rrc(&mut self.val)
     }
+    pub fn srl(&mut self) -> bool {
+        srl(&mut self.val)
+    }
     pub fn cpl(&mut self) {
         self.val = !self.val;
     }

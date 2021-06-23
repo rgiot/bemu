@@ -1108,6 +1108,26 @@ fn execute_rra3() {
 
 
 #[test]
+fn execute_rra4() {
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, data
+	db 0xcb, 0x3e; rra (hl)
+	jp $
+data db 1
+	");
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0b10000001,
+		motherboard.a()
+	);
+
+	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::NC));
+}
+
+#[test]
 fn execute_sbc1() {
 	let code = cpclib_macros::assemble!("
 	org 0x4000

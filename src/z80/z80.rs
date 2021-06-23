@@ -1220,6 +1220,15 @@ impl Z80 {
                 _ => unimplemented!("{:?}, {:?}", arg1, arg2),
             },
 
+            Mnemonic::Srl => {
+                
+                let c = self
+                .reg8_mut(arg1.unwrap().get_register8().unwrap().into())
+                .srl();
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag(Z80Flags::C, c);
+            }
             
             Mnemonic::Xor => {
                 let right = self.get_available_8bits_value(arg1.unwrap());

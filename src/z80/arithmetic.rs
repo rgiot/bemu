@@ -44,3 +44,9 @@ pub fn rrc(byte: &mut u8) -> bool {
     }
     bit0
 }
+
+pub fn srl(byte: &mut u8) -> bool {
+    let bit0 = *byte & 1 << 0 != 0;
+    *byte = *byte >> 1;
+    bit0
+}
