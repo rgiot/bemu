@@ -1,6 +1,7 @@
 use crate::chip::*;
 
 use crate::z80::arithmetic::set_bit;
+use crate::z80::arithmetic::srl;
 use crate::z80::registers::*;
 use crate::z80::registers_identifiers::*;
 use crate::z80::states::*;
@@ -1221,10 +1222,10 @@ impl Z80 {
             },
 
             Mnemonic::Srl => {
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                let c = srl(&mut val);
+                self.store_computed_8bits_value(arg1.unwrap(), val);
                 
-                let c = self
-                .reg8_mut(arg1.unwrap().get_register8().unwrap().into())
-                .srl();
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
@@ -1251,7 +1252,7 @@ impl Z80 {
                 let reg: Reg8 = reg.into();
                 return self.reg8(reg).get();
             }
-            DataAccess::MemoryRegister16(_reg) => {
+            DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)=> {
                 // Here we do not care at all of which register is used for memory reading
                 // Because the CPU has already read the information
                 return self.reg8(Reg8::Z).get();
@@ -1260,6 +1261,30 @@ impl Z80 {
                 return expr.eval().unwrap() as u8; // cannot fail as the value has been disassembled
             }
             DataAccess::Memory(_) => return self.reg8(Reg8::Z).get(),
+            _ => {
+                panic!("{:?} unhandled", data);
+            }
+        }
+    }
+
+    /// "Store" the currently compted value. When it is somewhere in memory, it is stored in the data pins
+    /// This function is mainly usefull for the 
+    pub fn store_computed_8bits_value(&mut self, data:&DataAccess, val: u8) {
+        match data {
+            DataAccess::Register8(reg) => {
+                let reg: Reg8 = reg.into();
+                self.reg8_mut(reg).set(val);
+            }
+            DataAccess::IndexRegister8(reg) => {
+                let reg: Reg8 = reg.into();
+                self.reg8_mut(reg).set(val);
+            }
+            DataAccess::MemoryRegister16(_)  | DataAccess::IndexRegister16WithIndex(_, _) => {
+               self.set_data_on_pins(val);
+            }
+            DataAccess::Memory(_) => {
+                self.set_data_on_pins(val);
+            }
             _ => {
                 panic!("{:?} unhandled", data);
             }
