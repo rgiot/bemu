@@ -710,6 +710,15 @@ impl Z80 {
                 Z80Flags::C.set_off(f);
             }
             
+            Mnemonic::Bit => {
+                let val = self.get_available_8bits_value(arg2.unwrap());
+                let bit = val & 1 << arg1.unwrap().expr().unwrap().eval().unwrap() != 0;
+                
+                self.set_flag_on(Z80Flags::H);
+                self.set_flag(Z80Flags::Z, bit);
+                self.set_flag_on(Z80Flags::N);
+            }
+
             Mnemonic::Call => {
                 #[cfg(test)]
                 {
@@ -1106,6 +1115,13 @@ impl Z80 {
                 self.next_state = MCycle::new_fake(1);
             }
             
+            Mnemonic::Res => {
+                let mut  val = self.get_available_8bits_value(arg2.unwrap());
+                val |= 1 << arg1.unwrap().expr().unwrap().eval().unwrap();
+                self.store_computed_8bits_value(arg2.unwrap(), val);
+            }
+
+
             Mnemonic::Ret => {
                 self.pc = self.wz;
                 self.sp.inc();
