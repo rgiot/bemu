@@ -1158,6 +1158,31 @@ fn execute_rra3() {
 	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::NC));
 }
 
+#[test]
+fn execute_rst() {
+	let code = dbg!(cpclib_macros::assemble!("
+
+	org 0x4000
+	ld a, 0xc9
+	ld (0x10), a
+
+	rst 0x10
+	org 0x4008
+	jr $
+
+
+
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0x4008,
+		motherboard.pc()
+	);
+
+}
+
 
 #[test]
 fn execute_srl1() {

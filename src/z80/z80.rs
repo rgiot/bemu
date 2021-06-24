@@ -1226,7 +1226,19 @@ impl Z80 {
                     Mnemonic::Rst => {
                         self.sp.dec();
                         self.sp.dec();
-                        self.pc.set(arg1.unwrap().expr().unwrap().eval().unwrap() as _);
+
+                        let addr =   match arg1.unwrap().expr().unwrap().eval().unwrap(){
+                            0 => 0,
+                            8 => 0x8,
+                            10 => 0x10,
+                            18 => 0x18,
+                            20 => 0x20,
+                            28 => 0x28,
+                            30 => 0x30,
+                            38 => 0x38,
+                            _ => unreachable!()
+                        };
+                        self.pc.set(addr);
                         self.next_state = MCycle::new_fake(1);
                     }
 
