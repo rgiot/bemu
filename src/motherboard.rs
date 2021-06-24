@@ -499,7 +499,7 @@ impl Motherboard {
 
         let mut read = || {
             let byte = self.read_byte(pc);
-            pc.wrapping_add(1);
+            pc = pc.wrapping_add(1);
             byte
         };
 

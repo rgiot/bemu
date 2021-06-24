@@ -6,7 +6,7 @@ use amsrust::debug::Monitor;
 /// Took inspiration from https://floooh.github.io/2016/07/12/z80-rust-ms1.html
 #[test]
 fn zexdoc() {
-    const verbose : bool = false;
+    const verbose : bool = true;  
     let mut motherboard = MotherboardBuilder::default().build();
     motherboard.force_rom_config(
         RomConfig{

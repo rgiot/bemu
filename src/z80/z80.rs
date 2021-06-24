@@ -506,7 +506,7 @@ impl Z80 {
                 assert!(nb == 0);
                 self.reg8_mut(reg).set(byte);
                 
-                dbg!(reg, self.reg8_mut(reg));
+          //      dbg!(reg, self.reg8_mut(reg));
             }
             DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
                 let reg = if reg == Reg16::Pc || reg == Reg16::Sp {

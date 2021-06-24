@@ -533,10 +533,10 @@ fn execute_ld_sp2() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x4000
-		ld sp, 0
+		ld sp, 0xbeef
 		ld hl, 0xdead
 		ld sp, hl
-		jp $
+		jr $
 	"));
 
 	let motherboard = execute_program(0x4000, 0x4000, code); 
