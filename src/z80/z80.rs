@@ -658,6 +658,27 @@ impl Z80 {
         match mnemonic {
             Mnemonic::Nop | Mnemonic::Out | Mnemonic::In => {}
             
+            Mnemonic::Adc => {
+                match arg1.unwrap() {
+                    DataAccess::Register8(cpclib_asm::preamble::Register8::A) => {
+                        // this MUST be A register
+                        // 8bits version
+                        let mut right = self.get_available_8bits_value(arg2.unwrap());
+                        if self.flag(Z80Flags::C) {
+                            right += 1;
+                        }
+                        let ovf = self.reg8_mut(Reg8::A).add(right); 
+                        // TODO manage the flags
+                        self.set_flag(Z80Flags::C, ovf);
+                        self.set_flag_off(Z80Flags::N);
+                    },
+
+                    _ =>  unimplemented!()
+                }
+            }
+
+
+
             Mnemonic::Add => {
                 match arg1.unwrap() {
                     DataAccess::Register8(cpclib_asm::preamble::Register8::A) => {

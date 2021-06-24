@@ -1,3 +1,4 @@
+use cpclib_asm::preamble::Mnemonic;
 use cpclib_asm::preamble::Token;
 use smallvec::smallvec;
 use smallvec::SmallVec;
@@ -498,7 +499,7 @@ impl Motherboard {
 
         let mut read = || {
             let byte = self.read_byte(pc);
-            pc += 1;
+            pc.wrapping_add(1);
             byte
         };
 
@@ -528,8 +529,9 @@ impl Motherboard {
             &prefix.disassembling_table(),
             &memory[1..],
         )
-        .unwrap()
-        .0;
+        .map(|r| r.0)
+        .unwrap_or(Token::OpCode(Mnemonic::Nop, None, None));
+        
 
         DisassembledInstruction {
             token,
