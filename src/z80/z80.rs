@@ -1223,6 +1223,14 @@ impl Z80 {
                         self.set_flag_on(Z80Flags::C);
                     }
                     
+                    Mnemonic::Rst => {
+                        self.sp.dec();
+                        self.sp.dec();
+                        self.pc.set(arg1.unwrap().expr().unwrap().eval().unwrap() as _);
+                        self.next_state = MCycle::new_fake(1);
+                    }
+
+
                     Mnemonic::Set => {
                         let bit = arg1.unwrap().expr().unwrap().eval().unwrap() as u8;
                         

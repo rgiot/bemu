@@ -4,7 +4,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 //use cpclib_asm::preamble::*;
 use super::{Reg16, Reg8, Z80Pin};
-use cpclib_asm::preamble::{DataAccess, Mnemonic, Token};
+use cpclib_asm::preamble::{DataAccess, ExprEvaluationExt, Mnemonic, Token};
 
 /// Provide all the information needed by the CPU to properly execute the instruction
 trait OpcodeDecoder {
@@ -100,7 +100,7 @@ impl OpcodeDecoder for Token {
             else if let Some(Mnemonic::ExMemSp) = self.mnemonic() {
                 AddressSource::Stack(StackDelta::Zero)
             }
-            else if let Some(Mnemonic::Call | Mnemonic::Push) = self.mnemonic() {
+            else if let Some(Mnemonic::Call | Mnemonic::Push | Mnemonic::Rst) = self.mnemonic() {
                 AddressSource::Stack(StackDelta::MinusTwo)
             }  else if matches!(
                 self.mnemonic().unwrap(), 
@@ -147,6 +147,9 @@ impl OpcodeDecoder for Token {
                     _ => unreachable!()
                 };
                 DataSource::Register16(reg)
+            }
+            else if let Some(Mnemonic::Rst) = self.mnemonic() {
+                DataSource::Register16(Reg16::Pc)
             }
             else {
                 match self.write_address() {
@@ -274,6 +277,7 @@ impl OpcodeDecoder for Token {
                 DataSource::Immediate => 1,           // XXX not sure of that
                 DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
                 DataSource::Pins => 1,                // the byte is already on the pins
+
             }
         }
     }
@@ -298,6 +302,7 @@ impl OpcodeDecoder for Token {
                 DataSource::Immediate => 1, // XXX not sure of that
                 DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
                 DataSource::Pins => 1,      // the byte is already on the pins
+
             }
         }
     }
@@ -565,6 +570,7 @@ impl OpcodeDecoder for Token {
         IndexRegister16(Reg16),
         /// The value is in a 8 bits indexed register
         IndexRegister8(Reg8),
+
         /// The value must be read from memory and tḧe address is in the register
         MemoryRegister16(cpclib_asm::preamble::Register16),
     }
@@ -934,6 +940,20 @@ impl OpcodeDecoder for Token {
             assert_eq!(call.write_data, DataSource::Register16(Reg16::Hl));
         }
         
+
+
+        #[test]
+        fn lookup_checks_rst() {
+            // call pq
+            let rst = dbg!(&OPCODE_PREFIX[0b11001111]);
+            assert_eq!(rst.nb_additional_opcode_bytes, 0);
+            assert_eq!(
+                rst.write_address,
+                AddressSource::Stack(StackDelta::MinusTwo)
+            ); // we want to write on the stack
+            assert_eq!(rst.write_data, DataSource::Register16(Reg16::Pc));
+        }
+
         #[test]
         fn lookup_checks_pop_hl() {
             // call pq
