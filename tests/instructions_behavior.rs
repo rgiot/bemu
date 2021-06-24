@@ -1113,7 +1113,7 @@ fn execute_srl1() {
 	org 0x4000
 	ld hl, data
 	srl (hl)
-	jp $
+	jr $
 	org 0x4010
 data db 1
 	"));

@@ -391,14 +391,8 @@ impl Z80 {
     
     /// Check if some operations has to be handled in the middle of the instructions (i.e. read / operation / write)
     fn must_execute_instruction_in_middle(&self) -> bool {
-        let info = self.opcode_information().unwrap();
-        info.read_data == DataSource::Pins 
-        && info.write_data == DataSource::Pins 
-        && !matches!(
-            info.token.mnemonic().unwrap(),
-            Mnemonic::Ldd | Mnemonic::Lddr
-            | Mnemonic::Ldi | Mnemonic::Ldir
-        )
+        self.opcode_information().unwrap()
+            .compute_between_read_write()
         
     }
     
@@ -510,7 +504,8 @@ impl Z80 {
                 self.reg8_mut(reg).set(byte);
             }
             DataSource::Pins => {
-                // we do nothing there as the data is already on the pins
+                assert_eq!(nb, 0);
+                self.reg8_mut(Reg8::Z).set(byte); // not sure if it is the case in real world, but at least it make work some instructions
             }
             _ => {
                 unimplemented!("{:?}/ {:?}", dst, self.opcode_information)
@@ -1222,10 +1217,12 @@ impl Z80 {
             },
 
             Mnemonic::Srl => {
-                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                let mut  val = dbg!(self.get_available_8bits_value(arg1.unwrap()));
                 let c = srl(&mut val);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
                 
+                dbg!("=============", &c, &val);
+
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);

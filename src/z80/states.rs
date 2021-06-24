@@ -423,6 +423,17 @@ impl OpcodeDecoder for Token {
         pub fn expect_write(&self) -> bool {
             self.nb_bytes_to_write != 0
         }
+
+
+        pub fn compute_between_read_write(&self) -> bool {
+            self.read_data == DataSource::Pins 
+                && self.write_data == DataSource::Pins 
+                && !matches!(
+                    self.token.mnemonic().unwrap(),
+                    Mnemonic::Ldd | Mnemonic::Lddr
+                    | Mnemonic::Ldi | Mnemonic::Ldir
+                )
+        }
     }
     
     impl From<u8> for OpcodePrefix {
@@ -913,6 +924,7 @@ impl OpcodeDecoder for Token {
             assert_eq!(srl.read_data, DataSource::Pins);
             assert_eq!(srl.read_address, AddressSource::Register16(Reg16::Hl));
             assert_eq!(srl.write_address, AddressSource::Register16(Reg16::Hl));
+            assert!(srl.compute_between_read_write());
         }
         
         #[test]
