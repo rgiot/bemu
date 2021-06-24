@@ -437,6 +437,37 @@ assert_eq!(
 }
 
 
+#[test]
+fn ld_a_mem_ix_delta() {
+let code = dbg!(cpclib_macros::assemble!(
+	"
+	org 0x4000
+	ld ix, mem
+	ld a, (ix+1)
+	ld b, (ix-1)
+	jr $ ; end of test
+
+	org 0x4010
+	db 0xbe
+mem
+	db 0xad
+	db 0xde
+"));
+
+let motherboard = execute_program(0x4000, 0x4000, code); 
+
+assert_eq!(
+	0xde,
+	motherboard.cpu().reg8(Reg8::A).value()
+);
+
+assert_eq!(
+	0xbe,
+	motherboard.cpu().reg8(Reg8::B).value()
+);
+}
+
+
 
 #[test]
 fn ld_mem_hl_a() {

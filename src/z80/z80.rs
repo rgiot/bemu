@@ -434,9 +434,17 @@ impl Z80 {
             // Corresponds to an indexed address
             AddressSource::Indexed(ref reg) => {
                 // by definition, delta is within the first byte
-                panic!("BUG for negative delta value or to be checked");
-                self.reg16(*reg).get() + (((self.reg8(Reg8::Z).get() as i8) as i32) as u16)
-                //
+                let delta = self.reg8(Reg8::Z).get();
+                let base = self.reg16(*reg).get();
+
+                let addr = if delta & 1 << 7 != 0 {
+                    let delta = (!delta).wrapping_add(1); // get positive delta
+                    base.wrapping_sub(delta as _)
+                }
+                else  {
+                    base.wrapping_add(delta as _)
+                };
+                addr
             }
             // We want to make an operation on the stack
             AddressSource::Stack(delta) => {
@@ -498,6 +506,8 @@ impl Z80 {
             DataSource::Register8(reg) | DataSource::IndexRegister8(reg) => {
                 assert!(nb == 0);
                 self.reg8_mut(reg).set(byte);
+
+                dbg!(reg, self.reg8_mut(reg));
             }
             DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
                 let reg = if reg == Reg16::Pc || reg == Reg16::Sp {
@@ -980,12 +990,19 @@ impl Z80 {
                 let arg1 = arg1.unwrap();
                 let arg2 = arg2.unwrap();
                 
-                let from_memory = matches!(arg2, DataAccess::Memory(_))
-                | matches!(arg2, DataAccess::MemoryIndexRegister16(_))
-                | matches!(arg2, DataAccess::MemoryRegister16(_));
-                let to_memory = matches!(arg1, DataAccess::Memory(_))
-                | matches!(arg1, DataAccess::MemoryIndexRegister16(_))
-                | matches!(arg1, DataAccess::MemoryRegister16(_));
+                let from_memory = matches!(
+                    arg2, 
+                    DataAccess::Memory(_) |  
+                    DataAccess::MemoryIndexRegister16(_) | 
+                    DataAccess::IndexRegister16WithIndex(_, _) |
+                    DataAccess::MemoryRegister16(_));
+                let to_memory = matches!(
+                    arg1, 
+                    DataAccess::Memory(_) |
+                    DataAccess::MemoryIndexRegister16(_) |
+                    DataAccess::IndexRegister16WithIndex(_, _) |
+                    DataAccess::MemoryRegister16(_));
+
                 if !(from_memory | to_memory) {
                     match arg1 {
                         DataAccess::Register8(reg) => {
@@ -1010,8 +1027,7 @@ impl Z80 {
                         _ => unimplemented!("{:?}", arg1),
                     }
                 }
-
-                if matches!(
+                else if matches!(
                     (arg1,arg2),
                     (
                         DataAccess::Register16(cpclib_asm::preamble::Register16::Sp),
@@ -1020,6 +1036,7 @@ impl Z80 {
                  ) {
                         self.next_state = MCycle::new_fake(1);
                     }
+
 
             }
             
@@ -1774,6 +1791,8 @@ impl Chip for Z80 {
             MCycle::Read(TState::T1, nb) | MCycle::Input(TState::T1, nb) => {
                 let address = self.get_read_address_from_opcode_information().wrapping_add(nb as u16);
                 self.set_address_on_pins(address);
+
+              //  eprintln!("ADDR={:x}", address);
                 
                 assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
@@ -1785,6 +1804,7 @@ impl Chip for Z80 {
             }
             MCycle::Read(TState::T2, nb) | MCycle::Input(TState::T2, nb) => {
                 let byte = self.get_data_from_pins();
+            //eprintln!("DATA={:x}", byte);
                 self.store_currently_read_byte(byte, nb);
                 
                 self.on(self.next_state.read_pin_type().unwrap());

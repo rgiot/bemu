@@ -821,6 +821,15 @@ impl OpcodeDecoder for Token {
         }
         
         #[test]
+        fn lookup_checks_ld_a_mem_ix_delta() {
+            let ld = dbg!(&OPCODE_PREFIX_DD[0x7e]);
+            assert_eq!(ld.nb_additional_opcode_bytes, 1);
+            assert_eq!(ld.nb_bytes_to_read, 1);
+            assert_eq!(ld.read_address, AddressSource::Indexed(Reg16::Ix));
+            assert_eq!(ld.read_data, DataDestination::Register8(Reg8::A));
+        }
+
+        #[test]
         fn lookup_checks_ld_a_mem_bc() {
             let ld = dbg!(&OPCODE_PREFIX[0x0a]);
             assert_eq!(ld.nb_additional_opcode_bytes, 0);
