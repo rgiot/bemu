@@ -799,7 +799,13 @@ impl Z80 {
                         self.reg16_mut(left).dec();
                         update_flags = false;
                     }
-                    _ => unimplemented!("{:?}", arg1),
+                    DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_,_) => {
+                        // executed in the middle
+                        let  left = self.get_data_from_pins();
+                        res = left.wrapping_sub(1);
+                        self.set_data_on_pins(res);
+                    }
+                    _ => unreachable!()
                 }
                 
                 if update_flags {

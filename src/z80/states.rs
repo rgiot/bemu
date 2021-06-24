@@ -775,6 +775,18 @@ impl OpcodeDecoder for Token {
             assert_eq!(call.write_data, DataSource::Register16(Reg16::Pc)); // we want to write PC
             assert_eq!(call.flag_test, Some(FlagTest::NZ))
         }
+
+
+        #[test]
+        fn lookup_check_dec_mem_hl() {
+            let dec = dbg!(&OPCODE_PREFIX[0x35]);
+            assert_eq!(dec.read_address, AddressSource::Register16(Reg16::Hl));
+            assert_eq!(dec.read_data, DataSource::Pins);
+            assert_eq!(dec.nb_bytes_to_read, 1);
+            assert_eq!(dec.write_address, AddressSource::Register16(Reg16::Hl));
+            assert_eq!(dec.write_data, DataSource::Pins);
+            assert_eq!(dec.nb_bytes_to_write, 1);
+        }
         
         #[test]
         fn lookup_checks_ex_sp_hl() {

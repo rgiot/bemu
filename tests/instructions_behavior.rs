@@ -262,6 +262,27 @@ fn execute_dec() {
 
 
 #[test]
+fn execute_dec_mem_hl() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld hl, mem
+		dec (hl)
+		jr $ ; end of test
+		org 0x4010
+mem db 2
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		1,
+		motherboard.read_byte(0x4010)
+	);
+}
+
+
+#[test]
 fn execute_ex_mem_sp_hl() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
