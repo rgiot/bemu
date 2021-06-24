@@ -1,6 +1,11 @@
 use crate::chip::*;
 
+use crate::z80::arithmetic::rlc;
+use crate::z80::arithmetic::rr;
+use crate::z80::arithmetic::rrc;
 use crate::z80::arithmetic::set_bit;
+use crate::z80::arithmetic::sla;
+use crate::z80::arithmetic::sra;
 use crate::z80::arithmetic::srl;
 use crate::z80::registers::*;
 use crate::z80::registers_identifiers::*;
@@ -674,9 +679,9 @@ impl Z80 {
             }
             
             Mnemonic::And => {
-                let right = self.get_available_8bits_value(arg1.unwrap());
-                let res = self.reg8(Reg8::A).value() & right;
-                self.reg8_mut(Reg8::A).set(res);
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                val = val & self.reg8(Reg8::A).value();
+                self.reg8_mut(Reg8::A).set(val);
                 
                 let f = &mut self.reg8_mut(Reg8::F).val;
                 Z80Flags::auto_update(
@@ -688,7 +693,7 @@ impl Z80 {
                     Z80Flags::Y,
                     ],
                     f,
-                    res,
+                    val,
                 );
                 Z80Flags::H.set_on(f);
                 Z80Flags::N.set_off(f);
@@ -1038,10 +1043,10 @@ impl Z80 {
             }
             
             Mnemonic::Or => {
-                let right = self.get_available_8bits_value(arg1.unwrap());
-                let res = self.reg8(Reg8::A).value() | right;
-                self.reg8_mut(Reg8::A).set(res);
-                
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                val = val | self.reg8(Reg8::A).value();                
+                self.reg8_mut(Reg8::A).set(val);
+                               
                 let f = &mut self.reg8_mut(Reg8::F).val;
                 Z80Flags::auto_update(
                     &[
@@ -1052,7 +1057,7 @@ impl Z80 {
                     Z80Flags::Y,
                     ],
                     f,
-                    res,
+                    val,
                 );
                 Z80Flags::H.set_on(f);
                 Z80Flags::N.set_off(f);
@@ -1083,20 +1088,36 @@ impl Z80 {
                 self.sp.inc();
                 self.sp.inc();
             }
-            
-            Mnemonic::Rlca => {
-                let c = self.reg8_mut(Reg8::A).rlc();
-                
+
+            Mnemonic::Rlc => {
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                let c = rlc(&mut val);
+                self.store_computed_8bits_value(arg1.unwrap(), val);
+ 
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
             }
-            
+          
+            Mnemonic::Rlca => {
+                let c = self.reg8_mut(Reg8::A).rlc();
+
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag(Z80Flags::C, c);
+            }
+            Mnemonic::Rld => {
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                unimplemented!();
+                self.store_computed_8bits_value(arg1.unwrap(), val);
+            }
             Mnemonic::Rr => {
                 let prev_c = self.test_flag(FlagTest::C);
-                let c = self
-                .reg8_mut(arg1.unwrap().get_register8().unwrap().into())
-                .rr(prev_c);
+                
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                let c = rr(&mut val, prev_c);
+                self.store_computed_8bits_value(arg1.unwrap(), val);
+
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
@@ -1110,6 +1131,18 @@ impl Z80 {
                 self.set_flag(Z80Flags::C, c);
             }
             
+            Mnemonic::Rrc => {
+               
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                let c = rrc(&mut val);
+                self.store_computed_8bits_value(arg1.unwrap(), val);
+
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag(Z80Flags::C, c);
+            }
+
+            
             Mnemonic::Rrca => {
                 let c = self.reg8_mut(Reg8::A).rrc();
                 
@@ -1118,6 +1151,11 @@ impl Z80 {
                 self.set_flag(Z80Flags::C, c);
             }
             
+            Mnemonic::Rrd => {
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                unimplemented!();
+                self.store_computed_8bits_value(arg1.unwrap(), val);
+            }
             Mnemonic::Scf => {
                 self.set_flag_on(Z80Flags::C);
             }
@@ -1216,21 +1254,41 @@ impl Z80 {
                 _ => unimplemented!("{:?}, {:?}", arg1, arg2),
             },
 
+            Mnemonic::Sla => {
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                let c = sla(&mut val);
+                self.store_computed_8bits_value(arg1.unwrap(), val);
+               
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag(Z80Flags::C, c);
+            }
+
+            Mnemonic::Sra => {
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                let c = sra(&mut val);
+                self.store_computed_8bits_value(arg1.unwrap(), val);
+               
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag(Z80Flags::C, c);
+            }
+            
+
             Mnemonic::Srl => {
-                let mut  val = dbg!(self.get_available_8bits_value(arg1.unwrap()));
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
                 let c = srl(&mut val);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
-                
-                dbg!("=============", &c, &val);
-
+               
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
             }
             
             Mnemonic::Xor => {
-                let right = self.get_available_8bits_value(arg1.unwrap());
-                self.reg8_mut(Reg8::A).xor(right);
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                val = val ^ self.reg8(Reg8::A).value();
+                self.reg8_mut(Reg8::A).set(val);
             }
             _ => unimplemented!("{:?}, {:?}, {:?}", mnemonic, arg1, arg2),
         }

@@ -1134,7 +1134,7 @@ fn execute_srl2() {
 	org 0x4000
 	ld a, 1
 	srl a
-	jp $
+	jr $
 	");
 
 	let motherboard = execute_program(0x4000, 0x4000, code); 

@@ -61,7 +61,8 @@ impl OpcodeDecoder for Token {
                 Mnemonic::Ldd | Mnemonic::Lddr |
                 Mnemonic::Ldi | Mnemonic::Ldir |
                 Mnemonic::Cpd | Mnemonic::Cpdr |
-                Mnemonic::Cpi | Mnemonic::Cpir
+                Mnemonic::Cpi | Mnemonic::Cpir |
+                Mnemonic::Rld | Mnemonic::Rrd
             ) 
             {
                 AddressSource::Register16(Reg16::Hl)
@@ -108,7 +109,12 @@ impl OpcodeDecoder for Token {
             ) 
             {
                 AddressSource::Register16(Reg16::De)
-            } 
+            } else if matches!(
+                self.mnemonic().unwrap(),
+                Mnemonic::Rld | Mnemonic::Rrd
+            ) {
+                AddressSource::Register16(Reg16::Hl)
+            }
             else {
                 match (self.mnemonic_arg1(), self.mnemonic_arg2()) {
                     (Some(DataAccess::IndexRegister16WithIndex(reg, _)), _) | (Some(DataAccess::Expression(_)), Some(DataAccess::IndexRegister16WithIndex(reg, _))) 
@@ -239,6 +245,7 @@ impl OpcodeDecoder for Token {
                 | Mnemonic::Ldir | Mnemonic::Lddr
                 | Mnemonic::Cpi | Mnemonic::Cpd
                 | Mnemonic::Cpir | Mnemonic::Cpdr
+                | Mnemonic::Rld | Mnemonic::Rrd
                 
             )
             {
@@ -914,7 +921,20 @@ impl OpcodeDecoder for Token {
             assert_eq!(pop.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
             assert_eq!(pop.read_data, DataSource::Register16(Reg16::Hl));
         }
-        
+  
+        #[test]
+        fn lookup_checks_rld() {
+            // call pq
+            let rld = dbg!(&OPCODE_PREFIX_ED[0x6f]);
+            assert_eq!(rld.nb_additional_opcode_bytes, 0);
+            assert_eq!(rld.write_address,AddressSource::Register16(Reg16::Hl));
+            assert_eq!(rld.read_address,AddressSource::Register16(Reg16::Hl));
+            assert_eq!(rld.write_data, DataSource::Pins);
+            assert_eq!(rld.read_data, DataSource::Pins);
+        }
+            
+
+
         #[test]
         fn lookup_check_srl_mem_hl() {
             let srl = dbg!(&OPCODE_PREFIX_CB[0x3e]);
