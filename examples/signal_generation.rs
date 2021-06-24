@@ -258,6 +258,20 @@ fn test_ex_mem_sp(motherboard: &mut Motherboard) {
    )
 }
 
+fn test_srl_mem_hl(motherboard: &mut Motherboard) {
+	motherboard.write_word(0x4010, 1);
+	execute_code(
+		motherboard,
+	   assemble!("
+	   org 0x4000
+	   ld hl, 0x4010
+	   "),
+	   assemble!("
+	   org 0x4000
+	   srl (hl)
+	   ")
+   )
+}
 fn main() {
 	let mut motherboard = MotherboardBuilder::default()
 										.disable_lower_rom()					.disable_upper_rom()
@@ -276,8 +290,8 @@ fn main() {
 	//test_out(&mut motherboard);
 	//test_outd(&mut motherboard);
 	//test_ldd(&mut motherboard);
-	test_ex_mem_sp(&mut motherboard);
+	//test_ex_mem_sp(&mut motherboard);
 
-
+	test_srl_mem_hl(&mut motherboard);
 
 }	

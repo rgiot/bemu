@@ -1109,20 +1109,39 @@ fn execute_rra3() {
 
 #[test]
 fn execute_srl1() {
-	let code = cpclib_macros::assemble!("
+	let code = dbg!(cpclib_macros::assemble!("
 	org 0x4000
 	ld hl, data
-	db 0xcb, 0x3e; srl (hl)
+	srl (hl)
 	jp $
 	org 0x4010
 data db 1
-	");
+	"));
 
 	let motherboard = execute_program(0x4000, 0x4000, code); 
 
 	assert_eq!(
 		0b00000000,
 		motherboard.read_byte(0x4010)
+	);
+
+	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+}
+
+#[test]
+fn execute_srl2() {
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld a, 1
+	srl a
+	jp $
+	");
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0b00000000,
+		motherboard.a()
 	);
 
 	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
