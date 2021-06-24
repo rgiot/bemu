@@ -18,6 +18,15 @@ pub fn xor(byte: &mut u8, value: u8) {
     *byte = *byte ^ value;
 }
 
+pub fn rla(byte: &mut u8, c: bool) -> bool  {
+    let bit7 = *byte & 1 << 7 != 0;
+    *byte = *byte << 1;
+    if c {
+        *byte |= 1;
+    }
+    bit7
+}
+
 pub fn rlc(byte: &mut u8) -> bool {
     let bit7 = *byte & 1 << 7 != 0;
     *byte = *byte << 1;
