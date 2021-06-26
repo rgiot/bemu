@@ -1057,6 +1057,12 @@ impl Z80 {
                                     let right = self.get_available_8bits_value(arg2);
                                     self.reg8_mut(left).set(right);
                                 }
+                                DataAccess::IndexRegister8(reg) => {
+                                    // 8bits version
+                                    let left: Reg8 = reg.into();
+                                    let right = self.get_available_8bits_value(arg2);
+                                    self.reg8_mut(left).set(right);
+                                }
                                 
                                 DataAccess::Register16(reg) => {
                                     let left: Reg16 = reg.into();
