@@ -373,6 +373,18 @@ impl Z80 {
         let flags = self.reg8(Reg8::F).value();
         flag.is_on(flags)
     }
+
+    #[inline]
+    fn auto_update_flags(&mut self, val: u8) {
+        let f = &mut self.reg8_mut(Reg8::F).val;
+        Z80Flags::auto_update(&[
+            Z80Flags::S,
+            Z80Flags::Z,
+            Z80Flags::P,
+            Z80Flags::X,
+            Z80Flags::Y,
+            ], f, val);
+    }
 }
 
 /// Conditionnaly related code
@@ -669,9 +681,23 @@ impl Z80 {
                         }
                         let ovf = self.reg8_mut(Reg8::A).add(right); 
                         // TODO manage the flags
+                        self.set_flag(Z80Flags::S, self.a() & 1 << 7 != 0);
+                        self.set_flag(Z80Flags::Z, self.a() == 0);
                         self.set_flag(Z80Flags::C, ovf);
                         self.set_flag_off(Z80Flags::N);
                     },
+
+                    DataAccess::Register16(cpclib_asm::preamble::Register16::Hl)=> {
+                        let mut right = self.get_available_16bits_value(arg2.unwrap());
+                        if self.flag(Z80Flags::C) {
+                            right += 1;
+                        }
+                        let ovf = self.reg16_mut(Reg16::Hl).add(right);
+                        self.set_flag(Z80Flags::S, self.hl() & 1 << 15 != 0);
+                        self.set_flag(Z80Flags::Z, self.hl() == 0);
+                        self.set_flag(Z80Flags::C, ovf);
+                        self.set_flag_off(Z80Flags::N);
+                    }
 
                     _ =>  unimplemented!()
                 }
@@ -713,21 +739,10 @@ impl Z80 {
                 val = val & self.reg8(Reg8::A).value();
                 self.reg8_mut(Reg8::A).set(val);
                 
-                let f = &mut self.reg8_mut(Reg8::F).val;
-                Z80Flags::auto_update(
-                    &[
-                    Z80Flags::S,
-                    Z80Flags::Z,
-                    Z80Flags::P,
-                    Z80Flags::X,
-                    Z80Flags::Y,
-                    ],
-                    f,
-                    val,
-                );
-                Z80Flags::H.set_on(f);
-                Z80Flags::N.set_off(f);
-                Z80Flags::C.set_off(f);
+                self.auto_update_flags(val);
+                self.set_flag_on(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag_off(Z80Flags::C);
             }
             
             Mnemonic::Bit => {
@@ -838,15 +853,10 @@ impl Z80 {
                 }
                 
                 if update_flags {
-                    let f = &mut self.reg8_mut(Reg8::F).val;
-                    Z80Flags::auto_update(
-                        &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
-                        f,
-                        res,
-                    );
-                    // TODO handle H flag
-                    // TODO handle P flag
-                    Z80Flags::N.set_on(f);
+                    self.auto_update_flags(res);
+                    self.set_flag_off(Z80Flags::H);//false
+                    self.set_flag_on(Z80Flags::N);
+
                 }
             }
             
@@ -939,16 +949,12 @@ impl Z80 {
                 }
                 
                 if update_flags {
-                    let f = &mut self.reg8_mut(Reg8::F).val;
-                    Z80Flags::auto_update(
-                        &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
-                        f,
-                        res,
-                    );
-                    // TODO handle H flag
-                    // TODO handle P flag
-                    // TODO handle C flag
-                    Z80Flags::N.set_off(f);
+                    if update_flags {
+                        self.auto_update_flags(res);
+                        self.set_flag_off(Z80Flags::H);//false
+                        self.set_flag_off(Z80Flags::N);
+    
+                    }
                 }
             }
             
@@ -1099,21 +1105,10 @@ impl Z80 {
                         val = val | self.reg8(Reg8::A).value();                
                         self.reg8_mut(Reg8::A).set(val);
                         
-                        let f = &mut self.reg8_mut(Reg8::F).val;
-                        Z80Flags::auto_update(
-                            &[
-                            Z80Flags::S,
-                            Z80Flags::Z,
-                            Z80Flags::P,
-                            Z80Flags::X,
-                            Z80Flags::Y,
-                            ],
-                            f,
-                            val,
-                        );
-                        Z80Flags::H.set_on(f);
-                        Z80Flags::N.set_off(f);
-                        Z80Flags::C.set_off(f);
+                        self.auto_update_flags(val);
+                        self.set_flag_off(Z80Flags::H);
+                        self.set_flag_off(Z80Flags::N);
+                        self.set_flag_off(Z80Flags::C);
                     }
                     
                     Mnemonic::Outd => {
@@ -1393,6 +1388,11 @@ impl Z80 {
                         let mut  val = self.get_available_8bits_value(arg1.unwrap());
                         val = val ^ self.reg8(Reg8::A).value();
                         self.reg8_mut(Reg8::A).set(val);
+
+                        self.auto_update_flags(val);
+                        self.set_flag_off(Z80Flags::H);
+                        self.set_flag_off(Z80Flags::N);
+                        self.set_flag_off(Z80Flags::C);
                     }
                     _ => unimplemented!("{:?}, {:?}, {:?}", mnemonic, arg1, arg2),
                 }
