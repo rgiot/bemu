@@ -101,14 +101,49 @@ _crc32_bit1
 
 ");
 
+const FLETCHER16: &[u8] = assemble!("
+;; Fletcher-16 checksum
+;;
+;; Input:
+;;  HL = Data address
+;;  BC = Data length
+;; Output:
+;;  DE = Fletcher-16
+;;  HL,BC,AF are modified
 
-fn test_checksum(hash_method: &[u8], data: &[u8], expected: u32) {
+fletcher16:
+	push ix
+	pop hl
+     ; Initialize both sums to zero
+     ld de,0
+     ; Adjust 16-bit length for 2x8-bit loops
+     inc b
+     dec bc
+     inc c
+_fletcher16_loop
+       ld a,(hl)
+       inc hl
+       ; sum1 += data
+       add a,e
+       ld e,a
+       ; sum2 += sum1
+       add a,d
+       ld d,a
+       dec c
+       jr nz,_fletcher16_loop
+       djnz  _fletcher16_loop
+     ret
+
+");
+
+
+fn test_checksum(checksum_method: &[u8], data: &[u8], expected: u32, thirty32: bool) {
 
 	let mut motherboard = MotherboardBuilder::default()
 					.disable_lower_rom()
 					.disable_upper_rom()
 					.build();
-	motherboard.write_buffer(0x4000, hash_method);
+	motherboard.write_buffer(0x4000, checksum_method);
 	motherboard.write_buffer(0x3000, data);
 
 
@@ -129,7 +164,11 @@ fn test_checksum(hash_method: &[u8], data: &[u8], expected: u32) {
 	}
 	Monitor::monitor(&motherboard);
 
-	let obtained = dbg!(dbg!(motherboard.hl()) as u32)*256*256+ motherboard.de() as u32;
+	let obtained = if thirty32 {
+		(motherboard.hl() as u32)*256*256+ motherboard.de() as u32
+	} else {
+		motherboard.de() as u32
+	};
 	assert_eq!(
 		obtained,
 		expected
@@ -138,18 +177,38 @@ fn test_checksum(hash_method: &[u8], data: &[u8], expected: u32) {
 
 
 #[test]
-fn test_hash_crc32_semilanceata() {
-	test_checksum(CRTC_32, b"Semilanceata", 0xB78816DE);
+fn test_checksum_crc32_semilanceata() {
+	test_checksum(CRTC_32, b"Semilanceata", 0xB78816DE, true);
 }
 #[test]
-fn test_hash_crc32_longueteau() {
-	test_checksum(CRTC_32, b"Longueteau", 0x935384D5);
+fn test_checksum_crc32_longueteau() {
+	test_checksum(CRTC_32, b"Longueteau", 0x935384D5, true);
 }
 #[test]
-fn test_hash_crc32_severin() {
-	test_checksum(CRTC_32, b"Severin", 0xE442806C);
+fn test_checksum_crc32_severin() {
+	test_checksum(CRTC_32, b"Severin", 0xE442806C, true);
 }
 #[test]
-fn test_hash_crc32_damoiseau() {
-	test_checksum(CRTC_32, b"Damoiseau", 0x95C8BAFA);
+fn test_checksum_crc32_damoiseau() {
+	test_checksum(CRTC_32, b"Damoiseau", 0x95C8BAFA, true);
+}
+
+
+
+
+#[test]
+fn test_checksum_fletcher_semilanceata() {
+	test_checksum(FLETCHER16, b"Semilanceata", 0xB8C7, false);
+}
+#[test]
+fn test_checksum_fletcher_longueteau() {
+	test_checksum(FLETCHER16, b"Longueteau", 0x0D19, false);
+}
+#[test]
+fn test_checksum_fletcher_severin() {
+	test_checksum(FLETCHER16, b"Severin", 0x1BDC, false);
+}
+#[test]
+fn test_checksum_fletcher_damoiseau() {
+	test_checksum(FLETCHER16, b"Damoiseau", 0x4098, false);
 }
