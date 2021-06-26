@@ -945,6 +945,11 @@ impl Z80 {
                         self.reg16_mut(left).inc();
                         update_flags = false;
                     }
+                    DataAccess::IndexRegister16(reg) => {
+                        let left: Reg16 = reg.into();
+                        self.reg16_mut(left).inc();
+                        update_flags = false;
+                    }
                     _ => unimplemented!(),
                 }
                 
