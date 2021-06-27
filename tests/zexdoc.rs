@@ -17,8 +17,8 @@ fn zexdoc() {
     );
     
     
-   let prg = include_bytes!("CPUTEST.COM");
-   //let prg = include_bytes!("zexdoc.com");
+  // let prg = include_bytes!("CPUTEST.COM");
+   let prg = include_bytes!("zexdoc.com");
    //let prg = include_bytes!("zexall.com");
 
 

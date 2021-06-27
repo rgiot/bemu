@@ -824,6 +824,59 @@ input db 1
 
 
 #[test]
+fn execute_lddr() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld bc, 2
+		ld de, output
+		ld hl, input
+		lddr
+		jr $
+
+		org 0x4010
+ 		db 0
+		db 0
+output		db 0
+
+		org 0x4020
+	 db 1
+		db 2
+input		db 3
+	"));
+
+	// wait (too much) to be sure screen mode changed
+	let mut motherboard = execute_program(0x4000,0x4000, code);
+
+	assert_eq!(
+		motherboard.bc(),
+		0x00,
+		"0x{:x} != 0x{:x}", motherboard.bc(),	0xffff
+	);
+	assert_eq!(
+		motherboard.hl(),
+		0x4020
+	);
+	assert_eq!(
+		motherboard.de(),
+		0x4010
+	);
+	assert_eq!(
+		motherboard.read_byte(0x4012),
+		motherboard.read_byte(0x4022),
+	);
+	assert_eq!(
+		motherboard.read_byte(0x4011),
+		motherboard.read_byte(0x4021),
+	);
+	assert_ne!(
+		motherboard.read_byte(0x4010),
+		motherboard.read_byte(0x4020),
+	);
+}
+
+
+#[test]
 fn execute_out1() {
 
 	let code = dbg!(cpclib_macros::assemble!(
