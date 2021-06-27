@@ -1057,6 +1057,8 @@ impl Z80 {
 
                     let involve_special_reg = matches!(arg1, DataAccess::SpecialRegisterI | DataAccess::SpecialRegisterR) | matches!(arg2, DataAccess::SpecialRegisterI | DataAccess::SpecialRegisterR
                     );
+
+                    let involve_sp = matches!(arg1, DataAccess::Register16(cpclib_asm::preamble::Register16::Sp));
                 
                 if !(from_memory | to_memory) {
                     match arg1 {
@@ -1096,7 +1098,7 @@ impl Z80 {
                 
                 
                 // needed for the addition ?
-                if involve_indexes | involve_special_reg { 
+                if involve_indexes | involve_special_reg | involve_sp{ 
                     self.next_state = MCycle::new_fake(1);
                 }
             }
@@ -1147,7 +1149,6 @@ impl Z80 {
             Mnemonic::Pop => {
                 self.sp.inc();
                 self.sp.inc();
-                self.next_state = MCycle::new_fake(1);
             }
             
             Mnemonic::Res => {
