@@ -701,6 +701,9 @@ impl Z80 {
                             self.set_flag(Z80Flags::Z, self.hl() == 0);
                             self.set_flag(Z80Flags::C, ovf);
                             self.set_flag_off(Z80Flags::N);
+
+                            let extra_cycles = 2;
+                            self.next_state = MCycle::new_fake(extra_cycles);
                         }
                         
                         _ =>  unimplemented!()
@@ -735,6 +738,9 @@ impl Z80 {
                             let ovf = left.add(right); 
                             // TODO manage the other flags
                             self.set_flag(Z80Flags::C, ovf);
+
+                            let extra_cycles = 2;
+                            self.next_state = MCycle::new_fake(extra_cycles);
                         }
                         
                         _ => unimplemented!(),
@@ -854,6 +860,11 @@ impl Z80 {
                             self.reg16_mut(left).dec();
                             update_flags = false;
                         }
+                        DataAccess::IndexRegister16(reg) => {
+                            let left: Reg16 = reg.into();
+                            self.reg16_mut(left).dec();
+                            update_flags = false;
+                        }
                         DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_,_) => {
                             // executed in the middle
                             let  left = self.get_data_from_pins();
@@ -865,6 +876,9 @@ impl Z80 {
                     
                     if matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
                         self.expect_additional_fake_cycle = 1;
+                    }
+                    else if matches!(arg1, Some(DataAccess::Register16(_) | DataAccess::IndexRegister16(_))) {
+                        self.next_state = MCycle::new_fake(1);
                     }
 
                     if update_flags {
@@ -959,6 +973,7 @@ impl Z80 {
                             let left: Reg16 = reg.into();
                             self.reg16_mut(left).inc();
                             update_flags = false;
+
                         }
                         DataAccess::IndexRegister16(reg) => {
                             let left: Reg16 = reg.into();
@@ -970,6 +985,9 @@ impl Z80 {
 
                     if matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
                         self.expect_additional_fake_cycle = 1;
+                    }
+                    else if matches!(arg1, Some(DataAccess::Register16(_) | DataAccess::IndexRegister16(_))) {
+                        self.next_state = MCycle::new_fake(1);
                     }
                     
                     if update_flags {
@@ -1348,6 +1366,9 @@ impl Z80 {
                         );
                         self.set_flag_on(Z80Flags::N);
                         self.set_flag(Z80Flags::C, c);
+
+                        let extra_cycles = 2;
+                        self.next_state = MCycle::new_fake(extra_cycles);
                         
                     },
                     

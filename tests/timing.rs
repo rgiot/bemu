@@ -275,15 +275,14 @@ fn test_timing_artihmetic_logic() {
 fn test_timing_arithmetic16() {
 	let madram = "
 
-	add hl,bc   |    00rr1001 | ..!!!.0C | 3 
-add ix,bc   | DD 00rr1001 | ..!!!.0C | 4 ;                 
-adc hl,bc   | ED 01rr1010 | SZ!!!V0C | 4 ;                 
-sbc hl,bc   | ED 01rr0010 | SZ!!!V1C | 4 ;                 
-inc bc      |    00rr0011 | ........ | 2 ;                 
-inc bc      | DD 00100011 | ........ | 3 ;                 
-dec bc      |    00rr1011 | ........ | 2 ;                 
-dec ix      | DD 00101011 | ........ | 3 ;                 
-	";
+	add hl,bc   |    00rr1001 | ..!!!.0C | 3
+	add ix,bc   | DD 00rr1001 | ..!!!.0C | 4                  
+	adc hl,bc   | ED 01rr1010 | SZ!!!V0C | 4                  
+	sbc hl,bc   | ED 01rr0010 | SZ!!!V1C | 4                
+	inc bc      |    00rr0011 | ........ | 2                  
+	inc ix      | DD 00100011 | ........ | 3                
+	dec bc      |    00rr1011 | ........ | 2                  
+	dec ix      | DD 00101011 | ........ | 3                  ";
 	check_madram_timing(madram);
 
 }
