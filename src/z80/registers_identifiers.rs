@@ -43,6 +43,9 @@ pub enum Reg8 {
 
     Ixl,
     Iyl,
+
+    I,
+    R
 }
 
 impl Into<Reg8> for &cpclib_asm::preamble::Register8 {
@@ -131,6 +134,9 @@ impl Reg8 {
 
             Ixl => Reg16::Ix,
             Iyl => Reg16::Iy,
+
+            I => unreachable!(),
+            R => unreachable!(),
         }
     }
 }
