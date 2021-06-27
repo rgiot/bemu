@@ -298,14 +298,13 @@ fn test_timing_general_purpose() {
 	ccf  |    3F | ..!!!.0C | 1  
 	scf  |    37 | ..!0!.01 | 1
 	nop  |    00 | ........ | 1  
-	halt |    76 | ........ | 1  
 	di   |    F3 | ........ | 1  
 	ei   |    FB | ........ | 1      
 	im 0 | ED 46 | ........ | 2  
 	im 1 | ED 56 | ........ | 2 
 	im 2 | ED 5E | ........ | 2 ";
 	check_madram_timing(madram);
-
+// untested : 	halt |    76 | ........ | 1  
 }
 
 

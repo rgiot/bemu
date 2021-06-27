@@ -296,8 +296,8 @@ pub struct Z80 {
     /// Instruction Register / contains the opcode of interest
     pub(crate) ir: Register8,
     
-    pub(crate) iff1: Register8,
-    pub(crate) iff2: Register8,
+    pub(crate) iff1: bool,
+    pub(crate) iff2: bool,
     pub(crate) im: InterruptMode,
     
     
@@ -1035,8 +1035,8 @@ impl Z80 {
                 }
                 
                 Mnemonic::Di => {
-                    self.iff1.set(0);
-                    self.iff2.set(0);
+                    self.iff1 = false;
+                    self.iff2 = false;
                 }
                 
                 Mnemonic::Djnz => {
@@ -1056,8 +1056,8 @@ impl Z80 {
                 }
                 
                 Mnemonic::Ei => {
-                    self.iff1.set(1);
-                    self.iff2.set(1);
+                    self.iff1 = true;
+                    self.iff2 = true;
                 }
                 
                 Mnemonic::ExAf => {
@@ -1086,7 +1086,11 @@ impl Z80 {
                 }
 
                 Mnemonic::Halt => {
-                    // TODO implement the appropriate behavior
+                    if self.get_pin(Z80Pin::Neg_INT) && self.iff1 {
+                        // do nothing we hit the interruption
+                    } else {
+                        self.pc.dec(); // wait
+                    }
                 }
                 
                 Mnemonic::Inc => {
@@ -1865,15 +1869,15 @@ impl Z80 {
     fn instruction_finished(&mut self) {
         // manage the flipflip for interruption
         if !self.get_pin(Z80Pin::Neg_INT)
-        && self.iff1.value() == 1
+        && self.iff1
         && !matches!(
             self.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         )
         {
             
-            self.iff1.set(0);
-            self.iff2.set(0);
+            self.iff1 = false;
+            self.iff2 = false;
             
             assert_eq!(
                 self.im,
@@ -2289,8 +2293,8 @@ impl Chip for Z80 {
         self.sp.set(0xffff);
         self.pc.set(0x0000);
         self.af.set(0xffff);
-        self.iff1.set(0);
-        self.iff2.set(0);
+        self.iff1 = false;
+        self.iff2 = false;
         self.im = InterruptMode::Mode1;
     }
 }

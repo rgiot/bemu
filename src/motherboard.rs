@@ -105,7 +105,7 @@ impl MotherboardBuilder {
             ..Default::default()
         };
         if self.enable_interruptions {
-            motherboard.cpu.iff1.set(1);
+            motherboard.cpu.iff1 = true ;
             motherboard.cpu.im = InterruptMode::Mode1;
         }
         if self.disable_lower_rom {
