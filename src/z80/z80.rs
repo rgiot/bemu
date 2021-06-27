@@ -706,6 +706,9 @@ impl Z80 {
                 
                 
                 Mnemonic::Add => {
+                    let involve_indexes = matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _))) | matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _))
+                    );
+
                     match arg1.unwrap() {
                         DataAccess::Register8(cpclib_asm::preamble::Register8::A) => {
                             // this MUST be A register
@@ -731,6 +734,10 @@ impl Z80 {
                         }
                         
                         _ => unimplemented!(),
+                    }
+
+                    if involve_indexes {
+                        self.next_state = MCycle::new_fake(1);
                     }
                 }
                 

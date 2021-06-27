@@ -250,21 +250,21 @@ fn test_timing_artihmetic_logic() {
 
 	add b      |    10000rrr   | SZ5H3V0C | 1 
 	add (hl)   |    10000110   | SZ5H3V0C | 2
-	add (ix+2) | DD 10000110 n | SZ5H3V0C | 5
+	add (ix+n) | DD 10000110 n | SZ5H3V0C | 5
 	add 3      |    11000110 n | SZ5H3V0C | 2  
 	adc b      |    10001rrr   | SZ5H3V0C | 1 
 	sub b      |    10010rrr   | SZ5H3V1C | 1 
 	sbc b      |    10011rrr   | SZ5H3V1C | 1 
 	and b      |    10100rrr   | SZ5H3P00 | 1 
-	 or b      |    10101rrr   | SZ5H3P00 | 1 
+	or b      |    10101rrr   | SZ5H3P00 | 1 
 	xor b      |    10110rrr   | SZ5H3P00 | 1 
 	cp  b      |    10111rrr   | SZ5H3V1C | 1 
 	inc b      |    00rrr100   | SZ5H3V0. | 1 
 	inc (hl)   |    00110100   | SZ5H3V0. | 3
-	inc (ix+4) | DD 00110100 n | SZ5H3V0. | 6
+	inc (ix+n) | DD 00110100 n | SZ5H3V0. | 6
 	dec b      |    00rrr101   | SZ5H3V1. | 1 
 	dec (hl)   |    00110101   | SZ5H3V1. | 3
-	dec (ix+5) | DD 00110101 n | SZ5H3V1. | 6";
+	dec (ix+n) | DD 00110101 n | SZ5H3V1. | 6";
 	check_madram_timing(madram);
 
 }
@@ -419,7 +419,11 @@ fn check_madram_timing(content: &str) {
 			println!("{} {}", code, timing);
 			let binary = cpclib_asm::assemble(&format!(
 				" org 0x4000\n {}", 
-				code.replace("nn", "0xdead").replace("n","0x01"))
+				code
+				.replace("nn", "0xdead")
+				.replace("n","0x01")
+				.replace("a0x01d", "and")
+			)
 			).unwrap();
 			let output  = execute_instruction(0x4000, &binary);
 			assert_eq!(
