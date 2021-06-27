@@ -421,8 +421,10 @@ fn check_madram_timing(content: &str) {
 				code
 				.replace("nn", "0xdead")
 				.replace("n","0x01")
-				.replace("a0x01d", "and")
+				.replace("a0x01d", "and") // fix broken replace
 				.replace("i0x01c", "inc")
+				.replace("0x01eg", "neg")
+				.replace("0x01op", "nop")
 			)
 			).unwrap();
 			let output  = execute_instruction(0x4000, &binary);

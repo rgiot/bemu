@@ -791,6 +791,13 @@ impl Z80 {
                     self.sp.dec();
                 }
                 
+                
+                Mnemonic::Ccf => {
+                    let c = self.flag(Z80Flags::C);
+                    self.set_flag(Z80Flags::C, !c);
+                    self.set_flag_off(Z80Flags::N);
+                }
+
                 Mnemonic::Cp => {
                     let left = self.reg8(Reg8::A).value();
                     let right = self.get_available_8bits_value(arg1.unwrap());
@@ -841,6 +848,144 @@ impl Z80 {
                     self.set_flag_on(Z80Flags::N);
                     
                 }
+
+                Mnemonic::Daa => {
+                    let low = self.a()&0x0f;
+                    let high = (self.a()&0xf0)>>4;
+
+
+                    let (diff, c) = match (
+                        self.flag(Z80Flags::N),
+                        self.flag(Z80Flags::C),
+                        high,
+                        self.flag(Z80Flags::H),
+                        low
+                    ) {
+                        //1
+                        (
+                            false,
+                            false,
+                            0..=9,
+                            false,
+                            0..=9
+                        ) => (0x00, false),
+
+                        // 2
+                        (
+                            false,
+                            false,
+                            0..=8,
+                            false,
+                            0xa..=0xf
+                        ) => (0x06, false),
+
+                        // 3
+                        (
+                            false,
+                            false,
+                            0..=9,
+                            true,
+                            0..=3
+                        ) => (0x06, false),
+                        
+                        // 4
+                        (
+                            false,
+                            false,
+                            0xa..=0xf,
+                            false,
+                            0x0..=0x9
+                        ) => (0x60, true),
+
+                        // 5
+                        (
+                            false,
+                            false,
+                            0x9..=0xf,
+                            false,
+                            0x1..0xf
+                        ) => (0x66, true),
+
+                        // 6
+                        (
+                            false,
+                            false,
+                            0xa..=0xf,
+                            true,
+                            0x0..=0x3
+                        ) => (0x66, true),
+
+                        //7
+                        (
+                            false,
+                            true,
+                            0x0..=0x2,
+                            false,
+                            0x0..=0x9
+                        ) => (0x60, true),
+
+                        //8
+                        (
+                            false,
+                            true,
+                            0x0..=0x2,
+                            false,
+                            0xa..=0xf
+                        ) => (0x66, true),
+
+                        // 9
+                        (
+                            false,
+                            true,
+                            0x0..=0x3,
+                            true,
+                            0x0..=0x3
+                        ) => (0x66, true),
+
+                        //1
+                        (
+                            true,
+                            false,
+                            0x0..=0x9,
+                            false,
+                            0x0..=0x9
+                        ) => (0x00, false),
+
+                        //2
+                        (
+                            true,
+                            false,
+                            0x0..=0x8,
+                            true,
+                            0x6..=0xf
+                        ) => (0xFA, false),
+
+                        //3
+                        (
+                            true,
+                            true,
+                            0x7..=0xf,
+                            false,
+                            0x0..=0x9
+                        ) => (0xa0, true),
+
+                        //4
+                        (
+                            true,
+                            true,
+                            0x6..=0xf,
+                            true,
+                            0x6..=0xf
+                        ) => (0x9a, true),
+                        _ => unreachable!()
+                    };
+
+
+                    self.reg8_mut(Reg8::A).add(diff);
+                    self.set_flag(Z80Flags::C, c);
+                    self.auto_update_flags(self.a());
+                }
+
                 Mnemonic::Dec => {
                     let mut update_flags = true; // disable only for 16 bits
                     let mut res = 0;
@@ -938,6 +1083,10 @@ impl Z80 {
                     std::mem::swap(&mut self.bc, &mut self.bc2);
                     std::mem::swap(&mut self.de, &mut self.de2);
                     std::mem::swap(&mut self.hl, &mut self.hl2);
+                }
+
+                Mnemonic::Halt => {
+                    // TODO implement the appropriate behavior
                 }
                 
                 Mnemonic::Inc => {
@@ -1158,6 +1307,19 @@ impl Z80 {
                 let jmp = self.inner_bc_loop();
                 self.next_state = MCycle::new_fake(if jmp {2} else {1});
             }
+
+            Mnemonic::Neg=> {
+                let a = self.a();
+                self.reg8_mut(Reg8::A).set(
+                    0u8.wrapping_sub(a)
+                );
+          
+                self.auto_update_flags(self.a());
+                self.set_flag(Z80Flags::C, a == 0);
+                self.set_flag(Z80Flags::P, a == 0x80);
+                self.set_flag_off(Z80Flags::N);
+                
+            },
             
             Mnemonic::Or => {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
