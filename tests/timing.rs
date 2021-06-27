@@ -175,10 +175,10 @@ fn test_timing_8_load() {
 	; Mnemonic  | Opcodes       | SZ5H3VNC | NOPs  ; Notes
 	ld a,b     |    01rrr'''   | ........ | 1    
 	ld a,(hl)   |    01rrr110   | ........ | 2 
-	ld a,(ix+2) | DD 01rrr110 n | ........ | 5
+	ld a,(ix+n) | DD 01rrr110 n | ........ | 5
 	ld a,10      |    00rrr110 n | ........ | 2 
 	ld (hl),b   |    01110rrr   | ........ | 2
-	ld (ix+2),b | DD 01110rrr n | ........ | 5
+	ld (ix+n),b | DD 01110rrr n | ........ | 5
 	ld (hl),4   |    00110110 n | ........ | 3
 	ld a,(bc)   |    0A         | ........ | 2
 	ld a,(de)   |    1A         | ........ | 2
@@ -417,7 +417,10 @@ fn check_madram_timing(content: &str) {
 			(fields[0], fields[3].trim().parse::<usize>().unwrap())
 		}) {
 			println!("{} {}", code, timing);
-			let binary = cpclib_asm::assemble(&format!(" org 0x4000\n {}", code)).unwrap();
+			let binary = cpclib_asm::assemble(&format!(
+				" org 0x4000\n {}", 
+				code.replace("nn", "0xdead").replace("n","0x01"))
+			).unwrap();
 			let output  = execute_instruction(0x4000, &binary);
 			assert_eq!(
 				output.1.nops_counter().value(),
