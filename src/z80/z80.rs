@@ -307,6 +307,10 @@ pub struct Z80 {
     
     /// Information for the current opcode - Setup after fetching the very first byte
     pub(crate) opcode_information: Option<&'static OpcodeInformation>,
+
+    /// Some instruction using ix and read & write need to have a correction of timing
+    /// Note that it is un unrealistic workaround as the lost timing appears BEFORE the read
+    expect_additional_fake_cycle: u8
 }
 
 /// Flags related code
@@ -859,6 +863,10 @@ impl Z80 {
                         _ => unreachable!()
                     }
                     
+                    if matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
+                        self.expect_additional_fake_cycle = 1;
+                    }
+
                     if update_flags {
                         self.auto_update_flags(res);
                         self.set_flag_off(Z80Flags::H);//false
@@ -922,7 +930,7 @@ impl Z80 {
                     let mut update_flags = true; // disable only for 16 bits
                     let mut res = 0;
                     match arg1.unwrap() {
-                        DataAccess::MemoryRegister16(_) => {
+                        DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)=> {
                             // read and write directly in pins (shoudl be launched before writting the results)
                             let left = self.get_data_from_pins();
                             let left = left.wrapping_add(1);
@@ -958,6 +966,10 @@ impl Z80 {
                             update_flags = false;
                         }
                         _ => unimplemented!(),
+                    }
+
+                    if matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
+                        self.expect_additional_fake_cycle = 1;
                     }
                     
                     if update_flags {
@@ -1839,6 +1851,8 @@ impl Chip for Z80 {
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
+                self.expect_additional_fake_cycle = 0;
+
                 self.set_address_on_pins(self.pc.get());
                 // pc is incremented in T2 in a real CPU
                 self.pc.inc();
@@ -2046,7 +2060,12 @@ impl Chip for Z80 {
                         self.next_state,
                         MCycle::Fake(TState::T1, _)
                     ){
-                        self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
+                        if self.expect_additional_fake_cycle > 0 {
+                            self.next_state = MCycle::new_fake(self.expect_additional_fake_cycle);
+                        }
+                        else {
+                            self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
+                        }
                     }
                     
                     // go back for a new instruction
