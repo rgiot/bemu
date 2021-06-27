@@ -1144,8 +1144,67 @@ end
 		motherboard.cpu().reg16(Reg16::Pc).value()
 	);
 }
+#[test]
+fn execute_rlc_a() {
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld a, 0b10000001
+	rlc a
+	jr $
+");
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0b11,
+		motherboard.a()
+	);
+
+	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+}
 
 
+#[test]
+fn execute_rlc_mem_hl() {
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, 0x4010
+	rlc (hl)
+	jr $
+	org 0x4010
+	db 0b10000001
+");
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0b11,
+		motherboard.read_byte(0x4010)
+	);
+
+	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+}
+
+#[test]
+fn execute_rlc_indexed() {
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld ix, data
+	rlc (ix+0)
+	jr $
+	org 0x4010
+data
+	db 0b10000001");
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0b11,
+		motherboard.read_byte(0x4010)
+	);
+
+	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+}
 
 #[test]
 fn execute_rra1() {

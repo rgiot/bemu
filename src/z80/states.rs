@@ -322,6 +322,10 @@ impl OpcodeDecoder for Token {
         array_init::array_init(|i| OpcodePrefix::Ed.build_opcode_information(i as u8));
         pub(crate) static ref OPCODE_PREFIX_FD: [OpcodeInformation; 256] =
         array_init::array_init(|i| OpcodePrefix::Fd.build_opcode_information(i as u8));
+        pub(crate) static ref OPCODE_PREFIX_DDCB: [OpcodeInformation; 256] =
+        array_init::array_init(|i| OpcodePrefix::DdCb.build_opcode_information(i as u8));
+        pub(crate) static ref OPCODE_PREFIX_FDCB: [OpcodeInformation; 256] =
+        array_init::array_init(|i| OpcodePrefix::FdCb.build_opcode_information(i as u8));
     }
     
     /// Possible states for a cycle
@@ -339,11 +343,13 @@ impl OpcodeDecoder for Token {
     #[derive(Debug, PartialEq, Copy, Clone)]
     /// TODO modify for multiprefix opcodes
     pub enum OpcodePrefix {
-        None = 0x00,
-        Dd = 0xdd,
-        Fd = 0xfd,
-        Cb = 0xcb,
-        Ed = 0xed,
+        None ,
+        Dd,
+        Fd,
+        Cb,
+        Ed,
+        DdCb,
+        FdCb
     }
     
     /// Contains all the informations needed to drive the next
@@ -460,6 +466,14 @@ impl OpcodeDecoder for Token {
         }
     }
     impl OpcodePrefix {
+
+        /// Return true for 4 bytes opcode where penultimate byte is the index
+        pub fn is_for_indexed_opcode(&self) -> bool {
+            match self {
+                OpcodePrefix::DdCb | OpcodePrefix::FdCb => true,
+                _ => false
+            }
+        }
         /// Get the opcode information from the LUT
         pub fn opcode_information(&self, opcode: u8) -> &'static OpcodeInformation {
             let table: &[OpcodeInformation; 256] = match self {
@@ -468,6 +482,8 @@ impl OpcodeDecoder for Token {
                 Self::Dd => &OPCODE_PREFIX_DD,
                 Self::Ed => &OPCODE_PREFIX_ED,
                 Self::Fd => &OPCODE_PREFIX_FD,
+                Self::DdCb => &OPCODE_PREFIX_DDCB,
+                Self::FdCb => &OPCODE_PREFIX_FDCB
             };
             &table[opcode as usize]
         }
@@ -506,6 +522,9 @@ impl OpcodeDecoder for Token {
                 Some(DataAccess::FlagTest(f)) => Some(*f),
                 _ => None,
             };
+
+
+
             
             OpcodeInformation {
                 prefix: self.clone(),
@@ -533,22 +552,31 @@ impl OpcodeDecoder for Token {
                 OpcodePrefix::Dd => &cpclib_asm::disass::TABINSTRDD,
                 OpcodePrefix::Ed => &cpclib_asm::disass::TABINSTRED,
                 OpcodePrefix::Fd => &cpclib_asm::disass::TABINSTRFD,
+                OpcodePrefix::DdCb => &cpclib_asm::disass::TABINSTRDDCB,
+                OpcodePrefix::FdCb => &cpclib_asm::disass::TABINSTRFDCB,
             }
         }
         
-        /// Serve to generate lookup tables at start
+        /// Return the number of bytes to read to build the opcode
+        /// Warning? it is not correct for ddcb / fdcb like instructions
         fn opcode_bytes_to_read(self, i: usize) -> u8 {
-            lazy_static! {
-                static ref HEIGHT_BITS: Regex = Regex::new(r"([^n]nn[^n])|([^n]nn$)").unwrap();
-                static ref SIXTEEN_BITS: Regex = Regex::new(r"[^n]nnnn[^n]|([^n]nnnn$)").unwrap();
+            match self {
+                OpcodePrefix::DdCb | OpcodePrefix::FdCb => 2,
+                _ => {
+                    
+                    lazy_static! {
+                        static ref HEIGHT_BITS: Regex = Regex::new(r"([^n]nn[^n])|([^n]nn$)").unwrap();
+                        static ref SIXTEEN_BITS: Regex = Regex::new(r"[^n]nnnn[^n]|([^n]nnnn$)").unwrap();
+                    }
+                    
+                    let repr = self.disassembling_table()[i];
+                    
+                    let nb_height_bits_args = HEIGHT_BITS.captures_iter(repr).count();
+                    let nb_sixteen_bits_args = SIXTEEN_BITS.captures_iter(repr).count();
+                    
+                    (nb_height_bits_args + 2 * nb_sixteen_bits_args) as u8
+                }
             }
-            
-            let repr = self.disassembling_table()[i];
-            
-            let nb_height_bits_args = HEIGHT_BITS.captures_iter(repr).count();
-            let nb_sixteen_bits_args = SIXTEEN_BITS.captures_iter(repr).count();
-            
-            (nb_height_bits_args + 2 * nb_sixteen_bits_args) as u8
         }
         
     }
@@ -585,7 +613,7 @@ impl OpcodeDecoder for Token {
                 DataAccess::Register16(reg) => DataSource::Register16(reg.into()),
                 DataAccess::Register8(reg) => DataSource::Register8(reg.into()),
                 DataAccess::Expression(_) => DataSource::Immediate, // to be read
-                DataAccess::MemoryRegister16(_) => DataSource::Pins, // what has bin read is stored in the pins
+                DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_,_) => DataSource::Pins, // what has bin read is stored in the pins
                 _ => panic!("{:?} unimplemented", d),
             }
         }
@@ -735,7 +763,9 @@ impl OpcodeDecoder for Token {
     
     #[cfg(test)]
     mod test {
-        use cpclib_asm::preamble::Register16;
+        use std::ops::Add;
+
+        use cpclib_asm::preamble::{IndexRegister16, Register16};
         
         use super::*;
         
@@ -940,6 +970,39 @@ impl OpcodeDecoder for Token {
             assert_eq!(call.write_data, DataSource::Register16(Reg16::Hl));
         }
         
+        #[test]
+        fn lookup_check_rlc_indexed() {
+            // Here we have a difficulty because 06 is obtained AFTER having read the two bytes... so extra should be viewed as 0
+            let rlc = dbg!(&OPCODE_PREFIX_DDCB[06]);
+            assert_eq!(
+                2,
+                rlc.nb_additional_opcode_bytes
+            );
+            assert_eq!(
+                1,
+                rlc.nb_bytes_to_read
+            );
+            assert_eq!(
+                1,
+                rlc.nb_bytes_to_write
+            );
+            assert_eq!(
+                rlc.read_data,
+                DataDestination::Pins
+            );
+            assert_eq!(
+                rlc.write_data,
+                DataDestination::Pins
+            );
+            assert_eq!(
+                rlc.read_address,
+                AddressSource::IndexRegister16(Reg16::Ix)
+            );
+            assert_eq!(
+                rlc.write_address,
+                AddressSource::IndexRegister16(Reg16::Ix)
+            );
+        }
 
 
         #[test]

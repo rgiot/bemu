@@ -316,17 +316,17 @@ fn test_timing_rotate() {
 	rrca         |       00001111   | ..503.0C | 1  
 	rla          |       00010111   | ..503.0C | 1 
 	rra          |       00011111   | ..503.0C | 1  
-	rlc r        |    CB 00000rrr   | SZ503P0C | 2 
+	rlc b        |    CB 00000rrr   | SZ503P0C | 2 
 	rlc (hl)     |    CB 00000110   | SZ503P0C | 4
-	rlc (ix+2)   | DD CB 00000110 n | SZ503P0C | 7
-	rlc (ix+2),b | DD CB 00000rrr n | SZ503P0C | 7 
-	rrc r        |    CB 00001rrr   | SZ503P0C | 2  
-	rl r         |    CB 00010rrr   | SZ503P0C | 2  
-	rr r         |    CB 00011rrr   | SZ503P0C | 2  
-	sla r        |    CB 00100rrr   | SZ503P0C | 2  
-	sra r        |    CB 00101rrr   | SZ503P0C | 2  
-	sl1 r        |    CB 00110rrr   | SZ503P0C | 2  
-	srl r        |    CB 00111rrr   | SZ503P0C | 2  
+	rlc (ix+n)   | DD CB 00000110 n | SZ503P0C | 7
+	rlc (ix+n),b | DD CB 00000rrr n | SZ503P0C | 7 
+	rrc b        |    CB 00001rrr   | SZ503P0C | 2  
+	rl b         |    CB 00010rrr   | SZ503P0C | 2  
+	rr b         |    CB 00011rrr   | SZ503P0C | 2  
+	sla b        |    CB 00100rrr   | SZ503P0C | 2  
+	sra b        |    CB 00101rrr   | SZ503P0C | 2  
+	sl1 b        |    CB 00110rrr   | SZ503P0C | 2  
+	srl b        |    CB 00111rrr   | SZ503P0C | 2  
 	rld          |    ED 6F         | SZ503P0. | 5 
 	rrd          |    ED 67         | SZ503P0. | 5 ";
 	check_madram_timing(madram);

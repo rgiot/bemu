@@ -607,17 +607,28 @@ impl Z80 {
                 // For prefixed instructions, we have to restart the process from scratch
                 0xdd => {
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Dd);
-                    assert!(current_prefix == OpcodePrefix::None, "Not implemented yet");
+                    assert!(current_prefix == OpcodePrefix::None, "impossible");
                     return false;
                 }
                 0xfd => {
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Fd);
-                    assert!(current_prefix == OpcodePrefix::None, "Not implemented yet");
+                    assert!(current_prefix == OpcodePrefix::None, "impossible");
+                    
                     return false;
                 }
                 0xcb => {
-                    self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Cb);
-                    assert!(current_prefix == OpcodePrefix::None, "Not implemented yet");
+                    match current_prefix {
+                        OpcodePrefix::None => {
+                            self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Cb);
+                        },
+                        OpcodePrefix::Dd => {
+                            self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::DdCb);
+                        },
+                        OpcodePrefix::Fd => {
+                            self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::FdCb);
+                        },
+                        _ => unreachable!()
+                    };
                     return false;
                 }
                 0xed => {
@@ -627,13 +638,22 @@ impl Z80 {
                 }
                 
                 _ => {
+                    // Indexed opcodes  need to be exchanged
+                    if current_prefix.is_for_indexed_opcode() {
+                        let z = self.reg8(Reg8::Z).value();
+                        let ir = self.ir.value();
+                        self.reg8_mut(Reg8::Z).set(ir);
+                        self.ir.set(z);
+                    }
+
                     // Get the number of additional bytes to read as well as the information for the next cycles
                     self.opcode_information = Some(current_prefix.opcode_information(self.ir.get()));
                     let opcode_information = self.opcode_information.as_ref().unwrap();
                     
-                    //dbg!(opcode_information);
-                    
-                    if opcode_information.fetch_finished() {
+                   //dbg!(opcode_information);
+
+
+                    if opcode_information.fetch_finished() || current_prefix.is_for_indexed_opcode() {
                         if opcode_information.expect_read() {
                             if opcode_information.read_from_pins {
                                 self.next_state = MCycle::Input(TState::T1, 0);
@@ -1394,7 +1414,9 @@ impl Z80 {
             
             Mnemonic::Rlc => {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                dbg!(val);
                 let c = rlc(&mut val);
+                dbg!(val);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
                 
                 self.set_flag_off(Z80Flags::H);
@@ -2034,7 +2056,7 @@ impl Chip for Z80 {
     }
     
     fn execute_tick(&mut self) {
-        //   dbg!(&self.next_state);
+        dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
@@ -2058,7 +2080,7 @@ impl Chip for Z80 {
                 self.set_pin(Z80Pin::Neg_MREQ, true);
                 self.set_pin(Z80Pin::Neg_M1, true);
                 
-                let byte = self.get_data_from_pins();
+                let byte = dbg!(self.get_data_from_pins());
                 match nb {
                     0 => {
                         self.ir.set(byte);
@@ -2090,7 +2112,8 @@ impl Chip for Z80 {
                 self.set_pin(Z80Pin::Neg_M1, false);
                 self.set_pin(Z80Pin::Neg_RFSH, true);
                 
-                if nb == 0 {
+                if  (nb == 0 && !prefix.is_for_indexed_opcode()) || 
+                    (nb ==1 &&  prefix.is_for_indexed_opcode()) {
                     let execute = self.decode_step(); // setup next state
                     // by definition there is no conditional instruction there
                     if execute {
@@ -2100,7 +2123,11 @@ impl Chip for Z80 {
                     } else {
                         // nothing to do ; the cpu is already in the right state
                     }
-                } else {
+                } 
+                else if prefix.is_for_indexed_opcode() {
+                    self.next_state = MCycle::FetchOpcode(TState::T1, nb + 1, prefix);
+                }
+                else {
                     let opcode_information = self.opcode_information.as_ref().unwrap();
                     
                     if nb == opcode_information.nb_additional_opcode_bytes {
@@ -2137,7 +2164,7 @@ impl Chip for Z80 {
                 let address = self.get_read_address_from_opcode_information().wrapping_add(nb as u16);
                 self.set_address_on_pins(address);
                 
-                //  eprintln!("ADDR={:x}", address);
+                eprintln!("READ ADDR={:x}", address);
                 
                 assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
@@ -2197,20 +2224,28 @@ impl Chip for Z80 {
             
             MCycle::Write(TState::T1, nb) | MCycle::Output(TState::T1, nb) => {
                 let opcode_information = self.opcode_information().unwrap();
-                // Get the real address to put on the pins
-                let address = if opcode_information.write_on_stack()  {
-                    let base = self.get_write_address_from_opcode_information();
-                    match nb {
-                        0 => base + 1,
-                        1 => base,
-                        _ => unreachable!(),
-                    }
+
+                if !opcode_information.compute_between_read_write() {
+                    // Get the real address to put on the pins
+                    let address = if opcode_information.write_on_stack()  {
+                        let base = self.get_write_address_from_opcode_information();
+                        match nb {
+                            0 => base + 1,
+                            1 => base,
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        self.get_write_address_from_opcode_information().wrapping_add(nb as u16)
+                    };
+                    //eprintln!("Write in 0x{:x}", address);
+                    self.set_address_on_pins(address);
                 } else {
-                    self.get_write_address_from_opcode_information().wrapping_add(nb as u16)
-                };
-                //eprintln!("Write in 0x{:x}", address);
-                self.set_address_on_pins(address);
+                    // address is already at the right place
+                    // to compute it once again will provide false information
+                }
+                    
                 
+                eprintln!("WRITE ADDR={:x}", self.get_address_from_pins());
                 assert!(self.get_pin(self.next_state.write_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
                 assert!(self.get_pin(Z80Pin::Neg_WR));
