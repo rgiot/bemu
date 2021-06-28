@@ -530,7 +530,7 @@ impl Motherboard {
             &memory[1..],
         )
         .map(|r| r.0)
-        .unwrap_or(Token::OpCode(Mnemonic::Nop, None, None));
+        .unwrap_or(Token::OpCode(Mnemonic::Nop, None, None, None));
         
 
         DisassembledInstruction {

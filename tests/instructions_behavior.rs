@@ -610,7 +610,7 @@ label
 			None,
 			Some(DataAccess::Expression(Expr::RelativeDelta(
 				((0x3ff0 - (0x4000+2)) & 0xff) as i8
-			)))
+			))), None
 		)
 	);
 
@@ -626,7 +626,7 @@ label
 			None,
 			Some(DataAccess::Expression(Expr::RelativeDelta(
 				((-2) & 0xff) as i8
-			)))
+			))), None
 		)
 	);
 
@@ -669,7 +669,7 @@ label
 			None,
 			Some(DataAccess::Expression(Expr::RelativeDelta(
 				((0x3ff0 - (0x4000+2)) & 0xff) as i8
-			)))
+			))), None
 		)
 	);
 
@@ -711,7 +711,7 @@ after
 			None,
 			Some(DataAccess::Expression(Expr::RelativeDelta(
 				((0x3ff0 - (0x4000+2)) & 0xff) as i8
-			)))
+			))), None
 		)
 	);
 

@@ -1422,6 +1422,11 @@ impl Z80 {
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
+
+                if matches!(arg1,
+                    Some(DataAccess::IndexRegister16WithIndex(_,_))) {
+                        self.expect_additional_fake_cycle = 1;
+                }
             }
             
             Mnemonic::Rlca => {

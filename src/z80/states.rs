@@ -194,49 +194,49 @@ impl OpcodeDecoder for Token {
             else if let Token::OpCode(
                 Mnemonic::Ld,
                 Some(DataAccess::Register16(reg)),
-                Some(DataAccess::Memory(_)),
+                Some(DataAccess::Memory(_)),_
             ) = self
             {
                 DataDestination::Register16(reg.into())
             } else if let Token::OpCode(
                 Mnemonic::Ld,
                 Some(DataAccess::IndexRegister16(reg)),
-                Some(DataAccess::Memory(_)),
+                Some(DataAccess::Memory(_)),_
             ) = self
             {
                 DataDestination::IndexRegister16(reg.into())
             } else if let Token::OpCode(
                 Mnemonic::Ld,
                 Some(DataAccess::Register8(ref reg)),
-                Some(DataAccess::Memory(_) | DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)),
+                Some(DataAccess::Memory(_) | DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)),_
             ) = self
             {
                 DataDestination::Register8(reg.into())
             } 
             // pop
-            else if let Token::OpCode(Mnemonic::Pop, Some(DataAccess::Register16(reg)), _) = self {
+            else if let Token::OpCode(Mnemonic::Pop, Some(DataAccess::Register16(reg)), _,_) = self {
                 DataDestination::Register16(reg.into())
             } 
-            else if let Token::OpCode(Mnemonic::Pop, Some(DataAccess::IndexRegister16(reg)), _) = self {
+            else if let Token::OpCode(Mnemonic::Pop, Some(DataAccess::IndexRegister16(reg)), _,_) = self {
                 DataDestination::Register16(reg.into())
             } 
             // dec-inc
             else if let Token::OpCode(
                 Mnemonic::Inc | Mnemonic::Dec,
                 Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)),
-                _,
+                _,_
             ) = self
             {
                 DataDestination::Pins // here we read/write on the data pins
             } 
             // JP / jr
-            else if let Token::OpCode( Mnemonic::Jp | Mnemonic::Jr, _, Some(DataAccess::MemoryRegister16(_) | DataAccess::MemoryIndexRegister16(_) )) = self {
+            else if let Token::OpCode( Mnemonic::Jp | Mnemonic::Jr, _, Some(DataAccess::MemoryRegister16(_) | DataAccess::MemoryIndexRegister16(_) ), _) = self {
                 DataDestination::Register16(Reg16::Wz)
             }
             // others (mathematicla ?)
-            else if let Token::OpCode(_, _, Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _))) = self {
+            else if let Token::OpCode(_, _, Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)), _) = self {
                 DataDestination::Pins
-            } else if let Token::OpCode(_, Some(DataAccess::MemoryRegister16(_)| DataAccess::IndexRegister16WithIndex(_, _)), None) = self {
+            } else if let Token::OpCode(_, Some(DataAccess::MemoryRegister16(_)| DataAccess::IndexRegister16WithIndex(_, _)), None, _) = self {
                 DataDestination::Pins
             }
             // repetition 
