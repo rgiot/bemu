@@ -339,17 +339,17 @@ fn test_timing_rotate() {
 fn test_timing_bit() {
 	let madram = "
 
-	bit 2,c        |    CB   01bbbrrr | !Z513Z0. | 2 
-	bit 2,(hl)     |    CB   01bbb110 | !Z!1!Z0. | 3
-	bit 2,(ix+4)   | DD CB n 01bbb110 | !Z!1!Z0. | 6
-	res 2,c        |    CB   10bbbrrr | ........ | 
-	res 2,(hl)     |    CB   10bbb110 | ........ | 4
-	res 2,(ix+4)   | DD CB n 10bbb110 | ........ | 7
-	res 2,(ix+4),c | DD CB n 10bbbrrr | ........ | 7 
-	set 2,c        |    CB   11bbbrrr | ........ | 2
-	set 2,(hl)     |    CB   11bbb110 | ........ | 4
-	set 2,(ix+4)   | DD CB n 11bbb110 | ........ | 7
-	set 2,(ix+4),c | DD CB n 11bbbrrr | ........ | 7";
+	bit n,c        |    CB   01bbbrrr | !Z513Z0. | 2 
+	bit n,(hl)     |    CB   01bbb110 | !Z!1!Z0. | 3
+	bit n,(ix+n)   | DD CB n 01bbb110 | !Z!1!Z0. | 6
+	res n,c        |    CB   10bbbrrr | ........ | 
+	res n,(hl)     |    CB   10bbb110 | ........ | 4
+	res n,(ix+n)   | DD CB n 10bbb110 | ........ | 7
+	res n,(ix+n),c | DD CB n 10bbbrrr | ........ | 7 
+	set n,c        |    CB   11bbbrrr | ........ | 2
+	set n,(hl)     |    CB   11bbb110 | ........ | 4
+	set n,(ix+n)   | DD CB n 11bbb110 | ........ | 7
+	set n,(ix+n),c | DD CB n 11bbbrrr | ........ | 7";
 	check_madram_timing(madram);
 
 }

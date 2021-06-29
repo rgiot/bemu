@@ -115,6 +115,9 @@ impl OpcodeDecoder for Token {
             ) {
                 AddressSource::Register16(Reg16::Hl)
             }
+            else if let Some(Mnemonic::Bit) = self.mnemonic() {
+                AddressSource::None
+            }
             else {
                 match (self.mnemonic_arg1(), self.mnemonic_arg2()) {
                     (Some(DataAccess::IndexRegister16WithIndex(reg, _)), _) | (Some(DataAccess::Expression(_)), Some(DataAccess::IndexRegister16WithIndex(reg, _))) 
@@ -774,7 +777,16 @@ impl OpcodeDecoder for Token {
             // ld hl, xxxx
             assert_eq!(dbg!(&OPCODE_PREFIX[0x21]).nb_additional_opcode_bytes, 2);
         }
-        
+       
+        #[test]
+        fn lookup_checks_bit_2_hl() {
+            let bit = dbg!(&OPCODE_PREFIX_CB[0b01010110]);
+
+            assert_eq!(bit.nb_additional_opcode_bytes, 0);
+            assert_eq!(bit.read_address, AddressSource::Register16(Reg16::Hl));
+            assert_eq!(bit.write_address, AddressSource::None);
+        } 
+
         #[test]
         fn lookup_checks_call() {
             // call pq

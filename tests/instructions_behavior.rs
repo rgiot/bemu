@@ -1338,14 +1338,14 @@ fn execute_srl2() {
 
 #[test]
 fn execute_sbc1() {
-	let code = cpclib_macros::assemble!("
+	let code = dbg!(cpclib_macros::assemble!("
 	org 0x4000
 	ld hl, 3
 	ld de, 2
 	or a
 	sbc hl, de
 	jr $
-	");
+	"));
 
 	let motherboard = execute_program(0x4000, 0x4000, code); 
 

@@ -1414,9 +1414,7 @@ impl Z80 {
             
             Mnemonic::Rlc => {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
-                dbg!(val);
                 let c = rlc(&mut val);
-                dbg!(val);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
                 
                 self.set_flag_off(Z80Flags::H);
@@ -2061,7 +2059,7 @@ impl Chip for Z80 {
     }
     
     fn execute_tick(&mut self) {
-        dbg!(&self.next_state);
+        //dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
