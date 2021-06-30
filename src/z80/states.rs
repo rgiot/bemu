@@ -119,7 +119,7 @@ impl OpcodeDecoder for Token {
             if self.is_output_opcode() {
                 match self.mnemonic_arg1() {
                     Some(DataAccess::PortC) | None => AddressSource::Register16(Reg16::Bc),
-                    Some(DataAccess::PortN(_)) => AddressSource::Immediate,
+                    Some(DataAccess::PortN(_)) => AddressSource::PortN,
                     _ => unreachable!("{:?}", self),
                 }
             }
@@ -335,10 +335,10 @@ impl OpcodeDecoder for Token {
             2
         }
         else if self.is_output_opcode() {
-            if let Some(DataAccess::PortC) = self.mnemonic_arg1() {
-                0
+            if self.mnemonic_arg1().is_none() {
+                1
             } else {
-                1 // port n belongs to the opcode
+                0
             }
         } else {
             match self.read_data() {
@@ -1047,20 +1047,25 @@ impl OpcodeDecoder for Token {
                 AddressSource::Register16(Reg16::Bc)
             );
             assert_eq!(
+                dbg!(&OPCODE_PREFIX_ED[0x79]).read_address,
+                AddressSource::None
+            );
+            assert_eq!(
                 dbg!(&OPCODE_PREFIX_ED[0x79]).write_data,
                 DataSource::Register8(Reg8::A)
             );
             
             // out (n), a
-            assert_eq!(
-                dbg!(&OPCODE_PREFIX[0xd3]).nb_additional_opcode_bytes,
-                1 //n
-            );
+            let out = dbg!(&OPCODE_PREFIX[0xd3]);
+            assert_eq!(out.nb_additional_opcode_bytes, 1 );
+            assert_eq!(out.nb_bytes_to_write, 1);
+            assert_eq!(out.nb_bytes_to_read, 0);
+            assert_eq!(out.write_address, AddressSource::PortN);
             
             // outd
             let desc = dbg!(&OPCODE_PREFIX_ED[0xab]);
             assert_eq!(desc.nb_bytes_to_write, 1);
-            assert_eq!(desc.nb_bytes_to_read, 1);
+            assert_eq!(desc.nb_bytes_to_read, 1); 
             assert_eq!(desc.nb_additional_opcode_bytes, 0);
             assert_eq!(desc.read_address, AddressSource::Register16(Reg16::Hl));
             assert_eq!(desc.write_address, AddressSource::Register16(Reg16::Bc));

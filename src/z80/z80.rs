@@ -413,8 +413,10 @@ impl Z80 {
         
         /// Check if some operations has to be handled in the middle of the instructions (i.e. read / operation / write)
         fn must_execute_instruction_in_middle(&self) -> bool {
-            self.opcode_information().unwrap()
-            .compute_between_read_write()
+            let info = self.opcode_information().unwrap();
+
+            info.compute_between_read_write() &&
+                !info.token.is_output_opcode()
             
         }
         
@@ -716,7 +718,7 @@ impl Z80 {
             arg2: Option<&DataAccess>,
         ) {
             match mnemonic {
-                Mnemonic::Nop | Mnemonic::Out  => {}
+                Mnemonic::Nop => {}
                 
                 Mnemonic::Adc => {
                     match arg1.unwrap() {
@@ -1296,13 +1298,20 @@ impl Z80 {
                 }
                 Mnemonic::Indr => {
                     self.inner_ind();
-                    let jmp = self.inner_bc_loop();
-                    self.next_state = MCycle::new_fake(if jmp {3} else {2});
+                    self.next_state = MCycle::new_fake(if self.b() != 0 {
+                        self.pc.dec();
+                        self.pc.dec();
+                        3} else {2});
                 }
                 Mnemonic::Inir => {
                     self.inner_ind();
-                    let jmp = self.inner_bc_loop();
-                    self.next_state = MCycle::new_fake(if jmp {3} else {2});
+                    self.next_state = MCycle::new_fake(if self.b() != 0 {
+                        self.pc.dec();
+                        self.pc.dec();
+                        3
+                    } else {
+                        2
+                    });
                 }
 
                 Mnemonic::Ld => {
@@ -1418,12 +1427,39 @@ impl Z80 {
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag_off(Z80Flags::C);
             }
-            
+
+            Mnemonic::Out => {
+                if let Some(DataAccess::PortN(_)) =  arg1 {
+                
+                } else {
+                    self.next_state = MCycle::new_fake(1);
+                }
+            }
+  
+            Mnemonic::Outi => {
+                self.inner_outi();
+                self.next_state = MCycle::new_fake(1);
+            }
+
+            Mnemonic::Otir => {
+                self.inner_outi();
+                self.next_state = MCycle::new_fake(if self.b() != 0 {
+                    self.pc.dec();
+                    self.pc.dec();
+                    2} else {1});
+            }          
+
             Mnemonic::Outd => {
-                let b_is_zero = self.reg8(Reg8::B).value() == 0;
-                let f = &mut self.reg8_mut(Reg8::F).val;
-                Z80Flags::Z.set(b_is_zero, f);
-                Z80Flags::N.set_on(f);
+                self.inner_outd();
+                self.next_state = MCycle::new_fake(1);
+            }
+
+            Mnemonic::Otdr => {
+                self.inner_outd();
+                self.next_state = MCycle::new_fake(if self.b() != 0 {
+                    self.pc.dec();
+                    self.pc.dec();
+                    2} else {1});
             }
             
             Mnemonic::Push => {
@@ -1991,11 +2027,42 @@ impl Z80 {
     
 
     fn inner_ini(&mut self) {
-        self.inner_ldi();
+        self.reg16_mut(Reg16::Hl).inc();
+        self.reg8_mut(Reg8::B).dec();
+        
+        self.set_flag_off(Z80Flags::H);
+        self.set_flag_off(Z80Flags::N);
+        self.set_flag(Z80Flags::Z, self.b()!=0);
+      
     }
 
     fn inner_ind(&mut self) {
-        self.inner_ldd();
+        self.reg16_mut(Reg16::Hl).dec();
+        self.reg8_mut(Reg8::B).dec();
+        
+        self.set_flag_off(Z80Flags::H);
+        self.set_flag_off(Z80Flags::N);
+        self.set_flag(Z80Flags::Z, self.b()!=0);
+    }
+
+    fn inner_outi(&mut self) {
+        // b already decremented
+        self.reg16_mut(Reg16::Hl).inc();
+
+        
+        self.set_flag_off(Z80Flags::H);
+        self.set_flag_on(Z80Flags::N);
+        self.set_flag(Z80Flags::P, self.b()!=0);
+    }
+
+    fn inner_outd(&mut self) {
+        // b already decremented
+        self.reg16_mut(Reg16::Hl).dec();
+
+        
+        self.set_flag_off(Z80Flags::H);
+        self.set_flag_on(Z80Flags::N);
+        self.set_flag(Z80Flags::P, self.b()!=0);
     }
 
     /// Handle the loop for LDDR/LDIR
@@ -2394,8 +2461,21 @@ impl Chip for Z80 {
             
             MCycle::Write(TState::T1, nb) | MCycle::Output(TState::T1, nb) => {
                 let opcode_information = self.opcode_information().unwrap();
+                
+                match opcode_information.token.mnemonic() {
+                    Some(Mnemonic::Otdr | Mnemonic::Outd |  Mnemonic::Otir | Mnemonic::Outi) => {
+                        self.bc.high_mut().dec();
+                    },
+                    _ => {
 
+                    }
+                }
+                let opcode_information = self.opcode_information().unwrap();
+                
                 if !opcode_information.compute_between_read_write() {
+
+
+
                     // Get the real address to put on the pins
                     let address = if opcode_information.write_on_stack()  {
                         let base = self.get_write_address_from_opcode_information();

@@ -3,6 +3,7 @@ use amsrust::motherboard::Motherboard;
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
 use amsrust::ga::{VideoMode, Sync, RgbLevels};
 use itertools::Itertools;
+use cpclib_asm::preamble::Mnemonic;
 
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
 /// Attention, do not put the code in area where ROMs are activated ...
@@ -23,12 +24,24 @@ fn execute_instruction(load: u16, test: &[u8]) -> (Vec<(RgbLevels, Sync)> , Moth
 }
 
 fn execute_instruction_in(motherboard: &mut Motherboard, load: u16, test: &[u8]) -> Vec<(RgbLevels, Sync)> {
-	dbg!(
+	let inst  = dbg!(
 		cpclib_asm::disass::disassemble(test)
 	);
     motherboard.write_buffer(load, test);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(load);
-    motherboard.cpu_mut().reg16_mut(Reg16::Bc).set(2); // always to loops for sensitive instructions
+
+	match inst[0].mnemonic().unwrap() {
+		Mnemonic::Ini | Mnemonic::Inir |
+		Mnemonic::Ind | Mnemonic::Indr |
+		Mnemonic::Outi | Mnemonic::Otir |
+		Mnemonic::Outd | Mnemonic::Otdr => {
+			motherboard.cpu_mut().reg8_mut(Reg8::B).set(2); // always to loops for sensitive instructions
+		},
+		_ => {
+			motherboard.cpu_mut().reg16_mut(Reg16::Bc).set(2); // always to loops for sensitive instructions
+		}
+	}
+
 
 	// execute it until it is finished
 	let mut output = Vec::new();

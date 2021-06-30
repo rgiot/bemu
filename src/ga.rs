@@ -899,7 +899,7 @@ impl Chip for GateArray {
     fn execute_tick(&mut self) {
         if !self.get_pin(GateArrayPin::Neg_RD) {
              // read expected
-             unimplemented!("Read on GA not implemented");
+             eprintln!("Read on GA not implemented");
         }
         else {
             // out expected
