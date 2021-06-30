@@ -1436,9 +1436,17 @@ impl Z80 {
                 self.set_flag(Z80Flags::C, c);
             }
             Mnemonic::Rld => {
-                let mut  val = self.get_available_8bits_value(arg1.unwrap());
-                unimplemented!();
-                self.store_computed_8bits_value(arg1.unwrap(), val);
+                let mut  val = self.get_data_from_pins();
+                let a = self.a();
+
+                let a_low = a & 0x0f;
+                let pin_low = val & 0x0f;
+                let pin_high = (val & 0xf0) >> 4;
+
+                self.set_a( (a & 0xf0) | pin_high);
+                self.set_data_on_pins( (pin_low << 4 ) | a_low);
+
+                self.expect_additional_fake_cycle = 1;
             }
             Mnemonic::Rr => {
                 let prev_c = self.test_flag(FlagTest::C);
@@ -1481,9 +1489,17 @@ impl Z80 {
             }
             
             Mnemonic::Rrd => {
-                let mut  val = self.get_available_8bits_value(arg1.unwrap());
-                unimplemented!();
-                self.store_computed_8bits_value(arg1.unwrap(), val);
+                let mut  val = self.get_data_from_pins();
+                let a = self.a();
+
+                let a_low = a & 0x0f;
+                let pin_low = val & 0x0f;
+                let pin_high = (val & 0xf0) >> 4;
+
+                self.set_a( (a & 0xf0) | pin_low);
+                self.set_data_on_pins( (a << 4 ) | pin_high);
+
+                self.expect_additional_fake_cycle = 1;
             }
             Mnemonic::Scf => {
                 self.set_flag_on(Z80Flags::C);
@@ -2033,6 +2049,47 @@ impl Z80 {
     }
     pub fn set_iy(&mut self, value: u16) {
         self.reg16_mut(Reg16::Iy).set(value)
+    }
+
+
+
+
+
+    pub fn set_a(&mut self, value: u8) {
+        self.reg16_mut(Reg16::Af).high_mut().set(value)
+    }
+    pub fn set_b(&mut self, value: u8) {
+        self.reg16_mut(Reg16::Bc).high_mut().set(value)
+    }
+    pub fn set_d(&mut self, value: u8) {
+        self.reg16_mut(Reg16::De).high_mut().set(value)
+    }
+    pub fn set_h(&mut self, value: u8) {
+        self.reg16_mut(Reg16::Hl).high_mut().set(value)
+    }
+    pub fn set_ixh(&mut self, value: u8) {
+        self.reg16_mut(Reg16::Ix).high_mut().set(value)
+    }
+    pub fn set_iyh(&mut self, value: u8) {
+        self.reg16_mut(Reg16::Iy).high_mut().set(value)
+    }
+
+
+
+    pub fn set_c(&mut self, value: u8) {
+        self.reg16_mut(Reg16::Bc).low_mut().set(value)
+    }
+    pub fn set_e(&mut self, value: u8) {
+        self.reg16_mut(Reg16::De).low_mut().set(value)
+    }
+    pub fn set_l(&mut self, value: u8) {
+        self.reg16_mut(Reg16::Hl).low_mut().set(value)
+    }
+    pub fn set_ixl(&mut self, value: u8) {
+        self.reg16_mut(Reg16::Ix).low_mut().set(value)
+    }
+    pub fn set_iyl(&mut self, value: u8) {
+        self.reg16_mut(Reg16::Iy).low_mut().set(value)
     }
 }
 
