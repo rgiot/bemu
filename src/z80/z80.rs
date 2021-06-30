@@ -1285,6 +1285,25 @@ impl Z80 {
                     }
                 }
                 
+                Mnemonic::Ind => {
+                    self.inner_ind();
+                    self.next_state = MCycle::new_fake(2);
+                }
+                Mnemonic::Ini => {
+                    self.inner_ini();
+                    self.next_state = MCycle::new_fake(2);
+                }
+                Mnemonic::Indr => {
+                    self.inner_ind();
+                    let jmp = self.inner_bc_loop();
+                    self.next_state = MCycle::new_fake(if jmp {3} else {2});
+                }
+                Mnemonic::Inir => {
+                    self.inner_ind();
+                    let jmp = self.inner_bc_loop();
+                    self.next_state = MCycle::new_fake(if jmp {3} else {2});
+                }
+
                 Mnemonic::Ld => {
                     let arg1 = arg1.unwrap();
                     let arg2 = arg2.unwrap();
@@ -1969,6 +1988,15 @@ impl Z80 {
         self.set_flag(Z80Flags::P, self.bc()!=0);
     }
     
+
+    fn inner_ini(&mut self) {
+        self.inner_ldi();
+    }
+
+    fn inner_ind(&mut self) {
+        self.inner_ldd();
+    }
+
     /// Handle the loop for LDDR/LDIR
     /// Return true when pc is modified
     fn inner_bc_loop(&mut self) -> bool {
