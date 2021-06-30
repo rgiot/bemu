@@ -420,7 +420,7 @@ fn test_timing_jump() {
 fn test_timing_input() {
 	let madram = "
 
-	in a,(2)  |    11011011 n | ........ | 3 
+	in a,(n)  |    11011011 n | ........ | 3 
 	in b,(C)  | ED 01rrr000   | SZ503P0. | 4 
 	in 0,(C)  | ED 01110000   | SZ503P0. | 4
 	ini       | ED A2         | !!!!!!!! | 5 
@@ -465,6 +465,7 @@ fn check_madram_timing(content: &str) {
 				.replace("0x01op", "nop")
 				.replace("dj0x01z", "djnz")
 				.replace("ret0x01", "retn")
+				.replace("i0x01", "in")
 			)
 			).unwrap());
 			let output  = execute_instruction(0x4000, &binary);

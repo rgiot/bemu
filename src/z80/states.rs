@@ -4,7 +4,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 //use cpclib_asm::preamble::*;
 use super::{Reg16, Reg8, Z80Pin};
-use cpclib_asm::preamble::{DataAccess, ExprEvaluationExt, Mnemonic, Token};
+use cpclib_asm::preamble::{DataAccess, Expr, ExprEvaluationExt, Mnemonic, Token};
 
 /// Provide all the information needed by the CPU to properly execute the instruction
 trait OpcodeDecoder {
@@ -213,8 +213,10 @@ impl OpcodeDecoder for Token {
             // input like opcodes
             if self.is_input_opcode() {
                 match self.mnemonic_arg1() {
-                    Some(position) => position.into(),
+                    Some(DataAccess::Register8(reg)) => DataDestination::Register8(reg.into()),
+                    Some(DataAccess::Expression(Expr::Value(0))) => DataDestination::Register8(Reg8::F),
                     None => DataDestination::Pins,
+                    _ => unreachable!()
                 }
             } 
             // retlike opcodes
@@ -1004,6 +1006,18 @@ impl OpcodeDecoder for Token {
             assert_eq!(ina.read_data, DataSource::Register8(Reg8::A)); // we want to write PC
         }
         
+
+        #[test]
+        fn lookup_checks_in_0() {
+            
+            let ina = dbg!(&OPCODE_PREFIX_ED[0b01110000]);
+            assert_eq!(ina.nb_additional_opcode_bytes, 0);
+            assert_eq!(ina.nb_bytes_to_read, 1);
+            assert_eq!(ina.read_address, AddressSource::Register16(Reg16::Bc));
+            assert_eq!(ina.read_data, DataSource::Register8(Reg8::F)); // we want to write PC
+        }
+
+
         #[test]
         fn lookup_checks_out() {
             // out(c), a

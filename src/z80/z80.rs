@@ -539,6 +539,7 @@ impl Z80 {
                     assert_eq!(nb, 0);
                     self.reg8_mut(Reg8::Z).set(byte); // not sure if it is the case in real world, but at least it make work some instructions
                 }
+
                 _ => {
                     unimplemented!("{:?}/ {:?}", dst, self.opcode_information)
                 }
@@ -714,7 +715,7 @@ impl Z80 {
             arg2: Option<&DataAccess>,
         ) {
             match mnemonic {
-                Mnemonic::Nop | Mnemonic::Out | Mnemonic::In => {}
+                Mnemonic::Nop | Mnemonic::Out  => {}
                 
                 Mnemonic::Adc => {
                     match arg1.unwrap() {
@@ -1140,6 +1141,16 @@ impl Z80 {
                         // do nothing we hit the interruption
                     } else {
                         self.pc.dec(); // wait
+                    }
+                }
+
+                Mnemonic::In => {
+                    match arg1 {
+                        Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)) => {},
+                        Some(DataAccess::Register8(_)) | Some(DataAccess::Expression(_))=> {
+                            self.next_state = MCycle::new_fake(1);
+                        },
+                        _ => unreachable!()
                     }
                 }
                 
