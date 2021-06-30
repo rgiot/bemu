@@ -319,7 +319,7 @@ fn test_timing_rotate() {
 	rlc b        |    CB 00000rrr   | SZ503P0C | 2 
 	rlc (hl)     |    CB 00000110   | SZ503P0C | 4
 	rlc (ix+n)   | DD CB 00000110 n | SZ503P0C | 7
-	rlc (ix+n),b | DD CB 00000rrr n | SZ503P0C | 7 
+	rlc (iy+n),a | DD CB 00000rrr n | SZ503P0C | 7 
 	rrc b        |    CB 00001rrr   | SZ503P0C | 2  
 	rl b         |    CB 00010rrr   | SZ503P0C | 2  
 	rr b         |    CB 00011rrr   | SZ503P0C | 2  
@@ -342,7 +342,7 @@ fn test_timing_bit() {
 	bit n,c        |    CB   01bbbrrr | !Z513Z0. | 2 
 	bit n,(hl)     |    CB   01bbb110 | !Z!1!Z0. | 3
 	bit n,(ix+n)   | DD CB n 01bbb110 | !Z!1!Z0. | 6
-	res n,c        |    CB   10bbbrrr | ........ | 
+	res n,c        |    CB   10bbbrrr | ........ | 2
 	res n,(hl)     |    CB   10bbb110 | ........ | 4
 	res n,(ix+n)   | DD CB n 10bbb110 | ........ | 7
 	res n,(ix+n),c | DD CB n 10bbbrrr | ........ | 7 
@@ -415,7 +415,7 @@ fn check_madram_timing(content: &str) {
 			(fields[0], fields[3].trim().parse::<usize>().unwrap())
 		}) {
 			println!("{} {}", code, timing);
-			let binary = cpclib_asm::assemble(&format!(
+			let binary = dbg!(cpclib_asm::assemble(&format!(
 				" org 0x4000\n {}", 
 				code
 				.replace("nn", "0xdead")
@@ -425,7 +425,7 @@ fn check_madram_timing(content: &str) {
 				.replace("0x01eg", "neg")
 				.replace("0x01op", "nop")
 			)
-			).unwrap();
+			).unwrap());
 			let output  = execute_instruction(0x4000, &binary);
 			assert_eq!(
 				output.1.nops_counter().value(),

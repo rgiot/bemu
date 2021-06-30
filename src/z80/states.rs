@@ -468,7 +468,17 @@ impl OpcodeDecoder for Token {
             }
         }
     }
+
     impl OpcodePrefix {
+
+        pub fn prefix_len(&self) -> usize {
+            match self {
+                Self::None => 0,
+                Self::Cb | Self::Dd | Self::Ed | Self::Fd => 1,
+                Self::DdCb | Self::FdCb => 2
+            }
+        }
+
 
         /// Return true for 4 bytes opcode where penultimate byte is the index
         pub fn is_for_indexed_opcode(&self) -> bool {

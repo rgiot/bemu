@@ -1,7 +1,6 @@
 use cpclib_asm::preamble::Mnemonic;
 use cpclib_asm::preamble::Token;
-use smallvec::smallvec;
-use smallvec::SmallVec;
+use smallvec::*;
 
 use crate::chip::*;
 use crate::counter::*;
@@ -503,39 +502,68 @@ impl Motherboard {
             byte
         };
 
-        let (prefix, ir) = {
-            let current = read();
-            let prefix = OpcodePrefix::from(current);
-            if let OpcodePrefix::None = prefix {
-                (prefix, current)
-            } else {
-                (prefix, read())
+        let mut current_prefix = OpcodePrefix::None;
+        let mut instruction_bytes : SmallVec <[u8;4]> = Default::default();
+        let mut ir = 0;
+        loop {
+            ir = read();
+            instruction_bytes.push(ir);
+            match current_prefix {
+                OpcodePrefix::None => {
+                    current_prefix = match ir {
+                        0xdd => OpcodePrefix::Dd,
+                        0xfd => OpcodePrefix::Fd,
+                        0xcb => OpcodePrefix::Cb,
+                        0xed => OpcodePrefix::Ed,
+                        _ => OpcodePrefix::None
+                    };
+                    
+                    if current_prefix == OpcodePrefix::None {
+                        break;
+                    }
+                },
+
+                OpcodePrefix::Cb | OpcodePrefix::Ed => {
+                    break;
+                }
+
+                OpcodePrefix::Dd => {
+                    if ir == 0xcb {
+                        current_prefix = OpcodePrefix::DdCb
+                    } else {
+                        break;
+                    }
+                },
+                
+                OpcodePrefix::Fd => {
+                    if ir == 0xcb {
+                        current_prefix = OpcodePrefix::FdCb
+                    } else {
+                        break;
+                    }
+                },
+
+                OpcodePrefix::DdCb |  OpcodePrefix::FdCb => {
+                   break;
+                }
             }
-        };
-
-        let opcode_info = prefix.opcode_information(ir);
-        let mut memory: SmallVec<[u8; 3]> = if let OpcodePrefix::None = prefix {
-            smallvec![ir]
-        } else {
-            smallvec![prefix as u8, ir]
-        };
-
-        for _i in 0..opcode_info.nb_additional_opcode_bytes {
-            memory.push(read());
         }
 
-        let token = cpclib_asm::disass::disassemble_with_potential_argument(
-            ir,
-            &prefix.disassembling_table(),
-            &memory[1..],
-        )
-        .map(|r| r.0)
+        /// Read the extra byte
+        let nb_bytes = if matches!(current_prefix, OpcodePrefix::DdCb |  OpcodePrefix::FdCb) {1} else {current_prefix.opcode_information(ir).nb_additional_opcode_bytes};
+        for _i in 0..nb_bytes {
+            instruction_bytes.push(read());
+        }
+
+        let token = cpclib_asm::disass::disassemble(&instruction_bytes)
+        .get(0)
+        .cloned()
         .unwrap_or(Token::OpCode(Mnemonic::Nop, None, None, None));
         
 
         DisassembledInstruction {
             token,
-            memory,
+            memory: instruction_bytes,
             address,
         }
     }

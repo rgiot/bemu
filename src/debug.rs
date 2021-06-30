@@ -213,7 +213,7 @@ impl Monitor {
 pub struct DisassembledInstruction {
     pub token: Token,
     pub address: u16,
-    pub memory: SmallVec<[u8; 3]>,
+    pub memory: SmallVec<[u8; 4]>,
 }
 
 impl ToString for DisassembledInstruction {
