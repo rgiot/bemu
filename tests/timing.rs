@@ -464,6 +464,7 @@ fn check_madram_timing(content: &str) {
 				.replace("0x01eg", "neg")
 				.replace("0x01op", "nop")
 				.replace("dj0x01z", "djnz")
+				.replace("ret0x01", "retn")
 			)
 			).unwrap());
 			let output  = execute_instruction(0x4000, &binary);

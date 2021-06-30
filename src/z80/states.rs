@@ -908,7 +908,15 @@ impl OpcodeDecoder for Token {
             assert_eq!(ret.nb_bytes_to_read, 2);
             assert_eq!(ret.read_data, DataSource::Register16(Reg16::Pc)); // we want to override PC
         }
-        
+          
+        #[test]
+        fn lookup_checks_reti() {
+            let ret = dbg!(&OPCODE_PREFIX_ED[0x4d]);
+            assert_eq!(ret.nb_additional_opcode_bytes, 0);
+            assert_eq!(ret.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
+            assert_eq!(ret.nb_bytes_to_read, 2);
+            assert_eq!(ret.read_data, DataSource::Register16(Reg16::Pc)); // we want to override PC
+        }      
 
         #[test]
         fn lookup_checks_ret_c() {

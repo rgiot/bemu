@@ -1418,7 +1418,7 @@ impl Z80 {
             }
             
             
-            Mnemonic::Ret => {
+            Mnemonic::Ret  => {
                 self.pc = self.wz;
                 self.sp.inc();
                 self.sp.inc();
@@ -1428,6 +1428,19 @@ impl Z80 {
                     self.next_state = MCycle::new_fake(1);
                 }
             }
+
+            Mnemonic::Reti => {
+                self.pc = self.wz;
+                self.sp.inc();
+                self.sp.inc();
+            }
+
+            Mnemonic::Retn => {
+                self.pc = self.wz;
+                self.sp.inc();
+                self.sp.inc();
+                self.iff2 = self.iff1;
+            }          
             
             
             Mnemonic::Rl => {
