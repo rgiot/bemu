@@ -38,7 +38,7 @@ impl OpcodeDecoder for Token {
                     AddressSource::Register16(Reg16::Bc)
                 },
                 Some(DataAccess::PortN(_)) => {
-                    AddressSource::Immediate
+                    AddressSource::PortN
                 },
                 _ => unreachable!("{:?}", self),
             }
@@ -447,6 +447,8 @@ impl OpcodeDecoder for Token {
         Indexed(Reg16),
         /// We are doing an operation on the stack / thus address is SP
         Stack(StackDelta),
+        /// Uses A and Immediate value
+        PortN
     }
     
     // Some operations use a modified value of the the SP register
@@ -828,13 +830,13 @@ impl OpcodeDecoder for Token {
         use super::*;
         
         #[test]
-        fn lookup_checks_hl() {
+        fn lookup_check_hl() {
             // ld hl, xxxx
             assert_eq!(dbg!(&OPCODE_PREFIX[0x21]).nb_additional_opcode_bytes, 2);
         }
        
         #[test]
-        fn lookup_checks_bit_2_hl() {
+        fn lookup_check_bit_2_hl() {
             let bit = dbg!(&OPCODE_PREFIX_CB[0b01010110]);
 
             assert_eq!(bit.nb_additional_opcode_bytes, 0);
@@ -843,7 +845,7 @@ impl OpcodeDecoder for Token {
         } 
 
         #[test]
-        fn lookup_checks_call() {
+        fn lookup_check_call() {
             // call pq
             let call = dbg!(&OPCODE_PREFIX[0xcd]);
             assert_eq!(call.nb_additional_opcode_bytes, 2);
@@ -867,7 +869,7 @@ impl OpcodeDecoder for Token {
             assert_eq!(cpi.nb_bytes_to_read, 1);
         }
         #[test]
-        fn lookup_checks_call_conditional() {
+        fn lookup_check_call_conditional() {
             use cpclib_asm::preamble::FlagTest;
             let call = dbg!(&OPCODE_PREFIX[0b11000100]);
             assert_eq!(call.nb_additional_opcode_bytes, 2);
@@ -892,7 +894,7 @@ impl OpcodeDecoder for Token {
         }
         
         #[test]
-        fn lookup_checks_ex_sp_hl() {
+        fn lookup_check_ex_sp_hl() {
             let ex = dbg!(&OPCODE_PREFIX[0xe3]);
             assert_eq!(ex.read_address, AddressSource::Stack(StackDelta::Zero));
             assert_eq!(ex.read_data, DataSource::Register16(Reg16::Wz)); // wz expected
@@ -903,7 +905,7 @@ impl OpcodeDecoder for Token {
         }
         
         #[test]
-        fn lookup_checks_ret() {
+        fn lookup_check_ret() {
             let ret = dbg!(&OPCODE_PREFIX[0xc9]);
             assert_eq!(ret.nb_additional_opcode_bytes, 0);
             assert_eq!(ret.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
@@ -912,7 +914,7 @@ impl OpcodeDecoder for Token {
         }
           
         #[test]
-        fn lookup_checks_reti() {
+        fn lookup_check_reti() {
             let ret = dbg!(&OPCODE_PREFIX_ED[0x4d]);
             assert_eq!(ret.nb_additional_opcode_bytes, 0);
             assert_eq!(ret.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
@@ -921,7 +923,7 @@ impl OpcodeDecoder for Token {
         }      
 
         #[test]
-        fn lookup_checks_ret_c() {
+        fn lookup_check_ret_c() {
             let ret = dbg!(&OPCODE_PREFIX[0b11011000]);
             assert_eq!(ret.nb_additional_opcode_bytes, 0);
             assert_eq!(ret.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
@@ -932,13 +934,13 @@ impl OpcodeDecoder for Token {
 
 
         #[test]
-        fn lookup_checks_ld_sp() {
+        fn lookup_check_ld_sp() {
             let call = dbg!(&OPCODE_PREFIX[0x31]);
             assert_eq!(call.nb_additional_opcode_bytes, 2);
         }
         
         #[test]
-        fn lookup_checks_ld_hl_mem() {
+        fn lookup_check_ld_hl_mem() {
             let ld = dbg!(&OPCODE_PREFIX[0x2a]);
             assert_eq!(ld.nb_additional_opcode_bytes, 2);
             assert_eq!(ld.nb_bytes_to_read, 2);
@@ -947,7 +949,7 @@ impl OpcodeDecoder for Token {
         }
         
         #[test]
-        fn lookup_checks_ld_sp_mem() {
+        fn lookup_check_ld_sp_mem() {
             let ld = dbg!(&OPCODE_PREFIX_ED[0x7b]);
             assert_eq!(ld.nb_additional_opcode_bytes, 2);
             assert_eq!(ld.nb_bytes_to_read, 2);
@@ -956,7 +958,7 @@ impl OpcodeDecoder for Token {
         }
         
         #[test]
-        fn lookup_checks_ld_a_mem_ix_delta() {
+        fn lookup_check_ld_a_mem_ix_delta() {
             let ld = dbg!(&OPCODE_PREFIX_DD[0x7e]);
             assert_eq!(ld.nb_additional_opcode_bytes, 1);
             assert_eq!(ld.nb_bytes_to_read, 1);
@@ -965,7 +967,7 @@ impl OpcodeDecoder for Token {
         }
 
         #[test]
-        fn lookup_checks_ld_a_mem_bc() {
+        fn lookup_check_ld_a_mem_bc() {
             let ld = dbg!(&OPCODE_PREFIX[0x0a]);
             assert_eq!(ld.nb_additional_opcode_bytes, 0);
             assert_eq!(ld.nb_bytes_to_read, 1);
@@ -997,18 +999,31 @@ impl OpcodeDecoder for Token {
         
         
         #[test]
-        fn lookup_checks_in() {
+        fn lookup_check_in_a_c() {
             
             let ina = dbg!(&OPCODE_PREFIX_ED[0b01111000]);
+
             assert_eq!(ina.nb_additional_opcode_bytes, 0);
             assert_eq!(ina.nb_bytes_to_read, 1);
             assert_eq!(ina.read_address, AddressSource::Register16(Reg16::Bc));
             assert_eq!(ina.read_data, DataSource::Register8(Reg8::A)); // we want to write PC
         }
+
+        #[test]
+        fn lookup_check_in_a_n() {
+            
+            let ina = dbg!(&OPCODE_PREFIX[0xdb]);
+
+            assert_eq!(ina.nb_additional_opcode_bytes, 1);
+            assert_eq!(ina.nb_bytes_to_read, 1);
+            assert_eq!(ina.read_address, AddressSource::PortN);
+            assert_eq!(ina.read_data, DataSource::Register8(Reg8::A)); // we want to write PC
+        }
+        
         
 
         #[test]
-        fn lookup_checks_in_0() {
+        fn lookup_check_in_0() {
             
             let ina = dbg!(&OPCODE_PREFIX_ED[0b01110000]);
             assert_eq!(ina.nb_additional_opcode_bytes, 0);
@@ -1019,7 +1034,7 @@ impl OpcodeDecoder for Token {
 
 
         #[test]
-        fn lookup_checks_out() {
+        fn lookup_check_out() {
             // out(c), a
             assert_eq!(
                 dbg!(&OPCODE_PREFIX_ED[0x79]).nb_additional_opcode_bytes,
@@ -1058,7 +1073,7 @@ impl OpcodeDecoder for Token {
         }
         
         #[test]
-        fn lookup_checks_push_hl() {
+        fn lookup_check_push_hl() {
             // call pq
             let call = dbg!(&OPCODE_PREFIX[0xe5]);
             assert_eq!(call.nb_additional_opcode_bytes, 0);
@@ -1140,7 +1155,7 @@ impl OpcodeDecoder for Token {
 
 
         #[test]
-        fn lookup_checks_rst() {
+        fn lookup_check_rst() {
             // call pq
             let rst = dbg!(&OPCODE_PREFIX[0b11001111]);
             assert_eq!(rst.nb_additional_opcode_bytes, 0);
@@ -1152,7 +1167,7 @@ impl OpcodeDecoder for Token {
         }
 
         #[test]
-        fn lookup_checks_pop_hl() {
+        fn lookup_check_pop_hl() {
             // call pq
             let pop = dbg!(&OPCODE_PREFIX[0xe1]);
             assert_eq!(pop.nb_additional_opcode_bytes, 0);
@@ -1161,7 +1176,7 @@ impl OpcodeDecoder for Token {
         }
   
         #[test]
-        fn lookup_checks_rld() {
+        fn lookup_check_rld() {
             // call pq
             let rld = dbg!(&OPCODE_PREFIX_ED[0x6f]);
             assert_eq!(rld.nb_additional_opcode_bytes, 0);

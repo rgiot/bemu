@@ -444,6 +444,7 @@ impl Z80 {
                 AddressSource::None => unreachable!(),
                 // As already been loaded in Wz
                 AddressSource::Immediate => self.reg16(Reg16::Wz).get(),
+                AddressSource::PortN => (self.a() as u16) << 8 + self.reg8(Reg8::Z).value() as u16,
                 // Is stored withing a 16 bits register
                 AddressSource::Register16(ref reg) | AddressSource::IndexRegister16(ref reg) => {
                     self.reg16(*reg).get()
