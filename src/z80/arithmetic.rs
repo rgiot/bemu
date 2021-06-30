@@ -53,6 +53,12 @@ pub fn rrc(byte: &mut u8) -> bool {
     }
     bit0
 }
+pub fn sl1(byte: &mut u8) -> bool {
+    let bit7 = *byte & 1 << 7 != 0;
+    *byte = *byte << 1;
+    *byte |= 1;
+    bit7
+}
 
 pub fn sla(byte: &mut u8) -> bool {
     let bit7 = *byte & 1 << 7 != 0;

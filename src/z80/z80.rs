@@ -5,6 +5,7 @@ use crate::z80::arithmetic::rlc;
 use crate::z80::arithmetic::rr;
 use crate::z80::arithmetic::rrc;
 use crate::z80::arithmetic::set_bit;
+use crate::z80::arithmetic::sl1;
 use crate::z80::arithmetic::sla;
 use crate::z80::arithmetic::sra;
 use crate::z80::arithmetic::srl;
@@ -1604,7 +1605,18 @@ impl Z80 {
                 
                 _ => unimplemented!("{:?}, {:?}", arg1, arg2),
             },
-            
+  
+            Mnemonic::Sl1 => {
+                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                let c = sl1(&mut val);
+                self.store_computed_8bits_value(arg1.unwrap(), val);
+                
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
+                self.set_flag(Z80Flags::C, c);
+            }
+
+
             Mnemonic::Sla => {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
                 let c = sla(&mut val);

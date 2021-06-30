@@ -67,6 +67,29 @@ impl OpcodeDecoder for Token {
             {
                 AddressSource::Register16(Reg16::Hl)
             } 
+            else if matches!(self,
+                Token::OpCode(
+                    Mnemonic::Rlc | Mnemonic::Rrc |
+                    Mnemonic::Rl | Mnemonic::Rr |
+                    Mnemonic::Sla | Mnemonic::Sra |
+                    Mnemonic::Sl1 | Mnemonic::Srl,
+                    Some(DataAccess::IndexRegister16WithIndex(_, _)),
+                    Some(DataAccess::Register8(_)),
+                    None
+                )
+            ) {
+                AddressSource::Indexed(self.mnemonic_arg1().unwrap().get_indexregister16().unwrap().into())
+            }
+            else if matches!(self,
+                Token::OpCode(
+                    Mnemonic::Res | Mnemonic::Set,
+                    Some(_),
+                    Some(DataAccess::IndexRegister16WithIndex(_, _)),
+                    Some(_)
+                )
+            ) {
+                AddressSource::Indexed(self.mnemonic_arg2().unwrap().get_indexregister16().unwrap().into())
+            }
             else {
                 // all other opcodes, rules are the same depending on the arguments
                 
@@ -260,7 +283,21 @@ impl OpcodeDecoder for Token {
             else if let Some(Mnemonic::ExMemSp) = self.mnemonic() {
                 DataDestination::Register16(Reg16::Wz)
             }
-            else {
+
+            else if matches!(self,
+                Token::OpCode(
+                    Mnemonic::Rlc | Mnemonic::Rrc |
+                    Mnemonic::Rl | Mnemonic::Rr |
+                    Mnemonic::Sla | Mnemonic::Sra |
+                    Mnemonic::Sl1 | Mnemonic::Srl,
+                    Some(DataAccess::IndexRegister16WithIndex(_, _)),
+                    Some(DataAccess::Register8(_)),
+                    None
+                ))
+                {
+                    DataDestination::Pins
+
+            } else {
                 assert_eq!(AddressSource::None, self.read_address(), "{:?}", self);
                 DataDestination::None // TODO implement the other ones
             }
@@ -1025,6 +1062,41 @@ impl OpcodeDecoder for Token {
                 AddressSource::IndexRegister16(Reg16::Ix)
             );
         }
+
+        #[test]
+        fn lookup_check_rlc_indexed_hidden() {
+            // Here we have a difficulty because 06 is obtained AFTER having read the two bytes... so extra should be viewed as 0
+            let rlc = dbg!(&OPCODE_PREFIX_DDCB[00]);
+            assert_eq!(
+                2,
+                rlc.nb_additional_opcode_bytes
+            );
+            assert_eq!(
+                1,
+                rlc.nb_bytes_to_read
+            );
+            assert_eq!(
+                1,
+                rlc.nb_bytes_to_write
+            );
+            assert_eq!(
+                rlc.read_data,
+                DataDestination::Pins
+            );
+            assert_eq!(
+                rlc.write_data,
+                DataDestination::Pins
+            );
+            assert_eq!(
+                rlc.read_address,
+                AddressSource::IndexRegister16(Reg16::Ix)
+            );
+            assert_eq!(
+                rlc.write_address,
+                AddressSource::IndexRegister16(Reg16::Ix)
+            );
+        }
+
 
 
         #[test]
