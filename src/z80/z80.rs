@@ -790,6 +790,10 @@ impl Z80 {
                     self.set_flag_on(Z80Flags::H);
                     self.set_flag(Z80Flags::Z, bit);
                     self.set_flag_on(Z80Flags::N);
+
+                    if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
+                        self.next_state = MCycle::new_fake(1);
+                    }
                 }
                 
                 Mnemonic::Call => {
@@ -1379,6 +1383,11 @@ impl Z80 {
                 let mut  val = self.get_available_8bits_value(arg2.unwrap());
                 val |= 1 << arg1.unwrap().expr().unwrap().eval().unwrap();
                 self.store_computed_8bits_value(arg2.unwrap(), val);
+
+                if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
+
+                    self.expect_additional_fake_cycle = 1;
+                }
             }
             
             
@@ -1544,6 +1553,10 @@ impl Z80 {
                     other => {
                         unimplemented!("{:?}", other);
                     }
+                }
+
+                if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
+                    self.expect_additional_fake_cycle = 1;
                 }
             }
             
