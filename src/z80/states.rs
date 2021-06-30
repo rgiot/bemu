@@ -90,6 +90,9 @@ impl OpcodeDecoder for Token {
             ) {
                 AddressSource::Indexed(self.mnemonic_arg2().unwrap().get_indexregister16().unwrap().into())
             }
+            else if self.mnemonic() == Some(&Mnemonic::Jp) {
+                AddressSource::None // JP (HL) is a misleading name
+            }
             else {
                 // all other opcodes, rules are the same depending on the arguments
                 
@@ -140,6 +143,9 @@ impl OpcodeDecoder for Token {
             }
             else if let Some(Mnemonic::Bit) = self.mnemonic() {
                 AddressSource::None
+            }
+            else if self.mnemonic() == Some(&Mnemonic::Jp) {
+                AddressSource::None // JP (HL) is a misleading name
             }
             else {
                 match (self.mnemonic_arg1(), self.mnemonic_arg2()) {
@@ -256,8 +262,8 @@ impl OpcodeDecoder for Token {
                 DataDestination::Pins // here we read/write on the data pins
             } 
             // JP / jr
-            else if let Token::OpCode( Mnemonic::Jp | Mnemonic::Jr, _, Some(DataAccess::MemoryRegister16(_) | DataAccess::MemoryIndexRegister16(_) ), _) = self {
-                DataDestination::Register16(Reg16::Wz)
+            else if let Token::OpCode( Mnemonic::Jp | Mnemonic::Jr, _, _, _) = self {
+                DataDestination::None // notation is erroneous; the value of the register is taken into account, not its address
             }
             // others (mathematicla ?)
             else if let Token::OpCode(_, _, Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)), _) = self {
@@ -815,7 +821,7 @@ impl OpcodeDecoder for Token {
     mod test {
         use std::ops::Add;
 
-        use cpclib_asm::preamble::{IndexRegister16, Register16};
+        use cpclib_asm::preamble::{FlagTest, IndexRegister16, Register16};
         
         use super::*;
         
@@ -903,6 +909,18 @@ impl OpcodeDecoder for Token {
             assert_eq!(ret.read_data, DataSource::Register16(Reg16::Pc)); // we want to override PC
         }
         
+
+        #[test]
+        fn lookup_checks_ret_c() {
+            let ret = dbg!(&OPCODE_PREFIX[0b11011000]);
+            assert_eq!(ret.nb_additional_opcode_bytes, 0);
+            assert_eq!(ret.read_address, AddressSource::Stack(StackDelta::Zero)); // we want to write on the stack
+            assert_eq!(ret.nb_bytes_to_read, 2);
+            assert_eq!(ret.read_data, DataSource::Register16(Reg16::Pc));
+            assert_eq!(ret.flag_test, Some(FlagTest::C));
+        }
+
+
         #[test]
         fn lookup_checks_ld_sp() {
             let call = dbg!(&OPCODE_PREFIX[0x31]);

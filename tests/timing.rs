@@ -165,6 +165,45 @@ fn timing_ldir2() {
 }
 
 
+
+
+#[test]
+fn timing_conditional_ret_not_met() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		ret c
+	"));
+
+	let mut motherboard = MotherboardBuilder::default().build();
+	motherboard.cpu_mut().set_flag_off(amsrust::z80::Z80Flags::C);
+	let output  = execute_instruction_in(&mut motherboard, 0x4000, code);
+
+	dbg!(output.len(), motherboard.t_state_counter(), motherboard.nops_counter());
+
+	assert_eq!(
+		motherboard.nops_counter().value(),
+		 2
+	);
+}
+
+#[test]
+fn timing_conditional_ret_met() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		ret c
+	"));
+
+	let mut motherboard = MotherboardBuilder::default().build();
+	motherboard.cpu_mut().set_flag_on(amsrust::z80::Z80Flags::C);
+	let output  = execute_instruction_in(&mut motherboard, 0x4000, code);
+
+	dbg!(output.len(), motherboard.t_state_counter(), motherboard.nops_counter());
+
+	assert_eq!(
+		motherboard.nops_counter().value(),
+		 4
+	);
+}
 // Timing based on https://64nops.wordpress.com/2021/01/13/perfectly-accurate-z80-flags-and-cpc-timing/
 // Each unique instruction has been modified to reflect a real use
 // Several lines has been modified to allow an appropriate parsing
@@ -359,14 +398,14 @@ fn test_timing_bit() {
 fn test_timing_jump() {
 	let madram = "
 
-	jp 11       |    11000011 nn  | ........ | 3
-	jp c,11   |    11ccc010 nn  | ........ | 3 
+	jp nn       |    11000011 nn  | ........ | 3
+	jp c,nn   |    11ccc010 nn  | ........ | 3 
 	jp hl       |    E9           | ........ | 1 
 	jp ix       | DD E9           | ........ | 2	
-	jr 1        |    00011000 n-2 | ........ | 3 
-	jr c,1    |    001cc000 n-2 | ........ | 3 
-	djnz 1      |    00010000 n-2 | ........ | 4 
-	call 1     |    11001101 nn  | ........ | 5
+	jr 0x4002        |    00011000 n-2 | ........ | 3 
+	jr c,0x4002    |    001cc000 n-2 | ........ | 3 
+	djnz 0x4002      |    00010000 n-2 | ........ | 4 
+	call nn     |    11001101 nn  | ........ | 5
 	call c,1 |    11ccc100 nn  | ........ | 5 
 	rst 0     |    11ttt111     | ........ | 4
 	ret         |    11001001     | ........ | 3
@@ -424,6 +463,7 @@ fn check_madram_timing(content: &str) {
 				.replace("i0x01c", "inc")
 				.replace("0x01eg", "neg")
 				.replace("0x01op", "nop")
+				.replace("dj0x01z", "djnz")
 			)
 			).unwrap());
 			let output  = execute_instruction(0x4000, &binary);

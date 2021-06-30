@@ -15,6 +15,7 @@ use crate::z80::states::*;
 
 use std::fmt::Debug;
 
+use cpclib_asm::preamble::Token;
 use cpclib_asm::preamble::{
     DataAccess, ExprEvaluationExt, FlagTest, Mnemonic, SymbolsTableCaseDependent,
 };
@@ -358,18 +359,18 @@ impl Z80 {
     }
     
     #[inline]
-    fn set_flag(&mut self, flag: Z80Flags, val: bool) {
+    pub fn set_flag(&mut self, flag: Z80Flags, val: bool) {
         let f = &mut self.reg8_mut(Reg8::F).val;
         flag.set(val, f);
     }
     
     #[inline]
-    fn set_flag_on(&mut self, flag: Z80Flags) {
+    pub fn set_flag_on(&mut self, flag: Z80Flags) {
         self.set_flag(flag, true);
     }
     
     #[inline]
-    fn set_flag_off(&mut self, flag: Z80Flags) {
+    pub fn set_flag_off(&mut self, flag: Z80Flags) {
         self.set_flag(flag, false);
     }
     
@@ -655,6 +656,26 @@ impl Z80 {
 
 
                     if opcode_information.fetch_finished() || current_prefix.is_for_indexed_opcode() {
+
+                        if let 
+                            Token::OpCode(
+                                Mnemonic::Ret,
+                                Some(DataAccess::FlagTest(test)),
+                                None,
+                                None
+                            ) = opcode_information.token {
+                                if !self.test_flag(test) {
+                                    self.next_state = MCycle::new_fake(1);
+                                    return false;
+                                } else {
+                                    self.next_state = MCycle::Read(TState::T1, 0);
+                                    return false;
+                                }
+                            }
+                           
+                        
+
+
                         if opcode_information.expect_read() {
                             if opcode_information.read_from_pins {
                                 self.next_state = MCycle::Input(TState::T1, 0);
@@ -1077,6 +1098,10 @@ impl Z80 {
                         } else {
                             self.pc.sub(-displacement as u16);
                         }
+                        self.next_state = MCycle::new_fake(2);
+                    }
+                    else {
+                        self.next_state = MCycle::new_fake(1);
                     }
                 }
                 
@@ -1236,6 +1261,8 @@ impl Z80 {
                         self.pc.add(full);
                         */
                     }
+
+                    self.next_state = MCycle::new_fake(1);
                 }
                 
                 Mnemonic::Im => {
@@ -1395,6 +1422,11 @@ impl Z80 {
                 self.pc = self.wz;
                 self.sp.inc();
                 self.sp.inc();
+
+                // conditional ret is far slower
+                if arg1.is_some() {
+                    self.next_state = MCycle::new_fake(1);
+                }
             }
             
             
