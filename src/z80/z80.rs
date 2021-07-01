@@ -2354,7 +2354,7 @@ impl Chip for Z80 {
                 self.set_pin(Z80Pin::Neg_MREQ, true);
                 self.set_pin(Z80Pin::Neg_M1, true);
                 
-                let byte = dbg!(self.get_data_from_pins());
+                let byte = self.get_data_from_pins();
                 match nb {
                     0 => {
                         self.ir.set(byte);
@@ -2438,7 +2438,7 @@ impl Chip for Z80 {
                 let address = self.get_read_address_from_opcode_information().wrapping_add(nb as u16);
                 self.set_address_on_pins(address);
                 
-                eprintln!("READ ADDR={:x}", address);
+                //aprintln!("READ ADDR={:x}", address);
                 
                 assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
@@ -2532,7 +2532,7 @@ impl Chip for Z80 {
                 }
                     
                 
-                eprintln!("WRITE ADDR={:x}", self.get_address_from_pins());
+                //eprintln!("WRITE ADDR={:x}", self.get_address_from_pins());
                 assert!(self.get_pin(self.next_state.write_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
                 assert!(self.get_pin(Z80Pin::Neg_WR));
