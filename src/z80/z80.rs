@@ -1587,6 +1587,8 @@ impl Z80 {
                 self.set_data_on_pins( (pin_low << 4 ) | a_low);
 
                 self.expect_additional_fake_cycle = 1;
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
             }
             Mnemonic::Rr => {
                 let prev_c = self.test_flag(FlagTest::C);
@@ -1640,6 +1642,8 @@ impl Z80 {
                 self.set_data_on_pins( (a << 4 ) | pin_high);
 
                 self.expect_additional_fake_cycle = 1;
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
             }
             Mnemonic::Scf => {
                 self.set_flag_on(Z80Flags::C);
