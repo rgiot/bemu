@@ -1,7 +1,7 @@
 #![feature(exclusive_range_pattern)]
 #![feature(half_open_range_patterns)]
 	
-use amsrust::{motherboard::MotherboardBuilder, z80::{HasValue, Reg16}};
+use amsrust::{debug::Monitor, motherboard::MotherboardBuilder, z80::{HasValue, Reg16}};
 use cpclib_asm::preamble::Mnemonic;
 
 #[test]
@@ -27,6 +27,8 @@ fn test_interruption_mode1() {
 
 		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 		let token = motherboard.disassemble_next_instruction().token;
+
+		Monitor::monitor(&motherboard);
 
 		match pc {
 			0x38..0x40=> {},

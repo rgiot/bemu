@@ -934,6 +934,13 @@ impl OpcodeDecoder for Token {
 
 
         #[test]
+        fn lookup_checks_jr() {
+            let jr = dbg!(&OPCODE_PREFIX[0x18]);
+            assert_eq!(jr.nb_additional_opcode_bytes, 1);
+            assert_eq!(jr.nb_bytes_to_read, 0);
+            assert_eq!(jr.nb_bytes_to_write, 0);
+        }
+        #[test]
         fn lookup_check_ld_sp() {
             let call = dbg!(&OPCODE_PREFIX[0x31]);
             assert_eq!(call.nb_additional_opcode_bytes, 2);

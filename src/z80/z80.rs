@@ -582,6 +582,7 @@ impl Z80 {
                 )
                 .unwrap();
                 assert!(opcode.is_opcode());
+         //       dbg!(&opcode);
                 self.execute_opcode(
                     opcode.mnemonic().unwrap(),
                     opcode.mnemonic_arg1(),
@@ -1270,31 +1271,16 @@ impl Z80 {
                     if do_jump {
                         //        dbg!("The implementation is incorrect. An additional mcycle must handle the operation");
                         
-                        let mut sym = SymbolsTableCaseDependent::default();
-                        sym.set_symbol_to_value("$", -2);
-                        
-                        let expr = arg2.unwrap().expr().unwrap();
-                        let displacement = expr.relative_delta().unwrap();
-                        
-                        //             dbg!(displacement);
-                        
-                        // the very same value is also here
-                        //   let displacement = self.wz.low().value() as i8 as i16 as u16;
-                        
+                        let displacement = self.reg8(Reg8::Z).value();
+                        let displacement :i8 = unsafe{std::mem::transmute(displacement)};
+             
+                      
                         if displacement > 0 {
                             self.pc.add(displacement as u16);
                         } else {
                             self.pc.sub(-displacement as u16);
                         }
-                        /*
-                        // convert the 8bit number in a 16 bits value
-                        let full = if displacement & 1<<7 != 0 {
-                            0xff00
-                        } else {
-                            0x0000
-                        } | displacement as u16;
-                        self.pc.add(full);
-                        */
+
                     }
 
                     self.next_state = MCycle::new_fake(1);
@@ -2143,9 +2129,11 @@ impl Z80 {
     }
     
     /// Handcraft a call to let the CPU jump in 0x38
-    /// TODO manage a Fake M1 cycle
     fn simulate_call_0x38_after_fetch(&mut self) {
+        
         self.opcode_information = Some(&OPCODE_PREFIX[0xcd]);
+        self.ir.set(0xcd);
+        self.wz.set(0x38);
         self.next_state = MCycle::Write(TState::T1, 0);
     }
 }
@@ -2324,7 +2312,7 @@ impl Chip for Z80 {
     }
     
     fn execute_tick(&mut self) {
-        //dbg!(&self.next_state);
+      //  dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) => {
