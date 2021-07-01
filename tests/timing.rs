@@ -462,8 +462,12 @@ fn check_madram_timing_and_flags(content: &str) {
 				match code {
 					'.' => {/* TODO: check the flag has not changed */},
 					'!' => {/* XXX: xe cannot test anything there */},
-					'0' => {assert!(!motherboard.cpu().get_flag(flag))},
-					'1' => {assert!(motherboard.cpu().get_flag(flag))},
+					'0' => {assert!(
+						!motherboard.cpu().get_flag(flag),
+						"{:#?} is wrongly set", flag
+					)},
+					'1' => {assert!(motherboard.cpu().get_flag(flag),
+						"{:#?} is wrong unset", flag)},
 					_ => {/* we need instraction specific tests there */}
 				}
 			}

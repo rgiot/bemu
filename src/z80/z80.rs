@@ -31,7 +31,7 @@ macro_rules! inner_8bits_sub {
         );
         
         Z80Flags::C.set(ovf, $f);
-        Z80Flags::N.set_off($f);
+        Z80Flags::N.set_on($f);
         // TODO manage signed stuff
         res
     }};
@@ -760,6 +760,8 @@ impl Z80 {
                         
                         _ =>  unimplemented!()
                     }
+
+                    self.set_flag_off(Z80Flags::N);
                 }
                 
                 
@@ -801,6 +803,8 @@ impl Z80 {
                     if involve_indexes {
                         self.next_state = MCycle::new_fake(1);
                     }
+
+                    self.set_flag_off(Z80Flags::N);
                 }
                 
                 Mnemonic::And => {
@@ -872,6 +876,8 @@ impl Z80 {
                     Z80Flags::X.auto_update_from(f, right);
                     Z80Flags::Y.auto_update_from(f, right);
                     
+                    self.set_flag_on(Z80Flags::N);
+
                     if *mnemonic == Mnemonic::Cpi || *mnemonic == Mnemonic::Cpir {
                         self.hl.inc();
                     }
@@ -1755,6 +1761,9 @@ impl Z80 {
                     let f = &mut self.reg8_mut(Reg8::F).val;
                     let res = inner_8bits_sub!(left, right, f);
                     self.reg8_mut(Reg8::A).set(res);
+
+
+
                 }
                 
                 _ => unimplemented!("{:?}, {:?}", arg1, arg2),
