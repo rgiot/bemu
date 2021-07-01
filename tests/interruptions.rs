@@ -23,12 +23,17 @@ fn test_interruption_mode1() {
 
 	/// memory is full of nop
 	let mut interrupt_count = 0;
-	for i in 0..(19968/3) {
+	while motherboard.nops_counter().value() < 19968 {
 
 		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 		let token = motherboard.disassemble_next_instruction().token;
 
-		Monitor::monitor(&motherboard);
+		if motherboard.nops_counter().value() < 64 {
+			eprintln!(
+				"nop {:#?}", motherboard.nops_counter()
+			);
+			Monitor::monitor(&motherboard);
+		}
 
 		match pc {
 			0x38..0x40=> {},
@@ -43,6 +48,10 @@ fn test_interruption_mode1() {
 		if motherboard.cpu().reg16(Reg16::Pc).value() == 0x38 {
 			interrupt_count += 1;
 		}
+
+		assert!(
+			motherboard.ga().r52() <= 52
+		);
 	}
 
 	assert_eq!(interrupt_count, 6);

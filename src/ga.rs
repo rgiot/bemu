@@ -48,9 +48,9 @@ pub enum GateArrayPin {
     /// The CPU request an input/output (ignored if does not match)
     Neg_IORQ = 1 << 15,
     /// CPU received an interruption signal
-    M1 = 1 << 16,
+    Neg_M1 = 1 << 16,
     /// CPU wants to access the memory
-    MERQ = 1 << 17,
+    Neg_MREQ = 1 << 17,
     /// CPU wants to read the memory
     Neg_RD = 1 << 18,
 
@@ -827,6 +827,7 @@ impl GateArray {
     }
 
     fn request_interrupt(&mut self) {
+        dbg!("GA request interrupt");
         self.inter_sign = InterruptionSignal::Signal(0);
         self.set_pin(GateArrayPin::INTERRUPT, false); //activate when low
     }
@@ -878,10 +879,16 @@ impl Chip for GateArray {
             //vsync occured
             self.vsync_counter = VSyncCounter::VSync(0);
         }
+
         if self.is_downfront(GateArrayPin::HSYNC) {
             // hsync occured
             self.manage_hsync_end();
         }
+
+        if !self.get_pin(GateArrayPin::Neg_M1) && !self.get_pin(GateArrayPin::Neg_IORQ) {
+            todo!("Implement CPU acknowledge of interruption")
+        }
+        /// TODO remove this code ?
         if let InterruptionSignal::Signal(ref mut count) = self.inter_sign {
             // cut the signal after 1.4 micro seconds
             *count += 1;

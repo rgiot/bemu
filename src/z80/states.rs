@@ -16,9 +16,13 @@ trait OpcodeDecoder {
     fn read_address(&self) -> AddressSource;
     /// For instructions writting to memory, get the location of address
     fn write_address(&self) -> AddressSource;
+    /// Where to get the data to write
     fn write_data(&self) -> DataSource;
+    /// Where to write the data read
     fn read_data(&self) -> DataSource;
+    /// The number of bytes to write
     fn nb_bytes_to_write(&self) -> u8;
+    /// The number of bytes to read
     fn nb_bytes_to_read(&self) -> u8;
 }
 
@@ -466,6 +470,17 @@ impl OpcodeDecoder for Token {
         }
     }
     
+
+    impl TState {
+        fn inc_state(&self) -> Self {
+            match self {
+                TState::T1 => TState::T2,
+                TState::T2 => TState::T3,
+                TState::T3 => TState::T4,
+                TState::T4 => panic!("MCycle need to change")
+            }
+        }
+    }
     impl Default for OpcodePrefix {
         fn default() -> Self {
             OpcodePrefix::None
@@ -687,6 +702,8 @@ impl OpcodeDecoder for Token {
         /// - T2: read the byte
         /// - T3&T4: memory refresh / decode the opcode
         FetchOpcode(TState, u8, OpcodePrefix),
+        /// M1 state dedicated to the interruption acknowledge
+        InterruptM1(TState),
         /// Read state (state, byte index to read) opciode information is stored by CPU
         Read(TState, u8),
         /// Write in memory
@@ -710,6 +727,9 @@ impl OpcodeDecoder for Token {
                 Self::FetchOpcode(t, b , pr) => {
                     format!("F({:#?},{},{:#?})", t, b, pr)
                 },
+                Self::InterruptM1(t) => {
+                    format!("I({:#?})", t)
+                }
                 Self::Read(t, b) => {
                     format!("R({:#?},{})", t, b)
                 },
@@ -734,6 +754,10 @@ impl OpcodeDecoder for Token {
         pub fn new_fake(duration: u8) -> Self {
             MCycle::Fake(TState::T1, duration)
         }
+
+        pub fn new_interruption() -> Self {
+            MCycle::InterruptM1(TState::T1)
+        }
     }
     
     impl MCycle {
@@ -755,44 +779,36 @@ impl OpcodeDecoder for Token {
                 _ => false,
             }
         }
+
+        pub fn is_interruption(&self) -> bool {
+            match self {
+                Self::InterruptM1(_) => true,
+                _ => false
+            }
+        }
         
         pub(crate) fn inc_state(&mut self) {
             *self = match self {
-                MCycle::FetchOpcode(TState::T1, nb, prefix) => {
-                    MCycle::FetchOpcode(TState::T2, *nb, *prefix)
-                }
-                MCycle::FetchOpcode(TState::T2, nb, prefix) => {
-                    MCycle::FetchOpcode(TState::T3, *nb, *prefix)
-                }
-                MCycle::FetchOpcode(TState::T3, nb, prefix) => {
-                    MCycle::FetchOpcode(TState::T4, *nb, *prefix)
-                }
                 MCycle::FetchOpcode(TState::T4, nb, prefix) => panic!("Ambigous"),
-                
-                MCycle::Read(TState::T1, nb) => MCycle::Read(TState::T2, *nb),
-                MCycle::Read(TState::T2, nb) => MCycle::Read(TState::T3, *nb),
-                MCycle::Read(TState::T3, nb) => MCycle::Read(TState::T4, *nb),
+                MCycle::FetchOpcode(t, nb, prefix) => MCycle::FetchOpcode(t.inc_state(), *nb, *prefix),
+
                 MCycle::Read(TState::T4, nb) => panic!("Ambigous"),
+                MCycle::Read(t, nb) => MCycle::Read(t.inc_state(), *nb),
                 
-                MCycle::Write(TState::T1, nb) => MCycle::Write(TState::T2, *nb),
-                MCycle::Write(TState::T2, nb) => MCycle::Write(TState::T3, *nb),
-                MCycle::Write(TState::T3, nb) => MCycle::Write(TState::T4, *nb),
                 MCycle::Write(TState::T4, nb) => panic!("Ambigous"),
-                
-                MCycle::Output(TState::T1, nb) => MCycle::Output(TState::T2, *nb),
-                MCycle::Output(TState::T2, nb) => MCycle::Output(TState::T3, *nb),
-                MCycle::Output(TState::T3, nb) => MCycle::Output(TState::T4, *nb),
+                MCycle::Write(t, nb) => MCycle::Write(t.inc_state(), *nb),
+
                 MCycle::Output(TState::T4, nb) => panic!("Ambigous"),
-                
-                MCycle::Input(TState::T1, nb) => MCycle::Input(TState::T2, *nb),
-                MCycle::Input(TState::T2, nb) => MCycle::Input(TState::T3, *nb),
-                MCycle::Input(TState::T3, nb) => MCycle::Input(TState::T4, *nb),
+                MCycle::Output(t, nb) => MCycle::Output(t.inc_state(), *nb),
+
                 MCycle::Input(TState::T4, nb) => panic!("Ambigous"),
-                
-                MCycle::Fake(TState::T1, nb) => MCycle::Fake(TState::T2, *nb),
-                MCycle::Fake(TState::T2, nb) => MCycle::Fake(TState::T3, *nb),
-                MCycle::Fake(TState::T3, nb) => MCycle::Fake(TState::T4, *nb),
+                MCycle::Input(t, nb) => MCycle::Input(t.inc_state(), *nb),
+
                 MCycle::Fake(TState::T4, nb) => MCycle::Fake(TState::T1, *nb - 1),
+                MCycle::Fake(t, nb) => MCycle::Fake(t.inc_state(), *nb),
+
+                MCycle::InterruptM1(TState::T4) => MCycle::Write(TState::T1, 0),
+                MCycle::InterruptM1(t) => MCycle::InterruptM1(t.inc_state()),
                 _ => unimplemented!(),
             }
         }
@@ -806,8 +822,8 @@ impl OpcodeDecoder for Token {
         
         pub fn read_pin_type(&self) -> Option<Z80Pin> {
             match self {
-                Self::Input(_, _) => Some(Z80Pin::Neg_IORQ),
-                Self::Read(_, _) => Some(Z80Pin::Neg_MREQ),
+                Self::Input(_, _) | Self::InterruptM1(_) => Some(Z80Pin::Neg_IORQ),
+                Self::Read(_, _) | Self::FetchOpcode(_, _, _) => Some(Z80Pin::Neg_MREQ),
                 _ => unreachable!(),
             }
         }

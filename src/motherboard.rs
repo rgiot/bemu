@@ -379,13 +379,21 @@ impl Motherboard {
         );
         sync_pins(
             &self.cpu,
-            &[Z80Pin::A14, Z80Pin::A15, Z80Pin::Neg_IORQ, Z80Pin::Neg_RD],
+            &[
+                Z80Pin::A14, 
+                Z80Pin::A15, 
+                Z80Pin::Neg_IORQ, 
+                Z80Pin::Neg_RD,
+                Z80Pin::Neg_M1,
+                Z80Pin::Neg_MREQ, ],
             &mut self.ga,
             &[
                 GateArrayPin::A14,
                 GateArrayPin::A15,
                 GateArrayPin::Neg_IORQ,
                 GateArrayPin::Neg_RD,
+                GateArrayPin::Neg_M1,
+                GateArrayPin::Neg_MREQ
             ],
         );
 

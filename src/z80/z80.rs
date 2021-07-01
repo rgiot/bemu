@@ -2103,6 +2103,10 @@ impl Z80 {
     // must be called only at the end of an instruction
     fn instruction_finished(&mut self) {
         // manage the flipflip for interruption
+
+        if !self.get_pin(Z80Pin::Neg_INT) {
+            dbg!("z80 received interrupt request");
+        }
         if !self.get_pin(Z80Pin::Neg_INT)
         && self.iff1
         && !matches!(
@@ -2121,7 +2125,7 @@ impl Z80 {
                 self.im
             );
             
-            self.simulate_call_0x38_after_fetch();
+           self.next_state = MCycle::new_interruption();
         } else {
             self.next_state = Default::default();
             return;
@@ -2134,7 +2138,7 @@ impl Z80 {
         self.opcode_information = Some(&OPCODE_PREFIX[0xcd]);
         self.ir.set(0xcd);
         self.wz.set(0x38);
-        self.next_state = MCycle::Write(TState::T1, 0);
+       
     }
 }
 
@@ -2315,27 +2319,36 @@ impl Chip for Z80 {
       //  dbg!(&self.next_state);
         match self.next_state {
             // First state of the fetch process
-            MCycle::FetchOpcode(TState::T1, _, _) => {
+            MCycle::FetchOpcode(TState::T1, _, _) | MCycle::InterruptM1(TState::T1) => {
                 self.expect_additional_fake_cycle = 0;
 
                 self.set_address_on_pins(self.pc.get());
                 // pc is incremented in T2 in a real CPU
                 self.pc.inc();
                 
-                self.set_pin(Z80Pin::Neg_MREQ, false);
+                self.set_pin(self.next_state.read_pin_type().unwrap(), false);
                 self.set_pin(Z80Pin::Neg_RD, false);
                 self.set_pin(Z80Pin::Neg_M1, false);
                 self.set_pin(Z80Pin::Neg_RFSH, true);
                 
                 self.next_state.inc_state();
             }
-            
-            // Second step / may be delayed if wait is activated
-            MCycle::FetchOpcode(TState::T2, nb, _) => {
+            MCycle::InterruptM1(TState::T2) => {
                 self.set_pin(Z80Pin::Neg_RD, true);
-                self.set_pin(Z80Pin::Neg_MREQ, true);
+                self.set_pin(self.next_state.read_pin_type().unwrap(), true);
+                self.set_pin(Z80Pin::Neg_M1, true);
+                self.set_pin(Z80Pin::Neg_RFSH, false);
+                self.set_address_on_pins(self.refresh_addr);
+                self.next_state.inc_state();
+
+            }
+            // Second step / may be delayed if wait is activated
+            MCycle::FetchOpcode(TState::T2, nb, _)   => {
+                self.set_pin(Z80Pin::Neg_RD, true);
+                self.set_pin(self.next_state.read_pin_type().unwrap(), true);
                 self.set_pin(Z80Pin::Neg_M1, true);
                 
+          
                 let byte = self.get_data_from_pins();
                 match nb {
                     0 => {
@@ -2350,17 +2363,26 @@ impl Chip for Z80 {
                     _ => {
                         unreachable!()
                     }
+                 
                 }
+
                 self.set_pin(Z80Pin::Neg_RFSH, false);
                 self.set_address_on_pins(self.refresh_addr);
                 self.next_state.inc_state();
             }
             
-            MCycle::FetchOpcode(TState::T3, _, _) => {
+            MCycle::FetchOpcode(TState::T3, _, _)  | MCycle::InterruptM1(TState::T3) => {
                 // we do nothing here
                 // but, IRL, the decoding appears there
                 self.next_state.inc_state();
-                self.set_pin(Z80Pin::Neg_MREQ, false);
+                self.set_pin(Z80Pin::Neg_MREQ, false); // is it normal there ?
+            }
+
+            MCycle::InterruptM1(TState::T4) => {
+                self.set_pin(Z80Pin::Neg_MREQ, true);
+                self.set_pin(Z80Pin::Neg_M1, false);
+                self.set_pin(Z80Pin::Neg_RFSH, true);
+                self.simulate_call_0x38_after_fetch();
             }
             
             MCycle::FetchOpcode(TState::T4, nb, prefix) => {
