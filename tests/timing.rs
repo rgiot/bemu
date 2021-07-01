@@ -1,4 +1,4 @@
-use amsrust::{crtc::{Crtc, CrtcType}, debug::Monitor, motherboard::{self, MotherboardBuilder}};
+use amsrust::{crtc::{Crtc, CrtcType}, debug::Monitor, motherboard::{self, MotherboardBuilder}, z80::Z80Flags};
 use amsrust::motherboard::Motherboard;
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
 use amsrust::ga::{VideoMode, Sync, RgbLevels};
@@ -201,7 +201,7 @@ fn test_timing_8_load() {
 	ld a,i      | ED 57         | SZ503!0. | 3 
 	ld a,r      | ED 5F         | SZ503!0. | 3";
 
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 
 }
 
@@ -224,7 +224,7 @@ fn test_timing_16_load() {
 	push ix     | DD 11100101    | ........ | 5
 	pop bc      |    11qq0001    | ........ | 3
 	pop ix      | DD 11100001    | ........ | 4";
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 
 }
 
@@ -250,7 +250,7 @@ fn test_timing_exchange() {
 	cpir        | ED B1 | SZ!H!!1. | 6 / 4 for last iteration.
 	cpdr        | ED B9 | SZ!H!!1. | 6 / 4 for last iteration.
 	";
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 
 }
 
@@ -275,7 +275,7 @@ fn test_timing_artihmetic_logic() {
 	dec b      |    00rrr101   | SZ5H3V1. | 1 
 	dec (hl)   |    00110101   | SZ5H3V1. | 3
 	dec (ix+n) | DD 00110101 n | SZ5H3V1. | 6";
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 
 }
 
@@ -293,7 +293,7 @@ fn test_timing_arithmetic16() {
 	inc ix      | DD 00100011 | ........ | 3                
 	dec bc      |    00rr1011 | ........ | 2                  
 	dec ix      | DD 00101011 | ........ | 3                  ";
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 
 }
 
@@ -313,7 +313,7 @@ fn test_timing_general_purpose() {
 	im 0 | ED 46 | ........ | 2  
 	im 1 | ED 56 | ........ | 2 
 	im 2 | ED 5E | ........ | 2 ";
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 // untested : 	halt |    76 | ........ | 1  
 }
 
@@ -339,7 +339,7 @@ fn test_timing_rotate() {
 	srl b        |    CB 00111rrr   | SZ503P0C | 2  
 	rld          |    ED 6F         | SZ503P0. | 5 
 	rrd          |    ED 67         | SZ503P0. | 5 ";
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 
 }
 
@@ -360,7 +360,7 @@ fn test_timing_bit() {
 	set n,(hl)     |    CB   11bbb110 | ........ | 4
 	set n,(ix+n)   | DD CB n 11bbb110 | ........ | 7
 	set n,(ix+n),c | DD CB n 11bbbrrr | ........ | 7";
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 
 }
 
@@ -383,7 +383,7 @@ fn test_timing_jump() {
 	ret c     |    11ccc000     | ........ | 4
 	reti        | ED 4D           | ........ | 4 
 	retn        | ED 45           | ........ | 4 ";
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 
 }
 
@@ -405,7 +405,7 @@ fn test_timing_input() {
 	outd      | ED AB         | !!!!!!!! | 5 
 	outir     | ED B3         | !!!!!!!! | 11
 	outdr     | ED BB         | !!!!!!!! | 11";
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 
 }
 
@@ -413,18 +413,22 @@ fn test_timing_input() {
 fn test_timing_any() {
 	let madram = "
 	";
-	check_madram_timing(madram);
+	check_madram_timing_and_flags(madram);
 
 }
 
-fn check_madram_timing(content: &str) {
-	for (code, timing) in content.split("\n")
+fn check_madram_timing_and_flags(content: &str) {
+	for (code, timing, flags) in content.split("\n")
 		.skip(2) // skip header
 		.map(|line|{
 			let fields = line.split("|").collect_vec();
-			(fields[0], fields[3].trim().parse::<usize>().unwrap())
+			(
+				fields[0], // opcode 
+				fields[3].trim().parse::<usize>().unwrap(), // timing
+				fields[2].trim() // flags
+			)
 		}) {
-			println!("{} {}", code, timing);
+			println!("{} / {} / {}", code, timing, flags);
 			let binary = dbg!(cpclib_asm::assemble(&format!(
 				" org 0x4000\n {}", 
 				code
@@ -440,9 +444,28 @@ fn check_madram_timing(content: &str) {
 			)
 			).unwrap());
 			let output  = execute_instruction(0x4000, &binary);
+			
+
+			let motherboard = output.1;
 			assert_eq!(
-				output.1.nops_counter().value(),
-				timing
+				motherboard.nops_counter().value(),
+				timing,
+				"Erroneous timing"
 			);
+
+			
+			for (flag, code) in itertools::zip(
+				[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::H, Z80Flags::Y, Z80Flags::P, Z80Flags::N, Z80Flags::C],
+				flags.chars()
+			) {
+
+				match code {
+					'.' => {/* TODO: check the flag has not changed */},
+					'!' => {/* XXX: xe cannot test anything there */},
+					'0' => {assert!(!motherboard.cpu().get_flag(flag))},
+					'1' => {assert!(motherboard.cpu().get_flag(flag))},
+					_ => {/* we need instraction specific tests there */}
+				}
+			}
 		}
 }

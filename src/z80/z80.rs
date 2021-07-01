@@ -359,6 +359,12 @@ impl Z80 {
     }
     
     #[inline]
+    pub fn get_flag(&self, flag: Z80Flags) -> bool {
+        let f = self.reg8(Reg8::F).value();
+        flag.is_on(f)
+    }
+
+    #[inline]
     pub fn set_flag(&mut self, flag: Z80Flags, val: bool) {
         let f = &mut self.reg8_mut(Reg8::F).val;
         flag.set(val, f);
@@ -1382,6 +1388,13 @@ impl Z80 {
                 // needed for the addition ?
                 if involve_indexes | involve_special_reg | involve_sp{ 
                     self.next_state = MCycle::new_fake(1);
+                }
+
+
+                if matches!(arg2, DataAccess::SpecialRegisterI | DataAccess::SpecialRegisterR) {
+                    self.auto_update_flags(self.a());
+                    self.set_flag_off(Z80Flags::N);
+                    self.set_flag_off(Z80Flags::H);
                 }
             }
             
