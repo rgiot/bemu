@@ -824,7 +824,7 @@ impl Z80 {
                     
                     self.set_flag_on(Z80Flags::H);
                     self.set_flag(Z80Flags::Z, bit);
-                    self.set_flag_on(Z80Flags::N);
+                    self.set_flag_off(Z80Flags::N);
 
                     if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
                         self.next_state = MCycle::new_fake(1);
