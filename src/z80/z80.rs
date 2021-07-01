@@ -1167,6 +1167,15 @@ impl Z80 {
                         },
                         _ => unreachable!()
                     }
+
+                    if matches!(
+                            arg1, 
+                            Some(DataAccess::Register8(cpclib_asm::preamble::Register8::B) |
+                            DataAccess::Expression(_))
+                        ) {
+                            self.set_flag_off(Z80Flags::N);
+                            self.set_flag_off(Z80Flags::H);
+                    }
                 }
                 
                 Mnemonic::Inc => {
