@@ -1423,7 +1423,7 @@ impl Z80 {
                 self.next_state = MCycle::new_fake(if jmp {2} else {1});
             }
 
-            Mnemonic::Neg=> {
+            Mnemonic::Neg => {
                 let a = self.a();
                 self.reg8_mut(Reg8::A).set(
                     0u8.wrapping_sub(a)
@@ -1432,7 +1432,7 @@ impl Z80 {
                 self.auto_update_flags(self.a());
                 self.set_flag(Z80Flags::C, a == 0);
                 self.set_flag(Z80Flags::P, a == 0x80);
-                self.set_flag_off(Z80Flags::N);
+                self.set_flag_on(Z80Flags::N);
                 
             },
             
@@ -1643,6 +1643,8 @@ impl Z80 {
             }
             Mnemonic::Scf => {
                 self.set_flag_on(Z80Flags::C);
+                self.set_flag_off(Z80Flags::H);
+                self.set_flag_off(Z80Flags::N);
             }
             
             Mnemonic::Rst => {
