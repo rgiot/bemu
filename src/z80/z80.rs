@@ -1410,6 +1410,7 @@ impl Z80 {
                     self.auto_update_flags(self.a());
                     self.set_flag_off(Z80Flags::N);
                     self.set_flag_off(Z80Flags::H);
+                    self.set_flag(Z80Flags::P, self.iff2);
                 }
             }
             
@@ -1528,6 +1529,7 @@ impl Z80 {
                 self.pc = self.wz;
                 self.sp.inc();
                 self.sp.inc();
+             
             }
 
             Mnemonic::Retn => {
