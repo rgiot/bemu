@@ -137,48 +137,6 @@ fn timing_ldd() {
 
 
 
-#[test]
-fn timing_ldir1() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
-		ldir
-	"));
-
-	let mut motherboard = MotherboardBuilder::default().build();
-	motherboard.set_bc(1);
-	let output  = execute_instruction_in(&mut motherboard, 0x4000, code);
-
-	dbg!(output.len(), motherboard.t_state_counter(), motherboard.nops_counter());
-
-	assert_eq!(
-		motherboard.nops_counter().value(),
-		5
-	);
-}
-
-
-
-#[test]
-fn timing_ldir2() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
-		ldir
-	"));
-
-	let mut motherboard = MotherboardBuilder::default().build();
-	motherboard.set_bc(2);
-	let output  = execute_instruction_in(&mut motherboard, 0x4000, code);
-
-	dbg!(output.len(), motherboard.t_state_counter(), motherboard.nops_counter());
-
-	assert_eq!(
-		motherboard.nops_counter().value(),
-		 6 + 5
-	);
-}
-
-
-
 
 #[test]
 fn timing_conditional_ret_not_met() {
