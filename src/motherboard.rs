@@ -159,6 +159,10 @@ impl Motherboard {
     pub fn nops_counter(&self) -> &Counter {
         &self.nops_counter
     }
+
+    pub fn nops_counter_mut(&mut self) -> &mut Counter {
+        &mut self.nops_counter
+    }
 }
 
 impl Motherboard {
@@ -891,4 +895,101 @@ mod test {
 
         assert_eq!(count_crtc, 32 / 16);
     }
+
+
+
+    #[test]
+    fn motherboard_execute_step_nop() {
+        let mut motherboard = MotherboardBuilder::default()
+                                .disable_lower_rom()
+                                .disable_upper_rom()
+                                .build();
+
+        // full of nop, no need to inject
+        motherboard.set_pc(0x1000);
+        motherboard.execute_next_opcode(); // ensure state is correct (it seems emu ini is wrong)
+
+        motherboard.nops_counter_mut().reset();
+        motherboard.set_pc(0x1000);
+        let res = motherboard.execute_next_opcode();
+        assert_eq!(
+            motherboard.pc(),
+            0x1001
+        );
+        assert_eq!(
+            res.len(),
+            16
+        );
+        assert_eq!(
+            motherboard.nops_counter().value(),
+            1
+        );
+    }
+
+    #[test]
+    fn motherboard_execute_step_halt_no_inter() {
+        let mut motherboard = MotherboardBuilder::default()
+                                .disable_lower_rom()
+                                .disable_upper_rom()
+                                .build();
+
+        // full of nop, no need to inject
+        motherboard.set_pc(0x1000);
+        motherboard.execute_next_opcode(); // ensure state is correct (it seems emu ini is wrong)
+
+        motherboard.nops_counter_mut().reset();
+        motherboard.set_pc(0x1000);
+        motherboard.cpu_mut().force_interruption_received(true);
+
+
+        motherboard.write_byte(0x1000, 0x76);
+        let res = motherboard.execute_next_opcode();
+        assert_eq!(
+            motherboard.pc(),
+            0x1000
+        );
+        assert_eq!(
+            res.len(),
+            16
+        );
+        assert_eq!(
+            motherboard.nops_counter().value(),
+            1
+        );
+    }
+
+    #[test]
+    fn motherboard_execute_step_halt() {
+        let mut motherboard = MotherboardBuilder::default()
+                                .disable_lower_rom()
+                                .disable_upper_rom()
+                                .enable_interruptions()
+                                .build();
+
+        // full of nop, no need to inject
+        motherboard.set_pc(0x1000);
+        motherboard.execute_next_opcode(); // ensure state is correct (it seems emu ini is wrong)
+
+        motherboard.nops_counter_mut().reset();
+        motherboard.set_pc(0x1000);
+        motherboard.cpu_mut().force_interruption_received(true);
+        motherboard.cpu_mut().iff1 = true;
+        motherboard.cpu_mut().iff2 = true;
+
+        motherboard.write_byte(0x1000, 0x76);
+        let res = motherboard.execute_next_opcode();
+        assert_eq!(
+            motherboard.pc(),
+            0x1001
+        );
+        assert_eq!(
+            res.len(),
+            16
+        );
+        assert_eq!(
+            motherboard.nops_counter().value(),
+            1
+        );
+    }
+
 }

@@ -758,6 +758,14 @@ impl OpcodeDecoder for Token {
         pub fn new_interruption() -> Self {
             MCycle::InterruptM1(TState::T1)
         }
+
+        pub fn new_write() -> Self {
+            MCycle::Write(TState::T1, 0)
+        }
+
+        pub fn new_read() -> Self {
+            MCycle::Read(TState::T1, 0)
+        }
     }
     
     impl MCycle {
@@ -948,6 +956,13 @@ impl OpcodeDecoder for Token {
             assert_eq!(ret.flag_test, Some(FlagTest::C));
         }
 
+        #[test]
+        fn lookup_halt() {
+            let halt = dbg!(&OPCODE_PREFIX[0x76]);
+            assert_eq!(halt.nb_additional_opcode_bytes, 0);
+            assert_eq!(halt.nb_bytes_to_read, 0);
+            assert_eq!(halt.nb_bytes_to_write, 0);
+        }
 
         #[test]
         fn lookup_checks_jr() {

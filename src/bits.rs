@@ -1,4 +1,4 @@
-pub use std::ops::{AddAssign, BitAnd, Deref, Shl, Sub, SubAssign};
+pub use std::ops::{AddAssign, BitAnd, BitAndAssign, Deref, DerefMut, Shl, Sub, SubAssign};
 
 use num::{
     traits::{WrappingAdd, WrappingSub},
@@ -30,6 +30,12 @@ impl<T, const C: usize> Deref for BitMax<T, C> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl<T, const C: usize> DerefMut for BitMax<T, C> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 

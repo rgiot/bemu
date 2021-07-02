@@ -312,7 +312,10 @@ pub struct Z80 {
 
     /// Some instruction using ix and read & write need to have a correction of timing
     /// Note that it is un unrealistic workaround as the lost timing appears BEFORE the read
-    expect_additional_fake_cycle: u8
+    expect_additional_fake_cycle: u8,
+
+    /// CPU has received an interruption (remember GA send it only during 1.4ms but an instruction can take 6 nops)
+    interruption_received: bool
 }
 
 /// Flags related code
@@ -1153,10 +1156,10 @@ impl Z80 {
                 }
 
                 Mnemonic::Halt => {
-                    if self.get_pin(Z80Pin::Neg_INT) && self.iff1 {
+                    if self.interruption_received && self.iff1 {
                         // do nothing we hit the interruption
                     } else {
-                        self.pc.dec(); // wait
+                        self.pc.dec(); // wait and restart
                     }
                 }
 
@@ -2099,24 +2102,30 @@ impl Z80 {
 
 /// Everything that is related to interruptions
 impl Z80 {
+
+    pub(crate) fn force_interruption_received(&mut self, val: bool) {
+        self.interruption_received = val;
+    }
+
     /// Handle interruption if any
     // must be called only at the end of an instruction
     fn instruction_finished(&mut self) {
         // manage the flipflip for interruption
 
-        if !self.get_pin(Z80Pin::Neg_INT) {
-            dbg!("z80 received interrupt request");
+        if self.interruption_received {
+      //      dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state);
         }
-        if !self.get_pin(Z80Pin::Neg_INT)
+        if self.interruption_received
         && self.iff1
         && !matches!(
             self.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         )
         {
-            
+        //    dbg!("z80 treat interrupt request");
             self.iff1 = false;
             self.iff2 = false;
+            self.interruption_received = false;
             
             assert_eq!(
                 self.im,
@@ -2133,12 +2142,11 @@ impl Z80 {
     }
     
     /// Handcraft a call to let the CPU jump in 0x38
-    fn simulate_call_0x38_after_fetch(&mut self) {
-        
+    fn simulate_call_0x38_after_fetch(&mut self) {      
         self.opcode_information = Some(&OPCODE_PREFIX[0xcd]);
         self.ir.set(0xcd);
         self.wz.set(0x38);
-       
+        self.next_state = MCycle::new_write();
     }
 }
 
@@ -2317,6 +2325,10 @@ impl Chip for Z80 {
     
     fn execute_tick(&mut self) {
       //  dbg!(&self.next_state);
+
+      // XXX there is no need to do it so often, but it should not be problematic to do it so often
+        self.interruption_received |= !self.is_downfront(Z80Pin::Neg_INT);
+
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) | MCycle::InterruptM1(TState::T1) => {
@@ -2616,6 +2628,8 @@ impl Chip for Z80 {
         self.iff2 = false;
         self.im = InterruptMode::Mode1;
     }
+
+
 }
 
 impl Activable for Z80 {

@@ -1,3 +1,5 @@
+use std::ops::BitAndAssign;
+
 use crate::bits::*;
 use crate::chip::*;
 use crate::memory::Flag;
@@ -613,7 +615,7 @@ pub enum InterruptionSignal {
 /// The effect of an INKR command appears almost immediatly always with the same timings, but the change is not in sync with the character display of the CRTC so the new color appears somehow in the middle of a character (the CRTC display unit).
 #[derive(Debug)]
 pub struct GateArray {
-    clock: u64,
+    pub (crate) clock: u8,
     pins: PinsBuffer,
 
     vsync_counter: VSyncCounter,
@@ -703,7 +705,7 @@ impl GateArray {
     /// Gate array works at 16Mhz and divide it to generate signals for other chips.
     /// CPU is at 4 Mhz
     pub fn manage_clocks(&mut self) {
-        self.clock = self.clock.wrapping_add(1);
+        self.clock = (self.clock + 1) % 16 ;
         self.divide_clock();
     }
 
@@ -863,6 +865,12 @@ impl GateArray {
     pub fn r52(&self) -> u8 {
         *self.r52.deref()
     }
+
+    /// When the CPU acknowledge the interrupt (eg. it is going to jump to the interrupt vector), the Gate Array will reset bit5 of the counter, so the next interrupt can't occur closer than 32 HSync. 
+    fn handle_cpu_acknowledge_of_interruption(&mut self) {
+        dbg!("CPU acknowledge interruption");
+       self.r52.bitand_assign(0b011111);
+    }
 }
 impl Chip for GateArray {
     type PinType = GateArrayPin;
@@ -885,8 +893,11 @@ impl Chip for GateArray {
             self.manage_hsync_end();
         }
 
-        if !self.get_pin(GateArrayPin::Neg_M1) && !self.get_pin(GateArrayPin::Neg_IORQ) {
-            todo!("Implement CPU acknowledge of interruption")
+        // XXX play with the modulo to handle the appropriate timing
+        if !self.get_pin(GateArrayPin::Neg_M1) && 
+            !self.get_pin(GateArrayPin::Neg_IORQ) && 
+            self.clock % 4 == 0 {
+            self.handle_cpu_acknowledge_of_interruption();
         }
         /// TODO remove this code ?
         if let InterruptionSignal::Signal(ref mut count) = self.inter_sign {
@@ -901,6 +912,8 @@ impl Chip for GateArray {
         self.generate_pixel();
         self.generate_sync();
     }
+
+
 
     /// React to the port addressing of the CPU
     fn execute_tick(&mut self) {
