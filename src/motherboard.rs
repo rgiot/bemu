@@ -182,7 +182,9 @@ impl Motherboard {
         self.pal.reset();
         self.cpu.reset();
 
-        self.sync_chips_pins();
+        for _ in 0..2 {
+            self.sync_chips_pins();
+        }
     }
 
     /// Execute one tick on all the components of the motherboard and returns the
@@ -933,11 +935,7 @@ mod test {
                                 .disable_upper_rom()
                                 .build();
 
-        // full of nop, no need to inject
-        motherboard.set_pc(0x1000);
-        motherboard.execute_next_opcode(); // ensure state is correct (it seems emu ini is wrong)
-
-        motherboard.nops_counter_mut().reset();
+         motherboard.nops_counter_mut().reset();
         motherboard.set_pc(0x1000);
         motherboard.cpu_mut().force_interruption_received(true);
 
@@ -966,9 +964,6 @@ mod test {
                                 .enable_interruptions()
                                 .build();
 
-        // full of nop, no need to inject
-        motherboard.set_pc(0x1000);
-        motherboard.execute_next_opcode(); // ensure state is correct (it seems emu ini is wrong)
 
         motherboard.nops_counter_mut().reset();
         motherboard.set_pc(0x1000);
@@ -980,7 +975,7 @@ mod test {
         let res = motherboard.execute_next_opcode();
         assert_eq!(
             motherboard.pc(),
-            0x1001
+            0x38
         );
         assert_eq!(
             res.len(),
