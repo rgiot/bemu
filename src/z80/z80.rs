@@ -2115,11 +2115,13 @@ impl Z80 {
         // manage the flipflip for interruption
 
         if self.interruption_received {
-      //      dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state);
+            dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state);
+
+
         }
         if self.interruption_received
         && self.iff1
-        && !matches!(
+        && matches!(
             self.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         )
@@ -2137,9 +2139,9 @@ impl Z80 {
             );
             
            self.next_state = MCycle::new_interruption();
+           dbg!(&self.next_state);
         } else {
             self.next_state = Default::default();
-            return;
         }
     }
     

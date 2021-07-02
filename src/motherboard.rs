@@ -979,12 +979,8 @@ mod test {
             0x38
         );
         assert_eq!(
-            res.len(),
-            16
-        );
-        assert_eq!(
             motherboard.nops_counter().value(),
-            1
+            1 + 3
         );
     }
 
