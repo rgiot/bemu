@@ -1158,6 +1158,8 @@ impl Z80 {
                 Mnemonic::Halt => {
                     if self.interruption_received && self.iff1 {
                         // do nothing we hit the interruption
+                        //Must jump in 0x38
+                        eprintln!("Must jump in 0x38 after");
                     } else {
                         self.pc.dec(); // wait and restart
                     }

@@ -973,6 +973,7 @@ mod test {
 
         motherboard.write_byte(0x1000, 0x76);
         let res = motherboard.execute_next_opcode();
+        dbg!(&motherboard.cpu.next_state);
         assert_eq!(
             motherboard.pc(),
             0x38
