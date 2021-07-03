@@ -684,6 +684,7 @@ impl Default for GateArray {
 
             r52: Default::default(),
         };
+        ga.reset();
         ga.divide_clock();
         ga
     }
@@ -868,7 +869,7 @@ impl GateArray {
 
     /// When the CPU acknowledge the interrupt (eg. it is going to jump to the interrupt vector), the Gate Array will reset bit5 of the counter, so the next interrupt can't occur closer than 32 HSync. 
     fn handle_cpu_acknowledge_of_interruption(&mut self) {
-        dbg!("CPU acknowledge interruption");
+ //       dbg!("CPU acknowledge interruption");
        self.r52.bitand_assign(0b011111);
     }
 }
@@ -902,7 +903,9 @@ impl Chip for GateArray {
        
         // Check if interrupt signal needs to be cut down
         if let InterruptionSignal::Signal(ref mut count) = self.interrupt_signal_counter {
-            // cut the signal after 1.4 micro seconds
+            // cut the signal after 1.4 micro seconds in real life
+            // here we simplify it to 1ms as the cpu is coded in a way that allows it to detect it faster than in real life
+            let limit = 4 /* (1.4 * 16.) as usize  */;
             *count += 1;
             if *count == (1.4 * 16.) as usize {
                 dbg!("GA stop request interrupt");
@@ -950,6 +953,7 @@ impl Chip for GateArray {
 
     fn reset(&mut self) {
         self.clock = 0;
+        self.on(GateArrayPin::INTERRUPT);
     }
 }
 

@@ -1,7 +1,7 @@
 #![feature(exclusive_range_pattern)]
 #![feature(half_open_range_patterns)]
 	
-use amsrust::{debug::Monitor, motherboard::MotherboardBuilder, z80::{HasValue, Reg16}};
+use amsrust::{debug::Monitor, motherboard::{self, MotherboardBuilder}, z80::{HasValue, Reg16}};
 use cpclib_asm::preamble::Mnemonic;
 
 
@@ -70,7 +70,7 @@ fn test_interruption_mode1_halt_ei() {
 		.build();
 	assert!(motherboard.cpu().iff1());
 
-	let infinite_loop = dbg!(cpclib_macros::assemble!(" halt"));
+	let infinite_loop = dbg!(cpclib_macros::assemble!(" halt : jr $"));
     let interrupt_handler = dbg!(cpclib_macros::assemble!(" ei : ret"));
 
 	motherboard.write_buffer(0x38, interrupt_handler);
@@ -109,7 +109,39 @@ fn test_interruption_mode1_halt_ei() {
 	}
 
 	assert!(
-		dbg!(motherboard.nops_counter().value() + 3) <= dbg!(19968/6)
+		dbg!(motherboard.nops_counter().value() ) <= dbg!(19968/6 +3)
+	);
+
+	let token = motherboard.disassemble_next_instruction().token;
+	assert_eq!(
+		token.mnemonic(),
+		Some(&Mnemonic::Ei)
+	);
+	assert_eq!(
+		motherboard.pc(),
+		0x38
+	);
+	motherboard.execute_next_opcode();
+
+	let token = motherboard.disassemble_next_instruction().token;
+	assert_eq!(
+		motherboard.pc(),
+		0x39
+	);
+	assert_eq!(
+		token.mnemonic(),
+		Some(&Mnemonic::Ret)
+	);
+	motherboard.execute_next_opcode();
+
+	let token = motherboard.disassemble_next_instruction().token;
+	assert_eq!(
+		motherboard.pc(),
+		0x101
+	);
+	assert_eq!(
+		token.mnemonic(),
+		Some(&Mnemonic::Jr)
 	);
 }
 
@@ -121,9 +153,9 @@ fn test_interruption_mode1() {
 		.disable_upper_rom()
 		.enable_interruptions()
 		.build();
+		assert!(motherboard.cpu().iff1());
 
-
-	let infinite_loop = dbg!(cpclib_macros::assemble!(" ei : jr $"));
+	let infinite_loop = dbg!(cpclib_macros::assemble!(" jr $"));
     let interrupt_handler = dbg!(cpclib_macros::assemble!(" ei : ret"));
 
 	motherboard.write_buffer(0x38, interrupt_handler);
@@ -132,12 +164,14 @@ fn test_interruption_mode1() {
 
 	/// memory is full of nop
 	let mut interrupt_count = 0;
+	let mut prev_interr_time = None;
+	motherboard.nops_counter_mut().reset();
 	while motherboard.nops_counter().value() < 19968 {
 
 		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 		let token = motherboard.disassemble_next_instruction().token;
 
-		if dbg!(motherboard.nops_counter().value()) < 64 {
+		if motherboard.nops_counter().value() < 64 {
 			eprintln!(
 				"nop {:#?}", motherboard.nops_counter()
 			);
@@ -145,8 +179,12 @@ fn test_interruption_mode1() {
 		}
 
 		match pc {
-			0x38..0x40=> {},
-			0x100..0x103 => {},
+			0x38..0x40=> {
+				todo!();
+			},
+			0x100 => {
+				assert!(motherboard.cpu().iff1());
+			},
 			_ => unreachable!("{:04x}={:?}", pc, token)
 		}
 		match token.mnemonic() {
@@ -154,8 +192,19 @@ fn test_interruption_mode1() {
 			_ => unreachable!("{:04x}={:?}", pc, token)
 		}
 		motherboard.execute_next_opcode();
+
 		if motherboard.cpu().reg16(Reg16::Pc).value() == 0x38 {
+			todo!();
 			interrupt_count += 1;
+			let nops = motherboard.nops_counter().value();
+			match prev_interr_time {
+				Some(time) => {
+					assert!(dbg!(time + 19968/6) <= dbg!(nops));
+				},
+				None => {
+				}
+			}
+			prev_interr_time = Some(nops);
 		}
 
 		assert!(

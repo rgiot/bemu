@@ -1159,7 +1159,7 @@ impl Z80 {
                     if self.interruption_received && self.iff1 {
                         // do nothing we hit the interruption
                         //Must jump in 0x38
-                        eprintln!("Must jump in 0x38 after");
+                        dbg!("====> Must jump in 0x38 after", self.pc);
                     } else {
                         self.pc.dec(); // wait and restart
                     }
@@ -2115,7 +2115,7 @@ impl Z80 {
         // manage the flipflip for interruption
 
         if self.interruption_received {
-            dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state);
+    dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state, self.pc());
 
 
         }
@@ -2126,7 +2126,7 @@ impl Z80 {
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         )
         {
-            dbg!("z80 treat interrupt request");
+   //         dbg!("z80 treat interrupt request");
             self.iff1 = false;
             self.iff2 = false;
             self.interruption_received = false;
@@ -2139,7 +2139,7 @@ impl Z80 {
             );
             
            self.next_state = MCycle::new_interruption();
-           dbg!(&self.next_state);
+     //      dbg!(&self.next_state);
         } else {
             self.next_state = Default::default();
         }
@@ -2333,9 +2333,9 @@ impl Chip for Z80 {
     
     fn execute_tick(&mut self) {
       //  dbg!(&self.next_state)
-        if  !self.get_pin(Z80Pin::Neg_INT) {
+        if  !self.get_pin(Z80Pin::Neg_INT) && !self.next_state.is_interruption() {
             self.interruption_received |= true;
-            dbg!("Z80 see interrupt pin", self.interruption_received, self.iff1);
+  //          dbg!("Z80 see interrupt pin", self.interruption_received, self.iff1);
         }
         match self.next_state {
             // First state of the fetch process
@@ -2344,7 +2344,9 @@ impl Chip for Z80 {
 
                 self.set_address_on_pins(self.pc.get());
                 // pc is incremented in T2 in a real CPU
-                self.pc.inc();
+                if !self.next_state.is_interruption() {
+                    self.pc.inc();
+                }
                 
                 self.set_pin(self.next_state.read_pin_type().unwrap(), false);
                 self.set_pin(Z80Pin::Neg_RD, false);
