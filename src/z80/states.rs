@@ -176,7 +176,10 @@ impl OpcodeDecoder for Token {
                     Some(position) => position.into(),
                     None => DataSource::Pins, // the data is already on the pins
                 }
-            } else if let Some(Mnemonic::ExMemSp) = self.mnemonic() {
+            } else if self.is_autocopy_opcode() {
+                DataSource::Pins // copy to register is manually handled in the emulator
+            }  
+            else if let Some(Mnemonic::ExMemSp) = self.mnemonic() {
                 let reg = match self.mnemonic_arg1() {
                     Some(DataAccess::Register16(reg)) => reg.into(),
                     Some(DataAccess::IndexRegister16(reg)) => reg.into(),
@@ -1153,11 +1156,11 @@ impl OpcodeDecoder for Token {
             );
             assert_eq!(
                 rlc.read_address,
-                AddressSource::IndexRegister16(Reg16::Ix)
+                AddressSource::Indexed(Reg16::Ix)
             );
             assert_eq!(
                 rlc.write_address,
-                AddressSource::IndexRegister16(Reg16::Ix)
+                AddressSource::Indexed(Reg16::Ix)
             );
         }
 
@@ -1187,11 +1190,11 @@ impl OpcodeDecoder for Token {
             );
             assert_eq!(
                 rlc.read_address,
-                AddressSource::IndexRegister16(Reg16::Ix)
+                AddressSource::Indexed(Reg16::Ix)
             );
             assert_eq!(
                 rlc.write_address,
-                AddressSource::IndexRegister16(Reg16::Ix)
+                AddressSource::Indexed(Reg16::Ix)
             );
         }
 
