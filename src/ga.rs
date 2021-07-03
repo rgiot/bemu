@@ -619,7 +619,7 @@ pub struct GateArray {
     pins: PinsBuffer,
 
     vsync_counter: VSyncCounter,
-    inter_sign: InterruptionSignal,
+    interrupt_signal_counter: InterruptionSignal,
 
     rmr: RMR,
     penr: PENR,
@@ -648,7 +648,7 @@ impl Default for GateArray {
             pins: (0, 0).into(),
 
             vsync_counter: VSyncCounter::NoVsync,
-            inter_sign: InterruptionSignal::NoSignal,
+            interrupt_signal_counter: InterruptionSignal::NoSignal,
 
             penr: PENR(0b000_00000),
             inkr: INKR(0b010_00000),
@@ -830,7 +830,7 @@ impl GateArray {
 
     fn request_interrupt(&mut self) {
         dbg!("GA request interrupt");
-        self.inter_sign = InterruptionSignal::Signal(0);
+        self.interrupt_signal_counter = InterruptionSignal::Signal(0);
         self.set_pin(GateArrayPin::INTERRUPT, false); //activate when low
     }
     delegate! {
@@ -900,11 +900,12 @@ impl Chip for GateArray {
             self.handle_cpu_acknowledge_of_interruption();
         }
         /// TODO remove this code ?
-        if let InterruptionSignal::Signal(ref mut count) = self.inter_sign {
+        if let InterruptionSignal::Signal(ref mut count) = self.interrupt_signal_counter {
             // cut the signal after 1.4 micro seconds
             *count += 1;
             if *count == (1.4 * 32f64 / 2f64) as usize {
-                self.inter_sign = InterruptionSignal::NoSignal;
+                dbg!("GA stop request interrupt");
+                self.interrupt_signal_counter = InterruptionSignal::NoSignal;
                 self.set_pin(GateArrayPin::INTERRUPT, true);
             }
         }

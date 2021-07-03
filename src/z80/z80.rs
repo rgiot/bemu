@@ -2115,7 +2115,7 @@ impl Z80 {
         // manage the flipflip for interruption
 
         if self.interruption_received {
-            dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state);
+    //        dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state);
 
 
         }
