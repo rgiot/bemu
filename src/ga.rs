@@ -830,7 +830,7 @@ impl GateArray {
     }
 
     fn request_interrupt(&mut self) {
-        dbg!("GA request interrupt");
+  //      dbg!("GA request interrupt");
         self.interrupt_signal_counter = InterruptionSignal::Signal(0);
         self.set_pin(GateArrayPin::INTERRUPT, false); //activate when low
     }
@@ -908,7 +908,7 @@ impl Chip for GateArray {
             let limit = 4 /* (1.4 * 16.) as usize  */;
             *count += 1;
             if *count == (1.4 * 16.) as usize {
-                dbg!("GA stop request interrupt");
+       //         dbg!("GA stop request interrupt");
                 self.interrupt_signal_counter = InterruptionSignal::NoSignal;
                 self.set_pin(GateArrayPin::INTERRUPT, true);
             }

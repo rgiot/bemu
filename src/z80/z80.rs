@@ -2115,18 +2115,18 @@ impl Z80 {
         // manage the flipflip for interruption
 
         if self.interruption_received {
-    dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state, self.pc());
+   // dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state, self.pc());
 
 
         }
         if self.interruption_received
-        && self.iff1
+        && self.iff1/*/
         && matches!(
             self.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
-        )
-        {
-   //         dbg!("z80 treat interrupt request");
+        )*/ /* this test was a nonsense and wrong, it is up to the caller to be sure to call it at the right time*/
+             {
+            //dbg!("z80 treat interrupt request");
             self.iff1 = false;
             self.iff2 = false;
             self.interruption_received = false;
