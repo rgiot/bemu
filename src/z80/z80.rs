@@ -2115,7 +2115,7 @@ impl Z80 {
         // manage the flipflip for interruption
 
         if self.interruption_received {
-    //        dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state);
+            dbg!("z80 received interrupt request", &self.iff1, &self.iff2, &self.next_state);
 
 
         }
@@ -2126,7 +2126,7 @@ impl Z80 {
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         )
         {
-        //    dbg!("z80 treat interrupt request");
+            dbg!("z80 treat interrupt request");
             self.iff1 = false;
             self.iff2 = false;
             self.interruption_received = false;
@@ -2221,6 +2221,10 @@ impl Z80 {
     }
     pub fn y(&self) -> u8 {
         self.reg8(Reg8::Iyl).value()
+    }
+
+    pub fn iff1(&self) -> bool {
+        self.iff1
     }
 }
 
@@ -2328,11 +2332,11 @@ impl Chip for Z80 {
     }
     
     fn execute_tick(&mut self) {
-      //  dbg!(&self.next_state);
-
-      // XXX there is no need to do it so often, but it should not be problematic to do it so often
-        self.interruption_received |= !self.is_downfront(Z80Pin::Neg_INT);
-
+      //  dbg!(&self.next_state)
+        if  !self.get_pin(Z80Pin::Neg_INT) {
+            self.interruption_received |= true;
+            dbg!("Z80 see interrupt pin", self.interruption_received, self.iff1);
+        }
         match self.next_state {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) | MCycle::InterruptM1(TState::T1) => {

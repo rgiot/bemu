@@ -899,11 +899,12 @@ impl Chip for GateArray {
             self.clock % 4 == 0 {
             self.handle_cpu_acknowledge_of_interruption();
         }
-        /// TODO remove this code ?
+       
+        // Check if interrupt signal needs to be cut down
         if let InterruptionSignal::Signal(ref mut count) = self.interrupt_signal_counter {
             // cut the signal after 1.4 micro seconds
             *count += 1;
-            if *count == (1.4 * 32f64 / 2f64) as usize {
+            if *count == (1.4 * 16.) as usize {
                 dbg!("GA stop request interrupt");
                 self.interrupt_signal_counter = InterruptionSignal::NoSignal;
                 self.set_pin(GateArrayPin::INTERRUPT, true);

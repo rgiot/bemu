@@ -68,7 +68,7 @@ fn test_interruption_mode1_halt_ei() {
 		.disable_upper_rom()
 		.enable_interruptions()
 		.build();
-
+	assert!(motherboard.cpu().iff1());
 
 	let infinite_loop = dbg!(cpclib_macros::assemble!(" halt"));
     let interrupt_handler = dbg!(cpclib_macros::assemble!(" ei : ret"));
@@ -79,6 +79,7 @@ fn test_interruption_mode1_halt_ei() {
 
 
 	motherboard.nops_counter_mut().reset();
+	assert!(motherboard.cpu().iff1());
 	while motherboard.pc() != 0x38 && motherboard.nops_counter().value() < 19968{
 
 		let pc = motherboard.cpu().reg16(Reg16::Pc).value();

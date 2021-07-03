@@ -103,11 +103,7 @@ impl MotherboardBuilder {
             crtc: crtc_type.into(),
             ..Default::default()
         };
-        if self.enable_interruptions {
-            motherboard.cpu.iff1 = true ;
-            motherboard.cpu.iff2 = true ;
-            motherboard.cpu.im = InterruptMode::Mode1;
-        }
+
         if self.disable_lower_rom {
             motherboard.disable_lower_rom();
         }
@@ -115,6 +111,13 @@ impl MotherboardBuilder {
             motherboard.disable_upper_rom();
         }
         motherboard.stabilize_run();
+
+        if self.enable_interruptions {
+            motherboard.cpu.iff1 = true ;
+            motherboard.cpu.iff2 = true ;
+            motherboard.cpu.im = InterruptMode::Mode1;
+        }
+        
         motherboard
     }
 }
