@@ -23,10 +23,11 @@ fn zexdoc() {
 
 
     motherboard.write_buffer(0x100, prg);
+    motherboard.write_buffer(0x38, cpclib_macros::assemble!(" ei : ret"));
     motherboard.write_byte(5, 0xc9); // need to return from cpm call
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
    // motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(0xF000);
-   // motherboard.write_word(6, 0xF000); // need to return from cpm call
+    motherboard.write_word(6, 0xF000); // need to return from cpm call
 
 
 

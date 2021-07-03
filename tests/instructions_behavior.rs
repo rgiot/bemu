@@ -243,6 +243,11 @@ end
 }
 
 #[test]
+fn execute_cp() {
+	todo!();
+}
+
+#[test]
 fn execute_dec() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
@@ -261,6 +266,10 @@ fn execute_dec() {
 }
 
 
+#[test]
+fn execute_dec_flags_test() {
+	unimplemented!();
+}
 #[test]
 fn execute_dec_mem_hl() {
 	let code = dbg!(cpclib_macros::assemble!(
@@ -1163,6 +1172,11 @@ fn execute_rlc_a() {
 	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
 }
 
+#[test]
+fn execute_rlca() {
+	todo!();
+}
+
 
 #[test]
 fn execute_rlc_mem_hl() {
@@ -1269,6 +1283,11 @@ fn execute_rra3() {
 
 	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::NC));
 }
+#[test]
+fn execute_rrc() {
+	unimplemented!();
+}
+
 
 #[test]
 fn execute_rst() {
