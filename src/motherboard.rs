@@ -510,6 +510,17 @@ impl Motherboard {
         self.disassemble_instruction_at(self.cpu.pc.value())
     }
 
+    /// Disassemble a bunch of instruction given an address
+    pub fn disassemble_instructions_from(&self, mut pc: u16, count: usize) -> Vec<DisassembledInstruction> {
+        let mut res = Vec::new();
+        for _ in 0..count {
+            let inst = self.disassemble_instruction_at(pc);
+            pc = pc.wrapping_add(inst.len() as u16);
+            res.push(inst);
+        }
+        res
+    }
+
     /// Disassemble the instruction at the given address
     pub fn disassemble_instruction_at(&self, mut pc: u16) -> DisassembledInstruction {
         let address = pc;

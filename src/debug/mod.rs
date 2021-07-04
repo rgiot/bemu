@@ -55,6 +55,11 @@ impl Monitor {
         Monitor::monitor_next_instruction(&motherboard)
     }
 
+    pub fn monitor_crtc(crtc: &Crtc) {
+        Monitor::monitor_crtc_counters(crtc);
+        Monitor::monitor_crtc_registers(crtc)
+    }
+
     pub fn monitor_crtc_registers(crtc: &Crtc) {
         println!(
             "AR:{} R0:{} R1:{} R2:{} R3:{} R4:{} R5:{} R6:{} R7:{} R8:{} R9:{} R10:{} R11:{} R12:{} R13:{}",
@@ -306,6 +311,16 @@ impl<'f> MonitorContext<'f> {
             Command::Continue => self.execute_continue(motherboard),
             Command::Next => self.execute_next(motherboard),
             Command::Step => self.execute_step(motherboard),
+
+            Command::Disassemble(addr) => {
+                Self::execute_disassemble(motherboard,  addr);
+                false
+            },
+            Command::Break(b) => {
+                self.add_breakpoint(b);
+                false
+            }
+            Command::Info(info) => {self.execute_info(motherboard, info); false}
             _ => unimplemented!("{:?}", command)
         }
     }
@@ -318,10 +333,15 @@ impl<'f> MonitorContext<'f> {
 
     /// Make run the emulator until the next breakpoint. 
     pub fn execute_continue(&mut self, motherboard: &mut Motherboard) -> bool {
-        while !self.is_some_breakpoint_fired(motherboard) {
+        loop {
             let res = self.execute_next(motherboard);
             if res {
                 return true;
+            }
+
+            if let Some(b) = self.has_some_breakpoint_fired(motherboard) {
+                println!("Breakpoint raised: {:?}", b);
+                break;
             }
         }
         false 
@@ -359,10 +379,44 @@ impl<'f> MonitorContext<'f> {
     }
 
     /// Check if one breakpoint is fired
-    pub fn is_some_breakpoint_fired(&self, motherboard: &mut Motherboard) -> bool {
+    pub fn has_some_breakpoint_fired(&self, motherboard: &mut Motherboard) -> Option<&BreakPoint> {
         self.breakpoints
             .iter()
-            .any(|b| b.is_fired(motherboard))
+            .filter(|b| b.is_fired(motherboard))
+            .next()
+    }
+
+    pub fn execute_info(&self, motherboard: &mut Motherboard, info: InfoKind) {
+        match info {
+            InfoKind::BreakPoint => {
+               self.breakpoints.iter()
+                .for_each(|b| println!("{:?}", b));
+            },
+            InfoKind::Crtc => {
+                Monitor::monitor_crtc(motherboard.crtc());
+            },
+            InfoKind::Ga => {
+                Monitor::monitor_ga(motherboard.ga());
+            },
+            InfoKind::Stack => {
+                Monitor::monitor_stack(motherboard, 2, 2);
+            },
+            InfoKind::Z80 => {
+                Monitor::monitor_z80(motherboard.cpu());
+            }
+        }
+    }
+
+    pub fn add_breakpoint(&mut self, b: BreakPoint) {
+        self.breakpoints.push(b);
+    }
+
+    pub fn execute_disassemble(motherboard: & Motherboard, addr: Option<u16>) {
+        let addr = addr.unwrap_or(motherboard.cpu().pc());
+        let code = motherboard.disassemble_instructions_from(addr, 10);
+        for inst in code {
+            println!("{}", inst.to_string());
+        }
     }
 }
 
@@ -377,7 +431,7 @@ pub struct DisassembledInstruction {
 
 impl ToString for DisassembledInstruction {
     fn to_string(&self) -> String {
-        format!("0x{:04x} {} {:02x?}", self.address, self.token, self.memory)
+        format!("0x{:04x} {:<16} {:02x?}", self.address, self.token.to_string(), self.memory)
     }
 }
 
