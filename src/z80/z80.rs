@@ -2059,7 +2059,7 @@ impl Z80 {
         self.set_flag_off(Z80Flags::N);
         self.set_flag(Z80Flags::P, self.bc()!=0);
 
-        let tmp = self.a() + self.get_data_from_pins();
+        let tmp = self.a().wrapping_add(self.get_data_from_pins());
         self.set_flag(Z80Flags::X, tmp & 1<<5 != 0);
         self.set_flag(Z80Flags::Y, tmp & 1<<3 != 0);
     }

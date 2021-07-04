@@ -1,7 +1,7 @@
 use amsrust::motherboard::{MotherboardBuilder, Motherboard};
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
 use amsrust::memory::*;
-use amsrust::debug::Monitor;
+use amsrust::debug::*;
 
 /// Took inspiration from https://floooh.github.io/2016/07/12/z80-rust-ms1.html
 #[test]
@@ -30,42 +30,37 @@ fn zexdoc() {
     motherboard.write_word(6, 0xF606); //value on cpc - correspond to the adress jumped from 05
 
 
+    assert_eq!(
+        0xc9,
+        motherboard.read_byte(0x5)
+    );
 
-    let mut nb_instructions = 0;
 
-    loop {
-      //  dbg!(motherboard.cpu().reg16(Reg16::Pc));
-        //    Monitor::monitor(&motherboard);
-        motherboard.execute_next_opcode();
-        if verbose {
-            Monitor::monitor(&motherboard);
-            let mut line = String::new();
-            let b1 = std::io::stdin().read_line(&mut line).unwrap();
-        }
+    // Handle the specificities of the test
+    let mut handle = |motherboard: &mut Motherboard| {
 
-        assert_eq!(
-            0xc9,
-            motherboard.read_byte(0x5)
-        );
-        
         let cpu = motherboard.cpu();
 
-        nb_instructions += 1;
-        if nb_instructions == 50 {
-      //      break;
-        } // execute few just to test
-
-        match cpu.reg16(Reg16::Pc).value() {
-            0x0005 => { cpm_bdos(&motherboard); },
+         match cpu.reg16(Reg16::Pc).value() {
+            0x0005 => { 
+                cpm_bdos(&motherboard); 
+                false
+            },
             0x0000 => { 
                 println!("leave test");
-                break; 
+                true
             },
-            _ => { },
+            _ => false,
         }
+    };
+
+    let mut ctx = MonitorContext::new(Box::new(&mut handle));
+    if verbose {
+        Monitor::cli_monitoring(&mut motherboard, &mut ctx);
     }
-
-
+    else {
+        ctx.execute_continue(&mut motherboard);
+    }
 }
 
 // Code to execute when a call is made to CPM

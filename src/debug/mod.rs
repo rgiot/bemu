@@ -1,13 +1,29 @@
 use cpclib_asm::preamble::Token;
 use smallvec::SmallVec;
+use itertools::Itertools;
 
 use crate::chip::{Chip, ReadAddressChip, ReadDataChip};
 use crate::crtc::{Crtc, CrtcPin};
-use crate::ga::*;
+use crate::{ga::*, motherboard};
 use crate::motherboard::Motherboard;
 use crate::z80::Z80Flags;
 use crate::z80::Z80Pin;
 use crate::z80::{HasValue, Reg16, Z80};
+
+use self::breakpoint::BreakPoint;
+
+
+mod interpretor;
+mod breakpoint;
+mod stepable;
+
+use stepable::StepInto;
+use interpretor::*;
+
+use rustyline::error::ReadlineError;
+use rustyline::Editor;
+
+
 
 pub struct Monitor {}
 
@@ -207,7 +223,150 @@ impl Monitor {
     pub fn monitor_next_instruction(motherboard: &Motherboard) {
         println!("{}", motherboard.disassemble_next_instruction().to_string());
     }
+
+
+
+    /// Wrap the motherboard around a cli interface
+    /// TODO handle special case as the one of zexdoc where prints are emulated
+    pub fn cli_monitoring(motherboard: &mut Motherboard, ctx: &mut MonitorContext) {
+         // `()` can be used when no completer is required
+        let mut rl = Editor::<()>::new();
+        if rl.load_history("history.txt").is_err() {
+            println!("No previous history.");
+        }
+        loop {
+            let readline = rl.readline(">> ");
+            match readline {
+                Ok(line) => {
+                    rl.add_history_entry(line.as_str());
+                    let quit = match interpretor::parse_command(&line) {
+                        Ok(cmd) => {
+                            ctx.execute_command(motherboard, cmd)
+                        }
+                        _ => {
+                            eprintln!("Error in the command line");
+                            false
+                        }
+                    };
+                    if quit {
+                        break;
+                    }
+                },
+                Err(ReadlineError::Interrupted) => {
+                    println!("CTRL-C");
+                    break
+                },
+                Err(ReadlineError::Eof) => {
+                    println!("CTRL-D");
+                    break
+                },
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                    break
+                }
+            }
+        }
+        rl.save_history("history.txt").unwrap();
+    }
 }
+
+pub struct MonitorContext<'f> {
+    /// The list of breakpoints to test at each instruction
+    breakpoints: Vec<BreakPoint>,
+    /// A dedicated code to handle BEFORE the execution of an instruction.
+    /// The handler takes as input the motherboard and returns true if emulation need to be stopped
+    preExec: Option<Box<&'f mut dyn Fn(&mut Motherboard) -> bool>>,
+}
+
+impl<'f> Default for MonitorContext<'f> {
+    fn default() -> Self {
+        MonitorContext {
+            breakpoints: Default::default(),
+            preExec: None
+        }
+    }
+}
+
+impl<'f> MonitorContext<'f> {
+    pub fn new(handle: Box<&'f mut dyn Fn(&mut Motherboard) -> bool>) -> Self {
+        Self {
+            breakpoints: Default::default(),
+            preExec: Some(handle)
+        }
+    }
+}
+pub enum MonitorError {
+}
+
+impl<'f> MonitorContext<'f> {
+    /// Execute the command. Return true if it is expected to leave
+    pub fn execute_command(&mut self, motherboard: &mut Motherboard, command: Command) -> bool {
+        match command {
+            Command::Run(addr) => self.execute_run(motherboard, addr),
+            Command::Continue => self.execute_continue(motherboard),
+            Command::Next => self.execute_next(motherboard),
+            Command::Step => self.execute_step(motherboard),
+            _ => unimplemented!("{:?}", command)
+        }
+    }
+
+    /// Make run the emulator until the next breakpoint. Start from the provided address
+    pub fn execute_run(&mut self, motherboard: &mut Motherboard, addr: u16) -> bool {
+        motherboard.cpu_mut().set_pc(addr);
+        self.execute_continue(motherboard)
+    }
+
+    /// Make run the emulator until the next breakpoint. 
+    pub fn execute_continue(&mut self, motherboard: &mut Motherboard) -> bool {
+        while !self.is_some_breakpoint_fired(motherboard) {
+            let res = self.execute_next(motherboard);
+            if res {
+                return true;
+            }
+        }
+        false 
+    }
+
+    /// Make run the emulator for a single instruction.
+    /// Return true if emulation has to be stopped
+    pub fn execute_next(&mut self, motherboard: &mut Motherboard) -> bool {
+        if let Some(handle) = self.preExec.as_mut() {
+            let res = handle(motherboard);
+            if res {
+                return true;
+            }
+        }
+        motherboard.execute_next_opcode();
+        false
+    }
+
+    /// Make run the emulator for an instruction plus all its dependencies (complete LDIR, call until its ret, ...)
+    pub fn execute_step(&mut self, motherboard: &mut Motherboard) -> bool {
+        let next_instruction = motherboard.disassemble_next_instruction();
+        if next_instruction.can_use_step_into() {
+            let next_pc = motherboard.pc() + next_instruction.len() as u16 ;
+            while motherboard.pc() != next_pc {
+                let quit = self.execute_next(motherboard);
+                if quit {
+                    return true;
+                }
+            }
+            false
+        }
+        else {
+            self.execute_next(motherboard)
+        }
+    }
+
+    /// Check if one breakpoint is fired
+    pub fn is_some_breakpoint_fired(&self, motherboard: &mut Motherboard) -> bool {
+        self.breakpoints
+            .iter()
+            .any(|b| b.is_fired(motherboard))
+    }
+}
+
+
 
 #[derive(Debug)]
 pub struct DisassembledInstruction {
@@ -221,3 +380,12 @@ impl ToString for DisassembledInstruction {
         format!("0x{:04x} {} {:02x?}", self.address, self.token, self.memory)
     }
 }
+
+impl DisassembledInstruction {
+    /// Number of bytes of the current instruction
+    pub fn len(&self) -> usize {
+        self.memory.len()
+    }
+}
+
+
