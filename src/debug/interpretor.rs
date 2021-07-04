@@ -18,8 +18,10 @@ pub enum Command {
 	Break(BreakPoint),
 	/// List some kind of information
 	Info(InfoKind),
+	/// Read byte at the requested address
+	Peek(u16),
+	Help,
 	/// Quit the interpretor
-
 	Quit
 }
 
@@ -55,8 +57,8 @@ pub fn parse_command(line: &str) -> Result<Command, WrongInput> {
 		match words[0] {
 			"n" | "next"=> Ok(Command::Next),
 			"s" | "step"=> Ok(Command::Step),
-			"c" | "Continue"=> Ok(Command::Continue),
-			"n" | "next"=> Ok(Command::Next),
+			"c" | "cont" | "continue"=> Ok(Command::Continue),
+			"h" | "help" => Ok(Command::Help),
 			"q" | "quit" => Ok(Command::Quit),
 			"d" | "disass" | "disassemble" => Ok(Command::Disassemble(None)),
 			_ => Err(WrongInput{})
@@ -93,6 +95,11 @@ pub fn parse_command(line: &str) -> Result<Command, WrongInput> {
 					_ => Err(WrongInput{})
 				}
 			},
+			"peek" => {
+				let address = parse_hexa(words[1])?;
+				Ok(Command::Peek(address))
+			},
+
 			"r" | "run" => {
 				 let address = parse_hexa(words[1])?;
 				Ok(Command::Run(address))

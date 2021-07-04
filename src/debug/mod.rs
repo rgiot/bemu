@@ -239,11 +239,22 @@ impl Monitor {
         if rl.load_history("history.txt").is_err() {
             println!("No previous history.");
         }
+
+        let mut previous : Option<String> = None;
         loop {
+            println!("{}", motherboard.disassemble_next_instruction().to_string());
             let readline = rl.readline(">> ");
             match readline {
                 Ok(line) => {
-                    rl.add_history_entry(line.as_str());
+
+                    let line: String = if line.is_empty() {
+                        previous.clone().unwrap_or("h".to_owned())
+                    } else {
+                        rl.add_history_entry(line.as_str());
+                        previous = Some(line.clone());
+                        line
+                    };
+                    
                     let quit = match interpretor::parse_command(&line) {
                         Ok(cmd) => {
                             ctx.execute_command(motherboard, cmd)
@@ -312,6 +323,10 @@ impl<'f> MonitorContext<'f> {
             Command::Next => self.execute_next(motherboard),
             Command::Step => self.execute_step(motherboard),
 
+            Command::Peek(addr) => {
+                println!("{:x}={:x}", addr, motherboard.read_byte(addr));
+                false
+            }
             Command::Disassemble(addr) => {
                 Self::execute_disassemble(motherboard,  addr);
                 false
@@ -320,6 +335,10 @@ impl<'f> MonitorContext<'f> {
                 self.add_breakpoint(b);
                 false
             }
+            Command::Help => {
+                Self::execute_help();
+                false
+            },
             Command::Info(info) => {self.execute_info(motherboard, info); false}
             _ => unimplemented!("{:?}", command)
         }
@@ -340,7 +359,7 @@ impl<'f> MonitorContext<'f> {
             }
 
             if let Some(b) = self.has_some_breakpoint_fired(motherboard) {
-                println!("Breakpoint raised: {:?}", b);
+                println!("Breakpoint raised: {}", b.to_string());
                 break;
             }
         }
@@ -390,7 +409,7 @@ impl<'f> MonitorContext<'f> {
         match info {
             InfoKind::BreakPoint => {
                self.breakpoints.iter()
-                .for_each(|b| println!("{:?}", b));
+                .for_each(|b| println!("{}", b.to_string()));
             },
             InfoKind::Crtc => {
                 Monitor::monitor_crtc(motherboard.crtc());
@@ -403,6 +422,7 @@ impl<'f> MonitorContext<'f> {
             },
             InfoKind::Z80 => {
                 Monitor::monitor_z80(motherboard.cpu());
+                Monitor::monitor_z80_flags(motherboard.cpu());
             }
         }
     }
@@ -417,6 +437,17 @@ impl<'f> MonitorContext<'f> {
         for inst in code {
             println!("{}", inst.to_string());
         }
+    }
+
+    pub fn execute_help() {
+        println!("
+        n | next: Execute next instruction
+        s | step: Execute next instruction and its consequences
+        c | cont | continue: Execute until next breakpoint
+        h | help: Display help
+        q | quit: Quit monitor
+        d | disass | disassemble [addr]: Disassmble at PC or addr if provided
+        ");
     }
 }
 

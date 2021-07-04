@@ -140,6 +140,42 @@ fn execute_and2() {
 }
 
 
+
+
+#[test]
+fn execute_and3() {
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld a, 0x0a
+		and 0xf8
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	let a = motherboard.cpu().reg8(Reg8::A).value();
+	let f = motherboard.cpu().reg8(Reg8::F).value();
+	assert_eq!(
+		08,
+		a
+	);
+	assert!(
+		Z80Flags::N.is_off(f)
+	);
+	assert!(
+		Z80Flags::C.is_off(f)
+	);
+	assert!(
+		Z80Flags::Z.is_off(f)
+	);
+	assert!(
+		Z80Flags::H.is_on(f)
+	);
+}
+
+
+
 #[test]
 fn execute_call() {
 	let code = dbg!(cpclib_macros::assemble!(
