@@ -46,10 +46,10 @@ pub fn rr(byte: &mut u8, c: bool) -> bool {
 }
 
 pub fn rrc(byte: &mut u8) -> bool {
-    let bit0 = *byte & 1 << 0 != 0;
+    let bit0 = *byte & 1  != 0;
     *byte = *byte >> 1;
     if bit0 {
-        set_bit(byte, 0);
+        set_bit(byte, 7);
     }
     bit0
 }

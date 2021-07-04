@@ -268,7 +268,41 @@ fn execute_dec() {
 
 #[test]
 fn execute_dec_flags_test() {
-	unimplemented!();
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld b, 1
+		dec b
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0x0,
+		motherboard.cpu().reg8(Reg8::B).value()
+	);
+	assert!(motherboard.cpu().flag(Z80Flags::Z));
+	assert!(!motherboard.cpu().flag(Z80Flags::S));
+
+
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld b, 0
+		dec b
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0xff,
+		motherboard.cpu().reg8(Reg8::B).value()
+	);
+	assert!(!motherboard.cpu().flag(Z80Flags::Z));
+	assert!(motherboard.cpu().flag(Z80Flags::S));
+
 }
 #[test]
 fn execute_dec_mem_hl() {
@@ -1174,7 +1208,21 @@ fn execute_rlc_a() {
 
 #[test]
 fn execute_rlca() {
-	todo!();
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld a, 0b10000001
+	rlca
+	jr $
+");
+
+let motherboard = execute_program(0x4000, 0x4000, code); 
+
+assert_eq!(
+	0b11,
+	motherboard.a()
+);
+
+assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
 }
 
 
@@ -1285,7 +1333,22 @@ fn execute_rra3() {
 }
 #[test]
 fn execute_rrc() {
-	unimplemented!();
+
+	let code = cpclib_macros::assemble!("
+	org 0x4000
+	ld a, 0b10000001
+	rrc a
+	jr $
+	");
+
+	let motherboard = execute_program(0x4000, 0x4000, code); 
+
+	assert_eq!(
+		0b11000000,
+		motherboard.a()
+	);
+
+	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
 }
 
 

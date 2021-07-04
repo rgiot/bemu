@@ -6,7 +6,7 @@ use amsrust::debug::Monitor;
 /// Took inspiration from https://floooh.github.io/2016/07/12/z80-rust-ms1.html
 #[test]
 fn zexdoc() {
-    const verbose : bool = false;  
+    const verbose : bool = true;  
     let mut motherboard = MotherboardBuilder::default().build();
     motherboard.force_rom_config(
         RomConfig{
@@ -27,7 +27,7 @@ fn zexdoc() {
     motherboard.write_byte(5, 0xc9); // need to return from cpm call
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
    // motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(0xF000);
-    motherboard.write_word(6, 0xF000); // need to return from cpm call
+    motherboard.write_word(6, 0xF606); //value on cpc - correspond to the adress jumped from 05
 
 
 

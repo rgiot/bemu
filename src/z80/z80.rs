@@ -25,7 +25,7 @@ macro_rules! inner_8bits_sub {
         let (res, ovf) = $a.overflowing_sub($b);
         
         Z80Flags::auto_update(
-            &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
+            &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y, Z80Flags::P],
             $f,
             res,
         );
@@ -2042,9 +2042,7 @@ impl Z80 {
         self.reg16_mut(Reg16::De).dec();
         self.reg16_mut(Reg16::Bc).dec();
         
-        self.set_flag_off(Z80Flags::H);
-        self.set_flag_off(Z80Flags::N);
-        self.set_flag(Z80Flags::P, self.bc()!=0);
+        self.inner_ldi_ldd_flags();
     }
     
     /// Handle the registers for LDI/LDIR
@@ -2053,11 +2051,19 @@ impl Z80 {
         self.reg16_mut(Reg16::De).inc();
         self.reg16_mut(Reg16::Bc).dec();
         
+        self.inner_ldi_ldd_flags();
+    }
+    
+    fn inner_ldi_ldd_flags(&mut self) {
         self.set_flag_off(Z80Flags::H);
         self.set_flag_off(Z80Flags::N);
         self.set_flag(Z80Flags::P, self.bc()!=0);
+
+        let tmp = self.a() + self.get_data_from_pins();
+        self.set_flag(Z80Flags::X, tmp & 1<<5 != 0);
+        self.set_flag(Z80Flags::Y, tmp & 1<<3 != 0);
     }
-    
+
 
     fn inner_ini_flags(&mut self) {
         self.set_flag_off(Z80Flags::H);
