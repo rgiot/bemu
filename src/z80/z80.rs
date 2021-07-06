@@ -235,8 +235,8 @@ impl Z80Flags {
     pub fn auto_update16_from(&self, byte: &mut u8, res: u16) {
         match self {
             Self::S => self.set(res & 1 << 15 != 0, byte),
-            Self::X => self.set(res & 1 << 3 != 0, byte), // XXX probably wrong
-            Self::Y => self.set(res & 1 << 5 != 0, byte), // XXX probably wrong
+            Self::X => self.set(res & 1 << (8+3) != 0, byte), // XXX probably wrong
+            Self::Y => self.set(res & 1 << (8+5) != 0, byte), // XXX probably wrong
             Self::Z => self.set(res == 0, byte),
             Self::P => self.set(res.count_ones() % 2 == 0, byte),
             
@@ -1748,14 +1748,15 @@ impl Z80 {
                         let reg1: Reg16 = reg1.into();
                         let reg2: Reg16 = reg2.into();
                         
-                        let other = {
+                        let right = {
                             let mut other = self.reg16(reg2).value();
                             if self.flag(Z80Flags::C){
                                 other = other.wrapping_add(1);
                             }        
                             other
                         };
-                        let c = self.reg16_mut(reg1).sub(other);
+                        let left = self.reg16(reg1).value();
+                        let c = self.reg16_mut(reg1).sub(right);
                         let value = self.reg16(reg1).value();
                         
                         // TODO manage H if borrow from bit 12
@@ -1766,6 +1767,9 @@ impl Z80 {
                         );
                         self.set_flag_on(Z80Flags::N);
                         self.set_flag(Z80Flags::C, c);
+                        self.set_flag(Z80Flags::P, 
+                            (((right ^ left) & (left^ value) &0x8000)) != 0
+                        );
 
                         let extra_cycles = 2;
                         self.next_state = MCycle::new_fake(extra_cycles);
