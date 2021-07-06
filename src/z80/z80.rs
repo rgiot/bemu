@@ -790,10 +790,14 @@ impl Z80 {
                         DataAccess::Register8(cpclib_asm::preamble::Register8::A) => {
                             // this MUST be A register
                             // 8bits version
+                            let left = self.a();
                             let right = self.get_available_8bits_value(arg2.unwrap());
                             let ovf = self.reg8_mut(Reg8::A).add(right); 
-                            // TODO manage the flags
+                            
+                            self.auto_update_flags(self.a());
+                            self.set_flag(Z80Flags::H, right& 0x0f > left&0x0f);
                             self.set_flag(Z80Flags::C, ovf);
+                            self.set_flag(Z80Flags::P, (right ^ left ^ 0x80) & (right ^ self.a()) & 0x80 != 0);
                         }
                         
                         DataAccess::Register16(_) | DataAccess::IndexRegister16(_)  => {
