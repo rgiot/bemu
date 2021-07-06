@@ -1352,7 +1352,7 @@ impl Z80 {
                 }
 
                 Mnemonic::Ld => {
-                    dbg!(self.opcode_information());
+                   // dbg!(self.opcode_information());
 
                     let arg1 = arg1.unwrap();
                     let arg2 = arg2.unwrap();
@@ -2505,7 +2505,7 @@ impl Chip for Z80 {
                 let address = self.get_read_address_from_opcode_information().wrapping_add(nb as u16);
                 self.set_address_on_pins(address);
                 
-                dbg!("READ ADDR={:x}", address);
+              //  dbg!("READ ADDR={:x}", address);
                 
                 assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
@@ -2517,7 +2517,7 @@ impl Chip for Z80 {
             }
             MCycle::Read(TState::T2, nb) | MCycle::Input(TState::T2, nb) => {
                 let byte = self.get_data_from_pins();
-                dbg!("DATA={:x}", byte);
+              //  dbg!("DATA={:x}", byte);
                 self.store_currently_read_byte(byte, nb);
                 
                 self.on(self.next_state.read_pin_type().unwrap());
