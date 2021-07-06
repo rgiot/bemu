@@ -25,14 +25,16 @@ macro_rules! inner_8bits_sub {
         let (res, ovf) = $a.overflowing_sub($b);
         
         Z80Flags::auto_update(
-            &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y, Z80Flags::P],
+            &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
             $f,
             res,
         );
-        
+
+        Z80Flags::H.set($b & 0x0f > $a & 0x0f, $f);
         Z80Flags::C.set(ovf, $f);
         Z80Flags::N.set_on($f);
-        // TODO manage signed stuff
+        Z80Flags::P.set((($b ^ $a) & ($a ^ res) & 0x80) != 0, $f);
+
         res
     }};
 }

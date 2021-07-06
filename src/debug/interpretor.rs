@@ -16,6 +16,10 @@ pub enum Command {
 
 	/// Add a breakpoint
 	Break(BreakPoint),
+
+	/// Force the display of some information before each command
+	Display(InfoKind),
+
 	/// List some kind of information
 	Info(InfoKind),
 	/// Read byte at the requested address
@@ -39,6 +43,26 @@ pub struct WrongInput {
 
 }
 
+fn get_info(word: &str) -> Result<InfoKind, WrongInput>{
+	match word {
+		"b" | "breakpoints" => {
+			Ok(InfoKind::BreakPoint)
+		},
+		"z" | "z80" | "cpu"=> {
+			Ok(InfoKind::Z80)
+		},
+		"c" | "crtc" => {
+			Ok(InfoKind::Crtc)
+		},
+		"s" | "stack" => {
+			Ok(InfoKind::Stack)
+		},
+		"g" | "ga" => {
+			Ok(InfoKind::Ga)
+		}
+		_ => Err(WrongInput{})
+	}	
+}
 
 /// Simple command parser. To be improved later
 pub fn parse_command(line: &str) -> Result<Command, WrongInput> {
@@ -75,25 +99,21 @@ pub fn parse_command(line: &str) -> Result<Command, WrongInput> {
 				Ok(Command::Disassemble(Some(address)))
 			},
 
+			"disp" | "display" => {
+					Ok(
+						Command::Display (
+							get_info(words[1])?
+						)
+					)
+								
+			},
+
 			"i" | "info" => {
-				match words[1] {
-					"b" | "breakpoints" => {
-						Ok(Command::Info(InfoKind::BreakPoint))
-					},
-					"z" | "z80" | "cpu"=> {
-						Ok(Command::Info(InfoKind::Z80))
-					},
-					"c" | "crtc" => {
-						Ok(Command::Info(InfoKind::Crtc))
-					},
-					"s" | "stack" => {
-						Ok(Command::Info(InfoKind::Stack))
-					},
-					"g" | "ga" => {
-						Ok(Command::Info(InfoKind::Ga))
-					}
-					_ => Err(WrongInput{})
-				}
+				Ok(
+					Command::Info(
+						get_info(words[1])?
+					)
+				)
 			},
 			"peek" => {
 				let address = parse_hexa(words[1])?;

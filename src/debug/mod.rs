@@ -242,6 +242,7 @@ impl Monitor {
 
         let mut previous : Option<String> = None;
         loop {
+            ctx.execute_displays(motherboard);
             println!("{}", motherboard.disassemble_next_instruction().to_string());
             let readline = rl.readline(">> ");
             match readline {
@@ -289,6 +290,9 @@ impl Monitor {
 pub struct MonitorContext<'f> {
     /// The list of breakpoints to test at each instruction
     breakpoints: Vec<BreakPoint>,
+    /// The list of informations to display
+    displays: Vec<InfoKind>,
+
     /// A dedicated code to handle BEFORE the execution of an instruction.
     /// The handler takes as input the motherboard and returns true if emulation need to be stopped
     preExec: Option<Box<&'f mut dyn Fn(&mut Motherboard) -> bool>>,
@@ -298,6 +302,7 @@ impl<'f> Default for MonitorContext<'f> {
     fn default() -> Self {
         MonitorContext {
             breakpoints: Default::default(),
+            displays: Default::default(),
             preExec: None
         }
     }
@@ -307,6 +312,7 @@ impl<'f> MonitorContext<'f> {
     pub fn new(handle: Box<&'f mut dyn Fn(&mut Motherboard) -> bool>) -> Self {
         Self {
             breakpoints: Default::default(),
+            displays: Default::default(),
             preExec: Some(handle)
         }
     }
@@ -339,7 +345,14 @@ impl<'f> MonitorContext<'f> {
                 Self::execute_help();
                 false
             },
-            Command::Info(info) => {self.execute_info(motherboard, info); false}
+            Command::Info(info) => {
+                self.execute_info(motherboard, &info); 
+                false
+            },
+            Command::Display(info) => {
+                self.displays.push(info); 
+                false
+            }
             _ => unimplemented!("{:?}", command)
         }
     }
@@ -405,7 +418,7 @@ impl<'f> MonitorContext<'f> {
             .next()
     }
 
-    pub fn execute_info(&self, motherboard: &mut Motherboard, info: InfoKind) {
+    pub fn execute_info(&self, motherboard: &Motherboard, info: & InfoKind) {
         match info {
             InfoKind::BreakPoint => {
                self.breakpoints.iter()
@@ -425,6 +438,11 @@ impl<'f> MonitorContext<'f> {
                 Monitor::monitor_z80_flags(motherboard.cpu());
             }
         }
+    }
+
+    pub fn execute_displays(&self, motherboard: & Motherboard) {
+        self.displays.iter()
+            .for_each(|d| self.execute_info(motherboard, d));
     }
 
     pub fn add_breakpoint(&mut self, b: BreakPoint) {
