@@ -478,6 +478,8 @@ let code = dbg!(cpclib_macros::assemble!(
 	org 0x4000
 	ld hl, (mem)
 	jr $ ; end of test
+
+	org 0x4010
 mem
 	db 0xad
 	db 0xde
@@ -500,6 +502,7 @@ let code = dbg!(cpclib_macros::assemble!(
 	org 0x4000
 	ld sp, (mem)
 	jr $ ; end of test
+	org 0x4010
 mem
 	db 0xad
 	db 0xde
@@ -509,7 +512,7 @@ let motherboard = execute_program(0x4000, 0x4000, code);
 
 assert_eq!(
 	0xdead,
-	motherboard.cpu().reg16(Reg16::Hl).value(),
+	motherboard.cpu().reg16(Reg16::Sp).value(),
 	"{:x} != {:x}", 0xdead, motherboard.cpu().reg16(Reg16::Sp).value()
 );
 }

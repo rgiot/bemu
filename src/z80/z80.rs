@@ -551,13 +551,14 @@ impl Z80 {
                     //      dbg!(reg, self.reg8_mut(reg));
                 }
                 DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
-                    let reg = if reg == Reg16::Pc || reg == Reg16::Sp {
+                    let reg = if reg == Reg16::Pc /*|| reg == Reg16::Sp*/ {
                         Reg16::Wz
                     } else {
                         reg
                     };
-                    let reg = if nb == 0 { reg.low() } else { reg.high() };
-                    self.reg8_mut(reg).set(byte);
+                    let reg = self.reg16_mut(reg);
+                    let reg = if nb == 0 { reg.low_mut() } else { reg.high_mut() };
+                    reg.set(byte);
                 }
                 DataSource::Pins => {
                     assert_eq!(nb, 0);
@@ -1351,6 +1352,8 @@ impl Z80 {
                 }
 
                 Mnemonic::Ld => {
+                    dbg!(self.opcode_information());
+
                     let arg1 = arg1.unwrap();
                     let arg2 = arg2.unwrap();
                     
@@ -2050,16 +2053,6 @@ impl Z80 {
                 self.reg8_mut(Reg8::B).dec();
             }           
             
-            Some(Mnemonic::Ld) => {
-                if let Some(DataAccess::Register16(cpclib_asm::preamble::Register16::Sp)) =
-                opcode_info.token.mnemonic_arg1()
-                {
-                    // arg2 is a memory read operation by definition
-                    self.sp = self.wz.clone();
-                    self.wz.inc();
-                }
-            }
-            
             _ => {
                 // by default, there is nothing to
             }
@@ -2512,7 +2505,7 @@ impl Chip for Z80 {
                 let address = self.get_read_address_from_opcode_information().wrapping_add(nb as u16);
                 self.set_address_on_pins(address);
                 
-                //aprintln!("READ ADDR={:x}", address);
+                dbg!("READ ADDR={:x}", address);
                 
                 assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
@@ -2524,7 +2517,7 @@ impl Chip for Z80 {
             }
             MCycle::Read(TState::T2, nb) | MCycle::Input(TState::T2, nb) => {
                 let byte = self.get_data_from_pins();
-                //eprintln!("DATA={:x}", byte);
+                dbg!("DATA={:x}", byte);
                 self.store_currently_read_byte(byte, nb);
                 
                 self.on(self.next_state.read_pin_type().unwrap());
