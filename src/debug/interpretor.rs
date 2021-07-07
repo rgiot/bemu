@@ -16,6 +16,8 @@ pub enum Command {
 
 	/// Add a breakpoint
 	Break(BreakPoint),
+	/// Clear a Breakpoint
+	Clear(BreakPoint),
 
 	/// Force the display of some information before each command
 	Display(InfoKind),
@@ -42,6 +44,12 @@ pub enum InfoKind {
 pub struct WrongInput {
 
 }
+fn  parse_hexa(s: &str) -> Result<u16, WrongInput> {
+	u16::from_str_radix(
+		s,
+		16)
+		.map_err(|e| WrongInput{})
+}
 
 fn get_info(word: &str) -> Result<InfoKind, WrongInput>{
 	match word {
@@ -64,18 +72,18 @@ fn get_info(word: &str) -> Result<InfoKind, WrongInput>{
 	}	
 }
 
+fn get_breakpoint(word: &str) -> Result<BreakPoint, WrongInput> {
+	let address = parse_hexa(word)?;
+	Ok(BreakPoint::Address(address))
+}
+
 /// Simple command parser. To be improved later
 pub fn parse_command(line: &str) -> Result<Command, WrongInput> {
 	let line = line.to_ascii_lowercase();
 	let words = line.split(" ");
 	let words = words.collect::<Vec<_>>();
 
-	let parse_hexa = |s: &str| {
-		u16::from_str_radix(
-			s,
-			16)
-			.map_err(|e| WrongInput{})
-	};
+
 
 	if words.len() == 1 {
 		match words[0] {
@@ -90,8 +98,10 @@ pub fn parse_command(line: &str) -> Result<Command, WrongInput> {
 	} else if words.len() == 2 {
 		match words[0] {
 			"b" | "break" => {
-				let address = parse_hexa(words[1])?;
-				Ok(Command::Break(BreakPoint::Address(address)))
+				Ok(Command::Break(get_breakpoint(words[1])?))
+			},
+			"clear" => {
+				Ok(Command::Clear(get_breakpoint(words[1])?))
 			},
 
 			"d" | "disass" | "disassemble" => {

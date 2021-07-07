@@ -340,6 +340,10 @@ impl<'f> MonitorContext<'f> {
             Command::Break(b) => {
                 self.add_breakpoint(b);
                 false
+            },
+            Command::Clear(b) => {
+                self.clear_breakpoint(b);
+                false
             }
             Command::Help => {
                 Self::execute_help();
@@ -447,6 +451,10 @@ impl<'f> MonitorContext<'f> {
 
     pub fn add_breakpoint(&mut self, b: BreakPoint) {
         self.breakpoints.push(b);
+    }
+
+    pub fn clear_breakpoint(&mut self, b: BreakPoint) {
+        self.breakpoints.retain(|b| b != b);
     }
 
     pub fn execute_disassemble(motherboard: & Motherboard, addr: Option<u16>) {

@@ -2,7 +2,7 @@ use amsrust::motherboard::{MotherboardBuilder, Motherboard};
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
 use amsrust::memory::*;
 use amsrust::debug::*;
-
+use std::io;use std::io::Write;
 /// Took inspiration from https://floooh.github.io/2016/07/12/z80-rust-ms1.html
 #[test]
 fn zexdoc() {
@@ -71,6 +71,7 @@ fn cpm_bdos(motherboard: & Motherboard) {
         2 => {
             // output character in register E
             print!("{}", cpu.reg8(Reg8::E).value() as u8 as char);
+            io::stdout().flush().unwrap();
         },
         9 => {
             // output a string at register DE until '$'
@@ -84,6 +85,7 @@ fn cpm_bdos(motherboard: & Motherboard) {
                 else {
                     break;
                 }
+                io::stdout().flush().unwrap();
             }
         },
         _ => {

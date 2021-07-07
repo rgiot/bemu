@@ -14,6 +14,7 @@ use crate::z80::registers_identifiers::*;
 use crate::z80::states::*;
 
 use std::fmt::Debug;
+use std::ops::BitAnd;
 
 use cpclib_asm::preamble::Token;
 use cpclib_asm::preamble::{
@@ -175,6 +176,13 @@ pub enum Z80Flags {
     N = 1 << 1,
     // The carry flag, set if there was a carry after the most significant bit.
     C = 1 << 0,
+}
+
+impl BitAnd<Z80Flags> for u8 {
+    type Output = u8;
+    fn bitand(self, rhs: Z80Flags) -> Self::Output {
+        self & rhs as u8
+    }
 }
 
 impl Z80Flags {
@@ -748,28 +756,50 @@ impl Z80 {
                         DataAccess::Register8(cpclib_asm::preamble::Register8::A) => {
                             // this MUST be A register
                             // 8bits version
+                            let left = self.a();
                             let mut right = self.get_available_8bits_value(arg2.unwrap());
                             if self.flag(Z80Flags::C) {
                                 right += 1;
                             }
                             let ovf = self.reg8_mut(Reg8::A).add(right); 
-                            // TODO manage the flags
-                            self.set_flag(Z80Flags::S, self.a() & 1 << 7 != 0);
-                            self.set_flag(Z80Flags::Z, self.a() == 0);
+                            let res = self.a();
+
+                            self.auto_update_flags(res);
                             self.set_flag(Z80Flags::C, ovf);
                             self.set_flag_off(Z80Flags::N);
+                            self.set_flag(Z80Flags::H, ((left ^ res ^ res) & Z80Flags::H ) != 0);
+                            self.set_flag(Z80Flags::P,
+                                (((right ^ left ^ 0x80) & (right ^ res) & 0x80) != 0 )
+                            );
                         },
                         
                         DataAccess::Register16(cpclib_asm::preamble::Register16::Hl)=> {
-                            let mut right = self.get_available_16bits_value(arg2.unwrap());
-                            if self.flag(Z80Flags::C) {
-                                right += 1;
-                            }
-                            let ovf = self.reg16_mut(Reg16::Hl).add(right);
+                            let reg = cpclib_asm::preamble::Register16::Hl.into();
+
+                            let right = self.get_available_16bits_value(arg2.unwrap());
+                            let  left = self.reg16(reg).value();
+
+                            let res =  if self.flag(Z80Flags::C) {
+                                left + right + 1
+                            } else {
+                                left + right
+                            };
+
+                            self.wz.set(left+1);
+
+                            let to_add = right.wrapping_add(if self.flag(Z80Flags::C) {1} else {0});
+                            let ovf = self.reg16_mut(reg).add(to_add);
+
+                            self.auto_update_flags_x_y((self.reg16(reg).value()>>8) as u8);
                             self.set_flag(Z80Flags::S, self.hl() & 1 << 15 != 0);
                             self.set_flag(Z80Flags::Z, self.hl() == 0);
                             self.set_flag(Z80Flags::C, ovf);
                             self.set_flag_off(Z80Flags::N);
+                            self.set_flag(
+                                Z80Flags::H,
+                                (((left ^ right^ 0x8000) & (right ^ res) & 0x8000) >> 13) !=0
+                            );
+                            
 
                             let extra_cycles = 2;
                             self.next_state = MCycle::new_fake(extra_cycles);
@@ -1765,6 +1795,9 @@ impl Z80 {
                             &mut self.reg8_mut(Reg8::F).val,
                             value,
                         );
+                        self.set_flag(Z80Flags::H, 
+                        (((left ^ value  ^ right) >> 8) & 1<<4) != 0
+                        );
                         self.set_flag_on(Z80Flags::N);
                         self.set_flag(Z80Flags::C, c);
                         self.set_flag(Z80Flags::P, 
@@ -1807,7 +1840,7 @@ impl Z80 {
             }
             
             Mnemonic::Sub => match arg1 {
-                Some(DataAccess::Register8(_) | DataAccess::Expression(_)) => {
+                Some(DataAccess::Register8(_) | DataAccess::Expression(_) | DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)) => {
                     let left = self.reg8(Reg8::A).value();
                     let right = self.get_available_8bits_value(arg1.unwrap());
                     let f = &mut self.reg8_mut(Reg8::F).val;

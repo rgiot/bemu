@@ -1,6 +1,6 @@
 use crate::motherboard::Motherboard;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum BreakPoint {
 	/// /Very weak-based breakpoint that considers an address whatever is the memory configuration
 	Address(u16)
