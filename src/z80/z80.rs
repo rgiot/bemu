@@ -780,12 +780,12 @@ impl Z80 {
                             let  left = self.reg16(reg).value();
 
                             let res =  if self.flag(Z80Flags::C) {
-                                left + right + 1
+                                left.wrapping_add(right).wrapping_add(1)
                             } else {
-                                left + right
+                                left.wrapping_add(right)
                             };
 
-                            self.wz.set(left+1);
+                            self.wz.set(left.wrapping_add(1));
 
                             let to_add = right.wrapping_add(if self.flag(Z80Flags::C) {1} else {0});
                             let ovf = self.reg16_mut(reg).add(to_add);
