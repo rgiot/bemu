@@ -1840,7 +1840,11 @@ impl Z80 {
             }
             
             Mnemonic::Sub => match arg1 {
-                Some(DataAccess::Register8(_) | DataAccess::Expression(_) | DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)) => {
+                Some(DataAccess::Register8(_) |
+                DataAccess::IndexRegister8(_) |
+                 DataAccess::Expression(_) | 
+                 DataAccess::MemoryRegister16(_) | 
+                 DataAccess::IndexRegister16WithIndex(_, _)) => {
                     let left = self.reg8(Reg8::A).value();
                     let right = self.get_available_8bits_value(arg1.unwrap());
                     let f = &mut self.reg8_mut(Reg8::F).val;
