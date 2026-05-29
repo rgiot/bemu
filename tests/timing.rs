@@ -2,6 +2,7 @@ use amsrust::{crtc::{Crtc, CrtcType}, debug::Monitor, motherboard::{self, Mother
 use amsrust::motherboard::Motherboard;
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
 use amsrust::ga::{VideoMode, Sync, RgbLevels};
+use cpclib_asm::preamble::ListingElement;
 use itertools::Itertools;
 use cpclib_asm::preamble::Mnemonic;
 

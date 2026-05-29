@@ -161,8 +161,7 @@ fn test_z80_vsync_activated() {
 		org 0x4000
 		ld b, 0xf5
 		in a, (c)
-end
-	assert end == 0x4000 + (2+2)
+	done:
 		rra
 	"));
 	motherboard.set_pc(0x4000);
@@ -237,12 +236,11 @@ fn test_z80_vsync_full_frame() {
 	let prog = dbg!(cpclib_macros::assemble!("
 		org 0x4000
 		ld b, 0xf5
-loop
+	loop:
 		in a, (c)
 		rra
 		jr nc, loop
-end
-	assert end == 0x4000 + (2+2+1+2)
+	done:
 	"));
 	motherboard.set_pc(0x4000);
 	motherboard.set_sp(0x4000);

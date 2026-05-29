@@ -2,6 +2,7 @@
 #![feature(half_open_range_patterns)]
 	
 use amsrust::{debug::Monitor, motherboard::{self, MotherboardBuilder}, z80::{HasValue, Reg16}};
+use cpclib_asm::preamble::ListingElement;
 use cpclib_asm::preamble::Mnemonic;
 
 

@@ -181,11 +181,11 @@ fn execute_call() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x4012
-		call end
+		call target
 		jr $ ; never reached if not buggy
 
 		org 0x5000
-end
+	target:
 		jr $ ; end of test
 	"));
 
@@ -226,11 +226,11 @@ fn execute_call_conditionnal_1(){
 		org 0x4012
 		xor a
 		or a
-		call z, end
+		call z, target
 		jr $ ; never reached if not buggy
 
 		org 0x5000
-end
+	target:
 		jr $ ; end of test
 	"));
 
@@ -255,11 +255,11 @@ fn execute_call_conditionnal_2(){
 		org 0x4012
 		ld a, 0xff
 		or a 
-		call z, end
+		call z, target
 		jr $ ; never reached if not buggy
 
 		org 0x5000
-end
+	target:
 		jr $ ; end of test
 	"));
 
@@ -811,16 +811,16 @@ fn execute_ldd() {
 		"
 		org 0x4000
 		ld bc, 0
-		ld de, output
-		ld hl, input
+		ld de, 0x4010
+		ld hl, 0x4020
 		ldd
 		jr $
 
 		org 0x4010
-output db 1
+		db 1
 
 		org 0x4020
-input db 2
+		db 2
 	"));
 
 	// wait (too much) to be sure screen mode changed
@@ -857,18 +857,18 @@ fn execute_ldir() {
 		"
 		org 0x4000
 		ld bc, 2
-		ld de, output
-		ld hl, input
+		ld de, 0x4010
+		ld hl, 0x4020
 		ldir
 		jr $
 
 		org 0x4010
-output db 0
+		db 0
 		db 0
 		db 0
 
 		org 0x4020
-input db 1
+		db 1
 		db 2
 		db 3
 	"));
@@ -911,20 +911,20 @@ fn execute_lddr() {
 		"
 		org 0x4000
 		ld bc, 2
-		ld de, output
-		ld hl, input
+		ld de, 0x4012
+		ld hl, 0x4022
 		lddr
 		jr $
 
 		org 0x4010
  		db 0
 		db 0
-output		db 0
+		db 0
 
 		org 0x4020
 	 db 1
 		db 2
-input		db 3
+		db 3
 	"));
 
 	// wait (too much) to be sure screen mode changed
@@ -1155,12 +1155,11 @@ fn execute_pop() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x4000
-		ld sp, stack
+		ld sp, 0x4006
 		pop hl
 		jr $
-stack
+	stack:
 		dw 0xdead
-		assert stack == 0x4000 + 6
 	"));
 
 	let motherboard = execute_program(0x4000, 0x4000,code); 
@@ -1183,13 +1182,12 @@ fn execute_ret1() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x4000
-		ld sp, stack
+		ld sp, 0x4004
 		ret
-stack
+	stack:
 		dw back
 
-back
-		assert back == 0x4000 + 6
+	back:
 		jr $
 
 	"));
@@ -1208,13 +1206,12 @@ fn execute_ret2() {
 	let code = dbg!(cpclib_macros::assemble!(
 		"
 		org 0x4000
-		call end
-return
-		assert return == 0x4000 + 3
+		call 0x4010
+	return_point:
 		jr $ ; really the final destination
 
 		org 0x4010
-end
+	target:
 		ret
 		jr $ ; end of test
 	"));
