@@ -172,7 +172,7 @@ impl WaitVerticalSynchronization {
                 }
             }
 
-            Done => unreachable!(),
+            Self::Done => unreachable!(),
         };
     }
 

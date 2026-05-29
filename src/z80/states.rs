@@ -4,7 +4,10 @@ use lazy_static::lazy_static;
 use regex::Regex;
 //use cpclib_asm::preamble::*;
 use super::{Reg16, Reg8, Z80Pin};
-use cpclib_asm::preamble::{DataAccess, Expr, ExprEvaluationExt, Mnemonic, Token};
+use cpclib_asm::preamble::{
+    DataAccess, DataAccessElem, Expr, ExprEvaluationExt, ListingElement, Mnemonic,
+    ParseToken, Token,
+};
 
 /// Provide all the information needed by the CPU to properly execute the instruction
 trait OpcodeDecoder {
@@ -77,7 +80,7 @@ impl OpcodeDecoder for Token {
                     Mnemonic::Rl | Mnemonic::Rr |
                     Mnemonic::Sla | Mnemonic::Sra |
                     Mnemonic::Sl1 | Mnemonic::Srl,
-                    Some(DataAccess::IndexRegister16WithIndex(_, _)),
+                    Some(DataAccess::IndexRegister16WithIndex(_, _, _)),
                     Some(DataAccess::Register8(_)),
                     None
                 )
@@ -88,7 +91,7 @@ impl OpcodeDecoder for Token {
                 Token::OpCode(
                     Mnemonic::Res | Mnemonic::Set,
                     Some(_),
-                    Some(DataAccess::IndexRegister16WithIndex(_, _)),
+                    Some(DataAccess::IndexRegister16WithIndex(_, _, _)),
                     Some(_)
                 )
             ) {
@@ -101,7 +104,7 @@ impl OpcodeDecoder for Token {
                 // all other opcodes, rules are the same depending on the arguments
                 
                 match (self.mnemonic_arg1(), self.mnemonic_arg2()) {
-                    (_, Some(DataAccess::IndexRegister16WithIndex(reg, _))) |(Some(DataAccess::IndexRegister16WithIndex(reg, _)), None)
+                    (_, Some(DataAccess::IndexRegister16WithIndex(reg, _, _))) |(Some(DataAccess::IndexRegister16WithIndex(reg, _, _)), None)
                     => AddressSource::Indexed(reg.into()),
                     
                     (_, Some(DataAccess::MemoryRegister16(reg))) |(Some(DataAccess::MemoryRegister16(reg)), None)
@@ -153,7 +156,7 @@ impl OpcodeDecoder for Token {
             }
             else {
                 match (self.mnemonic_arg1(), self.mnemonic_arg2()) {
-                    (Some(DataAccess::IndexRegister16WithIndex(reg, _)), _) | (Some(DataAccess::Expression(_)), Some(DataAccess::IndexRegister16WithIndex(reg, _))) 
+                    (Some(DataAccess::IndexRegister16WithIndex(reg, _, _)), _) | (Some(DataAccess::Expression(_)), Some(DataAccess::IndexRegister16WithIndex(reg, _, _))) 
                     => AddressSource::Indexed(reg.into()),
                     
                     (Some(DataAccess::MemoryRegister16(reg)), _) | (Some(DataAccess::Expression(_)), Some(DataAccess::MemoryRegister16(reg))) 
@@ -249,7 +252,7 @@ impl OpcodeDecoder for Token {
             } else if let Token::OpCode(
                 Mnemonic::Ld,
                 Some(DataAccess::Register8(ref reg)),
-                Some(DataAccess::Memory(_) | DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)),_
+                Some(DataAccess::Memory(_) | DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _)),_
             ) = self
             {
                 DataDestination::Register8(reg.into())
@@ -264,7 +267,7 @@ impl OpcodeDecoder for Token {
             // dec-inc
             else if let Token::OpCode(
                 Mnemonic::Inc | Mnemonic::Dec,
-                Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)),
+                Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _)),
                 _,_
             ) = self
             {
@@ -275,9 +278,9 @@ impl OpcodeDecoder for Token {
                 DataDestination::None // notation is erroneous; the value of the register is taken into account, not its address
             }
             // others (mathematicla ?)
-            else if let Token::OpCode(_, _, Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)), _) = self {
+            else if let Token::OpCode(_, _, Some(DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _)), _) = self {
                 DataDestination::Pins
-            } else if let Token::OpCode(_, Some(DataAccess::MemoryRegister16(_)| DataAccess::IndexRegister16WithIndex(_, _)), None, _) = self {
+            } else if let Token::OpCode(_, Some(DataAccess::MemoryRegister16(_)| DataAccess::IndexRegister16WithIndex(_, _, _)), None, _) = self {
                 DataDestination::Pins
             }
             // repetition 
@@ -305,7 +308,7 @@ impl OpcodeDecoder for Token {
                     Mnemonic::Rl | Mnemonic::Rr |
                     Mnemonic::Sla | Mnemonic::Sra |
                     Mnemonic::Sl1 | Mnemonic::Srl,
-                    Some(DataAccess::IndexRegister16WithIndex(_, _)),
+                    Some(DataAccess::IndexRegister16WithIndex(_, _, _)),
                     Some(DataAccess::Register8(_)),
                     None
                 ))
@@ -571,9 +574,7 @@ impl OpcodeDecoder for Token {
             let opcode = opcode as usize;
             
             let repr = self.disassembling_table()[opcode];
-            let token = cpclib_asm::parser::parse_token(if repr.is_empty() { "NOP" } else { repr })
-            .unwrap()
-            .1;
+            let token = Token::parse_token(if repr.is_empty() { "NOP" } else { repr }).unwrap();
             
             let read_from_pins = token.read_data_from_bus() ;
             let write_to_pins = token.write_data_to_bus();
@@ -597,7 +598,7 @@ impl OpcodeDecoder for Token {
             let nb_bytes_to_read = token.nb_bytes_to_read();
             
             let flag_test = match token.mnemonic_arg1() {
-                Some(DataAccess::FlagTest(f)) => Some(*f),
+                Some(DataAccess::FlagTest(f)) => Some(f.clone()),
                 _ => None,
             };
 
@@ -625,13 +626,13 @@ impl OpcodeDecoder for Token {
         pub const fn disassembling_table(&self) -> &[&'static str; 256] {
             // the decoding table depends on the prefix
             match self {
-                OpcodePrefix::None => &cpclib_asm::disass::TABINSTR,
-                OpcodePrefix::Cb => &cpclib_asm::disass::TABINSTRCB,
-                OpcodePrefix::Dd => &cpclib_asm::disass::TABINSTRDD,
-                OpcodePrefix::Ed => &cpclib_asm::disass::TABINSTRED,
-                OpcodePrefix::Fd => &cpclib_asm::disass::TABINSTRFD,
-                OpcodePrefix::DdCb => &cpclib_asm::disass::TABINSTRDDCB,
-                OpcodePrefix::FdCb => &cpclib_asm::disass::TABINSTRFDCB,
+                OpcodePrefix::None => &cpclib_tokens::opcode_table::TABINSTR,
+                OpcodePrefix::Cb => &cpclib_tokens::opcode_table::TABINSTRCB,
+                OpcodePrefix::Dd => &cpclib_tokens::opcode_table::TABINSTRDD,
+                OpcodePrefix::Ed => &cpclib_tokens::opcode_table::TABINSTRED,
+                OpcodePrefix::Fd => &cpclib_tokens::opcode_table::TABINSTRFD,
+                OpcodePrefix::DdCb => &cpclib_tokens::opcode_table::TABINSTRDDCB,
+                OpcodePrefix::FdCb => &cpclib_tokens::opcode_table::TABINSTRFDCB,
             }
         }
         
@@ -691,7 +692,7 @@ impl OpcodeDecoder for Token {
                 DataAccess::Register16(reg) => DataSource::Register16(reg.into()),
                 DataAccess::Register8(reg) => DataSource::Register8(reg.into()),
                 DataAccess::Expression(_) => DataSource::Immediate, // to be read
-                DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_,_) => DataSource::Pins, // what has bin read is stored in the pins
+                DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _) => DataSource::Pins, // what has bin read is stored in the pins
                 _ => panic!("{:?} unimplemented", d),
             }
         }

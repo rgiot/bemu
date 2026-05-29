@@ -1,8 +1,6 @@
-cargo-features = ["edition2021"]
-
 [package]
 name = "amsrust"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Romain Giot <giot.romain@gmail.com>"]
 edition = "2021"
 
@@ -12,9 +10,10 @@ edition = "2021"
 num = "0.4.0"
 num_enum = "0.5.1"
 itertools = "0.10.0"
-cpclib = {path = "../rust.cpclib/cpclib"}
-cpclib-asm = {path = "../rust.cpclib/cpclib-asm"}
-cpclib-macros = {path = "../rust.cpclib/cpclib-macros"}
+cpclib = {path = "../rust.cpcdemotools/cpclib"}
+cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm"}
+cpclib-macros = {path = "../rust.cpcdemotools/cpclib-macros"}
+cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens"}
 rand="0.8.3"
 regex = "1.4.6"
 lazy_static = "1.4.0"
@@ -28,13 +27,13 @@ smallvec = "1.6.1"
 rustyline = "8.2.0" # Make not mandaotry
 
 [patch.crates-io]
-cpclib = {path = "../rust.cpclib/cpclib/"}
-cpclib-asm = {path = "../rust.cpclib/cpclib-asm/"}
-cpclib-basic = {path = "../rust.cpclib/cpclib-basic/"}
-cpclib-disc = {path = "../rust.cpclib/cpclib-disc/"}
-cpclib-macros = {path = "../rust.cpclib/cpclib-macros/"}
-cpclib-sna = {path = "../rust.cpclib/cpclib-sna/"}#
-cpclib-tokens = {path = "../rust.cpclib/cpclib-tokens/"}
-cpclib-xfer = {path = "../rust.cpclib/cpclib-xfer/"}
-cpclib-xfertool = {path = "../rust.cpclib/cpclib-xfertool/"}
-cpclib-z80emu = {path = "../rust.cpclib/cpclib-z80emu/"}
+cpclib = {path = "../rust.cpcdemotools/cpclib/"}
+cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm/"}
+cpclib-basic = {path = "../rust.cpcdemotools/cpclib-basic/"}
+cpclib-disc = {path = "../rust.cpcdemotools/cpclib-disc/"}
+cpclib-macros = {path = "../rust.cpcdemotools/cpclib-macros/"}
+cpclib-sna = {path = "../rust.cpcdemotools/cpclib-sna/"}#
+cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens/"}
+cpclib-xfer = {path = "../rust.cpcdemotools/cpclib-xfer/"}
+cpclib-xfertool = {path = "../rust.cpcdemotools/cpclib-xfertool/"}
+cpclib-z80emu = {path = "../rust.cpcdemotools/cpclib-z80emu/"}

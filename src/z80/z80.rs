@@ -18,8 +18,17 @@ use std::ops::BitAnd;
 
 use cpclib_asm::preamble::Token;
 use cpclib_asm::preamble::{
-    DataAccess, ExprEvaluationExt, FlagTest, Mnemonic, SymbolsTableCaseDependent,
+    DataAccess, DataAccessElem, Expr, ExprElement, ExprEvaluationExt, FlagTest, ListingElement,
+    Mnemonic,
 };
+
+fn eval_expr_to_i32(expr: &Expr) -> i32 {
+    expr.eval().unwrap().int().unwrap()
+}
+
+fn eval_data_access_to_i32(access: &DataAccess) -> i32 {
+    eval_expr_to_i32(access.get_expression().unwrap())
+}
 
 macro_rules! inner_8bits_sub {
     ($a:ident,$b:ident,$f:ident) => {{
@@ -814,7 +823,7 @@ impl Z80 {
                 
                 
                 Mnemonic::Add => {
-                    let involve_indexes = matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _))) | matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _))
+                    let involve_indexes = matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _, _))) | matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _, _))
                     );
 
                     match arg1.unwrap() {
@@ -872,13 +881,13 @@ impl Z80 {
                 
                 Mnemonic::Bit => {
                     let val = self.get_available_8bits_value(arg2.unwrap());
-                    let bit = val & 1 << arg1.unwrap().expr().unwrap().eval().unwrap() != 0;
+                    let bit = val & 1 << eval_data_access_to_i32(arg1.unwrap()) != 0;
                     
                     self.set_flag_on(Z80Flags::H);
                     self.set_flag(Z80Flags::Z, bit);
                     self.set_flag_off(Z80Flags::N);
 
-                    if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
+                    if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _, _))) {
                         self.next_state = MCycle::new_fake(1);
                     }
                 }
@@ -893,7 +902,7 @@ impl Z80 {
                     }
                     
                     let addr = match arg2 {
-                        Some(DataAccess::Expression(exp)) => exp.eval().unwrap() as u16,
+                        Some(DataAccess::Expression(exp)) => eval_expr_to_i32(exp) as u16,
                         
                         _ => unreachable!(),
                     };
@@ -1125,7 +1134,7 @@ impl Z80 {
                             self.reg16_mut(left).dec();
                             update_flags = false;
                         }
-                        DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_,_) => {
+                        DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _) => {
                             // executed in the middle
                             let  left = self.get_data_from_pins();
                             let (res2, ovf2) = left.overflowing_sub(1);
@@ -1136,7 +1145,7 @@ impl Z80 {
                         _ => unreachable!()
                     }
                     
-                    if matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
+                    if matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _, _))) {
                         self.expect_additional_fake_cycle = 1;
                     }
                     else if matches!(arg1, Some(DataAccess::Register16(_) | DataAccess::IndexRegister16(_))) {
@@ -1160,11 +1169,8 @@ impl Z80 {
                 Mnemonic::Djnz => {
                     self.reg8_mut(Reg8::B).dec();
                     if self.reg8(Reg8::B).value() != 0 {
-                        let mut sym = SymbolsTableCaseDependent::default();
-                        sym.set_symbol_to_value("$", -2);
-                        
-                        let expr = arg1.unwrap().expr().unwrap();
-                        let displacement = expr.relative_delta().unwrap();
+                        let expr = arg1.unwrap().get_expression().unwrap();
+                        let displacement = expr.relative_delta();
                         if displacement > 0 {
                             self.pc.add(displacement as u16);
                         } else {
@@ -1241,7 +1247,7 @@ impl Z80 {
                     let mut res = 0;
                     let mut ovf = false;
                     match arg1.unwrap() {
-                        DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)=> {
+                        DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _)=> {
                             // read and write directly in pins (shoudl be launched before writting the results)
                             let left = self.get_data_from_pins();
                             let (left, ovf2) = left.overflowing_add(1);
@@ -1281,7 +1287,7 @@ impl Z80 {
                         _ => unimplemented!(),
                     }
 
-                    if matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
+                    if matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _, _))) {
                         self.expect_additional_fake_cycle = 1;
                     }
                     else if matches!(arg1, Some(DataAccess::Register16(_) | DataAccess::IndexRegister16(_))) {
@@ -1308,7 +1314,7 @@ impl Z80 {
                     
                     if do_jump {
                         let adr = match arg2.unwrap() {
-                            DataAccess::Expression(expr) => expr.eval().unwrap() as u16,
+                            DataAccess::Expression(expr) => eval_expr_to_i32(expr) as u16,
                             
                             DataAccess::MemoryRegister16(reg) => self.reg16(reg.into()).value(),
                             
@@ -1347,7 +1353,7 @@ impl Z80 {
                 }
                 
                 Mnemonic::Im => {
-                    match arg1.unwrap().expr().unwrap().eval().unwrap() {
+                    match eval_data_access_to_i32(arg1.unwrap()) {
                         0 => self.im = InterruptMode::Mode0,
                         1 => self.im = InterruptMode::Mode1,
                         2 => self.im = InterruptMode::Mode2,
@@ -1391,19 +1397,19 @@ impl Z80 {
                         arg2, 
                         DataAccess::Memory(_) |  
                         DataAccess::MemoryIndexRegister16(_) | 
-                        DataAccess::IndexRegister16WithIndex(_, _) |
+                        DataAccess::IndexRegister16WithIndex(_, _, _) |
                         DataAccess::MemoryRegister16(_)
                     );
                     let to_memory = matches!(
                         arg1, 
                         DataAccess::Memory(_) |
                         DataAccess::MemoryIndexRegister16(_) |
-                        DataAccess::IndexRegister16WithIndex(_, _) |
+                        DataAccess::IndexRegister16WithIndex(_, _, _) |
                         DataAccess::MemoryRegister16(_)
                     );
                     
                     
-                    let involve_indexes = matches!(arg1, DataAccess::IndexRegister16WithIndex(_, _)) | matches!(arg2, DataAccess::IndexRegister16WithIndex(_, _)
+                    let involve_indexes = matches!(arg1, DataAccess::IndexRegister16WithIndex(_, _, _)) | matches!(arg2, DataAccess::IndexRegister16WithIndex(_, _, _)
                     );
 
                     let involve_special_reg = matches!(arg1, DataAccess::SpecialRegisterI | DataAccess::SpecialRegisterR) | matches!(arg2, DataAccess::SpecialRegisterI | DataAccess::SpecialRegisterR
@@ -1554,12 +1560,12 @@ impl Z80 {
             
             Mnemonic::Res => {
                 let mut  val = self.get_available_8bits_value(arg2.unwrap());
-                val |= 1 << arg1.unwrap().expr().unwrap().eval().unwrap();
+                val |= 1 << eval_data_access_to_i32(arg1.unwrap());
                 self.store_computed_8bits_value(arg2.unwrap(), val);
 
 
 
-                if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
+                if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _, _))) {
 
                     self.expect_additional_fake_cycle = 1;
                 }
@@ -1629,7 +1635,7 @@ impl Z80 {
                 self.auto_update_flags_x_y(val);
 
                 if matches!(arg1,
-                    Some(DataAccess::IndexRegister16WithIndex(_,_))) {
+                    Some(DataAccess::IndexRegister16WithIndex(_, _, _))) {
                         self.expect_additional_fake_cycle = 1;
                 }
             }
@@ -1727,7 +1733,7 @@ impl Z80 {
                 self.sp.dec();
                 self.sp.dec();
                 
-                let addr =   match arg1.unwrap().expr().unwrap().eval().unwrap(){
+                let addr =   match eval_data_access_to_i32(arg1.unwrap()) {
                     0 => 0,
                     8 => 0x8,
                     10 => 0x10,
@@ -1744,7 +1750,7 @@ impl Z80 {
             
             
             Mnemonic::Set => {
-                let bit = arg1.unwrap().expr().unwrap().eval().unwrap() as u8;
+                let bit = eval_data_access_to_i32(arg1.unwrap()) as u8;
                 
                 match arg2.unwrap() {
                     DataAccess::Register8(reg8) => {
@@ -1752,7 +1758,7 @@ impl Z80 {
                     }
                     
                     DataAccess::MemoryRegister16(_)
-                    | DataAccess::IndexRegister16WithIndex(_, _) => {
+                    | DataAccess::IndexRegister16WithIndex(_, _, _) => {
                         // data is on the pins
                         let mut data = self.get_data_from_pins();
                         set_bit(&mut data, bit);
@@ -1764,7 +1770,7 @@ impl Z80 {
                     }
                 }
 
-                if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _))) {
+                if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _, _))) {
                     self.expect_additional_fake_cycle = 1;
                 }
             }
@@ -1844,7 +1850,7 @@ impl Z80 {
                 DataAccess::IndexRegister8(_) |
                  DataAccess::Expression(_) | 
                  DataAccess::MemoryRegister16(_) | 
-                 DataAccess::IndexRegister16WithIndex(_, _)) => {
+                      DataAccess::IndexRegister16WithIndex(_, _, _)) => {
                     let left = self.reg8(Reg8::A).value();
                     let right = self.get_available_8bits_value(arg1.unwrap());
                     let f = &mut self.reg8_mut(Reg8::F).val;
@@ -1938,13 +1944,13 @@ impl Z80 {
                 let reg: Reg8 = reg.into();
                 return self.reg8(reg).get();
             }
-            DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _)=> {
+            DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _)=> {
                 // Here we do not care at all of which register is used for memory reading
                 // Because the CPU has already read the information
                 return self.reg8(Reg8::Z).get();
             }
             DataAccess::Expression(expr) => {
-                return expr.eval().unwrap() as u8; // cannot fail as the value has been disassembled
+                return eval_expr_to_i32(expr) as u8; // cannot fail as the value has been disassembled
             }
             DataAccess::Memory(_) => return self.reg8(Reg8::Z).get(),
             _ => {
@@ -1965,7 +1971,7 @@ impl Z80 {
                 let reg: Reg8 = reg.into();
                 self.reg8_mut(reg).set(val);
             }
-            DataAccess::MemoryRegister16(_)  | DataAccess::IndexRegister16WithIndex(_, _) => {
+            DataAccess::MemoryRegister16(_)  | DataAccess::IndexRegister16WithIndex(_, _, _) => {
                 self.set_data_on_pins(val);
             }
             DataAccess::Memory(_) => {
@@ -1995,7 +2001,7 @@ impl Z80 {
                 //  return self.reg16(Reg16::Wz).get();
             }
             DataAccess::Expression(expr) => {
-                return expr.eval().unwrap() as u16; // cannot fail as the value has been disassembled
+                return eval_expr_to_i32(expr) as u16; // cannot fail as the value has been disassembled
             }
             DataAccess::Memory(_) => return self.reg16(Reg16::Wz).get(),
             _ => {

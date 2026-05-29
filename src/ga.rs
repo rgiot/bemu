@@ -134,8 +134,8 @@ impl From<u8> for Pen {
     }
 }
 
-impl From<cpclib::ga::Pen> for Pen {
-    fn from(p: cpclib::ga::Pen) -> Pen {
+impl From<cpclib::image::ga::Pen> for Pen {
+    fn from(p: cpclib::image::ga::Pen) -> Pen {
         p.number().into()
     }
 }
@@ -165,22 +165,36 @@ lazy_static! {
     /// LUT to retreive the pens in a given byte in mode 0
     static ref BYTE_TO_MODE0_PENS: [(Pen, Pen); 256] =
         array_init(|byte|{
-            let pens = cpclib::pixels::mode0::byte_to_pens(byte as u8);
-            pens.map(|p| Pen::from(p))
+            let pens = cpclib::image::pixels::mode0::byte_to_pens(byte as u8);
+            (Pen::from(pens[0]), Pen::from(pens[1]))
         });
 
     /// LUT to retreive the pens in a given byte in mode 1
     static ref BYTE_TO_MODE1_PENS: [(Pen, Pen, Pen, Pen); 256] =
     array_init(|byte|{
-        let pens = cpclib::pixels::mode1::byte_to_pens(byte as u8);
-        pens.map(|p| Pen::from(p))
+        let pens = cpclib::image::pixels::mode1::byte_to_pens(byte as u8);
+        (
+            Pen::from(pens[0]),
+            Pen::from(pens[1]),
+            Pen::from(pens[2]),
+            Pen::from(pens[3]),
+        )
     });
 
     /// LUT to retreive the pens in a given byte in mode 2
     static ref BYTE_TO_MODE2_PENS: [(Pen, Pen, Pen, Pen, Pen, Pen, Pen, Pen); 256] =
     array_init(|byte|{
-        let pens = cpclib::pixels::mode2::byte_to_pens(byte as u8);
-        pens.map(|p| Pen::from(p))
+        let pens = cpclib::image::pixels::mode2::byte_to_pens(byte as u8);
+        (
+            Pen::from(pens[0]),
+            Pen::from(pens[1]),
+            Pen::from(pens[2]),
+            Pen::from(pens[3]),
+            Pen::from(pens[4]),
+            Pen::from(pens[5]),
+            Pen::from(pens[6]),
+            Pen::from(pens[7]),
+        )
     });
 }
 
@@ -197,8 +211,8 @@ impl From<u8> for Ink {
     }
 }
 
-impl From<cpclib::ga::Ink> for Ink {
-    fn from(i: cpclib::ga::Ink) -> Ink {
+impl From<cpclib::image::ga::Ink> for Ink {
+    fn from(i: cpclib::image::ga::Ink) -> Ink {
         Ink(i.number())
     }
 }
@@ -348,7 +362,7 @@ impl PENR {
 impl INKR {
     fn ink(&self) -> Ink {
         let hard = self.0 & 0b000_11111;
-        cpclib::ga::Ink::from_hardware_color_number(hard).into()
+        cpclib::image::ga::Ink::from_hardware_color_number(hard).into()
     }
 }
 
