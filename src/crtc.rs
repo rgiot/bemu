@@ -869,8 +869,13 @@ mod test {
         for char_line in 0..=crtc.r4 {
             for scan_line in 0..=crtc.r9 {
                 for char in 0..=crtc.r0 {
+                    crtc.save_pins_state();
                     crtc.set_pin(CrtcPin::CCLK, true);
 
+                    assert!(!crtc.is_activated());
+
+                    crtc.save_pins_state();
+                    crtc.set_pin(CrtcPin::CCLK, false);
                     assert!(crtc.is_activated());
                     assert!(crtc.must_execute_tick());
 
@@ -902,8 +907,12 @@ mod test {
                         assert!(!crtc.get_pin(CrtcPin::HS));
                     }
 
-                    // Test for vsync
-                    if crtc.vcc >= crtc.r7 && crtc.vcc < crtc.r7 + crtc.vsync_height() {
+                    // VSYNC duration is expressed in raster lines, not in character lines.
+                    let raster_line = (crtc.vcc.value() as u16) * (crtc.r9 as u16 + 1)
+                        + crtc.vlc.value() as u16;
+                    let vsync_start = (crtc.r7 as u16) * (crtc.r9 as u16 + 1);
+                    let vsync_end = vsync_start + crtc.vsync_height() as u16;
+                    if raster_line >= vsync_start && raster_line < vsync_end {
                         assert!(crtc.get_pin(CrtcPin::VS));
                     } else {
                         assert!(!crtc.get_pin(CrtcPin::VS));
@@ -914,13 +923,12 @@ mod test {
                         let expected = 0xc000
                             + 0x800 * (scan_line as u16)
                             + 80 * (char_line as u16)
-                            + 2 * (char as u16);
+                            + 2 * (char as u16)
+                            + 1;
                         let collected = crtc.get_address_from_pins();
 
                         assert_eq!(expected, collected, "0x{:x}!=0x{:x}", expected, collected);
                     }
-
-                    crtc.set_pin(CrtcPin::CCLK, false);
                 }
             }
         }
