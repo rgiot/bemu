@@ -30,6 +30,19 @@ fn eval_data_access_to_i32(access: &DataAccess) -> i32 {
     eval_expr_to_i32(access.get_expression().unwrap())
 }
 
+fn eval_relative_displacement(access: &DataAccess) -> i8 {
+    match access {
+        DataAccess::Expression(expr) => {
+            if expr.is_relative() {
+                expr.relative_delta()
+            } else {
+                eval_expr_to_i32(expr) as i8
+            }
+        }
+        _ => unreachable!("Expected expression for relative displacement, got {access:?}"),
+    }
+}
+
 macro_rules! inner_8bits_sub {
     ($a:ident,$b:ident,$f:ident) => {{
         let (res, ovf) = $a.overflowing_sub($b);
@@ -1173,8 +1186,10 @@ impl Z80 {
                 Mnemonic::Djnz => {
                     self.reg8_mut(Reg8::B).dec();
                     if self.reg8(Reg8::B).value() != 0 {
-                        let expr = arg1.unwrap().get_expression().unwrap();
-                        let displacement = expr.relative_delta();
+                        let displacement = match arg1 {
+                            Some(arg @ DataAccess::Expression(_)) => eval_relative_displacement(arg),
+                            _ => self.reg8(Reg8::Z).value() as i8,
+                        };
                         if displacement > 0 {
                             self.pc.add(displacement as u16);
                         } else {
@@ -1339,10 +1354,11 @@ impl Z80 {
                     };
                     
                     if do_jump {
-                        //        dbg!("The implementation is incorrect. An additional mcycle must handle the operation");
-                        
-                        let displacement = self.reg8(Reg8::Z).value();
-                        let displacement :i8 = unsafe{std::mem::transmute(displacement)};
+                        let displacement = match (arg1, arg2) {
+                            (Some(arg @ DataAccess::Expression(_)), None) => eval_relative_displacement(arg),
+                            (_, Some(arg @ DataAccess::Expression(_))) => eval_relative_displacement(arg),
+                            _ => self.reg8(Reg8::Z).value() as i8,
+                        };
              
                       
                         if displacement > 0 {
