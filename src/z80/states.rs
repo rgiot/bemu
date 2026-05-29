@@ -59,17 +59,19 @@ impl OpcodeDecoder for Token {
         } else if self.is_retlike_opcode() {
             AddressSource::Stack(StackDelta::Zero)
         } else if matches!(
-            self.mnemonic().unwrap(), 
-            Mnemonic::ExMemSp | Mnemonic::Pop) 
+            self.mnemonic(), 
+            Some(Mnemonic::ExMemSp | Mnemonic::Pop)) 
             {
                 AddressSource::Stack(StackDelta::Zero)
             } else if matches!(
-                self.mnemonic().unwrap(), 
-                Mnemonic::Ldd | Mnemonic::Lddr |
-                Mnemonic::Ldi | Mnemonic::Ldir |
-                Mnemonic::Cpd | Mnemonic::Cpdr |
-                Mnemonic::Cpi | Mnemonic::Cpir |
-                Mnemonic::Rld | Mnemonic::Rrd
+                self.mnemonic(), 
+                Some(
+                    Mnemonic::Ldd | Mnemonic::Lddr |
+                    Mnemonic::Ldi | Mnemonic::Ldir |
+                    Mnemonic::Cpd | Mnemonic::Cpdr |
+                    Mnemonic::Cpi | Mnemonic::Cpir |
+                    Mnemonic::Rld | Mnemonic::Rrd
+                )
             ) 
             {
                 AddressSource::Register16(Reg16::Hl)
@@ -136,15 +138,17 @@ impl OpcodeDecoder for Token {
             else if let Some(Mnemonic::Call | Mnemonic::Push | Mnemonic::Rst) = self.mnemonic() {
                 AddressSource::Stack(StackDelta::MinusTwo)
             }  else if matches!(
-                self.mnemonic().unwrap(), 
-                Mnemonic::Ldd | Mnemonic::Lddr |
-                Mnemonic::Ldi | Mnemonic::Ldir 
+                self.mnemonic(), 
+                Some(
+                    Mnemonic::Ldd | Mnemonic::Lddr |
+                    Mnemonic::Ldi | Mnemonic::Ldir
+                )
             ) 
             {
                 AddressSource::Register16(Reg16::De)
             } else if matches!(
-                self.mnemonic().unwrap(),
-                Mnemonic::Rld | Mnemonic::Rrd
+                self.mnemonic(),
+                Some(Mnemonic::Rld | Mnemonic::Rrd)
             ) {
                 AddressSource::Register16(Reg16::Hl)
             }
@@ -285,15 +289,16 @@ impl OpcodeDecoder for Token {
             }
             // repetition 
             else if matches!(
-                self.mnemonic().unwrap(), 
-                Mnemonic::Outi | Mnemonic::Outd
-                | Mnemonic::Otir | Mnemonic::Otdr
-                | Mnemonic::Ldi | Mnemonic::Ldd
-                | Mnemonic::Ldir | Mnemonic::Lddr
-                | Mnemonic::Cpi | Mnemonic::Cpd
-                | Mnemonic::Cpir | Mnemonic::Cpdr
-                | Mnemonic::Rld | Mnemonic::Rrd
-                
+                self.mnemonic(), 
+                Some(
+                    Mnemonic::Outi | Mnemonic::Outd
+                    | Mnemonic::Otir | Mnemonic::Otdr
+                    | Mnemonic::Ldi | Mnemonic::Ldd
+                    | Mnemonic::Ldir | Mnemonic::Lddr
+                    | Mnemonic::Cpi | Mnemonic::Cpd
+                    | Mnemonic::Cpir | Mnemonic::Cpdr
+                    | Mnemonic::Rld | Mnemonic::Rrd
+                )
             )
             {
                 DataDestination::Pins
@@ -518,9 +523,11 @@ impl OpcodeDecoder for Token {
             self.read_data == DataSource::Pins 
                 && self.write_data == DataSource::Pins 
                 && !matches!(
-                    self.token.mnemonic().unwrap(),
-                    Mnemonic::Ldd | Mnemonic::Lddr
-                    | Mnemonic::Ldi | Mnemonic::Ldir
+                    self.token.mnemonic(),
+                    Some(
+                        Mnemonic::Ldd | Mnemonic::Lddr
+                        | Mnemonic::Ldi | Mnemonic::Ldir
+                    )
                 )
         }
     }
@@ -574,7 +581,13 @@ impl OpcodeDecoder for Token {
             let opcode = opcode as usize;
             
             let repr = self.disassembling_table()[opcode];
-            let token = Token::parse_token(if repr.is_empty() { "NOP" } else { repr }).unwrap();
+            let parsed = Token::parse_token(if repr.is_empty() { "NOP" } else { repr })
+                .unwrap_or_else(|_| Token::parse_token("NOP").unwrap());
+            let token = if parsed.is_opcode() && parsed.mnemonic().is_some() {
+                parsed
+            } else {
+                Token::parse_token("NOP").unwrap()
+            };
             
             let read_from_pins = token.read_data_from_bus() ;
             let write_to_pins = token.write_data_to_bus();
@@ -582,8 +595,6 @@ impl OpcodeDecoder for Token {
             let write_address = token.write_address();
             let write_data: DataSource = token.write_data();
             let read_data = token.read_data();
-            let mnemonic = token.mnemonic().unwrap();
-            
             let nb_bytes_to_write = token.nb_bytes_to_write();
             
             if read_address != AddressSource::None {

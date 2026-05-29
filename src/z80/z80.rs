@@ -19,7 +19,7 @@ use std::ops::BitAnd;
 use cpclib_asm::preamble::Token;
 use cpclib_asm::preamble::{
     DataAccess, DataAccessElem, Expr, ExprElement, ExprEvaluationExt, FlagTest, ListingElement,
-    Mnemonic,
+    Mnemonic, ParseToken,
 };
 
 fn eval_expr_to_i32(expr: &Expr) -> i32 {
@@ -614,7 +614,11 @@ impl Z80 {
                     &memory,
                 )
                 .unwrap();
-                assert!(opcode.is_opcode());
+                let opcode = if opcode.is_opcode() && opcode.mnemonic().is_some() {
+                    opcode
+                } else {
+                    Token::parse_token("NOP").unwrap()
+                };
          //       dbg!(&opcode);
                 self.execute_opcode(
                     opcode.mnemonic().unwrap(),
