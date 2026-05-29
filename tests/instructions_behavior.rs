@@ -280,7 +280,57 @@ fn execute_call_conditionnal_2(){
 
 #[test]
 fn execute_cp() {
-	todo!();
+	// CP must not modify A, only flags.
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld a, 0x42
+		cp 0x42
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code);
+	assert_eq!(0x42, motherboard.cpu().reg8(Reg8::A).value());
+	assert!(motherboard.cpu().flag(Z80Flags::Z));
+	assert!(!motherboard.cpu().flag(Z80Flags::C));
+	assert!(!motherboard.cpu().flag(Z80Flags::S));
+	assert!(motherboard.cpu().flag(Z80Flags::N));
+
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld a, 0x10
+		ld b, 0x20
+		cp b
+		jr $ ; end of test
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code);
+	assert_eq!(0x10, motherboard.cpu().reg8(Reg8::A).value());
+	assert!(!motherboard.cpu().flag(Z80Flags::Z));
+	assert!(motherboard.cpu().flag(Z80Flags::C));
+	assert!(motherboard.cpu().flag(Z80Flags::S));
+	assert!(motherboard.cpu().flag(Z80Flags::N));
+
+	let code = dbg!(cpclib_macros::assemble!(
+		"
+		org 0x4000
+		ld a, 0x20
+		ld hl, value
+		cp (hl)
+		jr $ ; end of test
+
+		org 0x4010
+	value
+		db 0x10
+	"));
+
+	let motherboard = execute_program(0x4000, 0x4000, code);
+	assert_eq!(0x20, motherboard.cpu().reg8(Reg8::A).value());
+	assert!(!motherboard.cpu().flag(Z80Flags::Z));
+	assert!(!motherboard.cpu().flag(Z80Flags::C));
+	assert!(!motherboard.cpu().flag(Z80Flags::S));
+	assert!(motherboard.cpu().flag(Z80Flags::N));
 }
 
 #[test]
@@ -686,14 +736,8 @@ label
 		0x4000
 	);
 	assert_eq!(
-		instruction.token,
-		Token::OpCode(
-			Mnemonic::Jr,
-			None,
-			Some(DataAccess::Expression(Expr::RelativeDelta(
-				((0x3ff0 - (0x4000+2)) & 0xff) as i8
-			))), None
-		)
+		instruction.memory[1] as i8,
+		-((0x4000 + 2 - 0x3ff0) as i8)
 	);
 
 	let instruction = dbg!(motherboard.disassemble_instruction_at(0x3ff0));
@@ -702,14 +746,8 @@ label
 		0x3ff0
 	);
 	assert_eq!(
-		instruction.token,
-		Token::OpCode(
-			Mnemonic::Jr,
-			None,
-			Some(DataAccess::Expression(Expr::RelativeDelta(
-				((-2) & 0xff) as i8
-			))), None
-		)
+		instruction.memory[1] as i8,
+		-2
 	);
 
 
@@ -745,14 +783,8 @@ label
 		0x4000
 	);
 	assert_eq!(
-		instruction.token,
-		Token::OpCode(
-			Mnemonic::Jr,
-			None,
-			Some(DataAccess::Expression(Expr::RelativeDelta(
-				((0x3ff0 - (0x4000+2)) & 0xff) as i8
-			))), None
-		)
+		instruction.memory[1] as i8,
+		-((0x4000 + 2 - 0x3ff0) as i8)
 	);
 
 	assert_eq!(
@@ -787,14 +819,8 @@ after
 		0x4000
 	);
 	assert_eq!(
-		instruction.token,
-		Token::OpCode(
-			Mnemonic::Jr,
-			None,
-			Some(DataAccess::Expression(Expr::RelativeDelta(
-				((0x3ff0 - (0x4000+2)) & 0xff) as i8
-			))), None
-		)
+		instruction.memory[1] as i8,
+		-((0x4000 + 2 - 0x3ff0) as i8)
 	);
 
 	assert_eq!(

@@ -778,28 +778,27 @@ impl Z80 {
                 Mnemonic::Nop => {}
                 
                 Mnemonic::Adc => {
-                    match arg1.unwrap() {
-                        DataAccess::Register8(cpclib_asm::preamble::Register8::A) => {
-                            // this MUST be A register
-                            // 8bits version
+                    let source = arg2.or(arg1).unwrap();
+                    match arg1 {
+                        None | Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)) => {
                             let left = self.a();
-                            let mut right = self.get_available_8bits_value(arg2.unwrap());
+                            let mut right = self.get_available_8bits_value(source);
                             if self.flag(Z80Flags::C) {
                                 right += 1;
                             }
-                            let ovf = self.reg8_mut(Reg8::A).add(right); 
+                            let ovf = self.reg8_mut(Reg8::A).add(right);
                             let res = self.a();
 
                             self.auto_update_flags(res);
                             self.set_flag(Z80Flags::C, ovf);
                             self.set_flag_off(Z80Flags::N);
-                            self.set_flag(Z80Flags::H, ((left ^ res ^ res) & Z80Flags::H ) != 0);
-                            self.set_flag(Z80Flags::P,
-                                (((right ^ left ^ 0x80) & (right ^ res) & 0x80) != 0 )
+                            self.set_flag(Z80Flags::H, ((left ^ res ^ res) & Z80Flags::H) != 0);
+                            self.set_flag(
+                                Z80Flags::P,
+                                (((right ^ left ^ 0x80) & (right ^ res) & 0x80) != 0)
                             );
                         },
-                        
-                        DataAccess::Register16(cpclib_asm::preamble::Register16::Hl)=> {
+                        Some(DataAccess::Register16(cpclib_asm::preamble::Register16::Hl))=> {
                             let reg = cpclib_asm::preamble::Register16::Hl.into();
 
                             let right = self.get_available_16bits_value(arg2.unwrap());
@@ -843,12 +842,12 @@ impl Z80 {
                     let involve_indexes = matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _, _))) | matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _, _))
                     );
 
-                    match arg1.unwrap() {
-                        DataAccess::Register8(cpclib_asm::preamble::Register8::A) => {
-                            // this MUST be A register
-                            // 8bits version
+                    let source = arg2.or(arg1).unwrap();
+
+                    match arg1 {
+                        None | Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)) => {
                             let left = self.a();
-                            let right = self.get_available_8bits_value(arg2.unwrap());
+                            let right = self.get_available_8bits_value(source);
                             let ovf = self.reg8_mut(Reg8::A).add(right); 
                             
                             self.auto_update_flags(self.a());
@@ -857,7 +856,7 @@ impl Z80 {
                             self.set_flag(Z80Flags::P, (right ^ left ^ 0x80) & (right ^ self.a()) & 0x80 != 0);
                         }
                         
-                        DataAccess::Register16(_) | DataAccess::IndexRegister16(_)  => {
+                        Some(DataAccess::Register16(_)) | Some(DataAccess::IndexRegister16(_))  => {
                             let reg: Reg16 = match arg1.unwrap() {
                                 DataAccess::Register16(reg) => reg.into(),
                                 DataAccess::IndexRegister16(reg) => reg.into(),
@@ -885,7 +884,7 @@ impl Z80 {
                 }
                 
                 Mnemonic::And => {
-                    let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                    let mut  val = self.get_available_8bits_value(arg2.or(arg1).unwrap());
                     val = val & self.reg8(Reg8::A).value();
                     self.reg8_mut(Reg8::A).set(val);
                     
@@ -938,7 +937,7 @@ impl Z80 {
 
                 Mnemonic::Cp => {
                     let left = self.reg8(Reg8::A).value();
-                    let right = self.get_available_8bits_value(arg1.unwrap());
+                    let right = self.get_available_8bits_value(arg2.or(arg1).unwrap());
                     let f = &mut self.reg8_mut(Reg8::F).val;
                     inner_8bits_sub!(left, right, f);
                     // override bit 5 and 3
@@ -1354,11 +1353,9 @@ impl Z80 {
                     };
                     
                     if do_jump {
-                        let displacement = match (arg1, arg2) {
-                            (Some(arg @ DataAccess::Expression(_)), None) => eval_relative_displacement(arg),
-                            (_, Some(arg @ DataAccess::Expression(_))) => eval_relative_displacement(arg),
-                            _ => self.reg8(Reg8::Z).value() as i8,
-                        };
+                        // JR semantics depend on the fetched immediate displacement byte.
+                        // Using the raw byte avoids ambiguities in symbolic disassembly forms.
+                        let displacement = self.reg8(Reg8::Z).value() as i8;
              
                       
                         if displacement > 0 {
@@ -1522,7 +1519,7 @@ impl Z80 {
             },
             
             Mnemonic::Or => {
-                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                let mut  val = self.get_available_8bits_value(arg2.or(arg1).unwrap());
                 val = val | self.reg8(Reg8::A).value();                
                 self.reg8_mut(Reg8::A).set(val);
                 
@@ -1835,13 +1832,11 @@ impl Z80 {
                         
                     },
                     
-                    (
-                        Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)),
-                        _
-                    ) => {
+                    (None, Some(_)) |
+                    (Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)), _) => {
                         let left = self.reg8(Reg8::A).value();
                         let right = {
-                            let mut other = self.get_available_8bits_value(arg2.unwrap());
+                            let mut other = self.get_available_8bits_value(arg2.or(arg1).unwrap());
                             if self.flag(Z80Flags::C){
                                 other = other.wrapping_add(1);
                             }        
@@ -1865,14 +1860,15 @@ impl Z80 {
                 }
             }
             
-            Mnemonic::Sub => match arg1 {
-                Some(DataAccess::Register8(_) |
-                DataAccess::IndexRegister8(_) |
-                 DataAccess::Expression(_) | 
-                 DataAccess::MemoryRegister16(_) | 
-                      DataAccess::IndexRegister16WithIndex(_, _, _)) => {
+                        Mnemonic::Sub => match arg2.or(arg1) {
+                                Some(DataAccess::Register8(_) |
+                                DataAccess::IndexRegister8(_) |
+                                 DataAccess::Expression(_) | 
+                                 DataAccess::MemoryRegister16(_) | 
+                                            DataAccess::IndexRegister16WithIndex(_, _, _) |
+                                            DataAccess::Memory(_)) => {
                     let left = self.reg8(Reg8::A).value();
-                    let right = self.get_available_8bits_value(arg1.unwrap());
+                                        let right = self.get_available_8bits_value(arg2.or(arg1).unwrap());
                     let f = &mut self.reg8_mut(Reg8::F).val;
                     let res = inner_8bits_sub!(left, right, f);
                     self.reg8_mut(Reg8::A).set(res);
@@ -1931,7 +1927,7 @@ impl Z80 {
             }
             
             Mnemonic::Xor => {
-                let mut  val = self.get_available_8bits_value(arg1.unwrap());
+                let mut  val = self.get_available_8bits_value(arg2.or(arg1).unwrap());
                 val = val ^ self.reg8(Reg8::A).value();
                 self.reg8_mut(Reg8::A).set(val);
                 
@@ -2663,15 +2659,24 @@ impl Chip for Z80 {
                 assert!(self.get_pin(self.next_state.write_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
                 assert!(self.get_pin(Z80Pin::Neg_WR));
+
+                // For memory writes, MREQ becomes active one T-state before WR.
+                // IO writes keep IORQ timing and assert it together with WR in T2.
+                if !self.next_state.is_output() {
+                    self.off(self.next_state.write_pin_type().unwrap());
+                }
+
+                // Preload the data bus before WR is asserted.
+                let byte = self.get_byte_to_write_from_opcode_information(nb);
+                self.set_data_on_pins(byte);
                 
                 self.next_state.inc_state();
             }
             MCycle::Write(TState::T2, nb) | MCycle::Output(TState::T2, nb) => {
-                self.off(self.next_state.write_pin_type().unwrap());
+                if self.next_state.is_output() {
+                    self.off(self.next_state.write_pin_type().unwrap());
+                }
                 self.off(Z80Pin::Neg_WR); // or is it the writer that does that ?
-                
-                let byte = self.get_byte_to_write_from_opcode_information(nb);
-                self.set_data_on_pins(byte);
                 
                 self.next_state.inc_state();
             }
@@ -2848,6 +2853,8 @@ mod test {
         let mut cpu = Z80::default();
         cpu.pc.set(0x1234);
         cpu.reg8_mut(Reg8::A).set(0xff);
+
+        force_front(&mut cpu);
         
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
@@ -2896,6 +2903,8 @@ mod test {
         cpu.tick();
         cpu.tick();
         cpu.tick();
+
+        assert_eq!(cpu.reg8(Reg8::Z).get(), 0x12);
         
         assert_eq!(
             cpu.next_state,
@@ -2906,20 +2915,20 @@ mod test {
         cpu.tick();
         cpu.tick();
         cpu.tick();
+
+        assert_eq!(cpu.reg8(Reg8::W).get(), 0x34);
+        assert_eq!(cpu.reg16(Reg16::Wz).get(), 0x3412);
         
-        // Write address
+        // Execute the single write cycle for LD (nn),A
         assert_eq!(cpu.next_state, MCycle::Write(TState::T1, 0));
         cpu.tick();
+        assert_eq!(cpu.get_address_from_pins(), 0x3412);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
         cpu.tick();
-        cpu.tick();
-        assert_eq!(cpu.next_state, MCycle::Write(TState::T1, 1));
-        cpu.tick();
-        cpu.tick();
-        cpu.tick();
-        
-        // Really write byte
-        assert_eq!(cpu.next_state, MCycle::Write(TState::T1, 2));
-        cpu.tick();
+        assert_eq!(cpu.get_data_from_pins(), 0xff);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_WR));
         cpu.tick();
         cpu.tick();
         
@@ -2979,6 +2988,8 @@ mod test {
     fn test_ld_a_mem_FetchOpcode() {
         let mut cpu = Z80::default();
         cpu.pc.set(0x1234);
+
+        force_front(&mut cpu);
         
         cpu.set_pin(Z80Pin::Neg_MREQ, true);
         cpu.set_pin(Z80Pin::Neg_RD, true);
@@ -3169,6 +3180,7 @@ mod test {
         cpu.set_data_on_pins(data);
         cpu.tick();
         cpu.tick();
+        cpu.tick();
     }
     
     fn test_byte_FetchOpcodeRead2(cpu: &mut Z80, byte: u8, data: u8, data2: u8) {
@@ -3245,6 +3257,7 @@ mod test {
         ///TODO add assertions there
         cpu.tick();
         cpu.set_data_on_pins(data2);
+        cpu.tick();
         cpu.tick();
         cpu.tick();
     }
