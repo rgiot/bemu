@@ -122,7 +122,7 @@ fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: V
                         assert!(crtc_address >= 0xc000);
 
                         // Feed GA with byte
-                        let byte = bank[crtc_address as usize - 0xc000];
+                        let byte = bank[((crtc_address ^ 1) as usize) - 0xc000];
                         ga.set_memory_byte(byte); // TODO do it with its pins
                     }
 
