@@ -3,7 +3,6 @@ use amsrust::chip::*;
 use amsrust::crtc::*;
 use amsrust::ga::*;
 use amsrust::monitor::*;
-use std::collections::HashSet;
 
 fn beginning_steps(ga: &mut GateArray, crtc: &mut Crtc) {
     ga.save_pins_state();
@@ -60,6 +59,14 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     ga.manage_clocks();
 }
 
+fn fetch_video_byte(bank: &[u8; 0x4000], ga: &GateArray, crtc: &Crtc) -> u8 {
+    let crtc_address = crtc.get_address_from_pins();
+    let fetch_address = ga.video_fetch_address(crtc_address);
+    assert!(fetch_address >= 0xc000);
+
+    bank[fetch_address as usize - 0xc000]
+}
+
 fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: VideoMode) {
     // Configure the crtc just before raising the vsync
     let mut crtc = Crtc::default();
@@ -108,21 +115,17 @@ fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: V
     let crtc_address = crtc.get_address_from_pins();
     println!("0x{:x}", crtc_address);
 
-    for char_line in 0..=crtc.r4() {
-        for scan_line in 0..=crtc.r9() {
-            for char in 0..=crtc.r0() {
-                for pixel in 0..16 {
+    for _char_line in 0..=crtc.r4() {
+        for _scan_line in 0..=crtc.r9() {
+            for _char in 0..=crtc.r0() {
+                for _pixel in 0..16 {
                     beginning_steps(&mut ga, &mut crtc);
 
                     // TODO reimplement this stuff in a more
                     // realistic way
                     if ga.need_memory_byte() {
-                        // Retreive CRTC address
-                        let crtc_address = crtc.get_address_from_pins();
-                        assert!(crtc_address >= 0xc000);
-
-                        // Feed GA with byte
-                        let byte = bank[((crtc_address ^ 1) as usize) - 0xc000];
+                        // Feed GA with the byte currently selected by CRTC+CCLK phase.
+                        let byte = fetch_video_byte(bank, &ga, &crtc);
                         ga.set_memory_byte(byte); // TODO do it with its pins
                     }
 
@@ -238,19 +241,15 @@ fn test_raster() {
 
     for char_line in 0..=crtc.r4() {
         for scan_line in 0..=crtc.r9() {
-            for char in 0..=crtc.r0() {
-                for pixel in 0..16 {
+            for _char in 0..=crtc.r0() {
+                for _pixel in 0..16 {
                     beginning_steps(&mut ga, &mut crtc);
 
                     // TODO reimplement this stuff in a more
                     // realistic way
                     if ga.need_memory_byte() {
-                        // Retreive CRTC address
-                        let crtc_address = crtc.get_address_from_pins();
-                        assert!(crtc_address >= 0xc000);
-
-                        // Feed GA with byte
-                        let byte = 0;
+                        // Feed GA with the byte currently selected by CRTC+CCLK phase.
+                        let byte = fetch_video_byte(bank, &ga, &crtc);
                         ga.set_memory_byte(byte); // TODO do it with its pins
                     }
 

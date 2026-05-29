@@ -788,6 +788,20 @@ impl GateArray {
         self.pixel_automata.is_done()
     }
 
+    /// Convert the CRTC exposed address into the byte address currently consumed by GA.
+    ///
+    /// The CRTC address and CCLK phase can both carry pair-position information depending
+    /// on where in the cycle we sample. Normalize to the 2-byte pair first, then pick the
+    /// byte from CCLK to avoid duplicating the same byte twice.
+    pub fn video_fetch_address(&self, crtc_address: u16) -> u16 {
+        let pair_base = crtc_address & !1;
+        if !self.get_pin(GateArrayPin::CCLK) {
+            pair_base
+        } else {
+            pair_base | 1
+        }
+    }
+
     /// Set the video memory byte that serves the the next 8 RGB signal generation
     pub fn set_memory_byte(&mut self, b: u8) {
         // assert!(self.pixel_automata.is_done()); may be false in tests
