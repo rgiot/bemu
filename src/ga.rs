@@ -1079,9 +1079,12 @@ mod test {
         ga.set_memory_byte(0x0);
         assert_eq!(ga.active_video_mode(), VideoMode::Mode0);
 
+        // Drive an OUT cycle toward GA (A15=0, A14=1, IORQ active, RD inactive).
         ga.set_data_on_pins(0x8d); // Mode 1
         ga.set_pin(GateArrayPin::A15, false);
         ga.set_pin(GateArrayPin::A14, true);
+        ga.set_pin(GateArrayPin::Neg_IORQ, false);
+        ga.set_pin(GateArrayPin::Neg_RD, true);
         assert!(ga.must_execute_tick());
         ga.tick();
 
@@ -1092,6 +1095,8 @@ mod test {
         ga.set_data_on_pins(0x8e); // Mode 2
         ga.set_pin(GateArrayPin::A15, false);
         ga.set_pin(GateArrayPin::A14, true);
+        ga.set_pin(GateArrayPin::Neg_IORQ, false);
+        ga.set_pin(GateArrayPin::Neg_RD, true);
         ga.set_pin(GateArrayPin::HSYNC, true);
         ga.save_pins_state();
         ga.set_pin(GateArrayPin::HSYNC, false);

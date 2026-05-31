@@ -1518,6 +1518,99 @@ fn execute_sbc1() {
 		);
 	}
 
+#[test]
+fn execute_adc16_family_zexdoc_first_group() {
+	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, 0x1234
+	ld bc, 0x1111
+	or a
+	adc hl, bc
+	jr $
+	"));
+	assert_eq!(0x2345, mb.hl());
+
+	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, 0xffff
+	ld de, 0x0000
+	scf
+	adc hl, de
+	jr $
+	"));
+	assert_eq!(0x0000, mb.hl());
+	assert!(mb.cpu().flag(Z80Flags::C));
+	assert!(mb.cpu().flag(Z80Flags::Z));
+	assert!(!mb.cpu().flag(Z80Flags::N));
+
+	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, 0x7fff
+	or a
+	adc hl, hl
+	jr $
+	"));
+	assert_eq!(0xfffe, mb.hl());
+	assert!(mb.cpu().flag(Z80Flags::P));
+	assert!(!mb.cpu().flag(Z80Flags::N));
+
+	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+	org 0x4000
+	ld sp, 0x0010
+	ld hl, 0x0001
+	or a
+	adc hl, sp
+	jr $
+	"));
+	assert_eq!(0x0011, mb.hl());
+}
+
+#[test]
+fn execute_sbc16_family_zexdoc_first_group() {
+	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, 0x1234
+	ld bc, 0x1111
+	or a
+	sbc hl, bc
+	jr $
+	"));
+	assert_eq!(0x0123, mb.hl());
+
+	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, 0x0000
+	ld de, 0x0000
+	scf
+	sbc hl, de
+	jr $
+	"));
+	assert_eq!(0xffff, mb.hl());
+	assert!(mb.cpu().flag(Z80Flags::C));
+	assert!(mb.cpu().flag(Z80Flags::N));
+	assert!(mb.cpu().flag(Z80Flags::S));
+
+	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+	org 0x4000
+	ld hl, 0x1111
+	or a
+	sbc hl, hl
+	jr $
+	"));
+	assert_eq!(0x0000, mb.hl());
+	assert!(mb.cpu().flag(Z80Flags::Z));
+
+	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+	org 0x4000
+	ld sp, 0x0010
+	ld hl, 0x0011
+	or a
+	sbc hl, sp
+	jr $
+	"));
+	assert_eq!(0x0001, mb.hl());
+}
+
 
 
 	#[test]

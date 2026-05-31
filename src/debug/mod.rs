@@ -392,7 +392,7 @@ impl<'f> MonitorContext<'f> {
                 return true;
             }
         }
-        motherboard.execute_next_opcode();
+        motherboard.execute_next_opcode_no_video();
         false
     }
 

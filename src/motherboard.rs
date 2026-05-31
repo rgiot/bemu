@@ -298,9 +298,10 @@ impl Motherboard {
         false
     }
 
-    /// Completly execute an opcode and returns the set of video information associated
-    pub fn execute_next_opcode(&mut self) -> Vec<(RgbLevels, Sync)> {
-        let mut video = Vec::new();
+    fn execute_next_opcode_internal<F>(&mut self, mut on_tick: F)
+    where
+        F: FnMut((RgbLevels, Sync)),
+    {
         assert!(
             self.cpu.next_state.is_new_opcode(),
             "We have to start by a new opcode"
@@ -311,7 +312,7 @@ impl Motherboard {
 
         /// execute the whole stuff as soon as it is necessary
         loop {
-            video.push(self.tick());
+            on_tick(self.tick());
 
             has_executed_first_state_counter =
                 has_executed_first_state_counter | !self.cpu.next_state.is_new_opcode();
@@ -328,8 +329,19 @@ impl Motherboard {
                 break;
             }
         }
+    }
 
+    /// Completly execute an opcode and returns the set of video information associated
+    pub fn execute_next_opcode(&mut self) -> Vec<(RgbLevels, Sync)> {
+        let mut video = Vec::with_capacity(32);
+        self.execute_next_opcode_internal(|ga_output| video.push(ga_output));
         video
+    }
+
+    /// Completely execute an opcode without collecting video samples.
+    /// Useful for CPU-only test harnesses where frame data is not consumed.
+    pub fn execute_next_opcode_no_video(&mut self) {
+        self.execute_next_opcode_internal(|_| {});
     }
 
     pub fn execute_ticks(&mut self, ticks: usize) -> Vec<(RgbLevels, Sync)> {

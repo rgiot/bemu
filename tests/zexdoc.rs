@@ -1,12 +1,23 @@
 use amsrust::motherboard::{MotherboardBuilder, Motherboard};
-use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
+use amsrust::z80::{HasValue, Reg16, Reg8};
 use amsrust::memory::*;
 use amsrust::debug::*;
 use std::io;use std::io::Write;
+use std::time::Instant;
 /// Took inspiration from https://floooh.github.io/2016/07/12/z80-rust-ms1.html
 #[test]
 fn zexdoc() {
-    const verbose : bool = true;  
+    let interactive = std::env::var("ZEXDOC_INTERACTIVE")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false);
+    let debug_every = std::env::var("ZEXDOC_DEBUG_EVERY")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    let max_operations = std::env::var("ZEXDOC_MAX_OPS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok());
+
     let mut motherboard = MotherboardBuilder::default().build();
     motherboard.force_rom_config(
         RomConfig{
@@ -23,6 +34,7 @@ fn zexdoc() {
 
 
     motherboard.write_buffer(0x100, prg);
+    // ZEXDOC harness expects interrupts to be re-enabled from the IM1 handler.
     motherboard.write_buffer(0x38, cpclib_macros::assemble!(" ei : ret"));
     motherboard.write_byte(5, 0xc9); // need to return from cpm call
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
@@ -55,11 +67,71 @@ fn zexdoc() {
     };
 
     let mut ctx = MonitorContext::new(Box::new(&mut handle));
-    if verbose {
+    if interactive {
+        eprintln!("[zexdoc] interactive mode enabled");
         Monitor::cli_monitoring(&mut motherboard, &mut ctx);
     }
     else {
-        ctx.execute_continue(&mut motherboard);
+        let start = Instant::now();
+        let mut operations = 0u64;
+        let mut iut_executions = 0u64;
+
+        // In zexdoc.com, the instruction-under-test trampoline label `iut` resolves to 0x1d42.
+        const IUT_ADDR: u16 = 0x1d42;
+        // zexdoc source comment for first descriptor (<adc,sbc> hl,<bc,de,hl,sp>): 38,912 iterations.
+        const FIRST_TEST_IUT_TARGET: u64 = 38_912;
+
+        loop {
+            if motherboard.cpu().reg16(Reg16::Pc).value() == IUT_ADDR {
+                iut_executions += 1;
+            }
+
+            operations += 1;
+            let stop = ctx.execute_next(&mut motherboard);
+            if stop {
+                let elapsed = start.elapsed();
+                eprintln!(
+                    "[zexdoc] finished after {} operations (iut_executions={}) in {:.2?}",
+                    operations,
+                    iut_executions,
+                    elapsed
+                );
+                break;
+            }
+
+            if debug_every > 0 && operations % debug_every == 0 {
+                let pc = motherboard.cpu().reg16(Reg16::Pc).value();
+                let af = motherboard.cpu().reg16(Reg16::Af).value();
+                let bc = motherboard.cpu().reg16(Reg16::Bc).value();
+                let de = motherboard.cpu().reg16(Reg16::De).value();
+                let hl = motherboard.cpu().reg16(Reg16::Hl).value();
+                let first_test_progress = (iut_executions as f64 / FIRST_TEST_IUT_TARGET as f64) * 100.0;
+                eprintln!(
+                    "[zexdoc] ops={} iut_executions={} first_test={:.2}% pc=0x{:04x} af=0x{:04x} bc=0x{:04x} de=0x{:04x} hl=0x{:04x} next={}",
+                    operations,
+                    iut_executions,
+                    first_test_progress,
+                    pc,
+                    af,
+                    bc,
+                    de,
+                    hl,
+                    motherboard.disassemble_next_instruction().to_string()
+                );
+            }
+
+            if let Some(max_operations) = max_operations {
+                if operations >= max_operations {
+                    panic!(
+                        "[zexdoc] reached max operations ({}) at pc=0x{:04x} after iut_executions={} ({:.2}% of first test); note: zexdoc source 'cycles' are test-case iterations, not CPU ops",
+                        max_operations,
+                        motherboard.cpu().reg16(Reg16::Pc).value(),
+                        iut_executions,
+                        (iut_executions as f64 / FIRST_TEST_IUT_TARGET as f64) * 100.0
+                    );
+                }
+            }
+        }
     }
 }
 
