@@ -23,24 +23,11 @@ use cpclib_asm::preamble::{
 };
 
 fn eval_expr_to_i32(expr: &Expr) -> i32 {
-    expr.eval().unwrap().int().unwrap()
+    expr.eval().unwrap().int_value().unwrap()
 }
 
 fn eval_data_access_to_i32(access: &DataAccess) -> i32 {
     eval_expr_to_i32(access.get_expression().unwrap())
-}
-
-fn eval_relative_displacement(access: &DataAccess) -> i8 {
-    match access {
-        DataAccess::Expression(expr) => {
-            if expr.is_relative() {
-                expr.relative_delta()
-            } else {
-                eval_expr_to_i32(expr) as i8
-            }
-        }
-        _ => unreachable!("Expected expression for relative displacement, got {access:?}"),
-    }
 }
 
 macro_rules! inner_8bits_sub {
@@ -347,7 +334,16 @@ pub struct Z80 {
     expect_additional_fake_cycle: u8,
 
     /// CPU has received an interruption (remember GA send it only during 1.4ms but an instruction can take 6 nops)
-    interruption_received: bool
+    interruption_received: bool,
+
+    /// Low byte of a not-yet-completed SSM (ScreenShot Management) pair:
+    /// set when an "ED <neutral>" instruction is executed and we're
+    /// waiting to see whether the very next instruction is also
+    /// "ED <neutral>" (see SSM-STANDARD-EN.pdf).
+    pending_ssm_low: Option<u8>,
+
+    /// SSM codes detected since the last call to `take_ssm_codes`.
+    ssm_codes: Vec<u16>
 }
 
 /// Flags related code
@@ -497,7 +493,7 @@ impl Z80 {
                 AddressSource::None => unreachable!(),
                 // As already been loaded in Wz
                 AddressSource::Immediate => self.reg16(Reg16::Wz).get(),
-                AddressSource::PortN => (self.a() as u16) << 8 + self.reg8(Reg8::Z).value() as u16,
+                AddressSource::PortN => ((self.a() as u16) << 8) + self.reg8(Reg8::Z).value() as u16,
                 // Is stored withing a 16 bits register
                 AddressSource::Register16(ref reg) | AddressSource::IndexRegister16(ref reg) => {
                     self.reg16(*reg).get()
@@ -620,13 +616,19 @@ impl Z80 {
                 // Get the two additional bytes needed for the instruction
                 let memory = [self.reg8(Reg8::Z).get(), self.reg8(Reg8::W).get()];
                 
-                // By construction, it cannot fail
+                // Undefined opcodes (e.g. the ED-prefixed suffixes SSM
+                // repurposes as "neutral" screenshot-request codes, see
+                // SSM-STANDARD-EN.pdf) have an empty representation in the
+                // cpclib-tokens tables, which `disassemble_with_potential_argument`
+                // reports as an error rather than silently treating as a
+                // NOP - the "it cannot fail" assumption only held while
+                // nothing ever actually executed one of those codes.
                 let (opcode, rest) = cpclib_asm::disass::disassemble_with_potential_argument(
                     self.ir.get(),
                     &prefix.disassembling_table(),
                     &memory,
                 )
-                .unwrap();
+                .unwrap_or_else(|_| (Token::parse_token("NOP").unwrap(), &memory[..]));
                 let opcode = if opcode.is_opcode() && opcode.mnemonic().is_some() {
                     opcode
                 } else {
@@ -669,17 +671,21 @@ impl Z80 {
             match self.ir.get() {
                 // For prefixed instructions, we have to restart the process from scratch
                 0xdd => {
+                    // A non-ED first byte breaks a pending SSM pair (see SSM-STANDARD-EN.pdf).
+                    self.pending_ssm_low = None;
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Dd);
                     assert!(current_prefix == OpcodePrefix::None, "impossible");
                     return false;
                 }
                 0xfd => {
+                    self.pending_ssm_low = None;
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Fd);
                     assert!(current_prefix == OpcodePrefix::None, "impossible");
-                    
+
                     return false;
                 }
                 0xcb => {
+                    self.pending_ssm_low = None;
                     match current_prefix {
                         OpcodePrefix::None => {
                             self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Cb);
@@ -701,6 +707,16 @@ impl Z80 {
                 }
                 
                 _ => {
+                    // SSM (ScreenShot Management) detection: an ED-prefixed
+                    // suffix feeds the ED/ED pair detector; any other fully
+                    // decoded instruction (no ED prefix at all) breaks a
+                    // pending pair. See SSM-STANDARD-EN.pdf.
+                    if current_prefix == OpcodePrefix::Ed {
+                        self.detect_ssm(self.ir.get());
+                    } else {
+                        self.pending_ssm_low = None;
+                    }
+
                     // Indexed opcodes  need to be exchanged
                     if current_prefix.is_for_indexed_opcode() {
                         let z = self.reg8(Reg8::Z).value();
@@ -1185,10 +1201,15 @@ impl Z80 {
                 Mnemonic::Djnz => {
                     self.reg8_mut(Reg8::B).dec();
                     if self.reg8(Reg8::B).value() != 0 {
-                        let displacement = match arg1 {
-                            Some(arg @ DataAccess::Expression(_)) => eval_relative_displacement(arg),
-                            _ => self.reg8(Reg8::Z).value() as i8,
-                        };
+                        // Same reasoning as JR above: use the raw fetched
+                        // displacement byte rather than re-evaluating the
+                        // disassembled expression, which encodes the
+                        // displacement biased by +2 for its own "$"-relative
+                        // display convention (and, for a self-referencing
+                        // jump, as a bare "$" symbol that isn't numerically
+                        // evaluable at all without a PC to resolve it
+                        // against).
+                        let displacement = self.reg8(Reg8::Z).value() as i8;
                         if displacement > 0 {
                             self.pc.add(displacement as u16);
                         } else {
@@ -1250,13 +1271,21 @@ impl Z80 {
                         _ => unreachable!()
                     }
 
-                    if matches!(
-                            arg1, 
-                            Some(DataAccess::Register8(cpclib_asm::preamble::Register8::B) |
-                            DataAccess::Expression(_))
-                        ) {
-                            self.set_flag_off(Z80Flags::N);
-                            self.set_flag_off(Z80Flags::H);
+                    // `IN A,(n)` (the fixed-port form) affects no flags at
+                    // all. Every `IN r,(C)` form - including `IN A,(C)`,
+                    // which the previous code silently skipped entirely -
+                    // sets S/Z/P/X/Y from the byte just read, resets H/N,
+                    // and leaves C untouched. Leaving `IN A,(C)` a flags
+                    // no-op broke the extremely common real-world idiom of
+                    // polling a hardware status bit with `IN A,(C)` then
+                    // `JR Z`/`JR NZ`, which would branch on a stale flag
+                    // from whatever instruction last set one instead.
+                    if !matches!(arg2, Some(DataAccess::PortN(_))) {
+                        let val = self.get_available_8bits_value(arg1.unwrap());
+                        self.auto_update_flags(val);
+                        self.auto_update_flags_x_y(val);
+                        self.set_flag_off(Z80Flags::H);
+                        self.set_flag_off(Z80Flags::N);
                     }
                 }
                 
@@ -1271,7 +1300,8 @@ impl Z80 {
                             let (left, ovf2) = left.overflowing_add(1);
                             self.set_data_on_pins(left);
                             ovf = ovf2;
-                            
+                            res = left;
+
                             assert_eq!(
                                 self.opcode_information().unwrap().read_data,
                                 DataDestination::Pins
@@ -1577,7 +1607,7 @@ impl Z80 {
             
             Mnemonic::Res => {
                 let mut  val = self.get_available_8bits_value(arg2.unwrap());
-                val |= 1 << eval_data_access_to_i32(arg1.unwrap());
+                val &= !(1 << eval_data_access_to_i32(arg1.unwrap()));
                 self.store_computed_8bits_value(arg2.unwrap(), val);
 
 
@@ -1621,13 +1651,14 @@ impl Z80 {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
                 let c = rla(&mut val, prev_c);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
-                
+
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
+                self.auto_update_flags(val);
                 self.auto_update_flags_x_y(val);
             }
-            
+
             Mnemonic::Rla => {
                 let prev_c = self.test_flag(FlagTest::C);
                 
@@ -1645,10 +1676,11 @@ impl Z80 {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
                 let c = rlc(&mut val);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
-                
+
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
+                self.auto_update_flags(val);
                 self.auto_update_flags_x_y(val);
 
                 if matches!(arg1,
@@ -1687,13 +1719,14 @@ impl Z80 {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
                 let c = rr(&mut val, prev_c);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
-                
+
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
+                self.auto_update_flags(val);
                 self.auto_update_flags_x_y(val);
             }
-            
+
             Mnemonic::Rra => {
                 let prev_c = self.test_flag(FlagTest::C);
                 let c = self.reg8_mut(Reg8::A).rr(prev_c);
@@ -1708,13 +1741,14 @@ impl Z80 {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
                 let c = rrc(&mut val);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
-                
+
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
+                self.auto_update_flags(val);
                 self.auto_update_flags_x_y(val);
             }
-            
+
             
             Mnemonic::Rrca => {
                 let c = self.reg8_mut(Reg8::A).rrc();
@@ -1884,10 +1918,11 @@ impl Z80 {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
                 let c = sl1(&mut val);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
-                
+
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
+                self.auto_update_flags(val);
                 self.auto_update_flags_x_y(val);
             }
 
@@ -1896,10 +1931,11 @@ impl Z80 {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
                 let c = sla(&mut val);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
-                
+
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
+                self.auto_update_flags(val);
                 self.auto_update_flags_x_y(val);
             }
             
@@ -1907,10 +1943,11 @@ impl Z80 {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
                 let c = sra(&mut val);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
-                
+
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
+                self.auto_update_flags(val);
                 self.auto_update_flags_x_y(val);
             }
             
@@ -1919,10 +1956,11 @@ impl Z80 {
                 let mut  val = self.get_available_8bits_value(arg1.unwrap());
                 let c = srl(&mut val);
                 self.store_computed_8bits_value(arg1.unwrap(), val);
-                
+
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
                 self.set_flag(Z80Flags::C, c);
+                self.auto_update_flags(val);
                 self.auto_update_flags_x_y(val);
             }
             
@@ -2749,10 +2787,68 @@ impl Chip for Z80 {
         self.af.set(0xffff);
         self.iff1 = false;
         self.iff2 = false;
-        self.im = InterruptMode::Mode1;
+        // Real Z80 hardware always resets into Interrupt Mode 0 - firmware
+        // explicitly executes `IM 1` as one of its first instructions
+        // (the whole CPC interrupt architecture depends on IM1's constant
+        // 0x0038 vector). Defaulting the reset state to Mode1 skipped that
+        // and hid whatever a real machine's Mode 0 window would do if an
+        // interrupt happened to land before firmware got there.
+        self.im = InterruptMode::Mode0;
     }
 
 
+}
+
+/// SSM (ScreenShot Management) support - see SSM-STANDARD-EN.pdf.
+///
+/// SSM repurposes the 177 "neutral" ED-prefixed suffix bytes that don't
+/// correspond to any real Z80A instruction: two of them executed back to
+/// back (ED <LL> immediately followed by ED <HH>) form a 16-bit request
+/// code (HH*256+LL) that an SSM-aware emulator can react to (e.g. saving a
+/// screenshot or a snapshot). Any other fully-decoded instruction in
+/// between - including a real (non-neutral) ED instruction - cancels the
+/// pending pair.
+impl Z80 {
+    /// Whether `byte`, used as an ED-prefix suffix, is one of the codes the
+    /// SSM standard reserves as "neutral" and therefore eligible to take
+    /// part in an SSM request. The ranges are the standard's, not simply
+    /// "every undefined ED opcode": #FE/#FF are deliberately excluded from
+    /// this pool since they're reserved to build the FFxx meta-codes.
+    fn is_ssm_neutral_ed_suffix(byte: u8) -> bool {
+        matches!(byte,
+            0x00..=0x3F
+            | 0x7F..=0x9F
+            | 0xA4..=0xA7
+            | 0xAC..=0xAF
+            | 0xB4..=0xB7
+            | 0xBC..=0xBF
+            | 0xC0..=0xFD
+        )
+    }
+
+    /// Feed one just-decoded ED-prefix suffix byte through the SSM pair
+    /// detector.
+    fn detect_ssm(&mut self, suffix: u8) {
+        if Self::is_ssm_neutral_ed_suffix(suffix) {
+            match self.pending_ssm_low.take() {
+                Some(low) => {
+                    let code = (suffix as u16) << 8 | low as u16;
+                    self.ssm_codes.push(code);
+                },
+                None => {
+                    self.pending_ssm_low = Some(suffix);
+                }
+            }
+        } else {
+            // A real ED instruction breaks a pending pair too.
+            self.pending_ssm_low = None;
+        }
+    }
+
+    /// Drain and return every SSM code detected since the last call.
+    pub fn take_ssm_codes(&mut self) -> Vec<u16> {
+        std::mem::take(&mut self.ssm_codes)
+    }
 }
 
 impl Activable for Z80 {

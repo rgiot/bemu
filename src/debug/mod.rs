@@ -385,6 +385,7 @@ impl<'f> MonitorContext<'f> {
 
     /// Make run the emulator for a single instruction.
     /// Return true if emulation has to be stopped
+    #[inline]
     pub fn execute_next(&mut self, motherboard: &mut Motherboard) -> bool {
         if let Some(handle) = self.preExec.as_mut() {
             let res = handle(motherboard);

@@ -583,6 +583,12 @@ impl OpcodeDecoder for Token {
             let repr = self.disassembling_table()[opcode];
             let parsed = Token::parse_token(if repr.is_empty() { "NOP" } else { repr })
                 .unwrap_or_else(|_| Token::parse_token("NOP").unwrap());
+            // Some mnemonics (e.g. `SBC A,(HL)`) are parsed as a `WarningWrapper`
+            // around the real opcode (here, for the redundant explicit
+            // accumulator prefix). Every match below inspects the token's raw
+            // shape rather than going through the trait accessors (which
+            // already unwrap internally), so unwrap once up front.
+            let parsed = parsed.unwrapped().clone();
             let token = if parsed.is_opcode() && parsed.mnemonic().is_some() {
                 parsed
             } else {

@@ -188,12 +188,20 @@ impl Rom {
         Self(Bank(*include_bytes!("../roms/basic6128_azerty.rom")))
     }
 
+    fn basic_6128() -> Self {
+        Self(Bank(*include_bytes!("../roms/basic6128.rom")))
+    }
+
     fn amsdos() -> Self {
         Self(Bank(*include_bytes!("../roms/amsdos.rom")))
     }
 
     fn os6128_azerty() -> Self {
         Self(Bank(*include_bytes!("../roms/os6128_azerty.rom")))
+    }
+
+    fn os6128() -> Self {
+        Self(Bank(*include_bytes!("../roms/os6128.rom")))
     }
 }
 
@@ -235,9 +243,21 @@ impl Chip for UpperRomSelector {
     }
 
     fn must_execute_tick(&self) -> bool {
+        // `IORQ`/`WR` here hold Neg_IORQ/Neg_WR verbatim (see the
+        // sync_pins call in motherboard.rs - it copies the CPU's pins
+        // unchanged, it doesn't invert them), i.e. true means the line is
+        // *inactive*, matching the active-low convention every other chip
+        // in this codebase negates before testing (e.g. Ppi::must_execute_tick
+        // checks `!get_pin(Neg_RD)`). This condition was requiring both
+        // lines inactive - the opposite of "a write is happening" - so
+        // `execute_tick()` fired on essentially every tick that *wasn't* an
+        // upper-ROM-select write, latching whatever garbage happened to be
+        // on the data bus (usually an opcode fetch byte) as the selected
+        // ROM number, and the one real select write got overwritten again
+        // within nanoseconds by the next unrelated bus cycle.
         self.get_pin(UpperRomSelectorPin::A13)
-            && self.get_pin(UpperRomSelectorPin::IORQ)
-            && self.get_pin(UpperRomSelectorPin::WR)
+            && !self.get_pin(UpperRomSelectorPin::IORQ)
+            && !self.get_pin(UpperRomSelectorPin::WR)
     }
 
     fn execute_tick(&mut self) {
@@ -262,7 +282,7 @@ impl UpperRomSelector {
 impl Default for Memory {
     fn default() -> Self {
         let mut roms = Vec::new();
-        roms.push(Some(Rom::basic_6128_azerty())); // 0
+        roms.push(Some(Rom::basic_6128())); // 0
         roms.push(None);
         roms.push(None);
         roms.push(None);
@@ -275,7 +295,7 @@ impl Default for Memory {
             main_memory: Page::default(),
             additional_memory: vec![Page::default(); 1],
             upper_roms: roms,
-            lower_rom: Rom::os6128_azerty(),
+            lower_rom: Rom::os6128(),
         }
     }
 }

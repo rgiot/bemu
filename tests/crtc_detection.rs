@@ -62,20 +62,23 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr);
 
     // execute it until it is finished
+    let mut last_d = 0xffu8;
     loop {
-        {
-          //  Monitor::monitor(&motherboard);
-          println!("{}", motherboard.disassemble_next_instruction().to_string());
-          Monitor::monitor_stack(&mut motherboard, 2, 6);
-        }
-
-        motherboard.execute_next_opcode();
+        let pc_before = motherboard.cpu().reg16(Reg16::Pc).value();
+        motherboard.execute_next_opcode_no_video();
         let pc = motherboard.cpu().reg16(Reg16::Pc).value();
+
+        let d = motherboard.cpu().reg8(Reg8::D).value();
+        if d != last_d {
+            eprintln!("pc_before={pc_before:04x} -> D changed to {d:#010b} ({d:#x})");
+            last_d = d;
+        }
 
         // detect if it is the end
         let current_pattern = [motherboard.read_byte(pc + 0), motherboard.read_byte(pc + 1)];
 
         if current_pattern == *end_pattern {
+            eprintln!("reached end at pc={pc:04x} a={:#x}", motherboard.cpu().reg8(Reg8::A).value());
             break;
         }
     }

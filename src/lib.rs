@@ -1,6 +1,7 @@
 pub mod chip;
 
 pub mod crtc;
+pub mod fdc;
 pub mod ga;
 pub mod pal;
 pub mod ppi;

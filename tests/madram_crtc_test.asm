@@ -49,7 +49,7 @@ test3
 	; Lit registre 12 :
 	; 0, 3 & 4   renvoient la valeur.
 	; 1 & 2             ; renvoient 0.
-	ld       bc,#bc00
+	ld       bc,#bc0c
 	out      (C),C
 	ld       b,#bf
 	in       a,(c)

@@ -6,6 +6,7 @@ use crate::chip::*;
 use crate::counter::*;
 use crate::crtc::*;
 use crate::debug::DisassembledInstruction;
+use crate::fdc::Fdc;
 use crate::ga::*;
 use crate::memory::*;
 use crate::pal::*;
@@ -27,6 +28,24 @@ pub struct Motherboard {
     ppi: Ppi,
     rom_selector: UpperRomSelector,
     memory: Memory,
+    fdc: Fdc,
+    // The FDC isn't a pin-level `Chip` (see fdc.rs), so unlike the other
+    // peripherals its register writes/reads aren't naturally idempotent
+    // across repeated calls: a single Z80 `OUT`/`IN` instruction's bus
+    // request condition (`cpu_request_byte_output`/`_input`) stays true
+    // for several consecutive `tick()`s (matching real M-cycle timing),
+    // and other chips tolerate being asked to "write"/"read" several times
+    // for that one instruction because doing so is a no-op the 2nd+ time.
+    // The FDC's command/result byte queues are not a no-op the 2nd time -
+    // these track whether the current bus request was already serviced so
+    // it's only acted on once, on its first tick.
+    fdc_write_active: bool,
+    fdc_read_active: bool,
+    /// The byte latched onto the data bus for the currently active input
+    /// cycle (see `fdc_read_active`) - held steady and reused across the
+    /// cycle's repeated ticks instead of re-deriving it (which would
+    /// re-invoke `Fdc::read_data` and advance its internal state each time).
+    cached_input_byte: u8,
 
     // Counter of t-states (to be removed later)
     t_state_counter: Counter,
@@ -55,6 +74,10 @@ impl Default for Motherboard {
             ppi: Default::default(),
             rom_selector: Default::default(),
             memory: Default::default(),
+            fdc: Default::default(),
+            fdc_write_active: false,
+            fdc_read_active: false,
+            cached_input_byte: 0xff,
 
             t_state_counter: Default::default(),
             nops_counter: Default::default(),
@@ -69,6 +92,10 @@ impl Default for Motherboard {
 pub struct MotherboardBuilder {
     /// The type of CRTC in the motherboard
     crtc_type: Option<CrtcType>,
+    /// The manufacturer identity the firmware reads back via PPI port B
+    /// (bits 1-3) to pick which name ("Amstrad", "Schneider", ...) to print
+    /// in the boot banner.
+    brand: Option<Brand>,
     /// If interruption are allowed
     enable_interruptions: bool, // false by default
     disable_lower_rom: bool, // false by default
@@ -78,6 +105,11 @@ pub struct MotherboardBuilder {
 impl MotherboardBuilder {
     pub fn set_crtc(&mut self, crtc_type: CrtcType) -> &mut Self {
         self.crtc_type = Some(crtc_type);
+        self
+    }
+
+    pub fn set_brand(&mut self, brand: Brand) -> &mut Self {
+        self.brand = Some(brand);
         self
     }
 
@@ -104,6 +136,10 @@ impl MotherboardBuilder {
             ..Default::default()
         };
 
+        if let Some(brand) = self.brand {
+            motherboard.ppi.set_brand(brand);
+        }
+
         if self.disable_lower_rom {
             motherboard.disable_lower_rom();
         }
@@ -124,14 +160,17 @@ impl MotherboardBuilder {
 
 // Fields access
 impl Motherboard {
+    #[inline]
     pub fn cpu(&self) -> &Z80 {
         &self.cpu
     }
 
+    #[inline]
     pub fn cpu_mut(&mut self) -> &mut Z80 {
         &mut self.cpu
     }
 
+    #[inline]
     pub fn crtc(&self) -> &Crtc {
         &self.crtc
     }
@@ -156,6 +195,14 @@ impl Motherboard {
         &mut self.ppi
     }
 
+    pub fn fdc(&self) -> &Fdc {
+        &self.fdc
+    }
+
+    pub fn fdc_mut(&mut self) -> &mut Fdc {
+        &mut self.fdc
+    }
+
     pub fn t_state_counter(&self) -> &Counter {
         &self.t_state_counter
     }
@@ -170,6 +217,7 @@ impl Motherboard {
 }
 
 impl Motherboard {
+    #[inline]
     fn stabilize_run(&mut self) {
         self.reset();
         while !self.cpu.is_activated() {
@@ -200,17 +248,50 @@ impl Motherboard {
         self.handle_write_access();
 
         // Keep this order to avoid side effect mixing previous state and current state
+        //
+        // NOTE: the CRTC's CPU-facing register read/write path
+        // (`execute_tick()`) shares this same CCLK-gated call with its
+        // video-timing counters (`pre_tick()`), and is therefore a
+        // known-narrow window: a `must_execute_tick()` condition as brief as
+        // a tight back-to-back `OUT (C),a`/`OUTD` loop can fall entirely
+        // between two CCLK edges and never get serviced (the register keeps
+        // its old/default value forever), while the exact same access from
+        // more spread-out code happens to land on an edge and "works". A
+        // fix that splits register access out to run on every system tick
+        // (like the PPI fix just below) was tried and does solve that, but
+        // it also broke `tests/interruptions.rs`'s interrupt-per-frame
+        // count in a way not yet understood (likely some Z80 pin state
+        // during HALT/refresh cycles spuriously satisfying the CRTC's
+        // CS/EN condition once it's no longer CCLK-gated) - left as CCLK-
+        // gated for now pending a fix that doesn't regress that.
         if self.crtc.is_activated() {
-        //    println!("*");
             self.crtc.tick(); // Virtually uses 16 cycles
-        } else {
-       //     println!(".");
         }
-        if self.ppi.is_activated() {
-            self.ppi.tick();
-        }
+        // Unlike the CRTC (whose is_activated() gates on CCLK - a genuinely
+        // free-running clock unrelated to chip-select, since its internal
+        // counters must advance regardless of CPU access), the PPI's
+        // is_activated() gates on the falling edge of Neg_CS itself. Since
+        // Neg_CS stays selected for the PPI's *whole* multi-tick read/write
+        // window (not a single-tick pulse), that edge only fires on the
+        // exact tick selection begins - which, depending on what Neg_RD/
+        // Neg_WR happen to be doing at that precise tick, can easily miss
+        // every genuine access, permanently freezing whatever the PPI last
+        // read/wrote (e.g. the CPU polling PPI port B for VSYNC would never
+        // observe it change). `Chip::tick()` already gates on the correct,
+        // level-based `must_execute_tick()` internally, so call it
+        // unconditionally here and let that internal check decide.
+        self.ppi.tick();
         self.ga.tick();
         self.pal.tick();
+        // Never ticked before at all - only its pins were kept in sync via
+        // sync_pins, so `execute_tick()` (which latches the selected upper
+        // ROM number from the data bus) never ran and `rom_number` stayed
+        // at whatever `reset()`/`force_upper_rom_number()` last set it to,
+        // regardless of what the CPU tried to select via `OUT`. No internal
+        // counters here (no `pre_tick()` override), so - like the PPI -
+        // ticking it unconditionally and letting `must_execute_tick()`
+        // gate `execute_tick()` is correct.
+        self.rom_selector.tick();
 
         self.handle_read_access();
 
@@ -242,14 +323,51 @@ impl Motherboard {
         let byte = self.cpu.get_data_from_pins();
 
         if self.ga_request_read() {
-            unimplemented!();       
+            unimplemented!();
         }  else if self.cpu_request_byte_write() {
         //    eprintln!("0x{:x}=0x{:x}", addr, byte);
             self.write_byte(addr, byte);
             self.cpu.set_pin(Z80Pin::Neg_WR, true); // TODO do the real stuff - but here I am sure to not play with the data bus ...
+            self.fdc_write_active = false;
         } else if self.cpu_request_byte_output() {
             // there is nothing to do there as the pin syncing method already did everything
+            // ... except for the FDC, which isn't a pin-level `Chip` (see
+            // fdc.rs) and so isn't reached by `sync_chips_pins()`. This
+            // condition stays true for several consecutive ticks per single
+            // `OUT` instruction (matching real M-cycle timing), so the
+            // actual write only happens once, on the first such tick.
+            if !self.fdc_write_active {
+                if Self::is_fdc_motor_addr(addr) {
+                    self.fdc.set_motor(byte & 1 != 0);
+                } else if Self::is_fdc_data_addr(addr) {
+                    self.fdc.write_data(byte);
+                }
+            }
+            self.fdc_write_active = true;
+        } else {
+            self.fdc_write_active = false;
         }
+    }
+
+    /// Address decode for the disk interface (motor control latch, FDC
+    /// status/data registers). Cross-checked against the NEC uPD765A/B
+    /// datasheet's register addressing (`doc/fdc.upd765ab.pdf`) and the
+    /// well-known CPC port conventions &FA7E/&FB7E/&FB7F: only A15-A8, A7
+    /// and (for the FDC's own two registers) A0 are actually decoded by the
+    /// hardware - firmware just always uses those conventional addresses.
+    #[inline]
+    fn is_fdc_motor_addr(addr: u16) -> bool {
+        (addr & 0xff80) == 0xfa00
+    }
+
+    #[inline]
+    fn is_fdc_status_addr(addr: u16) -> bool {
+        (addr & 0xff81) == 0xfb00
+    }
+
+    #[inline]
+    fn is_fdc_data_addr(addr: u16) -> bool {
+        (addr & 0xff81) == 0xfb01
     }
 
     /// Manage the operations where CPU requests a read
@@ -263,10 +381,22 @@ impl Motherboard {
             let byte = self.read_byte(addr);
             self.cpu.set_data_on_pins(byte);
             self.cpu.set_pin(Z80Pin::Neg_RD, true); // TODO do the real stuff - but here I am sure to not play with the data bus ...
+            self.fdc_read_active = false;
         }else if self.cpu_request_byte_input() {
-            let byte = self.input_byte();
-            self.cpu.set_data_on_pins(byte);
+            // As in handle_write_access: this condition stays true for
+            // several consecutive ticks per single `IN` instruction, so
+            // `input_byte` (which can advance the FDC's internal state) is
+            // only actually called once, on the first such tick - the
+            // latched byte is then held steady on the bus for the rest of
+            // the cycle, same as real hardware would.
+            if !self.fdc_read_active {
+                self.cached_input_byte = self.input_byte(addr);
+            }
+            self.cpu.set_data_on_pins(self.cached_input_byte);
             self.cpu.set_pin(Z80Pin::Neg_RD, true);
+            self.fdc_read_active = true;
+        } else {
+            self.fdc_read_active = false;
         }
     }
 
@@ -298,6 +428,7 @@ impl Motherboard {
         false
     }
 
+    #[inline]
     fn execute_next_opcode_internal<F>(&mut self, mut on_tick: F)
     where
         F: FnMut((RgbLevels, Sync)),
@@ -340,6 +471,7 @@ impl Motherboard {
 
     /// Completely execute an opcode without collecting video samples.
     /// Useful for CPU-only test harnesses where frame data is not consumed.
+    #[inline]
     pub fn execute_next_opcode_no_video(&mut self) {
         self.execute_next_opcode_internal(|_| {});
     }
@@ -495,6 +627,17 @@ impl Motherboard {
             &[Z80Pin::A11, Z80Pin::A9, Z80Pin::A8],
             &mut self.ppi,
             &[PpiPin::Neg_CS, PpiPin::InA1, PpiPin::InA0],
+        );
+        // Neg_CS must only be asserted during a real I/O bus cycle - A11 alone
+        // is also whatever it happens to be during ordinary memory fetches,
+        // so without gating on Neg_IORQ here the PPI's is_activated() (an
+        // edge on Neg_CS) essentially never fires again once code executes
+        // from a page where A11 stays constant, freezing every PPI port
+        // read/write (e.g. VSYNC polling on port B) at whatever stale value
+        // it last captured.
+        self.ppi.set_pin(
+            PpiPin::Neg_CS,
+            self.cpu.get_pin(Z80Pin::A11) || self.cpu.get_pin(Z80Pin::Neg_IORQ),
         );
         self.ppi.set_pin(PpiPin::Neg_RD, Neg_IORD);
         self.ppi.set_pin(PpiPin::Neg_WR, Neg_IOWR);
@@ -691,13 +834,17 @@ impl Motherboard {
 impl Motherboard {
     /// Return the byte read from a chip
     /// TODO handle the case where there is a read conflict over several chips
-    fn input_byte(&self) -> u8 {
+    fn input_byte(&mut self, addr: u16) -> u8 {
         if self.ppi().must_execute_tick() {
             self.ppi().get_data_from_pins()
         } else if self.ga().must_execute_tick() {
             self.ga().get_data_from_pins()
         } else if self.crtc().must_execute_tick() {
             self.crtc().get_data_from_pins()
+        } else if Self::is_fdc_status_addr(addr) {
+            self.fdc.read_status()
+        } else if Self::is_fdc_data_addr(addr) {
+            self.fdc.read_data()
         } else {
             0xff
         }

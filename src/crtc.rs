@@ -151,6 +151,13 @@ pub struct Crtc {
     pub hdc: u8,
     /// The Vertical Total Adjust Counter is shown in light blue when the end of the current CRTC frame is reached (after VCC = R4) and CRTC Register 5 has a value other than zero. This counts up to the value in CRTC register 5 before the next frame is started.
     pub vtac: u8,
+    /// True while the CRTC is between "VCC just reached R4" and "VTAC just reached R5":
+    /// VCC/VLC are held and only VTAC advances, one extra raster line at a
+    /// time, until the frame's total scan-line count has been topped up to
+    /// exactly R5 lines past the nominal (R4+1)*(R9+1) - the mechanism a
+    /// real 6845 uses to hit an exact line count (e.g. 312 for PAL) when
+    /// (R4+1)*(R9+1) alone doesn't divide evenly.
+    in_vertical_adjust: bool,
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
     pub hsc: u8,
 
@@ -191,6 +198,7 @@ impl Default for Crtc {
             hsc: 0, // meaningless when no hsync is present
             hdc: 0,
             vtac: 0,
+            in_vertical_adjust: false,
             ma: Default::default(),
             crtc_type: Default::default(),
         };
@@ -582,11 +590,10 @@ impl Crtc {
         if self.hcc == self.r0 + 1 {
             // This is the end of the line, we have to trigger all the other stuffs
             self.hcc = 0;
-            self.vlc += 1;
-            
-            
-            
-            // handle the end of vsync if any
+
+            // handle the end of vsync if any - independent of vertical
+            // total adjust, since VSYNC width (R3) and the adjust period
+            // (R5) are unrelated and can overlap.
             if self.vsync() {
                 self.vsc += 1;
                 if self.vsc == self.vsync_height() {
@@ -594,16 +601,36 @@ impl Crtc {
                 }
             }
 
-            // This is the end of a char line
-            if self.vlc == self.r9 + 1 {
-                self.vlc.reset();
-                self.vcc += 1;
-
-
-                if self.vcc == self.r4 + 1 {
-                    assert_eq!(self.r5, 0, "Need to handle vtac");
-                    // This is the end of the screen
+            if self.in_vertical_adjust {
+                // VCC/VLC are held here; only the adjust counter advances,
+                // one raster line at a time, until it has topped up the
+                // frame by R5 extra lines.
+                self.vtac += 1;
+                if self.vtac >= self.r5 {
+                    self.in_vertical_adjust = false;
+                    self.vtac = 0;
                     self.vcc.reset();
+                    self.vlc.reset();
+                }
+            } else {
+                self.vlc += 1;
+
+                // This is the end of a char line
+                if self.vlc == self.r9 + 1 {
+                    self.vlc.reset();
+                    self.vcc += 1;
+
+                    if self.vcc == self.r4 + 1 {
+                        if self.r5 == 0 {
+                            // This is the end of the screen
+                            self.vcc.reset();
+                        } else {
+                            // Enter vertical total adjust instead of
+                            // immediately starting the next frame.
+                            self.in_vertical_adjust = true;
+                            self.vtac = 0;
+                        }
+                    }
                 }
             }
         }
@@ -746,6 +773,8 @@ impl Chip for Crtc {
         self.vcc = self.r4.into();
         self.vlc = self.r9.into();
         self.hcc = self.r0;
+        self.vtac = 0;
+        self.in_vertical_adjust = false;
 
         self.set_pin(CrtcPin::DE, true);
         self.set_pin(CrtcPin::HS, false);

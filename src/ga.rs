@@ -1000,7 +1000,7 @@ impl Chip for GateArray {
         }
         else {
             // out expected
-            let command = dbg!(self.get_data_from_pins());
+            let command = self.get_data_from_pins();
 
             if PENR::is_addressed(command) {
                 self.penr = PENR(command);

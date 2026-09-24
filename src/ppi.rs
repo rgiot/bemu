@@ -219,6 +219,22 @@ impl Ppi {
     pub fn is_control_addressed(&self) -> bool {
         self.get_pin(PpiPin::InA1) && self.get_pin(PpiPin::InA0)
     }
+
+    /// Set which manufacturer's name the firmware reads back from port B
+    /// bits 1-3 (and therefore which one appears in the boot banner).
+    pub fn set_brand(&mut self, brand: Brand) {
+        self.brand = brand;
+        self.drive_hardwired_port_b_bits();
+    }
+
+    /// (Re-)assert the port B bits that are hardwired to external signals
+    /// rather than driven by the CPU: B1-B3 (manufacturer jumpers) and B4
+    /// (screen refresh rate strap). Must be called after anything that
+    /// clears port B's pins, since those pins are never CPU outputs here.
+    fn drive_hardwired_port_b_bits(&mut self) {
+        self.set_value_in_pins(self.brand as u8, &PPI_BRAND_PIN);
+        self.set_pin(PpiPin::B4, self.refresh as u8 != 0);
+    }
 }
 
 impl Ppi {
@@ -246,36 +262,36 @@ impl Ppi {
 
 impl Ppi {
     fn set_control_configuration(&mut self, byte: u8) {
-        self.direction_c_lower = if byte & 1 << 0 != 1 {
-            PpiDirection::Output
-        } else {
+        self.direction_c_lower = if byte & 1 << 0 != 0 {
             PpiDirection::Input
+        } else {
+            PpiDirection::Output
         };
 
-        self.direction_b = if byte & 1 << 1 != 1 {
-            PpiDirection::Output
-        } else {
+        self.direction_b = if byte & 1 << 1 != 0 {
             PpiDirection::Input
+        } else {
+            PpiDirection::Output
         };
 
-        let mode = if byte & 1 << 2 != 1 {
-            PpiMode::Mode0
-        } else {
+        let mode = if byte & 1 << 2 != 0 {
             PpiMode::Mode1
+        } else {
+            PpiMode::Mode0
         };
         self.mode_b = mode;
         self.mode_c_lower = mode;
 
-        self.direction_c_upper = if byte & 1 << 3 != 1 {
-            PpiDirection::Output
-        } else {
+        self.direction_c_upper = if byte & 1 << 3 != 0 {
             PpiDirection::Input
+        } else {
+            PpiDirection::Output
         };
 
-        self.direction_a = if byte & 1 << 4 != 1 {
-            PpiDirection::Output
-        } else {
+        self.direction_a = if byte & 1 << 4 != 0 {
             PpiDirection::Input
+        } else {
+            PpiDirection::Output
         };
 
         let mode = match (byte & 1 << 6 != 0, byte & 1 << 5 != 0) {
@@ -301,10 +317,19 @@ impl Chip for Ppi {
 
       ///  dbg!(self.is_port_a_addressed() , self.is_port_b_addressed() , self.is_port_c_addressed());
         if self.is_port_a_addressed() && self.mode_a == PpiMode::Mode0 {
-            if !self.get_pin(PpiPin::Neg_WR) && self.direction_a == PpiDirection::Output {
+            if !self.get_pin(PpiPin::Neg_WR) {
+                // Writing to an input-configured port still updates the
+                // internal output latch on a real 8255 (it just isn't
+                // driven onto the external pins) - see the read-side
+                // comment just below for why this doesn't need
+                // `direction_a` either.
                 let byte = self.get_data_from_pins();
                 self.set_data_a_on_pins(byte);
-            } else if !self.get_pin(PpiPin::Neg_RD) && self.direction_a == PpiDirection::Input {
+            } else if !self.get_pin(PpiPin::Neg_RD) {
+                // Reading an input-configured port returns the live input
+                // pins; reading an output-configured one returns the
+                // output latch (last written value) - on the real 8255,
+                // both are valid, so this doesn't need `direction_a` at all.
                 let byte = self.get_data_a_from_pins();
                 self.set_data_on_pins(byte);
             } else {
@@ -314,7 +339,21 @@ impl Chip for Ppi {
             if !self.get_pin(PpiPin::Neg_WR) && self.direction_b == PpiDirection::Output {
                 eprintln!("Warning vsync is supposely changed by ppi, but not properly handled by emulator");
                 self.set_pin(PpiPin::B0, self.get_pin(PpiPin::D0));
-            } else if !self.get_pin(PpiPin::Neg_RD) && self.direction_b == PpiDirection::Input {
+            } else if !self.get_pin(PpiPin::Neg_WR) {
+                // Unlike port A/C, port B's pins (B0=VSYNC, B1-B3=brand,
+                // B4=refresh rate) are hardwired to real external signals
+                // in this emulator, not just a CPU-driven latch - so a
+                // write while it's configured Input must be a genuine
+                // no-op here (real hardware would latch it internally, but
+                // that latch is never what's read back for an
+                // input-configured port, so there's nothing to do).
+                // Silently discarding the byte is correct; overwriting
+                // B0-B7 the way port A/C's write does would corrupt VSYNC/
+                // brand/refresh with whatever the CPU happened to write.
+            } else if !self.get_pin(PpiPin::Neg_RD) {
+                // See the port A comment: valid whether port B is
+                // configured Input (live pins, e.g. VSYNC on B0) or Output
+                // (the output latch).
                 let byte = self.get_data_b_from_pins();
                 self.set_data_on_pins(byte);
 
@@ -326,16 +365,18 @@ impl Chip for Ppi {
             && self.mode_c_lower == PpiMode::Mode0
             && self.mode_c_upper == PpiMode::Mode0
         {
-            if !self.get_pin(PpiPin::Neg_WR)
-                && self.direction_c_lower == PpiDirection::Output
-                && self.direction_c_upper == PpiDirection::Output
-            {
+            if !self.get_pin(PpiPin::Neg_WR) {
+                // Same reasoning as port A: the write goes to the output
+                // latch regardless of direction_c_lower/direction_c_upper.
                 let byte = self.get_data_from_pins();
                 self.set_data_c_on_pins(byte);
-            } else if !self.get_pin(PpiPin::Neg_RD)
-                && self.direction_c_lower == PpiDirection::Input
-                && self.direction_c_upper == PpiDirection::Input
-            {
+            } else if !self.get_pin(PpiPin::Neg_RD) {
+                // See the port A comment: valid regardless of
+                // direction_c_lower/direction_c_upper - e.g. the Madram/
+                // AmsLive CRTC-type detection deliberately reads Port C
+                // right after configuring it as Output, to check whether
+                // the mode-set write cleared its output latch to 0 (real
+                // PPI) or not (CPC+'s buggy PPI clone).
                 let byte = self.get_data_c_from_pins();
                 self.set_data_on_pins(byte);
             } else {
@@ -346,7 +387,12 @@ impl Chip for Ppi {
             self.set_control_configuration(byte);
 
             self.set_data_a_on_pins(0);
-            self.set_data_b_on_pins(0);
+            // Real 8255 hardware clears port B's output latch to 0 on a
+            // mode-set write, but in this emulator B0/B1-B3/B4 aren't CPU
+            // output latches - they're hardwired to VSYNC, the manufacturer
+            // jumpers and the refresh-rate strap. Zeroing them here would
+            // wipe out the brand the firmware is about to read back.
+            self.drive_hardwired_port_b_bits();
             self.set_data_c_on_pins(0);
         } else {
             let byte = self.get_data_from_pins();
@@ -379,8 +425,7 @@ impl Chip for Ppi {
     fn reset(&mut self) {
         self.pins = Default::default();
 
-        self.set_value_in_pins(self.brand as u8, &PPI_BRAND_PIN);
-        self.set_pin(PpiPin::B4, self.refresh as u8 != 0);
+        self.drive_hardwired_port_b_bits();
     }
 }
 
