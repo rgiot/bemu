@@ -235,6 +235,15 @@ impl Ppi {
         self.set_value_in_pins(self.brand as u8, &PPI_BRAND_PIN);
         self.set_pin(PpiPin::B4, self.refresh as u8 != 0);
     }
+
+    /// Drive port A's pins from an external source (the PSG, whose data bus
+    /// *is* port A on real hardware - see `psg.rs`) rather than from the
+    /// CPU. `Motherboard` calls this right after a PSG read bus cycle so
+    /// the byte is already sitting on port A by the time the CPU's `IN
+    /// A,(C)` reaches `execute_tick()`.
+    pub fn set_port_a_input(&mut self, value: u8) {
+        self.set_data_a_on_pins(value);
+    }
 }
 
 impl Ppi {

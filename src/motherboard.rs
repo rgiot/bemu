@@ -8,9 +8,11 @@ use crate::crtc::*;
 use crate::debug::DisassembledInstruction;
 use crate::fdc::Fdc;
 use crate::ga::*;
+use crate::keyboard::KeyboardMatrix;
 use crate::memory::*;
 use crate::pal::*;
 use crate::ppi::*;
+use crate::psg::{BusControl, Psg, REG_IO_PORT_A};
 use crate::z80::*;
 
 use std::convert::TryFrom;
@@ -47,6 +49,16 @@ pub struct Motherboard {
     /// re-invoke `Fdc::read_data` and advance its internal state each time).
     cached_input_byte: u8,
 
+    psg: Psg,
+    keyboard: KeyboardMatrix,
+    /// The last PPI port C byte the PSG bus-control logic was driven from -
+    /// like the FDC's `*_active` flags, this exists because a single Z80
+    /// `OUT` instruction's write reaches `Ppi::execute_tick()` (and
+    /// therefore updates port C's pins) on several consecutive ticks; only
+    /// reacting when the *value itself* changes gives one PSG bus cycle per
+    /// genuine port C write regardless of how many ticks that write spans.
+    last_psg_port_c: Option<u8>,
+
     // Counter of t-states (to be removed later)
     t_state_counter: Counter,
     // Counter of nops
@@ -78,6 +90,9 @@ impl Default for Motherboard {
             fdc_write_active: false,
             fdc_read_active: false,
             cached_input_byte: 0xff,
+            psg: Default::default(),
+            keyboard: Default::default(),
+            last_psg_port_c: None,
 
             t_state_counter: Default::default(),
             nops_counter: Default::default(),
@@ -203,6 +218,18 @@ impl Motherboard {
         &mut self.fdc
     }
 
+    pub fn psg(&self) -> &Psg {
+        &self.psg
+    }
+
+    pub fn keyboard(&self) -> &KeyboardMatrix {
+        &self.keyboard
+    }
+
+    pub fn keyboard_mut(&mut self) -> &mut KeyboardMatrix {
+        &mut self.keyboard
+    }
+
     pub fn t_state_counter(&self) -> &Counter {
         &self.t_state_counter
     }
@@ -281,6 +308,7 @@ impl Motherboard {
         // level-based `must_execute_tick()` internally, so call it
         // unconditionally here and let that internal check decide.
         self.ppi.tick();
+        self.sync_psg();
         self.ga.tick();
         self.pal.tick();
         // Never ticked before at all - only its pins were kept in sync via
@@ -486,6 +514,35 @@ impl Motherboard {
             }
         }
         video
+    }
+
+    /// Drive the PSG's bus protocol from PPI port A/C, exactly the way real
+    /// hardware wires it: port A *is* the PSG's data bus (DA0-7), and port
+    /// C bits 7/6 are BDIR/BC1 (bits 0-3 select the keyboard row read back
+    /// through register 14 - see `psg.rs` and `keyboard.rs`).
+    fn sync_psg(&mut self) {
+        let port_c = self.ppi.get_data_c_from_pins();
+        if self.last_psg_port_c == Some(port_c) {
+            return;
+        }
+        self.last_psg_port_c = Some(port_c);
+
+        let row_select = port_c & 0x0f;
+        let bc1 = port_c & (1 << 6) != 0;
+        let bdir = port_c & (1 << 7) != 0;
+        let control = BusControl::from_bdir_bc1(bdir, bc1);
+
+        // Keep register 14 (I/O port A) in sync with whatever row is
+        // currently selected before it's potentially read below - on real
+        // hardware this register *is* the keyboard matrix line, live.
+        if self.psg.selected_register() == Some(REG_IO_PORT_A) && self.psg.port_a_is_input() {
+            self.psg.set_register(REG_IO_PORT_A, self.keyboard.row(row_select));
+        }
+
+        let data_bus = self.ppi.get_data_a_from_pins();
+        if let Some(read_value) = self.psg.bus_cycle(control, data_bus) {
+            self.ppi.set_port_a_input(read_value);
+        }
     }
 
     /// Make the appropriate copy between some pins of some chips to other (we simulate the various buses here)

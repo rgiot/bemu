@@ -134,9 +134,14 @@ impl KeyboardMatrix {
     }
 
     /// The raw byte for one matrix row (0-9), as PSG register 14 would
-    /// return it once that row is selected via PPI port C.
+    /// return it once that row is selected via PPI port C. PPI port C's
+    /// row-select nibble can address up to 16 lines but only 10 are wired
+    /// to anything - selecting one of the other 6 floats the bus high
+    /// (nothing pressed) exactly like every real row already reads when
+    /// idle, rather than being a real distinct hardware condition worth a
+    /// panic.
     pub fn row(&self, row: u8) -> u8 {
-        self.rows[row as usize]
+        self.rows.get(row as usize).copied().unwrap_or(0xff)
     }
 
     /// Directly set every row - the wire format for
