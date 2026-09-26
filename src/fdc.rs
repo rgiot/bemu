@@ -359,7 +359,11 @@ impl Fdc {
         self.phase = Phase::Result;
         self.result_pos = 0;
         self.set_bit(st_bit::EXM, false);
-        self.set_bit(st_bit::CB, false);
+        // CB stays set for the whole result phase (MSR = &D0): software such
+        // as AMSDOS reads result bytes "while CB is set", so clearing it here
+        // made it stop after the first byte and desynchronise the FDC.
+        // `go_to_command_phase` clears it once the last byte has been read.
+        self.set_bit(st_bit::CB, true);
         self.set_bit(st_bit::DIO, true);
         self.set_bit(st_bit::RQM, true);
     }
@@ -443,8 +447,10 @@ impl Fdc {
             self.result = vec![self.st0, self.drives[unit].current_track];
         }
         else {
+            // No interrupt pending: the chip treats this as an invalid
+            // command and answers with the single byte ST0 = &80.
             self.st0 = st0_ic::INVALID;
-            self.result = vec![self.st0, 0xff];
+            self.result = vec![self.st0];
         }
         self.go_to_result_phase();
     }

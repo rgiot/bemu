@@ -248,3 +248,55 @@ fn motherboard_reads_disk_through_real_io_ports() {
     assert_eq!(motherboard.read_byte(result_buffer + sector_len), 0x00, "ST0");
     assert_eq!(motherboard.read_byte(result_buffer + sector_len + 5), sector_id, "result R");
 }
+
+const CB: u8 = 1 << 4;
+
+#[test]
+fn busy_bit_stays_set_for_the_whole_result_phase() {
+    // AMSDOS reads a result "while CB is set": it stops after the first
+    // byte if CB drops early, leaving the FDC stuck in its result phase
+    // and ignoring every later command byte.
+    let (disk, _, _) = disk_with_known_sector();
+    let mut fdc = Fdc::default();
+    fdc.insert_disk(FdcDrive::A, Some(disk));
+    fdc.set_motor(true);
+
+    // READ ID (MFM), unit 0 head 0: a 7 byte result
+    fdc.write_data(0x4a);
+    fdc.write_data(0x00);
+
+    for remaining in (1..=7).rev() {
+        assert_eq!(
+            fdc.read_status() & (RQM | DIO | CB),
+            RQM | DIO | CB,
+            "{remaining} result byte(s) left: MSR must read RQM|DIO|CB (&D0)"
+        );
+        fdc.read_data();
+    }
+
+    // last byte read: back to the command phase, idle
+    assert_eq!(fdc.read_status(), RQM);
+}
+
+#[test]
+fn sense_interrupt_with_nothing_pending_answers_a_single_invalid_byte() {
+    let mut fdc = Fdc::default();
+
+    fdc.write_data(0x08);
+    assert_eq!(fdc.read_status() & (RQM | DIO | CB), RQM | DIO | CB);
+    assert_eq!(fdc.read_data(), 0x80, "ST0 = invalid command");
+
+    // one byte only: the FDC is ready for a new command straight away
+    assert_eq!(fdc.read_status(), RQM);
+}
+
+#[test]
+fn commands_are_accepted_again_after_an_invalid_sense_interrupt() {
+    // the desynchronised FDC used to swallow command bytes after this
+    let mut fdc = Fdc::default();
+    fdc.write_data(0x08);
+    fdc.read_data();
+
+    fdc.write_data(0x03); // SPECIFY
+    assert_eq!(fdc.read_status() & (RQM | CB), RQM | CB, "command byte was not accepted");
+}
