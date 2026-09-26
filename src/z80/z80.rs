@@ -2638,18 +2638,33 @@ impl Chip for Z80 {
                         if self.must_execute_instruction_in_middle() {
                             self.execute_step();
                         }
-                        if opcode_info.write_to_pins {
-                            self.next_state = MCycle::Output(TState::T1, 0);
-                        } else {
-                            self.next_state = MCycle::Write(TState::T1, 0);
+                        // `execute_step()` may have just accepted a pending
+                        // interrupt (see the comment on the analogous check
+                        // below) - don't stomp that with the write phase.
+                        if !self.next_state.is_interruption() {
+                            if opcode_info.write_to_pins {
+                                self.next_state = MCycle::Output(TState::T1, 0);
+                            } else {
+                                self.next_state = MCycle::Write(TState::T1, 0);
+                            }
                         }
                     } else {
                         self.execute_step();
-                        
+
+                        // `execute_step()` -> `instruction_finished()` may
+                        // have just accepted a pending interrupt, setting
+                        // `next_state` to `MCycle::new_interruption()`
+                        // (and clearing iff1 as a side effect of doing so).
+                        // That must be preserved here exactly like the
+                        // `Fake(T1, _)` case already is - otherwise the
+                        // interrupt is silently swallowed: iff1 stays
+                        // cleared forever, since the CPU never actually
+                        // reaches the &0038 vector to run the handler that
+                        // would `ei` again.
                         if !matches!(
                             self.next_state,
                             MCycle::Fake(TState::T1, _)
-                        ){                      
+                        ) && !self.next_state.is_interruption() {
                             self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
                             // go back for a new instruction
                         }
@@ -2735,10 +2750,14 @@ impl Chip for Z80 {
                     } else {
                         self.opcode_information = None;
                     }
+                    // See the matching comment in the `Read`/`Input` T4
+                    // handler: `execute_step()` may have just accepted a
+                    // pending interrupt via `instruction_finished()`, and
+                    // that must not be overwritten here either.
                     if !matches!(
                         self.next_state,
                         MCycle::Fake(TState::T1, _)
-                    ){
+                    ) && !self.next_state.is_interruption() {
                         if self.expect_additional_fake_cycle > 0 {
                             self.next_state = MCycle::new_fake(self.expect_additional_fake_cycle);
                         }
