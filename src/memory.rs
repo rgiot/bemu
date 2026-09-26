@@ -255,7 +255,12 @@ impl Chip for UpperRomSelector {
         // on the data bus (usually an opcode fetch byte) as the selected
         // ROM number, and the one real select write got overwritten again
         // within nanoseconds by the next unrelated bus cycle.
-        self.get_pin(UpperRomSelectorPin::A13)
+        // The upper ROM select port is &DFxx: it is decoded by A13 being
+        // *low* (A13 is copied here verbatim, so high = 1). Testing for it
+        // high instead matched the gate array's &7Fxx port and latched its
+        // command bytes (e.g. &85) as ROM numbers, so no real ROM select -
+        // AMSDOS in slot 7 included - ever took effect.
+        !self.get_pin(UpperRomSelectorPin::A13)
             && !self.get_pin(UpperRomSelectorPin::IORQ)
             && !self.get_pin(UpperRomSelectorPin::WR)
     }
