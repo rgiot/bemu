@@ -154,6 +154,11 @@ impl MotherboardBuilder {
         if let Some(brand) = self.brand {
             motherboard.ppi.set_brand(brand);
         }
+        // The CPC+ (CRTC 3) has its PPI inside the ASIC, which keeps its
+        // ports on a mode-set write, unlike a real 8255.
+        motherboard
+            .ppi
+            .set_clears_ports_on_mode_set(crtc_type != CrtcType::Crtc3);
 
         if self.disable_lower_rom {
             motherboard.disable_lower_rom();

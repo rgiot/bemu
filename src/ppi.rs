@@ -179,6 +179,11 @@ pub struct Ppi {
     direction_b: PpiDirection,
     direction_c_lower: PpiDirection,
     direction_c_upper: PpiDirection,
+
+    /// A mode-set control word clears the output latches of a real 8255.
+    /// The PPI inside the CPC+'s ASIC does not (it keeps port C, which the
+    /// CRTC detection programs use to recognise such a machine).
+    clears_ports_on_mode_set: bool,
 }
 
 impl Default for Ppi {
@@ -197,6 +202,7 @@ impl Default for Ppi {
             direction_b: PpiDirection::Input, // no idea if it is the best choice, but it allows to directly test vsync
             direction_c_lower: Default::default(),
             direction_c_upper: Default::default(),
+            clears_ports_on_mode_set: true,
         };
         ppi.reset();
         ppi
@@ -218,6 +224,12 @@ impl Ppi {
 
     pub fn is_control_addressed(&self) -> bool {
         self.get_pin(PpiPin::InA1) && self.get_pin(PpiPin::InA0)
+    }
+
+    /// Whether a mode-set control word clears the ports (a real 8255) or
+    /// leaves them alone (the PPI clone in the CPC+'s ASIC).
+    pub fn set_clears_ports_on_mode_set(&mut self, clears: bool) {
+        self.clears_ports_on_mode_set = clears;
     }
 
     /// Set which manufacturer's name the firmware reads back from port B
@@ -395,14 +407,16 @@ impl Chip for Ppi {
             let byte = self.get_data_from_pins();
             self.set_control_configuration(byte);
 
-            self.set_data_a_on_pins(0);
-            // Real 8255 hardware clears port B's output latch to 0 on a
-            // mode-set write, but in this emulator B0/B1-B3/B4 aren't CPU
-            // output latches - they're hardwired to VSYNC, the manufacturer
-            // jumpers and the refresh-rate strap. Zeroing them here would
-            // wipe out the brand the firmware is about to read back.
-            self.drive_hardwired_port_b_bits();
-            self.set_data_c_on_pins(0);
+            if self.clears_ports_on_mode_set {
+                self.set_data_a_on_pins(0);
+                // Real 8255 hardware clears port B's output latch to 0 on a
+                // mode-set write, but in this emulator B0/B1-B3/B4 aren't CPU
+                // output latches - they're hardwired to VSYNC, the manufacturer
+                // jumpers and the refresh-rate strap. Zeroing them here would
+                // wipe out the brand the firmware is about to read back.
+                self.drive_hardwired_port_b_bits();
+                self.set_data_c_on_pins(0);
+            }
         } else {
             let byte = self.get_data_from_pins();
 

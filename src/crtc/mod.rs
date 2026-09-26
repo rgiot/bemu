@@ -1,9 +1,16 @@
+mod asic;
+mod model;
+mod type0;
+mod type1;
+mod type2;
+
+pub use model::{CrtcModel, CrtcType, DisplaySkew, ReadContext, Registers, NB_REGISTERS};
+
 use crate::bits::*;
 use crate::chip::*;
 
 use num_enum::IntoPrimitive;
 use num_enum::TryFromPrimitive;
-use rand::{thread_rng, Rng};
 
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -109,35 +116,13 @@ pub struct Crtc {
     ar: u8,
     /// Status register (crtvc 1)
     sr: u8,
-    /// Horizontal Total Register
-    r0: u8,
-    /// Horizontal Display Register
-    r1: u8,
-    /// Horizontal Sync Position Register
-    r2: u8,
-    /// Sync Width Register
-    r3: u8,
-    /// Verticzl Total Register
-    r4: u8,
-    /// Vertical Total Adjust
-    r5: u8,
-    /// Vertical Display Register
-    r6: u8,
-    /// Vertical Sync Position
-    r7: u8,
-    /// Interlaced mode
-    r8: u8,
-    /// Maximum Scan Line Register
-    r9: u8,
-    /// Cursor start register
-    r10: u8,
-    r11: u8,
-    r12: u8,
-    r13: u8,
-    r14: u8,
-    r15: u8,
-    r16: u8,
-    r17: u8,
+    /// R0-R17, masked to the bits the chip stores (see [`CrtcModel::write_mask`]):
+    /// R0 horizontal total, R1 horizontal displayed, R2 HSYNC position,
+    /// R3 sync widths, R4 vertical total, R5 vertical total adjust,
+    /// R6 vertical displayed, R7 VSYNC position, R8 interlace and skew,
+    /// R9 maximum scan line, R10/R11 cursor, R12/R13 display start,
+    /// R14/R15 cursor address, R16/R17 light pen.
+    regs: Registers,
 
     ///  	The Horizontal Character Counter (an internal CRTC register). Keeps track of the current horizontal character number. When this value equals R1 of the CRTC (horizontal displayed) display output is disabled for the rest of the current line. When this value equals R0 of the CRTC (horizontal total), display output is enabled and this value is reset to zero. When this value equals R2 of the CRTC (horizontal sync position) a new scan line may be started depending on the current HSYNC position of the monitor.
     pub hcc: u8,
@@ -164,7 +149,14 @@ pub struct Crtc {
     ///  The MA is reloaded with the value from R12 and R13 when VCC=0 and VLC=0 (that's when a new CRTC screen begin). However, CRTC Type 1 keep updating the MA on every new scanline while VCC=0 (and VLC=<R9)
     pub ma: u16,
 
-    crtc_type: CrtcType,
+    model: &'static dyn CrtcModel,
+
+    /// Whether the last completed line was in the vertical border by R6
+    /// (the UM6845R status register's V bit).
+    vertical_border: bool,
+    /// State of the noise source behind the floating values some chips
+    /// return (xorshift32: reproducible, unlike an OS random number).
+    noise: u32,
 }
 
 impl Default for Crtc {
@@ -173,24 +165,7 @@ impl Default for Crtc {
             pins: Default::default(),
             ar: Default::default(),
             sr: Default::default(),
-            r0: Default::default(),
-            r1: Default::default(),
-            r2: Default::default(),
-            r3: Default::default(),
-            r4: Default::default(),
-            r5: Default::default(),
-            r6: Default::default(),
-            r7: Default::default(),
-            r8: Default::default(),
-            r9: Default::default(),
-            r10: Default::default(),
-            r11: Default::default(),
-            r12: Default::default(),
-            r13: Default::default(),
-            r14: Default::default(),
-            r15: Default::default(),
-            r16: Default::default(),
-            r17: Default::default(),
+            regs: Default::default(),
             hcc: Default::default(),
             vcc: Default::default(),
             vlc: Default::default(),
@@ -200,37 +175,24 @@ impl Default for Crtc {
             vtac: 0,
             in_vertical_adjust: false,
             ma: Default::default(),
-            crtc_type: Default::default(),
+            model: CrtcType::default().model(),
+            vertical_border: false,
+            noise: 0x2545_f491,
         };
         crtc.reset();
         crtc
     }
 }
-#[derive(PartialEq, Debug, Clone, Copy)]
-#[repr(u8)]
-pub enum CrtcType {
-    Crtc0 = 0,
-    Crtc1 = 1,
-    Crtc2 = 2,
-    Crtc3 = 3,
-    Crtc4 = 4,
-}
-
 impl From<&CrtcType> for Crtc {
     fn from(from: &CrtcType) -> Self {
-        let mut crtc = Crtc {
-            crtc_type: *from,
-            ..Default::default()
-        };
-        crtc.reset();
-        crtc
+        Crtc::from(*from)
     }
 }
 
 impl From<CrtcType> for Crtc {
     fn from(from: CrtcType) -> Self {
         let mut crtc = Crtc {
-            crtc_type: from,
+            model: from.model(),
             ..Default::default()
         };
         crtc.reset();
@@ -238,177 +200,60 @@ impl From<CrtcType> for Crtc {
     }
 }
 
-impl Default for CrtcType {
-    fn default() -> Self {
-        CrtcType::Crtc0
-    }
-}
-
-impl CrtcType {
-    /// Provides the mask to keep the bit depending on the CRTC when reading the value
-    pub fn read_register_mask(&self, r: u8) -> u8 {
-        match r {
-            0..10 => unreachable!(),
-            10 => {
-                if self.is_crtc0() || self.is_crtc3() || self.is_crtc4() {
-                    0b00011111
-                } else {
-                    0b01111111
-                }
-            }
-
-            11 => 0b00011111,
-
-            12 => {
-                if self.is_crtc0() || self.is_crtc3() || self.is_crtc4() {
-                    0b00111111
-                } else {
-                    0x00
-                }
-            }
-
-            13 => {
-                if self.is_crtc0() || self.is_crtc3() || self.is_crtc4() {
-                    0xff
-                } else {
-                    0x00
-                }
-            }
-
-            14 | 16 => 0b111111,
-
-            15 | 17 => 0xff,
-
-            18.. => unreachable!(),
-        }
-    }
-
-    /// Provides the mask to keep the bit depending on the CRTC when writting the value
-    pub fn write_register_mask(&self, r: u8) -> u8 {
-        match r {
-            0 | 1 | 2 | 13 | 15 => 0xff,
-
-            3 => {
-                if self.is_crtc0() || self.is_crtc3() || self.is_crtc4() {
-                    0b10001111
-                } else {
-                    0b1111
-                }
-            }
-
-            4 => 0b01111111,
-
-            5 | 9 | 11 => 0b00011111,
-
-            6 | 7 => {
-                if self.is_crtc0() || self.is_crtc3() || self.is_crtc4() {
-                    0b01111111
-                } else {
-                    0b00111111
-                }
-            }
-
-            8 => {
-                if self.is_crtc0() || self.is_crtc2() || self.is_crtc4() {
-                    0b00000011
-                } else if self.is_crtc1() {
-                    0xff
-                } else {
-                    0b11110011
-                }
-            }
-
-            10 => {
-                if self.is_crtc0() || self.is_crtc3() || self.is_crtc4() {
-                    0b00011111
-                } else {
-                    0b01111111
-                }
-            }
-
-            12 | 14 => 0b00111111,
-
-            16.. => {
-                unimplemented!()
-            }
-        }
-    }
-
-    fn is_crtc0(&self) -> bool {
-        *self == CrtcType::Crtc0
-    }
-
-    fn is_crtc1(&self) -> bool {
-        *self == CrtcType::Crtc1
-    }
-
-    fn is_crtc2(&self) -> bool {
-        *self == CrtcType::Crtc2
-    }
-
-    fn is_crtc3(&self) -> bool {
-        *self == CrtcType::Crtc3
-    }
-
-    fn is_crtc4(&self) -> bool {
-        *self == CrtcType::Crtc4
-    }
-}
-
 impl Crtc {
     pub fn r0(&self) -> u8 {
-        self.r0
+        self.regs[0]
     }
     pub fn r1(&self) -> u8 {
-        self.r1
+        self.regs[1]
     }
     pub fn r2(&self) -> u8 {
-        self.r2
+        self.regs[2]
     }
     pub fn r3(&self) -> u8 {
-        self.r3
+        self.regs[3]
     }
     pub fn r4(&self) -> u8 {
-        self.r4
+        self.regs[4]
     }
     pub fn r5(&self) -> u8 {
-        self.r5
+        self.regs[5]
     }
     pub fn r6(&self) -> u8 {
-        self.r6
+        self.regs[6]
     }
     pub fn r7(&self) -> u8 {
-        self.r7
+        self.regs[7]
     }
     pub fn r8(&self) -> u8 {
-        self.r8
+        self.regs[8]
     }
     pub fn r9(&self) -> u8 {
-        self.r9
+        self.regs[9]
     }
     pub fn r10(&self) -> u8 {
-        self.r10
+        self.regs[10]
     }
     pub fn r11(&self) -> u8 {
-        self.r11
+        self.regs[11]
     }
     pub fn r12(&self) -> u8 {
-        self.r12
+        self.regs[12]
     }
     pub fn r13(&self) -> u8 {
-        self.r13
+        self.regs[13]
     }
     pub fn r14(&self) -> u8 {
-        self.r14
+        self.regs[14]
     }
     pub fn r15(&self) -> u8 {
-        self.r15
+        self.regs[15]
     }
     pub fn r16(&self) -> u8 {
-        self.r16
+        self.regs[16]
     }
     pub fn r17(&self) -> u8 {
-        self.r17
+        self.regs[17]
     }
     pub fn ar(&self) -> u8 {
         self.ar
@@ -431,147 +276,90 @@ impl Crtc {
         }
     }
 
-    /// Execute the CRTC register status
+    /// Execute the CRTC register status (read of &BE00): what the data bus
+    /// carries is the chip's business.
     pub fn status_register(&mut self) {
-        let data: u8 = if self.crtc_type.is_crtc1() {
-            todo!("Implement CRTC1 behavior when reading status register");
-            let u = 1; // TODO set the right value
-            let v = 1; // TODO set the right value
-            let l = if self.get_pin(CrtcPin::VS) { 1 } else { 0 }; // TODO set the right value
-            u << 7 + l << 6 + v << 5
-        } else if self.crtc_type.is_crtc3() || self.crtc_type.is_crtc4() {
-            self.do_read_register(self.ar)
-        } else {
-            thread_rng().gen::<u8>()
-        };
-
+        let data = self.model.read_status(&self.read_context());
         self.set_data_on_pins(data);
     }
 
-    /// Execute the CRTC register read
+    /// Execute the CRTC register read (read of &BF00).
     pub fn read_crtc_register(&mut self) {
-        if self.is_register_readable(self.ar) {
-            let val = self.do_read_register(self.ar) & self.crtc_type.read_register_mask(self.ar);
-            self.set_data_on_pins(val);
+        let data = self.model.read_register(&self.read_context());
+        self.set_data_on_pins(data);
+    }
+
+    /// What a register read may depend on. Advances the noise source, as a
+    /// floating bus would return something different each time.
+    fn read_context(&mut self) -> ReadContext<'_> {
+        // xorshift32
+        self.noise ^= self.noise << 13;
+        self.noise ^= self.noise >> 17;
+        self.noise ^= self.noise << 5;
+        ReadContext {
+            registers: &self.regs,
+            selected: self.ar,
+            vertical_border: self.vertical_border,
+            noise: self.noise & 1 != 0
         }
     }
 
-    /// REturn true if the CRTC allows the writting of the register
+    /// Whether register `r` can be written on this CRTC (R0-R15; R16/R17
+    /// are the read-only light pen).
     pub fn is_register_writable(&self, r: u8) -> bool {
-        match r {
-            0..=15 => true,
-            _ => false,
-        }
+        r <= 15
     }
 
-    /// REturn true if the CRTC allows the reading of the register
-    pub fn is_register_readable(&self, r: u8) -> bool {
-        match r {
-            10..=17 => true,
-            _ => false,
-        }
-    }
-
-    /// panic if register is not valid
-    /// Keep the bits of interest (that depend on the crtc) and store it
+    /// Store `v` in register `r`, keeping only the bits this chip has.
+    /// Registers that don't exist are ignored.
     pub fn do_write_register(&mut self, r: u8, v: u8) {
-        let v = v & self.crtc_type.write_register_mask(r);
-        let r = match r {
-            0 => &mut self.r0,
-            1 => &mut self.r1,
-            2 => &mut self.r2,
-            3 => &mut self.r3,
-            4 => &mut self.r4,
-            5 => &mut self.r5,
-            6 => &mut self.r6,
-            7 => &mut self.r7,
-            8 => &mut self.r8,
-            9 => &mut self.r9,
-            10 => &mut self.r10,
-            11 => &mut self.r11,
-            12 => &mut self.r12,
-            13 => &mut self.r13,
-            14 => &mut self.r14,
-            15 => &mut self.r15,
-            _ => unreachable!(),
-        };
-        *r = v;
+        let mask = self.model.write_mask(r);
+        if let Some(register) = self.regs.get_mut(usize::from(r)) {
+            *register = v & mask;
+        }
     }
 
+    /// The register as stored (no chip-dependent read behaviour: for that
+    /// see [`Crtc::read_crtc_register`]).
     pub fn do_read_register(&self, r: u8) -> u8 {
-        let v = match r {
-            0 => self.r0,
-            1 => self.r1,
-            2 => self.r2,
-            3 => self.r3,
-            4 => self.r4,
-            5 => self.r5,
-            6 => self.r6,
-            7 => self.r7,
-            8 => self.r8,
-            9 => self.r9,
-            10 => self.r10,
-            11 => self.r11,
-            12 => self.r12,
-            13 => self.r13,
-            14 => self.r14,
-            15 => self.r15,
-            _ => 0xff, // request to a wrong register,
-        };
-        let m = self.crtc_type.read_register_mask(r);
-        v & m
+        self.regs.get(usize::from(r)).copied().unwrap_or(0xff)
+    }
+
+    /// Which chip this is.
+    pub fn crtc_type(&self) -> CrtcType {
+        self.model.crtc_type()
     }
 
     /// A new screen begins
     /// This is call when VCC=0 and VLC<=r9 CRTC1 but only called when VCC and VLC are reseted for the others
     fn trigger_new_screen_if_needed(&mut self) {
-        let trigger = if self.crtc_type.is_crtc1() {
-            self.vcc == 0 && self.vlc <= self.r9
+        let trigger = if self.model.reloads_start_address_every_line_of_first_row() {
+            self.vcc == 0 && self.vlc <= self.regs[9]
         } else {
             self.vcc == 0 && self.vlc == 0
         };
 
         if trigger && self.hcc == 0 {
-            self.ma = ((self.r12 as u16) << 8).wrapping_add(self.r13 as u16);
+            self.ma = ((self.regs[12] as u16) << 8).wrapping_add(self.regs[13] as u16);
         }
     }
+
     /// VSync in lines
     fn vsync_height(&self) -> u8 {
-        let val = (self.r3 & 0b11110000) >> 4;
-        if val == 0 || self.crtc_type.is_crtc2() || self.crtc_type.is_crtc1() {
-            16
-        } else {
-            val
-        }
+        self.model.vsync_width(self.regs[3])
     }
 
-    /// To set 0 is problematic (for non CTM I would say)
-    /// Hsync with in chars
-    fn hsync_width(&self) -> u8 {
-        let width = self.r3 & 0b00001111;
-        if width != 0 {
-            width
-        } else if self.crtc_type.is_crtc2() {
-            16 // widht of 16 chars for crtc 2
-        } else {
-            0 // no hsync for other crtcs
-        }
+    /// HSync width in chars; `None` when no HSYNC is produced.
+    fn hsync_width(&self) -> Option<u8> {
+        self.model.hsync_width(self.regs[3])
     }
 
-    /// Return the delay to display the border.
-    /// it depends on r8 for CRTC 0 3 & 4,
+    /// Return the delay to display the border (R8's display skew).
     fn reg8_delay_border(&self) -> u8 {
-        match self.crtc_type {
-            CrtcType::Crtc0 | CrtcType::Crtc3 | CrtcType::Crtc4 => {
-                match self.r8 & 0b110000 {
-                    0b000000 => 0,
-                    0b010000 => 1,                  // 1 char delay
-                    0b100000 => 2,                  // 2 chars delay
-                    0b110000 => self.r1 - self.hcc, // ugly trick to force border
-                    _ => unreachable!(),
-                }
-            }
-            _ => 0,
+        match self.model.display_skew(self.regs[8]) {
+            DisplaySkew::Delayed(chars) => chars,
+            // ugly trick to force the border
+            DisplaySkew::Blanked => self.regs[1].wrapping_sub(self.hcc)
         }
     }
 
@@ -579,15 +367,15 @@ impl Crtc {
     fn update_memory_address(&mut self) {
         if self.hsync() {
             self.hsc += 1;
-            if self.hsc == self.hsync_width() {
+            if Some(self.hsc) == self.hsync_width() {
                 self.off(CrtcPin::HS);
             }
         }
 
         self.hcc = self.hcc.wrapping_add(1); // XXX check if there is a bit limit in the counter
-        self.hdc += 1;
+        self.hdc = self.hdc.wrapping_add(1);
 
-        if self.hcc == self.r0 + 1 {
+        if self.hcc == self.regs[0].wrapping_add(1) {
             // This is the end of the line, we have to trigger all the other stuffs
             self.hcc = 0;
 
@@ -606,7 +394,7 @@ impl Crtc {
                 // one raster line at a time, until it has topped up the
                 // frame by R5 extra lines.
                 self.vtac += 1;
-                if self.vtac >= self.r5 {
+                if self.vtac >= self.regs[5] {
                     self.in_vertical_adjust = false;
                     self.vtac = 0;
                     self.vcc.reset();
@@ -616,12 +404,12 @@ impl Crtc {
                 self.vlc += 1;
 
                 // This is the end of a char line
-                if self.vlc == self.r9 + 1 {
+                if self.vlc == self.regs[9] + 1 {
                     self.vlc.reset();
                     self.vcc += 1;
 
-                    if self.vcc == self.r4 + 1 {
-                        if self.r5 == 0 {
+                    if self.vcc == self.regs[4] + 1 {
+                        if self.regs[5] == 0 {
                             // This is the end of the screen
                             self.vcc.reset();
                         } else {
@@ -633,24 +421,29 @@ impl Crtc {
                     }
                 }
             }
+
+            // Sampled once per line, at C0=R0 (ACCC §21.3.3); an R6 of 0
+            // while the frame is running is not detected by the chip.
+            self.vertical_border = self.regs[6] != 0 && self.vcc >= self.regs[6];
         }
 
-        if self.hcc.wrapping_add(self.reg8_delay_border()) >= self.r1 || self.vcc >= self.r6 {
+        if self.hcc.wrapping_add(self.reg8_delay_border()) >= self.regs[1] || self.vcc >= self.regs[6] {
             self.set_pin(CrtcPin::DE, false); // Activate Border
         } else {
             // TODO handle the special case of CRTC1 that is unable to leave this state at some point
             self.set_pin(CrtcPin::DE, true);
         }
 
-        // Request an hsync if needed
-        if self.hcc == self.r2 {
+        // Request an hsync if needed (a zero width produces none on the
+        // chips that treat it that way: it would otherwise never end)
+        if self.hcc == self.regs[2] && self.hsync_width().is_some() {
             self.hsc = 0;
             self.on(CrtcPin::HS);
             self.hdc = 0; // XXX I am pretty sure I am not reseting it at the right place
         }
 
         // Request a vsync if needed
-        if self.vcc == self.r7 && !self.get_pin(CrtcPin::VS){
+        if self.vcc == self.regs[7] && !self.get_pin(CrtcPin::VS){
             self.vsc = 0;
             self.on(CrtcPin::VS); // Activate Vsync
         }
@@ -664,7 +457,7 @@ impl Crtc {
     /// should not be called outside of Crtc. Public only for test reasons
     pub fn set_address_on_pins(&mut self) {
         let address = (self.vcc.value() as u16)
-            .wrapping_mul(self.r1 as u16)
+            .wrapping_mul(self.regs[1] as u16)
             .wrapping_add(self.hcc as u16)
             .wrapping_add(self.ma);
 
@@ -750,29 +543,29 @@ impl Chip for Crtc {
     fn reset(&mut self) {
         self.ma = 0;
 
-        self.r0 = 63;
-        self.r1 = 40;
-        self.r2 = 46;
-        self.r3 = 128 + 14;
-        self.r4 = 38;
-        self.r5 = 0;
-        self.r6 = 25;
-        self.r7 = 30;
-        self.r8 = 0;
-        self.r9 = 7;
-        self.r10 = 0;
-        self.r11 = 0;
-        self.r12 = 48;
-        self.r13 = 0;
-        self.r14 = 0;
-        self.r15 = 0;
-        self.r16 = 0;
-        self.r17 = 0;
+        self.regs[0] = 63;
+        self.regs[1] = 40;
+        self.regs[2] = 46;
+        self.regs[3] = 128 + 14;
+        self.regs[4] = 38;
+        self.regs[5] = 0;
+        self.regs[6] = 25;
+        self.regs[7] = 30;
+        self.regs[8] = 0;
+        self.regs[9] = 7;
+        self.regs[10] = 0;
+        self.regs[11] = 0;
+        self.regs[12] = 48;
+        self.regs[13] = 0;
+        self.regs[14] = 0;
+        self.regs[15] = 0;
+        self.regs[16] = 0;
+        self.regs[17] = 0;
 
         // Set the counters to the limits
-        self.vcc = self.r4.into();
-        self.vlc = self.r9.into();
-        self.hcc = self.r0;
+        self.vcc = self.regs[4].into();
+        self.vlc = self.regs[9].into();
+        self.hcc = self.regs[0];
         self.vtac = 0;
         self.in_vertical_adjust = false;
 
@@ -828,9 +621,9 @@ mod test {
         let mut crtc = Crtc::default();
         crtc.reset();
 
-        assert_eq!(crtc.r1, 40);
-        assert_eq!(crtc.r4, 38);
-        assert_eq!(crtc.r9, 7);
+        assert_eq!(crtc.regs[1], 40);
+        assert_eq!(crtc.regs[4], 38);
+        assert_eq!(crtc.regs[9], 7);
 
         crtc.set_pin(CrtcPin::CCLK, true);
         crtc.set_pin(CrtcPin::CS, false);
@@ -838,8 +631,8 @@ mod test {
         crtc.set_pin(CrtcPin::RS, false);
         crtc.set_pin(CrtcPin::EN, false);
 
-        crtc.r12 = 0x30;
-        crtc.r13 = 0x00;
+        crtc.regs[12] = 0x30;
+        crtc.regs[13] = 0x00;
         crtc.vcc.reset();
         crtc.vlc.reset();
         crtc.hcc = 0;
@@ -861,9 +654,9 @@ mod test {
         let mut crtc = Crtc::default();
         crtc.reset();
 
-        assert_eq!(crtc.r1, 40);
-        assert_eq!(crtc.r4, 38);
-        assert_eq!(crtc.r9, 7);
+        assert_eq!(crtc.regs[1], 40);
+        assert_eq!(crtc.regs[4], 38);
+        assert_eq!(crtc.regs[9], 7);
 
         crtc.set_pin(CrtcPin::CCLK, true);
         crtc.set_pin(CrtcPin::CS, false);
@@ -871,8 +664,8 @@ mod test {
         crtc.set_pin(CrtcPin::RS, false);
         crtc.set_pin(CrtcPin::EN, false);
 
-        crtc.r12 = 0x00;
-        crtc.r13 = 0x00;
+        crtc.regs[12] = 0x00;
+        crtc.regs[13] = 0x00;
         crtc.vcc.reset();
         crtc.vlc.reset();
         crtc.hcc = 0;
@@ -894,9 +687,9 @@ mod test {
     fn test_standard_crtc() {
         let mut crtc = Crtc::default();
 
-        for char_line in 0..=crtc.r4 {
-            for scan_line in 0..=crtc.r9 {
-                for char in 0..=crtc.r0 {
+        for char_line in 0..=crtc.regs[4] {
+            for scan_line in 0..=crtc.regs[9] {
+                for char in 0..=crtc.regs[0] {
                     crtc.save_pins_state();
                     crtc.set_pin(CrtcPin::CCLK, true);
 
@@ -913,32 +706,32 @@ mod test {
                     //  dbg!(char_line, scan_line, char, &crtc);
 
                     // Check that main internal counter are correct
-                    assert!(crtc.vcc <= crtc.r4);
-                    assert!(crtc.vlc.value() <= crtc.r9);
-                    assert!(crtc.hcc <= crtc.r0);
+                    assert!(crtc.vcc <= crtc.regs[4]);
+                    assert!(crtc.vlc.value() <= crtc.regs[9]);
+                    assert!(crtc.hcc <= crtc.regs[0]);
 
                     assert!(crtc.vcc == char_line);
                     assert!(crtc.vlc.value() == scan_line);
                     assert!(crtc.hcc == char);
 
                     // Test for border
-                    if crtc.hcc >= crtc.r1 || crtc.vcc >= crtc.r6 {
+                    if crtc.hcc >= crtc.regs[1] || crtc.vcc >= crtc.regs[6] {
                         assert!(!crtc.get_pin(CrtcPin::DE));
                     } else {
                         assert!(crtc.get_pin(CrtcPin::DE));
                     }
 
                     // Test for hsync
-                    if crtc.hcc >= crtc.r2 && crtc.hcc < crtc.r2 + crtc.hsync_width() {
+                    if crtc.hcc >= crtc.regs[2] && crtc.hcc < crtc.regs[2] + crtc.hsync_width().unwrap() {
                         assert!(crtc.get_pin(CrtcPin::HS));
                     } else {
                         assert!(!crtc.get_pin(CrtcPin::HS));
                     }
 
                     // VSYNC duration is expressed in raster lines, not in character lines.
-                    let raster_line = (crtc.vcc.value() as u16) * (crtc.r9 as u16 + 1)
+                    let raster_line = (crtc.vcc.value() as u16) * (crtc.regs[9] as u16 + 1)
                         + crtc.vlc.value() as u16;
-                    let vsync_start = (crtc.r7 as u16) * (crtc.r9 as u16 + 1);
+                    let vsync_start = (crtc.regs[7] as u16) * (crtc.regs[9] as u16 + 1);
                     let vsync_end = vsync_start + crtc.vsync_height() as u16;
                     if raster_line >= vsync_start && raster_line < vsync_end {
                         assert!(crtc.get_pin(CrtcPin::VS));
@@ -979,7 +772,7 @@ mod test {
                 hsync_duration += 1;
                 crtc.update_memory_address();
             }
-            assert_eq!(hsync_duration, crtc.hsync_width());
+            assert_eq!(Some(hsync_duration), crtc.hsync_width());
 
             let mut hsync_wait = 0;
             while !crtc.hsync() {
