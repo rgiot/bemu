@@ -44,12 +44,12 @@ fn read_data_full_roundtrip() {
     let n = size_code_for_len(sector_len as usize);
 
     let mut fdc = Fdc::default();
-    fdc.insert_disk(FdcDrive::A, Some(disk));
+    fdc.insert_disk(FdcDrive::A, Some(disk)).unwrap();
     fdc.set_motor(true);
 
-    // Command phase: READ DATA (0x06), unit=0/head=0, C=0,H=0,R=sector_id,
+    // Command phase: READ DATA (0x46, MFM), unit=0/head=0, C=0,H=0,R=sector_id,
     // N=size code, EOT=sector_id (stop after this one sector), GPL, DTL.
-    let command = [0x06, 0x00, 0x00, 0x00, sector_id, n, sector_id, 0x2a, 0xff];
+    let command = [0x46, 0x00, 0x00, 0x00, sector_id, n, sector_id, 0x2a, 0xff];
     for &byte in &command {
         assert!(
             fdc.read_status() & RQM != 0,
@@ -91,10 +91,10 @@ fn read_data_sector_not_found_reports_no_data() {
     let missing_sector = sector_id.wrapping_add(200); // not present on the disk
 
     let mut fdc = Fdc::default();
-    fdc.insert_disk(FdcDrive::A, Some(disk));
+    fdc.insert_disk(FdcDrive::A, Some(disk)).unwrap();
     fdc.set_motor(true);
 
-    let command = [0x06, 0x00, 0x00, 0x00, missing_sector, 0x02, missing_sector, 0x2a, 0xff];
+    let command = [0x46, 0x00, 0x00, 0x00, missing_sector, 0x02, missing_sector, 0x2a, 0xff];
     for &byte in &command {
         fdc.write_data(byte);
     }
@@ -113,7 +113,7 @@ fn read_data_without_disk_reports_not_ready() {
     fdc.set_motor(true);
     // No disk inserted at all.
 
-    let command = [0x06, 0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0x2a, 0xff];
+    let command = [0x46, 0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0x2a, 0xff];
     for &byte in &command {
         fdc.write_data(byte);
     }
@@ -127,49 +127,51 @@ fn read_data_without_disk_reports_not_ready() {
 
 #[test]
 fn seek_and_sense_interrupt_status() {
+    let (disk, _, _) = disk_with_known_sector();
     let mut fdc = Fdc::default();
+    fdc.insert_disk(FdcDrive::A, Some(disk)).unwrap();
     fdc.set_motor(true);
+    drain_interrupts(&mut fdc); // the ready change caused by inserting the disc
 
     // SEEK to track 5, unit 0.
     for &byte in &[0x0f, 0x00, 0x05] {
         fdc.write_data(byte);
     }
-    // Seek has no result phase - FDC goes straight back to command phase,
-    // but unit 0's "busy" bit stays set until Sense Interrupt Status
-    // clears it (Table 2 of the datasheet: DnB busy while a seek's
-    // completion interrupt is still pending).
-    assert_eq!(fdc.read_status(), RQM | 0x01);
+    // Seek has no result phase: straight back to the command phase. The
+    // completion is an *interrupt*, not a bit of the main status register
+    // (its D0B-D3B only mean "seek in progress").
+    assert_eq!(fdc.read_status(), RQM);
 
     // SENSE INTERRUPT STATUS clears the pending seek-end and reports it.
     fdc.write_data(0x08);
     let st0 = fdc.read_data();
     let pcn = fdc.read_data();
-    assert_eq!(st0 & 0x20, 0x20, "ST0 SE (seek end) bit should be set");
+    assert_eq!(st0 & 0xe0, 0x20, "ST0: normal termination with SE (seek end)");
     assert_eq!(pcn, 5, "PCN should report the new track");
 
-    // A second SIS with nothing pending reports invalid command.
+    // A second SIS with nothing pending reports invalid command, one byte.
     fdc.write_data(0x08);
-    let st0_again = fdc.read_data();
-    let _ = fdc.read_data();
-    assert_eq!(st0_again, 0x80, "ST0 should report invalid command");
+    assert_eq!(fdc.read_data(), 0x80, "ST0 should report invalid command");
+    assert_eq!(fdc.read_status(), RQM, "and that was the whole result");
 }
 
 #[test]
 fn recalibrate_resets_track_to_zero() {
+    let (disk, _, _) = disk_with_known_sector();
     let mut fdc = Fdc::default();
+    fdc.insert_disk(FdcDrive::A, Some(disk)).unwrap();
     fdc.set_motor(true);
+    drain_interrupts(&mut fdc);
 
     for &byte in &[0x0f, 0x00, 0x1f] {
         fdc.write_data(byte);
     }
-    fdc.write_data(0x08); // clear the seek-end interrupt
-    let _ = fdc.read_data();
-    let _ = fdc.read_data();
+    drain_interrupts(&mut fdc); // the seek end
 
     for &byte in &[0x07, 0x00] {
         fdc.write_data(byte);
     }
-    assert_eq!(fdc.read_status(), RQM | 0x01);
+    assert_eq!(fdc.read_status(), RQM);
 
     fdc.write_data(0x08);
     let st0 = fdc.read_data();
@@ -179,14 +181,47 @@ fn recalibrate_resets_track_to_zero() {
 }
 
 #[test]
+fn seek_on_an_empty_drive_is_reported_not_ready() {
+    let mut fdc = Fdc::default();
+    fdc.set_motor(true);
+    for &byte in &[0x0f, 0x00, 0x05] {
+        fdc.write_data(byte);
+    }
+    fdc.write_data(0x08);
+    let st0 = fdc.read_data();
+    assert_eq!(st0 & 0xc8, 0x48, "abnormal termination, not ready");
+}
+
+/// Sense Interrupt Status until it answers "invalid" (nothing pending),
+/// exactly what AMSDOS does before trusting the chip's state.
+fn drain_interrupts(fdc: &mut Fdc) {
+    for _ in 0..8 {
+        fdc.write_data(0x08);
+        if fdc.read_data() == 0x80 {
+            return;
+        }
+        fdc.read_data(); // PCN
+    }
+    panic!("interrupts keep coming");
+}
+
+#[test]
 fn invalid_command_reports_st0_80() {
     let mut fdc = Fdc::default();
     fdc.set_motor(true);
 
-    // 0x0D is FORMAT TRACK, deliberately unsupported.
-    fdc.write_data(0x0d);
+    fdc.write_data(0x00);
     assert_eq!(fdc.read_data(), 0x80);
     // Back to command phase, ready for the next command.
+    assert_eq!(fdc.read_status(), RQM);
+}
+
+#[test]
+fn version_is_invalid_on_a_765a() {
+    // 0x10 is a 765B command; the 765A answers ST0 = &80 (datasheet, Version)
+    let mut fdc = Fdc::default();
+    fdc.write_data(0x10);
+    assert_eq!(fdc.read_data(), 0x80);
     assert_eq!(fdc.read_status(), RQM);
 }
 
@@ -203,7 +238,7 @@ fn motherboard_reads_disk_through_real_io_ports() {
         .disable_lower_rom()
         .disable_upper_rom()
         .build();
-    motherboard.fdc_mut().insert_disk(FdcDrive::A, Some(disk));
+    motherboard.fdc_mut().insert_disk(FdcDrive::A, Some(disk)).unwrap();
 
     let mut prog = Vec::new();
     let mut nb_instructions = 0usize;
@@ -215,7 +250,7 @@ fn motherboard_reads_disk_through_real_io_ports() {
         nb_instructions += 3;
     };
     emit_out(&mut prog, 0xfa7e, 1); // motor on
-    for &b in &[0x06, 0x00, 0x00, 0x00, sector_id, n, sector_id, 0x2a, 0xff] {
+    for &b in &[0x46, 0x00, 0x00, 0x00, sector_id, n, sector_id, 0x2a, 0xff] {
         emit_out(&mut prog, 0xfb7f, b);
     }
 
@@ -258,7 +293,7 @@ fn busy_bit_stays_set_for_the_whole_result_phase() {
     // and ignoring every later command byte.
     let (disk, _, _) = disk_with_known_sector();
     let mut fdc = Fdc::default();
-    fdc.insert_disk(FdcDrive::A, Some(disk));
+    fdc.insert_disk(FdcDrive::A, Some(disk)).unwrap();
     fdc.set_motor(true);
 
     // READ ID (MFM), unit 0 head 0: a 7 byte result

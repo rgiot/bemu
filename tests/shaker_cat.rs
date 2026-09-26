@@ -31,7 +31,8 @@ fn shaker_machine() -> Motherboard {
     let mut motherboard = MotherboardBuilder::default().enable_interruptions().build();
     motherboard
         .fdc_mut()
-        .insert_disk(FdcDrive::A, Some(AnyDisc::Edsk(dsk)));
+        .insert_disk(FdcDrive::A, Some(AnyDisc::Edsk(dsk)))
+        .expect("the disc can be loaded in the FDC");
     motherboard
 }
 

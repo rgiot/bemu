@@ -17,10 +17,10 @@ use common::*;
 #[ignore = "slow: boots the real firmware"]
 fn run_rhino_loads_and_prints_the_crtc_type() {
     let bytes = std::fs::read("validation/RHINO.DSK").expect("validation/RHINO.DSK");
-    let dsk = amsrust::disc_image::load_dsk(&bytes).expect("a valid standard DSK");
+    let disc = amsrust::disc_image::load_dsk(&bytes).expect("a valid standard DSK");
 
     let mut motherboard = MotherboardBuilder::default().enable_interruptions().build();
-    motherboard.fdc_mut().insert_disk(FdcDrive::A, Some(dsk));
+    motherboard.fdc_mut().insert_image(FdcDrive::A, Some(disc));
     motherboard.fdc_mut().start_command_log();
     run_opcodes(&mut motherboard, 1_000_000);
 
@@ -31,6 +31,7 @@ fn run_rhino_loads_and_prints_the_crtc_type() {
 
     let screen = screen_lines(&motherboard);
     let text = screen.join("\n");
+    eprintln!("{text}");
     assert!(!text.contains("File already open"), "AMSDOS refused to open the file:\n{text}");
 
     // the file data really was read from the disc (sector &C5 = block 2)
