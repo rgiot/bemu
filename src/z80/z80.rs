@@ -544,7 +544,17 @@ impl Z80 {
                 DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
                     self.reg16(*reg).value()
                 }
-                DataSource::Immediate => self.reg16(Reg16::Wz).value(),
+                DataSource::Immediate => {
+                    if matches!(self.opcode_information().unwrap().prefix, OpcodePrefix::Dd | OpcodePrefix::Fd) {
+                        // LD (IX+d),n / LD (IY+d),n: the first operand byte
+                        // (Z) is the displacement, the value to store is the
+                        // second one (W). Using Z stored the displacement.
+                        u16::from(self.reg8(Reg8::W).get())
+                    }
+                    else {
+                        self.reg16(Reg16::Wz).value()
+                    }
+                }
                 _ => unimplemented!("{:?} / {:?}", src, self.opcode_information),
             };
             
@@ -2555,14 +2565,18 @@ impl Chip for Z80 {
 
             MCycle::InterruptM1(TState::T4) => {
                 self.set_pin(Z80Pin::Neg_MREQ, true);
-                self.set_pin(Z80Pin::Neg_M1, false);
+                // /M1 is only low during T1-T2 (already released in T2)
+                self.set_pin(Z80Pin::Neg_M1, true);
                 self.set_pin(Z80Pin::Neg_RFSH, true);
                 self.simulate_call_0x38_after_fetch();
             }
             
             MCycle::FetchOpcode(TState::T4, nb, prefix) => {
                 self.set_pin(Z80Pin::Neg_MREQ, true);
-                self.set_pin(Z80Pin::Neg_M1, false);
+                // /M1 is only low during T1-T2 (already released in T2): it
+                // used to be driven low again here and stay low through the
+                // instruction's following memory/I-O cycles.
+                self.set_pin(Z80Pin::Neg_M1, true);
                 self.set_pin(Z80Pin::Neg_RFSH, true);
                 
                 if  (nb == 0 && !prefix.is_for_indexed_opcode()) || 
