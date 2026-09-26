@@ -934,11 +934,28 @@ impl Z80 {
                 
                 Mnemonic::Bit => {
                     let val = self.get_available_8bits_value(arg2.unwrap());
-                    let bit = val & 1 << eval_data_access_to_i32(arg1.unwrap()) != 0;
-                    
+                    let number = (eval_data_access_to_i32(arg1.unwrap()) & 7) as u8;
+                    let bit_set = val & (1 << number) != 0;
+
+                    // Z is set when the tested bit is *clear*; P/V is a copy
+                    // of Z; S is set when bit 7 is the tested bit and is set.
+                    // (This used to set Z when the bit was set - every BIT
+                    // was inverted, e.g. the firmware "is ESC held?" test.)
                     self.set_flag_on(Z80Flags::H);
-                    self.set_flag(Z80Flags::Z, bit);
+                    self.set_flag(Z80Flags::Z, !bit_set);
+                    self.set_flag(Z80Flags::P, !bit_set);
+                    self.set_flag(Z80Flags::S, number == 7 && bit_set);
                     self.set_flag_off(Z80Flags::N);
+                    // X/Y come from the tested register; for a memory operand
+                    // real hardware takes them from the high byte of the
+                    // internal address register (WZ).
+                    let xy_source: u8 = if matches!(arg2, Some(DataAccess::Register8(_))) {
+                        (val & 0xff) as u8
+                    }
+                    else {
+                        self.reg16(Reg16::Wz).high().get()
+                    };
+                    self.auto_update_flags_x_y(xy_source);
 
                     if matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _, _))) {
                         self.next_state = MCycle::new_fake(1);
