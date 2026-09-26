@@ -608,6 +608,7 @@ impl Z80 {
             );
             
             
+            let write_follows;
             {
                 // this is the normal behavior
                 // we may add additional duration
@@ -642,12 +643,22 @@ impl Z80 {
                 );
                 
                 // reset the various buffers
-                if !self.must_execute_instruction_in_middle() {
+                let in_middle = self.must_execute_instruction_in_middle();
+                write_follows = in_middle
+                    && self.opcode_information().unwrap().nb_bytes_to_write != 0;
+                if !in_middle {
                     self.opcode_information = None;
                 }
             }
-            
-            if matches!(
+
+            if write_follows {
+                // Read-modify-write (e.g. DEC (HL)): only the compute step
+                // happened here, the write M-cycle is still to come. The
+                // instruction retires at the end of that write cycle (see
+                // the `Write`/`Output` T4 handler) - accepting a pending
+                // interrupt now would drop the write.
+            }
+            else if matches!(
                 self.next_state,
                 MCycle::Fake(TState::T1, _)
             ) {
@@ -659,8 +670,8 @@ impl Z80 {
                 // so we can test if there is an interruption
                 self.instruction_finished();
             }
-            
-            
+
+
         }
         
         /// Check how many bytes have to be read yet and set up appropriately the next state
@@ -2636,17 +2647,14 @@ impl Chip for Z80 {
                 if nb + 1 == opcode_info.nb_bytes_to_read {
                     if 0 != opcode_info.nb_bytes_to_write {
                         if self.must_execute_instruction_in_middle() {
+                            // compute only: `execute_step()` doesn't retire
+                            // the instruction here, the write still follows
                             self.execute_step();
                         }
-                        // `execute_step()` may have just accepted a pending
-                        // interrupt (see the comment on the analogous check
-                        // below) - don't stomp that with the write phase.
-                        if !self.next_state.is_interruption() {
-                            if opcode_info.write_to_pins {
-                                self.next_state = MCycle::Output(TState::T1, 0);
-                            } else {
-                                self.next_state = MCycle::Write(TState::T1, 0);
-                            }
+                        if opcode_info.write_to_pins {
+                            self.next_state = MCycle::Output(TState::T1, 0);
+                        } else {
+                            self.next_state = MCycle::Write(TState::T1, 0);
                         }
                     } else {
                         self.execute_step();
@@ -2748,7 +2756,11 @@ impl Chip for Z80 {
                     if !self.must_execute_instruction_in_middle() {
                         self.execute_step();
                     } else {
+                        // Read-modify-write: the compute step already ran
+                        // after the read, and this write was the last
+                        // M-cycle - the instruction retires now.
                         self.opcode_information = None;
+                        self.instruction_finished();
                     }
                     // See the matching comment in the `Read`/`Input` T4
                     // handler: `execute_step()` may have just accepted a

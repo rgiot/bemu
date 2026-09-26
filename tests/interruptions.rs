@@ -255,3 +255,44 @@ fn test_interruption_mode1_one_frame() {
 
 	assert_eq!(interrupt_count, 5); // XXX check if it is not supposed to be 6
 }
+
+/// An interrupt must never be accepted between the compute step of a
+/// read-modify-write instruction and its write cycle: that used to leave
+/// `DEC (HL)`'s flags computed but its result never written back, corrupting
+/// memory (in AMSDOS/the firmware key queue: a phantom key).
+#[test]
+fn test_interruption_never_splits_a_read_modify_write_instruction() {
+	let mut motherboard = MotherboardBuilder::default()
+		.disable_lower_rom()
+		.disable_upper_rom()
+		.enable_interruptions()
+		.build();
+
+	// &0100: LD HL,&8000
+	// &0103: DEC (HL) ; INC (HL) ; JR &0103    (byte at &8000 starts at 0)
+	motherboard.write_buffer(0x100, &[0x21, 0x00, 0x80, 0x35, 0x34, 0x18, 0xfc]);
+	motherboard.write_buffer(0x38, cpclib_macros::assemble!(" ei : ret"));
+	motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
+	motherboard.nops_counter_mut().reset();
+
+	let mut interrupt_count = 0;
+	while motherboard.nops_counter().value() < 19968 * 3 {
+		motherboard.execute_next_opcode();
+
+		// DEC (HL) then INC (HL): the byte is only ever 0 or 0xff. A lost
+		// write leaves it at 1 or 0xfe after the INC / DEC pair.
+		let value = motherboard.read_byte(0x8000);
+		assert!(
+			value == 0x00 || value == 0xff,
+			"byte at &8000 is {value:#04x} - a write was lost around an interrupt"
+		);
+
+		if motherboard.cpu().reg16(Reg16::Pc).value() == 0x38 {
+			interrupt_count += 1;
+		}
+	}
+
+	// interrupts kept being accepted (they used to stop for good after the
+	// first one that landed on a multi-cycle instruction)
+	assert!(interrupt_count >= 12, "only {interrupt_count} interrupts were taken");
+}
