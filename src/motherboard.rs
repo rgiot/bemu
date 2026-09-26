@@ -276,23 +276,20 @@ impl Motherboard {
 
         // Keep this order to avoid side effect mixing previous state and current state
         //
-        // NOTE: the CRTC's CPU-facing register read/write path
-        // (`execute_tick()`) shares this same CCLK-gated call with its
-        // video-timing counters (`pre_tick()`), and is therefore a
-        // known-narrow window: a `must_execute_tick()` condition as brief as
-        // a tight back-to-back `OUT (C),a`/`OUTD` loop can fall entirely
-        // between two CCLK edges and never get serviced (the register keeps
-        // its old/default value forever), while the exact same access from
-        // more spread-out code happens to land on an edge and "works". A
-        // fix that splits register access out to run on every system tick
-        // (like the PPI fix just below) was tried and does solve that, but
-        // it also broke `tests/interruptions.rs`'s interrupt-per-frame
-        // count in a way not yet understood (likely some Z80 pin state
-        // during HALT/refresh cycles spuriously satisfying the CRTC's
-        // CS/EN condition once it's no longer CCLK-gated) - left as CCLK-
-        // gated for now pending a fix that doesn't regress that.
+        // The CRTC's video counters advance on its character clock (CCLK),
+        // but its CPU-facing register interface is asynchronous to that
+        // clock: the CPU holds CS/RS/RW for a whole I/O cycle whatever CCLK
+        // is doing. Running the register access only on CCLK edges (as it
+        // used to) lets a short I/O cycle fall between two edges and never be
+        // serviced, so e.g. a register read returned whatever the CPU had
+        // left on the data bus. Access is idempotent for the duration of a
+        // cycle (the data bus is stable), so servicing it on every tick is
+        // safe.
         if self.crtc.is_activated() {
             self.crtc.tick(); // Virtually uses 16 cycles
+        }
+        else if self.crtc.must_execute_tick() {
+            self.crtc.execute_tick();
         }
         // Unlike the CRTC (whose is_activated() gates on CCLK - a genuinely
         // free-running clock unrelated to chip-select, since its internal
@@ -640,9 +637,12 @@ impl Motherboard {
         self.pal.set_pin(PalPin::IOWR, !Neg_IOWR);
 
         // CPU to CRTC
+        // EN is active (low) during a real I/O cycle only: an interrupt
+        // acknowledge also drives IORQ (together with M1) and must not be
+        // seen as an access to whatever port the PC happens to spell.
         self.crtc.set_pin(
             CrtcPin::EN,
-            (Neg_IORD & Neg_IOWR),
+            (Neg_IORD & Neg_IOWR) | !self.cpu.get_pin(Z80Pin::Neg_M1),
         );
 
         sync_pins(
