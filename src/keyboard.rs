@@ -9,15 +9,11 @@
 //! library changes; this module and everything downstream of it (PSG
 //! register 14, `CslInstruction::KeyboardWrite`, ...) stay untouched.
 //!
-//! [`CpcKey`] currently only covers the keys whose matrix position could be
-//! pinned down with confidence (letters, digits, and the handful of control
-//! keys below) - deliberately *not* the full matrix (function keys, the
-//! numeric keypad, joystick lines, Copy/Clr/Tab/CapsLock/...): guessing
-//! those from memory risks the same mistake caught in review here (several
-//! keys silently aliased onto the same matrix position). Extend the match
-//! in `matrix_position` once each addition is checked against a primary
-//! source (the Amstrad Firmware Guide's keyboard chapter, or a service
-//! manual schematic), not carried over from another emulator's source.
+//! The (line, bit) of every key comes from the firmware itself: the default
+//! key translation table at &1EEF in the lower ROM is indexed
+//! `line * 8 + bit`, so it is the authoritative description of which key is
+//! wired where (see `tests/keyboard_matrix_rom.rs`, which checks this file
+//! against the ROM's own table).
 
 /// A physical CPC key, identified by what it is, not by any host input
 /// library's keycode.
@@ -32,130 +28,200 @@ pub enum CpcKey {
     Return,
     Shift,
     Control,
+    CapsLock,
+    Tab,
+    Esc,
+    Del,
+    Clr,
+    Copy,
     CursorUp,
     CursorDown,
     CursorLeft,
-    CursorRight
+    CursorRight,
+    /// `^` (the pound sign on some keyboards)
+    Caret,
+    Minus,
+    At,
+    Colon,
+    Semicolon,
+    Slash,
+    Dot,
+    Comma,
+    OpenBracket,
+    CloseBracket,
+    Backslash,
+    /// Numeric keypad `0`-`9` (the firmware's "f0"-"f9" function keys)
+    Keypad0, Keypad1, Keypad2, Keypad3, Keypad4,
+    Keypad5, Keypad6, Keypad7, Keypad8, Keypad9,
+    KeypadDot,
+    KeypadEnter,
+    /// Joystick 0 shares matrix line 9 with no keyboard key.
+    Joy0Up,
+    Joy0Down,
+    Joy0Left,
+    Joy0Right,
+    Joy0Fire2,
+    Joy0Fire1
 }
 
-/// `(row, bit)` for every key: `bit` indexes into [`KeyboardMatrix::row`]'s
-/// return value, bit 0 = LSB. Cross-checked against the CPC keyboard matrix
-/// as reproduced identically across independent CPC technical references
-/// (the layout is one of the most consistently documented parts of the
-/// machine); see the module doc comment for the standard this was held to
-/// before being added here.
-fn matrix_position(key: CpcKey) -> (u8, u8) {
-    use CpcKey::*;
-    match key {
-        CursorUp => (0, 7),
-        CursorRight => (0, 6),
-        CursorDown => (0, 5),
-        CursorLeft => (0, 0),
+impl CpcKey {
+    /// `(line, bit)` of the key in the matrix: `line` is the value selected
+    /// on PPI port C bits 0-3, `bit` the bit that goes low in the byte read
+    /// back through PSG register 14.
+    pub const fn matrix_position(self) -> (u8, u8) {
+        use CpcKey::*;
+        match self {
+            CursorUp => (0, 0),
+            CursorRight => (0, 1),
+            CursorDown => (0, 2),
+            Keypad9 => (0, 3),
+            Keypad6 => (0, 4),
+            Keypad3 => (0, 5),
+            KeypadEnter => (0, 6),
+            KeypadDot => (0, 7),
 
-        Return => (3, 1),
+            CursorLeft => (1, 0),
+            Copy => (1, 1),
+            Keypad7 => (1, 2),
+            Keypad8 => (1, 3),
+            Keypad5 => (1, 4),
+            Keypad1 => (1, 5),
+            Keypad2 => (1, 6),
+            Keypad0 => (1, 7),
 
-        P => (4, 7),
+            Clr => (2, 0),
+            OpenBracket => (2, 1),
+            Return => (2, 2),
+            CloseBracket => (2, 3),
+            Keypad4 => (2, 4),
+            Shift => (2, 5),
+            Backslash => (2, 6),
+            Control => (2, 7),
 
-        O => (5, 7),
-        I => (5, 6),
-        H => (5, 4),
-        L => (5, 3),
-        K => (5, 2),
-        M => (5, 1),
+            Caret => (3, 0),
+            Minus => (3, 1),
+            At => (3, 2),
+            P => (3, 3),
+            Semicolon => (3, 4),
+            Colon => (3, 5),
+            Slash => (3, 6),
+            Dot => (3, 7),
 
-        Y => (6, 4),
-        U => (6, 3),
-        J => (6, 2),
-        N => (6, 1),
+            Digit0 => (4, 0),
+            Digit9 => (4, 1),
+            O => (4, 2),
+            I => (4, 3),
+            L => (4, 4),
+            K => (4, 5),
+            M => (4, 6),
+            Comma => (4, 7),
 
-        T => (7, 4),
-        G => (7, 3),
-        B => (7, 2),
-        Space => (7, 1),
+            Digit8 => (5, 0),
+            Digit7 => (5, 1),
+            U => (5, 2),
+            Y => (5, 3),
+            H => (5, 4),
+            J => (5, 5),
+            N => (5, 6),
+            Space => (5, 7),
 
-        R => (8, 4),
-        F => (8, 3),
-        C => (8, 2),
-        V => (8, 1),
+            Digit6 => (6, 0),
+            Digit5 => (6, 1),
+            R => (6, 2),
+            T => (6, 3),
+            G => (6, 4),
+            F => (6, 5),
+            B => (6, 6),
+            V => (6, 7),
 
-        W => (9, 6),
-        E => (9, 4),
-        D => (9, 3),
-        S => (9, 2),
-        Z => (9, 1),
-        A => (9, 0),
+            Digit4 => (7, 0),
+            Digit3 => (7, 1),
+            E => (7, 2),
+            W => (7, 3),
+            S => (7, 4),
+            D => (7, 5),
+            C => (7, 6),
+            X => (7, 7),
 
-        // The remaining letters/digits/Q/X/Shift/Control share the matrix
-        // with rows above but their exact bit hasn't been individually
-        // pinned down yet - see the module doc comment. Rather than guess,
-        // route them through a single explicit "not yet mapped" panic so a
-        // caller finds out immediately instead of silently pressing the
-        // wrong key.
-        Q | X | Digit0 | Digit1 | Digit2 | Digit3 | Digit4 | Digit5 | Digit6 | Digit7
-        | Digit8 | Digit9 | Shift | Control => {
-            unimplemented!(
-                "CpcKey::{key:?} isn't in the verified part of the matrix yet - see src/keyboard.rs's module doc comment"
-            )
+            Digit1 => (8, 0),
+            Digit2 => (8, 1),
+            Esc => (8, 2),
+            Q => (8, 3),
+            Tab => (8, 4),
+            A => (8, 5),
+            CapsLock => (8, 6),
+            Z => (8, 7),
+
+            Joy0Up => (9, 0),
+            Joy0Down => (9, 1),
+            Joy0Left => (9, 2),
+            Joy0Right => (9, 3),
+            Joy0Fire2 => (9, 4),
+            Joy0Fire1 => (9, 5),
+            Del => (9, 7)
         }
     }
 }
 
+/// Number of lines in the matrix.
+pub const NB_LINES: usize = 10;
+
 /// The 10x8 keyboard matrix read back through PSG register 14 (I/O port A),
-/// one row at a time as selected by PPI port C bits 0-3.
+/// one line at a time as selected by PPI port C bits 0-3.
 ///
 /// Matches the format `CslInstruction::KeyboardWrite([u8; 10])` already
-/// uses: each row is active-low (bit = 0 means that key **is** pressed).
+/// uses: each line is active-low (bit = 0 means that key **is** pressed).
 #[derive(Debug, Clone, Copy)]
 pub struct KeyboardMatrix {
-    rows: [u8; 10]
+    lines: [u8; NB_LINES]
 }
 
 impl Default for KeyboardMatrix {
     fn default() -> Self {
-        // Active-low: 0xff means nothing on that row is pressed.
-        Self { rows: [0xff; 10] }
+        // Active-low: 0xff means nothing on that line is pressed.
+        Self {
+            lines: [0xff; NB_LINES]
+        }
     }
 }
 
 impl KeyboardMatrix {
     pub fn set_pressed(&mut self, key: CpcKey, pressed: bool) {
-        let (row, bit) = matrix_position(key);
+        let (line, bit) = key.matrix_position();
         if pressed {
-            self.rows[row as usize] &= !(1 << bit);
+            self.lines[line as usize] &= !(1 << bit);
         }
         else {
-            self.rows[row as usize] |= 1 << bit;
+            self.lines[line as usize] |= 1 << bit;
         }
     }
 
     pub fn is_pressed(&self, key: CpcKey) -> bool {
-        let (row, bit) = matrix_position(key);
-        self.rows[row as usize] & (1 << bit) == 0
+        let (line, bit) = key.matrix_position();
+        self.lines[line as usize] & (1 << bit) == 0
     }
 
-    /// The raw byte for one matrix row (0-9), as PSG register 14 would
-    /// return it once that row is selected via PPI port C. PPI port C's
-    /// row-select nibble can address up to 16 lines but only 10 are wired
-    /// to anything - selecting one of the other 6 floats the bus high
-    /// (nothing pressed) exactly like every real row already reads when
-    /// idle, rather than being a real distinct hardware condition worth a
-    /// panic.
-    pub fn row(&self, row: u8) -> u8 {
-        self.rows.get(row as usize).copied().unwrap_or(0xff)
+    /// The raw byte for one matrix line (0-9), as PSG register 14 would
+    /// return it once that line is selected via PPI port C. Port C's
+    /// line-select nibble can address 16 lines but only 10 are wired
+    /// to anything - selecting one of the others floats the bus high
+    /// (nothing pressed), exactly like every wired line reads when idle.
+    pub fn line(&self, line: u8) -> u8 {
+        self.lines.get(line as usize).copied().unwrap_or(0xff)
     }
 
-    /// Directly set every row - the wire format for
+    /// Directly set every line - the wire format for
     /// `CslInstruction::KeyboardWrite`.
-    pub fn set_rows(&mut self, rows: [u8; 10]) {
-        self.rows = rows;
+    pub fn set_lines(&mut self, lines: [u8; NB_LINES]) {
+        self.lines = lines;
     }
 
-    pub fn rows(&self) -> [u8; 10] {
-        self.rows
+    pub fn lines(&self) -> [u8; NB_LINES] {
+        self.lines
     }
 
     pub fn release_all(&mut self) {
-        self.rows = [0xff; 10];
+        self.lines = [0xff; NB_LINES];
     }
 }
 
@@ -166,7 +232,7 @@ mod test {
     #[test]
     fn default_matrix_has_nothing_pressed() {
         let matrix = KeyboardMatrix::default();
-        assert_eq!(matrix.rows(), [0xff; 10]);
+        assert_eq!(matrix.lines(), [0xff; NB_LINES]);
         assert!(!matrix.is_pressed(CpcKey::A));
     }
 
@@ -175,37 +241,42 @@ mod test {
         let mut matrix = KeyboardMatrix::default();
         matrix.set_pressed(CpcKey::A, true);
         assert!(matrix.is_pressed(CpcKey::A));
-        assert_eq!(matrix.row(9) & 0x01, 0);
+        assert_eq!(matrix.line(8), !(1 << 5));
 
         matrix.set_pressed(CpcKey::A, false);
         assert!(!matrix.is_pressed(CpcKey::A));
-        assert_eq!(matrix.row(9), 0xff);
+        assert_eq!(matrix.line(8), 0xff);
     }
 
     #[test]
-    fn pressing_one_key_does_not_affect_another_on_the_same_row() {
+    fn pressing_one_key_does_not_affect_another_on_the_same_line() {
         let mut matrix = KeyboardMatrix::default();
         matrix.set_pressed(CpcKey::A, true);
         assert!(!matrix.is_pressed(CpcKey::Z));
-        assert!(!matrix.is_pressed(CpcKey::S));
+        assert!(!matrix.is_pressed(CpcKey::Q));
     }
 
     #[test]
-    fn set_rows_matches_csl_keyboard_write_format() {
+    fn set_lines_matches_csl_keyboard_write_format() {
         let mut matrix = KeyboardMatrix::default();
-        let mut rows = [0xffu8; 10];
-        rows[9] = !0x01; // A pressed
-        matrix.set_rows(rows);
+        let mut lines = [0xffu8; NB_LINES];
+        lines[8] = !(1 << 5); // A pressed
+        matrix.set_lines(lines);
         assert!(matrix.is_pressed(CpcKey::A));
-        assert_eq!(matrix.rows(), rows);
+        assert_eq!(matrix.lines(), lines);
     }
 
     #[test]
-    fn release_all_clears_every_row() {
+    fn release_all_clears_every_line() {
         let mut matrix = KeyboardMatrix::default();
         matrix.set_pressed(CpcKey::A, true);
         matrix.set_pressed(CpcKey::Return, true);
         matrix.release_all();
-        assert_eq!(matrix.rows(), [0xff; 10]);
+        assert_eq!(matrix.lines(), [0xff; NB_LINES]);
+    }
+
+    #[test]
+    fn unwired_lines_read_as_nothing_pressed() {
+        assert_eq!(KeyboardMatrix::default().line(12), 0xff);
     }
 }

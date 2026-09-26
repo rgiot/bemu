@@ -58,7 +58,7 @@ fn run(prog: &[u8]) -> amsrust::motherboard::Motherboard {
 #[test]
 fn reading_an_untouched_row_returns_all_released() {
     let mut prog = Vec::new();
-    emit_read_row(&mut prog, 9, 0x8000);
+    emit_read_row(&mut prog, 8, 0x8000);
     let motherboard = run(&prog);
     assert_eq!(motherboard.read_byte(0x8000), 0xff);
 }
@@ -72,7 +72,7 @@ fn pressed_key_shows_up_as_a_clear_bit_on_its_row() {
     motherboard.keyboard_mut().set_pressed(CpcKey::A, true);
 
     let mut prog = Vec::new();
-    emit_read_row(&mut prog, 9, 0x8000);
+    emit_read_row(&mut prog, 8, 0x8000);
     motherboard.write_buffer(0x4000, &prog);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x4000);
     motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(0x9000);
@@ -80,8 +80,8 @@ fn pressed_key_shows_up_as_a_clear_bit_on_its_row() {
         motherboard.execute_next_opcode_no_video();
     }
 
-    // CpcKey::A is row 9, bit 0 - active low.
-    assert_eq!(motherboard.read_byte(0x8000), 0xfe);
+    // CpcKey::A is line 8, bit 5 - active low.
+    assert_eq!(motherboard.read_byte(0x8000), !(1 << 5));
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn reading_the_wrong_row_does_not_see_the_pressed_key() {
         .disable_lower_rom()
         .disable_upper_rom()
         .build();
-    motherboard.keyboard_mut().set_pressed(CpcKey::A, true); // row 9
+    motherboard.keyboard_mut().set_pressed(CpcKey::A, true); // line 8
 
     let mut prog = Vec::new();
     emit_read_row(&mut prog, 5, 0x8000); // a different row
@@ -111,9 +111,9 @@ fn keyboard_write_style_rows_are_read_back_correctly() {
         .disable_lower_rom()
         .disable_upper_rom()
         .build();
-    let mut rows = [0xffu8; 10];
-    rows[3] = 0b1110_1111; // bit 4 pressed on row 3
-    motherboard.keyboard_mut().set_rows(rows);
+    let mut lines = [0xffu8; 10];
+    lines[3] = 0b1110_1111; // bit 4 pressed on line 3
+    motherboard.keyboard_mut().set_lines(lines);
 
     let mut prog = Vec::new();
     emit_read_row(&mut prog, 3, 0x8000);

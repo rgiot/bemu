@@ -536,7 +536,7 @@ impl Motherboard {
         // currently selected before it's potentially read below - on real
         // hardware this register *is* the keyboard matrix line, live.
         if self.psg.selected_register() == Some(REG_IO_PORT_A) && self.psg.port_a_is_input() {
-            self.psg.set_register(REG_IO_PORT_A, self.keyboard.row(row_select));
+            self.psg.set_register(REG_IO_PORT_A, self.keyboard.line(row_select));
         }
 
         let data_bus = self.ppi.get_data_a_from_pins();
@@ -875,6 +875,35 @@ impl Motherboard {
     pub fn read_byte(&self, addr: u16) -> u8 {
         let memory_cfg = self.memory_config();
         self.memory.read(addr, &memory_cfg)
+    }
+
+    /// Read a byte the way the video hardware sees it: always from RAM, even
+    /// where a ROM is currently overlaid for the CPU (the gate array fetches
+    /// screen bytes from RAM regardless of the CPU's ROM mapping).
+    #[inline]
+    pub fn read_ram_byte(&self, addr: u16) -> u8 {
+        self.read_byte_with_roms(addr, Flag::Disable, Flag::Disable)
+    }
+
+    /// Read a byte as if the lower ROM was mapped in (and no upper ROM),
+    /// whatever the CPU's current mapping is - e.g. to reach the firmware
+    /// character matrix at &3800 while a ROM-disabled routine is running.
+    #[inline]
+    pub fn read_lower_rom_byte(&self, addr: u16) -> u8 {
+        self.read_byte_with_roms(addr, Flag::Enable, Flag::Disable)
+    }
+
+    fn read_byte_with_roms(&self, addr: u16, lower_rom: Flag, upper_rom: Flag) -> u8 {
+        let MemoryConfig(rom, ram) = self.memory_config();
+        let config = MemoryConfig(
+            RomConfig {
+                lower_rom,
+                upper_rom,
+                rom_number: rom.rom_number
+            },
+            ram
+        );
+        self.memory.read(addr, &config)
     }
 
     #[inline]
