@@ -29,6 +29,18 @@ pub fn press_and_release(motherboard: &mut Motherboard, key: CpcKey) {
     run_opcodes(motherboard, KEY_GAP_OPCODES);
 }
 
+/// Press several keys together (e.g. Shift + 2 for `"`), hold them, release.
+pub fn press_chord(motherboard: &mut Motherboard, keys: &[CpcKey]) {
+    for &key in keys {
+        motherboard.keyboard_mut().set_pressed(key, true);
+    }
+    run_opcodes(motherboard, KEY_HOLD_OPCODES);
+    for &key in keys {
+        motherboard.keyboard_mut().set_pressed(key, false);
+    }
+    run_opcodes(motherboard, KEY_GAP_OPCODES);
+}
+
 pub fn type_keys(motherboard: &mut Motherboard, keys: &[CpcKey]) {
     for &key in keys {
         press_and_release(motherboard, key);

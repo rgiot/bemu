@@ -1,6 +1,7 @@
 pub mod chip;
 
 pub mod crtc;
+pub mod disc_image;
 pub mod fdc;
 pub mod ga;
 pub mod keyboard;

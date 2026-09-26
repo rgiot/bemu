@@ -174,6 +174,14 @@ struct DriveState {
     current_track: u8
 }
 
+/// One command as seen on the data register: the bytes the CPU wrote and
+/// the result bytes the FDC answered (empty for commands with no result).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandRecord {
+    pub command: Vec<u8>,
+    pub result: Vec<u8>
+}
+
 pub struct Fdc {
     motor: bool,
     drives: [DriveState; 2],
@@ -197,7 +205,12 @@ pub struct Fdc {
     /// `read_data`/`write_data` just walk through it one byte at a time,
     /// matching what the real chip does one bit-cell at a time).
     exec_data: Vec<u8>,
-    exec_pos: usize
+    exec_pos: usize,
+
+    /// Every command executed so far, when logging was asked for (see
+    /// [`Fdc::start_command_log`]): a debugging aid for whoever needs to see
+    /// what a driver such as AMSDOS really says to the chip.
+    command_log: Option<Vec<CommandRecord>>
 }
 
 impl Default for Fdc {
@@ -217,7 +230,8 @@ impl Default for Fdc {
             result: Vec::new(),
             result_pos: 0,
             exec_data: Vec::new(),
-            exec_pos: 0
+            exec_pos: 0,
+            command_log: None
         };
         fdc.reset();
         fdc
@@ -242,6 +256,16 @@ impl Fdc {
             drive.current_track = 0;
         }
         self.go_to_command_phase();
+    }
+
+    /// Start recording every command (and its result) from now on.
+    pub fn start_command_log(&mut self) {
+        self.command_log = Some(Vec::new());
+    }
+
+    /// The commands recorded since [`Fdc::start_command_log`].
+    pub fn command_log(&self) -> &[CommandRecord] {
+        self.command_log.as_deref().unwrap_or_default()
     }
 
     pub fn set_motor(&mut self, on: bool) {
@@ -356,6 +380,9 @@ impl Fdc {
     }
 
     fn go_to_result_phase(&mut self) {
+        if let Some(record) = self.command_log.as_mut().and_then(|log| log.last_mut()) {
+            record.result = self.result.clone();
+        }
         self.phase = Phase::Result;
         self.result_pos = 0;
         self.set_bit(st_bit::EXM, false);
@@ -384,6 +411,12 @@ impl Fdc {
     }
 
     fn dispatch_command(&mut self) {
+        if let Some(log) = &mut self.command_log {
+            log.push(CommandRecord {
+                command: self.command.clone(),
+                result: Vec::new()
+            });
+        }
         match self.current_cmd {
             Cmd::ReadData | Cmd::WriteData => self.start_read_write(),
             Cmd::ReadId => self.do_read_id(),
