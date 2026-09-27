@@ -251,6 +251,92 @@ impl DiscImage {
         }
         out
     }
+
+    /// The AMSDOS directory of side 0/track 0 (the layout every CPC disc
+    /// uses, `|CPM` or not): 2048 bytes, the first 4 512-byte sectors in
+    /// logical (R) order regardless of the physical interleave, decoded as
+    /// 64 32-byte entries. Deleted entries (user number &E5) are left out;
+    /// entries whose extent number isn't 0 (a file bigger than 16 blocks
+    /// continues onto more entries) are merged into their first one, since
+    /// that's what "the file exists" means to a catalog listing.
+    pub fn amsdos_catalog(&self) -> Vec<AmsdosEntry> {
+        let Some(track) = self.track(0, 0) else { return Vec::new() };
+        let mut sectors: Vec<&Sector> = track.sectors.iter().collect();
+        sectors.sort_by_key(|s| s.r);
+
+        let mut directory = Vec::with_capacity(2048);
+        for sector in sectors {
+            directory.extend_from_slice(&sector.data);
+            if directory.len() >= 2048 {
+                break;
+            }
+        }
+        directory.resize(2048, 0xe5);
+
+        let mut entries: Vec<AmsdosEntry> = Vec::new();
+        for raw in directory.chunks_exact(32) {
+            let user = raw[0];
+            if user == 0xe5 || user > 15 {
+                continue; // empty slot
+            }
+            let extent = raw[12];
+            let name: String = raw[1..9].iter().map(|&b| (b & 0x7f) as char).collect();
+            let extension: String = raw[9..12].iter().map(|&b| (b & 0x7f) as char).collect();
+            let hidden = raw[10] & 0x80 != 0;
+            let entry = AmsdosEntry {
+                user,
+                name: name.trim_end().to_owned(),
+                extension: extension.trim_end().to_owned(),
+                hidden,
+                records: raw[15]
+            };
+            if extent == 0 {
+                entries.push(entry);
+            }
+            // extent != 0: a continuation of the entry already pushed for
+            // this name - nothing more to record for a catalog listing.
+        }
+        entries
+    }
+}
+
+/// One AMSDOS directory entry, as `CAT` would list it (`user:name.extension`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AmsdosEntry {
+    pub user: u8,
+    pub name: String,
+    pub extension: String,
+    /// The "system" attribute (extension bit 7 of its 2nd character):
+    /// `CAT` itself does not list these.
+    pub hidden: bool,
+    /// Records used in the entry's first extent (at most 128, one per 128
+    /// bytes): not the file's real length for anything bigger than 16KB,
+    /// but enough to rank entries by roughly how big they are.
+    pub records: u8
+}
+
+impl AmsdosEntry {
+    /// `NAME.EXT` the way `RUN"..."` expects it.
+    pub fn filename(&self) -> String {
+        if self.extension.is_empty() {
+            self.name.clone()
+        }
+        else {
+            format!("{}.{}", self.name, self.extension)
+        }
+    }
+
+    /// Whether this looks like an actual file rather than a "CATART"
+    /// directory entry - many demos replace their catalog with entries
+    /// whose name/extension bytes are cursor-control codes and colour
+    /// changes rather than text, so that `CAT` itself draws a picture (the
+    /// firmware's `PRINT` prints those bytes as VDU commands, not
+    /// characters). A real AMSDOS filename never contains one of those
+    /// (0x00-0x1F): only space-padding and printable characters.
+    pub fn is_plausible_filename(&self) -> bool {
+        let printable = |s: &str| s.bytes().all(|b| (0x20..0x7f).contains(&b));
+        !self.name.is_empty() && printable(&self.name) && printable(&self.extension)
+    }
 }
 
 impl TryFrom<&AnyDisc> for DiscImage {
@@ -360,6 +446,41 @@ fn write_track(track: &Track, out: &mut Vec<u8>) {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn amsdos_catalog_reads_rhino_dsk() {
+        let bytes = std::fs::read("validation/RHINO.DSK").unwrap();
+        let image = load_dsk(&bytes).unwrap();
+        let catalog = image.amsdos_catalog();
+        assert!(!catalog.is_empty(), "RHINO.DSK must have at least one file");
+        assert!(
+            catalog.iter().any(|e| e.name == "RHINO"),
+            "expected a RHINO entry, got {catalog:?}"
+        );
+    }
+
+    #[test]
+    fn filename_joins_name_and_extension_only_when_there_is_one() {
+        let with_ext = amsdos_entry("RHINO", "BIN");
+        assert_eq!(with_ext.filename(), "RHINO.BIN");
+        let without_ext = amsdos_entry("DISC", "");
+        assert_eq!(without_ext.filename(), "DISC");
+    }
+
+    fn amsdos_entry(name: &str, extension: &str) -> AmsdosEntry {
+        AmsdosEntry { user: 0, name: name.into(), extension: extension.into(), hidden: false, records: 0 }
+    }
+
+    #[test]
+    fn catart_entries_are_told_apart_from_real_filenames() {
+        assert!(amsdos_entry("HBL", "BAS").is_plausible_filename());
+        assert!(amsdos_entry("DISC", "").is_plausible_filename());
+        // control bytes (cursor moves, colour changes) used to draw a
+        // picture when `CAT` prints the directory, not a real filename
+        assert!(!amsdos_entry("K\n B.", "").is_plausible_filename());
+        assert!(!amsdos_entry("N2026.", "\n\n\n").is_plausible_filename());
+        assert!(!amsdos_entry("", "").is_plausible_filename());
+    }
 
     /// One track, three 512 byte sectors, in the standard layout (sector
     /// length field left at 0, as most writers do).
