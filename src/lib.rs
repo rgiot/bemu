@@ -10,6 +10,7 @@ pub mod pal;
 pub mod ppi;
 pub mod psg;
 pub mod shakerland;
+pub mod snapshot;
 pub mod z80;
 
 pub mod memory;
