@@ -26,6 +26,7 @@ use crate::fdc::FdcDrive;
 use crate::keyboard::CpcKey;
 use crate::monitor::FrameGrabber;
 use crate::motherboard::{Motherboard, MotherboardBuilder};
+use crate::shakerland::Manifest;
 
 /// Z80 T-states per CSL time unit (4MHz clock, microsecond unit).
 const T_STATES_PER_UNIT: usize = 4;
@@ -39,6 +40,11 @@ const MAX_FRAME_TICKS: usize = 4_000_000;
 const SSM_WAIT_RELEASE: u16 = 0x0000;
 /// SSM code asking for a screenshot named by `screenshot_name`.
 const SSM_NAMED_SCREENSHOT: u16 = 0xfffe;
+
+/// `wait_ssm0000` gives up after this many emulated microseconds and lets
+/// the script carry on: an unattended multi-hour run must not hang forever
+/// on a program that, because of some remaining bug, never raises the code.
+const WAIT_SSM0000_TIMEOUT_US: u64 = 90_000_000;
 
 /// A screenshot the script produced.
 #[derive(Debug, Clone)]
@@ -109,6 +115,12 @@ pub struct CslRunner {
     elapsed_before_reset_us: u64,
     /// Print each screenshot and reset as it happens.
     verbose: bool,
+    /// The Shaker module ('A'-'E') currently running, for naming screenshots
+    /// the way <https://shaker.logonsystem.eu/tests> does (see [`Manifest`]).
+    /// `None` outside of a `set_module` call: screenshots then keep the
+    /// generic `<crtc>_<code>` naming.
+    module: Option<char>,
+    manifest: Option<&'static Manifest>,
     report: CslReport
 }
 
@@ -129,6 +141,8 @@ impl CslRunner {
             taken: HashMap::new(),
             elapsed_before_reset_us: 0,
             verbose: false,
+            module: None,
+            manifest: None,
             report: CslReport::default()
         }
     }
@@ -136,6 +150,16 @@ impl CslRunner {
     /// Print progress on stderr while running.
     pub fn set_verbose(&mut self, verbose: bool) {
         self.verbose = verbose;
+    }
+
+    /// Name screenshots the way <https://shaker.logonsystem.eu/tests> does
+    /// for this Shaker module ('A'-'E'): looks up each SSM code in the
+    /// bundled [`Manifest`] for `<test id>_CRTC<n>_<subtest>.png` instead of
+    /// the generic `<module>_CRTC<n>_<code>.png`.
+    pub fn set_module(&mut self, module: char) {
+        static MANIFEST: std::sync::OnceLock<Manifest> = std::sync::OnceLock::new();
+        self.module = Some(module);
+        self.manifest = Some(MANIFEST.get_or_init(Manifest::bundled));
     }
 
     fn machine(crtc: CrtcType) -> Motherboard {
@@ -258,6 +282,7 @@ impl CslRunner {
             .ancestors()
             .take(3)
             .find_map(|dir| find_case_insensitive(&resolve(dir, filename)))
+            .or_else(|| self.only_disc_image_nearby(filename))
             .unwrap_or_else(|| resolve(&self.base_dir, filename));
         let image = load_dsk(&std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?)
             .map_err(|e| format!("{}: {e}", path.display()))?;
@@ -268,6 +293,43 @@ impl CslRunner {
         self.motherboard.fdc_mut().insert_image(drive(unit), Some(image.clone()));
         self.disc[unit] = Some(image);
         Ok(())
+    }
+
+    /// Published Shaker scripts have shipped with a `disk_insert` naming a
+    /// disc from a previous release that is no longer in the package (e.g.
+    /// `SHAKER-A-0.CSL` still says `shaker26.dsk`, present only as
+    /// `shaker27.dsk`) - real players reportedly get away with this because
+    /// whatever disc the emulator already had mounted stays in the drive
+    /// when the named one fails to load. Since there is nothing "already
+    /// mounted" here, the fallback instead looks for the one disc image
+    /// that actually sits near the script and uses that.
+    fn only_disc_image_nearby(&mut self, wanted: &str) -> Option<PathBuf> {
+        let mut found: Vec<PathBuf> = Vec::new();
+        for dir in self.base_dir.ancestors().take(3) {
+            let Ok(entries) = std::fs::read_dir(dir) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let is_disc = path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("dsk"));
+                if is_disc && !found.contains(&path) {
+                    found.push(path);
+                }
+            }
+            if !found.is_empty() {
+                break; // a closer directory's discs take priority
+            }
+        }
+        match found.as_slice() {
+            [only] => {
+                self.report.ignored.push(format!(
+                    "disk_insert: {wanted:?} not found, using {} instead",
+                    only.display()
+                ));
+                Some(only.clone())
+            },
+            _ => None // none, or too ambiguous to guess
+        }
     }
 
     fn find_script(&self, name: &str) -> Result<PathBuf, String> {
@@ -318,12 +380,22 @@ impl CslRunner {
     }
 
     fn wait_ssm_0000(&mut self) {
-        // bounded: a script waiting for a code that never comes must end
-        for _ in 0..u32::MAX {
+        // bounded: a script waiting for a code that never comes must not
+        // hang an unattended run forever
+        let deadline = self.motherboard.t_state_counter().value() + WAIT_SSM0000_TIMEOUT_US as usize * T_STATES_PER_UNIT;
+        while self.motherboard.t_state_counter().value() < deadline {
             if self.step().contains(&SSM_WAIT_RELEASE) {
                 return;
             }
         }
+        let note = format!(
+            "wait_ssm0000: gave up after {WAIT_SSM0000_TIMEOUT_US} µs (PC {:04X})",
+            self.motherboard.pc()
+        );
+        if self.verbose {
+            eprintln!("[{:>9} µs] {note}", self.elapsed_us());
+        }
+        self.report.ignored.push(note);
     }
 
     fn wait_vsync_off_on(&mut self) {
@@ -417,7 +489,10 @@ impl CslRunner {
 
         let stem = match (name, ssm_code) {
             (Some(name), _) => name.trim_end_matches(".png").to_owned(),
-            (None, Some(code)) => format!("AMSRUST_{}_{code:04X}", self.crtc as u8),
+            (None, Some(code)) => match (self.module, self.manifest) {
+                (Some(module), Some(manifest)) => manifest.file_stem(module, self.crtc as u8, code),
+                _ => format!("AMSRUST_{}_{code:04X}", self.crtc as u8)
+            },
             (None, None) => format!("AMSRUST_{}", self.crtc as u8)
         };
         let count = self.taken.entry(stem.clone()).or_insert(0);

@@ -16,6 +16,8 @@ cpclib-macros = {path = "../rust.cpcdemotools/cpclib-macros"}
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens"}
 cpclib-disc = {path = "../rust.cpcdemotools/cpclib-disc", default-features = false}
 cpclib-csl = {path = "../rust.cpcdemotools/cpclib-csl"}
+serde = {version = "1", features = ["derive"]}
+serde_json = "1"
 rand="0.8.3"
 regex = "1.4.6"
 lazy_static = "1.4.0"

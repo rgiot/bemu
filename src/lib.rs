@@ -9,6 +9,7 @@ pub mod keyboard;
 pub mod pal;
 pub mod ppi;
 pub mod psg;
+pub mod shakerland;
 pub mod z80;
 
 pub mod memory;
