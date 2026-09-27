@@ -1,3 +1,4 @@
+pub mod alu;
 mod arithmetic;
 mod registers;
 mod registers_identifiers;

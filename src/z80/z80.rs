@@ -17,6 +17,7 @@ use std::fmt::Debug;
 use std::ops::BitAnd;
 
 use cpclib_asm::preamble::Token;
+use super::alu;
 use cpclib_asm::preamble::{
     DataAccess, DataAccessElem, Expr, ExprElement, ExprEvaluationExt, FlagTest, ListingElement,
     Mnemonic, ParseToken,
@@ -417,6 +418,17 @@ impl Z80 {
         flag.is_on(flags)
     }
     
+    /// The F register.
+    #[inline]
+    fn flags(&self) -> u8 {
+        self.reg8(Reg8::F).value()
+    }
+
+    #[inline]
+    fn set_flags(&mut self, flags: u8) {
+        self.reg8_mut(Reg8::F).set(flags);
+    }
+
     #[inline]
     fn auto_update_flags(&mut self, val: u8) {
         let f = &mut self.reg8_mut(Reg8::F).val;
@@ -691,21 +703,21 @@ impl Z80 {
             let current_prefix = self.next_state.prefix();
             match self.ir.get() {
                 // For prefixed instructions, we have to restart the process from scratch
-                0xdd => {
+                0xdd if current_prefix == OpcodePrefix::None => {
                     // A non-ED first byte breaks a pending SSM pair (see SSM-STANDARD-EN.pdf).
                     self.pending_ssm_low = None;
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Dd);
                     assert!(current_prefix == OpcodePrefix::None, "impossible");
                     return false;
                 }
-                0xfd => {
+                0xfd if current_prefix == OpcodePrefix::None => {
                     self.pending_ssm_low = None;
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Fd);
                     assert!(current_prefix == OpcodePrefix::None, "impossible");
 
                     return false;
                 }
-                0xcb => {
+                0xcb if matches!(current_prefix, OpcodePrefix::None | OpcodePrefix::Dd | OpcodePrefix::Fd) => {
                     self.pending_ssm_low = None;
                     match current_prefix {
                         OpcodePrefix::None => {
@@ -721,9 +733,8 @@ impl Z80 {
                     };
                     return false;
                 }
-                0xed => {
+                0xed if current_prefix == OpcodePrefix::None => {
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Ed);
-                    assert!(current_prefix == OpcodePrefix::None, "Not implemented yet");
                     return false;
                 }
                 
@@ -815,62 +826,23 @@ impl Z80 {
                 Mnemonic::Nop => {}
                 
                 Mnemonic::Adc => {
-                    let source = arg2.or(arg1).unwrap();
                     match arg1 {
-                        None | Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)) => {
-                            let left = self.a();
-                            let mut right = self.get_available_8bits_value(source);
-                            if self.flag(Z80Flags::C) {
-                                right += 1;
-                            }
-                            let ovf = self.reg8_mut(Reg8::A).add(right);
-                            let res = self.a();
-
-                            self.auto_update_flags(res);
-                            self.set_flag(Z80Flags::C, ovf);
-                            self.set_flag_off(Z80Flags::N);
-                            self.set_flag(Z80Flags::H, ((left ^ res ^ res) & Z80Flags::H) != 0);
-                            self.set_flag(
-                                Z80Flags::P,
-                                (((right ^ left ^ 0x80) & (right ^ res) & 0x80) != 0)
-                            );
-                        },
-                        Some(DataAccess::Register16(cpclib_asm::preamble::Register16::Hl))=> {
-                            let reg = cpclib_asm::preamble::Register16::Hl.into();
-
+                        Some(DataAccess::Register16(cpclib_asm::preamble::Register16::Hl)) => {
+                            let left = self.hl.value();
                             let right = self.get_available_16bits_value(arg2.unwrap());
-                            let  left = self.reg16(reg).value();
-
-                            let res =  if self.flag(Z80Flags::C) {
-                                left.wrapping_add(right).wrapping_add(1)
-                            } else {
-                                left.wrapping_add(right)
-                            };
-
+                            let (result, flags) = alu::adc16(left, right, self.flag(Z80Flags::C));
                             self.wz.set(left.wrapping_add(1));
-
-                            let to_add = right.wrapping_add(if self.flag(Z80Flags::C) {1} else {0});
-                            let ovf = self.reg16_mut(reg).add(to_add);
-
-                            self.auto_update_flags_x_y((self.reg16(reg).value()>>8) as u8);
-                            self.set_flag(Z80Flags::S, self.hl() & 1 << 15 != 0);
-                            self.set_flag(Z80Flags::Z, self.hl() == 0);
-                            self.set_flag(Z80Flags::C, ovf);
-                            self.set_flag_off(Z80Flags::N);
-                            self.set_flag(
-                                Z80Flags::H,
-                                (((left ^ right^ 0x8000) & (right ^ res) & 0x8000) >> 13) !=0
-                            );
-                            
-
-                            let extra_cycles = 2;
-                            self.next_state = MCycle::new_fake(extra_cycles);
+                            self.hl.set(result);
+                            self.set_flags(flags);
+                            self.next_state = MCycle::new_fake(2);
                         }
-                        
-                        _ =>  unimplemented!()
+                        _ => {
+                            let right = self.get_available_8bits_value(arg2.or(arg1).unwrap());
+                            let (result, flags) = alu::add8(self.a(), right, self.flag(Z80Flags::C));
+                            self.reg8_mut(Reg8::A).set(result);
+                            self.set_flags(flags);
+                        }
                     }
-
-                    self.set_flag_off(Z80Flags::N);
                 }
                 
                 
@@ -879,45 +851,37 @@ impl Z80 {
                     let involve_indexes = matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _, _))) | matches!(arg2, Some(DataAccess::IndexRegister16WithIndex(_, _, _))
                     );
 
-                    let source = arg2.or(arg1).unwrap();
-
                     match arg1 {
                         None | Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)) => {
-                            let left = self.a();
-                            let right = self.get_available_8bits_value(source);
-                            let ovf = self.reg8_mut(Reg8::A).add(right); 
-                            
-                            self.auto_update_flags(self.a());
-                            self.set_flag(Z80Flags::H, right& 0x0f > left&0x0f);
-                            self.set_flag(Z80Flags::C, ovf);
-                            self.set_flag(Z80Flags::P, (right ^ left ^ 0x80) & (right ^ self.a()) & 0x80 != 0);
+                            let right = self.get_available_8bits_value(arg2.or(arg1).unwrap());
+                            let (result, flags) = alu::add8(self.a(), right, false);
+                            self.reg8_mut(Reg8::A).set(result);
+                            self.set_flags(flags);
                         }
-                        
+
                         Some(DataAccess::Register16(_)) | Some(DataAccess::IndexRegister16(_))  => {
                             let reg: Reg16 = match arg1.unwrap() {
                                 DataAccess::Register16(reg) => reg.into(),
                                 DataAccess::IndexRegister16(reg) => reg.into(),
                                 _ => unimplemented!()
                             };
+                            let left = self.reg16(reg).value();
                             let right = self.get_available_16bits_value(arg2.unwrap());
-                            let mut left = self.reg16_mut(reg);
-                            
-                            let ovf = left.add(right); 
-                            // TODO manage the other flags
-                            self.set_flag(Z80Flags::C, ovf);
+                            let (result, flags) = alu::add16(left, right, self.flags());
+                            self.wz.set(left.wrapping_add(1));
+                            self.reg16_mut(reg).set(result);
+                            self.set_flags(flags);
 
                             let extra_cycles = 2;
                             self.next_state = MCycle::new_fake(extra_cycles);
                         }
-                        
+
                         _ => unimplemented!(),
                     }
 
                     if involve_indexes {
                         self.next_state = MCycle::new_fake(1);
                     }
-
-                    self.set_flag_off(Z80Flags::N);
                 }
                 
                 Mnemonic::And => {
@@ -984,47 +948,47 @@ impl Z80 {
                 
                 
                 Mnemonic::Ccf => {
-                    let c = self.flag(Z80Flags::C);
-                    self.set_flag(Z80Flags::C, !c);
-                    self.set_flag_off(Z80Flags::N);
+                    let flags = alu::ccf(self.a(), self.flags());
+                    self.set_flags(flags);
                 }
 
                 Mnemonic::Cp => {
-                    let left = self.reg8(Reg8::A).value();
                     let right = self.get_available_8bits_value(arg2.or(arg1).unwrap());
-                    let f = &mut self.reg8_mut(Reg8::F).val;
-                    inner_8bits_sub!(left, right, f);
-                    // override bit 5 and 3
-                    Z80Flags::X.auto_update_from(f, right);
-                    Z80Flags::Y.auto_update_from(f, right);
+                    let flags = alu::cp8(self.a(), right);
+                    self.set_flags(flags);
                 }
                 
-                Mnemonic::Cpi | Mnemonic::Cpd => {
-                    let left = self.reg8(Reg8::A).value();
-                    let right = self.get_data_from_pins();
-                    let f = &mut self.reg8_mut(Reg8::F).val;
-                    inner_8bits_sub!(left, right, f);
-                    Z80Flags::X.auto_update_from(f, right);
-                    Z80Flags::Y.auto_update_from(f, right);
-                    
-                    self.set_flag_on(Z80Flags::N);
+                Mnemonic::Cpi | Mnemonic::Cpd | Mnemonic::Cpir | Mnemonic::Cpdr => {
+                    let value = self.get_data_from_pins();
+                    let (result, compared) = alu::sub8(self.a(), value, false);
 
-                    if *mnemonic == Mnemonic::Cpi || *mnemonic == Mnemonic::Cpir {
+                    if matches!(mnemonic, Mnemonic::Cpi | Mnemonic::Cpir) {
                         self.hl.inc();
                     }
                     else {
                         self.hl.dec();
                     }
                     self.bc.dec();
-                    self.set_flag(Z80Flags::P, self.bc() == 0);
-                    
-                    let jmp = if *mnemonic == Mnemonic::Cpi || *mnemonic == Mnemonic::Cpd {
-                        false
-                    } else {
-                        self.bc() != 0 || self.flag(Z80Flags::Z)
-                    };
-                    
-                    if jmp {
+
+                    // S, Z, H as for CP; N set; C untouched; P/V tells BC is
+                    // not 0; X and Y come from the result minus the half carry
+                    let adjusted = result.wrapping_sub(u8::from(compared & alu::H != 0));
+                    let mut flags = (compared & (alu::S | alu::Z | alu::H | alu::N)) | (self.flags() & alu::C);
+                    if self.bc() != 0 {
+                        flags |= alu::PV;
+                    }
+                    if adjusted & 0x08 != 0 {
+                        flags |= alu::X;
+                    }
+                    if adjusted & 0x02 != 0 {
+                        flags |= alu::Y;
+                    }
+                    self.set_flags(flags);
+
+                    let repeat = matches!(mnemonic, Mnemonic::Cpir | Mnemonic::Cpdr)
+                        && self.bc() != 0
+                        && flags & alu::Z == 0;
+                    if repeat {
                         self.next_state = MCycle::new_fake(2);
                         self.pc.dec();
                         self.pc.dec();
@@ -1036,198 +1000,54 @@ impl Z80 {
                 
                 
                 Mnemonic::Cpl => {
-                    self.reg8_mut(Reg8::A).cpl();
-                    self.set_flag_on(Z80Flags::H);
-                    self.set_flag_on(Z80Flags::N);
-                    
+                    let (result, flags) = alu::cpl(self.a(), self.flags());
+                    self.reg8_mut(Reg8::A).set(result);
+                    self.set_flags(flags);
                 }
 
                 Mnemonic::Daa => {
-                    let low = self.a()&0x0f;
-                    let high = (self.a()&0xf0)>>4;
-
-
-                    let (diff, c) = match (
-                        self.flag(Z80Flags::N),
-                        self.flag(Z80Flags::C),
-                        high,
-                        self.flag(Z80Flags::H),
-                        low
-                    ) {
-                        //1
-                        (
-                            false,
-                            false,
-                            0..=9,
-                            false,
-                            0..=9
-                        ) => (0x00, false),
-
-                        // 2
-                        (
-                            false,
-                            false,
-                            0..=8,
-                            false,
-                            0xa..=0xf
-                        ) => (0x06, false),
-
-                        // 3
-                        (
-                            false,
-                            false,
-                            0..=9,
-                            true,
-                            0..=3
-                        ) => (0x06, false),
-                        
-                        // 4
-                        (
-                            false,
-                            false,
-                            0xa..=0xf,
-                            false,
-                            0x0..=0x9
-                        ) => (0x60, true),
-
-                        // 5
-                        (
-                            false,
-                            false,
-                            0x9..=0xf,
-                            false,
-                            0x1..0xf
-                        ) => (0x66, true),
-
-                        // 6
-                        (
-                            false,
-                            false,
-                            0xa..=0xf,
-                            true,
-                            0x0..=0x3
-                        ) => (0x66, true),
-
-                        //7
-                        (
-                            false,
-                            true,
-                            0x0..=0x2,
-                            false,
-                            0x0..=0x9
-                        ) => (0x60, true),
-
-                        //8
-                        (
-                            false,
-                            true,
-                            0x0..=0x2,
-                            false,
-                            0xa..=0xf
-                        ) => (0x66, true),
-
-                        // 9
-                        (
-                            false,
-                            true,
-                            0x0..=0x3,
-                            true,
-                            0x0..=0x3
-                        ) => (0x66, true),
-
-                        //1
-                        (
-                            true,
-                            false,
-                            0x0..=0x9,
-                            false,
-                            0x0..=0x9
-                        ) => (0x00, false),
-
-                        //2
-                        (
-                            true,
-                            false,
-                            0x0..=0x8,
-                            true,
-                            0x6..=0xf
-                        ) => (0xFA, false),
-
-                        //3
-                        (
-                            true,
-                            true,
-                            0x7..=0xf,
-                            false,
-                            0x0..=0x9
-                        ) => (0xa0, true),
-
-                        //4
-                        (
-                            true,
-                            true,
-                            0x6..=0xf,
-                            true,
-                            0x6..=0xf
-                        ) => (0x9a, true),
-                        _ => unreachable!()
-                    };
-
-
-                    self.reg8_mut(Reg8::A).add(diff);
-                    self.set_flag(Z80Flags::C, c);
-                    self.auto_update_flags(self.a());
+                    let (result, flags) = alu::daa(self.a(), self.flags());
+                    self.reg8_mut(Reg8::A).set(result);
+                    self.set_flags(flags);
                 }
 
                 Mnemonic::Dec => {
-                    let mut update_flags = true; // disable only for 16 bits
-                    let mut res = 0;
-                    let mut ovf = false;
                     match arg1.unwrap() {
                         DataAccess::Register8(reg) => {
                             let left: Reg8 = reg.into();
-                            ovf = self.reg8_mut(left).dec();
-                            res = self.reg8(left).value();
+                            let (result, flags) = alu::dec8(self.reg8(left).value(), self.flags());
+                            self.reg8_mut(left).set(result);
+                            self.set_flags(flags);
                         }
                         DataAccess::IndexRegister8(reg) => {
                             let left: Reg8 = reg.into();
-                            ovf = self.reg8_mut(left).dec();
-                            res = self.reg8(left).value();
+                            let (result, flags) = alu::dec8(self.reg8(left).value(), self.flags());
+                            self.reg8_mut(left).set(result);
+                            self.set_flags(flags);
                         }
+                        // 16 bits: no flag at all
                         DataAccess::Register16(reg) => {
                             let left: Reg16 = reg.into();
                             self.reg16_mut(left).dec();
-                            update_flags = false;
                         }
                         DataAccess::IndexRegister16(reg) => {
                             let left: Reg16 = reg.into();
                             self.reg16_mut(left).dec();
-                            update_flags = false;
                         }
                         DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _) => {
                             // executed in the middle
-                            let  left = self.get_data_from_pins();
-                            let (res2, ovf2) = left.overflowing_sub(1);
-                            res = res2;
-                            ovf = ovf2;
-                            self.set_data_on_pins(res);
+                            let (result, flags) = alu::dec8(self.get_data_from_pins(), self.flags());
+                            self.set_data_on_pins(result);
+                            self.set_flags(flags);
                         }
                         _ => unreachable!()
                     }
-                    
+
                     if matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _, _))) {
                         self.expect_additional_fake_cycle = 1;
                     }
                     else if matches!(arg1, Some(DataAccess::Register16(_) | DataAccess::IndexRegister16(_))) {
                         self.next_state = MCycle::new_fake(1);
-                    }
-
-                    if update_flags {
-                        self.auto_update_flags(res);
-                        self.set_flag_off(Z80Flags::H);//false
-                        self.set_flag_on(Z80Flags::N);
-                        self.set_flag(Z80Flags::P, ovf);
-                        
                     }
                 }
                 
@@ -1328,18 +1148,9 @@ impl Z80 {
                 }
                 
                 Mnemonic::Inc => {
-                    let mut update_flags = true; // disable only for 16 bits
-                    let mut res = 0;
-                    let mut ovf = false;
                     match arg1.unwrap() {
                         DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _)=> {
-                            // read and write directly in pins (shoudl be launched before writting the results)
-                            let left = self.get_data_from_pins();
-                            let (left, ovf2) = left.overflowing_add(1);
-                            self.set_data_on_pins(left);
-                            ovf = ovf2;
-                            res = left;
-
+                            // read and write directly in pins (should be launched before writing the results)
                             assert_eq!(
                                 self.opcode_information().unwrap().read_data,
                                 DataDestination::Pins
@@ -1348,27 +1159,30 @@ impl Z80 {
                                 self.opcode_information().unwrap().write_data,
                                 DataDestination::Pins
                             );
+                            let (result, flags) = alu::inc8(self.get_data_from_pins(), self.flags());
+                            self.set_data_on_pins(result);
+                            self.set_flags(flags);
                         }
                         DataAccess::Register8(reg) => {
                             let left: Reg8 = reg.into();
-                            ovf = self.reg8_mut(left).inc();
-                            res = self.reg8(left).value();
+                            let (result, flags) = alu::inc8(self.reg8(left).value(), self.flags());
+                            self.reg8_mut(left).set(result);
+                            self.set_flags(flags);
                         }
                         DataAccess::IndexRegister8(reg) => {
                             let left: Reg8 = reg.into();
-                            ovf = self.reg8_mut(left).inc();
-                            res = self.reg8(left).value();
+                            let (result, flags) = alu::inc8(self.reg8(left).value(), self.flags());
+                            self.reg8_mut(left).set(result);
+                            self.set_flags(flags);
                         }
+                        // 16 bits: no flag at all
                         DataAccess::Register16(reg) => {
                             let left: Reg16 = reg.into();
                             self.reg16_mut(left).inc();
-                            update_flags = false;
-
                         }
                         DataAccess::IndexRegister16(reg) => {
                             let left: Reg16 = reg.into();
                             self.reg16_mut(left).inc();
-                            update_flags = false;
                         }
                         _ => unimplemented!(),
                     }
@@ -1378,16 +1192,6 @@ impl Z80 {
                     }
                     else if matches!(arg1, Some(DataAccess::Register16(_) | DataAccess::IndexRegister16(_))) {
                         self.next_state = MCycle::new_fake(1);
-                    }
-                    
-                    if update_flags {
-                        if update_flags {
-                            self.auto_update_flags(res);
-                            self.set_flag_off(Z80Flags::H);//false
-                            self.set_flag_off(Z80Flags::N);
-                            self.set_flag(Z80Flags::P, ovf);
-                            
-                        }
                     }
                 }
                 
@@ -1573,17 +1377,9 @@ impl Z80 {
             }
 
             Mnemonic::Neg => {
-                let a = self.a();
-                self.reg8_mut(Reg8::A).set(
-                    0u8.wrapping_sub(a)
-                );
-          
-                self.auto_update_flags(self.a());
-                self.set_flag(Z80Flags::C, a == 0);
-                self.set_flag(Z80Flags::P, a == 0x80);
-                self.set_flag_on(Z80Flags::N);
-                self.auto_update_flags_x_y(self.a());
-                
+                let (result, flags) = alu::sub8(0, self.a(), false);
+                self.reg8_mut(Reg8::A).set(result);
+                self.set_flags(flags);
             },
             
             Mnemonic::Or => {
@@ -1748,6 +1544,7 @@ impl Z80 {
                 self.set_data_on_pins( (pin_low << 4 ) | a_low);
 
                 self.expect_additional_fake_cycle = 1;
+                self.auto_update_flags(self.a());
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
             }
@@ -1809,14 +1606,14 @@ impl Z80 {
                 self.set_data_on_pins( (a << 4 ) | pin_high);
 
                 self.expect_additional_fake_cycle = 1;
+                self.auto_update_flags(self.a());
                 self.set_flag_off(Z80Flags::H);
                 self.set_flag_off(Z80Flags::N);
             }
             Mnemonic::Scf => {
-                self.set_flag_on(Z80Flags::C);
-                self.set_flag_off(Z80Flags::H);
-                self.set_flag_off(Z80Flags::N);
-            }
+                    let flags = alu::scf(self.a(), self.flags());
+                    self.set_flags(flags);
+                }
             
             Mnemonic::Rst => {
                 self.sp.dec();
@@ -1872,84 +1669,34 @@ impl Z80 {
                     ) => {
                         let reg1: Reg16 = reg1.into();
                         let reg2: Reg16 = reg2.into();
-                        
-                        let right = {
-                            let mut other = self.reg16(reg2).value();
-                            if self.flag(Z80Flags::C){
-                                other = other.wrapping_add(1);
-                            }        
-                            other
-                        };
                         let left = self.reg16(reg1).value();
-                        let c = self.reg16_mut(reg1).sub(right);
-                        let value = self.reg16(reg1).value();
-                        
-                        // TODO manage H if borrow from bit 12
-                        Z80Flags::auto_update16(
-                            &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
-                            &mut self.reg8_mut(Reg8::F).val,
-                            value,
-                        );
-                        self.set_flag(Z80Flags::H, 
-                        (((left ^ value  ^ right) >> 8) & 1<<4) != 0
-                        );
-                        self.set_flag_on(Z80Flags::N);
-                        self.set_flag(Z80Flags::C, c);
-                        self.set_flag(Z80Flags::P, 
-                            (((right ^ left) & (left^ value) &0x8000)) != 0
-                        );
+                        let right = self.reg16(reg2).value();
+                        let (result, flags) = alu::sbc16(left, right, self.flag(Z80Flags::C));
+                        self.wz.set(left.wrapping_add(1));
+                        self.reg16_mut(reg1).set(result);
+                        self.set_flags(flags);
 
                         let extra_cycles = 2;
                         self.next_state = MCycle::new_fake(extra_cycles);
-                        
                     },
-                    
+
                     (None, Some(_)) |
                     (Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)), _) => {
-                        let left = self.reg8(Reg8::A).value();
-                        let right = {
-                            let mut other = self.get_available_8bits_value(arg2.or(arg1).unwrap());
-                            if self.flag(Z80Flags::C){
-                                other = other.wrapping_add(1);
-                            }        
-                            other
-                        };
-                        
-                        let (value, c) = left.overflowing_sub(right);
-                        self.reg8_mut(Reg8::A).set(value);
-                        
-                        // TODO manage H if borrow from bit 12
-                        Z80Flags::auto_update(
-                            &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
-                            &mut self.reg8_mut(Reg8::F).val,
-                            value,
-                        );
-                        self.set_flag_on(Z80Flags::N);
-                        self.set_flag(Z80Flags::C, c);
+                        let right = self.get_available_8bits_value(arg2.or(arg1).unwrap());
+                        let (result, flags) = alu::sub8(self.a(), right, self.flag(Z80Flags::C));
+                        self.reg8_mut(Reg8::A).set(result);
+                        self.set_flags(flags);
                     }
-                    
+
                     _ => unimplemented!("{:?}, {:?}", arg1, arg2)
                 }
             }
             
-                        Mnemonic::Sub => match arg2.or(arg1) {
-                                Some(DataAccess::Register8(_) |
-                                DataAccess::IndexRegister8(_) |
-                                 DataAccess::Expression(_) | 
-                                 DataAccess::MemoryRegister16(_) | 
-                                            DataAccess::IndexRegister16WithIndex(_, _, _) |
-                                            DataAccess::Memory(_)) => {
-                    let left = self.reg8(Reg8::A).value();
-                                        let right = self.get_available_8bits_value(arg2.or(arg1).unwrap());
-                    let f = &mut self.reg8_mut(Reg8::F).val;
-                    let res = inner_8bits_sub!(left, right, f);
-                    self.reg8_mut(Reg8::A).set(res);
-
-
-
-                }
-                
-                _ => unimplemented!("{:?}, {:?}", arg1, arg2),
+                        Mnemonic::Sub => {
+                let right = self.get_available_8bits_value(arg2.or(arg1).unwrap());
+                let (result, flags) = alu::sub8(self.a(), right, false);
+                self.reg8_mut(Reg8::A).set(result);
+                self.set_flags(flags);
             },
   
             Mnemonic::Sl1 => {
@@ -2234,8 +1981,9 @@ impl Z80 {
         self.set_flag(Z80Flags::P, self.bc()!=0);
 
         let tmp = self.a().wrapping_add(self.get_data_from_pins());
-        self.set_flag(Z80Flags::X, tmp & 1<<5 != 0);
-        self.set_flag(Z80Flags::Y, tmp & 1<<3 != 0);
+        // bit 3 of A + data is X, its bit 1 is Y
+        self.set_flag(Z80Flags::X, tmp & 1<<3 != 0);
+        self.set_flag(Z80Flags::Y, tmp & 1<<1 != 0);
     }
 
 
@@ -2311,9 +2059,12 @@ impl Z80 {
             self.iff2 = false;
             self.interruption_received = false;
             
-            assert_eq!(
-                self.im,
-                InterruptMode::Mode1,
+            // In IM 0 the interrupting device puts an instruction on the
+            // bus; nothing does on a CPC (the gate array only pulls the
+            // interrupt line down), so the pull-ups give &FF, RST &38: the
+            // same thing as IM 1.
+            assert!(
+                matches!(self.im, InterruptMode::Mode0 | InterruptMode::Mode1),
                 "Interruption {:?} unimplemented",
                 self.im
             );
@@ -2405,6 +2156,16 @@ impl Z80 {
 
     pub fn iff1(&self) -> bool {
         self.iff1
+    }
+
+    pub fn iff2(&self) -> bool {
+        self.iff2
+    }
+
+    /// Force both interrupt flip-flops.
+    pub fn set_iffs(&mut self, iff1: bool, iff2: bool) {
+        self.iff1 = iff1;
+        self.iff2 = iff2;
     }
 }
 
@@ -2521,6 +2282,20 @@ impl Chip for Z80 {
             // First state of the fetch process
             MCycle::FetchOpcode(TState::T1, _, _) | MCycle::InterruptM1(TState::T1) => {
                 self.expect_additional_fake_cycle = 0;
+
+                // Every M1 cycle - an opcode or a prefix byte, or the
+                // interrupt acknowledge - is followed by a refresh cycle that
+                // counts in R; the operand bytes of an instruction, and the
+                // displacement and opcode of DD CB / FD CB, are ordinary
+                // reads and do not.
+                let is_m1 = match self.next_state {
+                    MCycle::FetchOpcode(_, nb, prefix) => nb == 0 && !prefix.is_for_indexed_opcode(),
+                    _ => true
+                };
+                if is_m1 {
+                    let r = self.r.get();
+                    self.r.set((r & 0x80) | (r.wrapping_add(1) & 0x7f));
+                }
 
                 self.set_address_on_pins(self.pc.get());
                 // pc is incremented in T2 in a real CPU

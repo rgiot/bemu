@@ -8,6 +8,7 @@ use std::io::{BufWriter, Write};
 use std::time::Instant;
 /// Took inspiration from https://floooh.github.io/2016/07/12/z80-rust-ms1.html
 #[test]
+#[ignore = "hours: the full Z80 exerciser; tests/z80_reference.rs is the quick check"]
 fn zexdoc() {
     let interactive = std::env::var("ZEXDOC_INTERACTIVE")
         .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
