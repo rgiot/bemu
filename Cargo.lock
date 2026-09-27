@@ -79,6 +79,7 @@ dependencies = [
  "array-init",
  "cpclib",
  "cpclib-asm",
+ "cpclib-csl",
  "cpclib-disc",
  "cpclib-macros",
  "cpclib-tokens",
@@ -743,6 +744,14 @@ dependencies = [
  "libc",
  "upkr",
  "zx0",
+]
+
+[[package]]
+name = "cpclib-csl"
+version = "0.11.0"
+dependencies = [
+ "codespan-reporting",
+ "cpclib-common",
 ]
 
 [[package]]

@@ -366,6 +366,12 @@ impl Monitor {
         self.full_texture = Default::default();
     }
 
+    /// Whether the beam has reached the bottom of the frame: `image()` then
+    /// holds a whole picture, until the next vertical synchronisation.
+    pub fn is_frame_complete(&self) -> bool {
+        self.state.is_in_vertical_retrace()
+    }
+
     /// Provide the image of the current frame
     pub fn image(&self) -> &RgbImage {
         &self.full_texture.0
@@ -460,6 +466,102 @@ impl Monitor {
 
         Rgb([to_u8(rgb.r()), to_u8(rgb.g()), to_u8(rgb.b())])
     }
+}
+
+/// Picture lines kept above the first line after the start of VSYNC: the
+/// beam needs this long to fly back to the top of the tube.
+const GRABBER_VERTICAL_RETRACE_LINES: usize = 24;
+/// Pixels of a line the grabber keeps: what a monitor shows before the beam
+/// flies back to the left.
+const GRABBER_WIDTH: usize = MONITOR_ACTIVE_PIXELS;
+/// More lines than any frame a CRTC can be programmed to make useful.
+const GRABBER_MAX_LINES: usize = 700;
+
+/// An ideal monitor that locks exactly on the synchronisation signals the
+/// gate array produces, to grab whole frames without the beam model of
+/// [`Monitor`]: a frame is the lines between two VSYNC starts, a line the
+/// pixels after the end of an HSYNC. Meant for looking at what a program
+/// draws, whatever its timings are.
+pub struct FrameGrabber {
+    lines: Vec<Vec<Rgb<u8>>>,
+    previous: Sync,
+    /// A VSYNC has been seen: what follows belongs to a frame.
+    synchronised: bool,
+    frame: Option<RgbImage>
+}
+
+impl Default for FrameGrabber {
+    fn default() -> Self {
+        FrameGrabber {
+            lines: Vec::new(),
+            previous: Sync {
+                vsync: false,
+                hsync: false
+            },
+            synchronised: false,
+            frame: None
+        }
+    }
+}
+
+impl FrameGrabber {
+    /// Handle one 16MHz tick of the gate array's output.
+    pub fn receive(&mut self, rgb: RgbLevels, sync: Sync) {
+        let hsync_end = self.previous.hsync && !sync.hsync;
+        let vsync_start = !self.previous.vsync && sync.vsync;
+        self.previous = sync;
+
+        if vsync_start {
+            if self.synchronised {
+                self.finish_frame();
+            }
+            self.synchronised = true;
+            self.lines.clear();
+            self.lines.push(Vec::with_capacity(GRABBER_WIDTH));
+            return;
+        }
+        if !self.synchronised {
+            return;
+        }
+        if hsync_end {
+            if self.lines.len() < GRABBER_MAX_LINES {
+                self.lines.push(Vec::with_capacity(GRABBER_WIDTH));
+            }
+        }
+        if let Some(line) = self.lines.last_mut() {
+            if line.len() < GRABBER_WIDTH {
+                line.push(pixel_of(rgb));
+            }
+        }
+    }
+
+    fn finish_frame(&mut self) {
+        let height = self.lines.len();
+        if height <= GRABBER_VERTICAL_RETRACE_LINES {
+            return;
+        }
+        // The picture starts a little after VSYNC: rotate the lines so the
+        // first one is that far into the frame.
+        let mut image = RgbImage::new(GRABBER_WIDTH as u32, height as u32);
+        for (row, line) in self.lines.iter().enumerate() {
+            let y = (row + height - GRABBER_VERTICAL_RETRACE_LINES) % height;
+            for (x, pixel) in line.iter().enumerate() {
+                image.put_pixel(x as u32, y as u32, *pixel);
+            }
+        }
+        self.frame = Some(image);
+    }
+
+    /// The last whole frame seen, if any (consumed).
+    pub fn take_frame(&mut self) -> Option<RgbImage> {
+        self.frame.take()
+    }
+}
+
+/// RGB intensities (percent) to 8-bit pixels.
+fn pixel_of(rgb: RgbLevels) -> Rgb<u8> {
+    let to_u8 = |v: f32| -> u8 { (v * 255f32 / 100.0).min(255f32) as u8 };
+    Rgb([to_u8(rgb.r()), to_u8(rgb.g()), to_u8(rgb.b())])
 }
 
 #[cfg(test)]

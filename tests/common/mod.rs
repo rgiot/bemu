@@ -47,8 +47,7 @@ pub fn type_keys(motherboard: &mut Motherboard, keys: &[CpcKey]) {
     }
 }
 
-/// Number of text columns/rows in the mode used by the default BASIC screen.
-const MODE1_COLUMNS: u16 = 40;
+/// Number of text rows of the default screens.
 const TEXT_ROWS: u16 = 25;
 
 /// Address the gate array puts on the RAM bus for a given CRTC memory
@@ -64,16 +63,19 @@ fn crtc_start(motherboard: &Motherboard) -> u16 {
     ((u16::from(motherboard.crtc().r12()) << 8) | u16::from(motherboard.crtc().r13())) & 0x3fff
 }
 
-/// Decode the mode 1 text screen back into text by matching every 8x8 cell
-/// against the firmware's own character matrix (lower ROM at &3800, 8 bytes
-/// per code), so a test can assert on what BASIC actually printed rather
-/// than on pixels. Cells matching no glyph (e.g. the cursor block) are '?'.
+/// Decode a mode 1 or mode 2 text screen back into text by matching every
+/// 8x8 cell against the firmware's own character matrix (lower ROM at
+/// &3800, 8 bytes per code), so a test can assert on what BASIC (or a
+/// program using the firmware font) actually printed rather than on pixels.
+/// Cells matching no glyph (e.g. the cursor block) are '?'.
 pub fn screen_lines(motherboard: &Motherboard) -> Vec<String> {
-    assert_eq!(
-        motherboard.ga().current_mode(),
-        VideoMode::Mode1,
-        "text decoding only implemented for mode 1"
-    );
+    let mode = motherboard.ga().current_mode();
+    // (characters per line, bytes per character, pixels per byte)
+    let (columns, bytes_per_char) = match mode {
+        VideoMode::Mode1 => (40u16, 2u16),
+        VideoMode::Mode2 => (80u16, 1u16),
+        other => panic!("text decoding only implemented for modes 1 and 2, not {other:?}")
+    };
 
     let font: Vec<[u8; 8]> = (0..=255u16)
         .map(|code| {
@@ -88,18 +90,26 @@ pub fn screen_lines(motherboard: &Motherboard) -> Vec<String> {
     let start = crtc_start(motherboard);
     (0..TEXT_ROWS)
         .map(|row| {
-            (0..MODE1_COLUMNS)
+            (0..columns)
                 .map(|col| {
-                    let ma = start.wrapping_add(row * MODE1_COLUMNS + col);
+                    // one MA covers two bytes (a "character" of the CRTC)
+                    let first_byte = col * bytes_per_char;
+                    let ma = start.wrapping_add(row * 40 + first_byte / 2);
                     let mut glyph = [0u8; 8];
                     for (scan, line) in glyph.iter_mut().enumerate() {
-                        for byte in 0..2u16 {
-                            let value = motherboard.read_ram_byte(video_address(ma, scan as u16, byte));
-                            for pixel in 0..4 {
-                                // mode 1: pixel p is bit (7-p) (pen bit 0) and bit (3-p) (pen bit 1)
-                                let pen = ((value >> (7 - pixel)) & 1) | (((value >> (3 - pixel)) & 1) << 1);
-                                if pen != 0 {
-                                    *line |= 0x80 >> (byte * 4 + pixel);
+                        for byte in 0..bytes_per_char {
+                            let value =
+                                motherboard.read_ram_byte(video_address(ma, scan as u16, (first_byte + byte) % 2));
+                            match mode {
+                                VideoMode::Mode2 => *line = value,
+                                _ => {
+                                    for pixel in 0..4 {
+                                        // mode 1: pixel p is bit (7-p) (pen bit 0) and bit (3-p) (pen bit 1)
+                                        let pen = ((value >> (7 - pixel)) & 1) | (((value >> (3 - pixel)) & 1) << 1);
+                                        if pen != 0 {
+                                            *line |= 0x80 >> (byte * 4 + pixel);
+                                        }
+                                    }
                                 }
                             }
                         }

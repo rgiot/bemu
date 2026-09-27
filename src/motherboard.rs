@@ -311,6 +311,16 @@ impl Motherboard {
         // unconditionally here and let that internal check decide.
         self.ppi.tick();
         self.sync_psg();
+        // The gate array owns the video bus: when its pixel pipeline is
+        // empty it fetches the byte at the address the CRTC currently
+        // exposes (MA/RA), whatever ROM is overlaid for the CPU.
+        if self.ga.need_memory_byte() {
+            let address = self
+                .ga
+                .video_fetch_address(self.crtc.get_address_from_pins());
+            let byte = self.read_ram_byte(address);
+            self.ga.set_memory_byte(byte);
+        }
         self.ga.tick();
         self.pal.tick();
         // Never ticked before at all - only its pins were kept in sync via
@@ -456,6 +466,16 @@ impl Motherboard {
     /// TODO implement that aspect
     fn ga_request_read(&self) -> bool {
         false
+    }
+
+    /// Completely execute an opcode, handing every tick's video output (the
+    /// gate array's RGB and sync) to `on_tick`, without allocating.
+    #[inline]
+    pub fn execute_next_opcode_with_video<F>(&mut self, on_tick: F)
+    where
+        F: FnMut((RgbLevels, Sync)),
+    {
+        self.execute_next_opcode_internal(on_tick);
     }
 
     #[inline]
