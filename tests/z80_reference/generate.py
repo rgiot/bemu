@@ -15,7 +15,9 @@ The memory is not stored: byte `a` of a vector's memory is `memory_byte(a,
 seed)` (also implemented by the Rust test) except for the instruction itself,
 placed at PC.
 
-Instructions doing I/O, halting or depending on interrupts are left out.
+Ports read the value `input_value(seed)`; the ports the instructions use
+are the ones nothing decodes on a CPC. Halting and interrupt-dependent
+instructions are left out.
 """
 import random
 import sys
@@ -30,6 +32,20 @@ def memory_byte(address, seed):
 
 
 STATE = ['af', 'bc', 'de', 'hl', 'alt_af', 'alt_bc', 'alt_de', 'alt_hl', 'ix', 'iy', 'sp', 'pc', 'i', 'r']
+
+
+IO_OPCODES_ED = {0xA2, 0xA3, 0xAA, 0xAB, 0xB2, 0xB3, 0xBA, 0xBB}
+
+
+def input_value(seed):
+    """What the ports read: the port numbers used are ones nothing decodes on
+    a CPC, so the Rust side just sets its floating bus to this."""
+    return (seed >> 24) & 0xFF
+
+
+def uses_ports(code):
+    return code[0] in (0xDB, 0xD3) or (code[0] == 0xED and (
+        (0x40 <= code[1] <= 0x7F and code[1] & 7 in (0, 1)) or code[1] in IO_OPCODES_ED))
 
 
 def load(machine, seed, code, state):
@@ -60,7 +76,7 @@ USES_HL = (
 
 def opcodes():
     """(bytes without operands, number of operand bytes) for the instructions to test."""
-    skipped_plain = {0x76, 0xDB, 0xD3, 0xF3, 0xFB, 0xCB, 0xDD, 0xED, 0xFD}
+    skipped_plain = {0x76, 0xF3, 0xFB, 0xCB, 0xDD, 0xED, 0xFD}
     for op in range(256):
         if op in skipped_plain:
             continue
@@ -68,11 +84,6 @@ def opcodes():
     for op in range(256):
         yield [0xCB, op]
     for op in range(256):
-        # ED: only the documented + block instructions; I/O ones are left out
-        if 0x40 <= op <= 0x7F and (op & 7) in (0, 1):
-            continue
-        if op in (0xA2, 0xA3, 0xAA, 0xAB, 0xB2, 0xB3, 0xBA, 0xBB):
-            continue
         yield [0xED, op]
     for prefix in (0xDD, 0xFD):
         for op in range(256):
@@ -109,8 +120,15 @@ def main():
             if special is not None:
                 for i in rng.sample(range(11), 3):
                     state[i] = special
+            if uses_ports(code):
+                # ports FC00-FFFF are not decoded by anything of a CPC (B is
+                # decremented by the block instructions before or after use)
+                state[1] = 0xFD00 | (state[1] & 0xFF) | (rng.getrandbits(2) << 8)
+                state[0] = (0xFD | rng.getrandbits(2)) << 8 | (state[0] & 0xFF) if code[0] in (0xDB, 0xD3) else state[0]
             load(machine, seed, code, state)
             del writes[:]
+            inputs = input_value(seed)
+            machine.set_input_callback(lambda port, value=inputs: value)
             machine.ticks_to_stop = 1
             machine.run()
             if code[0] in (0xDD, 0xFD):

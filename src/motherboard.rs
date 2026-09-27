@@ -43,6 +43,8 @@ pub struct Motherboard {
     // it's only acted on once, on its first tick.
     fdc_write_active: bool,
     fdc_read_active: bool,
+    /// What a read of a port nothing decodes returns.
+    floating_bus: u8,
     /// The byte latched onto the data bus for the currently active input
     /// cycle (see `fdc_read_active`) - held steady and reused across the
     /// cycle's repeated ticks instead of re-deriving it (which would
@@ -89,6 +91,7 @@ impl Default for Motherboard {
             fdc: Default::default(),
             fdc_write_active: false,
             fdc_read_active: false,
+            floating_bus: 0xff,
             cached_input_byte: 0xff,
             psg: Default::default(),
             keyboard: Default::default(),
@@ -260,6 +263,12 @@ impl Motherboard {
     }
 
     /// Reset all the components of the motherboard
+    /// Set what reading a port that no chip decodes returns (the CPC leaves
+    /// the bus floating: &FF unless something drives it).
+    pub fn set_floating_bus(&mut self, value: u8) {
+        self.floating_bus = value;
+    }
+
     pub fn reset(&mut self) {
         self.crtc.reset();
         self.ga.reset();
@@ -957,7 +966,7 @@ impl Motherboard {
         } else if Self::is_fdc_data_addr(addr) {
             self.fdc.read_data()
         } else {
-            0xff
+            self.floating_bus
         }
     }
 }

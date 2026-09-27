@@ -361,7 +361,16 @@ impl PENR {
 
 impl INKR {
     fn ink(&self) -> Ink {
+        // The gate array only wires 27 distinct colours to its 5-bit ink
+        // selector; the 5 remaining codes are documented hardware
+        // duplicates of an existing colour rather than new ones (the CPC's own
+        // ROM ink table agrees): raw codes 1, 8, 9, 16, 17 give firmware inks
+        // 13, 7, 25, 1, 19, the same as raw codes 0, 5, 3, 4, 2 respectively.
+        // `Ink::from_hardware_color_number` only knows the 27 primary codes,
+        // so the duplicates are resolved to their primary code here first.
+        const DUPLICATES: [(u8, u8); 5] = [(1, 0), (8, 5), (9, 3), (16, 4), (17, 2)];
         let hard = self.0 & 0b000_11111;
+        let hard = DUPLICATES.iter().find(|(dup, _)| *dup == hard).map_or(hard, |(_, primary)| *primary);
         cpclib::image::ga::Ink::from_hardware_color_number(hard).into()
     }
 }

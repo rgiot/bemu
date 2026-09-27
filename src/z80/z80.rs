@@ -1139,7 +1139,11 @@ impl Z80 {
                     // `JR Z`/`JR NZ`, which would branch on a stale flag
                     // from whatever instruction last set one instead.
                     if !matches!(arg2, Some(DataAccess::PortN(_))) {
-                        let val = self.get_available_8bits_value(arg1.unwrap());
+                        // IN F,(C) (ED 70) reads for the flags only
+                        let val = match arg1 {
+                            Some(DataAccess::Register8(_)) => self.get_available_8bits_value(arg1.unwrap()),
+                            _ => self.get_data_from_pins()
+                        };
                         self.auto_update_flags(val);
                         self.auto_update_flags_x_y(val);
                         self.set_flag_off(Z80Flags::H);
@@ -1266,7 +1270,7 @@ impl Z80 {
                         3} else {2});
                 }
                 Mnemonic::Inir => {
-                    self.inner_ind_flags();
+                    self.inner_ini_flags();
                     self.next_state = MCycle::new_fake(if self.b() != 0 {
                         self.pc.dec();
                         self.pc.dec();
@@ -1987,32 +1991,48 @@ impl Z80 {
     }
 
 
+    /// Flags of the block I/O instructions (INI, IND, OUTI, OUTD and their
+    /// repeating forms). `data` is the byte transferred, `counter` the value
+    /// that is added to it to find the carry and half carry (C+1 for INI,
+    /// C-1 for IND, L after the increment or decrement for OUTI and OUTD).
+    /// B must already be decremented.
+    fn inner_block_io_flags(&mut self, data: u8, counter: u8) {
+        let b = self.b();
+        let k = u16::from(data) + u16::from(counter);
+
+        let mut flags = (b & (alu::S | alu::Y | alu::X)) | if b == 0 { alu::Z } else { 0 };
+        if data & 0x80 != 0 {
+            flags |= alu::N;
+        }
+        if k > 0xff {
+            flags |= alu::H | alu::C;
+        }
+        if ((k as u8 & 7) ^ b).count_ones() % 2 == 0 {
+            flags |= alu::PV;
+        }
+        self.set_flags(flags);
+    }
+
     fn inner_ini_flags(&mut self) {
-        self.set_flag_off(Z80Flags::H);
-        self.set_flag_off(Z80Flags::N);
-        self.set_flag(Z80Flags::Z, self.b()!=0);
-      
+        let data = self.get_data_from_pins();
+        self.inner_block_io_flags(data, self.reg8(Reg8::C).value().wrapping_add(1));
     }
 
     fn inner_ind_flags(&mut self) {
-       
-        self.set_flag_off(Z80Flags::H);
-        self.set_flag_off(Z80Flags::N);
-        self.set_flag(Z80Flags::Z, self.b()!=0);
+        let data = self.get_data_from_pins();
+        self.inner_block_io_flags(data, self.reg8(Reg8::C).value().wrapping_sub(1));
     }
 
     fn inner_outi_flags(&mut self) {
         // registers modification already done
-        self.set_flag_off(Z80Flags::H);
-        self.set_flag_on(Z80Flags::N);
-        self.set_flag(Z80Flags::P, self.b()!=0);
+        let data = self.get_data_from_pins();
+        self.inner_block_io_flags(data, self.reg8(Reg8::L).value());
     }
 
     fn inner_outd_flags(&mut self) {
         // registers modification already done
-        self.set_flag_off(Z80Flags::H);
-        self.set_flag_on(Z80Flags::N);
-        self.set_flag(Z80Flags::P, self.b()!=0);
+        let data = self.get_data_from_pins();
+        self.inner_block_io_flags(data, self.reg8(Reg8::L).value());
     }
 
     /// Handle the loop for LDDR/LDIR

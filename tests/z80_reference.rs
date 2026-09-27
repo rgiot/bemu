@@ -3,9 +3,9 @@
 //! from random states, compared register by register - flags with their
 //! undocumented bits included - and write by write.
 //!
-//! Instructions doing I/O or touching the interrupt logic are not part of
-//! the set, and neither is the internal MEMPTR register, which the reference
-//! does not expose (the flags leaking it, like BIT n,(HL), are kept out of
+//! Instructions touching the interrupt logic are not part of the set, and
+//! neither is the internal MEMPTR register, which the reference does not
+//! expose (the flags leaking it, like BIT n,(HL), are kept out of
 //! the comparison through `ignored_flag_bits`).
 
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
@@ -63,6 +63,9 @@ fn load(motherboard: &mut Motherboard, code: &[u8], seed: u32, state: &State) {
     motherboard.write_buffer(0x8000, &memory[0x8000..]);
     motherboard.write_buffer(state[11], code);
 
+    // the ports the vectors use are decoded by nothing: they read this
+    motherboard.set_floating_bus((seed >> 24) as u8);
+
     let cpu = motherboard.cpu_mut();
     for (register, value) in REG16.iter().zip(state) {
         cpu.reg16_mut(*register).set(*value);
@@ -93,14 +96,19 @@ const NAMES: [&str; 16] = [
 #[test]
 fn every_instruction_matches_the_reference_core() {
     // panics are reported with the failures, not one by one
-    std::panic::set_hook(Box::new(|_| {}));
+    if std::env::var("Z80_REFERENCE_NOCATCH").is_err() {
+        std::panic::set_hook(Box::new(|_| {}));
+    }
     let mut motherboard = fresh_motherboard();
 
     // failures per instruction opcode (without operands): count, first description
     let mut failures: BTreeMap<String, (usize, String)> = BTreeMap::new();
     let mut total = 0;
 
-    for line in VECTORS.lines() {
+    // Z80_REFERENCE_FILTER / Z80_REFERENCE_NOCATCH help narrow a failure down
+    // to one vector and see its real panic message, rather than the summary.
+    let filter = std::env::var("Z80_REFERENCE_FILTER").unwrap_or_default();
+    for line in VECTORS.lines().filter(|line| line.starts_with(&filter)) {
         let mut fields = line.split_whitespace();
         let code_hex = fields.next().unwrap();
         let code: Vec<u8> = (0..code_hex.len() / 2)
@@ -118,9 +126,14 @@ fn every_instruction_matches_the_reference_core() {
 
         load(&mut motherboard, &code, seed, &before);
         // a core that panics on an instruction is a failure like another
-        let executed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            motherboard.execute_next_opcode_no_video()
-        }));
+        let executed: std::thread::Result<()> = if std::env::var("Z80_REFERENCE_NOCATCH").is_ok() {
+            motherboard.execute_next_opcode_no_video();
+            Ok(())
+        } else {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                motherboard.execute_next_opcode_no_video()
+            }))
+        };
         if executed.is_err() {
             motherboard = fresh_motherboard();
         }

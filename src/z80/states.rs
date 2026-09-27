@@ -228,7 +228,11 @@ impl OpcodeDecoder for Token {
             if self.is_input_opcode() {
                 match self.mnemonic_arg1() {
                     Some(DataAccess::Register8(reg)) => DataDestination::Register8(reg.into()),
-                    Some(DataAccess::Expression(Expr::Value(0))) => DataDestination::Register8(Reg8::F),
+                    // IN F,(C) (undocumented): the byte is only used to
+                    // compute flags (see execute_opcode), never stored, so
+                    // the generic read-store must not clobber F with it
+                    // before execute_opcode runs.
+                    Some(DataAccess::Expression(Expr::Value(0))) => DataDestination::Pins,
                     None => DataDestination::Pins,
                     _ => unreachable!()
                 }
@@ -1083,12 +1087,15 @@ impl OpcodeDecoder for Token {
 
         #[test]
         fn lookup_check_in_0() {
-            
+            // IN F,(C) (undocumented): only the flags change, the byte read
+            // is never stored anywhere - in particular not in F itself,
+            // which execute_opcode still needs at its original value to
+            // preserve the carry flag.
             let ina = dbg!(&OPCODE_PREFIX_ED[0b01110000]);
             assert_eq!(ina.nb_additional_opcode_bytes, 0);
             assert_eq!(ina.nb_bytes_to_read, 1);
             assert_eq!(ina.read_address, AddressSource::Register16(Reg16::Bc));
-            assert_eq!(ina.read_data, DataSource::Register8(Reg8::F)); // we want to write PC
+            assert_eq!(ina.read_data, DataSource::Pins);
         }
 
 
