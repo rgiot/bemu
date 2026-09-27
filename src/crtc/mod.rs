@@ -146,8 +146,26 @@ pub struct Crtc {
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
     pub hsc: u8,
 
-    ///  The MA is reloaded with the value from R12 and R13 when VCC=0 and VLC=0 (that's when a new CRTC screen begin). However, CRTC Type 1 keep updating the MA on every new scanline while VCC=0 (and VLC=<R9)
-    pub ma: u16,
+    /// CRTC-VMA (ACCC §17.1/§20.2): the live 14-bit video memory address
+    /// counter. Genuinely incremented once per character, whatever the
+    /// display state - a real 6845 has no idea it's drawing a border, it
+    /// just keeps counting (ACCC §17.3: "the VMA pointer continues to
+    /// count", even throughout the BORDER). This is what actually goes out
+    /// on the MA/RA pins (see [`Crtc::set_address_on_pins`]), not a formula
+    /// recomputed from `vcc`/`hcc` - which matters the moment a program
+    /// changes R1 or R12/R13 mid-frame (split-screen/dynamic-R1 techniques,
+    /// ACCC §17.3, §20.3): a formula would retroactively apply the new
+    /// value to rows it was never actually in effect for.
+    crtc_vma: u16,
+    /// CRTC-VMA' (ACCC §17.1): where the *next* row starts. Latched from
+    /// `crtc_vma` when C0 reaches R1 on that row's last scan line (C9=R9) -
+    /// so a row whose R1 was never reached that line (R1>R0) never gets its
+    /// next-row address updated, and repeats verbatim, exactly like real
+    /// hardware (ACCC §17.2.2/§17.4). Transferred into `crtc_vma` at the
+    /// start of every following line (C0=0); the very first line of a
+    /// frame is special-cased per CRTC type (ACCC §20.3, §17.4.1/§17.4.2),
+    /// see [`Crtc::reload_vma_if_needed`].
+    crtc_vma_prime: u16,
 
     model: &'static dyn CrtcModel,
 
@@ -174,7 +192,8 @@ impl Default for Crtc {
             hdc: 0,
             vtac: 0,
             in_vertical_adjust: false,
-            ma: Default::default(),
+            crtc_vma: 0,
+            crtc_vma_prime: 0,
             model: CrtcType::default().model(),
             vertical_border: false,
             noise: 0x2545_f491,
@@ -330,18 +349,37 @@ impl Crtc {
         self.model.crtc_type()
     }
 
-    /// A new screen begins
-    /// This is call when VCC=0 and VLC<=r9 CRTC1 but only called when VCC and VLC are reseted for the others
-    fn trigger_new_screen_if_needed(&mut self) {
-        let trigger = if self.model.reloads_start_address_every_line_of_first_row() {
-            self.vcc == 0 && self.vlc <= self.regs[9]
-        } else {
-            self.vcc == 0 && self.vlc == 0
-        };
+    /// R12/R13 as a 14-bit address (ACCC §20.1: "these two registers allow
+    /// for the definition... of the base memory address").
+    fn base_address(&self) -> u16 {
+        (((self.regs[12] as u16) << 8).wrapping_add(self.regs[13] as u16)) & 0x3fff
+    }
 
-        if trigger && self.hcc == 0 {
-            self.ma = ((self.regs[12] as u16) << 8).wrapping_add(self.regs[13] as u16);
+    /// ACCC §17.4/§20.3: at the start of every line (C0=0), reload the live
+    /// `crtc_vma` from `crtc_vma_prime` - except the frame's very first
+    /// line, which every CRTC type special-cases (called only once C0 has
+    /// just wrapped to 0, from [`Crtc::update_memory_address`]).
+    fn reload_vma_if_needed(&mut self) {
+        if self.hcc != 0 {
+            return;
         }
+        if self.model.reloads_start_address_every_line_of_first_row() {
+            // CRTC 1 (ACCC §17.4.2): while C4=0, VMA *itself* (not VMA') is
+            // reloaded from R12/R13 directly, line by line - the offset can
+            // be changed on each of that row's scan lines, not just once.
+            if self.vcc == 0 {
+                self.crtc_vma = self.base_address();
+                return;
+            }
+        }
+        else if self.vcc == 0 && self.vlc == 0 {
+            // CRTC 0, 2, 3, 4 (ACCC §20.3/§17.4.1): only the frame's very
+            // first line refreshes VMA' from R12/R13 before handing it to
+            // VMA - every other line just replays whatever VMA' was left
+            // holding from the end of the previous row.
+            self.crtc_vma_prime = self.base_address();
+        }
+        self.crtc_vma = self.crtc_vma_prime;
     }
 
     /// VSync in lines
@@ -374,6 +412,21 @@ impl Crtc {
 
         self.hcc = self.hcc.wrapping_add(1); // XXX check if there is a bit limit in the counter
         self.hdc = self.hdc.wrapping_add(1);
+
+        // CRTC-VMA (ACCC §17.3): a real, incrementing counter, advanced
+        // once per character whatever the display state - not recomputed
+        // from vcc/hcc, so a mid-frame R1/R12/R13 change only affects rows
+        // from that point on, matching real hardware (see its own doc).
+        self.crtc_vma = self.crtc_vma.wrapping_add(1) & 0x3fff;
+
+        // ACCC §17.1/§17.4: latch where the *next* row starts, the moment
+        // this row's active portion ends (C0=R1) on its last scan line
+        // (C9=R9). Using `==` rather than `>=` is deliberate: it's what
+        // lets a mid-line R1 rewrite (ACCC §17.3, "dynamic R1 update") make
+        // this condition true a second time on the same line.
+        if self.hcc == self.regs[1] && self.vlc == self.regs[9] {
+            self.crtc_vma_prime = self.crtc_vma;
+        }
 
         if self.hcc == self.regs[0].wrapping_add(1) {
             // This is the end of the line, we have to trigger all the other stuffs
@@ -448,7 +501,7 @@ impl Crtc {
             self.on(CrtcPin::VS); // Activate Vsync
         }
 
-        self.trigger_new_screen_if_needed();
+        self.reload_vma_if_needed();
         self.set_address_on_pins(); // set the address in the pins
     }
 
@@ -456,13 +509,8 @@ impl Crtc {
     /// they are directly wired to the pin; this fonction replicate them here
     /// should not be called outside of Crtc. Public only for test reasons
     pub fn set_address_on_pins(&mut self) {
-        let address = (self.vcc.value() as u16)
-            .wrapping_mul(self.regs[1] as u16)
-            .wrapping_add(self.hcc as u16)
-            .wrapping_add(self.ma);
-
         self.set_value_in_pins(
-            address & ((1 << 15) - 1),
+            self.crtc_vma,
             &[
                 CrtcPin::MA13,
                 CrtcPin::MA12,
@@ -491,6 +539,21 @@ impl Crtc {
                 CrtcPin::RA0,
             ],
         )
+    }
+
+    /// Seed `crtc_vma`/`crtc_vma_prime` as if `row` whole character rows had
+    /// already played out from `base_address` with R1 held constant the
+    /// whole time - a shortcut for tests that want to start mid-frame (at
+    /// the current `hcc`/`vlc`) without actually driving every tick of the
+    /// rows before it. Real hardware, and the rest of this module, only
+    /// ever reaches these values incrementally, tick by tick, through
+    /// [`Crtc::reload_vma_if_needed`] - this is not a path either of them
+    /// takes. Public only for test reasons.
+    pub fn seed_vma_for_test(&mut self, base_address: u16, row: u16) {
+        let stride = self.regs[1] as u16;
+        let row_start = base_address.wrapping_add(row.wrapping_mul(stride)) & 0x3fff;
+        self.crtc_vma = row_start.wrapping_add(self.hcc as u16) & 0x3fff;
+        self.crtc_vma_prime = row_start.wrapping_add(stride) & 0x3fff;
     }
 }
 
@@ -541,7 +604,8 @@ impl Chip for Crtc {
     }
 
     fn reset(&mut self) {
-        self.ma = 0;
+        self.crtc_vma = 0;
+        self.crtc_vma_prime = 0;
 
         self.regs[0] = 63;
         self.regs[1] = 40;
@@ -636,7 +700,7 @@ mod test {
         crtc.vcc.reset();
         crtc.vlc.reset();
         crtc.hcc = 0;
-        crtc.ma = 0x3000;
+        crtc.crtc_vma = 0x3000;
         crtc.set_address_on_pins();
 
         let address1 = crtc.get_address_from_pins();
@@ -669,7 +733,7 @@ mod test {
         crtc.vcc.reset();
         crtc.vlc.reset();
         crtc.hcc = 0;
-        crtc.ma = 0x0000;
+        crtc.crtc_vma = 0x0000;
         crtc.set_address_on_pins();
 
         let address1 = crtc.get_address_from_pins();

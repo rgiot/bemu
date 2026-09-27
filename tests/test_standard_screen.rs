@@ -75,7 +75,7 @@ fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: V
     crtc.vlc = 7.into();
     crtc.vcc = 29.into();
     crtc.hcc = 63;
-    crtc.ma = 0x3000;
+    crtc.seed_vma_for_test(0x3000, 29);
     crtc.set_address_on_pins();
 
     // Configure the monitor in a wait state (not a big deal, it happens one char too soon)
@@ -199,7 +199,7 @@ fn test_raster() {
     crtc.vlc = 7.into();
     crtc.vcc = 29.into();
     crtc.hcc = 63;
-    crtc.ma = 0x3000;
+    crtc.seed_vma_for_test(0x3000, 29);
     crtc.set_address_on_pins();
 
     // Configure the monitor in a wait state (not a big deal, it happens one char too soon)

@@ -172,7 +172,7 @@ pub fn render_screen(motherboard: &Motherboard, out_path: &str) {
     crtc.vlc = 7.into();
     crtc.vcc = 29.into();
     crtc.hcc = 63;
-    crtc.ma = crtc_start(motherboard);
+    crtc.seed_vma_for_test(crtc_start(motherboard), 29);
     crtc.set_address_on_pins();
 
     let mut monitor = Monitor::wait_vsync();
