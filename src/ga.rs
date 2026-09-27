@@ -1004,8 +1004,17 @@ impl Chip for GateArray {
     /// React to the port addressing of the CPU
     fn execute_tick(&mut self) {
         if !self.get_pin(GateArrayPin::Neg_RD) {
-             // read expected
-             eprintln!("Read on GA not implemented");
+            // The real gate array has no data-output driver at all on a
+            // read - it's write-only from the CPU's perspective, so a read
+            // that decodes to it (partial address decoding makes this a
+            // routine occurrence, not a software bug: real firmware/games
+            // do it constantly, e.g. reading the FDC or PPI status while
+            // the GA's own incomplete decoding also matches) leaves the
+            // bus floating. Nothing to do here - there used to be an
+            // eprintln!() on this branch, printed on every such tick (often
+            // hundreds of thousands of times a second for real software),
+            // which was pure debug noise and, worse, slowed emulation down
+            // by roughly an order of magnitude (stderr I/O in a hot path).
         }
         else {
             // out expected
