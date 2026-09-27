@@ -1254,16 +1254,21 @@ impl Z80 {
                     }
                 }
                 
+                // HL only moves now (see post_read_action): the write
+                // just completed used the address from before this move.
                 Mnemonic::Ind => {
                     self.inner_ind_flags();
+                    self.hl.dec();
                     self.next_state = MCycle::new_fake(2);
                 }
                 Mnemonic::Ini => {
                     self.inner_ini_flags();
+                    self.hl.inc();
                     self.next_state = MCycle::new_fake(2);
                 }
                 Mnemonic::Indr => {
                     self.inner_ind_flags();
+                    self.hl.dec();
                     self.next_state = MCycle::new_fake(if self.b() != 0 {
                         self.pc.dec();
                         self.pc.dec();
@@ -1271,6 +1276,7 @@ impl Z80 {
                 }
                 Mnemonic::Inir => {
                     self.inner_ini_flags();
+                    self.hl.inc();
                     self.next_state = MCycle::new_fake(if self.b() != 0 {
                         self.pc.dec();
                         self.pc.dec();
@@ -1934,14 +1940,28 @@ impl Z80 {
         let opcode_info = self.opcode_information.as_ref().unwrap();
         
         match opcode_info.token.mnemonic() {
-            Some(Mnemonic::Outd | Mnemonic::Otdr | Mnemonic::Ind | Mnemonic::Indr) => {
+            // OUTD/OTDR/OUTI/OTIR read FROM (HL): by the time this runs
+            // (right after that read) HL's old value has already served
+            // its purpose, so adjusting it immediately is safe.
+            Some(Mnemonic::Outd | Mnemonic::Otdr) => {
                 self.reg16_mut(Reg16::Hl).dec();
                 self.reg8_mut(Reg8::B).dec();
             }
-            Some(Mnemonic::Outi | Mnemonic::Otir | Mnemonic::Ini | Mnemonic::Inir ) => {
+            Some(Mnemonic::Outi | Mnemonic::Otir) => {
                 self.reg16_mut(Reg16::Hl).inc();
                 self.reg8_mut(Reg8::B).dec();
-            }           
+            }
+            // IND/INDR/INI/INIR instead write TO (HL): that write is still
+            // to come, as the Read/Input M-cycle's own Write follow-up,
+            // and it addresses (HL) using whatever HL holds at that time.
+            // Adjusting HL here - before the write - would target the
+            // wrong byte (off by one), so only B changes now; HL is
+            // adjusted by the Ini/Ind/Inir/Indr handlers in
+            // execute_opcode, which run once the write has already
+            // latched its address (see MCycle::Write's T1 handler).
+            Some(Mnemonic::Ind | Mnemonic::Indr | Mnemonic::Ini | Mnemonic::Inir) => {
+                self.reg8_mut(Reg8::B).dec();
+            }
             
             _ => {
                 // by default, there is nothing to
@@ -2542,7 +2562,6 @@ impl Chip for Z80 {
                 }
                     
                 
-                //eprintln!("WRITE ADDR={:x}", self.get_address_from_pins());
                 assert!(self.get_pin(self.next_state.write_pin_type().unwrap()));
                 assert!(self.get_pin(Z80Pin::Neg_RD));
                 assert!(self.get_pin(Z80Pin::Neg_WR));

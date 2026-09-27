@@ -251,8 +251,14 @@ impl CslRunner {
     }
 
     fn insert_disc(&mut self, drive_letter: Drive, filename: &str) -> Result<(), String> {
-        let path = resolve(&self.base_dir, filename);
-        let path = find_case_insensitive(&path).unwrap_or(path);
+        // The Shaker scripts sit in one directory per module while the disc
+        // is shared by all of them: look in the parent directories too.
+        let path = self
+            .base_dir
+            .ancestors()
+            .take(3)
+            .find_map(|dir| find_case_insensitive(&resolve(dir, filename)))
+            .unwrap_or_else(|| resolve(&self.base_dir, filename));
         let image = load_dsk(&std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?)
             .map_err(|e| format!("{}: {e}", path.display()))?;
         let unit = match drive_letter {

@@ -132,6 +132,11 @@ impl OpcodeDecoder for Token {
                     _ => unreachable!("{:?}", self),
                 }
             }
+            // INI/IND/INIR/INDR store the port byte into (HL) - the
+            // read-side symmetric case of OUTI/OUTD reading it from there.
+            else if self.is_input_opcode() && self.mnemonic_arg1().is_none() {
+                AddressSource::Register16(Reg16::Hl)
+            }
             else if let Some(Mnemonic::ExMemSp) = self.mnemonic() {
                 AddressSource::Stack(StackDelta::Zero)
             }
@@ -523,6 +528,15 @@ impl OpcodeDecoder for Token {
         }
 
 
+        /// Whether the read and write halves of this instruction share the
+        /// same address, so the address already on the pins after the read
+        /// can be reused for the write instead of recomputing it (true RMW,
+        /// e.g. `INC (HL)`, `RLC (HL)`). False for every instruction whose
+        /// read and write sides are on different buses or registers - the
+        /// LDx family (HL to DE) and the block I/O family (a port to/from
+        /// (HL), on the I/O bus for one side and the memory bus for the
+        /// other) - even though both still round-trip the byte through the
+        /// pins rather than computing anything from it.
         pub fn compute_between_read_write(&self) -> bool {
             self.read_data == DataSource::Pins 
                 && self.write_data == DataSource::Pins 
@@ -531,6 +545,10 @@ impl OpcodeDecoder for Token {
                     Some(
                         Mnemonic::Ldd | Mnemonic::Lddr
                         | Mnemonic::Ldi | Mnemonic::Ldir
+                        | Mnemonic::Ini | Mnemonic::Ind
+                        | Mnemonic::Inir | Mnemonic::Indr
+                        | Mnemonic::Outi | Mnemonic::Outd
+                        | Mnemonic::Otir | Mnemonic::Otdr
                     )
                 )
         }
