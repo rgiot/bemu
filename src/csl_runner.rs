@@ -41,10 +41,13 @@ const SSM_WAIT_RELEASE: u16 = 0x0000;
 /// SSM code asking for a screenshot named by `screenshot_name`.
 const SSM_NAMED_SCREENSHOT: u16 = 0xfffe;
 
-/// `wait_ssm0000` gives up after this many emulated microseconds and lets
-/// the script carry on: an unattended multi-hour run must not hang forever
-/// on a program that, because of some remaining bug, never raises the code.
-const WAIT_SSM0000_TIMEOUT_US: u64 = 90_000_000;
+/// Default `wait_ssm0000`/`wait_ssm`/`wait_driveonoff` timeout, in emulated
+/// microseconds: an unattended multi-hour run must not hang forever on a
+/// program that, because of some remaining bug, never raises the code or
+/// never cycles the drive motor. [`CslRunner::set_wait_timeout_us`] can
+/// shorten it, e.g. for a test that deliberately waits for a code that
+/// never comes.
+const DEFAULT_WAIT_TIMEOUT_US: u64 = 90_000_000;
 
 /// A screenshot the script produced.
 #[derive(Debug, Clone)]
@@ -121,6 +124,8 @@ pub struct CslRunner {
     /// generic `<crtc>_<code>` naming.
     module: Option<char>,
     manifest: Option<&'static Manifest>,
+    /// See [`Self::set_wait_timeout_us`].
+    wait_timeout_us: u64,
     report: CslReport
 }
 
@@ -143,6 +148,7 @@ impl CslRunner {
             verbose: false,
             module: None,
             manifest: None,
+            wait_timeout_us: DEFAULT_WAIT_TIMEOUT_US,
             report: CslReport::default()
         }
     }
@@ -150,6 +156,15 @@ impl CslRunner {
     /// Print progress on stderr while running.
     pub fn set_verbose(&mut self, verbose: bool) {
         self.verbose = verbose;
+    }
+
+    /// How long `wait_ssm0000`, `wait_ssm` and `wait_driveonoff` wait
+    /// (emulated microseconds) before giving up and letting the script
+    /// carry on, logging an ignored note instead of blocking forever.
+    /// Defaults to [`DEFAULT_WAIT_TIMEOUT_US`]; a test that deliberately
+    /// waits for a code that never comes should shorten it first.
+    pub fn set_wait_timeout_us(&mut self, timeout_us: u64) {
+        self.wait_timeout_us = timeout_us;
     }
 
     /// Name screenshots the way <https://shaker.logonsystem.eu/tests> does
@@ -231,6 +246,8 @@ impl CslRunner {
             Wait(us) => self.run_for(*us),
             WaitVsyncOffOn => self.wait_vsync_off_on(),
             WaitSsm0000 => self.wait_ssm_0000(),
+            WaitSsm(code) => self.wait_ssm(*code),
+            WaitDriveOnOff(count) => self.wait_drive_on_off(*count),
             DiskInsert { drive, filename } => self.insert_disc(*drive, filename.as_str())?,
             DiskDir(dir) => self.base_dir = resolve(&self.base_dir, dir.as_str()),
             KeyDelay {
@@ -380,22 +397,58 @@ impl CslRunner {
     }
 
     fn wait_ssm_0000(&mut self) {
+        self.wait_for_ssm_code(SSM_WAIT_RELEASE, "wait_ssm0000");
+    }
+
+    /// `wait_ssm <code>` (CSL v1.5): like `wait_ssm0000`, but for any code -
+    /// including one a `screenshot`-triggering value like `0xFFFE` would
+    /// also raise, since this only waits for it, it does not suppress the
+    /// screenshot that code still asks for (see [`Self::after_instruction`]).
+    fn wait_ssm(&mut self, code: u16) {
+        self.wait_for_ssm_code(code, "wait_ssm");
+    }
+
+    fn wait_for_ssm_code(&mut self, code: u16, instruction: &str) {
         // bounded: a script waiting for a code that never comes must not
         // hang an unattended run forever
-        let deadline = self.motherboard.t_state_counter().value() + WAIT_SSM0000_TIMEOUT_US as usize * T_STATES_PER_UNIT;
+        let deadline = self.motherboard.t_state_counter().value() + self.wait_timeout_us as usize * T_STATES_PER_UNIT;
         while self.motherboard.t_state_counter().value() < deadline {
-            if self.step().contains(&SSM_WAIT_RELEASE) {
+            if self.step().contains(&code) {
                 return;
             }
         }
         let note = format!(
-            "wait_ssm0000: gave up after {WAIT_SSM0000_TIMEOUT_US} µs (PC {:04X})",
+            "{instruction}: gave up waiting for SSM code {code:04X} after {} µs (PC {:04X})",
+            self.wait_timeout_us,
             self.motherboard.pc()
         );
         if self.verbose {
             eprintln!("[{:>9} µs] {note}", self.elapsed_us());
         }
         self.report.ignored.push(note);
+    }
+
+    /// `wait_driveonoff [<count>]`: waits for the FDC's own motor line to go
+    /// on then off again, `count` times (default 1).
+    fn wait_drive_on_off(&mut self, count: u32) {
+        let deadline = self.motherboard.t_state_counter().value()
+            + self.wait_timeout_us as usize * T_STATES_PER_UNIT * count.max(1) as usize;
+        for _ in 0..count.max(1) {
+            while !self.motherboard.fdc().motor() && self.motherboard.t_state_counter().value() < deadline {
+                self.step();
+            }
+            while self.motherboard.fdc().motor() && self.motherboard.t_state_counter().value() < deadline {
+                self.step();
+            }
+            if self.motherboard.t_state_counter().value() >= deadline {
+                let note = format!("wait_driveonoff: gave up after {} µs, motor never cycled {count} time(s)", self.wait_timeout_us);
+                if self.verbose {
+                    eprintln!("[{:>9} µs] {note}", self.elapsed_us());
+                }
+                self.report.ignored.push(note);
+                return;
+            }
+        }
     }
 
     fn wait_vsync_off_on(&mut self) {
