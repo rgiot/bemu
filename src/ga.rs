@@ -1009,19 +1009,7 @@ impl Chip for GateArray {
         }
         else {
             // out expected
-            let command = self.get_data_from_pins();
-
-            if PENR::is_addressed(command) {
-                self.penr = PENR(command);
-            } else if INKR::is_addressed(command) {
-                self.inkr = INKR(command);
-                self.set_ink(self.pen(), self.ink());
-            } else if RMR::is_addressed(command) {
-                self.rmr = RMR(command);
-                if self.interrupt_counter() {
-                    self.r52.reset();
-                }
-            }
+            self.write_register(self.get_data_from_pins());
         }
     }
 
@@ -1035,6 +1023,28 @@ impl Chip for GateArray {
     fn reset(&mut self) {
         self.clock = 0;
         self.on(GateArrayPin::INTERRUPT);
+    }
+}
+
+impl GateArray {
+    /// Feed one byte through the gate array's own register-select logic,
+    /// the way an `OUT` to its port does (see [`Chip::execute_tick`]):
+    /// dispatches on its top bits to PENR/INKR/RMR. Public so a snapshot
+    /// loader can replay a `.SNA`'s recorded GA bytes exactly as the real
+    /// chip would have seen them, rather than reconstructing the resulting
+    /// pen/palette/mode state by hand.
+    pub fn write_register(&mut self, command: u8) {
+        if PENR::is_addressed(command) {
+            self.penr = PENR(command);
+        } else if INKR::is_addressed(command) {
+            self.inkr = INKR(command);
+            self.set_ink(self.pen(), self.ink());
+        } else if RMR::is_addressed(command) {
+            self.rmr = RMR(command);
+            if self.interrupt_counter() {
+                self.r52.reset();
+            }
+        }
     }
 }
 

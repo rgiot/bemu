@@ -274,7 +274,7 @@ impl Z80Flags {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum InterruptMode {
     Mode0,
     Mode1,
@@ -1112,9 +1112,13 @@ impl Z80 {
 
                 Mnemonic::Halt => {
                     if self.interruption_received && self.iff1 {
-                        // do nothing we hit the interruption
-                        //Must jump in 0x38
-                        dbg!("====> Must jump in 0x38 after", self.pc);
+                        // Nothing more to do here: instruction_finished(),
+                        // called right after this for every instruction
+                        // alike, independently checks interruption_received
+                        // && iff1 and vectors to RST 38h on its own. PC is
+                        // already one past this HALT (from its own fetch),
+                        // which is the correct return address for the
+                        // RETI that ends the interrupt handler.
                     } else {
                         self.pc.dec(); // wait and restart
                     }
@@ -2206,6 +2210,24 @@ impl Z80 {
     pub fn set_iffs(&mut self, iff1: bool, iff2: bool) {
         self.iff1 = iff1;
         self.iff2 = iff2;
+    }
+
+    pub fn im(&self) -> InterruptMode {
+        self.im
+    }
+
+    /// Force the interrupt mode (e.g. when restoring a snapshot, which
+    /// records it directly rather than as the `IM n` that set it).
+    pub fn set_im(&mut self, im: InterruptMode) {
+        self.im = im;
+    }
+
+    /// Force I and R (the refresh counter) directly - as opposed to how
+    /// they're normally reached, through `LD A,I`/`LD A,R`/`LD I,A`/`LD R,A`
+    /// or the M1-cycle refresh itself.
+    pub fn set_i_and_r(&mut self, i: u8, r: u8) {
+        self.reg8_mut(Reg8::I).set(i);
+        self.reg8_mut(Reg8::R).set(r);
     }
 }
 

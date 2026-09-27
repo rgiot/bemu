@@ -247,6 +247,12 @@ impl Monitor {
             let readline = rl.readline(">> ");
             match readline {
                 Ok(line) => {
+                    // A real TTY hands readline() a line with no trailing
+                    // newline; reading from a pipe (a script feeding
+                    // commands, or just how this was tested) can still
+                    // include it, which would otherwise make the last
+                    // "word" e.g. "next\n" instead of "next".
+                    let line = line.trim_end().to_owned();
 
                     let line: String = if line.is_empty() {
                         previous.clone().unwrap_or("h".to_owned())
@@ -354,10 +360,10 @@ impl<'f> MonitorContext<'f> {
                 false
             },
             Command::Display(info) => {
-                self.displays.push(info); 
+                self.displays.push(info);
                 false
             }
-            _ => unimplemented!("{:?}", command)
+            Command::Quit => true
         }
     }
 

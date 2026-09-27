@@ -230,6 +230,10 @@ impl Motherboard {
         &self.psg
     }
 
+    pub fn psg_mut(&mut self) -> &mut Psg {
+        &mut self.psg
+    }
+
     pub fn keyboard(&self) -> &KeyboardMatrix {
         &self.keyboard
     }
