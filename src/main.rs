@@ -6,16 +6,22 @@
 //!         [--screenshot dir [--seconds N] [--every N]]
 //! ```
 //!
-//! With no `--screenshot`, drops into the existing interactive monitor
-//! (`amsrust::debug::Monitor`) once everything is loaded: `h` at its `>>`
-//! prompt lists its commands (`run`/`next`/`step`/`continue`, breakpoints,
-//! `info z`/`info crtc`/`info ga`, `disassemble`...) - a real debugger, for
-//! stepping through what a piece of software actually does.
+//! With no `--screenshot`/`--window`, drops into the existing interactive
+//! monitor (`amsrust::debug::Monitor`) once everything is loaded: `h` at its
+//! `>>` prompt lists its commands (`run`/`next`/`step`/`continue`,
+//! breakpoints, `info z`/`info crtc`/`info ga`, `disassemble`...) - a real
+//! debugger, for stepping through what a piece of software actually does.
 //!
 //! With `--screenshot <dir>`, runs headless instead: plays for `--seconds`
 //! (default 30) real-time seconds of emulated time, saving a screenshot to
 //! `<dir>` every `--every` seconds (default 2) - useful to eyeball what a
 //! disc/snapshot does without a terminal to type commands into.
+//!
+//! With `--window`, opens a live window instead, redrawn once per emulated
+//! video frame (the CPC's own ~50Hz) with the keyboard driving the CPC's
+//! keyboard matrix directly - for actually playing a game/demo rather than
+//! debugging it. No menus, no mouse/joystick support yet: close the window
+//! to quit.
 //!
 //! `--sna` restores CPU registers, the base 64K of RAM, the CRTC's
 //! registers, the gate array's ink/mode/ROM-paging state and the PSG's
@@ -26,8 +32,10 @@ use amsrust::crtc::CrtcType;
 use amsrust::debug::{Monitor, MonitorContext};
 use amsrust::disc_image::load_dsk;
 use amsrust::fdc::FdcDrive;
+use amsrust::keyboard::CpcKey;
 use amsrust::monitor::FrameGrabber;
-use amsrust::motherboard::MotherboardBuilder;
+use amsrust::motherboard::{Motherboard, MotherboardBuilder};
+use minifb::{Key, Window, WindowOptions};
 
 struct Args {
     crtc: CrtcType,
@@ -36,7 +44,8 @@ struct Args {
     sna: Option<String>,
     screenshot_dir: Option<String>,
     seconds: u64,
-    every: u64
+    every: u64,
+    window: bool
 }
 
 fn parse_args() -> Args {
@@ -47,7 +56,8 @@ fn parse_args() -> Args {
         sna: None,
         screenshot_dir: None,
         seconds: 30,
-        every: 2
+        every: 2,
+        window: false
     };
 
     let mut it = std::env::args().skip(1);
@@ -68,6 +78,7 @@ fn parse_args() -> Args {
             "--screenshot" => args.screenshot_dir = Some(next("--screenshot")),
             "--seconds" => args.seconds = next("--seconds").parse().expect("--seconds must be a number"),
             "--every" => args.every = next("--every").parse().expect("--every must be a number"),
+            "--window" => args.window = true,
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -85,12 +96,14 @@ fn parse_args() -> Args {
 fn print_help() {
     eprintln!(concat!(
         "amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]\n",
-        "        [--screenshot dir [--seconds N] [--every N]]\n",
+        "        [--screenshot dir [--seconds N] [--every N]] [--window]\n",
         "\n",
-        "With no --screenshot, drops into the interactive monitor once everything\n",
-        "is loaded ('h' at its prompt lists its commands). With --screenshot,\n",
-        "runs headless for --seconds (default 30), saving a screenshot every\n",
-        "--every seconds (default 2)."
+        "With no --screenshot/--window, drops into the interactive monitor once\n",
+        "everything is loaded ('h' at its prompt lists its commands). With\n",
+        "--screenshot, runs headless for --seconds (default 30), saving a\n",
+        "screenshot every --every seconds (default 2). With --window, opens a\n",
+        "live, playable window redrawn at the CPC's own ~50Hz, keyboard included\n",
+        "- close the window to quit."
     ));
 }
 
@@ -117,6 +130,7 @@ fn main() {
 
     match args.screenshot_dir {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every),
+        None if args.window => run_window(&mut motherboard),
         None => {
             let mut handle = |_motherboard: &mut amsrust::motherboard::Motherboard| false;
             let mut ctx = MonitorContext::new(Box::new(&mut handle));
@@ -176,3 +190,134 @@ fn run_headless(motherboard: &mut amsrust::motherboard::Motherboard, dir: &str, 
     }
     eprintln!("{shot} screenshot(s) over {seconds}s emulated, saved to {dir}/");
 }
+
+/// A generous upper bound on a captured frame's size (see
+/// `amsrust::monitor`'s own, private `GRABBER_WIDTH`/`MONITOR_HEIGHT`,
+/// which this can't reference across the bin/lib crate boundary): the
+/// window is created at this fixed size once, and every captured frame -
+/// whatever its actual dimensions, which can vary a little between modes -
+/// is blitted into a buffer of exactly this size, so `update_with_buffer`
+/// always gets what the window was created with.
+const WINDOW_WIDTH: usize = 52 * 8 * 2; // 832
+/// Each scanline is drawn twice, matching the vertical doubling
+/// `amsrust::monitor`'s own ideal-monitor `Texture` already does, for a
+/// roughly correct 4:3 aspect instead of a squashed one.
+const WINDOW_HEIGHT: usize = 312 * 2;
+
+fn run_window(motherboard: &mut Motherboard) {
+    let mut window = Window::new("amsrust", WINDOW_WIDTH, WINDOW_HEIGHT, WindowOptions {
+        resize: true,
+        ..WindowOptions::default()
+    })
+    .unwrap_or_else(|e| panic!("failed to open a window: {e}"));
+    // Cap redraws (and so input polling and emulated speed) at the CPC's
+    // own real refresh rate rather than running full tilt.
+    window.set_target_fps(50);
+
+    let mut buffer = vec![0u32; WINDOW_WIDTH * WINDOW_HEIGHT];
+
+    while window.is_open() {
+        update_keyboard(&window, motherboard);
+
+        let mut grabber = FrameGrabber::default();
+        let mut frame = None;
+        // One whole frame per redraw, same as run_headless()/csl_runner's
+        // own screenshot(): locked to the emulator's real VSYNC, not to a
+        // fixed t-state count.
+        while frame.is_none() {
+            motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
+                grabber.receive(rgb, sync);
+                if frame.is_none() {
+                    frame = grabber.take_frame();
+                }
+            });
+        }
+        let Some(frame) = frame
+        else {
+            break;
+        };
+
+        blit_doubled(&frame, &mut buffer);
+        window
+            .update_with_buffer(&buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
+            .unwrap_or_else(|e| panic!("failed to redraw the window: {e}"));
+    }
+}
+
+/// Copy `frame` into `buffer` (a `WINDOW_WIDTH`x`WINDOW_HEIGHT` canvas,
+/// minifb's expected 0RGB per pixel), doubling each scanline vertically and
+/// letterboxing in black whatever `frame` doesn't cover - it can be a little
+/// smaller than the canvas (see `WINDOW_WIDTH`/`WINDOW_HEIGHT`'s own doc).
+fn blit_doubled(frame: &image::RgbImage, buffer: &mut [u32]) {
+    buffer.fill(0);
+    let width = (frame.width() as usize).min(WINDOW_WIDTH);
+    let height = (frame.height() as usize).min(WINDOW_HEIGHT / 2);
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = frame.get_pixel(x as u32, y as u32);
+            let packed = (pixel[0] as u32) << 16 | (pixel[1] as u32) << 8 | pixel[2] as u32;
+            buffer[(y * 2) * WINDOW_WIDTH + x] = packed;
+            buffer[(y * 2 + 1) * WINDOW_WIDTH + x] = packed;
+        }
+    }
+}
+
+/// Set every mapped [`CpcKey`]'s pressed state from what's currently held
+/// down on the host keyboard - called once per redraw, so this is polled at
+/// the CPC's own ~50Hz rather than per-event.
+fn update_keyboard(window: &Window, motherboard: &mut Motherboard) {
+    let matrix = motherboard.keyboard_mut();
+    for key in HOST_KEY_MAP {
+        matrix.set_pressed(key.1, window.is_key_down(key.0));
+    }
+}
+
+/// Host key -> CPC key, per `amsrust::keyboard`'s own contract (see its doc
+/// comment): this table is the only thing that would need to change if the
+/// windowing/input library changes. A first pass covering the obvious keys;
+/// a real CPC keyboard's punctuation doesn't line up 1:1 with a modern one,
+/// so a few of these (`Colon`, `At`, `Caret`) are best-effort placements
+/// rather than a faithful physical-layout match.
+const HOST_KEY_MAP: &[(Key, CpcKey)] = {
+    use CpcKey::*;
+    &[
+        (Key::A, A), (Key::B, B), (Key::C, C), (Key::D, D), (Key::E, E),
+        (Key::F, F), (Key::G, G), (Key::H, H), (Key::I, I), (Key::J, J),
+        (Key::K, K), (Key::L, L), (Key::M, M), (Key::N, N), (Key::O, O),
+        (Key::P, P), (Key::Q, Q), (Key::R, R), (Key::S, S), (Key::T, T),
+        (Key::U, U), (Key::V, V), (Key::W, W), (Key::X, X), (Key::Y, Y),
+        (Key::Z, Z),
+        (Key::Key0, Digit0), (Key::Key1, Digit1), (Key::Key2, Digit2),
+        (Key::Key3, Digit3), (Key::Key4, Digit4), (Key::Key5, Digit5),
+        (Key::Key6, Digit6), (Key::Key7, Digit7), (Key::Key8, Digit8),
+        (Key::Key9, Digit9),
+        (Key::Space, Space),
+        (Key::Enter, Return),
+        (Key::LeftShift, Shift), (Key::RightShift, Shift),
+        (Key::LeftCtrl, Control), (Key::RightCtrl, Control),
+        (Key::CapsLock, CapsLock),
+        (Key::Tab, Tab),
+        (Key::Escape, Esc),
+        (Key::Backspace, Del),
+        (Key::Delete, Clr),
+        (Key::Up, CursorUp), (Key::Down, CursorDown),
+        (Key::Left, CursorLeft), (Key::Right, CursorRight),
+        (Key::Minus, Minus),
+        (Key::LeftBracket, OpenBracket), (Key::RightBracket, CloseBracket),
+        (Key::Backslash, Backslash),
+        (Key::Semicolon, Semicolon),
+        (Key::Apostrophe, Colon),
+        (Key::Comma, Comma),
+        (Key::Period, Dot),
+        (Key::Slash, Slash),
+        (Key::Backquote, Caret),
+        (Key::Equal, At),
+        (Key::NumPad0, Keypad0), (Key::NumPad1, Keypad1),
+        (Key::NumPad2, Keypad2), (Key::NumPad3, Keypad3),
+        (Key::NumPad4, Keypad4), (Key::NumPad5, Keypad5),
+        (Key::NumPad6, Keypad6), (Key::NumPad7, Keypad7),
+        (Key::NumPad8, Keypad8), (Key::NumPad9, Keypad9),
+        (Key::NumPadDot, KeypadDot),
+        (Key::NumPadEnter, KeypadEnter),
+    ]
+};
