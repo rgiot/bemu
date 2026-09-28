@@ -265,10 +265,69 @@ fn blit_doubled(frame: &image::RgbImage, buffer: &mut [u32]) {
 /// Set every mapped [`CpcKey`]'s pressed state from what's currently held
 /// down on the host keyboard - called once per redraw, so this is polled at
 /// the CPC's own ~50Hz rather than per-event.
+///
+/// Several host keys map to the same [`CpcKey`] (both Shift keys, both Ctrl
+/// keys, both Alt keys), so a naive "call `set_pressed` once per table
+/// entry, in order" gets this wrong: whichever entry for a given `CpcKey`
+/// happens to be *last* in the table unconditionally decides its final
+/// state, silently overriding an earlier entry that *was* held. E.g. with
+/// `(LeftShift, Shift)` before `(RightShift, Shift)`, holding only the left
+/// Shift key got immediately cancelled by the RightShift entry (not held)
+/// processed right after it - Shift would never actually reach the CPC
+/// unless the right-hand key specifically was used, breaking every
+/// Shift-combo character (`"` included: Shift+2 on this table) for anyone
+/// who naturally reaches for the left one. Each `CpcKey` must instead be
+/// OR-combined across every host key mapped to it.
 fn update_keyboard(window: &Window, motherboard: &mut Motherboard) {
     let matrix = motherboard.keyboard_mut();
     for key in HOST_KEY_MAP {
-        matrix.set_pressed(key.1, window.is_key_down(key.0));
+        matrix.set_pressed(key.1, any_host_key_pressed(HOST_KEY_MAP, key.1, |k| window.is_key_down(k)));
+    }
+}
+
+/// Whether `target` should be considered pressed: any host key `map`s to it
+/// that `is_down` reports held. Pulled out of `update_keyboard` so the
+/// OR-combining logic itself (see that function's doc comment) is
+/// unit-testable without a real `Window` - there's no display in CI/this
+/// sandbox to interactively verify a keyboard fix against.
+fn any_host_key_pressed(map: &[(Key, CpcKey)], target: CpcKey, is_down: impl Fn(Key) -> bool) -> bool {
+    map.iter().filter(|(_, cpc)| *cpc == target).any(|(host, _)| is_down(*host))
+}
+
+#[cfg(test)]
+mod keyboard_test {
+    use super::*;
+
+    /// The exact bug this whole refactor exists to prevent regressing:
+    /// holding only ONE of two host keys mapped to the same `CpcKey` must
+    /// still register as pressed, not get cancelled by the other, unheld,
+    /// one - see `update_keyboard`'s doc comment for the real symptom this
+    /// caused (Shift-combo characters, `"` included, not typeable unless
+    /// the right-hand modifier specifically was used).
+    #[test]
+    fn holding_just_one_mapped_host_key_is_not_cancelled_by_the_other_unheld_one() {
+        let map: &[(Key, CpcKey)] = &[(Key::LeftShift, CpcKey::Shift), (Key::RightShift, CpcKey::Shift)];
+        assert!(any_host_key_pressed(map, CpcKey::Shift, |k| k == Key::LeftShift), "left alone should register");
+        assert!(any_host_key_pressed(map, CpcKey::Shift, |k| k == Key::RightShift), "right alone should register");
+        assert!(any_host_key_pressed(map, CpcKey::Shift, |_| true), "both together should register");
+        assert!(!any_host_key_pressed(map, CpcKey::Shift, |_| false), "neither held should not register");
+    }
+
+    /// Both Alt keys act as the CPC's own COPY key.
+    #[test]
+    fn alt_is_mapped_to_copy() {
+        assert!(HOST_KEY_MAP.contains(&(Key::LeftAlt, CpcKey::Copy)));
+        assert!(HOST_KEY_MAP.contains(&(Key::RightAlt, CpcKey::Copy)));
+    }
+
+    /// `"` is Shift+2 on a real CPC keyboard (see `keys_of_char('"')` in
+    /// `csl_runner.rs`, already covered on the CSL/scripted-input side) -
+    /// this is the interactive-input counterpart: the host keys that
+    /// should combine to reach it are both mapped and distinct.
+    #[test]
+    fn double_quote_is_reachable_via_shift_plus_2() {
+        assert!(HOST_KEY_MAP.iter().any(|(h, c)| *h == Key::Key2 && *c == CpcKey::Digit2));
+        assert!(HOST_KEY_MAP.iter().any(|(h, c)| (*h == Key::LeftShift || *h == Key::RightShift) && *c == CpcKey::Shift));
     }
 }
 
@@ -295,6 +354,7 @@ const HOST_KEY_MAP: &[(Key, CpcKey)] = {
         (Key::Enter, Return),
         (Key::LeftShift, Shift), (Key::RightShift, Shift),
         (Key::LeftCtrl, Control), (Key::RightCtrl, Control),
+        (Key::LeftAlt, Copy), (Key::RightAlt, Copy),
         (Key::CapsLock, CapsLock),
         (Key::Tab, Tab),
         (Key::Escape, Esc),
