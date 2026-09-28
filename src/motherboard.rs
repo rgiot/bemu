@@ -118,6 +118,7 @@ pub struct MotherboardBuilder {
     enable_interruptions: bool, // false by default
     disable_lower_rom: bool, // false by default
     disable_upper_rom: bool, // false by defualt
+    extra_ram_pages: Option<usize>,
 }
 
 impl MotherboardBuilder {
@@ -146,6 +147,14 @@ impl MotherboardBuilder {
         self
     }
 
+    /// Fit `pages` extra 64kb RAM pages beyond the base 64kb every CPC has
+    /// (1 = a stock 128K CPC 6128, the default if unset; up to 7 = a fully
+    /// populated 512K expansion). See [`Motherboard::set_extra_ram_pages`].
+    pub fn set_extra_ram_pages(&mut self, pages: usize) -> &mut Self {
+        self.extra_ram_pages = Some(pages);
+        self
+    }
+
     pub fn build(self) -> Motherboard {
         let crtc_type = self.crtc_type.unwrap_or_default();
 
@@ -168,6 +177,9 @@ impl MotherboardBuilder {
         }
         if self.disable_upper_rom {
             motherboard.disable_upper_rom();
+        }
+        if let Some(pages) = self.extra_ram_pages {
+            motherboard.set_extra_ram_pages(pages);
         }
         motherboard.stabilize_run();
 
@@ -882,6 +894,18 @@ impl Motherboard {
 
     pub fn disable_upper_rom(&mut self) {
         self.ga.force_upper_rom_pagging(Flag::Disable);
+    }
+
+    /// Change how many extra 64kb RAM pages are fitted, beyond the base
+    /// 64kb every CPC has (1 = a stock 128K CPC 6128, the default; up to 7
+    /// = a fully populated 512K expansion). See [`Memory::set_extra_pages`].
+    pub fn set_extra_ram_pages(&mut self, pages: usize) {
+        self.memory.set_extra_pages(pages);
+    }
+
+    /// How many extra 64kb RAM pages are currently fitted.
+    pub fn extra_ram_pages(&self) -> usize {
+        self.memory.extra_pages()
     }
 
     /// Write the databuffer in memory according to the memory configuration

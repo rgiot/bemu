@@ -207,7 +207,11 @@ impl Rom {
 
 impl From<u8> for PageNumber {
     fn from(u: u8) -> Self {
-        assert!(u <= 3);
+        // `u` is the gate array's raw 3-bit page-select field (0-7, see
+        // ACCC/memory expansion scheme) - it legitimately spans the full
+        // range on real hardware even on a stock machine that only has RAM
+        // for page 0 fitted (see `Memory::ram_bank`, which aliases any page
+        // beyond what's actually installed rather than asserting here).
         PageNumber::Page(u)
     }
 }
@@ -364,6 +368,25 @@ impl Page {
 }
 
 impl Memory {
+    /// Change how many extra 64kb pages are actually fitted, beyond the
+    /// base 64kb every CPC has (1 extra page = a stock 128K CPC 6128; the
+    /// gate array's page-select field is 3 bits wide, so real hardware
+    /// supports up to 7 extra pages = 512K total).
+    ///
+    /// Existing pages keep their content when growing; pages dropped when
+    /// shrinking are discarded. `pages` is clamped to at least 1 so
+    /// `PageNumber::Page` always has somewhere to alias to (see
+    /// [`Memory::ram_bank`]).
+    pub fn set_extra_pages(&mut self, pages: usize) {
+        self.additional_memory.resize_with(pages.max(1), Page::default);
+    }
+
+    /// How many extra 64kb pages are currently fitted (see
+    /// [`Memory::set_extra_pages`]).
+    pub fn extra_pages(&self) -> usize {
+        self.additional_memory.len()
+    }
+
     /// Read a byte according to the provided memory configuration
     /// If the address is in an activate rom space; this rom is read instead of the ram
     /// If the adress is within the ram space, then the value depends on the ram configuration
@@ -419,21 +442,33 @@ impl Memory {
         &self.lower_rom.0
     }
 
-    /// Get the memory for the given bank
+    /// Get the memory for the given bank.
+    ///
+    /// `PageNumber::Page` carries the raw 3-bit page-select field of the
+    /// gate array's RAM configuration byte (0-7, ACCC/memory expansion
+    /// scheme), but a stock machine only has as many extra 64kb pages as
+    /// `additional_memory` actually holds (1 for a real 128K CPC). Real
+    /// hardware doesn't wire a comparator for the pages it doesn't have
+    /// fitted, so selecting one of those aliases back onto the installed
+    /// pages rather than addressing anything new - it does *not* trap or
+    /// panic. Modulo-wrapping here reproduces that aliasing instead of
+    /// indexing out of bounds.
     fn ram_bank(&self, conf: &BankConfig) -> &Bank {
         let page = match conf.0 {
             PageNumber::Base => &self.main_memory,
-            PageNumber::Page(p) => &self.additional_memory[p as usize],
+            PageNumber::Page(p) => &self.additional_memory[p as usize % self.additional_memory.len()],
         };
 
         page.bank(conf.1)
     }
 
-    /// Get the memory for the given bank
+    /// Get the memory for the given bank. See [`Memory::ram_bank`] for why
+    /// the page index wraps instead of being asserted in range.
     fn ram_bank_mut(&mut self, conf: &BankConfig) -> &mut Bank {
+        let len = self.additional_memory.len();
         let page = match conf.0 {
             PageNumber::Base => &mut self.main_memory,
-            PageNumber::Page(p) => &mut self.additional_memory[p as usize],
+            PageNumber::Page(p) => &mut self.additional_memory[p as usize % len],
         };
 
         page.bank_mut(conf.1)
@@ -505,6 +540,77 @@ mod test {
             mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank3))
                 .read(0),
             7
+        );
+    }
+
+    /// A stock 128K CPC (the default: 1 extra 64kb page) only wires a
+    /// comparator for that one page - the gate array's page-select field is
+    /// 3 bits wide (0-7) regardless, and real hardware doesn't trap or
+    /// crash when firmware/software (e.g. a memory-sizing routine run at
+    /// every cold boot, or a hardware diagnostic tool probing how much RAM
+    /// is really fitted) selects one of the pages it doesn't have: it
+    /// aliases back onto the page(s) that *are* fitted. This is a
+    /// regression test for exactly that panic (`assert!(u <= 3)` in
+    /// `PageNumber::from`, `src/memory.rs:210` before the fix), found by
+    /// running the real `AmstradDiag.dsk` hardware diagnostics tool (see
+    /// `tests/amstrad_diagnostics.rs`) - not a hypothetical case.
+    #[test]
+    fn a_page_beyond_what_is_fitted_aliases_instead_of_panicking() {
+        let mut mem = Memory::default();
+        assert_eq!(mem.extra_pages(), 1, "a stock CPC has exactly 1 extra page by default");
+
+        mem.additional_memory[0].0[0].fill(0x42);
+
+        for page in 0u8..=7 {
+            assert_eq!(
+                mem.ram_bank(&BankConfig(PageNumber::Page(page), BankNumber::Bank0)).read(0),
+                0x42,
+                "page {page} should alias back onto the only page actually fitted"
+            );
+        }
+
+        // Same for the write path, and for a freshly-shrunk configuration
+        // (exercises `set_extra_pages` itself, not just the Default impl).
+        mem.set_extra_pages(1);
+        mem.ram_bank_mut(&BankConfig(PageNumber::Page(5), BankNumber::Bank1)).write(0, 0x99);
+        assert_eq!(
+            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank1)).read(0),
+            0x99,
+            "writing through an unfitted page's alias should land on the real page"
+        );
+    }
+
+    /// A machine actually configured with more than the default one extra
+    /// page (e.g. a full 512K expansion, `set_extra_ram_pages(7)` on
+    /// `Motherboard`/`MotherboardBuilder`) must address each extra page
+    /// independently - this is the "genuine expanded memory" counterpart to
+    /// `a_page_beyond_what_is_fitted_aliases_instead_of_panicking`'s
+    /// "gracefully alias when unexpanded" case.
+    #[test]
+    fn extra_pages_are_independent_when_actually_fitted() {
+        let mut mem = Memory::default();
+        mem.set_extra_pages(7);
+        assert_eq!(mem.extra_pages(), 7);
+
+        for page in 0u8..7 {
+            mem.ram_bank_mut(&BankConfig(PageNumber::Page(page), BankNumber::Bank0))
+                .write(0, 0x10 + page);
+        }
+        for page in 0u8..7 {
+            assert_eq!(
+                mem.ram_bank(&BankConfig(PageNumber::Page(page), BankNumber::Bank0)).read(0),
+                0x10 + page,
+                "page {page} should hold its own value, independent of the other fitted pages"
+            );
+        }
+
+        // Shrinking back down shouldn't panic either, and re-exercises the
+        // aliasing path on a configuration that used to be bigger.
+        mem.set_extra_pages(1);
+        assert_eq!(
+            mem.ram_bank(&BankConfig(PageNumber::Page(3), BankNumber::Bank0)).read(0),
+            0x10,
+            "after shrinking, every page number should alias back onto page 0"
         );
     }
 }
