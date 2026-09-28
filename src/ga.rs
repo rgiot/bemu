@@ -659,6 +659,51 @@ pub enum InterruptionSignal {
     Signal(usize),
 }
 
+/// The two "classic" (pre-Plus) Gate Array chip families found in real
+/// CPCs (ACCC §9.3.4.3, confirmed against the compendium's own tables, not
+/// inferred): the 40007 and 40008 (grouped together throughout the ACCC -
+/// every table and note treats them identically) versus the 40010. They
+/// share the same pin-level behaviour this emulator currently models
+/// (register decode, INKR/border timing, HSYNC/VSYNC generation, the R52
+/// interrupt counter, ...) - the one *documented* difference between them
+/// is how the Gate Array reconstructs a colour number when the CRTC's
+/// video mode (R comes from the firmware, not a CRTC register: `OUT
+/// &7Fxx`) changes *in the middle of a byte already being displayed*.
+///
+/// When that happens, the pixel pipeline is partway through decoding one
+/// VRAM byte under the *old* mode's bit grouping, and must resume under
+/// the *new* mode's - some of that byte's bits were already consumed by
+/// the old mode and can't be "un-read". The 40010 pads those already-used
+/// bits with 0 when building the new colour number; the 40007/40008 pad
+/// them with 1 instead (ACCC §9.3.4.3, "Bits missed by the GATE ARRAY
+/// 40010 are considered 0 ... GATE ARRAY 40007 and 40008 ... Missed bits
+/// are considered to be 1" - each with its own worked example and a full
+/// VRAM-byte-to-displayed-pixels table per CRTC type and per mode-to-mode
+/// transition, ACCC §9.3.4.3-.5).
+///
+/// **Not yet implemented**: mid-byte mode switching itself doesn't exist
+/// in `PixelAutomata` yet (it locks in one mode for a whole byte the
+/// moment it's constructed - see [`PixelAutomata::new`]), so there is
+/// nowhere in the pixel pipeline yet for this distinction to apply. This
+/// type exists so the configuration surface ("which chip is fitted") is
+/// selectable and tested now, ready for that behaviour once a mid-byte
+/// mode-switch mechanism is built - see `project_gate_array_versions`
+/// memory for the detailed, page-referenced spec of what to implement,
+/// verified against the ACCC's own tables/diagrams directly (not
+/// transcribed from OCR/text-extracted PDF text, which mangles these
+/// multi-column tables) before writing it down.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+pub enum GateArrayType {
+    /// Ferranti 40007 / 40008 ULA.
+    Ga40007_8,
+    /// The later 40010 - what real-world CPC 6128s mostly shipped with
+    /// (ACCC: "The 6128's are mostly equipped with 40010 version 36AA"),
+    /// and what this emulator already modelled exclusively before this
+    /// type existed, so it stays the default (no behaviour change).
+    #[default]
+    Ga40010
+}
+
 /// GateArray emulation of the CPC.
 /// Version 40010 is targeted; it suffers of a shift in pixel rendering for mode 2
 /// TODO ensure the following sentence is applied
@@ -667,6 +712,10 @@ pub enum InterruptionSignal {
 pub struct GateArray {
     pub (crate) clock: u8,
     pins: PinsBuffer,
+    /// Which of the two classic Gate Array chip families is fitted - see
+    /// [`GateArrayType`]'s own doc comment for what this does (and
+    /// doesn't, yet) change.
+    ga_type: GateArrayType,
 
     vsync_counter: VSyncCounter,
     hsync_counter: HSyncCounter,
@@ -697,6 +746,7 @@ impl Default for GateArray {
         let mut ga = GateArray {
             clock: 0,
             pins: (0, 0).into(),
+            ga_type: GateArrayType::default(),
 
             vsync_counter: VSyncCounter::NoVsync,
             hsync_counter: HSyncCounter::NoHsync,
@@ -1003,6 +1053,22 @@ impl GateArray {
 impl GateArray {
     pub fn current_mode(&self) -> VideoMode {
         self.current_mode
+    }
+
+    /// Which of the two classic Gate Array chip families is fitted - see
+    /// [`GateArrayType`]'s own doc comment.
+    pub fn gate_array_type(&self) -> GateArrayType {
+        self.ga_type
+    }
+
+    /// Changes which of the two classic Gate Array chip families is
+    /// fitted. See [`GateArrayType`]'s own doc comment for what this
+    /// currently does (selects the configuration) and doesn't yet
+    /// (change any actual pixel decode - the one documented behavioural
+    /// difference needs a mid-byte mode-switch mechanism that doesn't
+    /// exist yet).
+    pub fn set_gate_array_type(&mut self, ga_type: GateArrayType) {
+        self.ga_type = ga_type;
     }
 
     pub fn r52(&self) -> u8 {

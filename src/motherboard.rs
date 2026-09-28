@@ -116,6 +116,9 @@ impl Default for Motherboard {
 pub struct MotherboardBuilder {
     /// The type of CRTC in the motherboard
     crtc_type: Option<CrtcType>,
+    /// Which of the two classic Gate Array chip families is fitted - see
+    /// [`crate::ga::GateArrayType`]'s own doc comment.
+    ga_type: Option<crate::ga::GateArrayType>,
     /// The manufacturer identity the firmware reads back via PPI port B
     /// (bits 1-3) to pick which name ("Amstrad", "Schneider", ...) to print
     /// in the boot banner.
@@ -131,6 +134,15 @@ pub struct MotherboardBuilder {
 impl MotherboardBuilder {
     pub fn set_crtc(&mut self, crtc_type: CrtcType) -> &mut Self {
         self.crtc_type = Some(crtc_type);
+        self
+    }
+
+    /// Which of the two classic Gate Array chip families is fitted - see
+    /// [`crate::ga::GateArrayType`]'s own doc comment. Defaults to the
+    /// 40010 (unset), matching what this emulator always modelled before
+    /// this option existed.
+    pub fn set_gate_array_type(&mut self, ga_type: crate::ga::GateArrayType) -> &mut Self {
+        self.ga_type = Some(ga_type);
         self
     }
 
@@ -181,6 +193,9 @@ impl MotherboardBuilder {
 
         if let Some(brand) = self.brand {
             motherboard.ppi.set_brand(brand);
+        }
+        if let Some(ga_type) = self.ga_type {
+            motherboard.ga.set_gate_array_type(ga_type);
         }
         // The CPC+ (CRTC 3) has its PPI inside the ASIC, which keeps its
         // ports on a mode-set write, unlike a real 8255.
