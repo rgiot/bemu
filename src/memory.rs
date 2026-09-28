@@ -70,6 +70,26 @@ pub struct BankConfig(pub PageNumber, pub BankNumber);
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct RamConfig(pub [BankConfig; 4]);
 
+impl RamConfig {
+    /// Combines a large RAM expansion's extra high bits (see
+    /// `crate::expansion::LargeRamExpansion`) into whichever quadrant the
+    /// gate array/PAL's own `PageNumber::Page` selects, widening its 3-bit
+    /// page number (0-7, this config's own D3-D5 bits) into the full 6-bit
+    /// bank number (`(high_bits << 3) | page`, up to 4MB) the expansion
+    /// protocol defines. A no-op wherever this config already selects
+    /// `PageNumber::Base` (those quadrants are the CPC's own base 64K,
+    /// which no RAM-select write - extended or not - ever touches).
+    pub fn with_expansion_high_bits(self, high_bits: u8) -> RamConfig {
+        RamConfig(self.0.map(|BankConfig(page, bank)| {
+            let page = match page {
+                PageNumber::Base => PageNumber::Base,
+                PageNumber::Page(p) => PageNumber::Page((high_bits << 3) | p),
+            };
+            BankConfig(page, bank)
+        }))
+    }
+}
+
 /// I have no idea of how is coded the ROM selection stuff within the CPC.
 /// So I create this chip only for this purpose
 #[derive(Default)]

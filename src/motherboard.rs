@@ -6,6 +6,7 @@ use crate::chip::*;
 use crate::counter::*;
 use crate::crtc::*;
 use crate::debug::DisassembledInstruction;
+use crate::expansion::{LargeRamExpansion, LargeRamExpansionPin, RamBankExpansion};
 use crate::fdc::Fdc;
 use crate::ga::*;
 use crate::keyboard::KeyboardMatrix;
@@ -30,6 +31,10 @@ pub struct Motherboard {
     ppi: Ppi,
     rom_selector: UpperRomSelector,
     memory: Memory,
+    /// A card plugged into the expansion port extending RAM banking beyond
+    /// the base machine's own 512K limit, if any (see `src/expansion.rs`).
+    /// `None` is a stock machine - the common case, and the default.
+    large_ram_expansion: Option<LargeRamExpansion>,
     fdc: Fdc,
     // The FDC isn't a pin-level `Chip` (see fdc.rs), so unlike the other
     // peripherals its register writes/reads aren't naturally idempotent
@@ -88,6 +93,7 @@ impl Default for Motherboard {
             ppi: Default::default(),
             rom_selector: Default::default(),
             memory: Default::default(),
+            large_ram_expansion: None,
             fdc: Default::default(),
             fdc_write_active: false,
             fdc_read_active: false,
@@ -119,6 +125,7 @@ pub struct MotherboardBuilder {
     disable_lower_rom: bool, // false by default
     disable_upper_rom: bool, // false by defualt
     extra_ram_pages: Option<usize>,
+    large_ram_expansion_banks: Option<usize>,
 }
 
 impl MotherboardBuilder {
@@ -155,6 +162,15 @@ impl MotherboardBuilder {
         self
     }
 
+    /// Plugs a [`crate::expansion::LargeRamExpansion`] (the standard
+    /// Yarek/RAM7/CPC4MB-style >512K protocol) into the expansion port,
+    /// with `bank_count` 64kb banks fitted (up to 64 = 4MB). See
+    /// [`Motherboard::plug_large_ram_expansion`].
+    pub fn plug_large_ram_expansion(&mut self, bank_count: usize) -> &mut Self {
+        self.large_ram_expansion_banks = Some(bank_count);
+        self
+    }
+
     pub fn build(self) -> Motherboard {
         let crtc_type = self.crtc_type.unwrap_or_default();
 
@@ -180,6 +196,9 @@ impl MotherboardBuilder {
         }
         if let Some(pages) = self.extra_ram_pages {
             motherboard.set_extra_ram_pages(pages);
+        }
+        if let Some(bank_count) = self.large_ram_expansion_banks {
+            motherboard.plug_large_ram_expansion(bank_count);
         }
         motherboard.stabilize_run();
 
@@ -289,6 +308,9 @@ impl Motherboard {
         self.crtc.reset();
         self.ga.reset();
         self.pal.reset();
+        if let Some(expansion) = &mut self.large_ram_expansion {
+            expansion.reset();
+        }
         self.cpu.reset();
 
         for _ in 0..2 {
@@ -348,6 +370,9 @@ impl Motherboard {
         }
         self.ga.tick();
         self.pal.tick();
+        if let Some(expansion) = &mut self.large_ram_expansion {
+            expansion.tick();
+        }
         // Never ticked before at all - only its pins were kept in sync via
         // sync_pins, so `execute_tick()` (which latches the selected upper
         // ROM number from the data bus) never ran and `rom_number` stayed
@@ -599,6 +624,9 @@ impl Motherboard {
         // Backup previous state
         self.ga.save_pins_state();
         self.pal.save_pins_state();
+        if let Some(expansion) = &mut self.large_ram_expansion {
+            expansion.save_pins_state();
+        }
         self.crtc.save_pins_state();
         self.cpu.save_pins_state();
 
@@ -685,6 +713,48 @@ impl Motherboard {
             self.cpu.get_pin(Z80Pin::D6) && self.cpu.get_pin(Z80Pin::D7),
         );
         self.pal.set_pin(PalPin::IOWR, !Neg_IOWR);
+
+        // CPU to the expansion port's large RAM card, if any is plugged in
+        // - it needs the full data byte (not `Pal`'s D6-D7-collapsed-to-one
+        // shortcut) plus address lines A8-A10, which the base machine's own
+        // decode never looks at (see `LargeRamExpansion`'s doc comment).
+        if let Some(expansion) = &mut self.large_ram_expansion {
+            sync_pins(
+                &self.cpu,
+                &[
+                    Z80Pin::A8,
+                    Z80Pin::A9,
+                    Z80Pin::A10,
+                    Z80Pin::A14,
+                    Z80Pin::A15,
+                    Z80Pin::D0,
+                    Z80Pin::D1,
+                    Z80Pin::D2,
+                    Z80Pin::D3,
+                    Z80Pin::D4,
+                    Z80Pin::D5,
+                    Z80Pin::D6,
+                    Z80Pin::D7,
+                ],
+                expansion,
+                &[
+                    LargeRamExpansionPin::A8,
+                    LargeRamExpansionPin::A9,
+                    LargeRamExpansionPin::A10,
+                    LargeRamExpansionPin::A14,
+                    LargeRamExpansionPin::A15,
+                    LargeRamExpansionPin::D0,
+                    LargeRamExpansionPin::D1,
+                    LargeRamExpansionPin::D2,
+                    LargeRamExpansionPin::D3,
+                    LargeRamExpansionPin::D4,
+                    LargeRamExpansionPin::D5,
+                    LargeRamExpansionPin::D6,
+                    LargeRamExpansionPin::D7,
+                ],
+            );
+            expansion.set_pin(LargeRamExpansionPin::IOWR, !Neg_IOWR);
+        }
 
         // CPU to CRTC
         // EN is active (low) during a real I/O cycle only: an interrupt
@@ -871,13 +941,17 @@ impl Motherboard {
 impl Motherboard {
     /// Provides the memory configuration for a proper access
     pub fn memory_config(&self) -> MemoryConfig {
+        let mut ram_config = self.pal.get_ram_configuration();
+        if let Some(expansion) = &self.large_ram_expansion {
+            ram_config = ram_config.with_expansion_high_bits(expansion.ram_bank_high_bits());
+        }
         MemoryConfig(
             RomConfig {
                 lower_rom: self.ga.lower_rom_pagging(),
                 upper_rom: self.ga.upper_rom_pagging(),
                 rom_number: self.rom_selector.upper_rom_number(),
             },
-            self.pal.get_ram_configuration(),
+            ram_config,
         )
     }
 
@@ -898,7 +972,10 @@ impl Motherboard {
 
     /// Change how many extra 64kb RAM pages are fitted, beyond the base
     /// 64kb every CPC has (1 = a stock 128K CPC 6128, the default; up to 7
-    /// = a fully populated 512K expansion). See [`Memory::set_extra_pages`].
+    /// = a fully populated 512K expansion, the standard CPC6128-style RAM
+    /// select's own limit). See [`Memory::set_extra_pages`]. For a real
+    /// >512K expansion card (up to 4MB), use [`Self::plug_large_ram_expansion`]
+    /// instead - it calls this with the card's own bank count.
     pub fn set_extra_ram_pages(&mut self, pages: usize) {
         self.memory.set_extra_pages(pages);
     }
@@ -906,6 +983,24 @@ impl Motherboard {
     /// How many extra 64kb RAM pages are currently fitted.
     pub fn extra_ram_pages(&self) -> usize {
         self.memory.extra_pages()
+    }
+
+    /// Plugs a [`LargeRamExpansion`] (the standard Yarek/RAM7/CPC4MB-style
+    /// >512K protocol, see `src/expansion.rs`) into the expansion port,
+    /// with `bank_count` 64kb banks fitted (up to 64 = 4MB). Real hardware
+    /// wires such a card to the same bus lines as the CPC's own internal
+    /// expansion RAM, so - like [`Self::set_extra_ram_pages`] - this
+    /// *replaces* the page count rather than adding to it.
+    pub fn plug_large_ram_expansion(&mut self, bank_count: usize) {
+        self.set_extra_ram_pages(bank_count);
+        self.large_ram_expansion = Some(LargeRamExpansion::new(bank_count));
+    }
+
+    /// Removes whatever [`LargeRamExpansion`] was plugged in (a no-op if
+    /// none was), reverting to the stock machine's own single extra page.
+    pub fn unplug_large_ram_expansion(&mut self) {
+        self.large_ram_expansion = None;
+        self.set_extra_ram_pages(1);
     }
 
     /// Write the databuffer in memory according to the memory configuration
