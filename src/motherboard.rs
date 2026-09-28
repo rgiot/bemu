@@ -1015,6 +1015,14 @@ impl Motherboard {
         self.large_ram_expansion.as_ref().map(|e| Expansion::ram_bank_count(e))
     }
 
+    /// The currently plugged-in `LargeRamExpansion`'s last-latched high
+    /// bits (see `RamBankExpansion::ram_bank_high_bits`), if any - lets
+    /// external code (tests, diagnostics) observe whether anything has
+    /// actually driven a port other than the standard &7Fxx.
+    pub fn large_ram_expansion_high_bits(&self) -> Option<u8> {
+        self.large_ram_expansion.as_ref().map(|e| e.ram_bank_high_bits())
+    }
+
     /// Whatever's plugged into the expansion port, as the trait `Memory`
     /// itself needs to reach its (real, on-card) RAM/ROM - see
     /// `src/memory.rs`'s `Expansion` doc comment for why `Memory` never

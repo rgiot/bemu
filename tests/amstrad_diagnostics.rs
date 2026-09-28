@@ -12,15 +12,14 @@
 //! ever legitimately needs to change (a real rendering fix), regenerate the
 //! fixture and eyeball the new picture rather than adjust pixel assertions.
 //!
-//! Known gap, not covered here: the tool can detect expansions well beyond
-//! a stock 128K (its own wiki shows a 512K example), by sweeping the gate
-//! array's RAM-select byte far more thoroughly than the 8 standard C0-C7
-//! configurations. amsrust's `Motherboard::set_extra_ram_pages` does give
-//! genuinely independent extra pages (see `src/memory.rs`'s
-//! `extra_pages_are_independent_when_actually_fitted`), but the tool's own
-//! *detection* of a >128K configuration hasn't been matched against real
-//! hardware yet - that needs properly reverse-engineering its size
-//! computation (starts around its own address 0x25aa), not guessing.
+//! The tool also correctly detects a full 4MB `LargeRamExpansion` (see
+//! `src/expansion.rs`) plugged into the expansion port - `upper_ram_test_detects_a_4mb_expansion`
+//! below. Getting that working surfaced a test-harness gotcha worth noting:
+//! `CslRunner`'s CSL `reset` instruction replaces the entire `Motherboard`
+//! (`self.motherboard = Self::machine(...)`), so anything configured via
+//! `motherboard_mut()` *before* a script containing `reset` is silently
+//! discarded - plug an expansion in a separate `run_text` call *after* the
+//! one that resets, never before.
 
 use amsrust::csl_runner::CslRunner;
 use image::RgbImage;
@@ -82,6 +81,29 @@ fn assert_matches_golden(actual: &RgbImage, golden_name: &str) {
     assert_eq!(actual.as_raw(), golden.as_raw(), "{golden_name}: pixels differ from the golden screenshot");
 }
 
+/// Like `assert_matches_golden`, but only over the `(x, y, width, height)`
+/// region of `actual` - for a frame whose *rest* legitimately varies with
+/// exact timing (e.g. the Upper RAM test's per-bank progress hatching,
+/// mid-sweep) while the part actually being checked doesn't.
+#[track_caller]
+fn assert_region_matches_golden(actual: &RgbImage, region: (u32, u32, u32, u32), golden_name: &str) {
+    use image::GenericImageView;
+    let (x, y, w, h) = region;
+    let cropped = actual.view(x, y, w, h).to_image();
+    let path = Path::new(FIXTURES).join(golden_name);
+    let golden = image::open(&path)
+        .unwrap_or_else(|e| panic!("{}: {e} (missing golden? see this file's module doc)", path.display()))
+        .into_rgb8();
+    assert_eq!(
+        cropped.dimensions(),
+        golden.dimensions(),
+        "{golden_name}: cropped region size doesn't match the golden ({:?} vs {:?})",
+        cropped.dimensions(),
+        golden.dimensions()
+    );
+    assert_eq!(cropped.as_raw(), golden.as_raw(), "{golden_name}: pixels differ from the golden crop");
+}
+
 /// The exact panic this whole test file exists to guard against: a stock
 /// 128K machine (the default) used to crash the instant `DIAG.BIN`'s own
 /// boot-time RAM-sizing routine selected a page beyond the one it has
@@ -112,6 +134,54 @@ fn boots_and_lower_ram_passes() {
 fn upper_ram_test_passes() {
     let frames = run_diag(0, &[("U", 20_000_000)]);
     assert_matches_golden(&frames[1], "upper_ram_passed.png");
+}
+
+/// A real >512K expansion, correctly detected: unlike `upper_ram_test_passes`
+/// (the default stock 128K case), this machine has a full 4MB
+/// `LargeRamExpansion` plugged in, and the tool's own boot-time RAM-sizing
+/// sweep (the same one `PageNumber::Expansion`/`RamConfig::with_expansion_high_bits`
+/// exist to answer correctly) must report `TOTAL UPPER RAM: 4096KB`, not
+/// the 64KB a stock machine shows. Only the "TOTAL UPPER RAM" line is
+/// checked (`assert_region_matches_golden`, not a whole-frame compare):
+/// the bank-by-bank test underneath is still actively progressing at this
+/// point (each of the tool's 64 display cells now covers a full 64K bank
+/// instead of 1K, so the exhaustive sweep takes proportionally longer than
+/// the 512K case and isn't run to completion here), and its exact
+/// hatching pattern legitimately depends on timing the rest of this test
+/// doesn't control.
+///
+/// The expansion is plugged in via a *second* `run_text` call, after the
+/// one that resets - see this file's module doc for why that ordering
+/// matters (`reset` replaces the whole `Motherboard`).
+#[test]
+#[ignore = "slow: boots the real firmware and a real diagnostics tool from disc"]
+fn upper_ram_test_detects_a_4mb_expansion() {
+    let dir = std::env::temp_dir().join(format!("amsrust_amstrad_diag_4mb_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut runner = CslRunner::new(&dir);
+
+    runner.run_text("csl_version 1.0\ncrtc_select 0\nreset\n", DISC_DIR).unwrap();
+    runner.motherboard_mut().plug_large_ram_expansion(64);
+    assert_eq!(runner.motherboard().large_ram_expansion_bank_count(), Some(64));
+
+    let report = runner
+        .run_text(
+            "csl_version 1.0\n\
+             wait 3000000\n\
+             disk_insert 'AmstradDiag.dsk'\n\
+             key_delay 70000 70000 400000\n\
+             key_output 'RUN\"DIAG.BIN\"\\(RET)'\n\
+             wait 8000000\n\
+             key_output 'U'\n\
+             wait 8000000\n\
+             screenshot\n",
+            DISC_DIR
+        )
+        .unwrap();
+    assert!(report.ignored.is_empty(), "unexpected ignored instructions: {:?}", report.ignored);
+
+    let frame = image::open(&report.screenshots[0].path).unwrap().into_rgb8();
+    assert_region_matches_golden(&frame, (190, 63, 280, 9), "upper_ram_size_4096kb.png");
 }
 
 /// The keyboard test draws the full key matrix and highlights whichever
