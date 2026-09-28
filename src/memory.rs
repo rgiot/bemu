@@ -11,13 +11,66 @@ pub struct Page([Bank; 4]);
 #[derive(Clone)]
 pub struct Rom(Bank);
 
-trait Readable {
+pub trait Readable {
     fn read(&self, addr: u16) -> u8;
 }
 
-trait Writeable {
+pub trait Writeable {
     fn fill(&mut self, v: u8);
     fn write(&mut self, addr: u16, byte: u8);
+}
+
+/// What a card plugged into the expansion port can provide to `Memory`.
+///
+/// Real expansion cards vary hugely in what they actually carry - a pure
+/// RAM board provides none of this beyond RAM banking; something like the
+/// M4 (<https://github.com/M4Duke/m4hardware>) bundles RAM, its own ROM
+/// (<https://github.com/M4Duke/m4rom>, <https://github.com/M4Duke/m4hackmenu>),
+/// persistent storage and more on one card. `Memory` never owns any of this
+/// storage - real hardware puts the RAM/ROM chips *on the card*, not inside
+/// the CPC - it only ever *borrows* a [`Page`]/[`Bank`] through this trait
+/// to service one read or write. Every method has a default "I don't
+/// provide this" implementation, so a card only overrides the capabilities
+/// it actually has (see [`crate::expansion::LargeRamExpansion`], which only
+/// overrides the RAM-banking methods).
+///
+/// Deliberately *not* covering here: anything that isn't a byte
+/// [`Memory`] itself addresses. Persistent storage (an SD/CF card behind
+/// its own command protocol) or a "hacker menu" (effectively a second,
+/// separate computer riding the bus) are peripherals in their own right,
+/// modelled the same way `Fdc`/other chips already are - their own
+/// pin-level `Chip` and/or their own command-and-result state machine, not
+/// a method on this trait. Implementing that for a specific real card (M4
+/// or otherwise) needs that card's own protocol researched first, the same
+/// way the RAM banking protocol here was confirmed against its actual spec
+/// rather than guessed at - not done in this codebase yet.
+pub trait Expansion {
+    /// How many 64kb RAM banks this card provides (0 if it doesn't provide
+    /// RAM banking at all - the default).
+    fn ram_bank_count(&self) -> usize {
+        0
+    }
+
+    /// Never called unless `ram_bank_count()` is nonzero for the same
+    /// card - the default panics rather than silently reading zeroes, so a
+    /// card that only forgets to override this fails loudly.
+    fn ram_page(&self, bank: u8) -> &Page {
+        let _ = bank;
+        panic!("this expansion doesn't provide RAM banking (ram_bank_count() should have been 0)")
+    }
+
+    fn ram_page_mut(&mut self, bank: u8) -> &mut Page {
+        let _ = bank;
+        panic!("this expansion doesn't provide RAM banking (ram_bank_count() should have been 0)")
+    }
+
+    /// If this card provides upper ROM slot `number` (its own firmware,
+    /// e.g. a hacker menu), the image itself - `None` (the default) falls
+    /// through to whatever's normally in that slot.
+    fn upper_rom(&self, number: u8) -> Option<&Bank> {
+        let _ = number;
+        None
+    }
 }
 
 pub struct Memory {
@@ -36,8 +89,14 @@ pub struct Memory {
 pub enum PageNumber {
     /// Main memory linked to CRTC
     Base,
-    /// From 0 to 3 in an extra page
+    /// One of the CPC's own on-board extra pages (`Memory::additional_memory`,
+    /// max 7 = the standard CPC6128-style RAM select's own 512K limit).
     Page(u8),
+    /// One of the banks a card plugged into the expansion port provides
+    /// (`Expansion::ram_bank_count`/`ram_page`, max 64 = 4MB) - real
+    /// hardware puts this RAM on the card itself, so `Memory` never owns
+    /// it, only addresses it.
+    Expansion(u8),
 }
 
 /// Number of the bank
@@ -73,17 +132,20 @@ pub struct RamConfig(pub [BankConfig; 4]);
 impl RamConfig {
     /// Combines a large RAM expansion's extra high bits (see
     /// `crate::expansion::LargeRamExpansion`) into whichever quadrant the
-    /// gate array/PAL's own `PageNumber::Page` selects, widening its 3-bit
-    /// page number (0-7, this config's own D3-D5 bits) into the full 6-bit
-    /// bank number (`(high_bits << 3) | page`, up to 4MB) the expansion
-    /// protocol defines. A no-op wherever this config already selects
-    /// `PageNumber::Base` (those quadrants are the CPC's own base 64K,
-    /// which no RAM-select write - extended or not - ever touches).
+    /// gate array/PAL's own `PageNumber::Page` selects, turning its 3-bit
+    /// page number (0-7, this config's own D3-D5 bits) into a
+    /// `PageNumber::Expansion` holding the full 6-bit bank number
+    /// (`(high_bits << 3) | page`, up to 4MB) the expansion protocol
+    /// defines - the expansion's own storage, not `Memory`'s. A no-op
+    /// wherever this config already selects `PageNumber::Base` (those
+    /// quadrants are the CPC's own base 64K, which no RAM-select write -
+    /// extended or not - ever touches).
     pub fn with_expansion_high_bits(self, high_bits: u8) -> RamConfig {
         RamConfig(self.0.map(|BankConfig(page, bank)| {
             let page = match page {
                 PageNumber::Base => PageNumber::Base,
-                PageNumber::Page(p) => PageNumber::Page((high_bits << 3) | p),
+                PageNumber::Page(p) => PageNumber::Expansion((high_bits << 3) | p),
+                PageNumber::Expansion(p) => PageNumber::Expansion(p),
             };
             BankConfig(page, bank)
         }))
@@ -378,11 +440,11 @@ impl MemoryConfig {
 
 impl Page {
     /// Get the appropriate bank
-    fn bank(&self, id: BankNumber) -> &Bank {
+    pub fn bank(&self, id: BankNumber) -> &Bank {
         &self.0[id.index()]
     }
 
-    fn bank_mut(&mut self, id: BankNumber) -> &mut Bank {
+    pub fn bank_mut(&mut self, id: BankNumber) -> &mut Bank {
         &mut self.0[id.index()]
     }
 }
@@ -407,52 +469,50 @@ impl Memory {
         self.additional_memory.len()
     }
 
-    /// Read a byte according to the provided memory configuration
+    /// Read a byte according to the provided memory configuration.
     /// If the address is in an activate rom space; this rom is read instead of the ram
     /// If the adress is within the ram space, then the value depends on the ram configuration
     /// TODO manage strange configuration with missing roms
-    pub fn read(&self, addr: u16, conf: &MemoryConfig) -> u8 {
-        /// Retreive the right bank
-        let memory = self.bank(addr, conf);
-
-        // and read it
-        memory.read(MemoryConfig::relative_address_at(addr))
+    ///
+    /// `expansion` is whatever card is plugged into the expansion port, if
+    /// any (see [`Expansion`]).
+    pub fn read(&self, addr: u16, conf: &MemoryConfig, expansion: Option<&dyn Expansion>) -> u8 {
+        let byte = if conf.is_in_enabled_lower_rom(addr) {
+            self.lower_rom_bank().read(MemoryConfig::relative_address_at(addr))
+        } else if conf.is_in_enabled_upper_rom(addr) {
+            self.upper_rom_bank(conf.0.rom_number, expansion).read(MemoryConfig::relative_address_at(addr))
+        } else {
+            self.ram_bank(conf.bank_at(addr), expansion).read(MemoryConfig::relative_address_at(addr))
+        };
+        byte
     }
 
-    /// Write a byte according to the memory configuration
+    /// Write a byte according to the memory configuration.
     /// write is done on RAM even if ROMs are activated
-    pub fn write(&mut self, addr: u16, val: u8, conf: &MemoryConfig) {
-        /// Retreive the right bank
-        let memory = self.bank(addr, conf);
-
-        // and read it
-        let bank = self.ram_bank_mut(conf.bank_at(addr));
+    ///
+    /// `expansion` is whatever card is plugged into the expansion port, if
+    /// any (see [`Expansion`]) - only consulted when `conf` selects
+    /// `PageNumber::Expansion`, which only happens when one actually is.
+    pub fn write<'a>(&'a mut self, addr: u16, val: u8, conf: &MemoryConfig, expansion: Option<&'a mut dyn Expansion>) {
+        let bank = self.ram_bank_mut(conf.bank_at(addr), expansion);
         bank.write(MemoryConfig::relative_address_at(addr), val);
     }
 
-    /// Get the appropriate bank to read for the given configuration
-    fn bank(&self, addr: u16, conf: &MemoryConfig) -> &Bank {
-        if conf.is_in_enabled_lower_rom(addr) {
-            self.lower_rom_bank()
-        } else if conf.is_in_enabled_upper_rom(addr) {
-            self.upper_rom_bank(conf.0.rom_number)
-        } else {
-            self.ram_bank(conf.bank_at(addr))
-        }
-    }
-
     /// TODO implement properly the behavior when a rom indice is wrong
-    fn upper_rom_bank(&self, number: u8) -> &Bank {
-        let number = number as usize;
+    fn upper_rom_bank<'a>(&'a self, number: u8, expansion: Option<&'a dyn Expansion>) -> &'a Bank {
+        if let Some(rom) = expansion.and_then(|e| e.upper_rom(number)) {
+            return rom;
+        }
 
-        if number >= self.upper_roms.len() {
-            self.upper_rom_bank(0)
+        let index = number as usize;
+        if index >= self.upper_roms.len() {
+            self.upper_rom_bank(0, expansion)
         } else {
-            match &self.upper_roms[number] {
+            match &self.upper_roms[index] {
                 Some(r) => &r.0,
                 None => {
                     assert!(number != 0);
-                    self.upper_rom_bank(0)
+                    self.upper_rom_bank(0, expansion)
                 }
             }
         }
@@ -472,26 +532,39 @@ impl Memory {
     /// fitted, so selecting one of those aliases back onto the installed
     /// pages rather than addressing anything new - it does *not* trap or
     /// panic. Modulo-wrapping here reproduces that aliasing instead of
-    /// indexing out of bounds.
-    fn ram_bank(&self, conf: &BankConfig) -> &Bank {
-        let page = match conf.0 {
-            PageNumber::Base => &self.main_memory,
-            PageNumber::Page(p) => &self.additional_memory[p as usize % self.additional_memory.len()],
-        };
-
-        page.bank(conf.1)
+    /// indexing out of bounds. `PageNumber::Expansion` reaches into
+    /// whatever's plugged into the expansion port the same way - see
+    /// [`Expansion`] - and is never produced unless one actually is (see
+    /// `RamConfig::with_expansion_high_bits`), but wraps defensively too
+    /// rather than panicking if `expansion` somehow provides fewer banks
+    /// than the bank number asks for.
+    fn ram_bank<'a>(&'a self, conf: &BankConfig, expansion: Option<&'a dyn Expansion>) -> &'a Bank {
+        match conf.0 {
+            PageNumber::Base => self.main_memory.bank(conf.1),
+            PageNumber::Page(p) => self.additional_memory[p as usize % self.additional_memory.len()].bank(conf.1),
+            PageNumber::Expansion(bank) => {
+                let expansion = expansion.expect("PageNumber::Expansion produced but no expansion is plugged in");
+                let count = expansion.ram_bank_count().max(1) as u8;
+                expansion.ram_page(bank % count).bank(conf.1)
+            }
+        }
     }
 
     /// Get the memory for the given bank. See [`Memory::ram_bank`] for why
     /// the page index wraps instead of being asserted in range.
-    fn ram_bank_mut(&mut self, conf: &BankConfig) -> &mut Bank {
-        let len = self.additional_memory.len();
-        let page = match conf.0 {
-            PageNumber::Base => &mut self.main_memory,
-            PageNumber::Page(p) => &mut self.additional_memory[p as usize % len],
-        };
-
-        page.bank_mut(conf.1)
+    fn ram_bank_mut<'a>(&'a mut self, conf: &BankConfig, expansion: Option<&'a mut dyn Expansion>) -> &'a mut Bank {
+        match conf.0 {
+            PageNumber::Base => self.main_memory.bank_mut(conf.1),
+            PageNumber::Page(p) => {
+                let len = self.additional_memory.len();
+                self.additional_memory[p as usize % len].bank_mut(conf.1)
+            }
+            PageNumber::Expansion(bank) => {
+                let expansion = expansion.expect("PageNumber::Expansion produced but no expansion is plugged in");
+                let count = expansion.ram_bank_count().max(1) as u8;
+                expansion.ram_page_mut(bank % count).bank_mut(conf.1)
+            }
+        }
     }
 }
 
@@ -515,49 +588,49 @@ mod test {
         mem.additional_memory[0].0[3].fill(7);
 
         assert_eq!(
-            mem.ram_bank(&BankConfig(PageNumber::Base, BankNumber::Bank0))
+            mem.ram_bank(&BankConfig(PageNumber::Base, BankNumber::Bank0), None)
                 .read(0),
             0
         );
 
         assert_eq!(
-            mem.ram_bank(&BankConfig(PageNumber::Base, BankNumber::Bank1))
+            mem.ram_bank(&BankConfig(PageNumber::Base, BankNumber::Bank1), None)
                 .read(0),
             1
         );
 
         assert_eq!(
-            mem.ram_bank(&BankConfig(PageNumber::Base, BankNumber::Bank2))
+            mem.ram_bank(&BankConfig(PageNumber::Base, BankNumber::Bank2), None)
                 .read(0),
             2
         );
 
         assert_eq!(
-            mem.ram_bank(&BankConfig(PageNumber::Base, BankNumber::Bank3))
+            mem.ram_bank(&BankConfig(PageNumber::Base, BankNumber::Bank3), None)
                 .read(0),
             3
         );
 
         assert_eq!(
-            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank0))
+            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank0), None)
                 .read(0),
             4
         );
 
         assert_eq!(
-            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank1))
+            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank1), None)
                 .read(0),
             5
         );
 
         assert_eq!(
-            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank2))
+            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank2), None)
                 .read(0),
             6
         );
 
         assert_eq!(
-            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank3))
+            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank3), None)
                 .read(0),
             7
         );
@@ -583,7 +656,7 @@ mod test {
 
         for page in 0u8..=7 {
             assert_eq!(
-                mem.ram_bank(&BankConfig(PageNumber::Page(page), BankNumber::Bank0)).read(0),
+                mem.ram_bank(&BankConfig(PageNumber::Page(page), BankNumber::Bank0), None).read(0),
                 0x42,
                 "page {page} should alias back onto the only page actually fitted"
             );
@@ -592,9 +665,9 @@ mod test {
         // Same for the write path, and for a freshly-shrunk configuration
         // (exercises `set_extra_pages` itself, not just the Default impl).
         mem.set_extra_pages(1);
-        mem.ram_bank_mut(&BankConfig(PageNumber::Page(5), BankNumber::Bank1)).write(0, 0x99);
+        mem.ram_bank_mut(&BankConfig(PageNumber::Page(5), BankNumber::Bank1), None).write(0, 0x99);
         assert_eq!(
-            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank1)).read(0),
+            mem.ram_bank(&BankConfig(PageNumber::Page(0), BankNumber::Bank1), None).read(0),
             0x99,
             "writing through an unfitted page's alias should land on the real page"
         );
@@ -613,12 +686,12 @@ mod test {
         assert_eq!(mem.extra_pages(), 7);
 
         for page in 0u8..7 {
-            mem.ram_bank_mut(&BankConfig(PageNumber::Page(page), BankNumber::Bank0))
+            mem.ram_bank_mut(&BankConfig(PageNumber::Page(page), BankNumber::Bank0), None)
                 .write(0, 0x10 + page);
         }
         for page in 0u8..7 {
             assert_eq!(
-                mem.ram_bank(&BankConfig(PageNumber::Page(page), BankNumber::Bank0)).read(0),
+                mem.ram_bank(&BankConfig(PageNumber::Page(page), BankNumber::Bank0), None).read(0),
                 0x10 + page,
                 "page {page} should hold its own value, independent of the other fitted pages"
             );
@@ -628,9 +701,63 @@ mod test {
         // aliasing path on a configuration that used to be bigger.
         mem.set_extra_pages(1);
         assert_eq!(
-            mem.ram_bank(&BankConfig(PageNumber::Page(3), BankNumber::Bank0)).read(0),
+            mem.ram_bank(&BankConfig(PageNumber::Page(3), BankNumber::Bank0), None).read(0),
             0x10,
             "after shrinking, every page number should alias back onto page 0"
+        );
+    }
+
+    /// Not every expansion card has RAM at all - e.g. a pure ROM board, or
+    /// something like the M4 (<https://github.com/M4Duke/m4hardware>)'s own
+    /// firmware ROM (<https://github.com/M4Duke/m4rom>,
+    /// <https://github.com/M4Duke/m4hackmenu>) sitting in an upper ROM slot
+    /// alongside its (separately modelled, not this trait's concern) RAM,
+    /// storage and menu capabilities. `Expansion`'s default
+    /// `ram_bank_count() == 0` means such a card simply never overrides the
+    /// RAM methods at all - proven here with a minimal card that *only*
+    /// implements `upper_rom`, and confirming it plugging in doesn't
+    /// disturb `PageNumber::Page`/`Base` RAM addressing (which never
+    /// touches `Expansion` in the first place - only
+    /// `RamConfig::with_expansion_high_bits`, itself only ever called for a
+    /// RAM-providing card, would).
+    struct RomOnlyExpansion {
+        rom: Bank
+    }
+
+    impl Expansion for RomOnlyExpansion {
+        fn upper_rom(&self, number: u8) -> Option<&Bank> {
+            (number == 7).then_some(&self.rom)
+        }
+    }
+
+    #[test]
+    fn a_rom_only_expansion_provides_no_ram_but_does_provide_its_rom() {
+        let mut rom = Bank::default();
+        rom.fill(0xAA);
+        let card = RomOnlyExpansion { rom };
+
+        assert_eq!(card.ram_bank_count(), 0, "the default: this card has no RAM at all");
+        assert!(card.upper_rom(0).is_none(), "slot 0 (BASIC) isn't this card's to provide");
+        assert_eq!(card.upper_rom(7).unwrap().read(0), 0xAA, "slot 7 is this card's own firmware");
+
+        let mem = Memory::default();
+        assert_eq!(
+            mem.upper_rom_bank(7, Some(&card)).read(0),
+            0xAA,
+            "Memory should reach the card's ROM for the slot it claims"
+        );
+        assert_eq!(
+            mem.upper_rom_bank(0, Some(&card)).read(0),
+            mem.upper_rom_bank(0, None).read(0),
+            "and fall through to its own BASIC ROM for a slot the card doesn't claim"
+        );
+
+        // Plain RAM addressing (Base/Page, no expansion high-bits combine)
+        // is entirely unaffected by this ROM-only card being present.
+        assert_eq!(
+            mem.ram_bank(&BankConfig(PageNumber::Base, BankNumber::Bank0), None).read(0),
+            0,
+            "a ROM-only card must not disturb ordinary base RAM addressing"
         );
     }
 }

@@ -11,21 +11,35 @@
 //! the board is already a concrete field wired at compile time, not a
 //! trait object either) - a new expansion is added the same way `pal`/`ppi`/
 //! `crtc` are: a new optional concrete field on `Motherboard`, plus one
-//! wiring block in `sync_chips_pins()`. What *is* abstracted here is the
-//! logical side other code needs: [`RamBankExpansion`] is a small,
-//! `Chip`-independent trait so `Motherboard::memory_config()` doesn't need
-//! to know which specific card (if any) is plugged in, only that it can
-//! answer "what extra high bits does the current RAM-select write carry,
-//! and how many banks do you actually have".
+//! wiring block in `sync_chips_pins()`.
+//!
+//! What *is* abstracted, so other code doesn't need to know which specific
+//! card (if any) is plugged in, comes in two independent pieces:
+//!
+//! - [`RamBankExpansion`] (this module) is the small, `Chip`-independent
+//!   *decode* side of RAM banking specifically - "what extra high bits does
+//!   the current RAM-select write carry" - `Motherboard::memory_config()`
+//!   uses it to build the address decode.
+//! - [`crate::memory::Expansion`] is the *storage/content* side, covering
+//!   RAM banks and any other byte-addressable thing a card provides (e.g.
+//!   its own upper ROM image) - real expansion cards carry their own chips,
+//!   so a card embeds its own [`Page`]s/ROM images and `Memory` only ever
+//!   *borrows* them to service one read or write, never owns them (see
+//!   that trait's own doc comment, including for what it deliberately
+//!   *doesn't* cover - persistent storage, a "hacker menu" second computer
+//!   on the bus, etc. - and why).
 //!
 //! [`Motherboard`]: crate::motherboard::Motherboard
 //! [`Pal`]: crate::pal::Pal
 //! [`Memory`]: crate::memory::Memory
 
 use crate::chip::*;
+use crate::memory::{BankNumber, Expansion as MemoryExpansion, Page};
 
-/// The logical interface a RAM-bank-extending expansion card exposes to the
-/// rest of the emulator, independent of how it decodes its own pins.
+/// The decode-side interface a RAM-bank-extending expansion card exposes:
+/// what its *address* decode currently contributes, independent of how it
+/// gets there or of its own storage (see [`crate::memory::Expansion`] for
+/// that side).
 pub trait RamBankExpansion {
     /// The extra high bits this card currently contributes to the
     /// effective RAM bank number (see [`LargeRamExpansion`] for the
@@ -34,14 +48,6 @@ pub trait RamBankExpansion {
     /// bits, which it always computes regardless of whether a card is
     /// plugged in.
     fn ram_bank_high_bits(&self) -> u8;
-
-    /// How many distinct 64kb banks this card provides. A card plugged
-    /// into the expansion port physically contends with - and wins over -
-    /// the CPC's own internal extra 64K (they're wired to the same bus
-    /// lines), so this *replaces* the machine's default single extra page
-    /// rather than adding to it: a 64K card still means 64+64=128K total,
-    /// not 64+128.
-    fn ram_bank_count(&self) -> usize;
 }
 
 /// An expansion card implementing the standard ">512K" RAM banking
@@ -65,8 +71,10 @@ pub trait RamBankExpansion {
 /// ... address the next 512K blocks up to 4MB (64 banks) total.
 pub struct LargeRamExpansion {
     pins: PinsBuffer,
-    /// Total banks actually fitted on this card (<=64): `bank_count()`.
-    bank_count: usize,
+    /// The card's own RAM chips - real hardware carries these on the card
+    /// itself, not inside the CPC (see `crate::memory::Expansion`'s doc
+    /// comment), one [`Page`] (64kb) per bank actually fitted.
+    banks: Vec<Page>,
     /// Latched high bits (A8-A10, inverted) from the last RAM-select write
     /// this card saw - persists between writes exactly like `Pal`'s own
     /// `MMR` register does.
@@ -78,7 +86,7 @@ impl LargeRamExpansion {
     /// card, 64 for a full 4MB one).
     pub fn new(bank_count: usize) -> Self {
         assert!((1..=64).contains(&bank_count), "a real card has 1 to 64 banks (64kb-4MB), got {bank_count}");
-        LargeRamExpansion { pins: (0, 0).into(), bank_count, high_bits: 0 }
+        LargeRamExpansion { pins: (0, 0).into(), banks: vec![Page::default(); bank_count], high_bits: 0 }
     }
 }
 
@@ -86,9 +94,19 @@ impl RamBankExpansion for LargeRamExpansion {
     fn ram_bank_high_bits(&self) -> u8 {
         self.high_bits
     }
+}
 
+impl MemoryExpansion for LargeRamExpansion {
     fn ram_bank_count(&self) -> usize {
-        self.bank_count
+        self.banks.len()
+    }
+
+    fn ram_page(&self, bank: u8) -> &Page {
+        &self.banks[bank as usize]
+    }
+
+    fn ram_page_mut(&mut self, bank: u8) -> &mut Page {
+        &mut self.banks[bank as usize]
     }
 }
 

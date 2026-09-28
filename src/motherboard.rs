@@ -987,27 +987,52 @@ impl Motherboard {
 
     /// Plugs a [`LargeRamExpansion`] (the standard Yarek/RAM7/CPC4MB-style
     /// >512K protocol, see `src/expansion.rs`) into the expansion port,
-    /// with `bank_count` 64kb banks fitted (up to 64 = 4MB). Real hardware
-    /// wires such a card to the same bus lines as the CPC's own internal
-    /// expansion RAM, so - like [`Self::set_extra_ram_pages`] - this
-    /// *replaces* the page count rather than adding to it.
+    /// with `bank_count` 64kb banks fitted (up to 64 = 4MB) - the card's own
+    /// [`Page`]s, not `Memory`'s (see [`Expansion`]'s doc comment
+    /// for why). `Memory::additional_memory` (the CPC's own on-board extra
+    /// page) is left exactly as it was: real hardware wires a plugged-in
+    /// card to the same bus lines, so once one *is* plugged in,
+    /// `RamConfig::with_expansion_high_bits` always redirects every access
+    /// that would have reached it to the card instead - it becomes
+    /// unreachable, not explicitly resized away, matching the spec's own
+    /// note that a real card "replaces", not adds to, that internal page.
     pub fn plug_large_ram_expansion(&mut self, bank_count: usize) {
-        self.set_extra_ram_pages(bank_count);
         self.large_ram_expansion = Some(LargeRamExpansion::new(bank_count));
     }
 
     /// Removes whatever [`LargeRamExpansion`] was plugged in (a no-op if
-    /// none was), reverting to the stock machine's own single extra page.
+    /// none was), reverting to the stock machine's own single extra page -
+    /// automatically reachable again, since `memory_config()` stops calling
+    /// `with_expansion_high_bits` at all once `large_ram_expansion` is
+    /// `None`.
     pub fn unplug_large_ram_expansion(&mut self) {
         self.large_ram_expansion = None;
-        self.set_extra_ram_pages(1);
+    }
+
+    /// How many 64kb banks the currently plugged-in `LargeRamExpansion`
+    /// provides, if any - `None` on a stock machine.
+    pub fn large_ram_expansion_bank_count(&self) -> Option<usize> {
+        self.large_ram_expansion.as_ref().map(|e| Expansion::ram_bank_count(e))
+    }
+
+    /// Whatever's plugged into the expansion port, as the trait `Memory`
+    /// itself needs to reach its (real, on-card) RAM/ROM - see
+    /// `src/memory.rs`'s `Expansion` doc comment for why `Memory` never
+    /// owns this storage. Read-only: the write paths below need a `&mut`
+    /// version too, but a `&mut self` helper for that would conflict with
+    /// also borrowing `self.memory` mutably in the same call - they
+    /// destructure `self` into its `memory`/`large_ram_expansion` fields
+    /// directly instead, which the borrow checker can see are disjoint.
+    fn expansion_ram_source(&self) -> Option<&dyn Expansion> {
+        self.large_ram_expansion.as_ref().map(|e| e as &dyn Expansion)
     }
 
     /// Write the databuffer in memory according to the memory configuration
     pub fn write_buffer(&mut self, mut addr: u16, buffer: &[u8]) {
         let config = self.memory_config();
+        let Motherboard { memory, large_ram_expansion, .. } = self;
         for byte in buffer.iter() {
-            self.memory.write(addr, *byte, &config);
+            memory.write(addr, *byte, &config, large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
             addr = addr.wrapping_add(1);
         }
     }
@@ -1016,22 +1041,24 @@ impl Motherboard {
     #[inline]
     pub fn write_byte(&mut self, addr: u16, byte: u8) {
         let memory_cfg = self.memory_config();
-        self.memory.write(addr, byte, &memory_cfg);
+        let Motherboard { memory, large_ram_expansion, .. } = self;
+        memory.write(addr, byte, &memory_cfg, large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
     }
 
     pub fn write_word(&mut self, addr: u16, word: u16) {
         let memory_cfg = self.memory_config();
         let low = (word & 0xff) as u8;
         let high = ((word & 0xff00) >> 8) as u8;
-        self.memory.write(addr, low, &memory_cfg);
-        self.memory.write(addr.wrapping_add(1), high, &memory_cfg);
+        let Motherboard { memory, large_ram_expansion, .. } = self;
+        memory.write(addr, low, &memory_cfg, large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
+        memory.write(addr.wrapping_add(1), high, &memory_cfg, large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
     }
 
     /// Read one memory byte according to the memory configuration
     #[inline]
     pub fn read_byte(&self, addr: u16) -> u8 {
         let memory_cfg = self.memory_config();
-        self.memory.read(addr, &memory_cfg)
+        self.memory.read(addr, &memory_cfg, self.expansion_ram_source())
     }
 
     /// Read a byte the way the video hardware sees it: always from RAM, even
@@ -1060,15 +1087,15 @@ impl Motherboard {
             },
             ram
         );
-        self.memory.read(addr, &config)
+        self.memory.read(addr, &config, self.expansion_ram_source())
     }
 
     #[inline]
     pub fn read_word(&self, addr: u16) -> u16 {
         let memory_cfg = self.memory_config();
 
-        let low = self.memory.read(addr, &memory_cfg) as u16;
-        let high = self.memory.read(addr.wrapping_add(1), &memory_cfg) as u16;
+        let low = self.memory.read(addr, &memory_cfg, self.expansion_ram_source()) as u16;
+        let high = self.memory.read(addr.wrapping_add(1), &memory_cfg, self.expansion_ram_source()) as u16;
 
         256 * high + low
     }
@@ -1154,7 +1181,7 @@ mod test {
         motherboard.cpu.set_pin(Z80Pin::Neg_WAIT, true); // delegate that to GA !!
                                                          // install the program
         motherboard.cpu.pc.set(0x4000);
-        motherboard.memory.write(0x4000, 0x00, &memory_config);
+        motherboard.memory.write(0x4000, 0x00, &memory_config, None);
 
         assert!(
             motherboard.cpu.next_state.is_new_opcode(),
@@ -1189,7 +1216,7 @@ mod test {
                                                          // install the program
         motherboard.cpu.pc.set(0x4000);
         motherboard.cpu.af.set(0xffff);
-        motherboard.memory.write(0x4000, 0xaf, &memory_config);
+        motherboard.memory.write(0x4000, 0xaf, &memory_config, None);
 
         assert!(
             motherboard.cpu.next_state.is_new_opcode(),
@@ -1255,9 +1282,9 @@ mod test {
         // install the program
         motherboard.cpu.pc.set(0x4000);
         motherboard.cpu.hl.set(0xff);
-        motherboard.memory.write(0x4000, 0x21, &memory_config);
-        motherboard.memory.write(0x4001, 0xad, &memory_config);
-        motherboard.memory.write(0x4002, 0xde, &memory_config);
+        motherboard.memory.write(0x4000, 0x21, &memory_config, None);
+        motherboard.memory.write(0x4001, 0xad, &memory_config, None);
+        motherboard.memory.write(0x4002, 0xde, &memory_config, None);
 
         assert!(
             motherboard.cpu.next_state.is_new_opcode(),

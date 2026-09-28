@@ -58,7 +58,11 @@ fn port_7f_still_behaves_like_plain_512k_hardware() {
 #[test]
 fn successive_ports_reach_genuinely_independent_banks_beyond_512k() {
     let mut mb = MotherboardBuilder::default().plug_large_ram_expansion(64).disable_upper_rom().build();
-    assert_eq!(mb.extra_ram_pages(), 64);
+    assert_eq!(mb.large_ram_expansion_bank_count(), Some(64));
+    // The CPC's own on-board extra page is untouched by plugging a card in
+    // (see `Motherboard::plug_large_ram_expansion`'s doc comment) - it just
+    // becomes unreachable while one's plugged in, not resized away.
+    assert_eq!(mb.extra_ram_pages(), 1);
 
     let ports = [0x7fffu16, 0x7eff, 0x7dff, 0x7cff, 0x7bff, 0x7aff, 0x79ff, 0x78ff];
     let config = 0b1100_1001u8; // ccc=001, bbb=001: substitutes 0xC000-0xFFFF with the selected bank
