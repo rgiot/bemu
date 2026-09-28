@@ -793,8 +793,55 @@ impl GateArray {
         self.sync
     }
 
+    /// Whether the pixel pipeline needs a fresh byte fetched for it now.
+    ///
+    /// A character is always exactly 2 bytes of video memory, whatever the
+    /// mode (Pierre Guerrier's CRTC compendium; ACCC §9.1's "2 pixels..8
+    /// pixels" tables are all per *byte*, and a character is 2 bytes
+    /// regardless), so this must fetch exactly twice every 16-tick
+    /// character clock (see `manage_clocks`/`divide_clock`, which derive
+    /// CCLK from this same `self.clock`) - once at its start and once
+    /// halfway through. This used to ask the pixel automaton itself
+    /// whether it had run out of steps (`pixel_automata.is_done()`): the
+    /// automaton free-runs its own 8-steps-per-byte count with nothing
+    /// tying it to the character clock, so *if* it ever got out of phase
+    /// with it (there was no structural reason it couldn't), it would
+    /// happily keep fetching/displaying on its own, wrong, schedule
+    /// forever after - concretely, during the border the fetch address
+    /// (VMA) keeps advancing a full character at a time exactly like
+    /// during active display (ACCC §17.3), so by the time a border ends
+    /// and a row's real first character begins, an out-of-phase automaton
+    /// could still be mid-byte on an already-prefetched-ahead byte,
+    /// showing that stale pen (which can be a wildly different value from
+    /// some effect elsewhere on the same line) for the first pixels of the
+    /// row instead of the correct one.
+    ///
+    /// Deriving the answer from `self.clock` directly instead - the same
+    /// counter CCLK itself is derived from - makes that drift structurally
+    /// impossible rather than something to detect and correct after the
+    /// fact: whatever the automaton's own state, a fresh byte gets loaded
+    /// right on the character clock's own two fetch points, every time.
     pub fn need_memory_byte(&self) -> bool {
-        self.pixel_automata.is_done()
+        self.clock == 7 || self.clock == 15
+    }
+
+    /// Fast-forward `self.clock` to the fetch phase (see [`GateArray::
+    /// need_memory_byte`]'s own doc), so the very next call fetches
+    /// immediately.
+    ///
+    /// Only for tests that manually pose a `Crtc` mid-frame (e.g. `hcc`
+    /// poked directly to some row's last character) without actually
+    /// driving every tick since reset: a fresh `GateArray::default()`
+    /// starts at `clock == 0`, 7 ticks short of its first fetch point,
+    /// which real, continuously-running hardware (and this same emulator
+    /// under normal use) is never actually in - the CRTC and GA reset
+    /// together and stay in phase from tick 0. Without this, such a test
+    /// sees `is_done()` genuinely true with nothing fetched yet on its very
+    /// first tick, i.e. a `generate_pixel()` that hasn't got a byte to show
+    /// regardless of border/display state - a gap in the test's own setup,
+    /// not a real hardware condition.
+    pub fn seed_clock_for_test(&mut self) {
+        self.clock = 7;
     }
 
     /// Convert the CRTC exposed address into the byte address currently consumed by GA.
@@ -889,6 +936,25 @@ impl GateArray {
                     *count += 1;
                     if *count == 2 {
                         // 2 lines after vsync counter is reseted.
+                        //
+                        // XXX ACCC §27.3.2 reads as the opposite of this
+                        // condition ("an interrupt is requested only if bit
+                        // 5 of R52 is 1") - tried inverting it (bits.rs's
+                        // `bit()` was itself separately broken, see its own
+                        // fix/doc, and had to be fixed first to even test
+                        // this), but that made a real, previously-passing
+                        // interruption-spacing test fail (an interrupt only
+                        // ~34 lines after the previous one, under this
+                        // engine's default CRTC timing, where the test
+                        // requires >=52). Pierre Guerrier's own doc
+                        // (GAINTS.HTM) does describe spacing as low as ~20
+                        // lines as legitimate right at the VSYNC boundary,
+                        // which would make the *test* the thing that's
+                        // wrong rather than this - but that needs an
+                        // external, independent confirmation (Shaker, or a
+                        // real CPC) before touching either side of it, so
+                        // left as the original behaviour for now. See
+                        // [[project_crtc_timing_core_rewrite]] memory.
                         if self.r52.bit(5) {
                             self.r52.reset();
                         } else {

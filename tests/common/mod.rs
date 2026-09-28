@@ -182,6 +182,7 @@ pub fn render_screen(motherboard: &Motherboard, out_path: &str) {
     ga.force_active_video_mode(mode);
     ga.set_video_mode(mode);
     ga.set_pin(GateArrayPin::CCLK, false);
+    ga.seed_clock_for_test();
 
     for _char_line in 0..=crtc.r4() {
         for _scan_line in 0..=crtc.r9() {

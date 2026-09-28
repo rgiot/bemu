@@ -86,6 +86,7 @@ fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: V
     ga.force_active_video_mode(mode);
     ga.set_video_mode(mode);
     ga.set_pin(GateArrayPin::CCLK, false);
+    ga.seed_clock_for_test();
 
     /*
     // let one second  pass to properly synchronize screen
@@ -210,6 +211,7 @@ fn test_raster() {
     ga.force_active_video_mode(mode);
     ga.set_video_mode(mode);
     ga.set_pin(GateArrayPin::CCLK, false);
+    ga.seed_clock_for_test();
 
     /*
     // let one second  pass to properly synchronize screen
