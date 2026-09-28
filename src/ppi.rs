@@ -356,25 +356,37 @@ impl Chip for Ppi {
             } else {
                 unimplemented!()
             }
-        } else if self.is_port_b_addressed() && self.mode_b == PpiMode::Mode0 {
-            if !self.get_pin(PpiPin::Neg_WR) && self.direction_b == PpiDirection::Output {
-                eprintln!("Warning vsync is supposely changed by ppi, but not properly handled by emulator");
-                self.set_pin(PpiPin::B0, self.get_pin(PpiPin::D0));
-            } else if !self.get_pin(PpiPin::Neg_WR) {
+        } else if self.is_port_b_addressed() {
+            if !self.get_pin(PpiPin::Neg_WR) {
                 // Unlike port A/C, port B's pins (B0=VSYNC, B1-B3=brand,
-                // B4=refresh rate) are hardwired to real external signals
-                // in this emulator, not just a CPU-driven latch - so a
-                // write while it's configured Input must be a genuine
-                // no-op here (real hardware would latch it internally, but
-                // that latch is never what's read back for an
-                // input-configured port, so there's nothing to do).
+                // B4=refresh rate) are hardwired to real external signals on
+                // the real board - not a CPU-driven latch the chip can
+                // actually drive out. Amstrad simply never wired an output
+                // path from the 8255 onto these pins, so it doesn't matter
+                // what mode/direction the CPU has configured Group B for
+                // (real firmware always leaves it Mode 0/Input, but nothing
+                // stops a program from doing otherwise, e.g. a demo
+                // reconfiguring Group B to Mode 1/Output for an unrelated
+                // effect): a write here is a genuine no-op on real hardware
+                // regardless, since there's nothing for it to reach.
                 // Silently discarding the byte is correct; overwriting
                 // B0-B7 the way port A/C's write does would corrupt VSYNC/
                 // brand/refresh with whatever the CPU happened to write.
             } else if !self.get_pin(PpiPin::Neg_RD) {
-                // See the port A comment: valid whether port B is
-                // configured Input (live pins, e.g. VSYNC on B0) or Output
-                // (the output latch).
+                // Same reasoning as the write side, mirrored: reading
+                // always returns the live hardwired pins, regardless of
+                // Group B's configured mode/direction - there is no output
+                // latch on the real board it could ever read back instead.
+                // (This used to be gated on `self.mode_b ==
+                // PpiMode::Mode0`, which silently fell through to whatever
+                // was last left on the data bus - usually the low byte of
+                // the port address itself, from an earlier access - the
+                // moment a program touched Group B's mode for any other
+                // purpose, e.g. a demo using Mode 2 on Group A for a
+                // printer-port effect and picking Mode 1 for Group B along
+                // the way even though it makes no electrical difference:
+                // the standard firmware `wait_vsync` polling loop would
+                // then spin forever, never once seeing VSYNC change.)
                 let byte = self.get_data_b_from_pins();
                 self.set_data_on_pins(byte);
 
