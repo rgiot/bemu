@@ -1,4 +1,4 @@
-pub use std::ops::{AddAssign, BitAnd, BitAndAssign, Deref, DerefMut, Shl, Sub, SubAssign};
+pub use std::ops::{AddAssign, BitAnd, BitAndAssign, Deref, DerefMut, Shl, Shr, Sub, SubAssign};
 
 use num::{
     traits::{WrappingAdd, WrappingSub},
@@ -56,11 +56,27 @@ where
 
 impl<T, const C: usize> BitMax<T, C>
 where
-    T: Clone + Zero + One + Shl<Output = T> + FromPrimitive + Sub<Output = T> + PartialEq,
+    T: Clone
+        + Zero
+        + One
+        + Shl<Output = T>
+        + Shr<Output = T>
+        + BitAnd<Output = T>
+        + FromPrimitive
+        + Sub<Output = T>
+        + PartialEq,
 {
+    /// Whether bit `pos` of the *stored value* is set.
+    ///
+    /// This used to test `(1 << pos) != 0` alone - a tautology for any
+    /// `pos < C` that never looked at `self.0` at all, so it always
+    /// returned `true` regardless of what the counter actually held. The
+    /// only real caller (`GateArray`'s R52 interrupt counter, ACCC §27.3.2)
+    /// was silently getting a constant `true` for "has R52 reached 32
+    /// yet?", every single time.
     pub fn bit(&self, pos: usize) -> bool {
         assert!(pos < C);
-        (T::one() << T::from_usize(pos).unwrap()) != T::zero()
+        (self.0.clone() >> T::from_usize(pos).unwrap()) & T::one() != T::zero()
     }
 }
 
