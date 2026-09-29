@@ -456,6 +456,24 @@ impl PixelOrder {
             _ => false,
         }
     }
+
+    /// How many pixels of this byte have already been generated before
+    /// this step (0 for `Pixel1`, ..., 7 for `Pixel8`). Used to find the
+    /// GATE ARRAY's own raw bit-serial position when a mode switch lands
+    /// mid-byte (see [`PixelAutomata::reconstruct_for_mode_switch`]).
+    fn already_generated(&self) -> u8 {
+        match self {
+            PixelOrder::Pixel1 => 0,
+            PixelOrder::Pixel2 => 1,
+            PixelOrder::Pixel3 => 2,
+            PixelOrder::Pixel4 => 3,
+            PixelOrder::Pixel5 => 4,
+            PixelOrder::Pixel6 => 5,
+            PixelOrder::Pixel7 => 6,
+            PixelOrder::Pixel8 => 7,
+        }
+    }
+
 }
 
 /// This is this strcuture that has the responsibility to produce the colors
@@ -602,6 +620,70 @@ impl PixelAutomata {
             PixelAutomata::NeedToReadMemory => None,
         }
     }
+
+    /// Reconstruct this automaton in place for a video-mode switch that
+    /// lands while it's still mid-byte (ACCC §9.3.4.3): the GATE ARRAY
+    /// can't "un-display" whatever pixels it already generated of this
+    /// byte under the old mode, but the pixels it *hasn't* generated yet
+    /// must now come from the new mode instead - and any bit already
+    /// consumed by the old mode is gone, so the new mode reconstructs its
+    /// remaining pixel(s) from whatever's left, with "missed" bit
+    /// positions padded by a value that depends on which GATE ARRAY chip
+    /// is fitted (`GateArrayType::missed_bit_pad`).
+    ///
+    /// **Only implemented when the OLD mode is MODE 2.** Verified
+    /// against the ACCC's own worked tables for both chip families (its
+    /// MODE 2 -> MODE 0 tables match exactly once GA40007/8's one
+    /// Pixel-M2 "lead" - `GateArrayType::reconstruction_lead` - is
+    /// applied). MODE 0 and MODE 3 as the *old* mode never need this at
+    /// all: their own ACCC tables show zero missing bits in every
+    /// transition (every destination mode gets fully real data), so
+    /// falling through to "just switch mode, keep the same real byte" is
+    /// already correct for them, not a shortcut. MODE 1 as the old mode
+    /// genuinely does need an analogous reconstruction per the ACCC, but
+    /// repeated attempts to re-derive its exact bit-selection rule from
+    /// the compendium's diagrams alone produced results contradicting the
+    /// ACCC's own stated valid colour-number ranges - a real,
+    /// unresolved gap, not a simplification, tracked in the
+    /// `project_gate_array_versions` memory (cross-check against Shaker
+    /// Module B's own "R3 JIT" test and/or AMSpiriT before attempting it
+    /// again, rather than the PDF diagrams alone).
+    pub fn reconstruct_for_mode_switch(&self, new_mode: VideoMode, ga_type: GateArrayType) -> Self {
+        if self.mode() == Some(new_mode) {
+            // No real transition (the diagonal entries in every one of the
+            // ACCC's own tables): nothing was ever missed, so this must
+            // stay a pure no-op regardless of what the caller does.
+            return match self {
+                PixelAutomata::AvailablePixel(step, byte, mode, palette) => {
+                    PixelAutomata::AvailablePixel(*step, *byte, *mode, *palette)
+                }
+                PixelAutomata::NeedToReadMemory => PixelAutomata::NeedToReadMemory,
+            };
+        }
+        match self {
+            PixelAutomata::AvailablePixel(step, byte, VideoMode::Mode2, palette) => {
+                let consumed = step.already_generated();
+                let missed = consumed.saturating_sub(ga_type.reconstruction_lead());
+                if missed == 0 {
+                    return PixelAutomata::AvailablePixel(PixelOrder::Pixel1, *byte, new_mode, *palette);
+                }
+                let remaining = 8 - missed;
+                let pad_byte = if ga_type.missed_bit_pad() == 1 { 0xFFu8 } else { 0x00u8 };
+                let real_bits = byte & ((1u8 << remaining) - 1);
+                let virtual_byte = (real_bits << missed) | (pad_byte & ((1u8 << missed) - 1));
+                // Resume from Pixel1, not from wherever the old byte's own
+                // count had reached: the ACCC is explicit that the new
+                // mode treats the recovered bits "as if they were the 1st
+                // bits of a byte" (§9.3.4.3.1), not a continuation of the
+                // old mode's own pixel count.
+                PixelAutomata::AvailablePixel(PixelOrder::Pixel1, virtual_byte, new_mode, *palette)
+            }
+            PixelAutomata::AvailablePixel(step, byte, _old_mode, palette) => {
+                PixelAutomata::AvailablePixel(*step, *byte, new_mode, *palette)
+            }
+            PixelAutomata::NeedToReadMemory => PixelAutomata::NeedToReadMemory,
+        }
+    }
 }
 
 /// Synchronization information comes from a specific pin SYNC. I guess it contains (how?) both vsync and hsync information. Anyway, CTM has no access at all to VSYNC and HSYNC of CRTC
@@ -702,6 +784,33 @@ pub enum GateArrayType {
     /// type existed, so it stays the default (no behaviour change).
     #[default]
     Ga40010
+}
+
+impl GateArrayType {
+    /// The value a "missed" (already-consumed-by-the-old-mode) bit is
+    /// padded with when reconstructing a colour number after a mid-byte
+    /// mode switch (ACCC §9.3.4.3: "Bits missed by the GATE ARRAY 40010
+    /// are considered 0 ... [GATE ARRAY 40007 and 40008] Missed bits are
+    /// considered to be 1"). See [`PixelAutomata::reconstruct_for_mode_switch`].
+    fn missed_bit_pad(&self) -> u8 {
+        match self {
+            GateArrayType::Ga40010 => 0,
+            GateArrayType::Ga40007_8 => 1,
+        }
+    }
+
+    /// GA40007/40008 recognise the reconstruction boundary 0.0625us (= 1
+    /// Pixel-M2) earlier than GA40010 (ACCC §9.3.4.3.1: "The GATE ARRAY
+    /// 40007 and 40008 are ahead of 0.0625usec ... when they recover the
+    /// bits allowing for the constitution of the colour number"), so by
+    /// the time a mode switch is recognised, they have one *more*
+    /// genuinely real bit available and one *fewer* position to pad.
+    fn reconstruction_lead(&self) -> u8 {
+        match self {
+            GateArrayType::Ga40010 => 0,
+            GateArrayType::Ga40007_8 => 1,
+        }
+    }
 }
 
 /// GateArray emulation of the CPC.
@@ -943,12 +1052,21 @@ impl GateArray {
             //     dbg!("Here some pixel are expected, but we do not know what as to be produced...");
             self.rgb = (0., 0., 0.).into();
         } else {
+            // Always advance the automaton, even while blanked by HSYNC/
+            // VSYNC - real hardware's pixel serialiser keeps running
+            // through the blanking period too (it's what lets a mode
+            // switch land "mid-byte" at all: see ACCC §9.3.4.3 and
+            // `PixelAutomata::reconstruct_for_mode_switch`, which reads
+            // how many pixels of the current byte are `already_generated`
+            // to know exactly where the switch landed). Only the
+            // *displayed* output is blanked below - not consumption.
+            let computed = self
+                .pixel_automata
+                .generate_pixel(!self.get_pin(GateArrayPin::DISPEN));
             if self.get_pin(GateArrayPin::HSYNC) || self.get_pin(GateArrayPin::VSYNC) {
                 self.rgb = (0., 0., 0.).into();
             } else {
-                self.rgb = self
-                    .pixel_automata
-                    .generate_pixel(!self.get_pin(GateArrayPin::DISPEN));
+                self.rgb = computed;
             }
         }
     }
@@ -975,7 +1093,21 @@ impl GateArray {
     fn manage_hsync_end(&mut self) {
         self.hsync_counter = HSyncCounter::NoHsync;
 
-        self.current_mode = self.next_video_mode();
+        let new_mode = self.next_video_mode();
+        if new_mode != self.current_mode {
+            // The byte the pixel pipeline is mid-way through was fetched
+            // and is still being consumed under the OLD mode - it can't
+            // just be swapped to the new mode from pixel 1, real hardware
+            // can't un-display what it already showed. Reconstruct the
+            // automaton's remaining pixels instead (ACCC §9.3.4.3, see
+            // `PixelAutomata::reconstruct_for_mode_switch`'s own doc for
+            // exactly which cases this actually changes vs. leaves as a
+            // documented gap).
+            self.pixel_automata = self
+                .pixel_automata
+                .reconstruct_for_mode_switch(new_mode, self.ga_type);
+        }
+        self.current_mode = new_mode;
         self.r52.inc();
         if self.r52 == 52 {
             self.r52.reset();
@@ -1222,6 +1354,90 @@ mod test {
             ga.manage_clocks();
         }
     }*/
+
+    /// Cross-checks [`PixelAutomata::reconstruct_for_mode_switch`]'s
+    /// virtual-byte construction against the ACCC §9.3.4.3.1 MODE 2 -> MODE
+    /// 0 worked tables, independently for both GA types (the two tables
+    /// give genuinely different bit references, not just a 0-vs-1 swap, so
+    /// this isn't just testing the padding constant).
+    fn mode2_automaton_at(consumed: u8, byte: u8) -> PixelAutomata {
+        let step = match consumed {
+            0 => PixelOrder::Pixel1,
+            1 => PixelOrder::Pixel2,
+            2 => PixelOrder::Pixel3,
+            3 => PixelOrder::Pixel4,
+            4 => PixelOrder::Pixel5,
+            5 => PixelOrder::Pixel6,
+            6 => PixelOrder::Pixel7,
+            7 => PixelOrder::Pixel8,
+            _ => unreachable!(),
+        };
+        PixelAutomata::AvailablePixel(step, byte, VideoMode::Mode2, [Ink(0); 17])
+    }
+
+    #[test]
+    fn mode2_to_mode0_reconstruction_matches_accc_ga40010_table() {
+        // ACCC: GA40010's bit counter reaches 5 by the time a MODE 2 byte's
+        // display resumes; missed bits (the top 5) are padded with 0, and
+        // the new colour number is (A3,A2,A1,A0) = (0, b0, 0, b2).
+        let byte = 0b0000_0101u8; // b2=1, b1=0, b0=1
+        let automaton = mode2_automaton_at(5, byte);
+        let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode0, GateArrayType::Ga40010);
+        // virtual byte: bits[7,6,5] = [b2,b1,b0] = [1,0,1], bits[4..0] = 0
+        assert_eq!(reconstructed.byte(), Some(0b1010_0000));
+        assert_eq!(reconstructed.step(), Some(&PixelOrder::Pixel1));
+        assert_eq!(reconstructed.mode(), Some(VideoMode::Mode0));
+    }
+
+    #[test]
+    fn mode2_to_mode0_reconstruction_matches_accc_ga4000708_table() {
+        // GA40007/8 recognise the boundary 1 Pixel-M2 earlier (bit counter
+        // at 4, not 5): one more real bit (b3) is available, missed bits
+        // (the top 4) are padded with 1 instead of 0.
+        let byte = 0b0000_1101u8; // b3=1, b2=1, b1=0, b0=1
+        let automaton = mode2_automaton_at(5, byte);
+        let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode0, GateArrayType::Ga40007_8);
+        // virtual byte: bits[7,6,5,4] = [b3,b2,b1,b0] = [1,1,0,1], bits[3..0] = 1111
+        assert_eq!(reconstructed.byte(), Some(0b1101_1111));
+        assert_eq!(reconstructed.step(), Some(&PixelOrder::Pixel1));
+    }
+
+    #[test]
+    fn mode2_to_mode2_never_reconstructs_since_new_mode_equals_old_mode() {
+        // Staying in MODE 2 is the trivial diagonal case: the ACCC's own
+        // tables show no missing bits and no GA-type split there (the
+        // caller in `manage_hsync_end` never invokes reconstruction at all
+        // when the mode doesn't actually change - this test documents that
+        // the function itself is also a safe no-op if it somehow were).
+        let byte = 0b1011_0110u8;
+        let automaton = mode2_automaton_at(5, byte);
+        let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode2, GateArrayType::Ga40010);
+        assert_eq!(reconstructed.byte(), Some(byte));
+    }
+
+    #[test]
+    fn mode0_and_mode3_sources_never_get_ga_dependent_padding() {
+        // Confirmed from the ACCC's own tables: MODE 0 and MODE 3 as the
+        // *old* mode show zero missing bits in every destination mode, for
+        // both chip families - so reconstruction must be a pure pass-
+        // through of the real byte regardless of GA type.
+        let byte = 0b1010_1100u8;
+        for old_mode in [VideoMode::Mode0, VideoMode::Mode3] {
+            // Pixel5 matches the ACCC's own stated resumption point for
+            // MODE 0/3 sources ("4th Pixel-M2 of the 5th byte", i.e. 4
+            // pixels already generated) - unlike MODE 2, these old modes'
+            // own bit-to-pixel grouping is preserved (not reset to Pixel1)
+            // because there's nothing to reconstruct: the position itself
+            // is what picks the correct still-real "second half" of the
+            // byte (e.g. `get_mode0_pen`'s Pixel5-8 branch).
+            let automaton = PixelAutomata::AvailablePixel(PixelOrder::Pixel5, byte, old_mode, [Ink(0); 17]);
+            for ga_type in [GateArrayType::Ga40010, GateArrayType::Ga40007_8] {
+                let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode1, ga_type);
+                assert_eq!(reconstructed.byte(), Some(byte));
+                assert_eq!(reconstructed.step(), Some(&PixelOrder::Pixel5));
+            }
+        }
+    }
 
     #[test]
     fn run_ga() {
