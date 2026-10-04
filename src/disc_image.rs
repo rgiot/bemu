@@ -350,7 +350,6 @@ impl TryFrom<&AnyDisc> for DiscImage {
                 dsk.to_buffer(&mut bytes);
                 Self::from_bytes(&bytes)
             },
-            #[cfg(feature = "hfe")]
             AnyDisc::Hfe(_) => Err("HFE images are not supported by the FDC yet".to_owned())
         }
     }
