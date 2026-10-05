@@ -335,9 +335,19 @@ impl Chip for Ppi {
     }
 
     fn execute_tick(&mut self) {
-
       ///  dbg!(self.is_port_a_addressed() , self.is_port_b_addressed() , self.is_port_c_addressed());
-        if self.is_port_a_addressed() && self.mode_a == PpiMode::Mode0 {
+        if self.is_port_a_addressed() {
+            // Same reasoning as Port C below: a plain write/read of Port
+            // A's *own* address always hits its output latch/pins
+            // verbatim regardless of `mode_a` - Mode 1/2 only changes what
+            // Port C's handshake bits do, never whether a direct Port A
+            // access reaches the latch. Gating this on `mode_a ==
+            // PpiMode::Mode0` incorrectly sent any Port A write made while
+            // Group A was in Mode 1/2 (e.g. the CPC Booster communication
+            // probe HBL.DSK's `DS_PRIVATE_CPCBOOSTER_INIT_COMMUNICATION`
+            // runs during its "AMSDOS leaving" sequence, which uses
+            // strobed I/O on Port A) into the `unimplemented!()` catch-all
+            // below instead of actually writing the byte.
             if !self.get_pin(PpiPin::Neg_WR) {
                 // Writing to an input-configured port still updates the
                 // internal output latch on a real 8255 (it just isn't
@@ -394,13 +404,27 @@ impl Chip for Ppi {
             } else {
                 unimplemented!()
             }
-        } else if self.is_port_c_addressed()
-            && self.mode_c_lower == PpiMode::Mode0
-            && self.mode_c_upper == PpiMode::Mode0
-        {
+        } else if self.is_port_c_addressed() {
+            // Unlike the branch dispatch itself (which real Mode 1/2 wiring
+            // does change - see the port A/B comments), a plain write/read
+            // of Port C's *own* address always hits its output latch/pins
+            // verbatim, whatever mode Group B/C_lower or Group A/C_upper is
+            // configured for (datasheet confirms, below) - so this doesn't
+            // need `mode_c_lower`/`mode_c_upper` gating it like the
+            // `is_control_addressed` dispatch below does. Getting this
+            // wrong previously sent any Port C write made while Group
+            // C_lower was still in Mode 1 (e.g. left there since boot/an
+            // earlier effect) into the Bit-Set/Reset branch below instead,
+            // silently dropping the intended byte - reproduced via
+            // HBL.DSK's own firmware keyboard-scan routine (0x0883+)
+            // writing the PSG's LatchAddress(14) control byte to Port C
+            // right before Group C_lower got reset to Mode 0 a few
+            // instructions later: the byte never landed, the PSG kept
+            // whatever register a completely unrelated earlier write had
+            // selected, and the scan read back stale PSG data instead of
+            // the keyboard matrix, which HBL's own checksum self-test
+            // (correctly) treated as a hardware fault and cold-reset on.
             if !self.get_pin(PpiPin::Neg_WR) {
-                // Same reasoning as port A: the write goes to the output
-                // latch regardless of direction_c_lower/direction_c_upper.
                 let byte = self.get_data_from_pins();
                 self.set_data_c_on_pins(byte);
             } else if !self.get_pin(PpiPin::Neg_RD) {
@@ -416,34 +440,44 @@ impl Chip for Ppi {
                 unimplemented!()
             }
         } else if self.is_control_addressed() {
+            // Per the datasheet's "Bit Set/Reset Function" section (e.g.
+            // `doc/ppi.82c55a.oki.pdf`): writes to the control register's
+            // own address are mode-set commands when D7=1, and Bit-Set/
+            // Reset commands (set or clear exactly one Port C output bit,
+            // D3-D1 select which, D0 is the new value) when D7=0. This is
+            // the *only* real access path to Bit-Set/Reset - it has
+            // nothing to do with which mode Port C's own address write
+            // dispatch above is in.
             let byte = self.get_data_from_pins();
-            self.set_control_configuration(byte);
+            if byte & (1 << 7) != 0 {
+                self.set_control_configuration(byte);
 
-            if self.clears_ports_on_mode_set {
-                self.set_data_a_on_pins(0);
-                // Real 8255 hardware clears port B's output latch to 0 on a
-                // mode-set write, but in this emulator B0/B1-B3/B4 aren't CPU
-                // output latches - they're hardwired to VSYNC, the manufacturer
-                // jumpers and the refresh-rate strap. Zeroing them here would
-                // wipe out the brand the firmware is about to read back.
-                self.drive_hardwired_port_b_bits();
-                self.set_data_c_on_pins(0);
+                if self.clears_ports_on_mode_set {
+                    self.set_data_a_on_pins(0);
+                    // Real 8255 hardware clears port B's output latch to 0 on a
+                    // mode-set write, but in this emulator B0/B1-B3/B4 aren't CPU
+                    // output latches - they're hardwired to VSYNC, the manufacturer
+                    // jumpers and the refresh-rate strap. Zeroing them here would
+                    // wipe out the brand the firmware is about to read back.
+                    self.drive_hardwired_port_b_bits();
+                    self.set_data_c_on_pins(0);
+                }
+            } else {
+                let bit = byte & 1 << 0 != 0;
+                let pin = [
+                    PpiPin::C0,
+                    PpiPin::C1,
+                    PpiPin::C2,
+                    PpiPin::C3,
+                    PpiPin::C4,
+                    PpiPin::C5,
+                    PpiPin::C6,
+                    PpiPin::C7,
+                ][((byte & 0b1110) >> 1) as usize];
+                self.set_pin(pin, bit)
             }
         } else {
-            let byte = self.get_data_from_pins();
-
-            let bit = byte & 1 << 0 != 0;
-            let pin = [
-                PpiPin::C0,
-                PpiPin::C1,
-                PpiPin::C2,
-                PpiPin::C3,
-                PpiPin::C4,
-                PpiPin::C5,
-                PpiPin::C6,
-                PpiPin::C7,
-            ][((byte & 0b1110) >> 1) as usize];
-            self.set_pin(pin, bit)
+            unimplemented!()
         }
     }
 

@@ -58,13 +58,6 @@ pub struct Motherboard {
 
     psg: Psg,
     keyboard: KeyboardMatrix,
-    /// The last PPI port C byte the PSG bus-control logic was driven from -
-    /// like the FDC's `*_active` flags, this exists because a single Z80
-    /// `OUT` instruction's write reaches `Ppi::execute_tick()` (and
-    /// therefore updates port C's pins) on several consecutive ticks; only
-    /// reacting when the *value itself* changes gives one PSG bus cycle per
-    /// genuine port C write regardless of how many ticks that write spans.
-    last_psg_port_c: Option<u8>,
 
     // Counter of t-states (to be removed later)
     t_state_counter: Counter,
@@ -101,7 +94,6 @@ impl Default for Motherboard {
             cached_input_byte: 0xff,
             psg: Default::default(),
             keyboard: Default::default(),
-            last_psg_port_c: None,
 
             t_state_counter: Default::default(),
             nops_counter: Default::default(),
@@ -608,12 +600,20 @@ impl Motherboard {
     /// C bits 7/6 are BDIR/BC1 (bits 0-3 select the keyboard row read back
     /// through register 14 - see `psg.rs` and `keyboard.rs`).
     fn sync_psg(&mut self) {
+        // Deliberately unconditional (no dedup on port C's resulting byte
+        // vs. last time): two genuinely separate writes/latches can use
+        // the identical control byte while Port A's data differs between
+        // them (e.g. the firmware's own keyboard-scan routine latching
+        // PSG register 14 via the same BDIR/BC1 pulse pattern another
+        // routine, like a music player, just used for a different
+        // register) - a dedup keyed only on port C's value silently
+        // dropped the second, *intended* latch, since nothing about port
+        // C's own byte looked different. `Psg::bus_cycle` is idempotent
+        // for repeated identical (control, data_bus) pairs - the same
+        // write/latch/read landing again every tick for the ~8 ticks of
+        // one CPU instruction's bus-active window is harmless - so there
+        // is no correctness or performance reason to skip this.
         let port_c = self.ppi.get_data_c_from_pins();
-        if self.last_psg_port_c == Some(port_c) {
-            return;
-        }
-        self.last_psg_port_c = Some(port_c);
-
         let row_select = port_c & 0x0f;
         let bc1 = port_c & (1 << 6) != 0;
         let bdir = port_c & (1 << 7) != 0;
@@ -622,7 +622,21 @@ impl Motherboard {
         // Keep register 14 (I/O port A) in sync with whatever row is
         // currently selected before it's potentially read below - on real
         // hardware this register *is* the keyboard matrix line, live.
-        if self.psg.selected_register() == Some(REG_IO_PORT_A) && self.psg.port_a_is_input() {
+        //
+        // Per the AY-3-8910/8912 datasheet (`doc/psg.ay-3-8910.datamanual.pdf`,
+        // §3.6, octal register R16 = our decimal 14): "when in the input
+        // mode, the contents of registers R16 and/or R17 will follow the
+        // signals applied to the I/O port(s)" - this tracking happens live,
+        // regardless of which register currently sits in the address latch;
+        // only *transferring* that value to the CPU bus needs an explicit
+        // read cycle with 14 addressed. Gating the update itself behind
+        // `selected_register() == Some(REG_IO_PORT_A)` (removed below) was
+        // wrong: any other code (e.g. a music player selecting a different
+        // register to silence channels) would freeze register 14's mirror
+        // stale, which the firmware's own keyboard-checksum self-test then
+        // read back as a hardware fault and cold-reset on - reproduced via
+        // HBL.DSK rebooting during its "amsdos leaving" sequence.
+        if self.psg.port_a_is_input() {
             self.psg.set_register(REG_IO_PORT_A, self.keyboard.line(row_select));
         }
 
