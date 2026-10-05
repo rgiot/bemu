@@ -29,13 +29,17 @@
 //! software expects a particular disc already in the drive.
 
 use amsrust::crtc::CrtcType;
+use amsrust::csl_runner::keys_of_char;
 use amsrust::debug::{Monitor, MonitorContext};
 use amsrust::disc_image::load_dsk;
 use amsrust::fdc::FdcDrive;
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::FrameGrabber;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
-use minifb::{Key, Window, WindowOptions};
+use minifb::{InputCallback, Key, Window, WindowOptions};
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::rc::Rc;
 
 struct Args {
     crtc: CrtcType,
@@ -214,10 +218,14 @@ fn run_window(motherboard: &mut Motherboard) {
     // own real refresh rate rather than running full tilt.
     window.set_target_fps(50);
 
+    let typed_chars = TypedChars::default();
+    window.set_input_callback(Box::new(typed_chars.clone()));
+    let mut typed_combo = TypedCombo::default();
+
     let mut buffer = vec![0u32; WINDOW_WIDTH * WINDOW_HEIGHT];
 
     while window.is_open() {
-        update_keyboard(&window, motherboard);
+        update_keyboard(&window, motherboard, typed_combo.advance(&typed_chars));
 
         let mut grabber = FrameGrabber::default();
         let mut frame = None;
@@ -262,6 +270,98 @@ fn blit_doubled(frame: &image::RgbImage, buffer: &mut [u32]) {
     }
 }
 
+/// Queue of Unicode code points typed through minifb's character callback
+/// (`InputCallback::add_char`), fed by the OS's real, layout-and-modifier-
+/// aware text input resolution (`Xutf8LookupString` on X11) - a `Clone`
+/// handle sharing the same underlying queue, since minifb needs to own a
+/// boxed callback while `run_window`'s loop also needs to drain it.
+#[derive(Default, Clone)]
+struct TypedChars(Rc<RefCell<VecDeque<u32>>>);
+
+impl InputCallback for TypedChars {
+    fn add_char(&mut self, uni_char: u32) {
+        self.0.borrow_mut().push_back(uni_char);
+    }
+}
+
+impl TypedChars {
+    /// The next queued character, if any (silently skipping any code point
+    /// that isn't valid UTF-32, which shouldn't happen in practice).
+    fn pop(&self) -> Option<char> {
+        loop {
+            let code = self.0.borrow_mut().pop_front()?;
+            if let Some(c) = char::from_u32(code) {
+                return Some(c);
+            }
+        }
+    }
+}
+
+/// Holds a [`keys_of_char`]-resolved key combo "pressed" for a few frames
+/// whenever a character arrives through minifb's host-layout-aware char
+/// callback, on top of `HOST_KEY_MAP`'s direct physical-key polling.
+///
+/// Needed because minifb's `Key` enum resolves a physical key's *base*
+/// (unshifted) character under the host OS's active layout, but always at
+/// a fixed shift-level-0 lookup (see minifb 0.28's X11 backend,
+/// `src/os/posix/x11.rs`: `XLookupKeysym(&mut ev.key, 0)`) - so it can
+/// only ever report keys whose *unshifted* glyph happens to be in its own
+/// small, fixed, US/UK-centric keysym table (confirmed by reading that
+/// table: no accented letters, no `XK_quotedbl`, nothing beyond a
+/// handful of plain ASCII punctuation keysyms). On a French AZERTY host,
+/// the digit row's unshifted glyphs are `& é " ' ( - è _ ç à` - digits
+/// only exist at the *shifted* level there - so minifb reports nothing
+/// at all for those keys, regardless of Shift: not just `"`, but every
+/// digit too, while a French layout is active. "Nothing happens" when
+/// pressing the key labelled `"` is exactly this, not a timing or focus
+/// issue.
+///
+/// minifb's character callback is backed by `Xutf8LookupString` - the
+/// same locale/layout/modifier-aware API any ordinary text field uses -
+/// so typed characters are routed through it and `keys_of_char` (the
+/// same table CSL scripts already use to turn text into CPC key combos)
+/// instead, and the resulting combo is forced on for a few frames: long
+/// enough for the CPC firmware's own keyboard scan to notice, short
+/// enough to not stall held-key gameplay using the same keys once the
+/// physical polling above takes back over.
+struct TypedCombo {
+    keys: Vec<CpcKey>,
+    frames_left: u8,
+}
+
+impl Default for TypedCombo {
+    fn default() -> Self {
+        Self { keys: Vec::new(), frames_left: 0 }
+    }
+}
+
+impl TypedCombo {
+    /// How many frames (at the CPC's own ~50Hz redraw rate) to hold a
+    /// typed character's key combo down for.
+    const HOLD_FRAMES: u8 = 4;
+
+    /// The combo to force on this frame: continues holding whatever's
+    /// already in progress, else starts holding the next queued
+    /// character's combo (skipping any character `keys_of_char` doesn't
+    /// know how to type), else nothing.
+    fn advance(&mut self, typed: &TypedChars) -> &[CpcKey] {
+        if self.frames_left == 0 {
+            self.keys.clear();
+            while let Some(c) = typed.pop() {
+                if let Some(keys) = keys_of_char(c) {
+                    self.keys = keys;
+                    self.frames_left = Self::HOLD_FRAMES;
+                    break;
+                }
+            }
+        }
+        if self.frames_left > 0 {
+            self.frames_left -= 1;
+        }
+        &self.keys
+    }
+}
+
 /// Set every mapped [`CpcKey`]'s pressed state from what's currently held
 /// down on the host keyboard - called once per redraw, so this is polled at
 /// the CPC's own ~50Hz rather than per-event.
@@ -278,10 +378,19 @@ fn blit_doubled(frame: &image::RgbImage, buffer: &mut [u32]) {
 /// Shift-combo character (`"` included: Shift+2 on this table) for anyone
 /// who naturally reaches for the left one. Each `CpcKey` must instead be
 /// OR-combined across every host key mapped to it.
-fn update_keyboard(window: &Window, motherboard: &mut Motherboard) {
+///
+/// `typed_combo` additionally forces on whatever [`CpcKey`]s `advance()`
+/// says to this frame, on top of the physical polling above - see
+/// `TypedCombo`'s doc comment for why `HOST_KEY_MAP`'s physical,
+/// `minifb::Key`-based mapping alone can't reach every character on every
+/// host keyboard layout.
+fn update_keyboard(window: &Window, motherboard: &mut Motherboard, typed_combo: &[CpcKey]) {
     let matrix = motherboard.keyboard_mut();
     for key in HOST_KEY_MAP {
         matrix.set_pressed(key.1, any_host_key_pressed(HOST_KEY_MAP, key.1, |k| window.is_key_down(k)));
+    }
+    for key in typed_combo {
+        matrix.set_pressed(*key, true);
     }
 }
 
@@ -328,6 +437,51 @@ mod keyboard_test {
     fn double_quote_is_reachable_via_shift_plus_2() {
         assert!(HOST_KEY_MAP.iter().any(|(h, c)| *h == Key::Key2 && *c == CpcKey::Digit2));
         assert!(HOST_KEY_MAP.iter().any(|(h, c)| (*h == Key::LeftShift || *h == Key::RightShift) && *c == CpcKey::Shift));
+    }
+
+    /// The actual bug report: on a French AZERTY host, `minifb::Key`-based
+    /// polling alone can never produce `"` (see `TypedCombo`'s doc comment
+    /// for why, verified against minifb 0.28's own X11 source) - but the
+    /// OS's real character resolution still correctly reports `"` was
+    /// typed, regardless of host layout. Simulates that: feed `"` straight
+    /// through the char callback, with no `minifb::Key` involved at all,
+    /// and check it resolves to the CPC's own Shift+Digit2 and stays
+    /// asserted for more than one frame (so the firmware's scan has time
+    /// to notice it).
+    #[test]
+    fn typed_double_quote_resolves_to_shift_plus_digit2_and_holds_for_several_frames() {
+        let typed = TypedChars::default();
+        typed.0.borrow_mut().push_back('"' as u32);
+        let mut combo = TypedCombo::default();
+
+        let first = combo.advance(&typed).to_vec();
+        assert_eq!(first, vec![CpcKey::Shift, CpcKey::Digit2]);
+
+        // Still held on a later frame, with nothing new typed meanwhile.
+        let second = combo.advance(&typed).to_vec();
+        assert_eq!(second, vec![CpcKey::Shift, CpcKey::Digit2]);
+
+        // Eventually releases rather than holding forever.
+        let mut released = false;
+        for _ in 0..TypedCombo::HOLD_FRAMES {
+            if combo.advance(&typed).is_empty() {
+                released = true;
+                break;
+            }
+        }
+        assert!(released, "a typed combo must eventually release, not stick forever");
+    }
+
+    /// A character `keys_of_char` doesn't know how to type (e.g. a control
+    /// character minifb's char callback is documented to never send, but
+    /// defensively handled anyway) is just skipped, not mistaken for an
+    /// empty-but-held combo.
+    #[test]
+    fn untypeable_character_is_skipped_without_holding_anything() {
+        let typed = TypedChars::default();
+        typed.0.borrow_mut().push_back(0x01); // unmapped control code
+        let mut combo = TypedCombo::default();
+        assert!(combo.advance(&typed).is_empty());
     }
 }
 

@@ -629,7 +629,12 @@ fn find_case_insensitive(path: &Path) -> Option<PathBuf> {
 }
 
 /// The keys to hold down together to produce a character on a UK keyboard.
-fn keys_of_char(c: char) -> Option<Vec<CpcKey>> {
+///
+/// Public so `main.rs`'s `--window` interactive mode can reuse it for
+/// typed-character input, not just CSL scripts - see `update_keyboard`'s
+/// doc comment there for why that's needed (host keyboard layouts other
+/// than US/UK QWERTY can't be represented as a fixed physical-key table).
+pub fn keys_of_char(c: char) -> Option<Vec<CpcKey>> {
     use CpcKey::*;
     let letter = |c: char| -> Option<CpcKey> {
         Some(match c.to_ascii_lowercase() {
