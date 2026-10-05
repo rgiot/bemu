@@ -213,6 +213,7 @@ fn test_interruption_mode1_one_frame() {
 	/// memory is full of nop
 	let mut interrupt_count = 0;
 	let mut prev_interr_time = None;
+	let mut gaps = Vec::new();
 	motherboard.nops_counter_mut().reset();
 	assert!(motherboard.cpu().iff1());
 
@@ -227,10 +228,20 @@ fn test_interruption_mode1_one_frame() {
 			0x100..0x106 => {
 				assert!(motherboard.cpu().iff1());
 			},
+			// A maskable interrupt accepted during HALT advances PC past
+			// it before pushing the return address (real Z80 behaviour),
+			// so RET from the 6th (and last) interrupt lands here, one
+			// past the last of the six HALTs - from here on it's just the
+			// zero-filled ("full of nop") memory beyond the test's own
+			// code, walked straight through NOP by NOP until the loop's
+			// own 19968-nop budget runs out.
+			0x106..=0x2000 => {
+				assert!(motherboard.cpu().iff1());
+			},
 			_ => unreachable!("{:04x}={:?}", pc, token)
 		}
 		match token.mnemonic() {
-			Some(Mnemonic::Ei | Mnemonic::Ret | Mnemonic::Halt) => {},
+			Some(Mnemonic::Ei | Mnemonic::Ret | Mnemonic::Halt | Mnemonic::Nop) => {},
 			_ => unreachable!("{:04x}={:?}", pc, token)
 		}
 		motherboard.execute_next_opcode();
@@ -238,12 +249,8 @@ fn test_interruption_mode1_one_frame() {
 		if motherboard.cpu().reg16(Reg16::Pc).value() == 0x38 {
 			interrupt_count += 1;
 			let nops = motherboard.nops_counter().value();
-			match prev_interr_time {
-				Some(time) => {
-					assert!(dbg!(time + 19968/6) <= dbg!(nops));
-				},
-				None => {
-				}
+			if let Some(time) = prev_interr_time {
+				gaps.push(nops - time);
 			}
 			prev_interr_time = Some(nops);
 		}
@@ -253,7 +260,23 @@ fn test_interruption_mode1_one_frame() {
 		);
 	}
 
-	assert_eq!(interrupt_count, 5); // XXX check if it is not supposed to be 6
+	// 312 lines / 52 lines-per-interrupt = 6 interrupts per 50Hz frame -
+	// the well-known real-hardware count (the earlier "XXX check if it is
+	// not supposed to be 6" doubt was warranted: the previously-inverted
+	// R52-bit5 condition silently dropped one of the six by suppressing
+	// the interrupt right at the VSYNC boundary).
+	assert_eq!(interrupt_count, 6);
+	// Gaps between interrupts are normally exactly 52 lines (19968/6 = 3328
+	// nops) apart, but ACCC §27.3.2's R52-bit5 mechanism legitimately
+	// shortens the one gap that straddles a VSYNC boundary - confirmed for
+	// real (not just by Pierre Guerrier's GAINTS.HTM, which already
+	// documented spacing as low as ~20 lines as legitimate here) against
+	// AMSpiriT's own Shaker self-test, which produces real, matching-its-
+	// own-expectation interrupts right at this transition - see
+	// `validation/Shaker_CSL/MODULE_B/reference_screenshots/
+	// BR_B_r52reset.png` and the `GateArray::manage_hsync_end` comment
+	// this corresponds to. 2176 nops = 34 lines, the shortened gap here.
+	assert_eq!(gaps, vec![3328, 3328, 3328, 2176, 3328]);
 }
 
 /// An interrupt must never be accepted between the compute step of a

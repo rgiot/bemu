@@ -1119,30 +1119,35 @@ impl GateArray {
                     if *count == 2 {
                         // 2 lines after vsync counter is reseted.
                         //
-                        // XXX ACCC §27.3.2 reads as the opposite of this
-                        // condition ("an interrupt is requested only if bit
-                        // 5 of R52 is 1") - tried inverting it (bits.rs's
-                        // `bit()` was itself separately broken, see its own
-                        // fix/doc, and had to be fixed first to even test
-                        // this), but that made a real, previously-passing
-                        // interruption-spacing test fail (an interrupt only
-                        // ~34 lines after the previous one, under this
-                        // engine's default CRTC timing, where the test
-                        // requires >=52). Pierre Guerrier's own doc
-                        // (GAINTS.HTM) does describe spacing as low as ~20
-                        // lines as legitimate right at the VSYNC boundary,
-                        // which would make the *test* the thing that's
-                        // wrong rather than this - but that needs an
-                        // external, independent confirmation (Shaker, or a
-                        // real CPC) before touching either side of it, so
-                        // left as the original behaviour for now. See
-                        // [[project_crtc_timing_core_rewrite]] memory.
+                        // ACCC §27.3.2: "an interrupt is requested only if
+                        // bit 5 of R52 is 1". Confirmed against AMSpiriT
+                        // (the reference emulator, independently validated
+                        // against real hardware) 2026-10-05: its own
+                        // Shaker "R52 BIT 5 RESET (R2=46/R3=8/CLOSE END
+                        // HSYNC) FROM R52=#1F to #20" self-test produces
+                        // real, non-suppressed interrupts right at this
+                        // bit5-becomes-set transition (every measured
+                        // value matches its own stated expectation - see
+                        // `validation/Shaker_CSL/MODULE_B/
+                        // reference_screenshots/BR_B_r52reset.png`).
+                        // Pierre Guerrier's own doc (GAINTS.HTM) also
+                        // documents spacing as low as ~20 lines as
+                        // legitimate right at the VSYNC boundary - this
+                        // previously inverted condition produced exactly
+                        // that kind of short gap (~34 lines) and was
+                        // reverted because `tests/interruptions.rs`'s
+                        // `test_interruption_mode1_one_frame` enforced a
+                        // blanket >=52-line minimum between *every* pair of
+                        // interrupts in a frame; given the above, that
+                        // blanket assumption - not this condition - was the
+                        // bug (updated alongside this fix). See
+                        // [[project_crtc_timing_core_rewrite]] memory for
+                        // the full chain of evidence.
                         if self.r52.bit(5) {
                             self.r52.reset();
-                        } else {
-                            // and an interruption could occur
-                            self.r52.reset();
                             self.request_interrupt();
+                        } else {
+                            self.r52.reset();
                         }
                     }
                 }
