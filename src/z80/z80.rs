@@ -546,11 +546,11 @@ impl Z80 {
             // Retreive the 16 bits value
             let value = match src {
                 DataSource::Register8(reg) => {
-                    assert_eq!(step, 0);
+                    debug_assert_eq!(step, 0);
                     self.reg8(*reg).get() as u16
                 }
                 DataSource::Pins => {
-                    assert_eq!(step, 0);
+                    debug_assert_eq!(step, 0);
                     self.get_data_from_pins() as u16
                 }
                 DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
@@ -593,7 +593,7 @@ impl Z80 {
             
             match dst {
                 DataSource::Register8(reg) | DataSource::IndexRegister8(reg) => {
-                    assert!(nb == 0);
+                    debug_assert!(nb == 0);
                     self.reg8_mut(reg).set(byte);
                     
                     //      dbg!(reg, self.reg8_mut(reg));
@@ -609,7 +609,7 @@ impl Z80 {
                     reg.set(byte);
                 }
                 DataSource::Pins => {
-                    assert_eq!(nb, 0);
+                    debug_assert_eq!(nb, 0);
                     self.reg8_mut(Reg8::Z).set(byte); // not sure if it is the case in real world, but at least it make work some instructions
                 }
 
@@ -621,7 +621,7 @@ impl Z80 {
         
         /// Execute the instruction ; all necessary stuffs has already been collected
         fn execute_step(&mut self) {
-            assert!(
+            debug_assert!(
                 !matches!(
                     self.next_state,
                     MCycle::Fake(_, _)
@@ -707,13 +707,13 @@ impl Z80 {
                     // A non-ED first byte breaks a pending SSM pair (see SSM-STANDARD-EN.pdf).
                     self.pending_ssm_low = None;
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Dd);
-                    assert!(current_prefix == OpcodePrefix::None, "impossible");
+                    debug_assert!(current_prefix == OpcodePrefix::None, "impossible");
                     return false;
                 }
                 0xfd if current_prefix == OpcodePrefix::None => {
                     self.pending_ssm_low = None;
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Fd);
-                    assert!(current_prefix == OpcodePrefix::None, "impossible");
+                    debug_assert!(current_prefix == OpcodePrefix::None, "impossible");
 
                     return false;
                 }
@@ -931,7 +931,7 @@ impl Z80 {
                     {
                         // conditional call where condition is not met MUST not arrive there
                         if arg1.is_some() {
-                            assert!(self.is_condition_met());
+                            debug_assert!(self.is_condition_met());
                         }
                     }
                     
@@ -1159,11 +1159,11 @@ impl Z80 {
                     match arg1.unwrap() {
                         DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _)=> {
                             // read and write directly in pins (should be launched before writing the results)
-                            assert_eq!(
+                            debug_assert_eq!(
                                 self.opcode_information().unwrap().read_data,
                                 DataDestination::Pins
                             );
-                            assert_eq!(
+                            debug_assert_eq!(
                                 self.opcode_information().unwrap().write_data,
                                 DataDestination::Pins
                             );
@@ -2107,7 +2107,7 @@ impl Z80 {
             // bus; nothing does on a CPC (the gate array only pulls the
             // interrupt line down), so the pull-ups give &FF, RST &38: the
             // same thing as IM 1.
-            assert!(
+            debug_assert!(
                 matches!(self.im, InterruptMode::Mode0 | InterruptMode::Mode1),
                 "Interruption {:?} unimplemented",
                 self.im
@@ -2487,9 +2487,9 @@ impl Chip for Z80 {
                 
               //  dbg!("READ ADDR={:x}", address);
                 
-                assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
-                assert!(self.get_pin(Z80Pin::Neg_RD));
-                assert!(self.get_pin(Z80Pin::Neg_WR));
+                debug_assert!(self.get_pin(self.next_state.read_pin_type().unwrap()));
+                debug_assert!(self.get_pin(Z80Pin::Neg_RD));
+                debug_assert!(self.get_pin(Z80Pin::Neg_WR));
                 
                 self.off(self.next_state.read_pin_type().unwrap());
                 self.off(Z80Pin::Neg_RD);
@@ -2584,9 +2584,9 @@ impl Chip for Z80 {
                 }
                     
                 
-                assert!(self.get_pin(self.next_state.write_pin_type().unwrap()));
-                assert!(self.get_pin(Z80Pin::Neg_RD));
-                assert!(self.get_pin(Z80Pin::Neg_WR));
+                debug_assert!(self.get_pin(self.next_state.write_pin_type().unwrap()));
+                debug_assert!(self.get_pin(Z80Pin::Neg_RD));
+                debug_assert!(self.get_pin(Z80Pin::Neg_WR));
 
                 // For memory writes, MREQ becomes active one T-state before WR.
                 // IO writes keep IORQ timing and assert it together with WR in T2.
