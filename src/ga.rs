@@ -1163,6 +1163,21 @@ impl GateArray {
         self.interrupt_signal_counter = InterruptionSignal::Signal(0);
         self.set_pin(GateArrayPin::INTERRUPT, false); //activate when low
     }
+
+    /// Cancel an already-*requested* interrupt that the CPU hasn't
+    /// acknowledged yet - the manual-clear path (`RMR` bit 4, below in
+    /// `write_register`) needs this in addition to resetting R52 itself.
+    /// Cross-checked against the "chips" project's pin-level am40010.h
+    /// (floooh/chips, `~/Perso/CPC/tiny8bit/chips/chips/am40010.h`,
+    /// `_am40010_tick`'s `AM40010_CONFIG_IRQRESET` handling): real
+    /// hardware's manual clear sets its `intr` flip-flop (our
+    /// `interrupt_signal_counter`) false outright, not just the counter -
+    /// otherwise an interrupt already in flight at the moment of a manual
+    /// clear still reaches the CPU instead of being cancelled by it.
+    fn cancel_interrupt(&mut self) {
+        self.interrupt_signal_counter = InterruptionSignal::NoSignal;
+        self.set_pin(GateArrayPin::INTERRUPT, true); //inactive when high
+    }
     delegate! {
         // Delegate all methods EXCEPT video mode as it is bufferized
         to self.rmr {
@@ -1321,6 +1336,7 @@ impl GateArray {
             self.rmr = RMR(command);
             if self.interrupt_counter() {
                 self.r52.reset();
+                self.cancel_interrupt();
             }
         }
     }
