@@ -145,15 +145,22 @@ pub trait Chip {
     where
         V: num::Integer + num::cast::ToPrimitive + num::cast::FromPrimitive,
     {
+        // Hoisted out of the loop: same reasoning as `get_pin`/`set_pin`'s
+        // `debug_assert` change just above - `.unwrap()` is a panic-capable
+        // call (even though `from_u8(2)` can never actually fail for any
+        // real integer type), and calling it fresh every one of up to 16
+        // bits per byte/word moved across a simulated bus added it to the
+        // same hot path for no behavioural benefit.
+        let two = V::from_u8(2).unwrap();
         for pin in pins.iter().rev() {
             self.set_pin(pin.clone(), value.is_odd());
-            value = value.div_floor(&V::from_u8(2).unwrap());
+            value = value.div_floor(&two);
         }
         //  assert!(value.to_usize().unwrap() == 0);
     }
 
     fn get_value_from_pins(&self, pins: &[Self::PinType]) -> u16 {
-        assert!(pins.len() <= 16);
+        debug_assert!(pins.len() <= 16);
 
         let mut res = 0;
         for pin in pins.iter() {
