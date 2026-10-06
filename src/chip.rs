@@ -98,7 +98,10 @@ pub trait Chip {
     fn is_upfront(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
         use std::ops::Not;
-        assert_eq!(pin.count_ones(), 1);
+        // See `set_pin`'s comment - same reasoning. `GateArray::
+        // must_execute_tick()` calls this every GA tick (every
+        // `Motherboard::tick()`), so this was on the hottest path too.
+        debug_assert_eq!(pin.count_ones(), 1);
 
         let &PinsBuffer(ref previous, ref current) = self.pins_buffer();
 
@@ -112,7 +115,7 @@ pub trait Chip {
     fn is_downfront(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
         use std::ops::Not;
-        assert_eq!(pin.count_ones(), 1);
+        debug_assert_eq!(pin.count_ones(), 1);
 
         let &PinsBuffer(ref previous, ref current) = self.pins_buffer();
 
@@ -120,6 +123,18 @@ pub trait Chip {
         let previous = 0 != (previous & pin);
 
         previous == true && current == false
+    }
+
+    /// Whether *any* pin changed since the last [`save_pins_state`](Self::save_pins_state)
+    /// call - a cheap, whole-buffer dirty check (one `u64` compare) rather
+    /// than asking about one specific pin. Used by `Motherboard::
+    /// sync_chips_pins()` to skip its entire cross-chip sync sweep on ticks
+    /// where none of its source chips changed at all, since every
+    /// destination it writes is purely driven by those sources - see that
+    /// function's own comment for the full reasoning.
+    fn any_pin_changed(&self) -> bool {
+        let &PinsBuffer(previous, current) = self.pins_buffer();
+        previous != current
     }
 
     /// Force the pin to be in front_down state (workaround because of the difference of speec d between chips)
