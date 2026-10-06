@@ -650,110 +650,137 @@ impl Motherboard {
     /// TODO improve behavior by handling BUSACK BUSREQ
     /// XXX as z80 timings are WRONG at them moment, it may change the signals too fast. As a workaround copy are made conditional for some chips
     fn sync_chips_pins(&mut self) {
-        // Backup previous state
+        // This function only ever *reads* from `cpu`, `ga` and `crtc` (as
+        // sources) - everything else it touches (`pal`, `rom_selector`,
+        // `ppi`, `large_ram_expansion`) is a pure destination, driven
+        // entirely by those three. Profiling (`project_cpu_tick_performance`)
+        // found this function was the second-largest cost in the emulator,
+        // and an all-or-nothing "skip if nothing changed" guard turned out
+        // to help essentially never in practice (empirically, ~0% of
+        // ticks: measured via temporary instrumentation) - GA's own
+        // clock/interrupt pins change on the large majority of ticks by
+        // themselves, which alone defeats an all-three-at-once check almost
+        // every time. But CPU's pins specifically are unchanged on ~44% of
+        // ticks (same measurement), and the CPU-sourced section below is
+        // the overwhelming majority of this function's own cost (~120 of
+        // ~125 pin operations) - so each source gets its *own* independent
+        // gate instead of one shared one. Each section's own
+        // `save_pins_state()` call is skipped along with it, which is
+        // exactly correct, not just "probably fine": if that source didn't
+        // change, its own `.0`/`.1` already agree, so re-saving would have
+        // been a no-op anyway (see `Chip::any_pin_changed`'s doc comment).
+        //
+        // None of `pal`/`rom_selector`/`ppi`/`large_ram_expansion`'s own
+        // `must_execute_tick()` gates use edge detection (grepped for
+        // `is_upfront`/`is_downfront`/`Activable` across the whole crate to
+        // confirm) - only `ga` does, on the VSYNC/HSYNC pins this function
+        // itself drives from `crtc`, which is why that write is gated on
+        // `crtc_changed` below, not folded into the GA section. If that
+        // ever changes, these gates would need revisiting.
+        let cpu_changed = self.cpu.any_pin_changed();
+        let ga_changed = self.ga.any_pin_changed();
+        let crtc_changed = self.crtc.any_pin_changed();
+
+        // Unlike `pal`/`rom_selector`/`ppi`/`large_ram_expansion` (pure
+        // destinations, written only from `cpu`, so their saves stay
+        // correctly gated below), `cpu`/`ga`/`crtc` are each BOTH a source
+        // *and* a destination for one of the other two within this same
+        // function (the GA-sourced block below writes into CPU's CLK/INT
+        // pins; the CRTC-sourced block writes into GA's VSYNC/HSYNC/DISPEN
+        // pins) - so their own `save_pins_state()` must run unconditionally,
+        // every call, exactly like before this change. Gating any of these
+        // three on its *own* dirty flag alone would miss a write landing on
+        // it from one of the other two sections later in this same call,
+        // silently delaying edge detection by a tick - confirmed the hard
+        // way: an earlier version of this gated each save on its own flag
+        // and broke `test_z80_vsync_activated` exactly this way (CPU's CLK
+        // edge, driven by GA, got detected a tick late whenever CPU's own
+        // pins happened not to change that same tick). Only the *writes*
+        // below (the actual expensive ~125 pin operations) are safe to
+        // skip per-source - the saves themselves are cheap (one `u64`
+        // compare each) regardless.
         self.ga.save_pins_state();
-        self.pal.save_pins_state();
-        if let Some(expansion) = &mut self.large_ram_expansion {
-            expansion.save_pins_state();
-        }
         self.crtc.save_pins_state();
         self.cpu.save_pins_state();
 
-        // Make some pins associattions
-        let Neg_IOWR = self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
-        let Neg_IORD = self.cpu.get_pin(Z80Pin::Neg_RD) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
-
-        if !Neg_IORD {
-            assert!(!self.cpu.get_pin(Z80Pin::Neg_IORQ));
+        // GA-sourced: its own clock/interrupt lines, to CPU and CRTC.
+        if ga_changed {
+            sync_pins(
+                &self.ga,
+                &[GateArrayPin::NCPU, GateArrayPin::INTERRUPT],
+                &mut self.cpu,
+                &[Z80Pin::Neg_CLK, Z80Pin::Neg_INT],
+            );
+            sync_pins(
+                &self.ga,
+                &[GateArrayPin::CCLK],
+                &mut self.crtc,
+                &[CrtcPin::CCLK],
+            );
         }
 
-        let chip_access = !Neg_IOWR | !Neg_IORD;
+        // CRTC-sourced: video timing signals, to PPI (VSYNC -> port B bit
+        // 0) and the gate array (VSYNC/HSYNC/DISPEN).
+        if crtc_changed {
+            self.ppi.set_pin(PpiPin::B0, self.crtc.get_pin(CrtcPin::VS));
+            sync_pins(
+                &self.crtc,
+                &[CrtcPin::VS, CrtcPin::HS, CrtcPin::DE],
+                &mut self.ga,
+                &[
+                    GateArrayPin::VSYNC,
+                    GateArrayPin::HSYNC,
+                    GateArrayPin::DISPEN,
+                ],
+            );
+        }
 
-        // GA to CPU
-        sync_pins(
-            &self.ga,
-            &[GateArrayPin::NCPU, GateArrayPin::INTERRUPT],
-            &mut self.cpu,
-            &[Z80Pin::Neg_CLK, Z80Pin::Neg_INT],
-        );
+        // CPU-sourced: the bulk of real bus traffic - address/data/control
+        // lines, to every peripheral actually wired to the CPU bus.
+        if cpu_changed {
+            self.pal.save_pins_state();
+            if let Some(expansion) = &mut self.large_ram_expansion {
+                expansion.save_pins_state();
+            }
 
-        // GA to CRTC
-        sync_pins(
-            &self.ga,
-            &[GateArrayPin::CCLK],
-            &mut self.crtc,
-            &[CrtcPin::CCLK],
-        );
+            let Neg_IOWR = self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
+            let Neg_IORD = self.cpu.get_pin(Z80Pin::Neg_RD) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
 
-        // CPU to GA
-        sync_pins(
-            &self.cpu,
-            Z80::pins_data(),
-            &mut self.ga,
-            GateArray::pins_data(),
-        );
-        sync_pins(
-            &self.cpu,
-            &[
-                Z80Pin::A14, 
-                Z80Pin::A15, 
-                Z80Pin::Neg_IORQ, 
-                Z80Pin::Neg_RD,
-                Z80Pin::Neg_M1,
-                Z80Pin::Neg_MREQ, ],
-            &mut self.ga,
-            &[
-                GateArrayPin::A14,
-                GateArrayPin::A15,
-                GateArrayPin::Neg_IORQ,
-                GateArrayPin::Neg_RD,
-                GateArrayPin::Neg_M1,
-                GateArrayPin::Neg_MREQ
-            ],
-        );
+            if !Neg_IORD {
+                assert!(!self.cpu.get_pin(Z80Pin::Neg_IORQ));
+            }
 
-        // CPU to PAL
-        sync_pins(
-            &self.cpu,
-            &[
-                Z80Pin::A14,
-                Z80Pin::A15,
-                Z80Pin::D0,
-                Z80Pin::D1,
-                Z80Pin::D2,
-                Z80Pin::D3,
-                Z80Pin::D4,
-                Z80Pin::D5,
-            ],
-            &mut self.pal,
-            &[
-                PalPin::A14,
-                PalPin::A15,
-                PalPin::D0,
-                PalPin::D1,
-                PalPin::D2,
-                PalPin::D3,
-                PalPin::D4,
-                PalPin::D5,
-            ],
-        );
-        self.pal.set_pin(
-            PalPin::D6_and_D7,
-            self.cpu.get_pin(Z80Pin::D6) && self.cpu.get_pin(Z80Pin::D7),
-        );
-        self.pal.set_pin(PalPin::IOWR, !Neg_IOWR);
-
-        // CPU to the expansion port's large RAM card, if any is plugged in
-        // - it needs the full data byte (not `Pal`'s D6-D7-collapsed-to-one
-        // shortcut) plus address lines A8-A10, which the base machine's own
-        // decode never looks at (see `LargeRamExpansion`'s doc comment).
-        if let Some(expansion) = &mut self.large_ram_expansion {
+            // CPU to GA
+            sync_pins(
+                &self.cpu,
+                Z80::pins_data(),
+                &mut self.ga,
+                GateArray::pins_data(),
+            );
             sync_pins(
                 &self.cpu,
                 &[
-                    Z80Pin::A8,
-                    Z80Pin::A9,
-                    Z80Pin::A10,
+                    Z80Pin::A14,
+                    Z80Pin::A15,
+                    Z80Pin::Neg_IORQ,
+                    Z80Pin::Neg_RD,
+                    Z80Pin::Neg_M1,
+                    Z80Pin::Neg_MREQ, ],
+                &mut self.ga,
+                &[
+                    GateArrayPin::A14,
+                    GateArrayPin::A15,
+                    GateArrayPin::Neg_IORQ,
+                    GateArrayPin::Neg_RD,
+                    GateArrayPin::Neg_M1,
+                    GateArrayPin::Neg_MREQ
+                ],
+            );
+
+            // CPU to PAL
+            sync_pins(
+                &self.cpu,
+                &[
                     Z80Pin::A14,
                     Z80Pin::A15,
                     Z80Pin::D0,
@@ -762,105 +789,131 @@ impl Motherboard {
                     Z80Pin::D3,
                     Z80Pin::D4,
                     Z80Pin::D5,
-                    Z80Pin::D6,
-                    Z80Pin::D7,
                 ],
-                expansion,
+                &mut self.pal,
                 &[
-                    LargeRamExpansionPin::A8,
-                    LargeRamExpansionPin::A9,
-                    LargeRamExpansionPin::A10,
-                    LargeRamExpansionPin::A14,
-                    LargeRamExpansionPin::A15,
-                    LargeRamExpansionPin::D0,
-                    LargeRamExpansionPin::D1,
-                    LargeRamExpansionPin::D2,
-                    LargeRamExpansionPin::D3,
-                    LargeRamExpansionPin::D4,
-                    LargeRamExpansionPin::D5,
-                    LargeRamExpansionPin::D6,
-                    LargeRamExpansionPin::D7,
+                    PalPin::A14,
+                    PalPin::A15,
+                    PalPin::D0,
+                    PalPin::D1,
+                    PalPin::D2,
+                    PalPin::D3,
+                    PalPin::D4,
+                    PalPin::D5,
                 ],
             );
-            expansion.set_pin(LargeRamExpansionPin::IOWR, !Neg_IOWR);
+            self.pal.set_pin(
+                PalPin::D6_and_D7,
+                self.cpu.get_pin(Z80Pin::D6) && self.cpu.get_pin(Z80Pin::D7),
+            );
+            self.pal.set_pin(PalPin::IOWR, !Neg_IOWR);
+
+            // CPU to the expansion port's large RAM card, if any is plugged
+            // in - it needs the full data byte (not `Pal`'s
+            // D6-D7-collapsed-to-one shortcut) plus address lines A8-A10,
+            // which the base machine's own decode never looks at (see
+            // `LargeRamExpansion`'s doc comment).
+            if let Some(expansion) = &mut self.large_ram_expansion {
+                sync_pins(
+                    &self.cpu,
+                    &[
+                        Z80Pin::A8,
+                        Z80Pin::A9,
+                        Z80Pin::A10,
+                        Z80Pin::A14,
+                        Z80Pin::A15,
+                        Z80Pin::D0,
+                        Z80Pin::D1,
+                        Z80Pin::D2,
+                        Z80Pin::D3,
+                        Z80Pin::D4,
+                        Z80Pin::D5,
+                        Z80Pin::D6,
+                        Z80Pin::D7,
+                    ],
+                    expansion,
+                    &[
+                        LargeRamExpansionPin::A8,
+                        LargeRamExpansionPin::A9,
+                        LargeRamExpansionPin::A10,
+                        LargeRamExpansionPin::A14,
+                        LargeRamExpansionPin::A15,
+                        LargeRamExpansionPin::D0,
+                        LargeRamExpansionPin::D1,
+                        LargeRamExpansionPin::D2,
+                        LargeRamExpansionPin::D3,
+                        LargeRamExpansionPin::D4,
+                        LargeRamExpansionPin::D5,
+                        LargeRamExpansionPin::D6,
+                        LargeRamExpansionPin::D7,
+                    ],
+                );
+                expansion.set_pin(LargeRamExpansionPin::IOWR, !Neg_IOWR);
+            }
+
+            // CPU to CRTC
+            // EN is active (low) during a real I/O cycle only: an interrupt
+            // acknowledge also drives IORQ (together with M1) and must not
+            // be seen as an access to whatever port the PC happens to spell.
+            self.crtc.set_pin(
+                CrtcPin::EN,
+                (Neg_IORD & Neg_IOWR) | !self.cpu.get_pin(Z80Pin::Neg_M1),
+            );
+
+            sync_pins(
+                &self.cpu,
+                &[Z80Pin::A8, Z80Pin::A9, Z80Pin::A14],
+                &mut self.crtc,
+                &[CrtcPin::RS, CrtcPin::RW, CrtcPin::CS],
+            );
+            sync_pins(
+                &self.cpu,
+                Z80::pins_data(),
+                &mut self.crtc,
+                Crtc::pins_data(),
+            );
+            // CPU to rom selection
+            sync_pins(
+                &self.cpu,
+                Z80::pins_data(),
+                &mut self.rom_selector,
+                UpperRomSelector::pins_data(),
+            );
+            sync_pins(
+                &self.cpu,
+                &[Z80Pin::A13, Z80Pin::Neg_IORQ, Z80Pin::Neg_WR],
+                &mut self.rom_selector,
+                &[
+                    UpperRomSelectorPin::A13,
+                    UpperRomSelectorPin::IORQ,
+                    UpperRomSelectorPin::WR,
+                ],
+            );
+
+            // CPU to ppi
+            if !Neg_IOWR {
+                sync_pins(&self.cpu, Z80::pins_data(), &mut self.ppi, Ppi::pins_data());
+            }
+            sync_pins(
+                &self.cpu,
+                &[Z80Pin::A11, Z80Pin::A9, Z80Pin::A8],
+                &mut self.ppi,
+                &[PpiPin::Neg_CS, PpiPin::InA1, PpiPin::InA0],
+            );
+            // Neg_CS must only be asserted during a real I/O bus cycle - A11
+            // alone is also whatever it happens to be during ordinary memory
+            // fetches, so without gating on Neg_IORQ here the PPI's
+            // is_activated() (an edge on Neg_CS) essentially never fires
+            // again once code executes from a page where A11 stays constant,
+            // freezing every PPI port read/write (e.g. VSYNC polling on
+            // port B) at whatever stale value it last captured.
+            self.ppi.set_pin(
+                PpiPin::Neg_CS,
+                self.cpu.get_pin(Z80Pin::A11) || self.cpu.get_pin(Z80Pin::Neg_IORQ),
+            );
+            self.ppi.set_pin(PpiPin::Neg_RD, Neg_IORD);
+            self.ppi.set_pin(PpiPin::Neg_WR, Neg_IOWR);
         }
-
-        // CPU to CRTC
-        // EN is active (low) during a real I/O cycle only: an interrupt
-        // acknowledge also drives IORQ (together with M1) and must not be
-        // seen as an access to whatever port the PC happens to spell.
-        self.crtc.set_pin(
-            CrtcPin::EN,
-            (Neg_IORD & Neg_IOWR) | !self.cpu.get_pin(Z80Pin::Neg_M1),
-        );
-
-        sync_pins(
-            &self.cpu,
-            &[Z80Pin::A8, Z80Pin::A9, Z80Pin::A14],
-            &mut self.crtc,
-            &[CrtcPin::RS, CrtcPin::RW, CrtcPin::CS],
-        );
-        sync_pins(
-            &self.cpu,
-            Z80::pins_data(),
-            &mut self.crtc,
-            Crtc::pins_data(),
-        );
-        // CPU to rom selection
-        sync_pins(
-            &self.cpu,
-            Z80::pins_data(),
-            &mut self.rom_selector,
-            UpperRomSelector::pins_data(),
-        );
-        sync_pins(
-            &self.cpu,
-            &[Z80Pin::A13, Z80Pin::Neg_IORQ, Z80Pin::Neg_WR],
-            &mut self.rom_selector,
-            &[
-                UpperRomSelectorPin::A13,
-                UpperRomSelectorPin::IORQ,
-                UpperRomSelectorPin::WR,
-            ],
-        );
-
-        // CPU to ppi
-        if !Neg_IOWR {
-            sync_pins(&self.cpu, Z80::pins_data(), &mut self.ppi, Ppi::pins_data());
-        }
-        sync_pins(
-            &self.cpu,
-            &[Z80Pin::A11, Z80Pin::A9, Z80Pin::A8],
-            &mut self.ppi,
-            &[PpiPin::Neg_CS, PpiPin::InA1, PpiPin::InA0],
-        );
-        // Neg_CS must only be asserted during a real I/O bus cycle - A11 alone
-        // is also whatever it happens to be during ordinary memory fetches,
-        // so without gating on Neg_IORQ here the PPI's is_activated() (an
-        // edge on Neg_CS) essentially never fires again once code executes
-        // from a page where A11 stays constant, freezing every PPI port
-        // read/write (e.g. VSYNC polling on port B) at whatever stale value
-        // it last captured.
-        self.ppi.set_pin(
-            PpiPin::Neg_CS,
-            self.cpu.get_pin(Z80Pin::A11) || self.cpu.get_pin(Z80Pin::Neg_IORQ),
-        );
-        self.ppi.set_pin(PpiPin::Neg_RD, Neg_IORD);
-        self.ppi.set_pin(PpiPin::Neg_WR, Neg_IOWR);
-        // CRTC to ppi
-        self.ppi.set_pin(PpiPin::B0, self.crtc.get_pin(CrtcPin::VS));
-
-        // Sync CRTC to gate array
-        sync_pins(
-            &self.crtc,
-            &[CrtcPin::VS, CrtcPin::HS, CrtcPin::DE],
-            &mut self.ga,
-            &[
-                GateArrayPin::VSYNC,
-                GateArrayPin::HSYNC,
-                GateArrayPin::DISPEN,
-            ],
-        );
     }
 }
 

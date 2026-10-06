@@ -58,7 +58,15 @@ pub trait Chip {
     fn set_pin(&mut self, pin: Self::PinType, value: bool) {
         let pin: u64 = pin.into();
         use std::ops::Not;
-        assert_eq!(pin.count_ones(), 1);
+        // Every `PinType` enum variant is defined as a single-bit value by
+        // construction (`1 << n`) - this is a guard against a future enum
+        // gaining a non-single-bit variant by mistake, not something that
+        // needs re-checking on every one of the millions of pin accesses a
+        // single Z80 instruction makes. `debug_assert` keeps the check for
+        // tests/debug builds while not paying for it in `--release`, where
+        // this was a real (non-debug) `assert!` - see the architecture/perf
+        // review in [[project_cpu_tick_performance]].
+        debug_assert_eq!(pin.count_ones(), 1);
 
         let ref mut buffer = self.pins_buffer_mut().1;
         *buffer &= pin.not(); // Keep ALL other bits
@@ -79,7 +87,8 @@ pub trait Chip {
     fn get_pin(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
         use std::ops::Not;
-        assert_eq!(pin.count_ones(), 1);
+        // See `set_pin`'s comment just above - same reasoning.
+        debug_assert_eq!(pin.count_ones(), 1);
 
         let ref current = self.pins_buffer().1;
         0 != (current & pin)
@@ -89,7 +98,10 @@ pub trait Chip {
     fn is_upfront(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
         use std::ops::Not;
-        assert_eq!(pin.count_ones(), 1);
+        // See `set_pin`'s comment - same reasoning. `GateArray::
+        // must_execute_tick()` calls this every GA tick (every
+        // `Motherboard::tick()`), so this was on the hottest path too.
+        debug_assert_eq!(pin.count_ones(), 1);
 
         let &PinsBuffer(ref previous, ref current) = self.pins_buffer();
 
@@ -103,7 +115,7 @@ pub trait Chip {
     fn is_downfront(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
         use std::ops::Not;
-        assert_eq!(pin.count_ones(), 1);
+        debug_assert_eq!(pin.count_ones(), 1);
 
         let &PinsBuffer(ref previous, ref current) = self.pins_buffer();
 
@@ -111,6 +123,18 @@ pub trait Chip {
         let previous = 0 != (previous & pin);
 
         previous == true && current == false
+    }
+
+    /// Whether *any* pin changed since the last [`save_pins_state`](Self::save_pins_state)
+    /// call - a cheap, whole-buffer dirty check (one `u64` compare) rather
+    /// than asking about one specific pin. Used by `Motherboard::
+    /// sync_chips_pins()` to skip its entire cross-chip sync sweep on ticks
+    /// where none of its source chips changed at all, since every
+    /// destination it writes is purely driven by those sources - see that
+    /// function's own comment for the full reasoning.
+    fn any_pin_changed(&self) -> bool {
+        let &PinsBuffer(previous, current) = self.pins_buffer();
+        previous != current
     }
 
     /// Force the pin to be in front_down state (workaround because of the difference of speec d between chips)
@@ -136,15 +160,22 @@ pub trait Chip {
     where
         V: num::Integer + num::cast::ToPrimitive + num::cast::FromPrimitive,
     {
+        // Hoisted out of the loop: same reasoning as `get_pin`/`set_pin`'s
+        // `debug_assert` change just above - `.unwrap()` is a panic-capable
+        // call (even though `from_u8(2)` can never actually fail for any
+        // real integer type), and calling it fresh every one of up to 16
+        // bits per byte/word moved across a simulated bus added it to the
+        // same hot path for no behavioural benefit.
+        let two = V::from_u8(2).unwrap();
         for pin in pins.iter().rev() {
             self.set_pin(pin.clone(), value.is_odd());
-            value = value.div_floor(&V::from_u8(2).unwrap());
+            value = value.div_floor(&two);
         }
         //  assert!(value.to_usize().unwrap() == 0);
     }
 
     fn get_value_from_pins(&self, pins: &[Self::PinType]) -> u16 {
-        assert!(pins.len() <= 16);
+        debug_assert!(pins.len() <= 16);
 
         let mut res = 0;
         for pin in pins.iter() {
