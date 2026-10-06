@@ -58,7 +58,15 @@ pub trait Chip {
     fn set_pin(&mut self, pin: Self::PinType, value: bool) {
         let pin: u64 = pin.into();
         use std::ops::Not;
-        assert_eq!(pin.count_ones(), 1);
+        // Every `PinType` enum variant is defined as a single-bit value by
+        // construction (`1 << n`) - this is a guard against a future enum
+        // gaining a non-single-bit variant by mistake, not something that
+        // needs re-checking on every one of the millions of pin accesses a
+        // single Z80 instruction makes. `debug_assert` keeps the check for
+        // tests/debug builds while not paying for it in `--release`, where
+        // this was a real (non-debug) `assert!` - see the architecture/perf
+        // review in [[project_cpu_tick_performance]].
+        debug_assert_eq!(pin.count_ones(), 1);
 
         let ref mut buffer = self.pins_buffer_mut().1;
         *buffer &= pin.not(); // Keep ALL other bits
@@ -79,7 +87,8 @@ pub trait Chip {
     fn get_pin(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
         use std::ops::Not;
-        assert_eq!(pin.count_ones(), 1);
+        // See `set_pin`'s comment just above - same reasoning.
+        debug_assert_eq!(pin.count_ones(), 1);
 
         let ref current = self.pins_buffer().1;
         0 != (current & pin)
