@@ -1153,10 +1153,25 @@ impl Motherboard {
 
     /// Read a byte the way the video hardware sees it: always from RAM, even
     /// where a ROM is currently overlaid for the CPU (the gate array fetches
-    /// screen bytes from RAM regardless of the CPU's ROM mapping).
+    /// screen bytes from RAM regardless of the CPU's ROM mapping) - and
+    /// always from the CPC's fixed base 64K (banks 0-3), regardless of
+    /// whatever extra RAM page the CPU's own MMR paging currently has
+    /// banked in. On real hardware the gate array's video-fetch address
+    /// lines are wired only to the base RAM ICs; a demo using the MMR to
+    /// page in an extra 64K page (e.g. to hold an off-screen layer) never
+    /// makes that page visible to the CRTC/GA, only to the CPU.
     #[inline]
     pub fn read_ram_byte(&self, addr: u16) -> u8 {
-        self.read_byte_with_roms(addr, Flag::Disable, Flag::Disable)
+        let MemoryConfig(rom, _) = self.memory_config();
+        let config = MemoryConfig(
+            RomConfig {
+                lower_rom: Flag::Disable,
+                upper_rom: Flag::Disable,
+                rom_number: rom.rom_number
+            },
+            MemoryConfig::default().1,
+        );
+        self.memory.read(addr, &config, self.expansion_ram_source())
     }
 
     /// Read a byte as if the lower ROM was mapped in (and no upper ROM),
