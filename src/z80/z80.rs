@@ -646,9 +646,24 @@ impl Z80 {
                 // reports as an error rather than silently treating as a
                 // NOP - the "it cannot fail" assumption only held while
                 // nothing ever actually executed one of those codes.
+                //
+                // A DD/FD-prefixed opcode whose table entry is empty is a
+                // different case: it's not undefined, it just doesn't touch
+                // H/L, so the real CPU executes it exactly as its unprefixed
+                // form (see the matching fallback in
+                // `states.rs::build_opcode_information`, which fixed the
+                // byte count but not this separate execute-time disassembly
+                // - both must agree on the same instruction).
+                let disassembling_table = if matches!(prefix, OpcodePrefix::Dd | OpcodePrefix::Fd)
+                    && prefix.disassembling_table()[self.ir.get() as usize].is_empty()
+                {
+                    OpcodePrefix::None.disassembling_table()
+                } else {
+                    prefix.disassembling_table()
+                };
                 let (opcode, rest) = cpclib_asm::disass::disassemble_with_potential_argument(
                     self.ir.get(),
-                    &prefix.disassembling_table(),
+                    &disassembling_table,
                     &memory,
                 )
                 .unwrap_or_else(|_| (Token::parse_token("NOP").unwrap(), &memory[..]));

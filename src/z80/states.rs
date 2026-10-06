@@ -601,8 +601,30 @@ impl OpcodeDecoder for Token {
         /// Retreive all the information needed to data collection for the current opcode
         fn build_opcode_information(&self, opcode: u8) -> OpcodeInformation {
             let opcode = opcode as usize;
-            
+
             let repr = self.disassembling_table()[opcode];
+            // An empty entry in the DD/FD table means that specific opcode's
+            // DD/FD-prefixed form has no *index-register-specific* behaviour
+            // (it doesn't touch H/L at all) - not that it's a no-op. On real
+            // hardware the CPU still executes the byte exactly as its
+            // unprefixed form (e.g. `DD 41` really does `LD B,C`, just with
+            // 4 wasted T-states for the ignored prefix fetch) - confirmed
+            // the hard way, via zexall's "ld <bcdexya>,<bcdexya>" test
+            // failing a CRC check. Treating it as a bare "NOP" (the previous
+            // behaviour) silently dropped the actual register transfer for
+            // every DD/FD-prefixed opcode that doesn't involve H/L - not
+            // just the register-to-register LDs zexall happened to catch,
+            // but potentially any instruction in that bucket (e.g. `DD 01
+            // nnnn` would also have desynced the fetch, since it never
+            // consumed the two immediate bytes the real `LD BC,nnnn` does).
+            // `OpcodePrefix::None`'s own table has no empty entries (every
+            // unprefixed byte is a real instruction), so this fallback
+            // always finds something real to parse.
+            let repr = if repr.is_empty() && matches!(self, OpcodePrefix::Dd | OpcodePrefix::Fd) {
+                OpcodePrefix::None.disassembling_table()[opcode]
+            } else {
+                repr
+            };
             let parsed = Token::parse_token(if repr.is_empty() { "NOP" } else { repr })
                 .unwrap_or_else(|_| Token::parse_token("NOP").unwrap());
             // Some mnemonics (e.g. `SBC A,(HL)`) are parsed as a `WarningWrapper`
@@ -688,7 +710,19 @@ impl OpcodeDecoder for Token {
                     }
                     
                     let repr = self.disassembling_table()[i];
-                    
+                    // Same fallback as build_opcode_information's own repr
+                    // lookup, and for the same reason: an empty DD/FD entry
+                    // means "no index-register-specific form", not "reads
+                    // zero extra bytes" - e.g. `DD 01` is `LD BC,nnnn`
+                    // exactly as unprefixed, and still needs its 2 operand
+                    // bytes read. Without this, `nb_additional_opcode_bytes`
+                    // would silently be 0 for any such opcode.
+                    let repr = if repr.is_empty() && matches!(self, OpcodePrefix::Dd | OpcodePrefix::Fd) {
+                        OpcodePrefix::None.disassembling_table()[i]
+                    } else {
+                        repr
+                    };
+
                     let nb_height_bits_args = HEIGHT_BITS.captures_iter(repr).count();
                     let nb_sixteen_bits_args = SIXTEEN_BITS.captures_iter(repr).count();
                     
