@@ -140,6 +140,12 @@ pub trait CrtcModel: Debug + Sync {
     /// program it; 1 and 2 have a fixed 16).
     fn vsync_width(&self, r3: u8) -> u8;
 
+    /// ACCC §14.4.2: writing R3l=0 while an HSYNC is running cancels it on
+    /// CRTC 1; the others treat 0 as a count to reach (after overflowing).
+    fn zero_r3_cancels_running_hsync(&self) -> bool {
+        false
+    }
+
     /// What the skew field of R8 does; none on CRTC 1 and 2 (ACCC §19.2).
     fn display_skew(&self, r8: u8) -> DisplaySkew;
 

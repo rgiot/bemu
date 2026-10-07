@@ -404,8 +404,13 @@ impl Crtc {
     /// Run all the CRTC machinery that compute the next CRTC address
     fn update_memory_address(&mut self) {
         if self.hsync() {
-            self.hsc += 1;
-            if Some(self.hsc) == self.hsync_width() {
+            // ACCC §14.4: C3l is a 4-bit counter. Lowering R3l below it
+            // during HSYNC (R3.JIT) makes it overflow and reach R3l on
+            // the next lap (R3l=0 included: "0 is treated as a value to
+            // reach"), except on CRTC 1 where R3l=0 cancels the HSYNC.
+            self.hsc = (self.hsc + 1) & 0x0f;
+            let r3l = self.regs[3] & 0x0f;
+            if self.hsc == r3l || (r3l == 0 && self.model.zero_r3_cancels_running_hsync()) {
                 self.off(CrtcPin::HS);
             }
         }
@@ -845,6 +850,31 @@ mod test {
             }
             assert_eq!(hsync_duration + hsync_wait, 64);
         }
+    }
+
+    /// ACCC §14.4: lowering R3l below the running 4-bit HSYNC counter makes
+    /// it overflow, so the HSYNC lasts until the counter reaches R3l again
+    /// (16 - old + new chars from its start), not 256 chars.
+    #[test]
+    fn test_hsync_r3_lowered_during_hsync_overflows() {
+        let mut crtc = Crtc::default();
+        crtc.update_memory_address();
+        while !crtc.hsync() {
+            crtc.update_memory_address();
+        }
+        // let the counter run past the new value, then lower R3l below it
+        for _ in 0..5 {
+            crtc.update_memory_address();
+        }
+        assert!(crtc.hsync());
+        crtc.regs[3] = (crtc.regs[3] & 0xf0) | 2;
+        let mut extra = 0;
+        while crtc.hsync() {
+            extra += 1;
+            assert!(extra <= 16, "HSYNC never ended");
+            crtc.update_memory_address();
+        }
+        assert!(extra > 5, "HSYNC must overflow the 4-bit counter, got {extra}");
     }
 
     #[test]

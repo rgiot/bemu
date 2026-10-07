@@ -48,6 +48,10 @@ impl CrtcModel for Crtc1 {
         Some(r3 & 0x0f).filter(|width| *width != 0)
     }
 
+    fn zero_r3_cancels_running_hsync(&self) -> bool {
+        true
+    }
+
     /// ACCC §14.1: R3h does not exist here, VSYNC is 16 lines.
     fn vsync_width(&self, _r3: u8) -> u8 {
         16
