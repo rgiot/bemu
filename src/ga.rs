@@ -1237,9 +1237,15 @@ impl Chip for GateArray {
     type PinType = GateArrayPin;
 
     fn must_execute_tick(&self) -> bool {
+        // M1 low together with IORQ is an interrupt acknowledge, not an I/O
+        // cycle: the address bus then spells the PC, which decodes to the
+        // GA's port whenever PC is in 0x4000-0x7FFF, and the data bus
+        // floating must never be taken for a register write (it used to
+        // randomly switch ROMs/modes/RAM config at every interrupt).
         !self.get_pin(GateArrayPin::A15)
             && self.get_pin(GateArrayPin::A14)
             && !self.get_pin(GateArrayPin::Neg_IORQ)
+            && self.get_pin(GateArrayPin::Neg_M1)
     }
 
     /// Change the screen mode when hsync is set
@@ -1481,6 +1487,7 @@ mod test {
         ga.set_pin(GateArrayPin::A15, false);
         ga.set_pin(GateArrayPin::A14, true);
         ga.set_pin(GateArrayPin::Neg_IORQ, false);
+        ga.set_pin(GateArrayPin::Neg_M1, true);
         ga.set_pin(GateArrayPin::Neg_RD, true);
         assert!(ga.must_execute_tick());
         ga.tick();
@@ -1493,6 +1500,7 @@ mod test {
         ga.set_pin(GateArrayPin::A15, false);
         ga.set_pin(GateArrayPin::A14, true);
         ga.set_pin(GateArrayPin::Neg_IORQ, false);
+        ga.set_pin(GateArrayPin::Neg_M1, true);
         ga.set_pin(GateArrayPin::Neg_RD, true);
         ga.set_pin(GateArrayPin::HSYNC, true);
         ga.save_pins_state();
@@ -1503,6 +1511,25 @@ mod test {
         assert_eq!(ga.next_video_mode(), VideoMode::Mode2);
         assert_eq!(ga.lower_rom_pagging(), Flag::Disable);
         assert_eq!(ga.upper_rom_pagging(), Flag::Disable);
+    }
+
+    /// An interrupt acknowledge (IORQ and M1 both low) with PC in
+    /// 0x4000-0x7FFF decodes to the GA's port: it must not be a write.
+    #[test]
+    fn interrupt_acknowledge_is_not_a_register_write() {
+        let mut ga = GateArray::default();
+        ga.set_data_on_pins(0x8d); // would be RMR: mode 1, both ROMs enabled
+        ga.set_pin(GateArrayPin::A15, false);
+        ga.set_pin(GateArrayPin::A14, true);
+        ga.set_pin(GateArrayPin::Neg_IORQ, false);
+        ga.set_pin(GateArrayPin::Neg_M1, false);
+        ga.set_pin(GateArrayPin::Neg_RD, true);
+        assert!(!ga.must_execute_tick());
+        ga.tick();
+        assert_eq!(ga.next_video_mode(), VideoMode::Mode0);
+        // a real write of 0x8d would have disabled both ROMs
+        assert_eq!(ga.lower_rom_pagging(), Flag::Enable);
+        assert_eq!(ga.upper_rom_pagging(), Flag::Enable);
     }
 
     #[test]
