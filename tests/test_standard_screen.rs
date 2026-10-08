@@ -81,7 +81,7 @@ fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: V
     crtc.set_address_on_pins();
 
     // Configure the monitor in a wait state (not a big deal, it happens one char too soon)
-    let mut monitor = Monitor::wait_vsync();
+    let mut monitor = Monitor::debug();
 
     let mut ga = GateArray::default();
     ga.set_palette(palette);
@@ -206,7 +206,7 @@ fn test_raster() {
     crtc.set_address_on_pins();
 
     // Configure the monitor in a wait state (not a big deal, it happens one char too soon)
-    let mut monitor = Monitor::wait_vsync();
+    let mut monitor = Monitor::debug();
 
     let mut ga = GateArray::default();
     ga.set_palette(palette);

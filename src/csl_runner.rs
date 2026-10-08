@@ -24,7 +24,7 @@ use crate::crtc::CrtcType;
 use crate::disc_image::{load_dsk, DiscImage};
 use crate::fdc::FdcDrive;
 use crate::keyboard::CpcKey;
-use crate::monitor::FrameGrabber;
+use crate::monitor::Monitor;
 use crate::motherboard::{Motherboard, MotherboardBuilder};
 use crate::shakerland::Manifest;
 
@@ -519,7 +519,7 @@ impl CslRunner {
     /// Capture the next whole frame the machine displays (keeping the
     /// program running meanwhile) and save it.
     fn screenshot(&mut self, ssm_code: Option<u16>, name: Option<&str>) -> Result<(), String> {
-        let mut grabber = FrameGrabber::default();
+        let mut monitor = Monitor::default();
         let mut ticks = 0;
         let mut frame = None;
         while frame.is_none() {
@@ -532,11 +532,11 @@ impl CslRunner {
                 ));
             }
             self.motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
-                grabber.receive(rgb, sync);
+                monitor.receive(rgb, sync);
                 ticks += 1;
             });
             self.apply_due_key_events();
-            frame = grabber.take_frame();
+            frame = monitor.take_frame();
         }
         let frame = frame.unwrap();
 

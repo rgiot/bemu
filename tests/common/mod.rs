@@ -175,7 +175,7 @@ pub fn render_screen(motherboard: &Motherboard, out_path: &str) {
     crtc.seed_vma_for_test(crtc_start(motherboard), 29);
     crtc.set_address_on_pins();
 
-    let mut monitor = Monitor::wait_vsync();
+    let mut monitor = Monitor::debug();
 
     let mut ga = GateArray::default();
     ga.set_palette(palette);

@@ -34,7 +34,7 @@ use amsrust::debug::{Monitor, MonitorContext};
 use amsrust::disc_image::load_dsk;
 use amsrust::fdc::FdcDrive;
 use amsrust::keyboard::CpcKey;
-use amsrust::monitor::FrameGrabber;
+use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use minifb::{InputCallback, Key, Window, WindowOptions};
 use std::cell::RefCell;
@@ -166,18 +166,18 @@ fn run_headless(motherboard: &mut amsrust::motherboard::Motherboard, dir: &str, 
             break;
         }
 
-        let mut grabber = FrameGrabber::default();
+        let mut monitor = CrtMonitor::default();
         let mut frame = None;
         // Capture the next whole frame once due, rather than every tick:
         // matches how the CSL runner and play_demo grab a screenshot.
         while frame.is_none() && motherboard.t_state_counter().value() < target_t_states {
             motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
-                grabber.receive(rgb, sync);
+                monitor.receive(rgb, sync);
                 // take_frame() consumes it: a later tick within this same
                 // multi-tick opcode would otherwise immediately overwrite
                 // a just-captured frame with the None the second take gives.
                 if frame.is_none() {
-                    frame = grabber.take_frame();
+                    frame = monitor.take_frame();
                 }
             });
         }
@@ -227,16 +227,16 @@ fn run_window(motherboard: &mut Motherboard) {
     while window.is_open() {
         update_keyboard(&window, motherboard, typed_combo.advance(&typed_chars));
 
-        let mut grabber = FrameGrabber::default();
+        let mut monitor = CrtMonitor::default();
         let mut frame = None;
         // One whole frame per redraw, same as run_headless()/csl_runner's
         // own screenshot(): locked to the emulator's real VSYNC, not to a
         // fixed t-state count.
         while frame.is_none() {
             motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
-                grabber.receive(rgb, sync);
+                monitor.receive(rgb, sync);
                 if frame.is_none() {
-                    frame = grabber.take_frame();
+                    frame = monitor.take_frame();
                 }
             });
         }
