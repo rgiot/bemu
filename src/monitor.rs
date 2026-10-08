@@ -18,20 +18,22 @@ use image::*;
 /// Ticks (1/16 usec) of a line the line oscillator runs when no HSYNC
 /// comes: 64 usec.
 const RASTER_LINE_LENGTH: usize = 64 * 16;
-/// Pixels (ticks) of a line the tube shows, from the end of an HSYNC.
-const MONITOR_ACTIVE_PIXELS: usize = 52 * 16;
-/// Lines of the tube. The beam is blanked before line `MONITOR_FIRST_LINE`
-/// after the start of a VSYNC: it is flying back to the top.
-const MONITOR_HEIGHT: usize = 312;
-const MONITOR_FIRST_LINE: usize = 24;
+/// What a CTM 644 shows (ACCC 23.2, 23.3, 24): 48 usec of a line, starting
+/// 8 usec (the 15th character after C0=R2, with a 4 usec C-HSYNC) after the
+/// end of the C-HSYNC; 272 lines, from the 34th after the start of the VSYNC.
+const MONITOR_FIRST_PIXEL: usize = 8 * 16;
+const MONITOR_ACTIVE_PIXELS: usize = 48 * 16;
+const MONITOR_HEIGHT: usize = 272;
+const MONITOR_FIRST_LINE: usize = 33;
+/// Lines the frame oscillator runs when no VSYNC comes.
+const MONITOR_FREE_RUN_LINES: usize = 312;
+
 /// Once locked, the line oscillator (AFC) only follows an HSYNC that ends
 /// in the last quarter of its period: a pulse half a line away (a second,
 /// cut-short HSYNC of the R3.JIT tests) is ignored.
 const MONITOR_HSYNC_WINDOW_START: usize = RASTER_LINE_LENGTH * 3 / 4;
 /// Lines without an accepted HSYNC after which the line oscillator unlocks.
 const MONITOR_HSYNC_LOST_LINES: usize = 4;
-/// Lines the frame oscillator runs when no VSYNC comes.
-const MONITOR_FREE_RUN_LINES: usize = 312;
 
 /// Shortest C-HSYNC pulse (in ticks of 1/16 usec) the monitor reacts to.
 const MONITOR_MIN_HSYNC_TICKS: usize = 16;
@@ -161,14 +163,15 @@ impl Monitor {
         if line_end {
             self.x = 0;
             self.line += 1;
-            if self.line >= MONITOR_FREE_RUN_LINES + MONITOR_FIRST_LINE && !self.synchronised {
+            if self.line >= MONITOR_FREE_RUN_LINES && !self.synchronised {
                 // no VSYNC at all: the frame oscillator restarts the frame
-                self.line = MONITOR_FIRST_LINE;
+                self.line = 0;
             }
         }
 
         let y = self.line.wrapping_sub(MONITOR_FIRST_LINE);
-        if self.x < MONITOR_ACTIVE_PIXELS && y < MONITOR_HEIGHT {
+        let px = self.x.wrapping_sub(MONITOR_FIRST_PIXEL);
+        if px < MONITOR_ACTIVE_PIXELS && y < MONITOR_HEIGHT {
             let pixel = if vsync {
                 self.vsync_color
             }
@@ -178,7 +181,7 @@ impl Monitor {
             else {
                 pixel_of(rgb)
             };
-            self.texture.put_pixel(self.x as u32, y as u32, pixel);
+            self.texture.put_pixel(px as u32, y as u32, pixel);
         }
         self.x += 1;
     }

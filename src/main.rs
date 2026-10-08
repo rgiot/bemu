@@ -202,11 +202,11 @@ fn run_headless(motherboard: &mut amsrust::motherboard::Motherboard, dir: &str, 
 /// whatever its actual dimensions, which can vary a little between modes -
 /// is blitted into a buffer of exactly this size, so `update_with_buffer`
 /// always gets what the window was created with.
-const WINDOW_WIDTH: usize = 52 * 8 * 2; // 832
+const WINDOW_WIDTH: usize = 48 * 8 * 2; // 768
 /// Each scanline is drawn twice, matching the vertical doubling
 /// `amsrust::monitor`'s own ideal-monitor `Texture` already does, for a
 /// roughly correct 4:3 aspect instead of a squashed one.
-const WINDOW_HEIGHT: usize = 312 * 2;
+const WINDOW_HEIGHT: usize = 272 * 2;
 
 fn run_window(motherboard: &mut Motherboard) {
     let mut window = Window::new("amsrust", WINDOW_WIDTH, WINDOW_HEIGHT, WindowOptions {
