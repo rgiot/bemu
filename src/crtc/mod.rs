@@ -146,6 +146,8 @@ pub struct Crtc {
     /// The "last line of the frame" state of CRTC 0 (see
     /// [`CrtcModel::has_last_line_state`]).
     last_line: bool,
+    /// Diagnostics: every register write as (C0, C4, C9, register, value).
+    write_log: Option<Vec<(u8, u8, u8, u8, u8)>>,
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
     pub hsc: u8,
 
@@ -196,6 +198,7 @@ impl Default for Crtc {
             vtac: 0,
             in_vertical_adjust: false,
             last_line: false,
+            write_log: None,
             crtc_vma: 0,
             crtc_vma_prime: 0,
             model: CrtcType::default().model(),
@@ -336,6 +339,9 @@ impl Crtc {
     /// Store `v` in register `r`, keeping only the bits this chip has.
     /// Registers that don't exist are ignored.
     pub fn do_write_register(&mut self, r: u8, v: u8) {
+        if let Some(log) = self.write_log.as_mut() {
+            log.push((self.hcc, self.vcc.value(), self.vlc.value(), r, v));
+        }
         let mask = self.model.write_mask(r);
         let previous_r3l = self.regs[3] & 0x0f;
         if let Some(register) = self.regs.get_mut(usize::from(r)) {
@@ -364,6 +370,16 @@ impl Crtc {
             self.on(CrtcPin::HS);
             self.hdc = 0;
         }
+    }
+
+    /// Start recording the register writes (diagnostics).
+    pub fn start_write_log(&mut self) {
+        self.write_log = Some(Vec::new());
+    }
+
+    /// The writes recorded since the last call, as (C0, C4, C9, register, value).
+    pub fn take_write_log(&mut self) -> Vec<(u8, u8, u8, u8, u8)> {
+        self.write_log.as_mut().map(std::mem::take).unwrap_or_default()
     }
 
     /// The register the next data write goes to (diagnostics).

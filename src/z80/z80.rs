@@ -2507,7 +2507,7 @@ impl Chip for Z80 {
                                 self.next_state = MCycle::Read(TState::T1, 0);
                             }
                         } else if opcode_information.expect_write() {
-                            if opcode_information.read_from_pins {
+                            if opcode_information.write_to_pins {
                                 self.next_state = MCycle::Output(TState::T1, 0);
                             } else {
                                 self.next_state = MCycle::Write(TState::T1, 0);
