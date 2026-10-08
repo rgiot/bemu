@@ -372,7 +372,7 @@ impl Motherboard {
             let address = self
                 .ga
                 .video_fetch_address(self.crtc.get_address_from_pins());
-            let byte = self.read_ram_byte(address);
+            let byte = self.read_video_ram_byte(address);
             self.ga.set_memory_byte(byte);
         }
         self.ga.tick();
@@ -1151,27 +1151,31 @@ impl Motherboard {
         self.memory.read(addr, &memory_cfg, self.expansion_ram_source())
     }
 
+    /// Debug/diagnostic: one byte of a physical RAM bank, whatever the
+    /// current CPU mapping, ROMs ignored.
+    pub fn read_physical_ram(&self, page: crate::memory::PageNumber, bank: crate::memory::BankNumber, offset: u16) -> u8 {
+        use crate::memory::{BankConfig, MemoryConfig, RamConfig};
+        let mut config = MemoryConfig::default();
+        config.1 = RamConfig([BankConfig(page, bank); 4]);
+        self.memory.read(offset % 0x4000, &config, self.expansion_ram_source())
+    }
+
     /// Read a byte the way the video hardware sees it: always from RAM, even
     /// where a ROM is currently overlaid for the CPU (the gate array fetches
-    /// screen bytes from RAM regardless of the CPU's ROM mapping) - and
+    /// screen bytes from RAM regardless of the CPU's ROM mapping), and
     /// always from the CPC's fixed base 64K (banks 0-3), regardless of
     /// whatever extra RAM page the CPU's own MMR paging currently has
     /// banked in. On real hardware the gate array's video-fetch address
-    /// lines are wired only to the base RAM ICs; a demo using the MMR to
-    /// page in an extra 64K page (e.g. to hold an off-screen layer) never
-    /// makes that page visible to the CRTC/GA, only to the CPU.
+    /// lines are wired only to the base RAM ICs, entirely independently of
+    /// the CPU's own memory mapping - a demo using the MMR to page in an
+    /// extra 64K page (e.g. to hold an off-screen layer) never makes that
+    /// page visible to the CRTC/GA, only to the CPU. So this deliberately
+    /// never consults `self.memory_config()` at all: the standard identity
+    /// config (`MemoryConfig::default()`, ROMs off, base Bank0-3) is the
+    /// video hardware's *only* view, full stop.
     #[inline]
-    pub fn read_ram_byte(&self, addr: u16) -> u8 {
-        let MemoryConfig(rom, _) = self.memory_config();
-        let config = MemoryConfig(
-            RomConfig {
-                lower_rom: Flag::Disable,
-                upper_rom: Flag::Disable,
-                rom_number: rom.rom_number
-            },
-            MemoryConfig::default().1,
-        );
-        self.memory.read(addr, &config, self.expansion_ram_source())
+    pub fn read_video_ram_byte(&self, addr: u16) -> u8 {
+        self.memory.read(addr, &MemoryConfig::default(), self.expansion_ram_source())
     }
 
     /// Read a byte as if the lower ROM was mapped in (and no upper ROM),

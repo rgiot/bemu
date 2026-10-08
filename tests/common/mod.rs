@@ -99,7 +99,7 @@ pub fn screen_lines(motherboard: &Motherboard) -> Vec<String> {
                     for (scan, line) in glyph.iter_mut().enumerate() {
                         for byte in 0..bytes_per_char {
                             let value =
-                                motherboard.read_ram_byte(video_address(ma, scan as u16, (first_byte + byte) % 2));
+                                motherboard.read_video_ram_byte(video_address(ma, scan as u16, (first_byte + byte) % 2));
                             match mode {
                                 VideoMode::Mode2 => *line = value,
                                 _ => {
@@ -161,7 +161,7 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
 pub fn render_screen(motherboard: &Motherboard, out_path: &str) {
     let mut bank = [0u8; 0x10000];
     for (addr, byte) in bank.iter_mut().enumerate() {
-        *byte = motherboard.read_ram_byte(addr as u16);
+        *byte = motherboard.read_video_ram_byte(addr as u16);
     }
     let palette = *motherboard.ga().palette();
     let mode = motherboard.ga().current_mode();
