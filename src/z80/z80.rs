@@ -1141,9 +1141,12 @@ impl Z80 {
 
                 Mnemonic::In => {
                     match arg1 {
-                        Some(DataAccess::Register8(cpclib_asm::preamble::Register8::A)) => {},
-                        Some(DataAccess::Register8(_)) | Some(DataAccess::Expression(_))=> {
-                            self.next_state = MCycle::new_fake(1);
+                        Some(DataAccess::Register8(_)) | Some(DataAccess::Expression(_)) => {
+                            // `IN A,(n)` is 3 us on a CPC; every `IN r,(C)`
+                            // form - `IN A,(C)` included - is 4 us.
+                            if !matches!(arg2, Some(DataAccess::PortN(_))) {
+                                self.next_state = MCycle::new_fake(1);
+                            }
                         },
                         _ => unreachable!()
                     }
@@ -1278,12 +1281,12 @@ impl Z80 {
                 Mnemonic::Ind => {
                     self.inner_ind_flags();
                     self.hl.dec();
-                    self.next_state = MCycle::new_fake(2);
+                    self.next_state = MCycle::new_fake(1);
                 }
                 Mnemonic::Ini => {
                     self.inner_ini_flags();
                     self.hl.inc();
-                    self.next_state = MCycle::new_fake(2);
+                    self.next_state = MCycle::new_fake(1);
                 }
                 Mnemonic::Indr => {
                     self.inner_ind_flags();
@@ -1291,7 +1294,7 @@ impl Z80 {
                     self.next_state = MCycle::new_fake(if self.b() != 0 {
                         self.pc.dec();
                         self.pc.dec();
-                        3} else {2});
+                        2} else {1});
                 }
                 Mnemonic::Inir => {
                     self.inner_ini_flags();
@@ -1299,9 +1302,9 @@ impl Z80 {
                     self.next_state = MCycle::new_fake(if self.b() != 0 {
                         self.pc.dec();
                         self.pc.dec();
-                        3
-                    } else {
                         2
+                    } else {
+                        1
                     });
                 }
 

@@ -375,6 +375,19 @@ impl INKR {
     }
 }
 
+/// How long before the end of an HSYNC the Gate Array samples the video mode
+/// it will switch to: an `OUT` to RMR whose write lands later than this is
+/// not seen by *this* HSYNC and waits for the next one.
+///
+/// Measured against AMSpiriT (itself validated on real hardware) with
+/// Shaker's "GATE ARRAY MODERISATION" test (AE: mode 2->0, R2=46, R3=14, one
+/// `OUT` per line at C0=#2B..#3E): writes up to C0=#31 change the mode, #32
+/// and later do not - 7 microseconds earlier than the HSYNC end, where this
+/// emulator used to cut. HBL's multi-mode rupture relies on it: its
+/// `OUT mode2` lands right at the end of a short (R3=2) HSYNC and must not
+/// replace the mode0 written long before.
+pub const MODE_LATCH_LEAD_TICKS: u64 = 7 * 16;
+
 impl RMR {
     fn interrupt_counter(&self) -> bool {
         self.0 & 0b000_10000 != 0
@@ -828,6 +841,13 @@ pub struct GateArray {
 
     vsync_counter: VSyncCounter,
     hsync_counter: HSyncCounter,
+    /// Number of HSYNC falling edges seen so far (diagnostics).
+    hsync_ends: u64,
+    /// GA clock ticks since power-on (timestamps of the RMR mode writes).
+    abs_tick: u64,
+    /// Recent RMR video-mode writes, oldest first, as (abs_tick, mode); see
+    /// [`MODE_LATCH_LEAD_TICKS`]. Never empty.
+    mode_writes: Vec<(u64, VideoMode)>,
     interrupt_signal_counter: InterruptionSignal,
 
     rmr: RMR,
@@ -859,6 +879,9 @@ impl Default for GateArray {
 
             vsync_counter: VSyncCounter::NoVsync,
             hsync_counter: HSyncCounter::NoHsync,
+            hsync_ends: 0,
+            abs_tick: 0,
+            mode_writes: vec![(0, VideoMode::Mode0)],
 
             interrupt_signal_counter: InterruptionSignal::NoSignal,
 
@@ -925,6 +948,21 @@ impl GateArray {
     pub fn divide_clock(&mut self) {
         self.set_pin(GateArrayPin::NCPU, ((self.clock + 0) % 4) >= 2); // this delay is needed to let time to CRTC to get cpu infos from pins
         self.set_pin(GateArrayPin::CCLK, !(((self.clock + 1) % 16) >= 8));
+    }
+
+    /// The video mode an HSYNC ending now switches to: the last RMR mode
+    /// written at least [`MODE_LATCH_LEAD_TICKS`] ago (see there), forgetting
+    /// the older writes it supersedes.
+    fn latched_video_mode(&mut self) -> VideoMode {
+        let limit = self.abs_tick.saturating_sub(MODE_LATCH_LEAD_TICKS);
+        let keep_from = self.mode_writes.iter().rposition(|(t, _)| *t <= limit).unwrap_or(0);
+        self.mode_writes.drain(..keep_from);
+        self.mode_writes[0].1
+    }
+
+    /// HSYNC falling edges seen so far (diagnostics).
+    pub fn hsync_ends(&self) -> u64 {
+        self.hsync_ends
     }
 
     /// get the active video mode
@@ -1091,9 +1129,10 @@ impl GateArray {
     /// it also manage a counter for the interuptions and generate one when it reaches 52
     /// TODO check who disable the interrupt (GA or z80?)
     fn manage_hsync_end(&mut self) {
+        self.hsync_ends += 1;
         self.hsync_counter = HSyncCounter::NoHsync;
 
-        let new_mode = self.next_video_mode();
+        let new_mode = self.latched_video_mode();
         if new_mode != self.current_mode {
             // The byte the pixel pipeline is mid-way through was fetched
             // and is still being consumed under the OLD mode - it can't
@@ -1250,6 +1289,7 @@ impl Chip for GateArray {
 
     /// Change the screen mode when hsync is set
     fn pre_tick(&mut self) {
+        self.abs_tick += 1;
         if self.is_upfront(GateArrayPin::VSYNC) {
             //vsync occured
             self.vsync_counter = VSyncCounter::VSync(0);
@@ -1340,6 +1380,7 @@ impl GateArray {
             self.set_ink(self.pen(), self.ink());
         } else if RMR::is_addressed(command) {
             self.rmr = RMR(command);
+            self.mode_writes.push((self.abs_tick, self.rmr.video_mode()));
             if self.interrupt_counter() {
                 self.r52.reset();
                 self.cancel_interrupt();
@@ -1496,6 +1537,12 @@ mod test {
         assert_eq!(ga.next_video_mode(), VideoMode::Mode1);
         assert_eq!(ga.lower_rom_pagging(), Flag::Disable);
         assert_eq!(ga.upper_rom_pagging(), Flag::Disable);
+        // let the Mode 1 write age past the latch lead time (see
+        // `MODE_LATCH_LEAD_TICKS`), so the HSYNC end below switches to it
+        ga.set_pin(GateArrayPin::Neg_IORQ, true);
+        for _ in 0..(MODE_LATCH_LEAD_TICKS + 8) {
+            ga.tick();
+        }
         ga.set_data_on_pins(0x8e); // Mode 2
         ga.set_pin(GateArrayPin::A15, false);
         ga.set_pin(GateArrayPin::A14, true);

@@ -404,8 +404,8 @@ fn test_timing_input() {
 	out (C),0 | ED 01110001   | ........ | 4 
 	outi      | ED A3         | !!!!!!!! | 5 
 	outd      | ED AB         | !!!!!!!! | 5 
-	outir     | ED B3         | !!!!!!!! | 11
-	outdr     | ED BB         | !!!!!!!! | 11";
+	otir      | ED B3         | !!!!!!!! | 11
+	otdr      | ED BB         | !!!!!!!! | 11";
 	check_madram_timing_and_flags(madram);
 
 }
@@ -473,4 +473,14 @@ fn check_madram_timing_and_flags(content: &str) {
 				}
 			}
 		}
+}
+/// `IN A,(C)` is a 4 us instruction like every other `IN r,(C)` (only
+/// `IN A,(n)` is 3 us). It used to be 3 us, which made the usual
+/// `ld b,&f5 : in a,(c) : rra : jr nc,...` VSYNC wait - and Shaker's
+/// frame-locked tests - one microsecond per poll too fast.
+#[test]
+fn timing_in_a_c_is_four_us() {
+	check_madram_timing_and_flags("
+	in a,(C)  | ED 78         | SZ503P0. | 4
+	in a,(n)  |    11011011 n | ........ | 3 ");
 }
