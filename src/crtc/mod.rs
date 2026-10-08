@@ -336,6 +336,16 @@ impl Crtc {
         if let Some(register) = self.regs.get_mut(usize::from(r)) {
             *register = v & mask;
         }
+        // R2.JIT, ACCC §14.7.1: "if the update of R2 occurs while C0=R2
+        // (during the 3rd usec of an OUT(C),r8) then the CRTC sends the HSYNC
+        // signal later to the Gate Array". The compare of C0 with R2 already
+        // went by at the start of this character; the HSYNC it would have
+        // raised starts now, part-way through it.
+        if r == 2 && self.hcc == self.regs[2] && !self.hsync() && self.hsync_width().is_some() {
+            self.hsc = 0;
+            self.on(CrtcPin::HS);
+            self.hdc = 0;
+        }
     }
 
     /// The register as stored (no chip-dependent read behaviour: for that

@@ -619,6 +619,31 @@ impl Z80 {
             }
         }
         
+        /// The state starting the port read of the current instruction.
+        /// ACCC 4.4.3: the read of IN r,(C) and INI/IND lands on the 4th
+        /// microsecond (IN A,(n): the 3rd), so those wait one microsecond first.
+        fn input_start_state(&self) -> MCycle {
+            let late = match self.opcode_information().map(|i| &i.token) {
+                Some(Token::OpCode(Mnemonic::In, _, Some(DataAccess::PortC), _)) => true,
+                Some(Token::OpCode(Mnemonic::Ini | Mnemonic::Ind | Mnemonic::Inir | Mnemonic::Indr, _, _, _)) => true,
+                _ => false,
+            };
+            if late {
+                MCycle::IoWait(TState::T1, false)
+            } else {
+                MCycle::Input(TState::T1, 0)
+            }
+        }
+
+        /// OUTI/OUTD/OTIR/OTDR
+        fn is_block_output(&self) -> bool {
+            matches!(
+                self.opcode_information().and_then(|i| i.token.mnemonic()),
+                Some(Mnemonic::Outi | Mnemonic::Outd | Mnemonic::Otir | Mnemonic::Otdr)
+            )
+        }
+
+
         /// Execute the instruction ; all necessary stuffs has already been collected
         fn execute_step(&mut self) {
             debug_assert!(
@@ -802,7 +827,7 @@ impl Z80 {
 
                         if opcode_information.expect_read() {
                             if opcode_information.read_from_pins {
-                                self.next_state = MCycle::Input(TState::T1, 0);
+                                self.next_state = self.input_start_state();
                             } else {
                                 self.next_state = MCycle::Read(TState::T1, 0);
                             }
@@ -1141,13 +1166,11 @@ impl Z80 {
 
                 Mnemonic::In => {
                     match arg1 {
-                        Some(DataAccess::Register8(_)) | Some(DataAccess::Expression(_)) => {
-                            // `IN A,(n)` is 3 us on a CPC; every `IN r,(C)`
-                            // form - `IN A,(C)` included - is 4 us.
-                            if !matches!(arg2, Some(DataAccess::PortN(_))) {
-                                self.next_state = MCycle::new_fake(1);
-                            }
-                        },
+                        // `IN A,(n)` is 3 us on a CPC; every `IN r,(C)` form -
+                        // `IN A,(C)` included - is 4 us, the extra microsecond
+                        // being waited *before* the port is read (see
+                        // `input_start_state`)
+                        Some(DataAccess::Register8(_)) | Some(DataAccess::Expression(_)) => {},
                         _ => unreachable!()
                     }
 
@@ -1281,31 +1304,28 @@ impl Z80 {
                 Mnemonic::Ind => {
                     self.inner_ind_flags();
                     self.hl.dec();
-                    self.next_state = MCycle::new_fake(1);
-                }
+                                    }
                 Mnemonic::Ini => {
                     self.inner_ini_flags();
                     self.hl.inc();
-                    self.next_state = MCycle::new_fake(1);
-                }
+                                    }
                 Mnemonic::Indr => {
                     self.inner_ind_flags();
                     self.hl.dec();
-                    self.next_state = MCycle::new_fake(if self.b() != 0 {
+                    if self.b() != 0 {
                         self.pc.dec();
                         self.pc.dec();
-                        2} else {1});
+                        self.next_state = MCycle::new_fake(1);
+                    }
                 }
                 Mnemonic::Inir => {
                     self.inner_ini_flags();
                     self.hl.inc();
-                    self.next_state = MCycle::new_fake(if self.b() != 0 {
+                    if self.b() != 0 {
                         self.pc.dec();
                         self.pc.dec();
-                        2
-                    } else {
-                        1
-                    });
+                        self.next_state = MCycle::new_fake(1);
+                    }
                 }
 
                 Mnemonic::Ld => {
@@ -1434,30 +1454,33 @@ impl Z80 {
                 }
             }
   
+            // OUTI/OUTD write the port on the 5th microsecond (an IoWait is
+            // inserted before the output): nothing is idle afterwards, except
+            // the extra microsecond of a repeating iteration
             Mnemonic::Outi => {
                 self.inner_outi_flags();
-                self.next_state = MCycle::new_fake(1);
             }
 
             Mnemonic::Otir => {
                 self.inner_outi_flags();
-                self.next_state = MCycle::new_fake(if self.b() != 0 {
+                if self.b() != 0 {
                     self.pc.dec();
                     self.pc.dec();
-                    2} else {1});
+                    self.next_state = MCycle::new_fake(1);
+                }
             }          
 
             Mnemonic::Outd => {
                 self.inner_outd_flags();
-                self.next_state = MCycle::new_fake(1);
             }
 
             Mnemonic::Otdr => {
                 self.inner_outd_flags();
-                self.next_state = MCycle::new_fake(if self.b() != 0 {
+                if self.b() != 0 {
                     self.pc.dec();
                     self.pc.dec();
-                    2} else {1});
+                    self.next_state = MCycle::new_fake(1);
+                }
             }
             
             Mnemonic::Push => {
@@ -2478,7 +2501,7 @@ impl Chip for Z80 {
                             self.instruction_finished();
                         } else if  opcode_information.expect_read() {
                             if opcode_information.read_from_pins {
-                                self.next_state = MCycle::Input(TState::T1, 0);
+                                self.next_state = self.input_start_state();
                             } else {
                                 self.next_state = MCycle::Read(TState::T1, 0);
                             }
@@ -2538,7 +2561,12 @@ impl Chip for Z80 {
                             self.execute_step();
                         }
                         if opcode_info.write_to_pins {
-                            self.next_state = MCycle::Output(TState::T1, 0);
+                            // OUTI/OUTD: the port is written on the 5th microsecond
+                            self.next_state = if self.is_block_output() {
+                                MCycle::IoWait(TState::T1, true)
+                            } else {
+                                MCycle::Output(TState::T1, 0)
+                            };
                         } else {
                             self.next_state = MCycle::Write(TState::T1, 0);
                         }
@@ -2607,7 +2635,9 @@ impl Chip for Z80 {
                 debug_assert!(self.get_pin(Z80Pin::Neg_WR));
 
                 // For memory writes, MREQ becomes active one T-state before WR.
-                // IO writes keep IORQ timing and assert it together with WR in T2.
+                // I/O writes assert IORQ and WR together on T1: the effect of an
+                // OUT lands on the start of the 3rd (OUT (C),r8 / OUT (n),A) or
+                // 5th (OUTI/OUTD) microsecond of the instruction (ACCC 4.4.3).
                 if !self.next_state.is_output() {
                     self.off(self.next_state.write_pin_type().unwrap());
                 }
@@ -2615,6 +2645,11 @@ impl Chip for Z80 {
                 // Preload the data bus before WR is asserted.
                 let byte = self.get_byte_to_write_from_opcode_information(nb);
                 self.set_data_on_pins(byte);
+
+                if self.next_state.is_output() {
+                    self.off(self.next_state.write_pin_type().unwrap());
+                    self.off(Z80Pin::Neg_WR);
+                }
                 
                 self.next_state.inc_state();
             }
@@ -2674,6 +2709,12 @@ impl Chip for Z80 {
                 }
             }
             
+            MCycle::IoWait(_, _) => {
+                // nothing happens on the buses; the I/O cycle starts a
+                // microsecond later (ACCC 4.4.3)
+                self.next_state.inc_state();
+            }
+
             MCycle::Fake(TState::T4, 1) => {
                 self.instruction_finished();
             },

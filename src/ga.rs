@@ -385,8 +385,21 @@ pub const HSYNC_GA_DELAY_TICKS: usize = 2;
 
 /// Shortest HSYNC (in GA ticks, 16 per microsecond) that updates the video
 /// mode: ACCC 9.3.1, "a HSYNC of at least 2 usec is required for the graphic
-/// mode update" (R3 = 1 never changes the mode).
-pub const MODE_UPDATE_MIN_HSYNC_TICKS: u64 = 2 * 16;
+/// mode update" (R3 = 1 never changes the mode). The GA counts whole
+/// characters: an R2.JIT HSYNC of R3=2 starts part-way through a character
+/// and is a little shorter than 2 usec on the pin, yet updates the mode
+/// (Shaker AR), while R3=1 is exactly one character long.
+pub const MODE_UPDATE_MIN_HSYNC_TICKS: u64 = 17;
+
+/// The Gate Array takes the video mode when its HSYNC-GA period ends, which is
+/// R3 usec after the HSYNC opens but "capped at 6 usec" (ACCC 9.3.1; the
+/// chronogram of 9.3.2, R2=46/R3=14, has the last `OUT` landing on C0=51 win,
+/// 6 usec after C0=46). Shaker AE agrees (see `latch_mode`).
+pub const MODE_LATCH_CAP_TICKS: u64 = 6 * 16;
+
+/// The INT line rises 1 usec (16 ticks) after the CRTC's HSYNC ends, ACCC
+/// 27.6.1; the GA already hears of that end `HSYNC_GA_DELAY_TICKS` late.
+pub const INTERRUPT_AFTER_HSYNC_TICKS: u32 = 16 - HSYNC_GA_DELAY_TICKS as u32;
 
 impl RMR {
     fn interrupt_counter(&self) -> bool {
@@ -881,10 +894,10 @@ pub struct GateArray {
     hsync_ga_prev: bool,
     /// Video mode decided at the last HSYNC end, applied one pixel later.
     pending_mode: Option<VideoMode>,
-    /// Recent RMR video-mode writes, oldest first, as (abs_tick, mode); the
-    /// HSYNC end picks the one current at the middle of the pulse (see
-    /// `latched_video_mode`). Never empty.
-    mode_writes: Vec<(u64, VideoMode)>,
+    /// The mode of this HSYNC pulse was already taken (6 usec cap reached).
+    mode_latched: bool,
+    /// Ticks left before the INT line rises (see `schedule_interrupt`).
+    interrupt_delay: Option<u32>,
     interrupt_signal_counter: InterruptionSignal,
 
     rmr: RMR,
@@ -922,7 +935,8 @@ impl Default for GateArray {
             hsync_ga: false,
             hsync_ga_prev: false,
             pending_mode: None,
-            mode_writes: vec![(0, VideoMode::Mode0)],
+            mode_latched: false,
+            interrupt_delay: None,
 
             interrupt_signal_counter: InterruptionSignal::NoSignal,
 
@@ -1004,26 +1018,29 @@ impl GateArray {
         self.current_mode = new_mode;
     }
 
-    /// The video mode an HSYNC that has just ended after `width` GA ticks
-    /// switches to.
+    /// Takes the video mode the Gate Array will switch to: the RMR mode as it
+    /// stands now, the writes of this very tick not being seen yet. It is the
+    /// end of the HSYNC-GA period (see [`MODE_LATCH_CAP_TICKS`]); the switch
+    /// itself happens one pixel later, in the middle of a byte (ACCC 9.3.4).
     ///
-    /// The Gate Array samples the mode register in the middle of the HSYNC
-    /// (ACCC 9.3.1: the mode update depends on the HSYNC-GA period, which R3
-    /// bounds; none under 2 usec): an `OUT` to RMR counts for this HSYNC only
-    /// if it was written before that midpoint, later ones wait for the next
-    /// HSYNC. Calibrated against AMSpiriT (validated on real hardware) with
-    /// Shaker's AE test (mode 2->0, R3=14: writes up to 6 usec after the
-    /// HSYNC start count, 7 do not) and consistent with HBL's multi-mode
-    /// rupture, whose `OUT mode2` lands right at the end of an R3=2 HSYNC and
-    /// must not replace the mode0 written long before.
-    fn latched_video_mode(&mut self, width: u64) -> VideoMode {
-        if width < MODE_UPDATE_MIN_HSYNC_TICKS {
-            return self.current_mode;
+    /// Calibrated against AMSpiriT (validated on real hardware) with Shaker's
+    /// AE test (mode 2->0, R3=14: `OUT`s landing up to 6 usec after the HSYNC
+    /// start count), and consistent with HBL's multi-mode rupture, whose
+    /// `OUT mode2` lands right at the end of an R3=2 HSYNC and must not replace
+    /// the mode0 written long before.
+    fn latch_mode(&mut self) {
+        let new_mode = self.rmr.video_mode();
+        self.mode_latched = true;
+        if new_mode != self.current_mode {
+            self.pending_mode = Some(new_mode);
         }
-        let limit = self.abs_tick.saturating_sub(width / 2);
-        let keep_from = self.mode_writes.iter().rposition(|(t, _)| *t < limit).unwrap_or(0);
-        self.mode_writes.drain(..keep_from);
-        self.mode_writes[0].1
+    }
+
+    /// ACCC 27.6.1: "an interrupt always starts 1 usec AFTER THE END OF THE
+    /// HSYNC regardless of the CRTC" - R52 itself counts on the HSYNC end,
+    /// only the INT line it raises comes up a microsecond later.
+    fn schedule_interrupt(&mut self) {
+        self.interrupt_delay = Some(INTERRUPT_AFTER_HSYNC_TICKS);
     }
 
     /// The CRTC HSYNC as the GA sees it (a few pixels late, see
@@ -1208,14 +1225,16 @@ impl GateArray {
         };
         self.hsync_counter = HSyncCounter::NoHsync;
 
-        let new_mode = self.latched_video_mode(width);
-        if new_mode != self.current_mode {
-            self.pending_mode = Some(new_mode);
+        // the mode is normally taken when the HSYNC-GA period ends: here only
+        // if the 6 usec cap was not reached first (see `latch_mode`)
+        if !self.mode_latched && width >= MODE_UPDATE_MIN_HSYNC_TICKS {
+            self.latch_mode();
         }
+        self.mode_latched = false;
         self.r52.inc();
         if self.r52 == 52 {
             self.r52.reset();
-            self.request_interrupt();
+            self.schedule_interrupt();
         } else {
             match self.vsync_counter {
                 VSyncCounter::VSync(ref mut count) => {
@@ -1249,7 +1268,7 @@ impl GateArray {
                         // the full chain of evidence.
                         if self.r52.bit(5) {
                             self.r52.reset();
-                            self.request_interrupt();
+                            self.schedule_interrupt();
                         } else {
                             self.r52.reset();
                         }
@@ -1366,6 +1385,15 @@ impl Chip for GateArray {
         self.hsync_pipe.rotate_left(1);
         self.hsync_pipe[HSYNC_GA_DELAY_TICKS - 1] = self.get_pin(GateArrayPin::HSYNC);
 
+        if let Some(left) = self.interrupt_delay {
+            if left <= 1 {
+                self.interrupt_delay = None;
+                self.request_interrupt();
+            } else {
+                self.interrupt_delay = Some(left - 1);
+            }
+        }
+
         // a mode decided at the previous HSYNC end changes one pixel after
         // the display came back (the first pixel is still in the old mode)
         if let Some(new_mode) = self.pending_mode.take() {
@@ -1380,6 +1408,13 @@ impl Chip for GateArray {
         }
         else if self.hsync_ga {
             self.hsync_counter.inc();
+        }
+        if self.hsync_ga && !self.mode_latched {
+            if let HSyncCounter::HSync(n) = self.hsync_counter {
+                if n as u64 + 1 >= MODE_LATCH_CAP_TICKS {
+                    self.latch_mode();
+                }
+            }
         }
 
         // XXX play with the modulo to handle the appropriate timing
@@ -1457,7 +1492,6 @@ impl GateArray {
             self.set_ink(self.pen(), self.ink());
         } else if RMR::is_addressed(command) {
             self.rmr = RMR(command);
-            self.mode_writes.push((self.abs_tick, self.rmr.video_mode()));
             if self.interrupt_counter() {
                 self.r52.reset();
                 self.cancel_interrupt();
@@ -1649,22 +1683,23 @@ mod test {
             ga.save_pins_state();
             ga.tick();
         }
-        ga.set_data_on_pins(0x8e); // Mode 2
+        // the HSYNC ends; the GA sees it a few ticks late, takes the mode (Mode 1)
+        // and switches one pixel later
+        ga.set_pin(GateArrayPin::HSYNC, false);
+        for _ in 0..(HSYNC_GA_DELAY_TICKS + 3) {
+            ga.save_pins_state();
+            ga.tick();
+        }
+        // a Mode 2 write after that waits for the next HSYNC
+        ga.set_data_on_pins(0x8e);
         ga.set_pin(GateArrayPin::A15, false);
         ga.set_pin(GateArrayPin::A14, true);
         ga.set_pin(GateArrayPin::Neg_IORQ, false);
         ga.set_pin(GateArrayPin::Neg_M1, true);
         ga.set_pin(GateArrayPin::Neg_RD, true);
-        ga.set_pin(GateArrayPin::HSYNC, true);
         ga.save_pins_state();
-        ga.set_pin(GateArrayPin::HSYNC, false);
-        ga.tick(); // the Mode 2 write lands here, right at the end of the HSYNC
+        ga.tick();
         ga.set_pin(GateArrayPin::Neg_IORQ, true);
-        // the GA sees the HSYNC end a few ticks late, and switches a pixel after
-        for _ in 0..(HSYNC_GA_DELAY_TICKS + 3) {
-            ga.save_pins_state();
-            ga.tick();
-        }
 
         assert_eq!(ga.active_video_mode(), VideoMode::Mode1);
         assert_eq!(ga.next_video_mode(), VideoMode::Mode2);

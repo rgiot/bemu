@@ -790,7 +790,11 @@ impl OpcodeDecoder for Token {
         /// Write to a chip
         Output(TState, u8),
         /// Fake state to simulate additional computations
-        Fake(TState, u8)
+        Fake(TState, u8),
+        /// One microsecond of waiting before an I/O cycle (`true`: an output,
+        /// else an input). ACCC 4.4.3: the effect of IN r,(C) and INI/IND lands
+        /// on the 4th microsecond of the instruction, OUTI/OUTD on the 5th.
+        IoWait(TState, bool)
     }
     
     impl Default for MCycle {
@@ -821,6 +825,9 @@ impl OpcodeDecoder for Token {
                 },
                 Self::Fake(t, c) => {
                     format!("F({:#?},{})", t, c)
+                }
+                Self::IoWait(t, out) => {
+                    format!("W({:#?},{})", t, out)
                 }
             };
             format!("\"{}\"", inner)
@@ -888,6 +895,10 @@ impl OpcodeDecoder for Token {
 
                 MCycle::Input(TState::T4, nb) => panic!("Ambigous"),
                 MCycle::Input(t, nb) => MCycle::Input(t.inc_state(), *nb),
+
+                MCycle::IoWait(TState::T4, true) => MCycle::Output(TState::T1, 0),
+                MCycle::IoWait(TState::T4, false) => MCycle::Input(TState::T1, 0),
+                MCycle::IoWait(t, out) => MCycle::IoWait(t.inc_state(), *out),
 
                 MCycle::Fake(TState::T4, nb) => MCycle::Fake(TState::T1, *nb - 1),
                 MCycle::Fake(t, nb) => MCycle::Fake(t.inc_state(), *nb),
