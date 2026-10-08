@@ -24,6 +24,12 @@ const MONITOR_ACTIVE_PIXELS: usize = 52 * 16;
 /// after the start of a VSYNC: it is flying back to the top.
 const MONITOR_HEIGHT: usize = 312;
 const MONITOR_FIRST_LINE: usize = 24;
+/// Once locked, the line oscillator (AFC) only follows an HSYNC that ends
+/// in the last quarter of its period: a pulse half a line away (a second,
+/// cut-short HSYNC of the R3.JIT tests) is ignored.
+const MONITOR_HSYNC_WINDOW_START: usize = RASTER_LINE_LENGTH * 3 / 4;
+/// Lines without an accepted HSYNC after which the line oscillator unlocks.
+const MONITOR_HSYNC_LOST_LINES: usize = 4;
 /// Lines the frame oscillator runs when no VSYNC comes.
 const MONITOR_FREE_RUN_LINES: usize = 312;
 
@@ -52,6 +58,10 @@ pub struct Monitor {
     vsync_run: usize,
     /// The VSYNC pulse has already restarted the frame.
     vsync_seen: bool,
+    /// The line oscillator follows the HSYNC pulses; counts the lines it ran
+    /// free since.
+    locked: bool,
+    free_lines: usize,
     /// A VSYNC has been seen at least once: only then a frame is whole.
     synchronised: bool,
     /// Ticks since the last frame start, for the frame oscillator.
@@ -75,6 +85,8 @@ impl Monitor {
             hsync_run: 0,
             vsync_run: 0,
             vsync_seen: false,
+            locked: false,
+            free_lines: 0,
             synchronised: false,
             vsync_color,
             hsync_color
@@ -128,8 +140,21 @@ impl Monitor {
 
         // horizontal synchronisation: end of a pulse long enough, or the
         // oscillator running out
-        let line_end = (hsync_pulse > MONITOR_MIN_HSYNC_TICKS && !hsync)
-            || self.x >= RASTER_LINE_LENGTH;
+        let pulse_end = hsync_pulse > MONITOR_MIN_HSYNC_TICKS
+            && !hsync
+            && (!self.locked || self.x >= MONITOR_HSYNC_WINDOW_START);
+        let free_run = self.x >= RASTER_LINE_LENGTH;
+        let line_end = pulse_end || free_run;
+        if pulse_end {
+            self.locked = true;
+            self.free_lines = 0;
+        }
+        else if free_run {
+            self.free_lines += 1;
+            if self.free_lines >= MONITOR_HSYNC_LOST_LINES {
+                self.locked = false;
+            }
+        }
         if frame_start {
             self.start_frame();
         }
