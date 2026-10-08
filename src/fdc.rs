@@ -62,6 +62,7 @@ mod st2 {
     pub const SH: u8 = 1 << 3; // Scan equal Hit
     pub const SN: u8 = 1 << 2; // Scan Not satisfied
     pub const BC: u8 = 1 << 1; // Bad Cylinder (C = &FF)
+    pub const MD: u8 = 1 << 0; // Missing Data address mark
 }
 
 /// ST3 (datasheet Table 3).
@@ -704,8 +705,16 @@ impl Fdc {
                 let index = cursor % sectors.len();
                 let sector = &sectors[index];
                 id = (sector.c, sector.h, sector.r, sector.n);
+                let bad_id_crc = sector.st1 & flag::ST1_DATA_ERROR != 0
+                    && sector.st2 & flag::ST2_DATA_ERROR_IN_DATA == 0;
                 let len = sectors.len();
                 self.drives[unit].cursor = (index + 1) % len;
+                // an ID whose CRC is bad is still reported, with MA|DE|ND
+                // (what MAME and DISCTEST's notes give)
+                if bad_id_crc {
+                    self.st0 |= st0::IC_ABNORMAL;
+                    self.st1 |= st1::MA | st1::DE | st1::ND;
+                }
             }
         }
 
@@ -815,6 +824,22 @@ impl Fdc {
 
         self.xfer.sector = index;
         (self.xfer.c, self.xfer.h, self.xfer.r, self.xfer.n) = id;
+
+        // A sector the medium recorded as unreadable *before its data*: a CRC
+        // error in the ID field (DE without DD), no such sector (ND), or no
+        // data address mark (MA/MD). The command ends before any data is
+        // transferred (DISCTEST's notes on the uPD765; a data CRC error, on the
+        // other hand, arrives after all the data).
+        let id_crc_error = recorded_st1 & flag::ST1_DATA_ERROR != 0
+            && recorded_st2 & flag::ST2_DATA_ERROR_IN_DATA == 0;
+        let not_found = recorded_st1 & st1::ND != 0;
+        let no_data_mark = recorded_st1 & st1::MA != 0 || recorded_st2 & st2::MD != 0;
+        if id_crc_error || not_found || no_data_mark {
+            self.st1 |= recorded_st1 | if id_crc_error { st1::ND } else { 0 };
+            self.st2 |= recorded_st2 & !st2::CM;
+            self.finish_transfer();
+            return;
+        }
 
         // What the medium recorded about this sector shows up in the flags
         self.st1 |= recorded_st1;
