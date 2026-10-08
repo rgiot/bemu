@@ -185,6 +185,9 @@ impl OpcodeDecoder for Token {
         fn write_data(&self) -> DataSource {
             if self.is_output_opcode() {
                 match self.mnemonic_arg2() {
+                    // OUT (C),0: the only output with a literal, and no
+                    // immediate byte follows the opcode
+                    Some(DataAccess::Expression(Expr::Value(0))) => DataSource::Zero,
                     Some(position) => position.into(),
                     None => DataSource::Pins, // the data is already on the pins
                 }
@@ -349,6 +352,7 @@ impl OpcodeDecoder for Token {
                 DataSource::Immediate => 1,           // XXX not sure of that
                 DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
                 DataSource::Pins => 1,                // the byte is already on the pins
+                DataSource::Zero => 1,
 
             }
         }
@@ -374,6 +378,7 @@ impl OpcodeDecoder for Token {
                 DataSource::Immediate => 1, // XXX not sure of that
                 DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
                 DataSource::Pins => 1,      // the byte is already on the pins
+                DataSource::Zero => 1,
 
             }
         }
@@ -742,6 +747,8 @@ impl OpcodeDecoder for Token {
         Immediate,
         /// Data stays on the pins
         Pins,
+        /// The constant 0 (undocumented OUT (C),0, ED 71)
+        Zero,
         /// The value is in a 8 bit register
         Register8(Reg8),
         /// The value is in a 16 bit register

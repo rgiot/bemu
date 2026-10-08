@@ -553,6 +553,7 @@ impl Z80 {
                     debug_assert_eq!(step, 0);
                     self.get_data_from_pins() as u16
                 }
+                DataSource::Zero => 0,
                 DataSource::Register16(reg) | DataSource::IndexRegister16(reg) => {
                     self.reg16(*reg).value()
                 }

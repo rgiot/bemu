@@ -54,6 +54,10 @@ impl CrtcModel for Crtc0 {
         }
     }
 
+    fn has_last_line_state(&self) -> bool {
+        true
+    }
+
     /// ACCC §19.1: R8 bits 5-4.
     fn display_skew(&self, r8: u8) -> DisplaySkew {
         skew_from_r8(r8)

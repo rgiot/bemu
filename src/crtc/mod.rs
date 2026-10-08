@@ -143,6 +143,9 @@ pub struct Crtc {
     /// real 6845 uses to hit an exact line count (e.g. 312 for PAL) when
     /// (R4+1)*(R9+1) alone doesn't divide evenly.
     in_vertical_adjust: bool,
+    /// The "last line of the frame" state of CRTC 0 (see
+    /// [`CrtcModel::has_last_line_state`]).
+    last_line: bool,
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
     pub hsc: u8,
 
@@ -192,6 +195,7 @@ impl Default for Crtc {
             hdc: 0,
             vtac: 0,
             in_vertical_adjust: false,
+            last_line: false,
             crtc_vma: 0,
             crtc_vma_prime: 0,
             model: CrtcType::default().model(),
@@ -346,6 +350,10 @@ impl Crtc {
                 self.off(CrtcPin::HS);
             }
         }
+        // CRTC 0 keeps assessing the last line while C0<2 (ACCC 12.2)
+        if (r == 4 || r == 9) && self.hcc < 2 {
+            self.assess_last_line();
+        }
         // R2.JIT, ACCC §14.7.1: "if the update of R2 occurs while C0=R2
         // (during the 3rd usec of an OUT(C),r8) then the CRTC sends the HSYNC
         // signal later to the Gate Array". The compare of C0 with R2 already
@@ -355,6 +363,24 @@ impl Crtc {
             self.hsc = 0;
             self.on(CrtcPin::HS);
             self.hdc = 0;
+        }
+    }
+
+    /// The register the next data write goes to (diagnostics).
+    pub fn selected_register(&self) -> u8 {
+        self.ar
+    }
+
+    /// The CRTC 0 "last line of the frame" state (diagnostics).
+    pub fn last_line(&self) -> bool {
+        self.last_line
+    }
+
+    /// ACCC 12.2: while C0<2, CRTC 0 decides whether this is the frame's
+    /// last line; it no longer looks at R4/R9 afterwards.
+    fn assess_last_line(&mut self) {
+        if self.model.has_last_line_state() && !self.in_vertical_adjust {
+            self.last_line = self.vcc == self.regs[4] && self.vlc == self.regs[9];
         }
     }
 
@@ -474,12 +500,33 @@ impl Crtc {
                 self.vtac += 1;
                 if self.vtac >= self.regs[5] {
                     self.in_vertical_adjust = false;
+                    self.last_line = false;
                     self.vtac = 0;
                     self.vcc.reset();
                     self.vlc.reset();
                 }
+            } else if self.model.has_last_line_state() {
+                // ACCC 12.2 / 10.3.1: the latched last-line state, or else
+                // C9==R9 at this very moment decides everything
+                if self.last_line {
+                    self.last_line = false;
+                    self.vlc.reset();
+                    self.vcc += 1;
+                    if self.regs[5] == 0 {
+                        self.vcc.reset();
+                    } else {
+                        self.in_vertical_adjust = true;
+                        self.vtac = 0;
+                    }
+                } else if self.vlc == self.regs[9] {
+                    self.vlc.reset();
+                    self.vcc += 1;
+                } else {
+                    self.vlc += 1;
+                }
             } else {
                 self.vlc += 1;
+
 
                 // This is the end of a char line
                 if self.vlc == self.regs[9] + 1 {
@@ -503,6 +550,9 @@ impl Crtc {
             // Sampled once per line, at C0=R0 (ACCC §21.3.3); an R6 of 0
             // while the frame is running is not detected by the chip.
             self.vertical_border = self.regs[6] != 0 && self.vcc >= self.regs[6];
+        }
+        if self.hcc < 2 {
+            self.assess_last_line();
         }
 
         if self.hcc.wrapping_add(self.reg8_delay_border()) >= self.regs[1] || self.vcc >= self.regs[6] {
@@ -657,6 +707,8 @@ impl Chip for Crtc {
         self.hcc = self.regs[0];
         self.vtac = 0;
         self.in_vertical_adjust = false;
+        // the counters sit on the last line of the frame
+        self.last_line = self.model.has_last_line_state();
 
         self.set_pin(CrtcPin::DE, true);
         self.set_pin(CrtcPin::HS, false);

@@ -153,6 +153,14 @@ pub trait CrtcModel: Debug + Sync {
         true
     }
 
+    /// CRTC 0 (ACCC 12.2, 10.3.1): the frame's last line is a latched state,
+    /// evaluated (C4==R4 && C9==R9) only while C0<2. Once set it resets C4
+    /// and C9 on the next line whatever R4/R9 become; when not set, C4
+    /// counts on (up to 127) each time C9==R9, R4 or no R4.
+    fn has_last_line_state(&self) -> bool {
+        false
+    }
+
     /// What the skew field of R8 does; none on CRTC 1 and 2 (ACCC §19.2).
     fn display_skew(&self, r8: u8) -> DisplaySkew;
 

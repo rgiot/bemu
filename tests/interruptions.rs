@@ -206,6 +206,9 @@ fn test_interruption_mode1_one_frame() {
 	let infinite_loop = dbg!(cpclib_macros::assemble!(" halt : halt : halt : halt : halt : halt "));
     let interrupt_handler = dbg!(cpclib_macros::assemble!(" ei : ret"));
 
+	// RAM does not power up zeroed (it holds #00/#FF blocks): make the memory
+	// walked beyond the test's own code a field of nops
+	motherboard.write_buffer(0x0, &[0u8; 0x2100]);
 	motherboard.write_buffer(0x38, interrupt_handler);
 	motherboard.write_buffer(0x100, infinite_loop);
 	motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);

@@ -232,8 +232,17 @@ const URS_PIN_DATA_BUS: [UpperRomSelectorPin; 8] = [
 ];
 
 impl Default for Bank {
+    /// Power-on content of a RAM bank: 8 bytes of #00 then 8 bytes of #FF,
+    /// over and over (what AMSpiriT fills every bank with; programs such
+    /// as Logon System's Dsc4 read RAM they never wrote, and depend on it).
     fn default() -> Self {
-        Self([0; 0x4000])
+        let mut bank = [0u8; 0x4000];
+        bank.iter_mut().enumerate().for_each(|(offset, byte)| {
+            if offset & 8 != 0 {
+                *byte = 0xff;
+            }
+        });
+        Self(bank)
     }
 }
 
