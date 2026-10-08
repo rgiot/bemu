@@ -18,7 +18,7 @@ fn main() {
     let mut runner = CslRunner::new("/tmp/debug_hbl_modes_shots");
     let script = format!(
         "csl_version 1.0\ncrtc_select 0\nreset\ndisk_insert '{dsk}'\nwait 3000000\n\
-         key_delay 70000 70000 400000\nkey_output 'RUN\"HBL\\(RET)'\nwait {}\n",
+         key_delay 70000 70000 400000\nkey_output 'RUN\"HBL\" \\(')CRTC=0\\(RET)'\nwait {}\n",
         wait * 1_000_000
     );
     if let Some(path) = &csl {
@@ -37,7 +37,7 @@ fn main() {
         use amsrust::z80::{HasValue, Reg16};
         let sp = mb.cpu().reg16(Reg16::Sp).value();
         println!("REGS DE={:04X} HL={:04X} BC={:04X} SP={:04X} stack={:02X?}", mb.cpu().reg16(Reg16::De).value(), mb.cpu().reg16(Reg16::Hl).value(), mb.cpu().reg16(Reg16::Bc).value(), sp, (0..8).map(|i| mb.read_byte(sp.wrapping_add(i))).collect::<Vec<_>>());
-        for i in mb.disassemble_instructions_from(0x8DE0, 40) { let t = format!("{:?}", i.token); if true { println!("DIS {:04X} {}", i.address, t); } }
+        for i in mb.disassemble_instructions_from(0x0, 0) { let t = format!("{:?}", i.token); if true { println!("DIS {:04X} {}", i.address, t); } }
     }
     let mut last = (regs(mb), mb.ga().next_video_mode(), mb.ga().active_video_mode(), mb.ga().hsync_ends());
     println!("start PC={:04X} regs R0-R7,R9={:?} next={:?} active={:?}", mb.pc(), last.0, last.1, last.2);

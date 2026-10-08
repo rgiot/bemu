@@ -375,18 +375,18 @@ impl INKR {
     }
 }
 
-/// How long before the end of an HSYNC the Gate Array samples the video mode
-/// it will switch to: an `OUT` to RMR whose write lands later than this is
-/// not seen by *this* HSYNC and waits for the next one.
-///
-/// Measured against AMSpiriT (itself validated on real hardware) with
-/// Shaker's "GATE ARRAY MODERISATION" test (AE: mode 2->0, R2=46, R3=14, one
-/// `OUT` per line at C0=#2B..#3E): writes up to C0=#31 change the mode, #32
-/// and later do not - 7 microseconds earlier than the HSYNC end, where this
-/// emulator used to cut. HBL's multi-mode rupture relies on it: its
-/// `OUT mode2` lands right at the end of a short (R3=2) HSYNC and must not
-/// replace the mode0 written long before.
-pub const MODE_LATCH_LEAD_TICKS: u64 = 7 * 16;
+/// The Gate Array reacts to the CRTC's HSYNC this many pixel-M2 ticks late
+/// (display blanking, HSYNC end processing). With it the display resumes at
+/// the 4th pixel-M2 of a byte, as the ACCC describes (9.3.4.3.1 and
+/// 9.3.4.3.3, CRTC 0/1/2: "display resumes from the 4th Pixel-M2 of the 5th
+/// VRAM byte"; the mode itself changes one pixel after the display is
+/// restored).
+pub const HSYNC_GA_DELAY_TICKS: usize = 2;
+
+/// Shortest HSYNC (in GA ticks, 16 per microsecond) that updates the video
+/// mode: ACCC 9.3.1, "a HSYNC of at least 2 usec is required for the graphic
+/// mode update" (R3 = 1 never changes the mode).
+pub const MODE_UPDATE_MIN_HSYNC_TICKS: u64 = 2 * 16;
 
 impl RMR {
     fn interrupt_counter(&self) -> bool {
@@ -674,8 +674,38 @@ impl PixelAutomata {
             };
         }
         match self {
+            PixelAutomata::AvailablePixel(step, byte, VideoMode::Mode1, palette)
+                if *step == PixelOrder::Pixel5 =>
+            {
+                // ACCC 9.3.4.3.3 (CRTC 0/1/2): the display resumes on the 4th
+                // pixel-M2 of the byte, still in MODE 1 colour (the last half
+                // of pixel B, already produced here), and the new mode
+                // starts on the 5th with bits recovered from the byte
+                // (A0..A3, B0.., etc. are the MODE 1 pixel bits: pixel A =
+                // (b3,b7), B = (b2,b6), C = (b1,b5), D = (b0,b4)):
+                //   -> MODE 0: one pixel, colour (pad, b3, b1, b5)
+                //   -> MODE 1: pixels C and D, unchanged
+                //   -> MODE 2: three pixels b5, b4, b3
+                //   -> MODE 3: one pixel, colour (b1, b5)
+                // `pad` is 0 on a GA 40010 and 1 on a 40007/8.
+                let bit = |n: u8| (byte >> n) & 1;
+                let pad = ga_type.missed_bit_pad();
+                let virtual_byte = match new_mode {
+                    // MODE 0's second pixel (slots 5-8) reads b0,b4,b2,b6 as
+                    // colour bits 3,2,1,0
+                    VideoMode::Mode0 | VideoMode::Mode3 => {
+                        (bit(5) << 6) | (bit(3) << 4) | (bit(1) << 2) | pad
+                    }
+                    // MODE 2 slots 5..8 read bits 3..0
+                    VideoMode::Mode2 => (bit(5) << 3) | (bit(4) << 2) | (bit(3) << 1) | bit(2),
+                    VideoMode::Mode1 => *byte,
+                };
+                PixelAutomata::AvailablePixel(PixelOrder::Pixel5, virtual_byte, new_mode, *palette)
+            }
             PixelAutomata::AvailablePixel(step, byte, VideoMode::Mode2, palette) => {
-                let consumed = step.already_generated();
+                // MODE 2 pixels run one pixel-M2 ahead of the other modes'
+                // (ACCC 9.3.4.3.1: it resumes on the 5th pixel, bit counter 5)
+                let consumed = step.already_generated() + 1;
                 let missed = consumed.saturating_sub(ga_type.reconstruction_lead());
                 if missed == 0 {
                     return PixelAutomata::AvailablePixel(PixelOrder::Pixel1, *byte, new_mode, *palette);
@@ -845,8 +875,15 @@ pub struct GateArray {
     hsync_ends: u64,
     /// GA clock ticks since power-on (timestamps of the RMR mode writes).
     abs_tick: u64,
-    /// Recent RMR video-mode writes, oldest first, as (abs_tick, mode); see
-    /// [`MODE_LATCH_LEAD_TICKS`]. Never empty.
+    /// The CRTC HSYNC as the GA sees it (see [`HSYNC_GA_DELAY_TICKS`]).
+    hsync_pipe: [bool; HSYNC_GA_DELAY_TICKS],
+    hsync_ga: bool,
+    hsync_ga_prev: bool,
+    /// Video mode decided at the last HSYNC end, applied one pixel later.
+    pending_mode: Option<VideoMode>,
+    /// Recent RMR video-mode writes, oldest first, as (abs_tick, mode); the
+    /// HSYNC end picks the one current at the middle of the pulse (see
+    /// `latched_video_mode`). Never empty.
     mode_writes: Vec<(u64, VideoMode)>,
     interrupt_signal_counter: InterruptionSignal,
 
@@ -881,6 +918,10 @@ impl Default for GateArray {
             hsync_counter: HSyncCounter::NoHsync,
             hsync_ends: 0,
             abs_tick: 0,
+            hsync_pipe: [false; HSYNC_GA_DELAY_TICKS],
+            hsync_ga: false,
+            hsync_ga_prev: false,
+            pending_mode: None,
             mode_writes: vec![(0, VideoMode::Mode0)],
 
             interrupt_signal_counter: InterruptionSignal::NoSignal,
@@ -950,14 +991,45 @@ impl GateArray {
         self.set_pin(GateArrayPin::CCLK, !(((self.clock + 1) % 16) >= 8));
     }
 
-    /// The video mode an HSYNC ending now switches to: the last RMR mode
-    /// written at least [`MODE_LATCH_LEAD_TICKS`] ago (see there), forgetting
-    /// the older writes it supersedes.
-    fn latched_video_mode(&mut self) -> VideoMode {
-        let limit = self.abs_tick.saturating_sub(MODE_LATCH_LEAD_TICKS);
-        let keep_from = self.mode_writes.iter().rposition(|(t, _)| *t <= limit).unwrap_or(0);
+    /// Switches to `new_mode` while the pixel pipeline may be mid-byte: the
+    /// byte being displayed was fetched under the old mode, so what is left of
+    /// it is reconstructed (ACCC 9.3.4.3, see
+    /// `PixelAutomata::reconstruct_for_mode_switch`).
+    fn apply_video_mode(&mut self, new_mode: VideoMode) {
+        if new_mode != self.current_mode {
+            self.pixel_automata = self
+                .pixel_automata
+                .reconstruct_for_mode_switch(new_mode, self.ga_type);
+        }
+        self.current_mode = new_mode;
+    }
+
+    /// The video mode an HSYNC that has just ended after `width` GA ticks
+    /// switches to.
+    ///
+    /// The Gate Array samples the mode register in the middle of the HSYNC
+    /// (ACCC 9.3.1: the mode update depends on the HSYNC-GA period, which R3
+    /// bounds; none under 2 usec): an `OUT` to RMR counts for this HSYNC only
+    /// if it was written before that midpoint, later ones wait for the next
+    /// HSYNC. Calibrated against AMSpiriT (validated on real hardware) with
+    /// Shaker's AE test (mode 2->0, R3=14: writes up to 6 usec after the
+    /// HSYNC start count, 7 do not) and consistent with HBL's multi-mode
+    /// rupture, whose `OUT mode2` lands right at the end of an R3=2 HSYNC and
+    /// must not replace the mode0 written long before.
+    fn latched_video_mode(&mut self, width: u64) -> VideoMode {
+        if width < MODE_UPDATE_MIN_HSYNC_TICKS {
+            return self.current_mode;
+        }
+        let limit = self.abs_tick.saturating_sub(width / 2);
+        let keep_from = self.mode_writes.iter().rposition(|(t, _)| *t < limit).unwrap_or(0);
         self.mode_writes.drain(..keep_from);
         self.mode_writes[0].1
+    }
+
+    /// The CRTC HSYNC as the GA sees it (a few pixels late, see
+    /// [`HSYNC_GA_DELAY_TICKS`]): what blanks the display.
+    pub fn hsync_ga(&self) -> bool {
+        self.hsync_ga
     }
 
     /// HSYNC falling edges seen so far (diagnostics).
@@ -1101,7 +1173,7 @@ impl GateArray {
             let computed = self
                 .pixel_automata
                 .generate_pixel(!self.get_pin(GateArrayPin::DISPEN));
-            if self.get_pin(GateArrayPin::HSYNC) || self.get_pin(GateArrayPin::VSYNC) {
+            if self.hsync_ga || self.get_pin(GateArrayPin::VSYNC) {
                 self.rgb = (0., 0., 0.).into();
             } else {
                 self.rgb = computed;
@@ -1130,23 +1202,16 @@ impl GateArray {
     /// TODO check who disable the interrupt (GA or z80?)
     fn manage_hsync_end(&mut self) {
         self.hsync_ends += 1;
+        let width = match self.hsync_counter {
+            HSyncCounter::HSync(n) => n as u64 + 1,
+            HSyncCounter::NoHsync => 0,
+        };
         self.hsync_counter = HSyncCounter::NoHsync;
 
-        let new_mode = self.latched_video_mode();
+        let new_mode = self.latched_video_mode(width);
         if new_mode != self.current_mode {
-            // The byte the pixel pipeline is mid-way through was fetched
-            // and is still being consumed under the OLD mode - it can't
-            // just be swapped to the new mode from pixel 1, real hardware
-            // can't un-display what it already showed. Reconstruct the
-            // automaton's remaining pixels instead (ACCC §9.3.4.3, see
-            // `PixelAutomata::reconstruct_for_mode_switch`'s own doc for
-            // exactly which cases this actually changes vs. leaves as a
-            // documented gap).
-            self.pixel_automata = self
-                .pixel_automata
-                .reconstruct_for_mode_switch(new_mode, self.ga_type);
+            self.pending_mode = Some(new_mode);
         }
-        self.current_mode = new_mode;
         self.r52.inc();
         if self.r52 == 52 {
             self.r52.reset();
@@ -1295,13 +1360,25 @@ impl Chip for GateArray {
             self.vsync_counter = VSyncCounter::VSync(0);
         }
 
+        // the HSYNC as the GA sees it, a few pixels after the CRTC raised it
+        self.hsync_ga_prev = self.hsync_ga;
+        self.hsync_ga = self.hsync_pipe[0];
+        self.hsync_pipe.rotate_left(1);
+        self.hsync_pipe[HSYNC_GA_DELAY_TICKS - 1] = self.get_pin(GateArrayPin::HSYNC);
+
+        // a mode decided at the previous HSYNC end changes one pixel after
+        // the display came back (the first pixel is still in the old mode)
+        if let Some(new_mode) = self.pending_mode.take() {
+            self.apply_video_mode(new_mode);
+        }
+
         if self.is_upfront(GateArrayPin::VSYNC) {
             self.hsync_counter = HSyncCounter::HSync(0);
         }
-        else if self.is_downfront(GateArrayPin::HSYNC) {
+        else if self.hsync_ga_prev && !self.hsync_ga {
             self.manage_hsync_end();
         }
-        else if self.get_pin(GateArrayPin::HSYNC) {
+        else if self.hsync_ga {
             self.hsync_counter.inc();
         }
 
@@ -1449,7 +1526,7 @@ mod test {
         // display resumes; missed bits (the top 5) are padded with 0, and
         // the new colour number is (A3,A2,A1,A0) = (0, b0, 0, b2).
         let byte = 0b0000_0101u8; // b2=1, b1=0, b0=1
-        let automaton = mode2_automaton_at(5, byte);
+        let automaton = mode2_automaton_at(4, byte);
         let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode0, GateArrayType::Ga40010);
         // virtual byte: bits[7,6,5] = [b2,b1,b0] = [1,0,1], bits[4..0] = 0
         assert_eq!(reconstructed.byte(), Some(0b1010_0000));
@@ -1463,11 +1540,37 @@ mod test {
         // at 4, not 5): one more real bit (b3) is available, missed bits
         // (the top 4) are padded with 1 instead of 0.
         let byte = 0b0000_1101u8; // b3=1, b2=1, b1=0, b0=1
-        let automaton = mode2_automaton_at(5, byte);
+        let automaton = mode2_automaton_at(4, byte);
         let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode0, GateArrayType::Ga40007_8);
         // virtual byte: bits[7,6,5,4] = [b3,b2,b1,b0] = [1,1,0,1], bits[3..0] = 1111
         assert_eq!(reconstructed.byte(), Some(0b1101_1111));
         assert_eq!(reconstructed.step(), Some(&PixelOrder::Pixel1));
+    }
+
+    /// ACCC 9.3.4.3.3: MODE 1 -> 0/2/3 with the display back on the 4th
+    /// pixel-M2 (4 already produced). Byte b7..b0 = 1011_0110.
+    #[test]
+    fn mode1_to_other_modes_matches_accc_table() {
+        let byte = 0b1011_0110u8; // b5=1 b4=1 b3=0 b2=1 b1=1 b0=0
+        let at = || PixelAutomata::AvailablePixel(PixelOrder::Pixel5, byte, VideoMode::Mode1, [Ink(0); 17]);
+        // MODE 0: colour (pad, b3, b1, b5) = (0,0,1,1) on a 40010, (1,0,1,1) on a 40007/8
+        for (ga, pad) in [(GateArrayType::Ga40010, 0u8), (GateArrayType::Ga40007_8, 1u8)] {
+            let r = at().reconstruct_for_mode_switch(VideoMode::Mode0, ga);
+            let v = r.byte().unwrap();
+            let pen = BYTE_TO_MODE0_PENS[v as usize].1.value();
+            assert_eq!(pen, (pad << 3) | (0 << 2) | (1 << 1) | 1, "mode 0, pad {pad}");
+            assert_eq!(r.step(), Some(&PixelOrder::Pixel5));
+        }
+        // MODE 3: colour (b1, b5) = (1, 1)
+        let r = at().reconstruct_for_mode_switch(VideoMode::Mode3, GateArrayType::Ga40010);
+        assert_eq!(BYTE_TO_MODE0_PENS[r.byte().unwrap() as usize].1.value() & 3, 0b11);
+        // MODE 2: pixels b5, b4, b3 then the continuation (b2) on slots 5..8
+        let r = at().reconstruct_for_mode_switch(VideoMode::Mode2, GateArrayType::Ga40010);
+        let pens = BYTE_TO_MODE2_PENS[r.byte().unwrap() as usize];
+        assert_eq!([pens.4.value(), pens.5.value(), pens.6.value(), pens.7.value()], [1, 1, 0, 1]);
+        // MODE 1 -> MODE 1 never gets here with a change; the byte stays real
+        let r = at().reconstruct_for_mode_switch(VideoMode::Mode1, GateArrayType::Ga40010);
+        assert_eq!(r.byte(), Some(byte));
     }
 
     #[test]
@@ -1478,7 +1581,7 @@ mod test {
         // when the mode doesn't actually change - this test documents that
         // the function itself is also a safe no-op if it somehow were).
         let byte = 0b1011_0110u8;
-        let automaton = mode2_automaton_at(5, byte);
+        let automaton = mode2_automaton_at(4, byte);
         let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode2, GateArrayType::Ga40010);
         assert_eq!(reconstructed.byte(), Some(byte));
     }
@@ -1537,10 +1640,13 @@ mod test {
         assert_eq!(ga.next_video_mode(), VideoMode::Mode1);
         assert_eq!(ga.lower_rom_pagging(), Flag::Disable);
         assert_eq!(ga.upper_rom_pagging(), Flag::Disable);
-        // let the Mode 1 write age past the latch lead time (see
-        // `MODE_LATCH_LEAD_TICKS`), so the HSYNC end below switches to it
+        // a long HSYNC pulse, so the Mode 1 write is well before its middle
         ga.set_pin(GateArrayPin::Neg_IORQ, true);
-        for _ in 0..(MODE_LATCH_LEAD_TICKS + 8) {
+        ga.save_pins_state();
+        ga.set_pin(GateArrayPin::HSYNC, true);
+        ga.tick();
+        for _ in 0..64 {
+            ga.save_pins_state();
             ga.tick();
         }
         ga.set_data_on_pins(0x8e); // Mode 2
@@ -1552,7 +1658,13 @@ mod test {
         ga.set_pin(GateArrayPin::HSYNC, true);
         ga.save_pins_state();
         ga.set_pin(GateArrayPin::HSYNC, false);
-        ga.tick();
+        ga.tick(); // the Mode 2 write lands here, right at the end of the HSYNC
+        ga.set_pin(GateArrayPin::Neg_IORQ, true);
+        // the GA sees the HSYNC end a few ticks late, and switches a pixel after
+        for _ in 0..(HSYNC_GA_DELAY_TICKS + 3) {
+            ga.save_pins_state();
+            ga.tick();
+        }
 
         assert_eq!(ga.active_video_mode(), VideoMode::Mode1);
         assert_eq!(ga.next_video_mode(), VideoMode::Mode2);

@@ -35,7 +35,9 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     palette[0].to_rgb_levels();
 
     let vsync = ga.get_pin(GateArrayPin::VSYNC);
-    let hsync = ga.get_pin(GateArrayPin::HSYNC);
+    // the display is blanked by the HSYNC as the GA sees it (a few pixels
+    // after the CRTC raises/lowers it)
+    let hsync = ga.hsync_ga();
 
     if !vsync && !hsync {
         if is_border {
