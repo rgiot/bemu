@@ -1357,7 +1357,15 @@ impl Z80 {
                     let involve_special_reg = matches!(arg1, DataAccess::SpecialRegisterI | DataAccess::SpecialRegisterR) | matches!(arg2, DataAccess::SpecialRegisterI | DataAccess::SpecialRegisterR
                     );
 
-                    let involve_sp = matches!(arg1, DataAccess::Register16(cpclib_asm::preamble::Register16::Sp));
+                    // only LD SP,HL/IX/IY has an internal cycle (6 T-states): LD SP,nn
+                    // (3 us on a CPC) and LD SP,(nn) (5 us) do not
+                    let involve_sp = matches!(
+                        (arg1, arg2),
+                        (
+                            DataAccess::Register16(cpclib_asm::preamble::Register16::Sp),
+                            DataAccess::Register16(cpclib_asm::preamble::Register16::Hl) | DataAccess::IndexRegister16(_)
+                        )
+                    );
                 
                 if !(from_memory | to_memory) {
                     match arg1 {

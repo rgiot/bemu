@@ -484,3 +484,27 @@ fn timing_in_a_c_is_four_us() {
 	in a,(C)  | ED 78         | SZ503P0. | 4
 	in a,(n)  |    11011011 n | ........ | 3 ");
 }
+
+/// Duration in T-states (CPC rounding) of a single instruction.
+fn instruction_t_states(code: &[u8]) -> usize {
+	let (_, motherboard) = execute_instruction(0x4000, code);
+	motherboard.t_state_counter().value()
+}
+
+#[test]
+fn timing_ld_sp_nn_is_three_us() {
+	assert_eq!(instruction_t_states(&[0x31, 0x34, 0x12]), 3 * 4, "LD SP,nn");
+	assert_eq!(instruction_t_states(&[0x01, 0x34, 0x12]), 3 * 4, "LD BC,nn");
+}
+
+#[test]
+fn timing_ld_sp_mem_is_six_us() {
+	// six memory cycles (ED, opcode, nn lo, nn hi, data lo, data hi)
+	assert_eq!(instruction_t_states(&[0xed, 0x7b, 0x00, 0x50]), 6 * 4, "LD SP,(nn)");
+	assert_eq!(instruction_t_states(&[0xed, 0x4b, 0x00, 0x50]), 6 * 4, "LD BC,(nn)");
+}
+
+#[test]
+fn timing_ld_sp_hl_is_two_us() {
+	assert_eq!(instruction_t_states(&[0xf9]), 2 * 4, "LD SP,HL");
+}
