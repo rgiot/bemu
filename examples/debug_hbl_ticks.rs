@@ -42,8 +42,12 @@ fn main() {
     let mut last = snap(mb);
     let mut vs_prev = mb.crtc().vsync();
     println!("tick 0 PC={:04X} crtc_hsync={} ga_hsync_ends={} next={:?} active={:?} R2={} R3={}", last.6, last.0, last.1, last.2, last.3, last.4, last.5);
+    let (rgb_from, rgb_to): (u64, u64) = std::env::var("RGB_RANGE").ok().and_then(|v| { let mut p = v.split('-'); Some((p.next()?.parse().ok()?, p.next()?.parse().ok()?)) }).unwrap_or((0, 0));
     for t in 1..=ticks {
         mb.tick();
+        if t >= rgb_from && t < rgb_to {
+            println!("rgb tick {t:5} hsync_ga={} rgb={:?} active={:?}", mb.ga().hsync_ga(), mb.ga().rgb(), mb.ga().active_video_mode());
+        }
         let now = snap(mb);
         let mut ev = Vec::new();
         if mb.crtc().vsync() != vs_prev { vs_prev = mb.crtc().vsync(); println!("tick {t:5} CRTC VSYNC -> {} (C0={})", vs_prev, mb.crtc().hcc); }
@@ -51,7 +55,7 @@ fn main() {
         if now.1 != last.1 { ev.push("GA_HSYNC_END".to_string()); }
         if now.2 != last.2 { ev.push(format!("RMR next->{:?} (C0={})", now.2, mb.crtc().hcc)); }
         if now.3 != last.3 { ev.push(format!("ACTIVE->{:?}", now.3)); }
-        if now.4 != last.4 || now.5 != last.5 { ev.push(format!("R2/R3 = {}/{}", now.4, now.5)); }
+        if now.4 != last.4 || now.5 != last.5 { ev.push(format!("R2/R3 = {}/{} (C0={})", now.4, now.5, mb.crtc().hcc)); }
         if !ev.is_empty() {
             println!("tick {t:5} PC={:04X} {}", now.6, ev.join(", "));
         }

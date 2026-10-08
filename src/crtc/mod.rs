@@ -333,8 +333,18 @@ impl Crtc {
     /// Registers that don't exist are ignored.
     pub fn do_write_register(&mut self, r: u8, v: u8) {
         let mask = self.model.write_mask(r);
+        let previous_r3l = self.regs[3] & 0x0f;
         if let Some(register) = self.regs.get_mut(usize::from(r)) {
             *register = v & mask;
+        }
+        // R3.JIT, ACCC §14.4.4 / §14.5.4: R3l written (by an OUT(C),r8, on CRTC
+        // 0, 1 and 2) with exactly the running C3l, while it was above it,
+        // stops the HSYNC at once instead of letting the 4-bit counter wrap.
+        if r == 3 && self.hsync() && self.model.supports_r3_jit() {
+            let new_r3l = self.regs[3] & 0x0f;
+            if new_r3l == self.hsc && previous_r3l > self.hsc {
+                self.off(CrtcPin::HS);
+            }
         }
         // R2.JIT, ACCC §14.7.1: "if the update of R2 occurs while C0=R2
         // (during the 3rd usec of an OUT(C),r8) then the CRTC sends the HSYNC

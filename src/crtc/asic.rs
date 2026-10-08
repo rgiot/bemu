@@ -66,6 +66,11 @@ impl CrtcModel for Asic {
         self.read_register(context)
     }
 
+    /// ACCC 14.4.4: "this technique does not work on CRTC's 3 and 4".
+    fn supports_r3_jit(&self) -> bool {
+        false
+    }
+
     /// ACCC §14.6: R3l = 0 gives an HSYNC of 16 characters.
     fn hsync_width(&self, r3: u8) -> Option<u8> {
         Some(match r3 & 0x0f {

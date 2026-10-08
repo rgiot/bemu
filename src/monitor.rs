@@ -28,6 +28,9 @@ const MONITOR_HORIZONTAL_HOLD: usize =
 // No idea if it is correct
 const MONITOR_VERTICAL_HOLD: usize = 20;
 
+/// Shortest C-HSYNC pulse (in ticks of 1/16 usec) the monitor reacts to.
+const MONITOR_MIN_HSYNC_TICKS: usize = 16;
+
 const HSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 128, 255]);
 const VSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 64, 255]);
 
@@ -314,6 +317,8 @@ pub struct Monitor {
     hsync_color: Rgb<u8>,
 
     previous_hsync: bool,
+    /// How long the C-HSYNC has been high, in ticks.
+    hsync_run: usize,
 }
 
 impl Default for Monitor {
@@ -330,6 +335,7 @@ impl Default for Monitor {
             hsync_color: HSYNC_COLOR,
 
             previous_hsync: false,
+            hsync_run: 0,
         }
     }
 }
@@ -349,6 +355,7 @@ impl Monitor {
             hsync_color: HSYNC_DEBUG_COLOR,
 
             previous_hsync: false,
+            hsync_run: 0,
         }
     }
 
@@ -379,6 +386,17 @@ impl Monitor {
 
     /// Handle the information send from the CPC by the GA
     pub fn receive(&mut self, rgb: RgbLevels, Sync { vsync, hsync }: Sync) {
+        // ACCC 9.3.1: with R3l=2 (or an R3.JIT cut) the Gate Array's C-HSYNC
+        // lasts 2 or 3 pixel-M2, "much too short to be detected by the
+        // monitor": a pulse has to last a little to be a synchronisation.
+        if hsync {
+            self.hsync_run += 1;
+        }
+        else {
+            self.hsync_run = 0;
+        }
+        let hsync = hsync && self.hsync_run > MONITOR_MIN_HSYNC_TICKS;
+
         if self.state.is_in_vertical_retrace() {
             // Gun is moving from bottom right to top left
             let step = self.state.vertical_retrace_step_mut().unwrap();
@@ -487,7 +505,10 @@ pub struct FrameGrabber {
     previous: Sync,
     /// A VSYNC has been seen: what follows belongs to a frame.
     synchronised: bool,
-    frame: Option<RgbImage>
+    frame: Option<RgbImage>,
+    /// How long the C-HSYNC has been high, in ticks (see
+    /// [`MONITOR_MIN_HSYNC_TICKS`]).
+    hsync_run: usize
 }
 
 impl Default for FrameGrabber {
@@ -499,7 +520,8 @@ impl Default for FrameGrabber {
                 hsync: false
             },
             synchronised: false,
-            frame: None
+            frame: None,
+            hsync_run: 0
         }
     }
 }
@@ -507,7 +529,16 @@ impl Default for FrameGrabber {
 impl FrameGrabber {
     /// Handle one 16MHz tick of the gate array's output.
     pub fn receive(&mut self, rgb: RgbLevels, sync: Sync) {
-        let hsync_end = self.previous.hsync && !sync.hsync;
+        // a C-HSYNC pulse too short for a monitor to see (R3l=2, R3.JIT cuts:
+        // ACCC 9.3.1) does not start a new line
+        let pulse = self.hsync_run;
+        if sync.hsync {
+            self.hsync_run += 1;
+        }
+        else {
+            self.hsync_run = 0;
+        }
+        let hsync_end = self.previous.hsync && !sync.hsync && pulse > MONITOR_MIN_HSYNC_TICKS;
         let vsync_start = !self.previous.vsync && sync.vsync;
         self.previous = sync;
 

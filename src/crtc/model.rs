@@ -146,6 +146,13 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
+    /// R3.JIT (ACCC 14.4.4): an R3l write equal to the running C3l stops the
+    /// HSYNC at once. Not on the ASICs of CRTC 3 and 4, which synchronise the
+    /// HSYNC with the display.
+    fn supports_r3_jit(&self) -> bool {
+        true
+    }
+
     /// What the skew field of R8 does; none on CRTC 1 and 2 (ACCC §19.2).
     fn display_skew(&self, r8: u8) -> DisplaySkew;
 
