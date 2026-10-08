@@ -25,8 +25,9 @@ const MONITOR_FIRST_PIXEL: usize = 8 * 16;
 const MONITOR_ACTIVE_PIXELS: usize = 48 * 16;
 const MONITOR_HEIGHT: usize = 272;
 const MONITOR_FIRST_LINE: usize = 33;
-/// Lines the frame oscillator runs when no VSYNC comes.
-const MONITOR_FREE_RUN_LINES: usize = 312;
+/// Lines the frame oscillator runs when no VSYNC comes (a little more than
+/// a 50Hz frame, so a VSYNC always arrives first when there is one).
+const MONITOR_FREE_RUN_LINES: usize = 350;
 
 /// Once locked, the line oscillator (AFC) only follows an HSYNC that ends
 /// in the last quarter of its period: a pulse half a line away (a second,
@@ -163,9 +164,10 @@ impl Monitor {
         if line_end {
             self.x = 0;
             self.line += 1;
-            if self.line >= MONITOR_FREE_RUN_LINES && !self.synchronised {
-                // no VSYNC at all: the frame oscillator restarts the frame
-                self.line = 0;
+            if self.line >= MONITOR_FREE_RUN_LINES {
+                // no VSYNC: the frame oscillator rolls the picture
+                self.end_frame();
+                self.synchronised = true;
             }
         }
 
@@ -188,10 +190,20 @@ impl Monitor {
 
     fn start_frame(&mut self) {
         if self.synchronised {
-            self.frame = Some(self.texture.clone());
+            self.end_frame();
+        }
+        else {
+            self.texture = RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32);
+            self.line = 0;
         }
         self.synchronised = true;
-        self.texture = RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32);
+    }
+
+    fn end_frame(&mut self) {
+        self.frame = Some(std::mem::replace(
+            &mut self.texture,
+            RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32)
+        ));
         self.line = 0;
     }
 }
@@ -264,6 +276,15 @@ mod test {
         // lines free-run on the same period: same line count as the CRTC's
         let image = short.take_frame().unwrap();
         assert_eq!(*image.get_pixel(0, 100), Rgb([255, 0, 0]));
+    }
+
+    #[test]
+    fn without_vsync_the_frame_oscillator_rolls_the_picture() {
+        let mut mon = Monitor::default();
+        for _ in 0..(MONITOR_FREE_RUN_LINES + 1) * RASTER_LINE_LENGTH {
+            mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync: false });
+        }
+        assert!(mon.is_frame_complete());
     }
 
     #[test]
