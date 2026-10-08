@@ -40,14 +40,16 @@ fn main() {
         (mb.crtc().hsync(), mb.ga().hsync_ends(), mb.ga().next_video_mode(), mb.ga().active_video_mode(), mb.crtc().r2(), mb.crtc().r3(), mb.pc())
     };
     let mut last = snap(mb);
+    let mut vs_prev = mb.crtc().vsync();
     println!("tick 0 PC={:04X} crtc_hsync={} ga_hsync_ends={} next={:?} active={:?} R2={} R3={}", last.6, last.0, last.1, last.2, last.3, last.4, last.5);
     for t in 1..=ticks {
         mb.tick();
         let now = snap(mb);
         let mut ev = Vec::new();
+        if mb.crtc().vsync() != vs_prev { vs_prev = mb.crtc().vsync(); println!("tick {t:5} CRTC VSYNC -> {} (C0={})", vs_prev, mb.crtc().hcc); }
         if now.0 != last.0 { ev.push(format!("CRTC_HSYNC->{}", now.0)); }
         if now.1 != last.1 { ev.push("GA_HSYNC_END".to_string()); }
-        if now.2 != last.2 { ev.push(format!("RMR next->{:?}", now.2)); }
+        if now.2 != last.2 { ev.push(format!("RMR next->{:?} (C0={})", now.2, mb.crtc().hcc)); }
         if now.3 != last.3 { ev.push(format!("ACTIVE->{:?}", now.3)); }
         if now.4 != last.4 || now.5 != last.5 { ev.push(format!("R2/R3 = {}/{}", now.4, now.5)); }
         if !ev.is_empty() {
