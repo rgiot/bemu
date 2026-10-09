@@ -146,6 +146,11 @@ pub struct Crtc {
     /// The "last line of the frame" state of CRTC 0 (see
     /// [`CrtcModel::has_last_line_state`]).
     last_line: bool,
+    /// CRTC 0: the additional line management armed by default on a last line
+    /// found at C0<2, disarmed when C0 reaches 2 (so never on a 2 character
+    /// line), and the R5 > 0 request seen before C0=3 (ACCC 13.2.1).
+    additional_armed: bool,
+    additional_r5: bool,
     /// Diagnostics: every register write as (C0, C4, C9, register, value).
     write_log: Option<Vec<(u8, u8, u8, u8, u8)>>,
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
@@ -198,6 +203,8 @@ impl Default for Crtc {
             vtac: 0,
             in_vertical_adjust: false,
             last_line: false,
+            additional_armed: false,
+            additional_r5: false,
             write_log: None,
             crtc_vma: 0,
             crtc_vma_prime: 0,
@@ -360,6 +367,9 @@ impl Crtc {
         if (r == 4 || r == 9) && self.hcc < 2 {
             self.assess_last_line();
         }
+        if r == 5 && self.hcc <= 2 {
+            self.assess_additional_line();
+        }
         // R2.JIT, ACCC §14.7.1: "if the update of R2 occurs while C0=R2
         // (during the 3rd usec of an OUT(C),r8) then the CRTC sends the HSYNC
         // signal later to the Gate Array". The compare of C0 with R2 already
@@ -397,6 +407,21 @@ impl Crtc {
     fn assess_last_line(&mut self) {
         if self.model.has_last_line_state() && !self.in_vertical_adjust {
             self.last_line = self.vcc == self.regs[4] && self.vlc == self.regs[9];
+            self.additional_armed = self.last_line;
+            self.additional_r5 = self.last_line && self.regs[5] > 0;
+        }
+    }
+
+    /// ACCC 13.2.1: C0=2 on the last line decides the additional lines; an R5
+    /// programmed before C0=3 asks for them.
+    fn assess_additional_line(&mut self) {
+        if self.model.has_last_line_state() && self.last_line && !self.in_vertical_adjust {
+            if self.hcc == 2 {
+                self.additional_armed = false;
+            }
+            if self.hcc <= 2 {
+                self.additional_r5 = self.regs[5] > 0;
+            }
         }
     }
 
@@ -528,7 +553,7 @@ impl Crtc {
                     self.last_line = false;
                     self.vlc.reset();
                     self.vcc += 1;
-                    if self.regs[5] == 0 {
+                    if !(self.additional_armed || self.additional_r5) {
                         self.vcc.reset();
                     } else {
                         self.in_vertical_adjust = true;
@@ -570,6 +595,7 @@ impl Crtc {
         if self.hcc < 2 {
             self.assess_last_line();
         }
+        self.assess_additional_line();
 
         if self.hcc.wrapping_add(self.reg8_delay_border()) >= self.regs[1] || self.vcc >= self.regs[6] {
             self.set_pin(CrtcPin::DE, false); // Activate Border
@@ -580,7 +606,9 @@ impl Crtc {
 
         // Request an hsync if needed (a zero width produces none on the
         // chips that treat it that way: it would otherwise never end)
-        if self.hcc == self.regs[2] && self.hsync_width().is_some() {
+        // ACCC 15.1: during a HSYNC the C0=R2 condition is not managed, so a
+        // HSYNC cannot restart within a HSYNC
+        if self.hcc == self.regs[2] && !self.hsync() && self.hsync_width().is_some() {
             self.hsc = 0;
             self.on(CrtcPin::HS);
             self.hdc = 0; // XXX I am pretty sure I am not reseting it at the right place
