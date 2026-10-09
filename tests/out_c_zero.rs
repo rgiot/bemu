@@ -57,3 +57,21 @@ fn out_n_a_is_an_io_write_not_a_memory_write() {
     assert_eq!(mb.read_byte(0x04ff), before);
     assert_eq!(mb.crtc().selected_register(), 4);
 }
+
+#[test]
+fn out_c_0_puts_bc_on_the_address_bus_and_0_on_the_data_bus() {
+    use amsrust::chip::{Chip, ReadAddressChip, ReadDataChip};
+    use amsrust::z80::Z80Pin;
+    let mut mb = Motherboard::default();
+    mb.write_buffer(0x4000, &[0x01, 0x09, 0xbc, 0xed, 0x71, 0x18, 0xfe]);
+    mb.cpu_mut().reg16_mut(Reg16::Pc).set(0x4000);
+    let mut seen = None;
+    for _ in 0..400 {
+        mb.tick();
+        let cpu = mb.cpu();
+        if !cpu.get_pin(Z80Pin::Neg_IORQ) && !cpu.get_pin(Z80Pin::Neg_WR) {
+            seen = Some((cpu.get_address_from_pins(), cpu.get_data_from_pins()));
+        }
+    }
+    assert_eq!(seen, Some((0xbc09, 0x00)));
+}
