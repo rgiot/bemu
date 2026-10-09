@@ -21,7 +21,9 @@ const RASTER_LINE_LENGTH: usize = 64 * 16;
 /// What a CTM 644 shows (ACCC 23.2, 23.3, 24): 48 usec of a line, starting
 /// 8 usec (the 15th character after C0=R2, with a 4 usec C-HSYNC) after the
 /// end of the C-HSYNC; 272 lines, from the 34th after the start of the VSYNC.
-const MONITOR_FIRST_PIXEL: usize = 8 * 16;
+/// Three pixels earlier than that: where AMSpiriT puts the 640 pixels of a
+/// standard screen (x=64..703 of its 768 wide picture).
+const MONITOR_FIRST_PIXEL: usize = 8 * 16 - 3;
 const MONITOR_ACTIVE_PIXELS: usize = 48 * 16;
 const MONITOR_HEIGHT: usize = 272;
 const MONITOR_FIRST_LINE: usize = 33;

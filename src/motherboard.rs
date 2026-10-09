@@ -350,6 +350,13 @@ impl Motherboard {
         else if self.crtc.must_execute_tick() {
             self.crtc.execute_tick();
         }
+        // The gate array blanks the pixels the very tick the CRTC drops
+        // DE: it fetches the video bytes from the CRTC's address pins of the
+        // current tick, so seeing DE one tick late made the border start (and
+        // the paper end) a pixel late - the first pixel of the next fetched
+        // byte leaked at the right edge of every line and the first pixel of
+        // the line was lost.
+        self.ga.set_pin(GateArrayPin::DISPEN, self.crtc.get_pin(CrtcPin::DE));
         // Unlike the CRTC (whose is_activated() gates on CCLK - a genuinely
         // free-running clock unrelated to chip-select, since its internal
         // counters must advance regardless of CPU access), the PPI's
