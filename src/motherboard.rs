@@ -1533,7 +1533,7 @@ mod test {
         );
         assert_eq!(
             motherboard.nops_counter().value(),
-            1 + 3
+            1 + 5
         );
     }
 

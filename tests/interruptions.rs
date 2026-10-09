@@ -322,3 +322,31 @@ fn test_interruption_never_splits_a_read_modify_write_instruction() {
 	// first one that landed on a multi-cycle instruction)
 	assert!(interrupt_count >= 12, "only {interrupt_count} interrupts were taken");
 }
+
+/// ACCC 27.x: the call to #38 of an interrupt lasts 5 us whatever the CPC.
+#[test]
+fn test_interrupt_response_lasts_five_us() {
+	let mut motherboard = MotherboardBuilder::default()
+		.disable_lower_rom()
+		.disable_upper_rom()
+		.enable_interruptions()
+		.build();
+	motherboard.write_buffer(0x0, &[0u8; 0x2100]);
+	motherboard.write_buffer(0x38, &[0x00, 0x00, 0x00, 0x00]);
+	motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
+	let mut before = motherboard.nops_counter().value();
+	let mut duration = None;
+	for _ in 0..20000 {
+		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
+		motherboard.execute_next_opcode();
+		let now = motherboard.nops_counter().value();
+		if motherboard.cpu().reg16(Reg16::Pc).value() == 0x38 && pc != 0x38 && duration.is_none() {
+			// that "instruction" was the interrupt response (the NOP it
+			// interrupted was a previous one)
+			duration = Some(now - before);
+		}
+		before = now;
+	}
+	// the interrupted NOP (1 us) then the response (5 us)
+	assert_eq!(duration, Some(1 + 5), "NOP + interrupt response in us");
+}

@@ -801,7 +801,11 @@ impl OpcodeDecoder for Token {
         /// One microsecond of waiting before an I/O cycle (`true`: an output,
         /// else an input). ACCC 4.4.3: the effect of IN r,(C) and INI/IND lands
         /// on the 4th microsecond of the instruction, OUTI/OUTD on the 5th.
-        IoWait(TState, bool)
+        IoWait(TState, bool),
+        /// Extra microseconds of the interrupt response (ACCC 27.4: the call to
+        /// #38 lasts 5 us, an RST #38 4 us and the M1 plus the two pushes 3),
+        /// before the return address is pushed: (T-state, microseconds left)
+        InterruptWait(TState, u8)
     }
     
     impl Default for MCycle {
@@ -835,6 +839,9 @@ impl OpcodeDecoder for Token {
                 }
                 Self::IoWait(t, out) => {
                     format!("W({:#?},{})", t, out)
+                }
+                Self::InterruptWait(t, left) => {
+                    format!("IW({:#?},{})", t, left)
                 }
             };
             format!("\"{}\"", inner)
@@ -906,6 +913,10 @@ impl OpcodeDecoder for Token {
                 MCycle::IoWait(TState::T4, true) => MCycle::Output(TState::T1, 0),
                 MCycle::IoWait(TState::T4, false) => MCycle::Input(TState::T1, 0),
                 MCycle::IoWait(t, out) => MCycle::IoWait(t.inc_state(), *out),
+
+                MCycle::InterruptWait(TState::T4, 1) => MCycle::Write(TState::T1, 0),
+                MCycle::InterruptWait(TState::T4, left) => MCycle::InterruptWait(TState::T1, *left - 1),
+                MCycle::InterruptWait(t, left) => MCycle::InterruptWait(t.inc_state(), *left),
 
                 MCycle::Fake(TState::T4, nb) => MCycle::Fake(TState::T1, *nb - 1),
                 MCycle::Fake(t, nb) => MCycle::Fake(t.inc_state(), *nb),

@@ -2175,7 +2175,9 @@ impl Z80 {
         self.opcode_information = Some(&OPCODE_PREFIX[0xcd]);
         self.ir.set(0xcd);
         self.wz.set(0x38);
-        self.next_state = MCycle::new_write();
+        // the response of an IM 1 interrupt lasts 5 us (ACCC 27.4), two more
+        // than the M1 and the two pushes
+        self.next_state = MCycle::InterruptWait(TState::T1, 2);
     }
 }
 
@@ -2718,6 +2720,10 @@ impl Chip for Z80 {
                 }
             }
             
+            MCycle::InterruptWait(_, _) => {
+                self.next_state.inc_state();
+            }
+
             MCycle::IoWait(_, _) => {
                 // nothing happens on the buses; the I/O cycle starts a
                 // microsecond later (ACCC 4.4.3)
