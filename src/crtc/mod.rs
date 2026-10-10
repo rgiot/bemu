@@ -527,7 +527,12 @@ impl Crtc {
         // (C9=R9). Using `==` rather than `>=` is deliberate: it's what
         // lets a mid-line R1 rewrite (ACCC §17.3, "dynamic R1 update") make
         // this condition true a second time on the same line.
-        if self.hcc == self.regs[1] && self.vlc == self.regs[9] {
+        // The counter does not reach R0+1: it wraps to 0 instead (ACCC
+        // §17.2.2: with R1>R0, C0 is never equal to R1 and VMA' is stuck).
+        if self.hcc == self.regs[1]
+            && self.hcc != self.regs[0].wrapping_add(1)
+            && self.vlc == self.regs[9]
+        {
             self.crtc_vma_prime = self.crtc_vma;
         }
 
