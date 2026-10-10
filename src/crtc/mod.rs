@@ -397,6 +397,17 @@ impl Crtc {
         self.ar
     }
 
+    /// ACCC 17.6.2: on this character (C0=R0 reached with the display still
+    /// on) only the first of its two bytes carries video, the second is
+    /// BORDER (CRTC 0 and 2, without an R8 display skew).
+    pub fn second_byte_is_border(&self) -> bool {
+        let skew = (self.regs[8] >> 4) & 3;
+        self.model.anticipates_border_byte()
+            && self.hcc == self.regs[0]
+            && self.get_pin(CrtcPin::DE)
+            && (skew == 0 || skew == 3)
+    }
+
     /// The CRTC 0 "last line of the frame" state (diagnostics).
     pub fn last_line(&self) -> bool {
         self.last_line

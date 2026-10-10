@@ -161,6 +161,13 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
+    /// CRTC 0 and 2 (ACCC 17.6.2): when C0 reaches R0 with the display still
+    /// on (R1 not reached), they send BORDER ON to the Gate Array 0.5 usec too
+    /// early: one byte (half a character) of border before C0 returns to 0.
+    fn anticipates_border_byte(&self) -> bool {
+        false
+    }
+
     /// What the skew field of R8 does; none on CRTC 1 and 2 (ACCC §19.2).
     fn display_skew(&self, r8: u8) -> DisplaySkew;
 

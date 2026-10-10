@@ -11,6 +11,10 @@ impl CrtcModel for Crtc2 {
         CrtcType::Crtc2
     }
 
+    fn anticipates_border_byte(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> &'static str {
         "MC6845"
     }

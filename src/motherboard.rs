@@ -356,7 +356,9 @@ impl Motherboard {
         // the paper end) a pixel late - the first pixel of the next fetched
         // byte leaked at the right edge of every line and the first pixel of
         // the line was lost.
-        self.ga.set_pin(GateArrayPin::DISPEN, self.crtc.get_pin(CrtcPin::DE));
+        let display = self.crtc.get_pin(CrtcPin::DE)
+            && !(self.crtc.second_byte_is_border() && self.ga.get_pin(GateArrayPin::CCLK));
+        self.ga.set_pin(GateArrayPin::DISPEN, display);
         // Unlike the CRTC (whose is_activated() gates on CCLK - a genuinely
         // free-running clock unrelated to chip-select, since its internal
         // counters must advance regardless of CPU access), the PPI's
