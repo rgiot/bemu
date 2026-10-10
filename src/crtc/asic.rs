@@ -28,6 +28,10 @@ impl Asic {
 }
 
 impl CrtcModel for Asic {
+    fn acknowledges_r1_zero_on_c0_zero(&self) -> bool {
+        false
+    }
+
     fn crtc_type(&self) -> CrtcType {
         self.crtc_type
     }

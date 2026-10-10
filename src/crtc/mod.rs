@@ -185,6 +185,8 @@ pub struct Crtc {
     /// The horizontal BORDER condition of the last characters, newest first:
     /// the R8 display skew delays it by 1 or 2 characters (ACCC §19.2.3).
     border_history: [bool; 3],
+    /// C4 reached R6: BORDER until the next frame (CRTC 0 and 2, ACCC §18.2.2).
+    r6_border: bool,
     /// State of the noise source behind the floating values some chips
     /// return (xorshift32: reproducible, unlike an OS random number).
     noise: u32,
@@ -214,6 +216,7 @@ impl Default for Crtc {
             model: CrtcType::default().model(),
             vertical_border: false,
             border_history: [false; 3],
+            r6_border: false,
             noise: 0x2545_f491,
         };
         crtc.reset();
@@ -365,6 +368,29 @@ impl Crtc {
             let new_r3l = self.regs[3] & 0x0f;
             if new_r3l == self.hsc && previous_r3l > self.hsc {
                 self.off(CrtcPin::HS);
+            }
+        }
+        // ACCC §18.2.2: C4=R6 is considered immediately, whatever C0 (not on
+        // the frame's first line, where R6 conflicts with C4=0, §18.3).
+        if r == 6 && self.model.latches_r6_border() && self.vcc == self.regs[6]
+            && !(self.vcc == 0 && self.vlc == 0)
+        {
+            self.r6_border = true;
+            self.set_pin(CrtcPin::DE, false);
+        }
+        // ACCC §17.4: "the condition C0=R1 is considered immediately on a
+        // line", and it can be met several times in one line by reprogramming
+        // R1: the video pointer is updated (on the last scan line of the
+        // row) and the BORDER starts at once.
+        if r == 1 && self.hcc == self.regs[1] && (self.regs[1] != 0 || self.hcc != 0 || self.model.acknowledges_r1_zero_on_c0_zero()) {
+            if self.vlc == self.regs[9] {
+                self.crtc_vma_prime = self.crtc_vma;
+            }
+            self.border_history[0] = true;
+            if let DisplaySkew::Delayed(chars) = self.model.display_skew(self.regs[8]) {
+                if self.border_history[usize::from(chars)] {
+                    self.set_pin(CrtcPin::DE, false);
+                }
             }
         }
         // CRTC 0 keeps assessing the last line while C0<2 (ACCC 12.2)
@@ -621,7 +647,18 @@ impl Crtc {
             DisplaySkew::Delayed(chars) => self.border_history[usize::from(chars)],
             DisplaySkew::Blanked => true,
         };
-        if horizontal_border || self.vcc >= self.regs[6] {
+        let vertical_border = if self.model.latches_r6_border() {
+            if self.hcc == 0 && self.vcc == 0 && self.vlc == 0 {
+                self.r6_border = false;
+            }
+            if self.vcc == self.regs[6] {
+                self.r6_border = true;
+            }
+            self.r6_border
+        } else {
+            self.vcc >= self.regs[6]
+        };
+        if horizontal_border || vertical_border {
             self.set_pin(CrtcPin::DE, false); // Activate Border
         } else {
             // TODO handle the special case of CRTC1 that is unable to leave this state at some point

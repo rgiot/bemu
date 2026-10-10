@@ -15,6 +15,10 @@ impl CrtcModel for Crtc2 {
         true
     }
 
+    fn latches_r6_border(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> &'static str {
         "MC6845"
     }

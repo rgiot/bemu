@@ -168,6 +168,18 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
+    /// ACCC 18.2.2: on CRTC 0 and 2, C4=R6 starts a BORDER that lasts until the
+    /// next frame (C4=C9=C0=0), whatever R6 is made later.
+    fn latches_r6_border(&self) -> bool {
+        false
+    }
+
+    /// ACCC 17.5: an R1=0 written while C0=0 is still in time to raise the
+    /// BORDER on CRTC 0, 1 and 2 ("too late" on CRTC 3 and 4).
+    fn acknowledges_r1_zero_on_c0_zero(&self) -> bool {
+        true
+    }
+
     /// What the skew field of R8 does; none on CRTC 1 and 2 (ACCC §19.2).
     fn display_skew(&self, r8: u8) -> DisplaySkew;
 
