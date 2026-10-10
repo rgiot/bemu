@@ -187,6 +187,8 @@ pub struct Crtc {
     border_history: [bool; 3],
     /// C4 reached R6: BORDER until the next frame (CRTC 0 and 2, ACCC §18.2.2).
     r6_border: bool,
+    /// R6 was 0 during this frame's first line: the C4=R6 conflict of ACCC §18.3.2.
+    r6_zero_seen: bool,
     /// State of the noise source behind the floating values some chips
     /// return (xorshift32: reproducible, unlike an OS random number).
     noise: u32,
@@ -217,6 +219,7 @@ impl Default for Crtc {
             vertical_border: false,
             border_history: [false; 3],
             r6_border: false,
+            r6_zero_seen: false,
             noise: 0x2545_f491,
         };
         crtc.reset();
@@ -438,6 +441,17 @@ impl Crtc {
             && (skew == 0 || skew == 3)
     }
 
+    /// ACCC 18.3.2: on the first line of a frame with R6=0, CRTC 0 and 2
+    /// alternate a byte of video and a byte of BORDER (the second half of
+    /// each character is BORDER) as long as R1 has not been reached.
+    pub fn r6_conflict_second_byte_is_border(&self) -> bool {
+        self.model.latches_r6_border()
+            && self.vcc == 0
+            && self.vlc == 0
+            && self.regs[6] == 0
+            && self.get_pin(CrtcPin::DE)
+    }
+
     /// The CRTC 0 "last line of the frame" state (diagnostics).
     pub fn last_line(&self) -> bool {
         self.last_line
@@ -648,10 +662,21 @@ impl Crtc {
             DisplaySkew::Blanked => true,
         };
         let vertical_border = if self.model.latches_r6_border() {
-            if self.hcc == 0 && self.vcc == 0 && self.vlc == 0 {
+            let first_line = self.vcc == 0 && self.vlc == 0;
+            if self.hcc == 0 && first_line {
                 self.r6_border = false;
+                self.r6_zero_seen = false;
             }
             if self.vcc == self.regs[6] {
+                // ACCC §18.3.2: with C4=R6=C9=0 the BORDER R6 comes and goes
+                // at each character; it only becomes final once C0=R1
+                if first_line {
+                    self.r6_zero_seen = true;
+                } else {
+                    self.r6_border = true;
+                }
+            }
+            if self.r6_zero_seen && first_line && self.hcc >= self.regs[1] {
                 self.r6_border = true;
             }
             self.r6_border

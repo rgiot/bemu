@@ -357,7 +357,8 @@ impl Motherboard {
         // byte leaked at the right edge of every line and the first pixel of
         // the line was lost.
         let display = self.crtc.get_pin(CrtcPin::DE)
-            && !(self.crtc.second_byte_is_border() && self.ga.get_pin(GateArrayPin::CCLK));
+            && !((self.crtc.second_byte_is_border() || self.crtc.r6_conflict_second_byte_is_border())
+                && self.ga.get_pin(GateArrayPin::CCLK));
         self.ga.set_pin(GateArrayPin::DISPEN, display);
         // Unlike the CRTC (whose is_activated() gates on CCLK - a genuinely
         // free-running clock unrelated to chip-select, since its internal
