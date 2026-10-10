@@ -182,6 +182,9 @@ pub struct Crtc {
     /// Whether the last completed line was in the vertical border by R6
     /// (the UM6845R status register's V bit).
     vertical_border: bool,
+    /// The horizontal BORDER condition of the last characters, newest first:
+    /// the R8 display skew delays it by 1 or 2 characters (ACCC §19.2.3).
+    border_history: [bool; 3],
     /// State of the noise source behind the floating values some chips
     /// return (xorshift32: reproducible, unlike an OS random number).
     noise: u32,
@@ -210,6 +213,7 @@ impl Default for Crtc {
             crtc_vma_prime: 0,
             model: CrtcType::default().model(),
             vertical_border: false,
+            border_history: [false; 3],
             noise: 0x2545_f491,
         };
         crtc.reset();
@@ -490,15 +494,6 @@ impl Crtc {
         self.model.hsync_width(self.regs[3])
     }
 
-    /// Return the delay to display the border (R8's display skew).
-    fn reg8_delay_border(&self) -> u8 {
-        match self.model.display_skew(self.regs[8]) {
-            DisplaySkew::Delayed(chars) => chars,
-            // ugly trick to force the border
-            DisplaySkew::Blanked => self.regs[1].wrapping_sub(self.hcc)
-        }
-    }
-
     /// Run all the CRTC machinery that compute the next CRTC address
     fn update_memory_address(&mut self) {
         if self.hsync() {
@@ -613,7 +608,20 @@ impl Crtc {
         }
         self.assess_additional_line();
 
-        if self.hcc.wrapping_add(self.reg8_delay_border()) >= self.regs[1] || self.vcc >= self.regs[6] {
+        // ACCC §19.2.3/§19.2.4: the horizontal BORDER condition (C0 reached
+        // R1 - or R0 if R1 was not reached, CRTC 0 and 2) goes through a delay
+        // line of 0 to 2 characters set by the R8 skew field.
+        let skew = self.model.display_skew(self.regs[8]);
+        let replaced_by_r0 = self.model.anticipates_border_byte()
+            && self.hcc == self.regs[0]
+            && matches!(skew, DisplaySkew::Delayed(d) if d > 0);
+        self.border_history.rotate_right(1);
+        self.border_history[0] = self.hcc >= self.regs[1] || replaced_by_r0;
+        let horizontal_border = match skew {
+            DisplaySkew::Delayed(chars) => self.border_history[usize::from(chars)],
+            DisplaySkew::Blanked => true,
+        };
+        if horizontal_border || self.vcc >= self.regs[6] {
             self.set_pin(CrtcPin::DE, false); // Activate Border
         } else {
             // TODO handle the special case of CRTC1 that is unable to leave this state at some point
