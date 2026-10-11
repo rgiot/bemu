@@ -350,3 +350,31 @@ fn test_interrupt_response_lasts_five_us() {
 	// the interrupted NOP (1 us) then the response (5 us)
 	assert_eq!(duration, Some(1 + 5), "NOP + interrupt response in us");
 }
+
+/// An interrupt that follows an instruction ending with idle T-states
+/// (DEC HL: 6 T-states in a 2 us slot) is acknowledged inside that
+/// instruction's last microsecond, so its response is one microsecond
+/// shorter (SHAKER BR/A, ACCC 27.4).
+#[test]
+fn test_interrupt_after_dec_hl_has_a_shorter_response() {
+	let mut motherboard = MotherboardBuilder::default()
+		.disable_lower_rom()
+		.disable_upper_rom()
+		.enable_interruptions()
+		.build();
+	motherboard.write_buffer(0x0, &[0x2b; 0x2100]); // DEC HL
+	motherboard.write_buffer(0x38, &[0x00, 0x00, 0x00, 0x00]);
+	motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
+	let mut before = motherboard.nops_counter().value();
+	let mut found = None;
+	for _ in 0..20000 {
+		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
+		motherboard.execute_next_opcode();
+		let now = motherboard.nops_counter().value();
+		if motherboard.cpu().reg16(Reg16::Pc).value() == 0x38 && pc != 0x38 && found.is_none() {
+			found = Some((now - before, motherboard.cpu().last_idle_t()));
+		}
+		before = now;
+	}
+	assert_eq!(found, Some((2 + 4, 2)), "DEC HL + its interrupt response in us, idle T-states of DEC HL");
+}

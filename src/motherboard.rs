@@ -385,6 +385,7 @@ impl Motherboard {
             let byte = self.read_video_ram_byte(address);
             self.ga.set_memory_byte(byte);
         }
+        self.ga.set_last_idle_t(self.cpu.last_idle_t());
         self.ga.tick();
         self.pal.tick();
         if let Some(expansion) = &mut self.large_ram_expansion {

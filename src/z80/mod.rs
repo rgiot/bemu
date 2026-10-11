@@ -3,6 +3,7 @@ mod arithmetic;
 mod registers;
 mod registers_identifiers;
 mod states;
+mod tstates;
 mod z80;
 
 pub use registers::*;

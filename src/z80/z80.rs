@@ -337,6 +337,15 @@ pub struct Z80 {
     /// CPU has received an interruption (remember GA send it only during 1.4ms but an instruction can take 6 nops)
     interruption_received: bool,
 
+    /// Where the instruction being executed started, and what it is - to know
+    /// where its last T-state falls (see `tstates`).
+    instr_start_pc: u16,
+    instr_prefix: OpcodePrefix,
+    instr_op: u8,
+    /// T-states left idle at the end of the last microsecond of the last
+    /// executed instruction (0 to 3).
+    last_idle_t: u8,
+
     /// Low byte of a not-yet-completed SSM (ScreenShot Management) pair:
     /// set when an "ED <neutral>" instruction is executed and we're
     /// waiting to see whether the very next instruction is also
@@ -799,6 +808,8 @@ impl Z80 {
                     }
 
                     // Get the number of additional bytes to read as well as the information for the next cycles
+                    self.instr_prefix = current_prefix;
+                    self.instr_op = self.ir.get();
                     self.opcode_information = Some(current_prefix.opcode_information(self.ir.get()));
                     let opcode_information = self.opcode_information.as_ref().unwrap();
                     
@@ -2134,6 +2145,9 @@ impl Z80 {
     /// Handle interruption if any
     // must be called only at the end of an instruction
     fn instruction_finished(&mut self) {
+        if !self.next_state.is_interruption() {
+            self.record_idle_tail();
+        }
         // manage the flipflip for interruption
 
         if self.interruption_received {
@@ -2170,6 +2184,34 @@ impl Z80 {
         }
     }
     
+    /// Work out how many T-states the instruction that just ended left idle
+    /// in its last microsecond.
+    fn record_idle_tail(&mut self) {
+        let (prefix, op) = (self.instr_prefix, self.instr_op);
+        let pc = self.pc.get();
+        let start = self.instr_start_pc;
+        let sequential_len: Option<u16> = if prefix == OpcodePrefix::None {
+            match op {
+                0x10 | 0x20 | 0x28 | 0x30 | 0x38 => Some(2),
+                0xc0 | 0xc8 | 0xd0 | 0xd8 | 0xe0 | 0xe8 | 0xf0 | 0xf8 => Some(1),
+                _ if op >= 0xc0 && op & 7 == 4 && op != 0xcd => Some(3),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let taken = sequential_len.map_or(false, |len| pc != start.wrapping_add(len));
+        let repeat = prefix == OpcodePrefix::Ed
+            && matches!(op, 0xb0..=0xb3 | 0xb8..=0xbb)
+            && pc == start;
+        self.last_idle_t = super::tstates::idle_tail(prefix, op, taken, repeat);
+    }
+
+    /// T-states the last executed instruction left idle in its last microsecond.
+    pub fn last_idle_t(&self) -> u8 {
+        self.last_idle_t
+    }
+
     /// Handcraft a call to let the CPU jump in 0x38
     fn simulate_call_0x38_after_fetch(&mut self) {      
         self.opcode_information = Some(&OPCODE_PREFIX[0xcd]);
@@ -2177,7 +2219,10 @@ impl Z80 {
         self.wz.set(0x38);
         // the response of an IM 1 interrupt lasts 5 us (ACCC 27.4), two more
         // than the M1 and the two pushes
-        self.next_state = MCycle::InterruptWait(TState::T1, 2);
+        // ...but one microsecond less when the instruction left 2 or more idle
+        // T-states in its last one: the acknowledge starts inside it
+        let extra = if self.last_idle_t >= 2 { 1 } else { 2 };
+        self.next_state = MCycle::InterruptWait(TState::T1, extra);
     }
 }
 
@@ -2412,6 +2457,9 @@ impl Chip for Z80 {
                 }
 
                 self.set_address_on_pins(self.pc.get());
+                if matches!(self.next_state, MCycle::FetchOpcode(_, 0, OpcodePrefix::None)) {
+                    self.instr_start_pc = self.pc.get();
+                }
                 // pc is incremented in T2 in a real CPU
                 if !self.next_state.is_interruption() {
                     self.pc.inc();

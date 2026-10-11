@@ -397,6 +397,10 @@ pub const MODE_UPDATE_MIN_HSYNC_TICKS: u64 = 17;
 /// 6 usec after C0=46). Shaker AE agrees (see `latch_mode`).
 pub const MODE_LATCH_CAP_TICKS: u64 = 6 * 16;
 
+/// The acknowledge of an interrupt is heard this much later when the
+/// interrupted instruction ends with at most one idle T-state.
+pub const ACK_LATE_TICKS: u32 = 16;
+
 /// The INT line rises 1 usec (16 ticks) after the CRTC's HSYNC ends, ACCC
 /// 27.6.1; the GA already hears of that end `HSYNC_GA_DELAY_TICKS` late.
 pub const INTERRUPT_AFTER_HSYNC_TICKS: u32 = 16 - HSYNC_GA_DELAY_TICKS as u32;
@@ -898,6 +902,10 @@ pub struct GateArray {
     mode_latched: bool,
     /// Ticks left before the INT line rises (see `schedule_interrupt`).
     interrupt_delay: Option<u32>,
+    /// T-states the last executed instruction left idle (see `z80::tstates`).
+    last_idle_t: u8,
+    ack_armed: bool,
+    ack_countdown: Option<u32>,
     interrupt_signal_counter: InterruptionSignal,
 
     rmr: RMR,
@@ -937,6 +945,9 @@ impl Default for GateArray {
             pending_mode: None,
             mode_latched: false,
             interrupt_delay: None,
+            last_idle_t: 0,
+            ack_armed: false,
+            ack_countdown: None,
 
             interrupt_signal_counter: InterruptionSignal::NoSignal,
 
@@ -1351,6 +1362,10 @@ impl GateArray {
     }
 
     /// When the CPU acknowledge the interrupt (eg. it is going to jump to the interrupt vector), the Gate Array will reset bit5 of the counter, so the next interrupt can't occur closer than 32 HSync. 
+    pub fn set_last_idle_t(&mut self, idle: u8) {
+        self.last_idle_t = idle;
+    }
+
     fn handle_cpu_acknowledge_of_interruption(&mut self) {
  //       dbg!("CPU acknowledge interruption");
        self.r52.bitand_assign(0b011111);
@@ -1418,10 +1433,31 @@ impl Chip for GateArray {
         }
 
         // XXX play with the modulo to handle the appropriate timing
-        if !self.get_pin(GateArrayPin::Neg_M1) && 
-            !self.get_pin(GateArrayPin::Neg_IORQ) && 
-            self.clock % 4 == 0 {
-            self.handle_cpu_acknowledge_of_interruption();
+        if !self.get_pin(GateArrayPin::Neg_M1) && !self.get_pin(GateArrayPin::Neg_IORQ) {
+            if !self.ack_armed && self.clock % 4 == 0 {
+                self.ack_armed = true;
+                // ACCC §27.3.1/§27.7.1: the Gate Array hears of the acknowledge
+                // on the Z80A's own last T-state of the interrupted
+                // instruction. One that ends with 2 or more idle T-states
+                // is heard in its last microsecond; the others a
+                // microsecond later (SHAKER BR/A on a real CPC, and the
+                // same rule in CPCSyntaxError's timing).
+                if self.last_idle_t <= 1 {
+                    self.ack_countdown = Some(ACK_LATE_TICKS);
+                } else {
+                    self.handle_cpu_acknowledge_of_interruption();
+                }
+            }
+        } else {
+            self.ack_armed = false;
+        }
+        if let Some(left) = self.ack_countdown {
+            if left <= 1 {
+                self.ack_countdown = None;
+                self.handle_cpu_acknowledge_of_interruption();
+            } else {
+                self.ack_countdown = Some(left - 1);
+            }
         }
        
         // Check if interrupt signal needs to be cut down
