@@ -342,6 +342,10 @@ pub struct Z80 {
     /// still shadowed.
     ei_shadow: u8,
 
+    /// IM 2 response: 0 = none, 1 = the return address is being pushed, 2 = the
+    /// vector is being read (address `I<<8 | #FF`, the data bus being pulled up).
+    im2_stage: u8,
+
     /// Where the instruction being executed started, and what it is - to know
     /// where its last T-state falls (see `tstates`).
     instr_start_pc: u16,
@@ -507,6 +511,9 @@ impl Z80 {
         /// During the fetch cycle, the CPU collected the information to obtain the address to read/write
         /// This method obtains it
         fn get_read_address_from_opcode_information(&self) -> u16 {
+            if self.im2_stage == 2 {
+                return (u16::from(self.reg8(Reg8::I).get()) << 8) | 0xff;
+            }
             self.get_address_from_address_source(
                 &self.opcode_information.as_ref().unwrap().read_address,
             )
@@ -1536,8 +1543,13 @@ impl Z80 {
             
             Mnemonic::Ret  => {
                 self.pc = self.wz;
-                self.sp.inc();
-                self.sp.inc();
+                if self.im2_stage == 2 {
+                    // end of an IM 2 response: the vector is not on the stack
+                    self.im2_stage = 0;
+                } else {
+                    self.sp.inc();
+                    self.sp.inc();
+                }
 
                 // conditional ret is far slower
                 if arg1.is_some() {
@@ -2227,13 +2239,25 @@ impl Z80 {
     fn simulate_call_0x38_after_fetch(&mut self) {      
         self.opcode_information = Some(&OPCODE_PREFIX[0xcd]);
         self.ir.set(0xcd);
-        self.wz.set(0x38);
+        let im2 = self.im == InterruptMode::Mode2;
+        self.wz.set(if im2 { 0 } else { 0x38 });
+        self.im2_stage = u8::from(im2);
         // the response of an IM 1 interrupt lasts 5 us (ACCC 27.4), two more
         // than the M1 and the two pushes
         // ...but one microsecond less when the instruction left 2 or more idle
         // T-states in its last one: the acknowledge starts inside it
-        let extra = if self.last_idle_t >= 2 { 1 } else { 2 };
-        self.next_state = MCycle::InterruptWait(TState::T1, extra);
+        // IM 2 reads the vector in two more microseconds: 6 us in all (ACCC
+        // 27.5, CPCSyntaxError's 19 T-states), so the wait is shorter
+        let extra: u8 = match (im2, self.last_idle_t >= 2) {
+            (false, false) => 2,
+            (false, true) | (true, false) => 1,
+            (true, true) => 0,
+        };
+        self.next_state = if extra == 0 {
+            MCycle::Write(TState::T1, 0)
+        } else {
+            MCycle::InterruptWait(TState::T1, extra)
+        };
     }
 }
 
@@ -2752,11 +2776,20 @@ impl Chip for Z80 {
                         self.opcode_information = None;
                         self.instruction_finished();
                     }
+                    if self.im2_stage == 1 {
+                        // IM 2: the return address is pushed, now fetch the
+                        // handler address at I<<8 | #FF (a RET that reads
+                        // there instead of the stack)
+                        self.im2_stage = 2;
+                        self.opcode_information = Some(&OPCODE_PREFIX[0xc9]);
+                        self.ir.set(0xc9);
+                        self.next_state = MCycle::Read(TState::T1, 0);
+                    }
                     // See the matching comment in the `Read`/`Input` T4
                     // handler: `execute_step()` may have just accepted a
                     // pending interrupt via `instruction_finished()`, and
                     // that must not be overwritten here either.
-                    if !matches!(
+                    if self.im2_stage != 2 && !matches!(
                         self.next_state,
                         MCycle::Fake(TState::T1, _)
                     ) && !self.next_state.is_interruption() {

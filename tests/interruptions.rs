@@ -1,7 +1,7 @@
 #![feature(exclusive_range_pattern)]
 #![feature(half_open_range_patterns)]
 	
-use amsrust::{debug::Monitor, motherboard::{self, MotherboardBuilder}, z80::{HasValue, Reg16}};
+use amsrust::{debug::Monitor, motherboard::{self, MotherboardBuilder}, z80::{HasValue, InterruptMode, Reg16, Reg8}};
 use cpclib_asm::preamble::ListingElement;
 use cpclib_asm::preamble::Mnemonic;
 
@@ -377,4 +377,35 @@ fn test_interrupt_after_dec_hl_has_a_shorter_response() {
 		before = now;
 	}
 	assert_eq!(found, Some((2 + 4, 2)), "DEC HL + its interrupt response in us, idle T-states of DEC HL");
+}
+
+/// IM 2: the handler address is read at I<<8 | #FF (nothing drives the data
+/// bus on a CPC) and the response lasts 6 us (19 T-states + the acknowledge).
+#[test]
+fn test_interrupt_mode_2_vectors_through_the_i_register() {
+	let mut motherboard = MotherboardBuilder::default()
+		.disable_lower_rom()
+		.disable_upper_rom()
+		.enable_interruptions()
+		.build();
+	motherboard.write_buffer(0x0, &[0u8; 0x2100]);
+	// vector table entry at 0x80FF -> handler at 0x1234
+	motherboard.write_buffer(0x80ff, &[0x34, 0x12]);
+	motherboard.write_buffer(0x1234, &[0x00, 0x00, 0x00, 0x00]);
+	motherboard.cpu_mut().reg8_mut(Reg8::I).set(0x80);
+	motherboard.cpu_mut().set_im(InterruptMode::Mode2);
+	motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
+	let mut before = motherboard.nops_counter().value();
+	let mut found = None;
+	for _ in 0..20000 {
+		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
+		motherboard.execute_next_opcode();
+		let now = motherboard.nops_counter().value();
+		if motherboard.cpu().reg16(Reg16::Pc).value() == 0x1234 && pc != 0x1234 && found.is_none() {
+			found = Some(now - before);
+		}
+		before = now;
+	}
+	// the interrupted NOP (1 us) then the response (6 us)
+	assert_eq!(found, Some(1 + 6), "NOP + IM 2 response in us");
 }
