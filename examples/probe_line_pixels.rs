@@ -35,7 +35,7 @@ fn main() {
         let hcc = mb.crtc().hcc;
         if n == line && ranges.iter().any(|(f, t)| tick >= *f && tick < *t) {
             let dispen = mb.ga().get_pin(GateArrayPin::DISPEN);
-            println!("tick {tick:4} C0={hcc:2} rgb=({:.0},{:.0},{:.0}) DISPEN={} chs={} hs_ga={}", rgb.r(), rgb.g(), rgb.b(), dispen, sync.hsync, mb.ga().hsync_ga());
+            println!("tick {tick:4} C0={hcc:2} rgb=({:.0},{:.0},{:.0}) DISPEN={} chs={} hs_ga={} next={:?} active={:?}", rgb.r(), rgb.g(), rgb.b(), dispen, sync.hsync, mb.ga().hsync_ga(), mb.ga().next_video_mode(), mb.ga().active_video_mode());
         }
         if hcc == 0 && last_hcc != 0 {
             n += 1; tick = 0;

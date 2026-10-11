@@ -391,6 +391,14 @@ pub const HSYNC_GA_DELAY_TICKS: usize = 2;
 /// (Shaker AR), while R3=1 is exactly one character long.
 pub const MODE_UPDATE_MIN_HSYNC_TICKS: u64 = 17;
 
+/// The latch at the end of a short HSYNC (R3 below the 6 usec cap) misses the
+/// mode writes of the last this many ticks: the Gate Array's own period is
+/// "very slightly less than 2 usec" for R3=2 (ACCC 9.3.1), a little before the
+/// CRTC's HSYNC ends. HBL's multi-mode lines write `OUT mode` 6 to 8 ticks
+/// before that end and the real machine still latches the previous mode,
+/// while Shaker AE (cap path, R3=14) puts the limit exactly on the cap.
+pub const MODE_WRITE_DELAY_TICKS: usize = 8;
+
 /// The Gate Array takes the video mode when its HSYNC-GA period ends, which is
 /// R3 usec after the HSYNC opens but "capped at 6 usec" (ACCC 9.3.1; the
 /// chronogram of 9.3.2, R2=46/R3=14, has the last `OUT` landing on C0=51 win,
@@ -898,6 +906,9 @@ pub struct GateArray {
     hsync_ga_prev: bool,
     /// Video mode decided at the last HSYNC end, applied one pixel later.
     pending_mode: Option<VideoMode>,
+    /// The RMR video mode over the last ticks, newest first: a mode write
+    /// only reaches the latch `MODE_WRITE_DELAY_TICKS` after it was made.
+    mode_history: [VideoMode; MODE_WRITE_DELAY_TICKS + 1],
     /// The mode of this HSYNC pulse was already taken (6 usec cap reached).
     mode_latched: bool,
     /// Ticks left before the INT line rises (see `schedule_interrupt`).
@@ -943,6 +954,7 @@ impl Default for GateArray {
             hsync_ga: false,
             hsync_ga_prev: false,
             pending_mode: None,
+            mode_history: [VideoMode::Mode1; MODE_WRITE_DELAY_TICKS + 1],
             mode_latched: false,
             interrupt_delay: None,
             last_idle_t: 0,
@@ -1039,8 +1051,8 @@ impl GateArray {
     /// start count), and consistent with HBL's multi-mode rupture, whose
     /// `OUT mode2` lands right at the end of an R3=2 HSYNC and must not replace
     /// the mode0 written long before.
-    fn latch_mode(&mut self) {
-        let new_mode = self.rmr.video_mode();
+    fn latch_mode(&mut self, lag: usize) {
+        let new_mode = self.mode_history[lag];
         self.mode_latched = true;
         if new_mode != self.current_mode {
             self.pending_mode = Some(new_mode);
@@ -1239,7 +1251,7 @@ impl GateArray {
         // the mode is normally taken when the HSYNC-GA period ends: here only
         // if the 6 usec cap was not reached first (see `latch_mode`)
         if !self.mode_latched && width >= MODE_UPDATE_MIN_HSYNC_TICKS {
-            self.latch_mode();
+            self.latch_mode(MODE_WRITE_DELAY_TICKS);
         }
         self.mode_latched = false;
         self.r52.inc();
@@ -1389,6 +1401,8 @@ impl Chip for GateArray {
     /// Change the screen mode when hsync is set
     fn pre_tick(&mut self) {
         self.abs_tick += 1;
+        self.mode_history.rotate_right(1);
+        self.mode_history[0] = self.rmr.video_mode();
         if self.is_upfront(GateArrayPin::VSYNC) {
             //vsync occured
             self.vsync_counter = VSyncCounter::VSync(0);
@@ -1427,7 +1441,7 @@ impl Chip for GateArray {
         if self.hsync_ga && !self.mode_latched {
             if let HSyncCounter::HSync(n) = self.hsync_counter {
                 if n as u64 + 1 >= MODE_LATCH_CAP_TICKS {
-                    self.latch_mode();
+                    self.latch_mode(0);
                 }
             }
         }
