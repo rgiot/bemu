@@ -190,6 +190,16 @@ pub struct Crtc {
     /// CRTC 0 with R0=0 (ACCC §13.2.4): how many times C0 has wrapped to 0 since
     /// R0 became 0 (0, 1, 2 and more); C9 is frozen from the second one on.
     r0_zero_wraps: u8,
+    /// CRTC 0 interlace (ACCC §19): the parity of the frame (true = odd), the
+    /// parity ParityR6 that anticipates the next frame's, the parity of the
+    /// C9 lines being generated in interlace video mode, and whether the
+    /// lines currently counted use the doubled C9 (R8=3).
+    parity_frame: bool,
+    parity_r6: bool,
+    parity_c9: bool,
+    ivm_lines: bool,
+    /// An extra interlace line follows the R5 lines of this frame.
+    interlace_extra_line: bool,
     /// C9 had reached R9 on the first of them: C4 moves on the second.
     r0_zero_c4_pending: bool,
     /// R6 was 0 during this frame's first line: the C4=R6 conflict of ACCC §18.3.2.
@@ -225,6 +235,11 @@ impl Default for Crtc {
             border_history: [false; 3],
             r6_border: false,
             r0_zero_wraps: 0,
+            parity_frame: false,
+            parity_r6: false,
+            parity_c9: false,
+            ivm_lines: false,
+            interlace_extra_line: false,
             r0_zero_c4_pending: false,
             r6_zero_seen: false,
             noise: 0x2545_f491,
@@ -398,7 +413,7 @@ impl Crtc {
         // R1: the video pointer is updated (on the last scan line of the
         // row) and the BORDER starts at once.
         if r == 1 && self.hcc == self.regs[1] && (self.regs[1] != 0 || self.hcc != 0 || self.model.acknowledges_r1_zero_on_c0_zero()) {
-            if self.vlc == self.regs[9] {
+            if self.c9_is_last() {
                 self.crtc_vma_prime = self.crtc_vma;
             }
             self.border_history[0] = true;
@@ -469,11 +484,41 @@ impl Crtc {
         self.last_line
     }
 
+    /// CRTC 0, R8=1 or 3: the two interlace modes (ACCC §19.3).
+    fn interlaced(&self) -> bool {
+        self.model.has_last_line_state() && self.regs[8] & 1 != 0
+    }
+
+    /// CRTC 0, R8=3: interlace sync and video mode.
+    fn ivm(&self) -> bool {
+        self.model.has_last_line_state() && self.regs[8] & 3 == 3
+    }
+
+    /// C9 as it builds the video address (ACCC §19.8.1): shifted left, bit 0
+    /// carrying the parity, while the lines are counted in IVM.
+    fn c9_vma(&self) -> u8 {
+        if self.ivm_lines {
+            (self.vlc.value() << 1 | u8::from(self.parity_c9)) & 0x1f
+        } else {
+            self.vlc.value()
+        }
+    }
+
+    /// Whether C9 is on the last line of the character row.
+    fn c9_is_last(&self) -> bool {
+        if self.ivm_lines {
+            let r9 = self.regs[9];
+            self.c9_vma() == (r9 + ((r9 ^ u8::from(self.parity_c9)) & 1)) & 0x1f
+        } else {
+            self.vlc == self.regs[9]
+        }
+    }
+
     /// ACCC 12.2: while C0<2, CRTC 0 decides whether this is the frame's
     /// last line; it no longer looks at R4/R9 afterwards.
     fn assess_last_line(&mut self) {
         if self.model.has_last_line_state() && !self.in_vertical_adjust {
-            self.last_line = self.vcc == self.regs[4] && self.vlc == self.regs[9];
+            self.last_line = self.vcc == self.regs[4] && self.c9_is_last();
             self.additional_armed = self.last_line;
             self.additional_r5 = self.last_line && self.regs[5] > 0;
         }
@@ -578,7 +623,7 @@ impl Crtc {
         // §17.2.2: with R1>R0, C0 is never equal to R1 and VMA' is stuck).
         if self.hcc == self.regs[1]
             && self.hcc != self.regs[0].wrapping_add(1)
-            && self.vlc == self.regs[9]
+            && self.c9_is_last()
         {
             self.crtc_vma_prime = self.crtc_vma;
         }
@@ -613,6 +658,8 @@ impl Crtc {
                 self.r0_zero_wraps = 0;
                 self.r0_zero_c4_pending = false;
             }
+            let mut new_frame = false;
+            let vcc_before = self.vcc.value();
             if skip_counters {
                 // frozen
             } else if self.in_vertical_adjust {
@@ -620,32 +667,60 @@ impl Crtc {
                 // one raster line at a time, until it has topped up the
                 // frame by R5 extra lines.
                 self.vtac += 1;
-                if self.vtac >= self.regs[5] {
+                let extra = u8::from(self.interlace_extra_line);
+                if self.vtac >= self.regs[5].saturating_add(extra) {
                     self.in_vertical_adjust = false;
+                    self.interlace_extra_line = false;
                     self.last_line = false;
                     self.vtac = 0;
                     self.vcc.reset();
                     self.vlc.reset();
+                    new_frame = true;
                 }
             } else if self.model.has_last_line_state() {
                 // ACCC 12.2 / 10.3.1: the latched last-line state, or else
                 // C9==R9 at this very moment decides everything
+                let ivm_now = self.ivm();
+                let end_of_row = if self.last_line {
+                    true
+                } else {
+                    let r9 = self.regs[9];
+                    let pf = u8::from(self.parity_frame);
+                    match (self.ivm_lines, ivm_now) {
+                        (false, false) => self.vlc == r9,
+                        // the line where R8 goes to 3: C9 against R9 with the parity
+                        (false, true) => self.vlc.value() == (r9 | pf),
+                        (true, true) => self.c9_is_last(),
+                        // back to normal: C9.VMA against R9
+                        (true, false) => self.c9_vma() == r9,
+                    }
+                };
                 if self.last_line {
                     self.last_line = false;
                     self.vlc.reset();
                     self.vcc += 1;
-                    if !(self.additional_armed || self.additional_r5) {
+                    let extra = self.interlaced() && self.parity_r6;
+                    if !(self.additional_armed || self.additional_r5 || extra) {
                         self.vcc.reset();
+                        new_frame = true;
                     } else {
                         self.in_vertical_adjust = true;
+                        self.interlace_extra_line = extra;
                         self.vtac = 0;
                     }
-                } else if self.vlc == self.regs[9] {
+                } else if end_of_row {
                     self.vlc.reset();
                     self.vcc += 1;
                 } else {
                     self.vlc += 1;
                 }
+                self.ivm_lines = ivm_now;
+                // parity of the C9 lines of the next row
+                self.parity_c9 = if ivm_now && self.regs[9] & 1 != 0 {
+                    (self.vcc.value() & 1 != 0) ^ self.parity_frame
+                } else {
+                    self.parity_frame
+                };
             } else {
                 self.vlc += 1;
 
@@ -669,7 +744,20 @@ impl Crtc {
                 }
             }
             if frozen_r0 && self.r0_zero_wraps == 1 {
-                self.r0_zero_c4_pending = !self.in_vertical_adjust && self.vlc == self.regs[9];
+                self.r0_zero_c4_pending = !self.in_vertical_adjust && self.c9_is_last();
+            }
+
+            // ACCC §19.5.2: ParityFrame takes ParityR6 when a frame starts;
+            // ParityR6 anticipates the next frame's parity each time C4
+            // reaches R6.
+            if self.model.has_last_line_state() {
+                if new_frame {
+                    self.parity_frame = self.parity_r6;
+                    self.parity_c9 = self.parity_frame;
+                }
+                if self.vcc == self.regs[6] && (new_frame || self.vcc.value() != vcc_before) {
+                    self.parity_r6 = !self.parity_frame;
+                }
             }
 
             // Sampled once per line, at C0=R0 (ACCC §21.3.3); an R6 of 0
@@ -734,7 +822,10 @@ impl Crtc {
         }
 
         // Request a vsync if needed
-        if self.vcc == self.regs[7] && !self.get_pin(CrtcPin::VS){
+        // ACCC §19.7.2: in interlace, on an even frame the VSYNC starts in the
+        // middle of the line (C0=R0/2)
+        let mid_vsync_wait = self.interlaced() && !self.parity_frame && self.hcc < self.regs[0] / 2;
+        if self.vcc == self.regs[7] && !self.get_pin(CrtcPin::VS) && !mid_vsync_wait {
             self.vsc = 0;
             self.on(CrtcPin::VS); // Activate Vsync
         }
@@ -768,7 +859,7 @@ impl Crtc {
         );
 
         self.set_value_in_pins(
-            self.vlc.value(),
+            self.c9_vma(),
             &[
                 CrtcPin::RA4,
                 CrtcPin::RA3,
