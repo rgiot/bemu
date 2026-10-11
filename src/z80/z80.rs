@@ -337,6 +337,11 @@ pub struct Z80 {
     /// CPU has received an interruption (remember GA send it only during 1.4ms but an instruction can take 6 nops)
     interruption_received: bool,
 
+    /// An interrupt cannot be taken right after EI (ACCC 27.3.3): the
+    /// instruction following it always runs. Counts the instruction ends
+    /// still shadowed.
+    ei_shadow: u8,
+
     /// Where the instruction being executed started, and what it is - to know
     /// where its last T-state falls (see `tstates`).
     instr_start_pc: u16,
@@ -1135,6 +1140,7 @@ impl Z80 {
                 Mnemonic::Ei => {
                     self.iff1 = true;
                     self.iff2 = true;
+                    self.ei_shadow = 1;
                 }
                 
                 Mnemonic::ExAf => {
@@ -2155,8 +2161,13 @@ impl Z80 {
 
 
         }
+        let shadowed = self.ei_shadow > 0;
+        if shadowed {
+            self.ei_shadow -= 1;
+        }
         if self.interruption_received
-        && self.iff1/*/
+        && self.iff1
+        && !shadowed/*
         && matches!(
             self.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
