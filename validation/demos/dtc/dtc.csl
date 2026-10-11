@@ -1,0 +1,43 @@
+csl_version 1.0
+crtc_select 0
+reset
+wait 6000000
+disk_insert 'dtc.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"-DTC"\(RET)'
+wait 5000000
+screenshot_name 'dtc01'
+screenshot
+wait 5000000
+screenshot_name 'dtc02'
+screenshot
+wait 5000000
+screenshot_name 'dtc03'
+screenshot
+wait 5000000
+screenshot_name 'dtc04'
+screenshot
+wait 5000000
+screenshot_name 'dtc05'
+screenshot
+wait 5000000
+screenshot_name 'dtc06'
+screenshot
+wait 5000000
+screenshot_name 'dtc07'
+screenshot
+wait 5000000
+screenshot_name 'dtc08'
+screenshot
+wait 5000000
+screenshot_name 'dtc09'
+screenshot
+wait 5000000
+screenshot_name 'dtc10'
+screenshot
+wait 5000000
+screenshot_name 'dtc11'
+screenshot
+wait 5000000
+screenshot_name 'dtc12'
+screenshot

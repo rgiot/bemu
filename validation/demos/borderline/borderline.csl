@@ -1,0 +1,49 @@
+csl_version 1.0
+crtc_select 0
+reset
+wait 6000000
+disk_insert 'borderline.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"BORDER"\(RET)'
+wait 5000000
+screenshot_name 'borderline_01'
+screenshot
+wait 5000000
+screenshot_name 'borderline_02'
+screenshot
+wait 5000000
+screenshot_name 'borderline_03'
+screenshot
+wait 5000000
+screenshot_name 'borderline_04'
+screenshot
+wait 5000000
+screenshot_name 'borderline_05'
+screenshot
+wait 5000000
+screenshot_name 'borderline_06'
+screenshot
+wait 5000000
+screenshot_name 'borderline_07'
+screenshot
+wait 5000000
+screenshot_name 'borderline_08'
+screenshot
+wait 5000000
+screenshot_name 'borderline_09'
+screenshot
+wait 5000000
+screenshot_name 'borderline_10'
+screenshot
+wait 5000000
+screenshot_name 'borderline_11'
+screenshot
+wait 5000000
+screenshot_name 'borderline_12'
+screenshot
+wait 5000000
+screenshot_name 'borderline_13'
+screenshot
+wait 5000000
+screenshot_name 'borderline_14'
+screenshot

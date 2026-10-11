@@ -1,0 +1,43 @@
+csl_version 1.0
+crtc_select 0
+reset
+wait 6000000
+disk_insert 'oc4.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"-OSC4"\(RET)'
+wait 5000000
+screenshot_name 'oc4_01'
+screenshot
+wait 5000000
+screenshot_name 'oc4_02'
+screenshot
+wait 5000000
+screenshot_name 'oc4_03'
+screenshot
+wait 5000000
+screenshot_name 'oc4_04'
+screenshot
+wait 5000000
+screenshot_name 'oc4_05'
+screenshot
+wait 5000000
+screenshot_name 'oc4_06'
+screenshot
+wait 5000000
+screenshot_name 'oc4_07'
+screenshot
+wait 5000000
+screenshot_name 'oc4_08'
+screenshot
+wait 5000000
+screenshot_name 'oc4_09'
+screenshot
+wait 5000000
+screenshot_name 'oc4_10'
+screenshot
+wait 5000000
+screenshot_name 'oc4_11'
+screenshot
+wait 5000000
+screenshot_name 'oc4_12'
+screenshot

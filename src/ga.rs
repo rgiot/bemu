@@ -895,6 +895,14 @@ pub struct GateArray {
     ga_type: GateArrayType,
 
     vsync_counter: VSyncCounter,
+    /// HSYNC ends to wait after a VSYNC start before the R52 sync: 2, or 1
+    /// when the VSYNC rises inside an HSYNC with R52 above 50.
+    vsync_sync_hsyncs: usize,
+    /// The CRTC's HSYNC ended in the very tick the VSYNC rose: the Gate Array
+    /// hears of that end a little later, but it comes before the VSYNC and
+    /// does not count for the R52 sync (CPCSyntaxError's order of events,
+    /// seen on Checkmate).
+    vsync_ignores_next_end: bool,
     hsync_counter: HSyncCounter,
     /// Number of HSYNC falling edges seen so far (diagnostics).
     hsync_ends: u64,
@@ -947,6 +955,8 @@ impl Default for GateArray {
             ga_type: GateArrayType::default(),
 
             vsync_counter: VSyncCounter::NoVsync,
+            vsync_sync_hsyncs: 2,
+            vsync_ignores_next_end: false,
             hsync_counter: HSyncCounter::NoHsync,
             hsync_ends: 0,
             abs_tick: 0,
@@ -1255,50 +1265,34 @@ impl GateArray {
         }
         self.mode_latched = false;
         self.r52.inc();
-        if self.r52 == 52 {
-            self.r52.reset();
-            self.schedule_interrupt();
-        } else {
-            match self.vsync_counter {
-                VSyncCounter::VSync(ref mut count) => {
+        // ACCC §27.3.2: while a VSYNC sync is pending (2 HSYNC ends after its
+        // start) the 52 count is not looked at; the sync then resets R52 and
+        // requests an interrupt if bit 5 was set (Shaker BR/B, CPCSyntaxError's
+        // order of events seen on Checkmate).
+        let pending = match self.vsync_counter {
+            VSyncCounter::VSync(ref mut count) if *count < self.vsync_sync_hsyncs => {
+                if self.vsync_ignores_next_end {
+                    self.vsync_ignores_next_end = false;
+                } else {
                     *count += 1;
-                    if *count == 2 {
-                        // 2 lines after vsync counter is reseted.
-                        //
-                        // ACCC §27.3.2: "an interrupt is requested only if
-                        // bit 5 of R52 is 1". Confirmed against AMSpiriT
-                        // (the reference emulator, independently validated
-                        // against real hardware) 2026-10-05: its own
-                        // Shaker "R52 BIT 5 RESET (R2=46/R3=8/CLOSE END
-                        // HSYNC) FROM R52=#1F to #20" self-test produces
-                        // real, non-suppressed interrupts right at this
-                        // bit5-becomes-set transition (every measured
-                        // value matches its own stated expectation - see
-                        // `validation/Shaker_CSL/MODULE_B/
-                        // reference_screenshots/BR_B_r52reset.png`).
-                        // Pierre Guerrier's own doc (GAINTS.HTM) also
-                        // documents spacing as low as ~20 lines as
-                        // legitimate right at the VSYNC boundary - this
-                        // previously inverted condition produced exactly
-                        // that kind of short gap (~34 lines) and was
-                        // reverted because `tests/interruptions.rs`'s
-                        // `test_interruption_mode1_one_frame` enforced a
-                        // blanket >=52-line minimum between *every* pair of
-                        // interrupts in a frame; given the above, that
-                        // blanket assumption - not this condition - was the
-                        // bug (updated alongside this fix). See
-                        // [[project_crtc_timing_core_rewrite]] memory for
-                        // the full chain of evidence.
-                        if self.r52.bit(5) {
-                            self.r52.reset();
-                            self.schedule_interrupt();
-                        } else {
-                            self.r52.reset();
-                        }
-                    }
                 }
-                _ => {
-                    // nothing to do when there is no vsync
+                Some(*count >= self.vsync_sync_hsyncs)
+            }
+            _ => None,
+        };
+        match pending {
+            Some(true) => {
+                let interrupt = self.r52.bit(5);
+                self.r52.reset();
+                if interrupt {
+                    self.schedule_interrupt();
+                }
+            }
+            Some(false) => {}
+            None => {
+                if *self.r52.deref() >= 52 {
+                    self.r52.reset();
+                    self.schedule_interrupt();
                 }
             }
         }
@@ -1406,6 +1400,9 @@ impl Chip for GateArray {
         if self.is_upfront(GateArrayPin::VSYNC) {
             //vsync occured
             self.vsync_counter = VSyncCounter::VSync(0);
+            let pin_active = self.get_pin(GateArrayPin::HSYNC);
+            self.vsync_sync_hsyncs = if pin_active && self.r52.deref() > &50 { 1 } else { 2 };
+            self.vsync_ignores_next_end = !pin_active && self.hsync_ga;
         }
 
         // the HSYNC as the GA sees it, a few pixels after the CRTC raised it

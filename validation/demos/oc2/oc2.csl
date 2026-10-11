@@ -1,0 +1,43 @@
+csl_version 1.0
+crtc_select 0
+reset
+wait 6000000
+disk_insert 'oc2.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"-OSC2"\(RET)'
+wait 5000000
+screenshot_name 'oc2_01'
+screenshot
+wait 5000000
+screenshot_name 'oc2_02'
+screenshot
+wait 5000000
+screenshot_name 'oc2_03'
+screenshot
+wait 5000000
+screenshot_name 'oc2_04'
+screenshot
+wait 5000000
+screenshot_name 'oc2_05'
+screenshot
+wait 5000000
+screenshot_name 'oc2_06'
+screenshot
+wait 5000000
+screenshot_name 'oc2_07'
+screenshot
+wait 5000000
+screenshot_name 'oc2_08'
+screenshot
+wait 5000000
+screenshot_name 'oc2_09'
+screenshot
+wait 5000000
+screenshot_name 'oc2_10'
+screenshot
+wait 5000000
+screenshot_name 'oc2_11'
+screenshot
+wait 5000000
+screenshot_name 'oc2_12'
+screenshot
