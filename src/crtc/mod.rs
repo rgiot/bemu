@@ -187,6 +187,11 @@ pub struct Crtc {
     border_history: [bool; 3],
     /// C4 reached R6: BORDER until the next frame (CRTC 0 and 2, ACCC §18.2.2).
     r6_border: bool,
+    /// CRTC 0 with R0=0 (ACCC §13.2.4): how many times C0 has wrapped to 0 since
+    /// R0 became 0 (0, 1, 2 and more); C9 is frozen from the second one on.
+    r0_zero_wraps: u8,
+    /// C9 had reached R9 on the first of them: C4 moves on the second.
+    r0_zero_c4_pending: bool,
     /// R6 was 0 during this frame's first line: the C4=R6 conflict of ACCC §18.3.2.
     r6_zero_seen: bool,
     /// State of the noise source behind the floating values some chips
@@ -219,6 +224,8 @@ impl Default for Crtc {
             vertical_border: false,
             border_history: [false; 3],
             r6_border: false,
+            r0_zero_wraps: 0,
+            r0_zero_c4_pending: false,
             r6_zero_seen: false,
             noise: 0x2545_f491,
         };
@@ -358,6 +365,11 @@ impl Crtc {
     pub fn do_write_register(&mut self, r: u8, v: u8) {
         if let Some(log) = self.write_log.as_mut() {
             log.push((self.hcc, self.vcc.value(), self.vlc.value(), r, v));
+        }
+        // ACCC §13.2.1: C9 is no longer managed while R0=0, and R4, R5 and R9
+        // updates are ignored with it (R8 still is)
+        if self.model.has_last_line_state() && self.regs[0] == 0 && matches!(r, 4 | 5 | 9) {
+            return;
         }
         let mask = self.model.write_mask(r);
         let previous_r3l = self.regs[3] & 0x0f;
@@ -585,7 +597,25 @@ impl Crtc {
                 }
             }
 
-            if self.in_vertical_adjust {
+            // ACCC §13.2.1/§13.2.4: with R0=0 on CRTC 0, C0 never reaches 1 and
+            // C9 stops being managed: the first wrap to C0=0 updates the
+            // counters as usual (and arms C4 if C9 reached R9), the second
+            // only moves C4 once, then everything is frozen.
+            let frozen_r0 = self.model.has_last_line_state() && self.regs[0] == 0;
+            let skip_counters = frozen_r0 && self.r0_zero_wraps >= 1;
+            if frozen_r0 {
+                if self.r0_zero_wraps == 1 && self.r0_zero_c4_pending {
+                    self.vcc += 1;
+                    self.r0_zero_c4_pending = false;
+                }
+                self.r0_zero_wraps = self.r0_zero_wraps.saturating_add(1);
+            } else {
+                self.r0_zero_wraps = 0;
+                self.r0_zero_c4_pending = false;
+            }
+            if skip_counters {
+                // frozen
+            } else if self.in_vertical_adjust {
                 // VCC/VLC are held here; only the adjust counter advances,
                 // one raster line at a time, until it has topped up the
                 // frame by R5 extra lines.
@@ -637,6 +667,9 @@ impl Crtc {
                         }
                     }
                 }
+            }
+            if frozen_r0 && self.r0_zero_wraps == 1 {
+                self.r0_zero_c4_pending = !self.in_vertical_adjust && self.vlc == self.regs[9];
             }
 
             // Sampled once per line, at C0=R0 (ACCC §21.3.3); an R6 of 0
