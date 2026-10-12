@@ -45,7 +45,8 @@ cpclib-xfertool = {path = "../rust.cpcdemotools/cpclib-xfertool/"}
 cpclib-z80emu = {path = "../rust.cpcdemotools/cpclib-z80emu/"}
 
 [features]
-# Sound output in the `amsrust --window` binary. Off by default so the
-# library and the default build need no audio system library (on Linux,
-# cpal needs the ALSA headers: libasound2-dev / alsa-lib-devel).
+default = ["audio"]
+# Sound output in the `amsrust --window` binary (on Linux cpal needs the ALSA
+# headers: libasound2-dev / alsa-lib-devel). On by default; a build without
+# an audio system library uses `--no-default-features`.
 audio = ["dep:cpal"]

@@ -34,11 +34,11 @@ cargo run --release --example dump_wav -- --dsk game.dsk --type 'run"game\n' --s
 cargo run --release --example dump_wav -- --csl script.csl out.wav
 ```
 
-Play the sound live in the window with the opt-in `audio` feature (cpal; on
+Sound is played live in the window by default (the `audio` feature, on; build with `--no-default-features` where there is no audio library; on
 Linux it needs the ALSA headers, e.g. `libasound2-dev`):
 
 ```sh
-cargo run --release --features audio -- --window --dsk game.dsk
+cargo run --release -- --window --dsk game.dsk
 ```
 
 The audio device's clock then paces the emulation; `--mute` silences it.
