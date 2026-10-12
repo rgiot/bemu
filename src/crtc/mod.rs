@@ -151,6 +151,8 @@ pub struct Crtc {
     /// line), and the R5 > 0 request seen before C0=3 (ACCC 13.2.1).
     additional_armed: bool,
     additional_r5: bool,
+    /// ACCC §13.7.2: C4 steps at C0=2 after an R0 enlargement out of 1.
+    r0_enlarge_steps_c4: bool,
     /// Diagnostics: every register write as (C0, C4, C9, register, value).
     write_log: Option<Vec<(u8, u8, u8, u8, u8)>>,
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
@@ -227,6 +229,7 @@ impl Default for Crtc {
             last_line: false,
             additional_armed: false,
             additional_r5: false,
+            r0_enlarge_steps_c4: false,
             write_log: None,
             crtc_vma: 0,
             crtc_vma_prime: 0,
@@ -388,8 +391,16 @@ impl Crtc {
         }
         let mask = self.model.write_mask(r);
         let previous_r3l = self.regs[3] & 0x0f;
+        let previous_r0 = self.regs[0];
         if let Some(register) = self.regs.get_mut(usize::from(r)) {
             *register = v & mask;
+        }
+        // ACCC §13.7.2: R0 enlarged out of 1 when C0=1 and C9=R9 overflows C4
+        // (even if C4<>R4); the step itself lands at C0=2.
+        if r == 0 && self.model.has_last_line_state() && self.hcc == 1 && previous_r0 == 1
+            && self.regs[0] > 1 && self.c9_is_last() && !self.in_vertical_adjust
+        {
+            self.r0_enlarge_steps_c4 = true;
         }
         // R3.JIT, ACCC §14.4.4 / §14.5.4: R3l written (by an OUT(C),r8, on CRTC
         // 0, 1 and 2) with exactly the running C3l, while it was above it,
@@ -763,6 +774,13 @@ impl Crtc {
             // Sampled once per line, at C0=R0 (ACCC §21.3.3); an R6 of 0
             // while the frame is running is not detected by the chip.
             self.vertical_border = self.regs[6] != 0 && self.vcc >= self.regs[6];
+        }
+        if self.hcc == 2 && self.r0_enlarge_steps_c4 {
+            self.r0_enlarge_steps_c4 = false;
+            self.vcc += 1;
+            if self.vcc == self.regs[6] && self.regs[6] != 0 {
+                self.vertical_border = true;
+            }
         }
         if self.hcc < 2 {
             self.assess_last_line();
