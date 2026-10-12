@@ -47,3 +47,18 @@ stays right); the number of seconds missed is printed when the window closes.
 
 See `src/psg.rs` for the mixing (CPC stereo wiring), the resampling and the
 known differences with the AY-3-8912.
+
+## Video capture
+
+`--record <file>` records a video with sound through `ffmpeg` (which must be
+installed; the file extension picks the format), at the CPC's exact frame rate
+(~50.08 fps), picture and sound in sync in emulated time:
+
+```sh
+# 30 emulated seconds (--seconds), headless
+cargo run --release -- --dsk demo.dsk --record demo.mp4 --seconds 30
+# what the window shows and plays, until it is closed
+cargo run --release -- --window --dsk game.dsk --record game.mkv
+```
+
+Ctrl+C stops a recording early; the file is still finished properly.
