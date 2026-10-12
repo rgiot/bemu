@@ -106,6 +106,9 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
     CrtcPin::CCLK,
 ];
 
+/// C0 below which an R7 written with the value of C4 does not start a VSYNC
+const BLOCKED_R7_C0: u8 = 2;
+
 #[derive(Debug)]
 /// https://www.grimware.org/doku.php/documentations/devices/crtc
 /// https://neuro-sys.github.io/2019/10/01/amstrad-cpc-crtc.html
@@ -158,6 +161,14 @@ pub struct Crtc {
     /// The running adjustment was asked for by R5>0 (CRTC 0: it ends when the
     /// count equals R5, read live) and not by the additional management alone.
     adjust_counts_to_r5: bool,
+    /// ACCC 16.4.1.1: an R7 written with C4's value on C0<2 is a BLOCKED VSYNC (CRTC 0):
+    /// no VSYNC until C4 or R7 changes. (ACCC 16.3's wider "no second VSYNC while the
+    /// equality is unchanged" made Shaker CT worse against AMSpiriT, so it is not applied.)
+    r7_match: bool,
+    /// ACCC 16.4.1: a CRTC 0 VSYNC begun in the middle of a line does not count that line
+    vsync_skips_first_line_end: bool,
+    /// Number of line ends (C0 back to 0 through R0) since reset; for tests and tools
+    pub line_ends: u64,
     /// Motherboard ticks since the last character clock edge (0..15).
     phase_ticks: u8,
     /// BORDER R1 latched on this line (CRTC 0/2), see `update_memory_address`.
@@ -246,6 +257,9 @@ impl Default for Crtc {
             r0_enlarge_steps_c4: false,
             r0_enlarge_c9_to_r5: false,
             adjust_counts_to_r5: false,
+            r7_match: false,
+            vsync_skips_first_line_end: false,
+            line_ends: 0,
             phase_ticks: 0,
             r1_latch: false,
             r1_zero_late: false,
@@ -419,6 +433,17 @@ impl Crtc {
         let mask = self.model.write_mask(r);
         let previous_r3l = self.regs[3] & 0x0f;
         let previous_r0 = self.regs[0];
+        // ACCC 16.4.1.1: R7 given the value of C4 on C0=0/1 is a BLOCKED VSYNC: it
+        // does not start, nor can it until C4 or R7 changes
+        if r == 7
+            && self.model.has_last_line_state()
+            && !self.get_pin(CrtcPin::VS)
+            && self.vcc.value() == v & mask
+            && self.vcc.value() != self.regs[7]
+            && self.hcc < BLOCKED_R7_C0
+        {
+            self.r7_match = true;
+        }
         if let Some(register) = self.regs.get_mut(usize::from(r)) {
             *register = v & mask;
         }
@@ -555,11 +580,25 @@ impl Crtc {
     /// C9 as it builds the video address (ACCC §19.8.1): shifted left, bit 0
     /// carrying the parity, while the lines are counted in IVM.
     fn c9_vma(&self) -> u8 {
-        if self.ivm_lines {
+        if self.in_vertical_adjust && self.adjust_counts_to_r5 && !self.ivm_lines {
+            // ACCC 11.2.2: on CRTC 0 there is no C5, C9 itself counts the lines of
+            // the adjustment (and so goes out on RA)
+            self.vtac & 0x1f
+        } else if self.ivm_lines {
             (self.vlc.value() << 1 | u8::from(self.parity_c9)) & 0x1f
         } else {
             self.vlc.value()
         }
+    }
+
+    /// Register `r` as stored (tools)
+    pub fn regs_r(&self, r: usize) -> u8 {
+        self.regs[r]
+    }
+
+    /// The value of C9 as it goes out on RA0-RA4.
+    pub fn c9(&self) -> u8 {
+        self.c9_vma()
     }
 
     /// Whether C9 is on the last line of the character row.
@@ -689,14 +728,21 @@ impl Crtc {
         if self.hcc == self.regs[0].wrapping_add(1) {
             // This is the end of the line, we have to trigger all the other stuffs
             self.hcc = 0;
+            self.line_ends += 1;
 
             // handle the end of vsync if any - independent of vertical
             // total adjust, since VSYNC width (R3) and the adjust period
             // (R5) are unrelated and can overlap.
             if self.vsync() {
-                self.vsc += 1;
-                if self.vsc == self.vsync_height() {
-                    self.off(CrtcPin::VS);
+                if self.vsync_skips_first_line_end {
+                    self.vsync_skips_first_line_end = false;
+                } else {
+                    // a 4 bit counter: an R3 lowered below the count makes it go round
+                    // (16 lines more), and a width of 16 is the counter back at 0
+                    self.vsc = (self.vsc + 1) & 0x0f;
+                    if self.vsc == self.vsync_height() & 0x0f {
+                        self.off(CrtcPin::VS);
+                    }
                 }
             }
 
@@ -940,8 +986,19 @@ impl Crtc {
         // ACCC §19.7.2: in interlace, on an even frame the VSYNC starts in the
         // middle of the line (C0=R0/2)
         let mid_vsync_wait = self.interlaced() && !self.parity_frame && self.hcc < self.regs[0] / 2;
-        if self.vcc == self.regs[7] && !self.get_pin(CrtcPin::VS) && !mid_vsync_wait {
+        // a blocked VSYNC (see r7_match) is released when C4 and R7 differ
+        let protected = self.model.has_last_line_state();
+        if protected && !self.get_pin(CrtcPin::VS) && self.vcc != self.regs[7] {
+            self.r7_match = false;
+        }
+        if self.vcc == self.regs[7]
+            && !self.get_pin(CrtcPin::VS)
+            && !mid_vsync_wait
+            && !(protected && self.r7_match)
+        {
             self.vsc = 0;
+            // ACCC 16.4.1: the line counter of a VSYNC begun mid-line starts at the next C0=0
+            self.vsync_skips_first_line_end = protected && self.hcc > 0;
             self.on(CrtcPin::VS); // Activate Vsync
         }
 
@@ -1413,5 +1470,70 @@ mod test {
         }
         assert_eq!(crtc.vcc.value(), c4);
         assert_eq!(crtc.vlc.value(), c9 + 1);
+    }
+
+    /// One line of 64 characters
+    fn run_line(crtc: &mut Crtc) {
+        let ends = crtc.line_ends;
+        while crtc.line_ends == ends {
+            crtc.update_memory_address();
+        }
+    }
+
+    /// The VSYNC line counter is 4 bits: an R3 lowered below the count makes it
+    /// go round.
+    #[test]
+    fn test_crtc0_vsync_counter_goes_round_when_r3_is_lowered() {
+        let mut crtc = crtc0();
+        while !crtc.vsync() {
+            crtc.update_memory_address();
+        }
+        for _ in 0..4 {
+            run_line(&mut crtc);
+        }
+        crtc.do_write_register(3, 0x20 | 0x0e);
+        let mut more = 0;
+        while crtc.vsync() {
+            run_line(&mut crtc);
+            more += 1;
+        }
+        assert_eq!(more, 16 - 4 + 2);
+    }
+
+    /// ACCC §11.2.2: on CRTC 0 C9 itself counts the additional lines, and goes
+    /// out on RA.
+    #[test]
+    fn test_crtc0_c9_counts_the_additional_lines() {
+        let mut crtc = crtc0();
+        crtc.do_write_register(5, 3);
+        let mut seen = Vec::new();
+        for _ in 0..400 {
+            run_line(&mut crtc);
+            if crtc.vcc.value() == crtc.regs[4] + 1 {
+                seen.push(crtc.c9());
+            }
+        }
+        assert!(seen.starts_with(&[0, 1, 2]), "{seen:?}");
+    }
+
+    /// ACCC §16.4.1: a VSYNC triggered by R7 in the middle of a line does not
+    /// count that line.
+    #[test]
+    fn test_crtc0_vsync_started_mid_line_lasts_one_line_more() {
+        let mut crtc = crtc0();
+        crtc.do_write_register(7, 99);
+        while crtc.vcc.value() != 31 {
+            run_line(&mut crtc);
+        }
+        step_until_hcc(&mut crtc, 20);
+        crtc.do_write_register(7, 31);
+        crtc.update_memory_address();
+        assert!(crtc.vsync());
+        let mut lines = 0;
+        while crtc.vsync() {
+            run_line(&mut crtc);
+            lines += 1;
+        }
+        assert_eq!(lines, 1 + 8);
     }
 }
