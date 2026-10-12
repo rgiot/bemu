@@ -283,7 +283,9 @@ impl CslRunner {
             eprintln!("[{:>9} µs] reset, CRTC {}", self.elapsed_us(), self.crtc as u8);
         }
         self.elapsed_before_reset_us = self.elapsed_us();
-        self.motherboard = Self::machine(self.crtc);
+        let mut previous = std::mem::replace(&mut self.motherboard, Self::machine(self.crtc));
+        // The sound recorded so far (and its settings) outlives the machine.
+        self.motherboard.psg_mut().take_audio_output_from(previous.psg_mut());
         for (unit, disc) in self.disc.iter().enumerate() {
             self.motherboard.fdc_mut().insert_image(drive(unit), disc.clone());
         }
