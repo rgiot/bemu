@@ -8,10 +8,7 @@
 //! Not restored: PPI port latches (no public way to force one without
 //! reconstructing its mode first) and the FDD motor/track flags (a disc
 //! given on its own command line is inserted stopped at track 0 already).
-//! Extended memory beyond the base 64K (128K-game snapshots using memory
-//! chunks) is reported rather than silently dropped - the chip-based RAM
-//! model this emulator uses would need its own bank restored too, which
-//! this loader does not attempt.
+//! The extra 64K pages of a 128K+ snapshot go to the extra RAM.
 
 use cpclib::sna::{Snapshot, SnapshotFlag};
 
@@ -65,14 +62,12 @@ fn load_registers(motherboard: &mut Motherboard, word: &impl Fn(SnapshotFlag) ->
 
 fn load_memory(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(), String> {
     let memory = snapshot.memory_dump()?;
-    if memory.len() > 0x10000 {
-        eprintln!(
-            "warning: snapshot has {}K of memory, only the base 64K is restored (no extra RAM bank)",
-            memory.len() / 1024
-        );
-    }
     for (address, &value) in memory.iter().take(0x10000).enumerate() {
         motherboard.write_byte(address as u16, value);
+    }
+    // the 128K (and more) snapshots: the following 64K pages go to the extra RAM
+    for (page, data) in memory.get(0x10000..).unwrap_or(&[]).chunks(0x10000).enumerate() {
+        motherboard.load_extra_ram_page(page, data);
     }
     Ok(())
 }

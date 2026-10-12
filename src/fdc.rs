@@ -48,6 +48,7 @@ mod st0 {
 
 /// ST1 (datasheet Table 3).
 mod st1 {
+    pub const EN: u8 = 1 << 7; // End of cylinder (no TC on a CPC: every command ends on EOT)
     pub const DE: u8 = 1 << 5; // Data Error (CRC)
     pub const ND: u8 = 1 << 2; // No Data (sector not found)
     pub const NW: u8 = 1 << 1; // Not Writable
@@ -972,6 +973,9 @@ impl Fdc {
             if self.current_cmd.is_scan() && !self.xfer.scan_satisfied {
                 self.st2 |= st2::SN;
             }
+            // the terminal count is not wired on a CPC: a command that reads
+            // up to EOT ends with the End of Cylinder flag (ST0=#40, ST1=#80)
+            self.st1 |= st1::EN;
             self.finish_transfer();
         }
     }

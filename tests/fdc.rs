@@ -73,8 +73,9 @@ fn read_data_full_roundtrip() {
     for _ in 0..7 {
         result.push(fdc.read_data());
     }
-    assert_eq!(result[0], 0x00, "ST0 should report normal termination");
-    assert_eq!(result[1], 0x00, "ST1 should report no error");
+    // the terminal count is not wired on a CPC: a read ends on EOT with End of Cylinder
+    assert_eq!(result[0], 0x40, "ST0 should report the abnormal termination of the end of cylinder");
+    assert_eq!(result[1], 0x80, "ST1 should report End of Cylinder only");
     assert_eq!(result[2], 0x00, "ST2 should report no error");
     assert_eq!(result[3], 0x00, "result C");
     assert_eq!(result[4], 0x00, "result H");
@@ -280,7 +281,7 @@ fn motherboard_reads_disk_through_real_io_ports() {
             "data byte {i}"
         );
     }
-    assert_eq!(motherboard.read_byte(result_buffer + sector_len), 0x00, "ST0");
+    assert_eq!(motherboard.read_byte(result_buffer + sector_len), 0x40, "ST0 (end of cylinder)");
     assert_eq!(motherboard.read_byte(result_buffer + sector_len + 5), sector_id, "result R");
 }
 

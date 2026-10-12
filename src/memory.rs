@@ -472,6 +472,19 @@ impl Memory {
         self.additional_memory.resize_with(pages.max(1), Page::default);
     }
 
+    /// Fill extra page `page` (64K: banks 0-3 in order) with `data`; growing
+    /// the memory if the page is not fitted yet.
+    pub fn load_extra_page(&mut self, page: usize, data: &[u8]) {
+        if page >= self.additional_memory.len() {
+            self.additional_memory.resize_with(page + 1, Page::default);
+        }
+        for (i, chunk) in data.chunks(0x4000).take(4).enumerate() {
+            for (offset, byte) in chunk.iter().enumerate() {
+                self.additional_memory[page].0[i].0[offset] = *byte;
+            }
+        }
+    }
+
     /// How many extra 64kb pages are currently fitted (see
     /// [`Memory::set_extra_pages`]).
     pub fn extra_pages(&self) -> usize {

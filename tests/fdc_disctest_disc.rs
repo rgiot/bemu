@@ -125,7 +125,7 @@ fn eighteen_small_sectors_and_an_8k_sector_read_in_full() {
     seek(&mut fdc, 24);
     for r in [1u8, 9, 18] {
         let (data, res) = read_sector(&mut fdc, 24, r, 1);
-        assert_eq!((data, res[1], res[2]), (256, 0, 0), "R={r}");
+        assert_eq!((data, res[1], res[2]), (256, 0x80, 0), "R={r}");
     }
     seek(&mut fdc, 25);
     let (data, res) = read_sector(&mut fdc, 25, 0xc1, 6);

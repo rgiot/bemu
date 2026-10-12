@@ -1061,6 +1061,11 @@ impl Motherboard {
 // Block for the memory related functions
 impl Motherboard {
     /// Provides the memory configuration for a proper access
+    /// Fill the extra RAM page `page` (a 128K snapshot's second 64K, ...).
+    pub fn load_extra_ram_page(&mut self, page: usize, data: &[u8]) {
+        self.memory.load_extra_page(page, data);
+    }
+
     pub fn memory_config(&self) -> MemoryConfig {
         let mut ram_config = self.pal.get_ram_configuration();
         if let Some(expansion) = &self.large_ram_expansion {

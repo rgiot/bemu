@@ -84,7 +84,7 @@ fn check_disc(path: &str, image: DiscImage) -> (usize, usize) {
                 let data = receive(&mut fdc, sector.nominal_len());
                 let result = receive(&mut fdc, 7);
                 let ctx = format!("{path} head {head} track {cyl} R={:#04x}", sector.r);
-                assert_eq!(result[0] & 0xc0, 0, "{ctx}: abnormal ST0 {result:02x?}");
+                assert_eq!((result[0] & 0xc0, result[1]), (0x40, 0x80), "{ctx}: not a clean End of Cylinder {result:02x?}");
                 assert_eq!(data, sector.data, "{ctx}: data differs from the image");
                 checked += 1;
             }

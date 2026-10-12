@@ -134,7 +134,7 @@ fn reading_a_sector_returns_its_data_and_id() {
     let mut fdc = ready_fdc();
     let (data, result) = read(&mut fdc, &rw(READ_DATA, 0, 0, 2, 1, 2), 256);
     assert_eq!(data, vec![2; 256]);
-    assert_eq!(result, [0x00, 0x00, 0x00, 0, 0, 2, 1]);
+    assert_eq!(result, [0x40, 0x80, 0x00, 0, 0, 2, 1], "ends with End of Cylinder");
 }
 
 #[test]
@@ -297,7 +297,7 @@ fn write_deleted_data_sets_the_mark_and_write_data_clears_it() {
 
     send(&mut fdc, &rw(WRITE_DELETED_DATA, 0, 0, 2, 1, 2));
     send(&mut fdc, &[0x5a; 256]);
-    assert_eq!(receive(&mut fdc, 7)[0] & 0xc0, 0x00);
+    assert_eq!(receive(&mut fdc, 7)[0] & 0xc0, 0x40, "End of Cylinder");
 
     // now a Read Data sees a deleted sector
     let (data, result) = read(&mut fdc, &rw(READ_DATA, 0, 0, 2, 1, 2), 256);
@@ -322,7 +322,7 @@ fn rewriting_a_sector_with_a_crc_error_repairs_it() {
 
     let (data, result) = read(&mut fdc, &rw(READ_DATA, 0, 0, 5, 1, 5), 256);
     assert_eq!(data, vec![0x77; 256]);
-    assert_eq!(result[..3], [0, 0, 0]);
+    assert_eq!(result[..3], [0x40, 0x80, 0], "End of Cylinder, nothing else");
 }
 
 #[test]
@@ -345,7 +345,7 @@ fn a_read_continues_through_the_sectors_up_to_eot() {
     assert_eq!(&data[..256], vec![1; 256].as_slice());
     assert_eq!(&data[256..512], vec![2; 256].as_slice());
     assert_eq!(&data[512..], vec![3; 256].as_slice());
-    assert_eq!(result, [0x00, 0x00, 0x00, 0, 0, 3, 1]);
+    assert_eq!(result, [0x40, 0x80, 0x00, 0, 0, 3, 1], "ends with End of Cylinder");
 }
 
 #[test]
@@ -384,7 +384,7 @@ fn multi_track_carries_on_with_the_other_side() {
     assert_eq!(&data[256..512], vec![0x02; 256].as_slice());
     assert_eq!(&data[512..768], vec![0x11; 256].as_slice(), "side 1, sector 1");
     assert_eq!(&data[768..], vec![0x12; 256].as_slice());
-    assert_eq!(result[0] & 0xc0, 0x00);
+    assert_eq!(result[0] & 0xc0, 0x40, "End of Cylinder");
     assert_eq!((result[3], result[4], result[5]), (0, 1, 2), "ends on H=1 R=2");
 }
 
