@@ -57,8 +57,6 @@ const MONITOR_PULL_DEAD_WIDTH: i32 = 9;
 const MONITOR_PULL_DEADZONE: i64 = 6 * 16;
 const MONITOR_PULL_FLAT_LATE: i64 = 422;
 const MONITOR_PULL_END_LATE: i64 = 496;
-const MONITOR_PULL_FLAT_EARLY: i64 = 12 * 16;
-const MONITOR_PULL_END_EARLY: i64 = 20 * 16;
 
 const HSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 128, 255]);
 const VSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 64, 255]);
@@ -77,6 +75,8 @@ pub struct Monitor {
     line: usize,
     /// Ticks the HSYNC/VSYNC input has been high.
     hsync_run: usize,
+    /// The HSYNC pulse running began where the line oscillator listens: it blanks the beam
+    hsync_listened: bool,
     vsync_run: usize,
     /// The VSYNC pulse has already restarted the frame.
     vsync_seen: bool,
@@ -115,6 +115,7 @@ impl Monitor {
             x: 0,
             line: 0,
             hsync_run: 0,
+            hsync_listened: true,
             vsync_run: 0,
             vsync_seen: false,
             locked: false,
@@ -155,6 +156,9 @@ impl Monitor {
     pub fn receive(&mut self, rgb: RgbLevels, Sync { vsync, hsync }: Sync) {
         let hsync_pulse = self.hsync_run;
         if hsync {
+            if self.hsync_run == 0 {
+                self.hsync_listened = !self.locked || self.x >= MONITOR_HSYNC_WINDOW_START;
+            }
             self.hsync_run += 1;
         }
         else {
@@ -226,7 +230,7 @@ impl Monitor {
             let pixel = if vsync {
                 self.vsync_color
             }
-            else if hsync {
+            else if hsync && self.hsync_listened {
                 self.hsync_color
             }
             else {
@@ -244,7 +248,6 @@ impl Monitor {
         let mut target = 0i32;
         if let (Some(previous), [(other, width)]) = (self.last_sync_start, self.pulses.as_slice()) {
             let after = (*other - previous) as i64; // late for the previous sync
-            let before = (start - *other) as i64; // early for this one
             let late_pull = ((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12;
             let taper = |pull: i32, distance: i64, flat: i64, end: i64| -> i32 {
                 if distance <= flat {
@@ -257,10 +260,9 @@ impl Monitor {
             };
             if after > MONITOR_PULL_DEADZONE && after < MONITOR_PULL_END_LATE {
                 target = -taper(late_pull, after, MONITOR_PULL_FLAT_LATE, MONITOR_PULL_END_LATE);
-            } else if before > MONITOR_PULL_DEADZONE && before < MONITOR_PULL_END_EARLY {
-                let early_pull = (late_pull * 4 + 3) / 7;
-                target = taper(early_pull, before, MONITOR_PULL_FLAT_EARLY, MONITOR_PULL_END_EARLY);
             }
+            // a second sync BEFORE the line sync does not pull the picture: AMSpiriT shows
+            // no shift for an extra pulse 12 to 28 us ahead (validation/fuzz/gen_pull_probe.py)
         }
         self.shift = self.next_shift;
         if target == 0 {
@@ -404,5 +406,25 @@ mod test {
             }
         }
         assert_eq!(mon.shift, 0);
+    }
+
+    /// A pulse the locked line oscillator does not listen to does not blank the beam
+    /// (AMSpiriT, validation/fuzz/gen_pull2_probe.py: a narrow extra pulse before a wide sync).
+    #[test]
+    fn an_ignored_pulse_does_not_blank_the_beam() {
+        let mut mon = Monitor::default();
+        for l in 0..120 {
+            for t in 0..RASTER_LINE_LENGTH {
+                let main = t >= 736 && t < 800;
+                let other = l >= 30 && t >= 400 && t < 464;
+                let hsync = main || other;
+                mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
+            }
+        }
+        // the oscillator is locked: the pulse is not listened to, nothing goes black in the lines drawn
+        let blacks = (0..MONITOR_ACTIVE_PIXELS as u32)
+            .filter(|&x| mon.texture.get_pixel(x, 40).0 == [0, 0, 0])
+            .count();
+        assert_eq!(blacks, 0);
     }
 }
