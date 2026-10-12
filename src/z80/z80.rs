@@ -20,7 +20,7 @@ use cpclib_asm::preamble::Token;
 use super::alu;
 use cpclib_asm::preamble::{
     DataAccess, DataAccessElem, Expr, ExprElement, ExprEvaluationExt, FlagTest, ListingElement,
-    Mnemonic, ParseToken,
+    Mnemonic,
 };
 
 fn eval_expr_to_i32(expr: &Expr) -> i32 {
@@ -686,39 +686,13 @@ impl Z80 {
                 // Get the two additional bytes needed for the instruction
                 let memory = [self.reg8(Reg8::Z).get(), self.reg8(Reg8::W).get()];
                 
-                // Undefined opcodes (e.g. the ED-prefixed suffixes SSM
-                // repurposes as "neutral" screenshot-request codes, see
-                // SSM-STANDARD-EN.pdf) have an empty representation in the
-                // cpclib-tokens tables, which `disassemble_with_potential_argument`
-                // reports as an error rather than silently treating as a
-                // NOP - the "it cannot fail" assumption only held while
-                // nothing ever actually executed one of those codes.
-                //
-                // A DD/FD-prefixed opcode whose table entry is empty is a
-                // different case: it's not undefined, it just doesn't touch
-                // H/L, so the real CPU executes it exactly as its unprefixed
-                // form (see the matching fallback in
-                // `states.rs::build_opcode_information`, which fixed the
-                // byte count but not this separate execute-time disassembly
-                // - both must agree on the same instruction).
-                let disassembling_table = if matches!(prefix, OpcodePrefix::Dd | OpcodePrefix::Fd)
-                    && prefix.disassembling_table()[self.ir.get() as usize].is_empty()
-                {
-                    OpcodePrefix::None.disassembling_table()
-                } else {
-                    prefix.disassembling_table()
-                };
-                let (opcode, rest) = cpclib_asm::disass::disassemble_with_potential_argument(
-                    self.ir.get(),
-                    &disassembling_table,
-                    &memory,
-                )
-                .unwrap_or_else(|_| (Token::parse_token("NOP").unwrap(), &memory[..]));
-                let opcode = if opcode.is_opcode() && opcode.mnemonic().is_some() {
-                    opcode
-                } else {
-                    Token::parse_token("NOP").unwrap()
-                };
+                // Decoded from the opcode bits and the operand bytes (see
+                // `decoder.rs`): the instruction table and this agree on
+                // the same instruction, including the DD/FD opcodes that
+                // execute as their unprefixed form and the undefined ED
+                // opcodes (e.g. those SSM repurposes as screenshot-request
+                // codes, see SSM-STANDARD-EN.pdf), which are NOPs.
+                let opcode = super::decoder::with_operands(*prefix, self.ir.get(), memory);
          //       dbg!(&opcode);
                 self.execute_opcode(
                     opcode.mnemonic().unwrap(),
@@ -1712,17 +1686,9 @@ impl Z80 {
                 self.sp.dec();
                 self.sp.dec();
                 
-                let addr =   match eval_data_access_to_i32(arg1.unwrap()) {
-                    0 => 0,
-                    8 => 0x8,
-                    10 => 0x10,
-                    18 => 0x18,
-                    20 => 0x20,
-                    28 => 0x28,
-                    30 => 0x30,
-                    38 => 0x38,
-                    _ => unreachable!()
-                };
+                // The decoder gives the target address (opcode bits 5-3 * 8).
+                let addr = eval_data_access_to_i32(arg1.unwrap()) as u16;
+                debug_assert!(addr & !0x38 == 0, "RST {addr:#x}");
                 self.pc.set(addr);
                 self.next_state = MCycle::new_fake(1);
             }
