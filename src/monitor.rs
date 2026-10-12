@@ -23,7 +23,7 @@ const RASTER_LINE_LENGTH: usize = 64 * 16;
 /// end of the C-HSYNC; 272 lines, from the 34th after the start of the VSYNC.
 /// Three pixels earlier than that: where AMSpiriT puts the 640 pixels of a
 /// standard screen (x=64..703 of its 768 wide picture).
-const MONITOR_FIRST_PIXEL: usize = 8 * 16 - 3;
+const MONITOR_FIRST_PIXEL: usize = 8 * 16 - 2;
 const MONITOR_ACTIVE_PIXELS: usize = 48 * 16;
 const MONITOR_HEIGHT: usize = 272;
 const MONITOR_FIRST_LINE: usize = 33;

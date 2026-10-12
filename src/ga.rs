@@ -907,6 +907,8 @@ pub struct GateArray {
     /// Number of HSYNC falling edges seen so far (diagnostics).
     hsync_ends: u64,
     monitor_hsync_advance: usize,
+    rgb_previous: RgbLevels,
+    rgb_delayed: bool,
     /// GA clock ticks since power-on (timestamps of the RMR mode writes).
     abs_tick: u64,
     /// The CRTC HSYNC as the GA sees it (see [`HSYNC_GA_DELAY_TICKS`]).
@@ -961,6 +963,8 @@ impl Default for GateArray {
             hsync_counter: HSyncCounter::NoHsync,
             hsync_ends: 0,
             monitor_hsync_advance: 0,
+            rgb_previous: (0., 0., 0.).into(),
+            rgb_delayed: false,
             abs_tick: 0,
             hsync_pipe: [false; HSYNC_GA_DELAY_TICKS],
             hsync_ga: false,
@@ -1212,7 +1216,10 @@ impl GateArray {
     fn generate_pixel(&mut self) {
         if self.pixel_automata.is_done() {
             //     dbg!("Here some pixel are expected, but we do not know what as to be produced...");
-            self.rgb = (0., 0., 0.).into();
+            // the last pixel of a delayed (non MODE 2) byte still comes out
+            self.rgb = if self.rgb_delayed { self.rgb_previous } else { (0., 0., 0.).into() };
+            self.rgb_previous = (0., 0., 0.).into();
+            self.rgb_delayed = false;
         } else {
             // Always advance the automaton, even while blanked by HSYNC/
             // VSYNC - real hardware's pixel serialiser keeps running
@@ -1222,13 +1229,20 @@ impl GateArray {
             // how many pixels of the current byte are `already_generated`
             // to know exactly where the switch landed). Only the
             // *displayed* output is blanked below - not consumption.
+            let mode = self.pixel_automata.mode();
             let computed = self
                 .pixel_automata
                 .generate_pixel(!self.get_pin(GateArrayPin::DISPEN));
+            // ACCC §9.3 (GA 40007/8/10): the pixels of MODE 2 are displayed one
+            // pixel earlier than those of the other modes (the BORDER stops and
+            // starts one pixel earlier too); the other modes are what we delay
+            let pixel = if mode == Some(VideoMode::Mode2) { computed } else { self.rgb_previous };
+            self.rgb_previous = computed;
+            self.rgb_delayed = mode != Some(VideoMode::Mode2);
             if self.hsync_ga || self.get_pin(GateArrayPin::VSYNC) {
                 self.rgb = (0., 0., 0.).into();
             } else {
-                self.rgb = computed;
+                self.rgb = pixel;
             }
         }
     }
@@ -1906,6 +1920,11 @@ mod test {
 
     fn check_expected_inks(ga: &mut GateArray, expected: &[RgbLevels; 8]) {
         assert!(!ga.pixel_automata.is_done());
+        // the pixels of the other modes than MODE 2 come out one tick late
+        let delayed = ga.pixel_automata.mode() != Some(VideoMode::Mode2);
+        if delayed {
+            ga.tick();
+        }
         let obtained = (0..8)
             .into_iter()
             .map(|i| {
