@@ -4,6 +4,7 @@
 //! ```text
 //! amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]
 //!         [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]
+//!         [--record file [--seconds N]]
 //! ```
 //!
 //! With no `--screenshot`/`--window`, drops into the existing interactive
@@ -28,6 +29,13 @@
 //! clock then sets the emulation speed; `--mute` turns it off. Without the
 //! feature the window is silent.
 //!
+//! With `--record <file>` (e.g. `capture.mp4`), records a video, picture
+//! and sound, through `ffmpeg` (which must be installed; the extension picks
+//! the format, see `recorder.rs`). With `--window`, records what is played
+//! until the window is closed; otherwise runs headless for `--seconds`
+//! (default 30) of emulated time. Ctrl+C (or SIGTERM) ends a recording
+//! early, the file being finished properly.
+//!
 //! `--sna` restores CPU registers, the base 64K of RAM, the CRTC's
 //! registers, the gate array's ink/mode/ROM-paging state and the PSG's
 //! registers (see `amsrust::snapshot`); apply it after `--dsk` if the
@@ -41,12 +49,14 @@ use amsrust::fdc::FdcDrive;
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
+use amsrust::psg::AudioConfig;
 use minifb::{InputCallback, Key, Window, WindowOptions};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
 mod host_audio;
+mod recorder;
 
 struct Args {
     crtc: CrtcType,
@@ -57,7 +67,8 @@ struct Args {
     seconds: u64,
     every: u64,
     window: bool,
-    mute: bool
+    mute: bool,
+    record: Option<String>
 }
 
 fn parse_args() -> Args {
@@ -70,7 +81,8 @@ fn parse_args() -> Args {
         seconds: 30,
         every: 2,
         window: false,
-        mute: false
+        mute: false,
+        record: None
     };
 
     let mut it = std::env::args().skip(1);
@@ -93,6 +105,7 @@ fn parse_args() -> Args {
             "--every" => args.every = next("--every").parse().expect("--every must be a number"),
             "--window" => args.window = true,
             "--mute" => args.mute = true,
+            "--record" => args.record = Some(next("--record")),
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -111,6 +124,7 @@ fn print_help() {
     eprintln!(concat!(
         "amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]\n",
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]\n",
+        "        [--record file [--seconds N]]\n",
         "\n",
         "With no --screenshot/--window, drops into the interactive monitor once\n",
         "everything is loaded ('h' at its prompt lists its commands). With\n",
@@ -118,7 +132,9 @@ fn print_help() {
         "screenshot every --every seconds (default 2). With --window, opens a\n",
         "live, playable window redrawn at the CPC's own ~50Hz, keyboard included\n",
         "- close the window to quit. Built with --features audio, the window\n",
-        "plays the sound too (--mute to silence it)."
+        "plays the sound too (--mute to silence it). --record capture.mp4 records\n",
+        "a video with sound through ffmpeg: what the window shows until it is\n",
+        "closed, or without --window --seconds (default 30) run headless."
     ));
 }
 
@@ -128,8 +144,22 @@ fn insert_disc(path: &str, drive: FdcDrive, motherboard: &mut amsrust::motherboa
     motherboard.fdc_mut().insert_image(drive, Some(image));
 }
 
+/// Set by Ctrl+C / SIGTERM: the window and headless recording loops stop at
+/// the next frame, so a recording is still finished properly.
+static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn stop_requested() -> bool {
+    STOP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn main() {
     let args = parse_args();
+    if args.record.is_some() {
+        // Only when recording: elsewhere (the interactive monitor) Ctrl+C
+        // keeps its usual meaning.
+        ctrlc::set_handler(|| STOP.store(true, std::sync::atomic::Ordering::Relaxed))
+            .expect("cannot install the Ctrl+C handler");
+    }
 
     let mut motherboard = MotherboardBuilder::default().set_crtc(args.crtc).enable_interruptions().build();
 
@@ -145,7 +175,10 @@ fn main() {
 
     match args.screenshot_dir {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every),
-        None if args.window => run_window(&mut motherboard, !args.mute),
+        None if args.window => run_window(&mut motherboard, !args.mute, args.record.as_deref()),
+        None if args.record.is_some() => {
+            run_recording(&mut motherboard, args.record.as_deref().unwrap(), args.seconds)
+        },
         None => {
             let mut handle = |_motherboard: &mut amsrust::motherboard::Motherboard| false;
             let mut ctx = MonitorContext::new(Box::new(&mut handle));
@@ -206,6 +239,57 @@ fn run_headless(motherboard: &mut amsrust::motherboard::Motherboard, dir: &str, 
     eprintln!("{shot} screenshot(s) over {seconds}s emulated, saved to {dir}/");
 }
 
+/// The format the PSG is recorded in when no audio device dictates it.
+const RECORD_AUDIO: fn() -> AudioConfig = || AudioConfig::stereo(48_000);
+
+fn start_recorder(path: &str, audio: Option<AudioConfig>) -> recorder::Recorder {
+    recorder::Recorder::start(std::path::Path::new(path), WINDOW_WIDTH, WINDOW_HEIGHT / 2, audio)
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1)
+        })
+}
+
+fn finish_recorder(recorder: recorder::Recorder, path: &str) {
+    match recorder.finish() {
+        Ok(frames) => eprintln!("{path}: {frames} frames ({:.1}s)", frames as f64 * 312.0 / 15625.0),
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1)
+        }
+    }
+}
+
+/// `--record` without `--window`: run `seconds` of emulated time headless,
+/// recording every frame and the sound.
+fn run_recording(motherboard: &mut Motherboard, path: &str, seconds: u64) {
+    motherboard.set_audio_output(Some(RECORD_AUDIO()));
+    let mut recorder = start_recorder(path, Some(RECORD_AUDIO()));
+    let target_t_states = seconds as usize * T_STATES_PER_SECOND;
+    let mut monitor = CrtMonitor::default();
+    while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
+        let mut frame = None;
+        motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
+            monitor.receive(rgb, sync);
+            if frame.is_none() {
+                frame = monitor.take_frame();
+            }
+        });
+        if let Some(frame) = frame {
+            let recorded = recorder
+                .samples(&motherboard.take_audio_samples())
+                .and_then(|()| recorder.frame(&frame));
+            if let Err(e) = recorded {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    // The sound of the last, incomplete frame is not recorded: the video
+    // ends with the last whole frame.
+    finish_recorder(recorder, path);
+}
+
 /// A generous upper bound on a captured frame's size (see
 /// `amsrust::monitor`'s own, private `GRABBER_WIDTH`/`MONITOR_HEIGHT`,
 /// which this can't reference across the bin/lib crate boundary): the
@@ -219,7 +303,7 @@ const WINDOW_WIDTH: usize = 48 * 8 * 2; // 768
 /// roughly correct 4:3 aspect instead of a squashed one.
 const WINDOW_HEIGHT: usize = 272 * 2;
 
-fn run_window(motherboard: &mut Motherboard, sound: bool) {
+fn run_window(motherboard: &mut Motherboard, sound: bool, record: Option<&str>) {
     let mut window = Window::new("amsrust", WINDOW_WIDTH, WINDOW_HEIGHT, WindowOptions {
         resize: true,
         ..WindowOptions::default()
@@ -234,6 +318,14 @@ fn run_window(motherboard: &mut Motherboard, sound: bool) {
         // The audio device's clock paces the emulation instead.
         window.set_target_fps(0);
     }
+    // The recording takes the sound in the device's format if it plays it.
+    let mut recorder = record.map(|path| {
+        let config = motherboard.psg().audio_config().unwrap_or_else(|| {
+            motherboard.set_audio_output(Some(RECORD_AUDIO()));
+            RECORD_AUDIO()
+        });
+        start_recorder(path, Some(config))
+    });
 
     let typed_chars = TypedChars::default();
     window.set_input_callback(Box::new(typed_chars.clone()));
@@ -241,7 +333,7 @@ fn run_window(motherboard: &mut Motherboard, sound: bool) {
 
     let mut buffer = vec![0u32; WINDOW_WIDTH * WINDOW_HEIGHT];
 
-    while window.is_open() {
+    while window.is_open() && !stop_requested() {
         update_keyboard(&window, motherboard, typed_combo.advance(&typed_chars));
 
         let mut monitor = CrtMonitor::default();
@@ -262,12 +354,24 @@ fn run_window(motherboard: &mut Motherboard, sound: bool) {
             break;
         };
 
-        play_frame_audio(audio.as_ref(), motherboard, &window);
+        let samples = motherboard.take_audio_samples();
+        if let Some(recorder) = &mut recorder {
+            let recorded = recorder.samples(&samples).and_then(|()| recorder.frame(&frame));
+            if let Err(e) = recorded {
+                eprintln!("recording stopped: {e}");
+                break;
+            }
+        }
+        play_frame_audio(audio.as_ref(), &samples, &window);
 
         blit_doubled(&frame, &mut buffer);
         window
             .update_with_buffer(&buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
             .unwrap_or_else(|e| panic!("failed to redraw the window: {e}"));
+    }
+
+    if let (Some(recorder), Some(path)) = (recorder, record) {
+        finish_recorder(recorder, path);
     }
 
     #[cfg(feature = "audio")]
@@ -324,10 +428,10 @@ fn open_audio(sound: bool, motherboard: &mut Motherboard) -> Option<AudioOut> {
 /// Hand the frame's samples to the device, then wait while enough sound is
 /// already queued: this keeps the emulation in step with the device.
 #[allow(unused_variables)]
-fn play_frame_audio(audio: Option<&AudioOut>, motherboard: &mut Motherboard, window: &Window) {
+fn play_frame_audio(audio: Option<&AudioOut>, samples: &[f32], window: &Window) {
     #[cfg(feature = "audio")]
     if let Some(audio) = audio {
-        audio.push(&motherboard.take_audio_samples());
+        audio.push(samples);
         while audio.buffered() > host_audio::TARGET_LATENCY && window.is_open() {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
