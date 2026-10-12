@@ -13,7 +13,7 @@ use crate::keyboard::KeyboardMatrix;
 use crate::memory::*;
 use crate::pal::*;
 use crate::ppi::*;
-use crate::psg::{BusControl, Psg, REG_IO_PORT_A};
+use crate::psg::{AudioConfig, BusControl, Psg, REG_IO_PORT_A};
 use crate::z80::*;
 
 use std::convert::TryFrom;
@@ -270,6 +270,18 @@ impl Motherboard {
 
     pub fn psg_mut(&mut self) -> &mut Psg {
         &mut self.psg
+    }
+
+    /// Start (`Some`) or stop (`None`) producing PSG audio samples - see
+    /// [`AudioConfig`] for the format.
+    pub fn set_audio_output(&mut self, config: Option<AudioConfig>) {
+        self.psg.set_audio_output(config);
+    }
+
+    /// The PSG audio samples produced since the last call (interleaved
+    /// left/right in stereo); empty when no audio output is configured.
+    pub fn take_audio_samples(&mut self) -> Vec<f32> {
+        self.psg.take_samples()
     }
 
     pub fn keyboard(&self) -> &KeyboardMatrix {
@@ -660,6 +672,11 @@ impl Motherboard {
         if let Some(read_value) = self.psg.bus_cycle(control, data_bus) {
             self.ppi.set_port_a_input(read_value);
         }
+
+        // The PSG's CLOCK pin is wired to the gate array's 1MHz output, the
+        // same signal as the CRTC's CCLK: the chip advances on its rising
+        // edges (once every 16 ticks).
+        self.psg.set_clock_pin(self.ga.get_pin(GateArrayPin::CCLK));
     }
 
     /// Make the appropriate copy between some pins of some chips to other (we simulate the various buses here)

@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]
-//!         [--screenshot dir [--seconds N] [--every N]]
+//!         [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]
 //! ```
 //!
 //! With no `--screenshot`/`--window`, drops into the existing interactive
@@ -23,6 +23,11 @@
 //! debugging it. No menus, no mouse/joystick support yet: close the window
 //! to quit.
 //!
+//! Sound: built with `--features audio`, `--window` plays the PSG on the
+//! default audio output device (see `host_audio.rs`), and the device's
+//! clock then sets the emulation speed; `--mute` turns it off. Without the
+//! feature the window is silent.
+//!
 //! `--sna` restores CPU registers, the base 64K of RAM, the CRTC's
 //! registers, the gate array's ink/mode/ROM-paging state and the PSG's
 //! registers (see `amsrust::snapshot`); apply it after `--dsk` if the
@@ -41,6 +46,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+mod host_audio;
+
 struct Args {
     crtc: CrtcType,
     dsk_a: Option<String>,
@@ -49,7 +56,8 @@ struct Args {
     screenshot_dir: Option<String>,
     seconds: u64,
     every: u64,
-    window: bool
+    window: bool,
+    mute: bool
 }
 
 fn parse_args() -> Args {
@@ -61,7 +69,8 @@ fn parse_args() -> Args {
         screenshot_dir: None,
         seconds: 30,
         every: 2,
-        window: false
+        window: false,
+        mute: false
     };
 
     let mut it = std::env::args().skip(1);
@@ -83,6 +92,7 @@ fn parse_args() -> Args {
             "--seconds" => args.seconds = next("--seconds").parse().expect("--seconds must be a number"),
             "--every" => args.every = next("--every").parse().expect("--every must be a number"),
             "--window" => args.window = true,
+            "--mute" => args.mute = true,
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -100,14 +110,15 @@ fn parse_args() -> Args {
 fn print_help() {
     eprintln!(concat!(
         "amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]\n",
-        "        [--screenshot dir [--seconds N] [--every N]] [--window]\n",
+        "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]\n",
         "\n",
         "With no --screenshot/--window, drops into the interactive monitor once\n",
         "everything is loaded ('h' at its prompt lists its commands). With\n",
         "--screenshot, runs headless for --seconds (default 30), saving a\n",
         "screenshot every --every seconds (default 2). With --window, opens a\n",
         "live, playable window redrawn at the CPC's own ~50Hz, keyboard included\n",
-        "- close the window to quit."
+        "- close the window to quit. Built with --features audio, the window\n",
+        "plays the sound too (--mute to silence it)."
     ));
 }
 
@@ -134,7 +145,7 @@ fn main() {
 
     match args.screenshot_dir {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every),
-        None if args.window => run_window(&mut motherboard),
+        None if args.window => run_window(&mut motherboard, !args.mute),
         None => {
             let mut handle = |_motherboard: &mut amsrust::motherboard::Motherboard| false;
             let mut ctx = MonitorContext::new(Box::new(&mut handle));
@@ -208,7 +219,7 @@ const WINDOW_WIDTH: usize = 48 * 8 * 2; // 768
 /// roughly correct 4:3 aspect instead of a squashed one.
 const WINDOW_HEIGHT: usize = 272 * 2;
 
-fn run_window(motherboard: &mut Motherboard) {
+fn run_window(motherboard: &mut Motherboard, sound: bool) {
     let mut window = Window::new("amsrust", WINDOW_WIDTH, WINDOW_HEIGHT, WindowOptions {
         resize: true,
         ..WindowOptions::default()
@@ -217,6 +228,12 @@ fn run_window(motherboard: &mut Motherboard) {
     // Cap redraws (and so input polling and emulated speed) at the CPC's
     // own real refresh rate rather than running full tilt.
     window.set_target_fps(50);
+
+    let audio = open_audio(sound, motherboard);
+    if audio.is_some() {
+        // The audio device's clock paces the emulation instead.
+        window.set_target_fps(0);
+    }
 
     let typed_chars = TypedChars::default();
     window.set_input_callback(Box::new(typed_chars.clone()));
@@ -245,10 +262,75 @@ fn run_window(motherboard: &mut Motherboard) {
             break;
         };
 
+        play_frame_audio(audio.as_ref(), motherboard, &window);
+
         blit_doubled(&frame, &mut buffer);
         window
             .update_with_buffer(&buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
             .unwrap_or_else(|e| panic!("failed to redraw the window: {e}"));
+    }
+
+    #[cfg(feature = "audio")]
+    if let Some(audio) = &audio {
+        let missing = audio.missing_frames();
+        if missing > 0 {
+            eprintln!(
+                "sound: {:.1}s of gaps in total (the emulation ran slower than real time)",
+                missing as f64 / audio.config().sample_rate as f64
+            );
+        }
+    }
+}
+
+#[cfg(feature = "audio")]
+type AudioOut = host_audio::AudioOut;
+/// Stands for the audio device when built without the `audio` feature.
+#[cfg(not(feature = "audio"))]
+type AudioOut = ();
+
+/// Open the default audio output and make the PSG produce samples for it.
+/// `None` (silent window) when `sound` is off, the `audio` feature is not
+/// built in or no device can be opened.
+fn open_audio(sound: bool, motherboard: &mut Motherboard) -> Option<AudioOut> {
+    if !sound {
+        return None;
+    }
+    #[cfg(feature = "audio")]
+    {
+        match host_audio::AudioOut::open() {
+            Ok(audio) => {
+                let config = audio.config();
+                eprintln!(
+                    "sound: {}Hz {}",
+                    config.sample_rate,
+                    if config.stereo { "stereo" } else { "mono" }
+                );
+                motherboard.set_audio_output(Some(config));
+                Some(audio)
+            },
+            Err(error) => {
+                eprintln!("sound disabled: {error}");
+                None
+            }
+        }
+    }
+    #[cfg(not(feature = "audio"))]
+    {
+        let _ = motherboard;
+        None
+    }
+}
+
+/// Hand the frame's samples to the device, then wait while enough sound is
+/// already queued: this keeps the emulation in step with the device.
+#[allow(unused_variables)]
+fn play_frame_audio(audio: Option<&AudioOut>, motherboard: &mut Motherboard, window: &Window) {
+    #[cfg(feature = "audio")]
+    if let Some(audio) = audio {
+        audio.push(&motherboard.take_audio_samples());
+        while audio.buffered() > host_audio::TARGET_LATENCY && window.is_open() {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 }
 
