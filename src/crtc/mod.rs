@@ -155,6 +155,9 @@ pub struct Crtc {
     r0_enlarge_steps_c4: bool,
     /// ACCC §13.7.2.2: C9 counts on from the last line up to R5.
     r0_enlarge_c9_to_r5: bool,
+    /// The running adjustment was asked for by R5>0 (CRTC 0: it ends when the
+    /// count equals R5, read live) and not by the additional management alone.
+    adjust_counts_to_r5: bool,
     /// Motherboard ticks since the last character clock edge (0..15).
     phase_ticks: u8,
     /// BORDER R1 latched on this line (CRTC 0/2), see `update_memory_address`.
@@ -242,6 +245,7 @@ impl Default for Crtc {
             additional_r5: false,
             r0_enlarge_steps_c4: false,
             r0_enlarge_c9_to_r5: false,
+            adjust_counts_to_r5: false,
             phase_ticks: 0,
             r1_latch: false,
             r1_zero_late: false,
@@ -742,9 +746,18 @@ impl Crtc {
                 // VCC/VLC are held here; only the adjust counter advances,
                 // one raster line at a time, until it has topped up the
                 // frame by R5 extra lines.
-                self.vtac += 1;
                 let extra = u8::from(self.interlace_extra_line);
-                if self.vtac >= self.regs[5].saturating_add(extra) {
+                let ended = if self.model.has_last_line_state() && self.adjust_counts_to_r5 {
+                    // CRTC 0 (ACCC 11.3): there is no C5, C9 counts on to R5, read
+                    // live: an R5 lowered below the count makes the 5 bit counter
+                    // overflow and go round up to the new value
+                    self.vtac = (self.vtac + 1) & 0x1f;
+                    self.vtac == (self.regs[5].wrapping_add(extra)) & 0x1f
+                } else {
+                    self.vtac += 1;
+                    self.vtac >= self.regs[5].saturating_add(extra)
+                };
+                if ended {
                     self.in_vertical_adjust = false;
                     self.interlace_extra_line = false;
                     self.last_line = false;
@@ -781,6 +794,7 @@ impl Crtc {
                         new_frame = true;
                     } else {
                         self.in_vertical_adjust = true;
+                        self.adjust_counts_to_r5 = self.additional_r5;
                         self.interlace_extra_line = extra;
                         self.vtac = 0;
                     }
