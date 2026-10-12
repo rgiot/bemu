@@ -2766,7 +2766,12 @@ impl Chip for Z80 {
                         // after the read, and this write was the last
                         // M-cycle - the instruction retires now.
                         self.opcode_information = None;
-                        self.instruction_finished();
+                        // ...unless an internal cycle still follows (RLD,
+                        // (IX+d) rotates, RES, SET): a pending interrupt is
+                        // only accepted once that cycle is over
+                        if self.expect_additional_fake_cycle == 0 {
+                            self.instruction_finished();
+                        }
                     }
                     if self.im2_stage == 1 {
                         // IM 2: the return address is pushed, now fetch the
