@@ -24,7 +24,13 @@ use cpclib_asm::preamble::{
 };
 
 fn eval_expr_to_i32(expr: &Expr) -> i32 {
-    expr.eval().unwrap().int_value().unwrap()
+    match expr {
+        // What the decoder produces for operands: read it directly.
+        // `Expr::eval` builds a whole default assembler environment (a
+        // zeroed memory image included) on every call.
+        Expr::Value(value) => *value,
+        _ => expr.eval().unwrap().int_value().unwrap()
+    }
 }
 
 fn eval_data_access_to_i32(access: &DataAccess) -> i32 {
