@@ -1855,6 +1855,26 @@ impl Z80 {
             }
             _ => unimplemented!("{:?}, {:?}, {:?}", mnemonic, arg1, arg2),
         }
+
+        // the internal cycle of the 8 bits ALU instructions on (IX+d)/(IY+d)
+        // (ADD has its own above): 19 T-states, 5 us on a CPC
+        if matches!(
+            mnemonic,
+            Mnemonic::Adc | Mnemonic::And | Mnemonic::Cp | Mnemonic::Or | Mnemonic::Sbc | Mnemonic::Sub | Mnemonic::Xor
+        ) && matches!(arg2.or(arg1), Some(DataAccess::IndexRegister16WithIndex(_, _, _)))
+        {
+            self.next_state = MCycle::new_fake(1);
+        }
+
+        // rotates and shifts on (IX+d)/(IY+d) take 7 us like RLC, RES and SET
+        // (RLC, RES and SET ask for it themselves)
+        if matches!(
+            mnemonic,
+            Mnemonic::Rl | Mnemonic::Rr | Mnemonic::Rrc | Mnemonic::Sla | Mnemonic::Sra | Mnemonic::Srl | Mnemonic::Sl1
+        ) && matches!(arg1, Some(DataAccess::IndexRegister16WithIndex(_, _, _)))
+        {
+            self.expect_additional_fake_cycle = 1;
+        }
     }
     /// Return the value for this data access
     /// - Inside a register / straightworard to obtain
