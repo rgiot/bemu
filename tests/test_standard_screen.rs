@@ -22,8 +22,22 @@ fn beginning_steps(ga: &mut GateArray, crtc: &mut Crtc) {
     assert_eq!(ga.get_pin(GateArrayPin::CCLK), crtc.get_pin(CrtcPin::CCLK),);
 }
 
+thread_local! {
+    /// Was the previous pixel a border one? The pixels of the modes other than
+    /// MODE 2 come out one tick late (MODE 2 is displayed a pixel earlier).
+    static PREVIOUS_BORDER: std::cell::Cell<Option<(bool, [Ink; 17])>> = std::cell::Cell::new(None);
+}
+
 fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
-    let is_border = !ga.get_pin(GateArrayPin::DISPEN);
+    let is_border_now = !ga.get_pin(GateArrayPin::DISPEN);
+    let previous = PREVIOUS_BORDER.with(|p| p.replace(Some((is_border_now, *ga.palette()))));
+    // nothing to check on the very first tick of a delayed mode
+    let unknown = ga.current_mode() != VideoMode::Mode2 && previous.is_none();
+    let (is_border, palette) = if ga.current_mode() == VideoMode::Mode2 {
+        (is_border_now, *ga.palette())
+    } else {
+        previous.unwrap_or((true, *ga.palette()))
+    };
     // ga cycles
     ga.tick();
     if crtc.is_activated() {
@@ -31,7 +45,6 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     }
 
     let rgb = ga.rgb();
-    let palette = ga.palette();
     palette[0].to_rgb_levels();
 
     let vsync = ga.get_pin(GateArrayPin::VSYNC);
@@ -39,7 +52,7 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     // after the CRTC raises/lowers it)
     let hsync = ga.hsync_ga();
 
-    if !vsync && !hsync {
+    if !vsync && !hsync && !unknown {
         if is_border {
             assert_eq!(rgb, palette[16].to_rgb_levels())
         } else {
