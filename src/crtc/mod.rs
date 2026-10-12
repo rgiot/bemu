@@ -153,6 +153,8 @@ pub struct Crtc {
     additional_r5: bool,
     /// ACCC §13.7.2: C4 steps at C0=2 after an R0 enlargement out of 1.
     r0_enlarge_steps_c4: bool,
+    /// ACCC §13.7.2.2: C9 counts on from the last line up to R5.
+    r0_enlarge_c9_to_r5: bool,
     /// Diagnostics: every register write as (C0, C4, C9, register, value).
     write_log: Option<Vec<(u8, u8, u8, u8, u8)>>,
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
@@ -230,6 +232,7 @@ impl Default for Crtc {
             additional_armed: false,
             additional_r5: false,
             r0_enlarge_steps_c4: false,
+            r0_enlarge_c9_to_r5: false,
             write_log: None,
             crtc_vma: 0,
             crtc_vma_prime: 0,
@@ -673,6 +676,15 @@ impl Crtc {
             let vcc_before = self.vcc.value();
             if skip_counters {
                 // frozen
+            } else if self.r0_enlarge_c9_to_r5 {
+                self.last_line = false;
+                self.vlc += 1;
+                if self.vlc.value() == self.regs[5] & 0x1f {
+                    self.r0_enlarge_c9_to_r5 = false;
+                    self.vcc.reset();
+                    self.vlc.reset();
+                    new_frame = true;
+                }
             } else if self.in_vertical_adjust {
                 // VCC/VLC are held here; only the adjust counter advances,
                 // one raster line at a time, until it has topped up the
@@ -780,6 +792,11 @@ impl Crtc {
             self.vcc += 1;
             if self.vcc == self.regs[6] && self.regs[6] != 0 {
                 self.vertical_border = true;
+            }
+            // ACCC §13.7.2.2: on a last line the additional management stays
+            // active whatever R5 is, and C9 goes on counting (no reset) up to R5
+            if self.last_line {
+                self.r0_enlarge_c9_to_r5 = true;
             }
         }
         if self.hcc < 2 {
