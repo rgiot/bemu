@@ -1330,4 +1330,74 @@ mod test {
             assert_eq!(vsync_duration + vsync_wait, 19968);
         }
     }
+
+    fn crtc0() -> Crtc {
+        Crtc::from(CrtcType::Crtc0)
+    }
+
+    fn step_until_hcc(crtc: &mut Crtc, hcc: u8) {
+        for _ in 0..100_000 {
+            crtc.update_memory_address();
+            if crtc.hcc == hcc {
+                return;
+            }
+        }
+        panic!("C0 never reached {hcc}");
+    }
+
+    /// ACCC §17.4/§17.5: once the BORDER R1 has started on a line (here an
+    /// R1=0 on C0=0), raising R1 does not bring the display back before the
+    /// next line.
+    #[test]
+    fn test_crtc0_border_r1_is_latched_for_the_line() {
+        let mut crtc = crtc0();
+        step_until_hcc(&mut crtc, 0);
+        crtc.do_write_register(1, 0);
+        assert!(!crtc.get_pin(CrtcPin::DE));
+        step_until_hcc(&mut crtc, 3);
+        crtc.do_write_register(1, 40);
+        step_until_hcc(&mut crtc, 8);
+        assert!(!crtc.get_pin(CrtcPin::DE), "the border must stay until the next line");
+        step_until_hcc(&mut crtc, 2);
+        assert!(crtc.get_pin(CrtcPin::DE), "the next line displays again");
+    }
+
+    /// ACCC §13.7.2.1: R0 enlarged out of 1 on C0=1 while C9=R9 overflows C4
+    /// on C0=2, even if C4<>R4.
+    #[test]
+    fn test_crtc0_r0_enlarged_from_one_steps_c4() {
+        let mut crtc = crtc0();
+        crtc.do_write_register(9, 0);
+        crtc.do_write_register(4, 100);
+        crtc.do_write_register(0, 1);
+        step_until_hcc(&mut crtc, 1);
+        while crtc.vlc.value() != 0 {
+            step_until_hcc(&mut crtc, 1);
+        }
+        let before = crtc.vcc.value();
+        crtc.do_write_register(0, 63);
+        crtc.update_memory_address();
+        assert_eq!(crtc.hcc, 2);
+        assert_eq!(crtc.vcc.value(), (before + 1) & 0x7f);
+    }
+
+    /// ACCC §13.2.6: with R0=0 the first C0=0 only compares C9 (C9<>R9: it
+    /// moves once), then C9 and C4 are frozen.
+    #[test]
+    fn test_crtc0_r0_zero_freezes_the_counters() {
+        let mut crtc = crtc0();
+        step_until_hcc(&mut crtc, 0);
+        for _ in 0..3 * 64 {
+            crtc.update_memory_address();
+        }
+        step_until_hcc(&mut crtc, 0);
+        let (c4, c9) = (crtc.vcc.value(), crtc.vlc.value());
+        assert!(c9 < 6, "need room to count");
+        crtc.do_write_register(0, 0);
+        for _ in 0..50 {
+            crtc.update_memory_address();
+        }
+        assert_eq!(crtc.vcc.value(), c4);
+        assert_eq!(crtc.vlc.value(), c9 + 1);
+    }
 }
