@@ -157,6 +157,10 @@ pub struct Crtc {
     r0_enlarge_c9_to_r5: bool,
     /// Motherboard ticks since the last character clock edge (0..15).
     phase_ticks: u8,
+    /// BORDER R1 latched on this line (CRTC 0/2), see `update_memory_address`.
+    r1_latch: bool,
+    /// R1=0 came after C0=0: not considered until the next line.
+    r1_zero_late: bool,
     /// How many ticks late the running HSYNC rose compared to its C0=R2
     /// character (R2.JIT, ACCC 14.7.1: the monitor sync does not move).
     hsync_late_ticks: u8,
@@ -239,6 +243,8 @@ impl Default for Crtc {
             r0_enlarge_steps_c4: false,
             r0_enlarge_c9_to_r5: false,
             phase_ticks: 0,
+            r1_latch: false,
+            r1_zero_late: false,
             hsync_late_ticks: 0,
             write_log: None,
             crtc_vma: 0,
@@ -436,6 +442,10 @@ impl Crtc {
             self.r6_border = true;
             self.set_pin(CrtcPin::DE, false);
         }
+        // ACCC §17.5: R1=0 written after C0=0 is too late for this line
+        if r == 1 && self.regs[1] == 0 && self.hcc > 0 {
+            self.r1_zero_late = true;
+        }
         // ACCC §17.4: "the condition C0=R1 is considered immediately on a
         // line", and it can be met several times in one line by reprogramming
         // R1: the video pointer is updated (on the last scan line of the
@@ -445,6 +455,7 @@ impl Crtc {
                 self.crtc_vma_prime = self.crtc_vma;
             }
             self.border_history[0] = true;
+            self.r1_latch = true;
             if let DisplaySkew::Delayed(chars) = self.model.display_skew(self.regs[8]) {
                 if self.border_history[usize::from(chars)] {
                     self.set_pin(CrtcPin::DE, false);
@@ -851,7 +862,22 @@ impl Crtc {
             && self.hcc == self.regs[0]
             && matches!(skew, DisplaySkew::Delayed(d) if d > 0);
         self.border_history.rotate_right(1);
-        self.border_history[0] = self.hcc >= self.regs[1] || replaced_by_r0;
+        let by_r1 = if self.model.has_last_line_state() {
+            // ACCC §17.4/§17.5: the BORDER R1 is a state set by the C0=R1
+            // equality (or R1=0), cleared when a line starts; raising R1
+            // afterwards does not bring the display back before the next line
+            if self.hcc == 0 {
+                self.r1_zero_late = false;
+                self.r1_latch = false;
+            }
+            if self.hcc == self.regs[1] || (self.regs[1] == 0 && !self.r1_zero_late) {
+                self.r1_latch = true;
+            }
+            self.r1_latch
+        } else {
+            self.hcc >= self.regs[1]
+        };
+        self.border_history[0] = by_r1 || replaced_by_r0;
         let horizontal_border = match skew {
             DisplaySkew::Delayed(chars) => self.border_history[usize::from(chars)],
             DisplaySkew::Blanked => true,
