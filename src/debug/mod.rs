@@ -10,7 +10,7 @@ use crate::z80::Z80Flags;
 use crate::z80::Z80Pin;
 use crate::z80::{HasValue, Reg16, Z80};
 
-use self::breakpoint::BreakPoint;
+pub use self::breakpoint::BreakPoint;
 
 
 mod interpretor;
