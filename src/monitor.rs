@@ -43,6 +43,23 @@ const MONITOR_MIN_HSYNC_TICKS: usize = 16;
 /// Shortest C-VSYNC pulse the monitor reacts to: it integrates the signal.
 const MONITOR_MIN_VSYNC_TICKS: usize = 64;
 
+/// Pulses (in ticks) too short or too long to be taken for a line sync.
+const MONITOR_HPULSE_MIN: usize = 4;
+const MONITOR_HPULSE_MAX: usize = 128;
+/// A second sync inside a line pulls the picture (the monitor's AFC
+/// discriminator), measured on Shaker D3/AT/AY against AmSpiriT: the pull is
+/// the pulse width less 9 ticks times 5/12 when it comes after the line sync
+/// (the picture moves left) and 4/7 of that when it comes before (to the
+/// right); it is flat over most of the half line and falls to nothing at 31
+/// characters after (20 before); a pulse within 6 characters belongs to the
+/// same sync complex. The beam follows it by 1 to 3 ticks a line.
+const MONITOR_PULL_DEAD_WIDTH: i32 = 9;
+const MONITOR_PULL_DEADZONE: i64 = 6 * 16;
+const MONITOR_PULL_FLAT_LATE: i64 = 422;
+const MONITOR_PULL_END_LATE: i64 = 496;
+const MONITOR_PULL_FLAT_EARLY: i64 = 12 * 16;
+const MONITOR_PULL_END_EARLY: i64 = 20 * 16;
+
 const HSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 128, 255]);
 const VSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 64, 255]);
 
@@ -69,7 +86,17 @@ pub struct Monitor {
     free_lines: usize,
     /// A VSYNC has been seen at least once: only then a frame is whole.
     synchronised: bool,
-    /// Ticks since the last frame start, for the frame oscillator.
+    /// Ticks since the beginning of time, to date the sync pulses.
+    now: u64,
+    /// The other sync pulses (start, width) seen since the last line sync.
+    pulses: Vec<(u64, i32)>,
+    /// Start of the last line sync.
+    last_sync_start: Option<u64>,
+    /// How far (ticks, + = right) the second-sync discriminator holds the picture.
+    shift: i32,
+    /// What the discriminator decided at the last sync: the beam follows it
+    /// from the next line (the pulses it looks at come after the flyback).
+    next_shift: i32,
     vsync_color: Rgb<u8>,
     hsync_color: Rgb<u8>,
 }
@@ -93,6 +120,11 @@ impl Monitor {
             locked: false,
             free_lines: 0,
             synchronised: false,
+            now: 0,
+            pulses: Vec::new(),
+            last_sync_start: None,
+            shift: 0,
+            next_shift: 0,
             vsync_color,
             hsync_color
         }
@@ -150,6 +182,21 @@ impl Monitor {
             && (!self.locked || self.x >= MONITOR_HSYNC_WINDOW_START);
         let free_run = self.x >= RASTER_LINE_LENGTH;
         let line_end = pulse_end || free_run;
+        // the sync pulses, dated, for the second-sync discriminator
+        if hsync_pulse > 0 && !hsync && !vsync
+            && (MONITOR_HPULSE_MIN..=MONITOR_HPULSE_MAX).contains(&hsync_pulse)
+        {
+            let start = self.now - hsync_pulse as u64;
+            if pulse_end {
+                self.discriminate(start);
+                self.last_sync_start = Some(start);
+                self.pulses.clear();
+            }
+            else if self.pulses.len() < 8 {
+                self.pulses.push((start, hsync_pulse as i32));
+            }
+        }
+        self.now += 1;
         if pulse_end {
             self.locked = true;
             self.free_lines = 0;
@@ -174,7 +221,7 @@ impl Monitor {
         }
 
         let y = self.line.wrapping_sub(MONITOR_FIRST_LINE);
-        let px = self.x.wrapping_sub(MONITOR_FIRST_PIXEL);
+        let px = (self.x as isize - MONITOR_FIRST_PIXEL as isize + self.shift as isize) as usize;
         if px < MONITOR_ACTIVE_PIXELS && y < MONITOR_HEIGHT {
             let pixel = if vsync {
                 self.vsync_color
@@ -188,6 +235,42 @@ impl Monitor {
             self.texture.put_pixel(px as u32, y as u32, pixel);
         }
         self.x += 1;
+    }
+
+    /// A line sync starting at `start` has been accepted: look at the other
+    /// pulse that came since the previous one (the discriminator answers to
+    /// exactly one) and let the beam follow it.
+    fn discriminate(&mut self, start: u64) {
+        let mut target = 0i32;
+        if let (Some(previous), [(other, width)]) = (self.last_sync_start, self.pulses.as_slice()) {
+            let after = (*other - previous) as i64; // late for the previous sync
+            let before = (start - *other) as i64; // early for this one
+            let late_pull = ((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12;
+            let taper = |pull: i32, distance: i64, flat: i64, end: i64| -> i32 {
+                if distance <= flat {
+                    pull
+                } else if distance >= end {
+                    0
+                } else {
+                    ((pull as i64 * (end - distance) + (end - flat) / 2) / (end - flat)) as i32
+                }
+            };
+            if after > MONITOR_PULL_DEADZONE && after < MONITOR_PULL_END_LATE {
+                target = -taper(late_pull, after, MONITOR_PULL_FLAT_LATE, MONITOR_PULL_END_LATE);
+            } else if before > MONITOR_PULL_DEADZONE && before < MONITOR_PULL_END_EARLY {
+                let early_pull = (late_pull * 4 + 3) / 7;
+                target = taper(early_pull, before, MONITOR_PULL_FLAT_EARLY, MONITOR_PULL_END_EARLY);
+            }
+        }
+        self.shift = self.next_shift;
+        if target == 0 {
+            // no second sync: the lock takes the picture back at once
+            self.next_shift = 0;
+        } else {
+            let error = target - self.next_shift;
+            let step = if error.abs() > 5 { 3 } else { 1 };
+            self.next_shift += error.signum() * step.min(error.abs());
+        }
     }
 
     fn start_frame(&mut self) {
@@ -295,5 +378,31 @@ mod test {
         frame(&mut mon, 312, 64);
         feed(&mut mon, MONITOR_MIN_VSYNC_TICKS, (0., 0., 0.), true, false);
         assert!(!mon.is_frame_complete());
+    }
+
+    /// A second sync 29 characters after the line sync (Shaker AY): the beam
+    /// follows it a few ticks a line to the left and the picture goes back
+    /// at once when it goes away.
+    #[test]
+    fn a_second_sync_pulls_the_picture() {
+        let mut mon = Monitor::default();
+        for l in 0..40 {
+            for t in 0..RASTER_LINE_LENGTH {
+                let main = t >= 736 && t < 800;
+                let other = l >= 10 && t >= 176 && t < 240;
+                let hsync = main || other;
+                mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
+            }
+            if l == 30 {
+                assert_eq!(mon.shift, -10, "the plateau of the pull");
+            }
+        }
+        for _ in 0..3 {
+            for t in 0..RASTER_LINE_LENGTH {
+                let hsync = t >= 736 && t < 800;
+                mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
+            }
+        }
+        assert_eq!(mon.shift, 0);
     }
 }
