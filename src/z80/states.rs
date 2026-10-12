@@ -1,12 +1,11 @@
 
 ///! This module contains all that can help to manage the variuous states of the CPU
 use lazy_static::lazy_static;
-use regex::Regex;
 //use cpclib_asm::preamble::*;
 use super::{Reg16, Reg8, Z80Pin};
 use cpclib_asm::preamble::{
     DataAccess, DataAccessElem, Expr, ExprEvaluationExt, ListingElement, Mnemonic,
-    ParseToken, Token,
+    Token,
 };
 
 /// Provide all the information needed by the CPU to properly execute the instruction
@@ -453,8 +452,6 @@ impl OpcodeDecoder for Token {
         pub(crate) read_from_pins: bool,
         /// Write in memory ? (otherwise chip) / No meaning when no write
         pub(crate) write_to_pins: bool,
-        /// String representation
-        pub(crate) repr: &'static str,
         /// Flag test for conditional execution of instruction
         pub(crate) flag_test: Option<cpclib_asm::preamble::FlagTest>,
         //   /// Token just in case it is usefull (to be removed if not)
@@ -605,45 +602,14 @@ impl OpcodeDecoder for Token {
         
         /// Retreive all the information needed to data collection for the current opcode
         fn build_opcode_information(&self, opcode: u8) -> OpcodeInformation {
-            let opcode = opcode as usize;
+            // A DD/FD-prefixed opcode that doesn't touch HL/H/L/(HL)
+            // decodes as its unprefixed form - it is not a no-op: the real
+            // CPU executes it as such (e.g. `DD 41` is `LD B,C`, with 4
+            // wasted T-states for the prefix fetch; zexall's "ld
+            // <bcdexya>,<bcdexya>" test checks it), operand bytes included
+            // (`DD 01 nnnn` is `LD BC,nnnn`). See `decoder.rs`.
+            let token = super::decoder::template(*self, opcode);
 
-            let repr = self.disassembling_table()[opcode];
-            // An empty entry in the DD/FD table means that specific opcode's
-            // DD/FD-prefixed form has no *index-register-specific* behaviour
-            // (it doesn't touch H/L at all) - not that it's a no-op. On real
-            // hardware the CPU still executes the byte exactly as its
-            // unprefixed form (e.g. `DD 41` really does `LD B,C`, just with
-            // 4 wasted T-states for the ignored prefix fetch) - confirmed
-            // the hard way, via zexall's "ld <bcdexya>,<bcdexya>" test
-            // failing a CRC check. Treating it as a bare "NOP" (the previous
-            // behaviour) silently dropped the actual register transfer for
-            // every DD/FD-prefixed opcode that doesn't involve H/L - not
-            // just the register-to-register LDs zexall happened to catch,
-            // but potentially any instruction in that bucket (e.g. `DD 01
-            // nnnn` would also have desynced the fetch, since it never
-            // consumed the two immediate bytes the real `LD BC,nnnn` does).
-            // `OpcodePrefix::None`'s own table has no empty entries (every
-            // unprefixed byte is a real instruction), so this fallback
-            // always finds something real to parse.
-            let repr = if repr.is_empty() && matches!(self, OpcodePrefix::Dd | OpcodePrefix::Fd) {
-                OpcodePrefix::None.disassembling_table()[opcode]
-            } else {
-                repr
-            };
-            let parsed = Token::parse_token(if repr.is_empty() { "NOP" } else { repr })
-                .unwrap_or_else(|_| Token::parse_token("NOP").unwrap());
-            // Some mnemonics (e.g. `SBC A,(HL)`) are parsed as a `WarningWrapper`
-            // around the real opcode (here, for the redundant explicit
-            // accumulator prefix). Every match below inspects the token's raw
-            // shape rather than going through the trait accessors (which
-            // already unwrap internally), so unwrap once up front.
-            let parsed = parsed.unwrapped().clone();
-            let token = if parsed.is_opcode() && parsed.mnemonic().is_some() {
-                parsed
-            } else {
-                Token::parse_token("NOP").unwrap()
-            };
-            
             let read_from_pins = token.read_data_from_bus() ;
             let write_to_pins = token.write_data_to_bus();
             let read_address = token.read_address();
@@ -668,71 +634,21 @@ impl OpcodeDecoder for Token {
                 _ => None,
             };
 
-
-
-            
             OpcodeInformation {
                 prefix: self.clone(),
-                nb_additional_opcode_bytes: self.opcode_bytes_to_read(opcode),
+                // Warning: for DD CB / FD CB this counts the displacement
+                // and the opcode, which follow the prefixes.
+                nb_additional_opcode_bytes: super::decoder::nb_operand_bytes(*self, opcode),
                 read_address,
                 write_address,
                 write_data,
                 read_data,
                 nb_bytes_to_read,
                 nb_bytes_to_write,
-                repr,
                 read_from_pins,
                 write_to_pins,
                 token,
                 flag_test,
-            }
-        }
-        
-        /// Return the disassembling LUT table depending on the prefix
-        pub const fn disassembling_table(&self) -> &[&'static str; 256] {
-            // the decoding table depends on the prefix
-            match self {
-                OpcodePrefix::None => &cpclib_tokens::opcode_table::TABINSTR,
-                OpcodePrefix::Cb => &cpclib_tokens::opcode_table::TABINSTRCB,
-                OpcodePrefix::Dd => &cpclib_tokens::opcode_table::TABINSTRDD,
-                OpcodePrefix::Ed => &cpclib_tokens::opcode_table::TABINSTRED,
-                OpcodePrefix::Fd => &cpclib_tokens::opcode_table::TABINSTRFD,
-                OpcodePrefix::DdCb => &cpclib_tokens::opcode_table::TABINSTRDDCB,
-                OpcodePrefix::FdCb => &cpclib_tokens::opcode_table::TABINSTRFDCB,
-            }
-        }
-        
-        /// Return the number of bytes to read to build the opcode
-        /// Warning? it is not correct for ddcb / fdcb like instructions
-        fn opcode_bytes_to_read(self, i: usize) -> u8 {
-            match self {
-                OpcodePrefix::DdCb | OpcodePrefix::FdCb => 2,
-                _ => {
-                    
-                    lazy_static! {
-                        static ref HEIGHT_BITS: Regex = Regex::new(r"([^n]nn[^n])|([^n]nn$)").unwrap();
-                        static ref SIXTEEN_BITS: Regex = Regex::new(r"[^n]nnnn[^n]|([^n]nnnn$)").unwrap();
-                    }
-                    
-                    let repr = self.disassembling_table()[i];
-                    // Same fallback as build_opcode_information's own repr
-                    // lookup, and for the same reason: an empty DD/FD entry
-                    // means "no index-register-specific form", not "reads
-                    // zero extra bytes" - e.g. `DD 01` is `LD BC,nnnn`
-                    // exactly as unprefixed, and still needs its 2 operand
-                    // bytes read. Without this, `nb_additional_opcode_bytes`
-                    // would silently be 0 for any such opcode.
-                    let repr = if repr.is_empty() && matches!(self, OpcodePrefix::Dd | OpcodePrefix::Fd) {
-                        OpcodePrefix::None.disassembling_table()[i]
-                    } else {
-                        repr
-                    };
-
-                    let nb_height_bits_args = HEIGHT_BITS.captures_iter(repr).count();
-                    let nb_sixteen_bits_args = SIXTEEN_BITS.captures_iter(repr).count();
-                    
-                    (nb_height_bits_args + 2 * nb_sixteen_bits_args) as u8
-                }
             }
         }
         

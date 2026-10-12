@@ -1,5 +1,3 @@
-use cpclib_asm::preamble::Mnemonic;
-use cpclib_asm::preamble::Token;
 use smallvec::*;
 
 use crate::chip::*;
@@ -1025,17 +1023,25 @@ impl Motherboard {
             }
         }
 
-        /// Read the extra byte
-        let nb_bytes = if matches!(current_prefix, OpcodePrefix::DdCb |  OpcodePrefix::FdCb) {1} else {current_prefix.opcode_information(ir).nb_additional_opcode_bytes};
-        for _i in 0..nb_bytes {
-            instruction_bytes.push(read());
+        // Decoded from the bits (see `z80::decoder`), like the CPU does.
+        let token = if matches!(current_prefix, OpcodePrefix::DdCb | OpcodePrefix::FdCb) {
+            // DD CB d op: `ir` is the displacement, the opcode follows.
+            let opcode = read();
+            instruction_bytes.push(opcode);
+            crate::z80::decoder::with_operands(current_prefix, opcode, [ir, 0])
         }
+        else {
+            let mut operands = [0u8; 2];
+            for operand in operands
+                .iter_mut()
+                .take(crate::z80::decoder::nb_operand_bytes(current_prefix, ir) as usize)
+            {
+                *operand = read();
+                instruction_bytes.push(*operand);
+            }
+            crate::z80::decoder::with_operands(current_prefix, ir, operands)
+        };
 
-        let token = cpclib_asm::disass::disassemble(&instruction_bytes)
-        .get(0)
-        .cloned()
-        .unwrap_or(Token::OpCode(Mnemonic::Nop, None, None, None));
-        
 
         DisassembledInstruction {
             token,

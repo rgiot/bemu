@@ -1,5 +1,6 @@
 pub mod alu;
 mod arithmetic;
+pub mod decoder;
 mod registers;
 mod registers_identifiers;
 mod states;
