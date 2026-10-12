@@ -384,6 +384,13 @@ impl Crtc {
     /// Store `v` in register `r`, keeping only the bits this chip has.
     /// Registers that don't exist are ignored.
     pub fn do_write_register(&mut self, r: u8, v: u8) {
+        {
+            use std::sync::OnceLock;
+            static TRACE: OnceLock<bool> = OnceLock::new();
+            if *TRACE.get_or_init(|| std::env::var("AMSRUST_TRACE_REG").is_ok()) {
+                eprintln!("W R{r}<-{v} C0={} C4={} C9={}", self.hcc, self.vcc.value(), self.vlc.value());
+            }
+        }
         if let Some(log) = self.write_log.as_mut() {
             log.push((self.hcc, self.vcc.value(), self.vlc.value(), r, v));
         }
@@ -661,9 +668,22 @@ impl Crtc {
             // counters as usual (and arms C4 if C9 reached R9), the second
             // only moves C4 once, then everything is frozen.
             let frozen_r0 = self.model.has_last_line_state() && self.regs[0] == 0;
-            let skip_counters = frozen_r0 && self.r0_zero_wraps >= 1;
+            let skip_counters = frozen_r0;
             if frozen_r0 {
-                if self.r0_zero_wraps == 1 && self.r0_zero_c4_pending {
+                if self.r0_zero_wraps == 0 {
+                    // First C0=0 with R0=0: C9 is compared with R9 for the first
+                    // time; on C9=R9 it stays put and C4 moves on the next one
+                    // (13.2.6), starting the additional management when C4=R4.
+                    // Nothing moves at all while an adjustment is running (13.2.3).
+                    let hiccup = !self.in_vertical_adjust && self.c9_is_last();
+                    if !hiccup && !self.in_vertical_adjust {
+                        self.vlc += 1;
+                    }
+                    self.r0_zero_c4_pending = hiccup;
+                    if hiccup && self.vcc == self.regs[4] {
+                        self.r0_enlarge_c9_to_r5 = true;
+                    }
+                } else if self.r0_zero_wraps == 1 && self.r0_zero_c4_pending {
                     self.vcc += 1;
                     self.r0_zero_c4_pending = false;
                 }
@@ -765,9 +785,6 @@ impl Crtc {
                         }
                     }
                 }
-            }
-            if frozen_r0 && self.r0_zero_wraps == 1 {
-                self.r0_zero_c4_pending = !self.in_vertical_adjust && self.c9_is_last();
             }
 
             // ACCC §19.5.2: ParityFrame takes ParityR6 when a frame starts;
