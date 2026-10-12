@@ -31,6 +31,7 @@ smallvec = "1.6.1"
 rustyline = "8.2.0" # Make not mandaotry
 minifb = "0.28.0"
 ym2149 = "0.9.1"
+cpal = { version = "0.18.2", optional = true }
 
 [patch.crates-io]
 cpclib = {path = "../rust.cpcdemotools/cpclib/"}
@@ -43,3 +44,9 @@ cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens/"}
 cpclib-xfer = {path = "../rust.cpcdemotools/cpclib-xfer/"}
 cpclib-xfertool = {path = "../rust.cpcdemotools/cpclib-xfertool/"}
 cpclib-z80emu = {path = "../rust.cpcdemotools/cpclib-z80emu/"}
+
+[features]
+# Sound output in the `amsrust --window` binary. Off by default so the
+# library and the default build need no audio system library (on Linux,
+# cpal needs the ALSA headers: libasound2-dev / alsa-lib-devel).
+audio = ["dep:cpal"]
