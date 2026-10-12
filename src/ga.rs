@@ -906,6 +906,7 @@ pub struct GateArray {
     hsync_counter: HSyncCounter,
     /// Number of HSYNC falling edges seen so far (diagnostics).
     hsync_ends: u64,
+    monitor_hsync_advance: usize,
     /// GA clock ticks since power-on (timestamps of the RMR mode writes).
     abs_tick: u64,
     /// The CRTC HSYNC as the GA sees it (see [`HSYNC_GA_DELAY_TICKS`]).
@@ -959,6 +960,7 @@ impl Default for GateArray {
             vsync_ignores_next_end: false,
             hsync_counter: HSyncCounter::NoHsync,
             hsync_ends: 0,
+            monitor_hsync_advance: 0,
             abs_tick: 0,
             hsync_pipe: [false; HSYNC_GA_DELAY_TICKS],
             hsync_ga: false,
@@ -1237,8 +1239,7 @@ impl GateArray {
 
         let hsync = match self.hsync_counter {
             HSyncCounter::NoHsync => false,
-            HSyncCounter::HSync(32..96) => true, // from 2 nops during 4 nops
-            HSyncCounter::HSync(_) => false
+            HSyncCounter::HSync(n) => (32..96).contains(&(n + self.monitor_hsync_advance)), // from 2 nops during 4 nops
         };
 
         self.sync = Sync {
@@ -1368,6 +1369,12 @@ impl GateArray {
     }
 
     /// When the CPU acknowledge the interrupt (eg. it is going to jump to the interrupt vector), the Gate Array will reset bit5 of the counter, so the next interrupt can't occur closer than 32 HSync. 
+    /// An R2.JIT HSYNC rises late for the black zone, but the monitor is
+    /// synchronised as if it had risen on its character (ACCC 14.7.1).
+    pub fn set_monitor_hsync_advance(&mut self, ticks: u8) {
+        self.monitor_hsync_advance = usize::from(ticks);
+    }
+
     pub fn set_last_idle_t(&mut self, idle: u8) {
         self.last_idle_t = idle;
     }

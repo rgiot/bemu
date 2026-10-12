@@ -345,10 +345,14 @@ impl Motherboard {
         // cycle (the data bus is stable), so servicing it on every tick is
         // safe.
         if self.crtc.is_activated() {
+            self.crtc.set_phase_ticks(0);
             self.crtc.tick(); // Virtually uses 16 cycles
         }
-        else if self.crtc.must_execute_tick() {
-            self.crtc.execute_tick();
+        else {
+            self.crtc.set_phase_ticks(self.crtc.phase_ticks().saturating_add(1));
+            if self.crtc.must_execute_tick() {
+                self.crtc.execute_tick();
+            }
         }
         // The gate array blanks the pixels the very tick the CRTC drops
         // DE: it fetches the video bytes from the CRTC's address pins of the
@@ -386,6 +390,7 @@ impl Motherboard {
             self.ga.set_memory_byte(byte);
         }
         self.ga.set_last_idle_t(self.cpu.last_idle_t());
+        self.ga.set_monitor_hsync_advance(self.crtc.hsync_late_ticks());
         self.ga.tick();
         self.pal.tick();
         if let Some(expansion) = &mut self.large_ram_expansion {

@@ -155,6 +155,11 @@ pub struct Crtc {
     r0_enlarge_steps_c4: bool,
     /// ACCC §13.7.2.2: C9 counts on from the last line up to R5.
     r0_enlarge_c9_to_r5: bool,
+    /// Motherboard ticks since the last character clock edge (0..15).
+    phase_ticks: u8,
+    /// How many ticks late the running HSYNC rose compared to its C0=R2
+    /// character (R2.JIT, ACCC 14.7.1: the monitor sync does not move).
+    hsync_late_ticks: u8,
     /// Diagnostics: every register write as (C0, C4, C9, register, value).
     write_log: Option<Vec<(u8, u8, u8, u8, u8)>>,
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
@@ -233,6 +238,8 @@ impl Default for Crtc {
             additional_r5: false,
             r0_enlarge_steps_c4: false,
             r0_enlarge_c9_to_r5: false,
+            phase_ticks: 0,
+            hsync_late_ticks: 0,
             write_log: None,
             crtc_vma: 0,
             crtc_vma_prime: 0,
@@ -460,7 +467,22 @@ impl Crtc {
             self.hsc = 0;
             self.on(CrtcPin::HS);
             self.hdc = 0;
+            self.hsync_late_ticks = self.phase_ticks;
         }
+    }
+
+    /// The motherboard tells where in the character clock this tick falls.
+    pub fn set_phase_ticks(&mut self, phase: u8) {
+        self.phase_ticks = phase;
+    }
+
+    pub fn phase_ticks(&self) -> u8 {
+        self.phase_ticks
+    }
+
+    /// Ticks by which the running HSYNC started late (R2.JIT), else 0.
+    pub fn hsync_late_ticks(&self) -> u8 {
+        self.hsync_late_ticks
     }
 
     /// Start recording the register writes (diagnostics).
@@ -870,6 +892,7 @@ impl Crtc {
         if self.hcc == self.regs[2] && !self.hsync() && self.hsync_width().is_some() {
             self.hsc = 0;
             self.on(CrtcPin::HS);
+            self.hsync_late_ticks = 0;
             self.hdc = 0; // XXX I am pretty sure I am not reseting it at the right place
         }
 
