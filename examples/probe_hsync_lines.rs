@@ -1,4 +1,4 @@
-//! `probe_hsync_lines <script.csl> <frames_to_print>`: plays the script, then prints for the
+//! `probe_hsync_lines <script.csl|file.sna> <frames_to_print>`: plays the script, then prints for the
 //! next frames, per CRTC line, the CRTC HSYNC pulses (C0 start..end, in microseconds from the line
 //! start) as `C4/C9 R2 R3 [start-end ...]`, only for lines with more than one pulse or odd ones.
 use amsrust::chip::Chip;
@@ -9,7 +9,13 @@ fn main() {
     let script = a.next().expect("script");
     let n: usize = a.next().and_then(|s| s.parse().ok()).unwrap_or(1);
     let mut runner = CslRunner::new("/tmp/probe_hsync_shots");
-    runner.run_text(&std::fs::read_to_string(&script).unwrap(), ".").unwrap();
+    if script.ends_with(".sna") {
+        runner.run_text("csl_version 1.0\ncrtc_select 0\nreset\nwait 1000000\n", ".").unwrap();
+        amsrust::snapshot::load_sna(runner.motherboard_mut(), &script).expect("load sna");
+        runner.run_text("csl_version 1.0\nwait 100000\n", ".").unwrap();
+    } else {
+        runner.run_text(&std::fs::read_to_string(&script).unwrap(), ".").unwrap();
+    }
     let mb = runner.motherboard_mut();
     let mut vs_rises = 0;
     let mut prev_vs = mb.crtc().vsync();
