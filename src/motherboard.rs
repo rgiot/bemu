@@ -401,6 +401,9 @@ impl Motherboard {
         }
         self.ga.set_last_idle_t(self.cpu.last_idle_t());
         self.ga.set_monitor_hsync_advance(self.crtc.hsync_late_ticks());
+        if let Some(ago) = self.crtc.take_hsync_restart() {
+            self.ga.restart_hsync(ago);
+        }
         self.ga.tick();
         self.pal.tick();
         if let Some(expansion) = &mut self.large_ram_expansion {

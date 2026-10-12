@@ -18,6 +18,8 @@ Findings against AMSpiriT (single extra pulse, 200 lines of stripes):
 * with a main sync as narrow as the extra pulse, a restart happens 3 + w/2 us after the pulse start for
   w = 3..5 us (6 us for w >= 6), and 6.5 / 7.5 us for w = 1 / 2; amsrust restarts at the end of its C-HSYNC
   window. NOT applied: it makes Shaker AY_F worse (cut pulses), so the rule must depend on how the pulse ends.
-* HBL panel: the black box behind the "B" is 16 us wide in both emulators but starts 1 us (15 px) later in
-  amsrust (x=274 against 259). Not explained yet: it is not the C-HSYNC blanking, the palette, nor the
-  monitor; mode latch times were moved by 1 us without effect.
+* HBL panel (solved): a narrow (R3l=2) extra HSYNC pulse is 1 us EARLIER than amsrust had it: the black box behind
+  the "B" started 15 px late. `gen_mode_probe.py` (mode 1 written before a 2 us pulse) showed the mode edge 16 px
+  earlier in AMSpiriT; Shaker AR also improves (4.2 % -> 2.6 %). The Crtc starts such a pulse one character
+  early (R3l=2) - unless R3 is raised on the character R2 names (HBL's main sync is begun with R3=2 and widened
+  at once by an R3 write: it keeps its place and the Gate Array counts it from the write).
