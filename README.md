@@ -84,7 +84,8 @@ Ctrl+C stops a recording early; the file is still finished properly.
 [AMSpiriT-Lite web API](https://github.com/AMSpiriT-Emulator/amspirit-releases/blob/main/docs/lite/web_api.md)
 on `127.0.0.1:6128` (`--debug-port N` to change it), for debugger front ends
 such as `cpclib-dap`. It runs with `--window` or headless (real time, Ctrl+C to
-quit). `GET /api/doc` lists the implemented endpoints; extensions to the
+quit; `--debug-paused` starts it paused, so a debugger sets its breakpoints
+before anything runs). `GET /api/doc` lists the implemented endpoints; extensions to the
 AMSpiriT API are flagged there, and `ping` answers `"frontend":"bemu"`.
 
 Beyond the first endpoints (`ping`, `state`, `z80`, `ram` on every 16K bank,

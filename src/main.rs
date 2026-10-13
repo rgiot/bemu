@@ -5,7 +5,7 @@
 //! amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]
 //!         [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]
 //!         [--record file [--seconds N]] [--type text [--type-at N]]
-//!         [--debug-server [--debug-port N]]
+//!         [--debug-server [--debug-port N] [--debug-paused]]
 //! ```
 //!
 //! With no `--screenshot`/`--window`, drops into the existing interactive
@@ -92,6 +92,8 @@ struct Args {
     record: Option<String>,
     debug_server: bool,
     debug_port: u16,
+    /// Start paused, for a debugger to arm its breakpoints first.
+    debug_paused: bool,
     text: Option<String>,
     type_at: f64
 }
@@ -113,6 +115,7 @@ fn parse_args() -> Args {
         record: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
+        debug_paused: false,
         text: None,
         type_at: 3.0
     };
@@ -149,6 +152,10 @@ fn parse_args() -> Args {
             "--mute" => args.mute = true,
             "--record" => args.record = Some(next("--record")),
             "--debug-server" => args.debug_server = true,
+            "--debug-paused" => {
+                args.debug_server = true;
+                args.debug_paused = true;
+            },
             "--debug-port" => {
                 args.debug_server = true;
                 args.debug_port = next("--debug-port").parse().expect("--debug-port must be a port number")
@@ -175,7 +182,7 @@ fn print_help() {
         "        [--dsk path] [--dsk-b path] [--sna path]\n",
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
-        "        [--debug-server [--debug-port N]]\n",
+        "        [--debug-server [--debug-port N] [--debug-paused]]\n",
         "\n",
         "--model picks the ROMs (default 6128). The 464 and 664 have 64K and the\n",
         "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
@@ -195,7 +202,8 @@ fn print_help() {
         "in the interactive monitor.\n",
         "--debug-server serves the AMSpiriT-Lite compatible debug API on\n",
         "127.0.0.1:6128 (GET /api/doc lists the endpoints), with --window or\n",
-        "headless."
+        "headless. --debug-paused starts it paused, for a debugger to set its\n",
+        "breakpoints before anything runs."
     ));
 }
 
@@ -500,6 +508,11 @@ fn start_debug_server(
             }
             for breakpoint in &breakpoints.advanced {
                 server.add_advanced_breakpoint(breakpoint.clone(), motherboard);
+            }
+            if args.debug_paused {
+                // Nothing has run yet: the debugger arms its breakpoints,
+                // then resumes (POST /api/config {"paused":false}).
+                server.pause();
             }
             Some(server)
         },
