@@ -98,6 +98,8 @@ pub struct Monitor {
     ran_free: bool,
     /// Lines left in which a small phase error is still followed (a correction is going on)
     pll_active: u32,
+    /// ticks the pulse's end is ahead of the middle-referenced position (see `follow_sync`)
+    sync_adj: i64,
     /// Ticks the beam still waits before the next line starts (a sync that came early)
     hold: usize,
     /// Ticks since the beginning of time, to date the sync pulses.
@@ -137,6 +139,7 @@ impl Monitor {
             synchronised: false,
             ran_free: false,
             pll_active: 0,
+            sync_adj: 0,
             hold: 0,
             now: 0,
             pulses: Vec::new(),
@@ -271,6 +274,9 @@ impl Monitor {
         if line_end {
             self.x = 0;
             if pulse_end {
+                // the line oscillator is referenced to the middle of the sync pulse (ACCC 14.4: the
+                // picture moves half a microsecond when R3l drops by one; Shaker D3 on AMSpiriT)
+                self.sync_adj = (hsync_pulse as i64 - 64).clamp(-32, 32) / 2;
                 self.follow_sync(x_before, was_locked);
             } else {
                 self.ran_free = true;
@@ -310,7 +316,9 @@ impl Monitor {
     /// curve; measured against AMSpiriT with validation/fuzz/gen_wave_probe.py. Far outside
     /// that range, or when the oscillator was not locked, the beam simply restarts.
     fn follow_sync(&mut self, x_before: usize, was_locked: bool) {
+        let adj = std::mem::take(&mut self.sync_adj);
         let error = if self.ran_free { x_before as i64 } else { x_before as i64 - RASTER_LINE_LENGTH as i64 };
+        let error = error - adj;
         self.ran_free = false;
         if !was_locked || error < -MONITOR_PLL_CAPTURE_EARLY || error > MONITOR_PLL_CAPTURE_LATE {
             return;
@@ -321,7 +329,7 @@ impl Monitor {
             self.pll_active -= 1;
         }
         let pull = if error.abs() <= 1 { error } else { ((error * 3 + 4 * error.signum()) / 8).clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL) };
-        let start = error - pull; // ticks since the new line start, at this sync
+        let start = error - pull + adj; // ticks since the new line start, at this sync
         if start >= 0 {
             self.x = start as usize;
         } else {
