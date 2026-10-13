@@ -78,8 +78,11 @@ Beyond the first endpoints (`ping`, `state`, `z80`, `ram` on every 16K bank,
 breakpoints on physical locations (`z80_bp` with `Bnn:hhhh`; CPU addresses are
 resolved to the RAM bank or ROM mapped at that time) and, as an extension,
 advanced breakpoints as rasm/basm/ACE describe them (`/api/breakpoints`:
-memory/IO, read/write, stop or watch, masks, sizes, values). A snapshot's
-breakpoints (REMU, ACE `BRKC`, WinAPE `WABP` chunks) are set when it is loaded.
+memory/IO, read/write, stop or watch, masks, sizes, values, and conditions
+such as `A == #12 && peek(HL) <> 0` or `value & %1000`). A snapshot's
+breakpoints (REMU, ACE `BRKC`, WinAPE `WABP` chunks) are set when it is loaded,
+`--sna` or `POST /api/media`. Also: `history`, `screenshot` (PNG), `media`
+(sna, dsk, bin), `quit`.
 
 ```sh
 cargo run --release -- --debug-server &

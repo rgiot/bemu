@@ -25,7 +25,8 @@
 //! Extensions to the AMSpiriT API - listed in `/api/doc` with
 //! `"extension":true` - add what debuggers of rasm/basm/ACE programs need:
 //! `/api/breakpoints` for advanced breakpoints (memory/IO watchpoints,
-//! ranges and masks, stop or watch, see [`crate::breakpoints`]), the
+//! ranges and masks, stop or watch, conditions, see
+//! [`crate::breakpoints`]), the
 //! `watch` event for watch hits, and `kind`/`name`/`access` in `z80_bp`
 //! events. Replies identify this emulator with `"frontend":"bemu"`.
 
@@ -37,7 +38,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::breakpoints::{AdvancedBreakpoint, BreakpointAccess, BreakpointKind, RunMode};
+use crate::breakpoints::{AdvancedBreakpoint, BreakpointAccess, BreakpointKind, Condition, ConditionContext, RunMode};
 use crate::csl_runner::keys_of_char;
 use crate::keyboard::CpcKey;
 use crate::memory::PhysicalAddress;
@@ -387,8 +388,14 @@ impl DebugServer {
         self.type_due_keys(motherboard);
     }
 
-    /// An advanced breakpoint hit: stop, or only report (watch).
+    /// An advanced breakpoint hit: stop, or only report (watch) - if its
+    /// condition holds.
     fn hit(&mut self, brk: &AdvancedBreakpoint, access: Option<BusAccess>, motherboard: &Motherboard) {
+        if let Some(condition) = &brk.condition {
+            if !condition.holds(&MachineContext { motherboard, access }) {
+                return;
+            }
+        }
         let mut info = json!({ "kind": kind_name(brk.kind) });
         if let Some(name) = &brk.name {
             info["name"] = json!(name);
@@ -1015,6 +1022,41 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// What a breakpoint condition reads: the machine, and the access that hit.
+struct MachineContext<'m> {
+    motherboard: &'m Motherboard,
+    access: Option<BusAccess>
+}
+
+impl ConditionContext for MachineContext<'_> {
+    fn variable(&self, name: &str) -> Option<i64> {
+        let cpu = self.motherboard.cpu();
+        let r8 = |reg: Reg8| Some(cpu.reg8(reg).get() as i64);
+        let r16 = |reg: Reg16| Some(cpu.reg16(reg).get() as i64);
+        match name {
+            "A" => r8(Reg8::A), "F" => r8(Reg8::F), "B" => r8(Reg8::B), "C" => r8(Reg8::C),
+            "D" => r8(Reg8::D), "E" => r8(Reg8::E), "H" => r8(Reg8::H), "L" => r8(Reg8::L),
+            "I" => r8(Reg8::I), "R" => r8(Reg8::R),
+            "IXH" => r8(Reg8::Ixh), "IXL" => r8(Reg8::Ixl), "IYH" => r8(Reg8::Iyh), "IYL" => r8(Reg8::Iyl),
+            "AF" => r16(Reg16::Af), "BC" => r16(Reg16::Bc), "DE" => r16(Reg16::De), "HL" => r16(Reg16::Hl),
+            "IX" => r16(Reg16::Ix), "IY" => r16(Reg16::Iy), "SP" => r16(Reg16::Sp), "PC" => r16(Reg16::Pc),
+            "A'" => r8(Reg8::A2), "F'" => r8(Reg8::F2), "B'" => r8(Reg8::B2), "C'" => r8(Reg8::C2),
+            "D'" => r8(Reg8::D2), "E'" => r8(Reg8::E2), "H'" => r8(Reg8::H2), "L'" => r8(Reg8::L2),
+            "AF'" => r16(Reg16::Af2), "BC'" => r16(Reg16::Bc2), "DE'" => r16(Reg16::De2), "HL'" => r16(Reg16::Hl2),
+            "IFF1" => Some(cpu.iff1() as i64),
+            "IFF2" => Some(cpu.iff2() as i64),
+            "IM" => Some(match cpu.im() { InterruptMode::Mode0 => 0, InterruptMode::Mode1 => 1, InterruptMode::Mode2 => 2 }),
+            "ADDRESS" => self.access.map(|a| a.address as i64),
+            "VALUE" => self.access.map(|a| a.value as i64),
+            _ => None
+        }
+    }
+
+    fn peek(&self, address: u16) -> u8 {
+        self.motherboard.read_byte(address)
+    }
+}
+
 /// The 4 bytes at `pc`, as the CPU sees them now.
 fn instruction_bytes(motherboard: &Motherboard, pc: u16) -> [u8; 4] {
     std::array::from_fn(|i| motherboard.read_byte(pc.wrapping_add(i as u16)))
@@ -1068,7 +1110,8 @@ fn breakpoint_json(index: usize, brk: &AdvancedBreakpoint) -> Value {
         "run": match brk.run { RunMode::Stop => "stop", RunMode::Watch => "watch" },
         "addr": brk.address, "mask": brk.mask, "size": brk.size,
         "value": brk.value, "valmask": brk.value_mask,
-        "name": brk.name
+        "name": brk.name,
+        "condition": brk.condition.as_ref().map(Condition::source)
     })
 }
 
@@ -1108,9 +1151,12 @@ fn breakpoint_of_json(body: &Value) -> Result<AdvancedBreakpoint, ApiError> {
         Some(Value::String(name)) => Some(name.clone()),
         Some(_) => return Err(ApiError::field("name", "field \"name\" must be a string"))
     };
-    if find_key(body, "condition").is_some_and(|c| c.as_str() != Some("")) {
-        return Err(ApiError::field("condition", "conditional breakpoints are not supported yet"));
-    }
+    brk.condition = match find_key(body, "condition") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(text)) if text.trim().is_empty() => None,
+        Some(Value::String(text)) => Some(Condition::parse(text).map_err(|e| ApiError::field("condition", e))?),
+        Some(_) => return Err(ApiError::field("condition", "field \"condition\" must be a string"))
+    };
     Ok(brk)
 }
 
@@ -1515,7 +1561,28 @@ mod test {
         assert!(stops.iter().any(|e| e.starts_with("event: pause") && e.contains("true")), "{stops:?}");
         let (_, list) = call(&mut server, &mut mb, "GET", "/api/breakpoints", "");
         assert_eq!(list["advanced"][0]["addr"], 0xc005);
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/breakpoints", r#"{"addr":1,"condition":"A==1"}"#).0, 400);
+        assert_eq!(call(&mut server, &mut mb, "POST", "/api/breakpoints", r#"{"addr":1,"condition":"A=="}"#).0, 400);
+    }
+
+    #[test]
+    fn conditions_select_the_hits() {
+        let (mut server, mut mb) = (server(), machine());
+        // INC A; LD (0xC000),A; JR -5 - writes 1, 2, 3...
+        mb.write_buffer(0x4000, &[0x3c, 0x32, 0x00, 0xc0, 0x18, 0xfa]);
+        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        let (status, _) = call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/breakpoints",
+            r#"{"kind":"mem","access":"w","addr":"0xC000","condition":"value == 3 && A = 3 && peek(0xC000) = 3"}"#
+        );
+        assert_eq!(status, 200);
+        run(&mut server, &mut mb, 100);
+        assert!(server.paused());
+        assert_eq!(mb.read_byte(0xc000), 3);
+        let (_, list) = call(&mut server, &mut mb, "GET", "/api/breakpoints", "");
+        assert_eq!(list["advanced"][0]["condition"], "value == 3 && A = 3 && peek(0xC000) = 3");
     }
 
     #[test]
