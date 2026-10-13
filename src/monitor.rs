@@ -93,6 +93,8 @@ pub struct Monitor {
     synchronised: bool,
     /// The line oscillator went round (free) since the last accepted sync
     ran_free: bool,
+    /// Lines left in which a small phase error is still followed (a correction is going on)
+    pll_active: u32,
     /// Ticks the beam still waits before the next line starts (a sync that came early)
     hold: usize,
     /// Ticks since the beginning of time, to date the sync pulses.
@@ -131,6 +133,7 @@ impl Monitor {
             free_lines: 0,
             synchronised: false,
             ran_free: false,
+            pll_active: 0,
             hold: 0,
             now: 0,
             pulses: Vec::new(),
@@ -237,6 +240,9 @@ impl Monitor {
         }
         if late_pulse {
             if x_before > 2 {
+                self.free_lines = 0;
+            }
+            if x_before > 2 || self.pll_active > 0 {
                 self.follow_sync(x_before, was_locked);
             } else {
                 self.ran_free = false;
@@ -288,6 +294,11 @@ impl Monitor {
         self.ran_free = false;
         if !was_locked || error < -MONITOR_PLL_CAPTURE_EARLY || error > MONITOR_PLL_CAPTURE_LATE {
             return;
+        }
+        if error.abs() > 2 {
+            self.pll_active = 12;
+        } else if self.pll_active > 0 {
+            self.pll_active -= 1;
         }
         let pull = if error.abs() <= 1 { error } else { ((error * 3 + 4 * error.signum()) / 8).clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL) };
         let start = error - pull; // ticks since the new line start, at this sync
