@@ -12,6 +12,7 @@
 
 use cpclib::sna::{Snapshot, SnapshotFlag};
 
+use crate::breakpoints::AdvancedBreakpoint;
 use crate::motherboard::Motherboard;
 
 /// Load `path` into `motherboard`. Registers, RAM and the CRTC/GA/PSG are
@@ -20,13 +21,25 @@ use crate::motherboard::Motherboard;
 /// inserting a disc still leaves those in place).
 pub fn load_sna(motherboard: &mut Motherboard, path: &str) -> Result<(), String> {
     let snapshot = Snapshot::load(path).map_err(|e| format!("{path}: {e}"))?;
+    load_snapshot(motherboard, &snapshot)
+}
+
+/// [`load_sna`] from the bytes of a `.SNA` file; also returns the
+/// breakpoints it carries (see [`load_breakpoints`]).
+pub fn load_sna_bytes(motherboard: &mut Motherboard, bytes: &[u8]) -> Result<SnapshotBreakpoints, String> {
+    let snapshot = Snapshot::from_buffer(bytes.to_vec())?;
+    load_snapshot(motherboard, &snapshot)?;
+    Ok(breakpoints_of_snapshot(&snapshot))
+}
+
+fn load_snapshot(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(), String> {
     let word = |flag: SnapshotFlag| -> u16 {
         snapshot.get_value(&flag).as_u16().unwrap_or_else(|| panic!("{flag:?} is not a plain value"))
     };
     let byte = |flag: SnapshotFlag| -> u8 { word(flag) as u8 };
 
     load_registers(motherboard, &word, &byte);
-    load_memory(motherboard, &snapshot)?;
+    load_memory(motherboard, snapshot)?;
     load_crtc(motherboard, &byte);
     load_gate_array(motherboard, &byte);
     load_psg(motherboard, &byte);
@@ -123,26 +136,48 @@ pub struct SnapshotBreakpoint {
     pub chunk: &'static str
 }
 
-/// The code breakpoints of the snapshot at `path`, and a description of
-/// what was found but is not supported (memory/IO/conditional breakpoints,
-/// unknown entries). The emulator's debugger only knows execution
-/// breakpoints on an address, whatever the memory configuration: banks and
-/// ROM numbers are ignored.
-pub fn load_breakpoints(path: &str) -> Result<(Vec<SnapshotBreakpoint>, Vec<String>), String> {
-    let snapshot = Snapshot::load(path).map_err(|e| format!("{path}: {e}"))?;
-    let mut breakpoints = Vec::new();
-    let mut ignored = Vec::new();
-    for chunk in snapshot.chunks() {
-        breakpoints_of_chunk(chunk.code().as_str(), chunk.data(), &mut breakpoints, &mut ignored);
-    }
-    Ok((breakpoints, ignored))
+/// The breakpoints a snapshot carries.
+#[derive(Debug, Default)]
+pub struct SnapshotBreakpoints {
+    /// Execution breakpoints on an address (banks and ROM numbers ignored).
+    pub exec: Vec<SnapshotBreakpoint>,
+    /// REMU `acebreak` entries: memory/IO/execution breakpoints with
+    /// masks, sizes, values, stop or watch (see [`crate::breakpoints`]).
+    pub advanced: Vec<AdvancedBreakpoint>,
+    /// What was found but is not supported, described.
+    pub ignored: Vec<String>
 }
 
-fn breakpoints_of_chunk(code: &str, data: &[u8], breakpoints: &mut Vec<SnapshotBreakpoint>, ignored: &mut Vec<String>) {
+impl SnapshotBreakpoints {
+    pub fn is_empty(&self) -> bool {
+        self.exec.is_empty() && self.advanced.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.exec.len() + self.advanced.len()
+    }
+}
+
+/// The breakpoints of the snapshot at `path`.
+pub fn load_breakpoints(path: &str) -> Result<SnapshotBreakpoints, String> {
+    let snapshot = Snapshot::load(path).map_err(|e| format!("{path}: {e}"))?;
+    Ok(breakpoints_of_snapshot(&snapshot))
+}
+
+fn breakpoints_of_snapshot(snapshot: &Snapshot) -> SnapshotBreakpoints {
+    let mut breakpoints = SnapshotBreakpoints::default();
+    for chunk in snapshot.chunks() {
+        breakpoints_of_chunk(chunk.code().as_str(), chunk.data(), &mut breakpoints);
+    }
+    breakpoints
+}
+
+fn breakpoints_of_chunk(code: &str, data: &[u8], breakpoints: &mut SnapshotBreakpoints) {
+    let SnapshotBreakpoints { exec, advanced, ignored } = breakpoints;
     match code {
-        "REMU" => remu_breakpoints(data, breakpoints, ignored),
-        "BRKC" => ace_breakpoints(data, breakpoints, ignored),
-        "WABP" => winape_breakpoints(data, breakpoints, ignored),
+        "REMU" => remu_breakpoints(data, exec, advanced, ignored),
+        "BRKC" => ace_breakpoints(data, exec, ignored),
+        "WABP" => winape_breakpoints(data, exec, ignored),
         _ => {}
     }
 }
@@ -162,16 +197,30 @@ fn parse_number(text: &str) -> Option<u16> {
 }
 
 /// REMU: text entries separated by ';' - "brk <address> <bank>",
-/// "rombrk <address> <rom>", "acebreak ...", "label ...", "alias ...".
-fn remu_breakpoints(data: &[u8], breakpoints: &mut Vec<SnapshotBreakpoint>, ignored: &mut Vec<String>) {
+/// "rombrk <address> <rom>", "acebreak <description>", "label ...",
+/// "alias ...".
+fn remu_breakpoints(
+    data: &[u8],
+    breakpoints: &mut Vec<SnapshotBreakpoint>,
+    advanced: &mut Vec<AdvancedBreakpoint>,
+    ignored: &mut Vec<String>
+) {
     for entry in String::from_utf8_lossy(data).split(';') {
+        let entry = entry.trim();
+        if let Some(description) = entry.strip_prefix("acebreak ") {
+            match AdvancedBreakpoint::parse_remu(description) {
+                Ok(brk) => advanced.push(brk),
+                Err(e) => ignored.push(format!("REMU: {entry}: {e}"))
+            }
+            continue;
+        }
         let mut words = entry.split_whitespace();
         match (words.next(), words.next().and_then(parse_number)) {
             (Some("brk" | "rombrk"), Some(address)) => {
                 breakpoints.push(SnapshotBreakpoint { address, chunk: "REMU" })
             },
             (Some("label" | "alias") | None, _) => {},
-            _ => ignored.push(format!("REMU: {}", entry.trim()))
+            _ => ignored.push(format!("REMU: {entry}"))
         }
     }
 }
@@ -222,9 +271,56 @@ mod breakpoint_test {
     use cpclib::sna::*;
 
     fn parse(code: &str, data: &[u8]) -> (Vec<u16>, usize) {
-        let (mut breakpoints, mut ignored) = (Vec::new(), Vec::new());
-        breakpoints_of_chunk(code, data, &mut breakpoints, &mut ignored);
-        (breakpoints.iter().map(|b| b.address).collect(), ignored.len())
+        let mut breakpoints = SnapshotBreakpoints::default();
+        breakpoints_of_chunk(code, data, &mut breakpoints);
+        (breakpoints.exec.iter().map(|b| b.address).collect(), breakpoints.ignored.len())
+    }
+
+    #[test]
+    fn breakpoints_of_a_saved_v3_snapshot() {
+        let mut snapshot = Snapshot::default();
+        let mut remu = RemuChunk::empty();
+        remu.add_entry(&RemuEntry::new_breakpoint(0x4000, 0));
+        let mut io = AdvancedRemuBreakPoint::default();
+        io.brk_type = RemuBreakPointType::IO;
+        io.access_mode = RemuBreakPointAccessMode::Write;
+        io.run_mode = RemuBreakPointRunMode::Watch;
+        io.addr = 0x7f00;
+        io.mask = 0xc000;
+        remu.add_entry(&RemuEntry::new_remu_breakpoint(io));
+        snapshot.add_chunk(remu);
+        let mut ace = AceBreakPointChunk::empty();
+        ace.add_breakpoint(AceBreakPoint::new_execution(0x8000, AceBrkRuntimeMode::Break, AceMemMapType::Undefined));
+        snapshot.add_chunk(ace);
+
+        let path = std::env::temp_dir().join(format!("amsrust_breakpoints_{}.sna", std::process::id()));
+        let path = path.to_str().unwrap().to_owned();
+        snapshot.save(&path, SnapshotVersion::V3).unwrap();
+        let breakpoints = load_breakpoints(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let exec: Vec<_> = breakpoints.exec.iter().map(|b| (b.address, b.chunk)).collect();
+        assert_eq!(exec, vec![(0x4000, "REMU"), (0x8000, "BRKC")]);
+        assert_eq!(breakpoints.advanced.len(), 1);
+        assert_eq!(breakpoints.advanced[0].run, crate::breakpoints::RunMode::Watch);
+        assert!(breakpoints.ignored.is_empty(), "{:?}", breakpoints.ignored);
+    }
+
+    #[test]
+    fn remu_advanced_entries_written_by_cpclib() {
+        let mut chunk = RemuChunk::empty();
+        let mut brk = AdvancedRemuBreakPoint::default();
+        brk.brk_type = RemuBreakPointType::Mem;
+        brk.access_mode = RemuBreakPointAccessMode::Write;
+        brk.addr = 0xc000;
+        brk.size = 0x4000;
+        chunk.add_entry(&RemuEntry::new_remu_breakpoint(brk));
+        let mut breakpoints = SnapshotBreakpoints::default();
+        breakpoints_of_chunk("REMU", chunk.data(), &mut breakpoints);
+        assert_eq!(breakpoints.ignored, Vec::<String>::new());
+        let advanced = &breakpoints.advanced[0];
+        assert_eq!(advanced.kind, crate::breakpoints::BreakpointKind::Memory);
+        assert_eq!((advanced.address, advanced.size), (0xc000, 0x4000));
     }
 
     #[test]

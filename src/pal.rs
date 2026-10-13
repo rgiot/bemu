@@ -202,6 +202,11 @@ impl Chip for Pal {
 }
 
 impl Pal {
+    /// The MMR as last written (`0xC0` | page bits | configuration).
+    pub fn mmr(&self) -> u8 {
+        self.mmr.0
+    }
+
     delegate! {
         // Delegate all methods EXCEPT video mode as it is bufferized
         to self.mmr {

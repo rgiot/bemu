@@ -122,6 +122,42 @@ impl BankNumber {
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct BankConfig(pub PageNumber, pub BankNumber);
 
+impl BankConfig {
+    /// The 16K bank index used by debuggers (AMSpiriT's `Bnn`): 0-3 for the
+    /// base 64K, then 4 per extra 64K page - on-board (`Page`) or on an
+    /// expansion card (`Expansion`, whose low bits are the same page).
+    pub fn physical_index(&self) -> u16 {
+        let bank = self.1.index() as u16;
+        match self.0 {
+            PageNumber::Base => bank,
+            PageNumber::Page(p) | PageNumber::Expansion(p) => 4 + 4 * p as u16 + bank
+        }
+    }
+
+    /// The bank with that physical index: `Page` when the extra RAM is on
+    /// board, `Expansion` when a large RAM card provides it.
+    pub fn of_physical_index(index: u16, on_expansion_card: bool) -> Self {
+        let bank = [BankNumber::Bank0, BankNumber::Bank1, BankNumber::Bank2, BankNumber::Bank3][index as usize % 4];
+        if index < 4 {
+            return Self(PageNumber::Base, bank);
+        }
+        let page = ((index - 4) / 4) as u8;
+        Self(if on_expansion_card { PageNumber::Expansion(page) } else { PageNumber::Page(page) }, bank)
+    }
+}
+
+/// Where a byte physically is - what a CPU address designates under a given
+/// mapping. For debuggers: a breakpoint on a physical location fires
+/// whatever address the code is reached through, and only when that RAM
+/// bank or ROM is mapped.
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
+pub enum PhysicalAddress {
+    /// A 16K RAM bank (see [`BankConfig::physical_index`]) and an offset in it.
+    Ram { bank: u16, offset: u16 },
+    LowerRom { offset: u16 },
+    UpperRom { rom: u8, offset: u16 }
+}
+
 // [0x0000 - 0x3fff]
 // [0x4000 - 0x7fff]
 // [0x8000 - 0xbfff]

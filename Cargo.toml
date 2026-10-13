@@ -32,6 +32,7 @@ minifb = "0.28.0"
 ym2149 = "0.9.1"
 cpal = { version = "0.18.2", optional = true }
 ctrlc = { version = "3.5.2", features = ["termination"] }
+tiny_http = "0.12"
 
 [patch.crates-io]
 cpclib = {path = "../rust.cpcdemotools/cpclib/"}
