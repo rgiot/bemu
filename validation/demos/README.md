@@ -20,5 +20,4 @@ takes a screenshot every 5 seconds:
 | wcw | Benediction, What a Cool Weekend (2000, scene.org). Press space for the second part (the waving screens: smooth sine on AMSpiriT, jagged on amsrust) | `RUN"-WACWE!"`, space |
 
 `../../examples/probe_pc_sample.rs` lists what the Z80 is doing when a demo waits (the ovfprev prompt is a BASIC INPUT).
-`Amazing Demo 2021` (cpcrulez.fr/f/9ta) could not be fetched: the site answers an empty file ("AlreadyDownloaded").
-
+| amazing | Logon System, The Amazing Megademo (rev 2, 2021; cpcrulez.fr/f/9ta). All CRTCs: it prints `CRTC 0 detected`, then a one-line rupture (RVI/RVLL) intro with a QR code page | `RUN"AMAZING"` |
