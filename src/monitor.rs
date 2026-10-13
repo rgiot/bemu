@@ -40,6 +40,9 @@ const MONITOR_HSYNC_LOST_LINES: usize = 4;
 
 /// Shortest C-HSYNC pulse (in ticks of 1/16 usec) the monitor reacts to.
 const MONITOR_MIN_HSYNC_TICKS: usize = 16;
+/// Lines after the beam started a frame from which the frame oscillator accepts a VSYNC
+/// (Shaker DT: pulses 156 lines apart are not followed, 312 are).
+const MONITOR_VSYNC_WINDOW_START_LINES: usize = 200;
 /// Shortest C-VSYNC pulse the monitor reacts to: it integrates the signal.
 const MONITOR_MIN_VSYNC_TICKS: usize = 64;
 
@@ -204,7 +207,10 @@ impl Monitor {
         let mut frame_start = false;
         if self.vsync_run > MONITOR_MIN_VSYNC_TICKS && !self.vsync_seen {
             self.vsync_seen = true;
-            frame_start = true;
+            // like the line oscillator, the frame oscillator only listens to a VSYNC that comes late
+            // enough in its period: AMSpiriT shows the first of the two VSYNCs of Shaker DT (156
+            // lines apart) as a black band in the middle of a picture that goes on
+            frame_start = !self.synchronised || self.line >= MONITOR_VSYNC_WINDOW_START_LINES;
         }
 
         // horizontal synchronisation: end of a pulse long enough, or the
