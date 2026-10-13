@@ -16,7 +16,9 @@ cargo run --example emulator
 464, 1.1 on the others). The 464 and 664 have 64K: `--ram 128` (up to 576)
 adds a RAM expansion, banked through the same `&7Fxx` register as the 6128's
 second 64K. The 664 and 6128 have a disc interface; `--ddi` adds a DDI-1
-(AMSDOS and the FDC) to a 464, and `--no-disc` removes it. In the library:
+(AMSDOS and the FDC) to a 464, and `--no-disc` removes it. A snapshot
+(version 2 or later) runs on the model it was taken on, with its extra RAM
+as an expansion on a 464/664. In the library:
 `MotherboardBuilder::set_model`, `set_extra_ram_pages`, `set_disc_interface`.
 
 ```sh

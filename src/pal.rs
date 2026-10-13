@@ -207,6 +207,11 @@ impl Pal {
         self.mmr.0
     }
 
+    /// Set the MMR (a snapshot's): bits 7-6 are forced to 11.
+    pub fn force_mmr(&mut self, value: u8) {
+        self.mmr.set(0xc0 | value);
+    }
+
     delegate! {
         // Delegate all methods EXCEPT video mode as it is bufferized
         to self.mmr {

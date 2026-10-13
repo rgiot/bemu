@@ -244,6 +244,9 @@ fn main() {
     let mut breakpoints = amsrust::snapshot::SnapshotBreakpoints::default();
     if let Some(path) = &args.sna {
         amsrust::snapshot::load_sna(&mut motherboard, path).unwrap_or_else(|e| panic!("{e}"));
+        if motherboard.model() != args.model {
+            eprintln!("{path}: a CPC {} snapshot, run as such", motherboard.model().name());
+        }
         breakpoints = amsrust::snapshot::load_breakpoints(path).unwrap_or_else(|e| panic!("{e}"));
         for what in &breakpoints.ignored {
             eprintln!("snapshot breakpoint not supported: {what}");

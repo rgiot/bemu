@@ -388,6 +388,13 @@ impl Motherboard {
         self.pal.mmr()
     }
 
+    /// Set the MMR as if written to (a snapshot's), when RAM is banked.
+    pub fn force_mmr(&mut self, value: u8) {
+        if self.ram_banking {
+            self.pal.force_mmr(value);
+        }
+    }
+
     pub fn fdc(&self) -> &Fdc {
         &self.fdc
     }

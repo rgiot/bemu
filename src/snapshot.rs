@@ -8,12 +8,14 @@
 //! Not restored: PPI port latches (no public way to force one without
 //! reconstructing its mode first) and the FDD motor/track flags (a disc
 //! given on its own command line is inserted stopped at track 0 already).
-//! The extra 64K pages of a 128K+ snapshot go to the extra RAM.
+//! The extra 64K pages of a 128K+ snapshot go to the extra RAM (a RAM
+//! expansion on a 464/664), banked as the MMR says. From version 2, the
+//! header's CPC type picks the model (ROMs, RAM banking).
 
 use cpclib::sna::{Snapshot, SnapshotFlag};
 
 use crate::breakpoints::AdvancedBreakpoint;
-use crate::motherboard::Motherboard;
+use crate::motherboard::{CpcModel, Motherboard};
 
 /// Load `path` into `motherboard`. Registers, RAM and the CRTC/GA/PSG are
 /// all overwritten; anything not covered by the snapshot format is left as
@@ -38,6 +40,7 @@ fn load_snapshot(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(
     };
     let byte = |flag: SnapshotFlag| -> u8 { word(flag) as u8 };
 
+    load_model(motherboard, snapshot);
     load_registers(motherboard, &word, &byte);
     load_memory(motherboard, snapshot)?;
     load_crtc(motherboard, &byte);
@@ -73,15 +76,48 @@ fn load_registers(motherboard: &mut Motherboard, word: &impl Fn(SnapshotFlag) ->
     });
 }
 
+/// The machine the snapshot was taken on (version 2 and later): a 464,
+/// 664 or 6128 gets its ROMs and RAM banking (see
+/// [`Motherboard::set_model`]); the disc interface, an add-on on a 464, is
+/// kept as it was. Other types (unknown, Plus range) leave the machine
+/// as it is.
+pub fn model_of_snapshot(snapshot: &Snapshot) -> Option<CpcModel> {
+    if snapshot.version_header() < 2 {
+        return None;
+    }
+    match snapshot.get_value(&SnapshotFlag::CPC_TYPE).as_u16()? {
+        0 => Some(CpcModel::Cpc464),
+        1 => Some(CpcModel::Cpc664),
+        2 => Some(CpcModel::Cpc6128),
+        _ => None
+    }
+}
+
+fn load_model(motherboard: &mut Motherboard, snapshot: &Snapshot) {
+    if let Some(model) = model_of_snapshot(snapshot) {
+        if model != motherboard.model() {
+            let disc_interface = motherboard.has_disc_interface();
+            motherboard.set_model(model);
+            motherboard.set_disc_interface(disc_interface);
+        }
+    }
+}
+
 fn load_memory(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(), String> {
     let memory = snapshot.memory_dump()?;
     for (address, &value) in memory.iter().take(0x10000).enumerate() {
         motherboard.write_byte(address as u16, value);
     }
-    // the 128K (and more) snapshots: the following 64K pages go to the extra RAM
+    // the 128K (and more) snapshots: the following 64K pages go to the
+    // extra RAM - an expansion on a 464/664, banked through the MMR.
+    let extra_pages = memory.len().saturating_sub(0x10000).div_ceil(0x10000);
+    if extra_pages > 0 && (!motherboard.has_ram_banking() || motherboard.extra_ram_pages() < extra_pages) {
+        motherboard.set_extra_ram_pages(extra_pages.max(motherboard.extra_ram_pages()));
+    }
     for (page, data) in memory.get(0x10000..).unwrap_or(&[]).chunks(0x10000).enumerate() {
         motherboard.load_extra_ram_page(page, data);
     }
+    motherboard.force_mmr(snapshot.get_value(&SnapshotFlag::GA_RAMCFG).as_u16().unwrap_or(0) as u8);
     Ok(())
 }
 
@@ -304,6 +340,49 @@ mod breakpoint_test {
         assert_eq!(breakpoints.advanced.len(), 1);
         assert_eq!(breakpoints.advanced[0].run, crate::breakpoints::RunMode::Watch);
         assert!(breakpoints.ignored.is_empty(), "{:?}", breakpoints.ignored);
+    }
+
+    /// A snapshot saved as `version`, its CPC type and MMR set, loaded
+    /// into a 6128.
+    fn load_typed(cpc_type: u16, mmr: u16, version: SnapshotVersion) -> (Motherboard, Snapshot) {
+        let mut snapshot = Snapshot::default();
+        snapshot.set_value(SnapshotFlag::CPC_TYPE, cpc_type).unwrap();
+        snapshot.set_value(SnapshotFlag::GA_RAMCFG, mmr).unwrap();
+        let path = std::env::temp_dir().join(format!("amsrust_model_{}_{cpc_type}_{mmr}.sna", std::process::id()));
+        let path = path.to_str().unwrap().to_owned();
+        snapshot.save(&path, version).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        load_sna_bytes(&mut motherboard, &bytes).unwrap();
+        (motherboard, Snapshot::from_buffer(bytes).unwrap())
+    }
+
+    #[test]
+    fn the_snapshot_cpc_type_picks_the_model() {
+        let (motherboard, snapshot) = load_typed(0, 0xc0, SnapshotVersion::V2);
+        assert_eq!(model_of_snapshot(&snapshot), Some(CpcModel::Cpc464));
+        assert_eq!(motherboard.model(), CpcModel::Cpc464);
+        assert!(motherboard.has_disc_interface(), "the disc interface is kept, as a DDI-1");
+        let extra = snapshot.memory_size_header() > 64;
+        assert_eq!(motherboard.has_ram_banking(), extra, "banked only with the snapshot's extra RAM");
+
+        let (motherboard, _) = load_typed(1, 0xc0, SnapshotVersion::V2);
+        assert_eq!(motherboard.model(), CpcModel::Cpc664);
+        // Version 1 has no CPC type; unknown and Plus types leave it.
+        assert_eq!(load_typed(0, 0xc0, SnapshotVersion::V1).0.model(), CpcModel::Cpc6128);
+        assert_eq!(load_typed(4, 0xc0, SnapshotVersion::V2).0.model(), CpcModel::Cpc6128);
+    }
+
+    #[test]
+    fn the_snapshot_mmr_is_restored() {
+        let (motherboard, _) = load_typed(2, 0xc4, SnapshotVersion::V2);
+        assert_eq!(motherboard.model(), CpcModel::Cpc6128);
+        assert_eq!(motherboard.mmr(), 0xc4);
+        assert_eq!(
+            motherboard.physical_address(0x4000),
+            crate::memory::PhysicalAddress::Ram { bank: 4, offset: 0 }
+        );
     }
 
     #[test]
