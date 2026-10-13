@@ -1,0 +1,43 @@
+csl_version 1.0
+crtc_select 0
+reset
+wait 6000000
+disk_insert 'foursome.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"FOURSOME"\(RET)'
+wait 5000000
+screenshot_name 'foursome_01'
+screenshot
+wait 5000000
+screenshot_name 'foursome_02'
+screenshot
+wait 5000000
+screenshot_name 'foursome_03'
+screenshot
+wait 5000000
+screenshot_name 'foursome_04'
+screenshot
+wait 5000000
+screenshot_name 'foursome_05'
+screenshot
+wait 5000000
+screenshot_name 'foursome_06'
+screenshot
+wait 5000000
+screenshot_name 'foursome_07'
+screenshot
+wait 5000000
+screenshot_name 'foursome_08'
+screenshot
+wait 5000000
+screenshot_name 'foursome_09'
+screenshot
+wait 5000000
+screenshot_name 'foursome_10'
+screenshot
+wait 5000000
+screenshot_name 'foursome_11'
+screenshot
+wait 5000000
+screenshot_name 'foursome_12'
+screenshot

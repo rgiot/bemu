@@ -1,0 +1,99 @@
+csl_version 1.0
+crtc_select 0
+reset
+wait 6000000
+disk_insert 'wcw.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"-WACWE!"\(RET)'
+wait 60000000
+key_output ' '
+wait 6000000
+screenshot_name 'wcw_01'
+screenshot
+wait 6000000
+screenshot_name 'wcw_02'
+screenshot
+wait 6000000
+screenshot_name 'wcw_03'
+screenshot
+wait 6000000
+screenshot_name 'wcw_04'
+screenshot
+wait 6000000
+screenshot_name 'wcw_05'
+screenshot
+wait 6000000
+screenshot_name 'wcw_06'
+screenshot
+wait 6000000
+screenshot_name 'wcw_07'
+screenshot
+wait 6000000
+screenshot_name 'wcw_08'
+screenshot
+wait 6000000
+screenshot_name 'wcw_09'
+screenshot
+wait 6000000
+screenshot_name 'wcw_10'
+screenshot
+wait 6000000
+screenshot_name 'wcw_11'
+screenshot
+wait 6000000
+screenshot_name 'wcw_12'
+screenshot
+wait 6000000
+screenshot_name 'wcw_13'
+screenshot
+wait 6000000
+screenshot_name 'wcw_14'
+screenshot
+wait 6000000
+screenshot_name 'wcw_15'
+screenshot
+wait 6000000
+screenshot_name 'wcw_16'
+screenshot
+wait 6000000
+screenshot_name 'wcw_17'
+screenshot
+wait 6000000
+screenshot_name 'wcw_18'
+screenshot
+wait 6000000
+screenshot_name 'wcw_19'
+screenshot
+wait 6000000
+screenshot_name 'wcw_20'
+screenshot
+wait 6000000
+screenshot_name 'wcw_21'
+screenshot
+wait 6000000
+screenshot_name 'wcw_22'
+screenshot
+wait 6000000
+screenshot_name 'wcw_23'
+screenshot
+wait 6000000
+screenshot_name 'wcw_24'
+screenshot
+wait 6000000
+screenshot_name 'wcw_25'
+screenshot
+wait 6000000
+screenshot_name 'wcw_26'
+screenshot
+wait 6000000
+screenshot_name 'wcw_27'
+screenshot
+wait 6000000
+screenshot_name 'wcw_28'
+screenshot
+wait 6000000
+screenshot_name 'wcw_29'
+screenshot
+wait 6000000
+screenshot_name 'wcw_30'
+screenshot

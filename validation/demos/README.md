@@ -14,3 +14,11 @@ takes a screenshot every 5 seconds:
 | ghostnop | Pulpo Corrosivo and Futurs', Ghost NOP (Revision 24) | `RUN"GHOSTNOP"` |
 | oc2 | Vanity, Onescreen Colonies #2 | `RUN"-OSC2"` |
 | oc4 | Vanity, Onescreen Colonies #4 | `RUN"-OSC4"` |
+| foursome | Pulpo Corrosivo, Foursome (Benediction Coding Party 2022, scene.org) | `RUN"FOURSOME"` |
+| ovfprev | Overflow (Logon System), 5 previews 1992 (genesis8.free.fr). The loader asks `PREVIEW (1/5) ?`: type the preview number, then a key; ESC leaves to BASIC, so the script resets between previews | `RUN"-PREVIEW"`, `1`..`5`, space |
+| stillscrolling | Still Scrolling (Lost, Found and More, scene.org). `CREDITS.BAS` waits for a key, then runs it. It does not run on CRTC 1/2 | `RUN"CREDITS"`, space |
+| wcw | Benediction, What a Cool Weekend (2000, scene.org). Press space for the second part (the waving screens: smooth sine on AMSpiriT, jagged on amsrust) | `RUN"-WACWE!"`, space |
+
+`../../examples/probe_pc_sample.rs` lists what the Z80 is doing when a demo waits (the ovfprev prompt is a BASIC INPUT).
+`Amazing Demo 2021` (cpcrulez.fr/f/9ta) could not be fetched: the site answers an empty file ("AlreadyDownloaded").
+
