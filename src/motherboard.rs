@@ -452,6 +452,17 @@ impl Motherboard {
         self.stabilize_run();
     }
 
+    /// Power the machine off and on: [`Self::restart`] with every RAM
+    /// bank (extra pages and expansion included) cleared.
+    pub fn power_cycle(&mut self) {
+        for bank in 0..self.physical_bank_count() {
+            for offset in 0..0x4000 {
+                self.write_bank_byte(bank, offset, 0);
+            }
+        }
+        self.restart();
+    }
+
     #[inline]
     fn stabilize_run(&mut self) {
         self.reset();
