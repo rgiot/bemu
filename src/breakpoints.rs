@@ -259,6 +259,10 @@ mod test {
 ///   `<>`, `<` `<=` `>` `>=`, `<<` `>>`, `+` `-`, `*` `/` `%`, then the unary
 ///   `!` `~` `-`, and parentheses.
 ///
+/// As in C, `&`, `|` and `^` bind looser than the comparisons:
+/// `value & 0xC0 == 0x80` is `value & (0xC0 == 0x80)`, write
+/// `(value & 0xC0) == 0x80`.
+///
 /// Arithmetic is on 64-bit integers; a division by 0 gives 0.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Condition {
