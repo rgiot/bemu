@@ -114,6 +114,10 @@ pub struct CslRunner {
     base_dir: PathBuf,
     /// Count of screenshots per file stem, to keep repeated codes apart.
     taken: HashMap<String, usize>,
+    /// The beam is always followed, so that a screenshot is the last whole frame the
+    /// monitor displayed when it was requested (what AMSpiriT saves).
+    monitor: Monitor,
+    last_frame: Option<image::RgbImage>,
     /// Machines are rebuilt on reset; this accumulates their time.
     elapsed_before_reset_us: u64,
     /// Print each screenshot and reset as it happens.
@@ -144,6 +148,8 @@ impl CslRunner {
             screenshot_dir: output_dir.into(),
             base_dir: PathBuf::from("."),
             taken: HashMap::new(),
+            monitor: Monitor::default(),
+            last_frame: None,
             elapsed_before_reset_us: 0,
             verbose: false,
             module: None,
@@ -372,7 +378,11 @@ impl CslRunner {
     /// One instruction, then whatever it made happen: due key events and SSM
     /// requests. Returns the SSM codes it raised.
     fn step(&mut self) -> Vec<u16> {
-        self.motherboard.execute_next_opcode_no_video();
+        let monitor = &mut self.monitor;
+        self.motherboard.execute_next_opcode_with_video(|(rgb, sync)| monitor.receive(rgb, sync));
+        if let Some(frame) = self.monitor.take_frame() {
+            self.last_frame = Some(frame);
+        }
         self.after_instruction()
     }
 
@@ -518,13 +528,10 @@ impl CslRunner {
 
     // --------------------------------------------------------- screenshots
 
-    /// Capture the next whole frame the machine displays (keeping the
-    /// program running meanwhile) and save it.
+    /// Save the last whole frame the monitor displayed (the next one when there is none yet).
     fn screenshot(&mut self, ssm_code: Option<u16>, name: Option<&str>) -> Result<(), String> {
-        let mut monitor = Monitor::default();
         let mut ticks = 0;
-        let mut frame = None;
-        while frame.is_none() {
+        while self.last_frame.is_none() {
             if ticks > MAX_FRAME_TICKS {
                 let crtc = self.motherboard.crtc();
                 return Err(format!(
@@ -533,14 +540,15 @@ impl CslRunner {
                     self.motherboard.pc()
                 ));
             }
+            let monitor = &mut self.monitor;
             self.motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
                 monitor.receive(rgb, sync);
                 ticks += 1;
             });
             self.apply_due_key_events();
-            frame = monitor.take_frame();
+            self.last_frame = self.monitor.take_frame();
         }
-        let frame = frame.unwrap();
+        let frame = self.last_frame.clone().unwrap();
 
         let stem = match (name, ssm_code) {
             (Some(name), _) => name.trim_end_matches(".png").to_owned(),
