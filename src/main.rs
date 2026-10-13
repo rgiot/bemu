@@ -500,6 +500,15 @@ fn start_debug_server(
     if !args.debug_server {
         return None;
     }
+    if args.sna.is_none() {
+        // A powered-on machine: boot the firmware to BASIC's prompt before
+        // serving, so a debugger that connects at once (and loads a BASIC
+        // program, reads BASIC's state) finds BASIC up rather than a boot in
+        // progress. Run flat out, about half a second.
+        while motherboard.t_state_counter().value() < amsrust::debug_server::BASIC_BOOT_T_STATES {
+            motherboard.execute_next_opcode_no_video();
+        }
+    }
     match DebugServer::start(args.debug_port) {
         Ok(mut server) => {
             eprintln!("debug server: http://127.0.0.1:{}/api/doc", args.debug_port);

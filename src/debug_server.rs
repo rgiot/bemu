@@ -198,7 +198,7 @@ struct PendingBasic {
 }
 
 /// T-states the firmware takes, after a reset, before BASIC is ready.
-const BASIC_BOOT_T_STATES: usize = 4_000_000 * 3 / 2;
+pub const BASIC_BOOT_T_STATES: usize = 4_000_000 * 3 / 2;
 
 /// The beam: where the monitor draws, in its ticks (16 per NOP, 1024 for a
 /// 64 NOP line) and lines since the frame started, with the origin of the
@@ -972,6 +972,12 @@ impl DebugServer {
                 at_t_states: motherboard.t_state_counter().value() + BASIC_BOOT_T_STATES
             });
         }
+        else if motherboard.t_state_counter().value() < BASIC_BOOT_T_STATES {
+            // Just powered on, the firmware still booting: BASIC would clear
+            // the program as it starts. Loaded once it is up, like after a
+            // reset (a debugger that starts the emulator injects at once).
+            self.pending_basic = Some(PendingBasic { source, run: flag("run"), at_t_states: BASIC_BOOT_T_STATES });
+        }
         else {
             self.load_basic(&source, flag("run"), motherboard)
                 .map_err(|e| ApiError::new(format!("BASIC inject failed: {e}")))?;
@@ -1435,6 +1441,10 @@ impl DebugServer {
     /// Press/release the typed keys that are due.
     fn type_due_keys(&mut self, motherboard: &mut Motherboard) {
         if self.typing.is_empty() && self.typed_pressed.is_none() {
+            return;
+        }
+        // Keys typed for a program not loaded yet (`RUN`) wait for it.
+        if self.pending_basic.is_some() && self.typed_pressed.is_none() {
             return;
         }
         let now = motherboard.t_state_counter().value();
@@ -2316,6 +2326,20 @@ mod test {
         );
         let text = String::from_utf8(response.body).unwrap();
         assert!(text.contains("GOTO 20"), "{text}");
+    }
+
+    #[test]
+    fn basic_sent_while_the_firmware_boots_waits_for_it() {
+        // Sent the moment the machine is powered on, then RUN typed: the
+        // program is loaded once BASIC is up, and RUN after it.
+        let (mut server, mut mb) = (server(), MotherboardBuilder::default().build());
+        call(&mut server, &mut mb, "POST", "/api/basic", "10 GOTO 10\n");
+        call(&mut server, &mut mb, "POST", "/api/keytype", r#"{"text":"RUN\r"}"#);
+        call(&mut server, &mut mb, "POST", "/api/basic_bp", "10");
+        run(&mut server, &mut mb, 4_000_000);
+        assert!(server.paused(), "line 10 reached");
+        let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
+        assert_eq!((state["prog_start"].clone(), state["cur_linenum"].clone()), (json!(368), json!(10)), "{state}");
     }
 
     #[test]
