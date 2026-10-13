@@ -23,5 +23,6 @@ pub mod motherboard;
 pub mod counter;
 pub mod debug;
 pub mod debug_server;
+pub mod breakpoints;
 
 mod bits;

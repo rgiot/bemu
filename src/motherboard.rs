@@ -57,6 +57,10 @@ pub struct Motherboard {
     psg: Psg,
     keyboard: KeyboardMatrix,
 
+    /// The CPU's bus accesses, recorded for debuggers (watchpoints) while
+    /// `Some` - see [`Motherboard::watch_bus`].
+    bus_log: Option<Vec<BusAccess>>,
+
     // Counter of t-states (to be removed later)
     t_state_counter: Counter,
     // Counter of nops
@@ -92,6 +96,7 @@ impl Default for Motherboard {
             cached_input_byte: 0xff,
             psg: Default::default(),
             keyboard: Default::default(),
+            bus_log: None,
 
             t_state_counter: Default::default(),
             nops_counter: Default::default(),
@@ -99,6 +104,25 @@ impl Default for Motherboard {
         motherboard.stabilize_run();
         motherboard
     }
+}
+
+/// One access of the CPU to the memory or an IO port, as recorded by
+/// [`Motherboard::watch_bus`]. Opcode fetches (M1 cycles) are not memory
+/// reads here: a debugger watches data, and breaks on code with execution
+/// breakpoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BusAccess {
+    pub kind: BusAccessKind,
+    pub address: u16,
+    pub value: u8
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusAccessKind {
+    MemoryRead,
+    MemoryWrite,
+    IoRead,
+    IoWrite
 }
 
 /// TODO add the other kinds of varitions
@@ -450,6 +474,7 @@ impl Motherboard {
         }  else if self.cpu_request_byte_write() {
         //    eprintln!("0x{:x}=0x{:x}", addr, byte);
             self.write_byte(addr, byte);
+            self.log_bus(BusAccessKind::MemoryWrite, addr, byte);
             self.cpu.set_pin(Z80Pin::Neg_WR, true); // TODO do the real stuff - but here I am sure to not play with the data bus ...
             self.fdc_write_active = false;
         } else if self.cpu_request_byte_output() {
@@ -460,6 +485,7 @@ impl Motherboard {
             // `OUT` instruction (matching real M-cycle timing), so the
             // actual write only happens once, on the first such tick.
             if !self.fdc_write_active {
+                self.log_bus(BusAccessKind::IoWrite, addr, byte);
                 if Self::is_fdc_motor_addr(addr) {
                     self.fdc.set_motor(byte & 1 != 0);
                 } else if Self::is_fdc_data_addr(addr) {
@@ -502,6 +528,9 @@ impl Motherboard {
         
         } else  if self.cpu_request_byte_read() {
             let byte = self.read_byte(addr);
+            if self.cpu.get_pin(Z80Pin::Neg_M1) {
+                self.log_bus(BusAccessKind::MemoryRead, addr, byte);
+            }
             self.cpu.set_data_on_pins(byte);
             self.cpu.set_pin(Z80Pin::Neg_RD, true); // TODO do the real stuff - but here I am sure to not play with the data bus ...
             self.fdc_read_active = false;
@@ -514,6 +543,7 @@ impl Motherboard {
             // the cycle, same as real hardware would.
             if !self.fdc_read_active {
                 self.cached_input_byte = self.input_byte(addr);
+                self.log_bus(BusAccessKind::IoRead, addr, self.cached_input_byte);
             }
             self.cpu.set_data_on_pins(self.cached_input_byte);
             self.cpu.set_pin(Z80Pin::Neg_RD, true);
@@ -1202,6 +1232,75 @@ impl Motherboard {
         let mut config = MemoryConfig::default();
         config.1 = RamConfig([BankConfig(page, bank); 4]);
         self.memory.read(offset % 0x4000, &config, self.expansion_ram_source())
+    }
+
+    /// Record (`true`) or not (`false`, the default) the CPU's bus accesses
+    /// for [`Self::take_bus_accesses`]. Watching does not change timing.
+    pub fn watch_bus(&mut self, watch: bool) {
+        self.bus_log = watch.then(Vec::new);
+    }
+
+    /// The accesses recorded since the last call (empty when not watching).
+    pub fn take_bus_accesses(&mut self) -> Vec<BusAccess> {
+        self.bus_log.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    #[inline]
+    fn log_bus(&mut self, kind: BusAccessKind, address: u16, value: u8) {
+        if let Some(log) = &mut self.bus_log {
+            log.push(BusAccess { kind, address, value });
+        }
+    }
+
+    /// Where the CPU address `addr` lands under the current mapping.
+    pub fn physical_address(&self, addr: u16) -> PhysicalAddress {
+        let config = self.memory_config();
+        let offset = addr & 0x3fff;
+        if config.is_in_enabled_lower_rom(addr) {
+            PhysicalAddress::LowerRom { offset }
+        }
+        else if config.is_in_enabled_upper_rom(addr) {
+            PhysicalAddress::UpperRom { rom: config.0.rom_number, offset }
+        }
+        else {
+            PhysicalAddress::Ram { bank: config.bank_at(addr).physical_index(), offset }
+        }
+    }
+
+    /// How many 16K RAM banks exist: the base 64K plus the extra pages, on
+    /// board or on an expansion card.
+    pub fn physical_bank_count(&self) -> u16 {
+        let extra_pages = match self.large_ram_expansion_bank_count() {
+            Some(count) => count,
+            None => self.extra_ram_pages()
+        };
+        4 + 4 * extra_pages as u16
+    }
+
+    fn physical_bank_config(&self, bank: u16) -> MemoryConfig {
+        let bank_config = BankConfig::of_physical_index(bank, self.large_ram_expansion.is_some());
+        let mut config = MemoryConfig::default();
+        config.1 = RamConfig([bank_config; 4]);
+        config
+    }
+
+    /// One byte of a 16K RAM bank (see [`Self::physical_bank_count`]),
+    /// whatever the CPU mapping. `None` for a bank that does not exist.
+    pub fn read_bank_byte(&self, bank: u16, offset: u16) -> Option<u8> {
+        (bank < self.physical_bank_count())
+            .then(|| self.memory.read(offset & 0x3fff, &self.physical_bank_config(bank), self.expansion_ram_source()))
+    }
+
+    /// Write one byte of a 16K RAM bank; `false` for a bank that does not
+    /// exist.
+    pub fn write_bank_byte(&mut self, bank: u16, offset: u16, byte: u8) -> bool {
+        if bank >= self.physical_bank_count() {
+            return false;
+        }
+        let config = self.physical_bank_config(bank);
+        let Motherboard { memory, large_ram_expansion, .. } = self;
+        memory.write(offset & 0x3fff, byte, &config, large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
+        true
     }
 
     /// Write one byte of the base 64K RAM, whatever is mapped for the CPU

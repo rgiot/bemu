@@ -369,7 +369,7 @@ fn run_frame(
     }
     if frame.is_some() {
         if let Some(server) = server {
-            server.frame_completed();
+            server.frame_completed(motherboard);
         }
     }
     frame
