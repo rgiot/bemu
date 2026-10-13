@@ -36,7 +36,31 @@ pub enum RunMode {
     /// Pause the emulation.
     Stop,
     /// Only report the hit, keep running.
-    Watch
+    Watch,
+    /// Neither stop nor report: only act on the counters (see
+    /// [`AdvancedBreakpoint::counters`]) and count the hit.
+    Count
+}
+
+/// What a hit does to one of the debugger's named NOP counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CounterAction {
+    /// Start counting (creating the counter if needed).
+    Start,
+    /// Stop counting.
+    Stop,
+    /// Back to 0 (creating the counter if needed), running or not as it was.
+    Reset
+}
+
+impl CounterAction {
+    pub fn name(&self) -> &'static str {
+        match self {
+            CounterAction::Start => "start",
+            CounterAction::Stop => "stop",
+            CounterAction::Reset => "reset"
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,7 +74,13 @@ pub struct AdvancedBreakpoint {
     pub value: u8,
     pub value_mask: u8,
     pub name: Option<String>,
-    pub condition: Option<Condition>
+    pub condition: Option<Condition>,
+    /// Counters to act on at each hit (debugger extension), in order.
+    pub counters: Vec<(CounterAction, String)>,
+    /// Hits ignored before it acts (a pass count): 0 acts on the first.
+    pub after: u64,
+    /// Hits so far (its condition holding), counted by the debugger.
+    pub hits: u64
 }
 
 impl AdvancedBreakpoint {
@@ -66,7 +96,10 @@ impl AdvancedBreakpoint {
             value: 0,
             value_mask: 0,
             name: None,
-            condition: None
+            condition: None,
+            counters: Vec::new(),
+            after: 0,
+            hits: 0
         }
     }
 
