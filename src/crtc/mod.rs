@@ -107,9 +107,6 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
 ];
 
 /// C0 below which an R7 written with the value of C4 does not start a VSYNC
-/// Ticks the GA's monitor window is advanced by less than the write phase when an HSYNC restarts
-/// (R3 widened on R2's character), measured on HBL's moving-letters screen against AMSpiriT.
-const HSYNC_RESTART_LATE_TRIM: u8 = 3;
 const BLOCKED_R7_C0: u8 = 2;
 
 #[derive(Debug)]
@@ -168,10 +165,11 @@ pub struct Crtc {
     /// no VSYNC until C4 or R7 changes. (ACCC 16.3's wider "no second VSYNC while the
     /// equality is unchanged" made Shaker CT worse against AMSpiriT, so it is not applied.)
     r7_match: bool,
-    /// The running HSYNC was begun a character early (R3l=2, see `update_memory_address`)
-    early_hsync: bool,
-    /// ... and has begun again on time: the Gate Array has to count from here (see `take_hsync_restart`)
-    hsync_restart: Option<u8>,
+    /// Characters left of the blanking window of an R3l=2 HSYNC, which the Gate Array draws a character
+    /// before the CRTC's pulse (see `hsync_blank_window`)
+    early_blank_chars: u8,
+    /// the running HSYNC began as an R3l=2 one (its character-early blanking window was opened)
+    two_wide_pulse: bool,
     /// ACCC 16.4.1: a CRTC 0 VSYNC begun in the middle of a line does not count that line
     vsync_skips_first_line_end: bool,
     /// Number of line ends (C0 back to 0 through R0) since reset; for tests and tools
@@ -265,8 +263,8 @@ impl Default for Crtc {
             r0_enlarge_c9_to_r5: false,
             adjust_counts_to_r5: false,
             r7_match: false,
-            early_hsync: false,
-            hsync_restart: None,
+            early_blank_chars: 0,
+            two_wide_pulse: false,
             vsync_skips_first_line_end: false,
             line_ends: 0,
             phase_ticks: 0,
@@ -472,18 +470,11 @@ impl Crtc {
                 self.off(CrtcPin::HS);
             }
         }
-        // an HSYNC begun a character early for R3l=2 turns out wide (R3 raised on the very
-        // character R2 names, HBL's main sync): it starts there, on time
-        if r == 3 && self.early_hsync && self.hsync() && self.hcc == self.regs[2]
-            && self.hsync_width() != Some(2)
-        {
-            self.early_hsync = false;
-            self.hsc = 0;
-            self.hdc = 0;
-            // the monitor still gets the pulse on the character grid (HBL's box edges stay straight on
-            // AMSpiriT): the GA advances its window by the time the write took within this character
-            self.hsync_late_ticks = self.phase_ticks.saturating_sub(HSYNC_RESTART_LATE_TRIM);
-            self.hsync_restart = Some(0);
+        // an early window of an R3l=2 HSYNC that turns out wide (R3 raised on the very
+        // character R2 names, HBL's main sync) is not drawn early
+        if r == 3 && self.early_blank_chars > 0 && self.hcc == self.regs[2] && !self.hsync_is_two_wide() {
+            self.early_blank_chars = 0;
+            self.two_wide_pulse = false;
         }
         // ACCC §18.2.2: C4=R6 is considered immediately, whatever C0 (not on
         // the frame's first line, where R6 conflicts with C4=0, §18.3).
@@ -613,12 +604,6 @@ impl Crtc {
         }
     }
 
-    /// Once, when the running HSYNC was begun over (an early one that turned out wide): how many
-    /// ticks into the character this happened, that is how long ago the pulse should have started
-    pub fn take_hsync_restart(&mut self) -> Option<u8> {
-        self.hsync_restart.take()
-    }
-
     /// Register `r` as stored (tools)
     pub fn regs_r(&self, r: usize) -> u8 {
         self.regs[r]
@@ -711,6 +696,20 @@ impl Crtc {
         self.model.vsync_width(self.regs[3])
     }
 
+    /// `Some(blank)` while R3l=2: the Gate Array's blanking follows this window instead of the HSYNC pin
+    pub fn hsync_blank_window(&self) -> Option<bool> {
+        if self.early_blank_chars > 0 {
+            Some(true)
+        } else {
+            (self.two_wide_pulse && self.hsync()).then_some(false)
+        }
+    }
+
+    /// R3l=2 on a CRTC 0: its HSYNC is too short for the monitor (see the Gate Array's mode latch)
+    pub fn hsync_is_two_wide(&self) -> bool {
+        self.model.has_last_line_state() && self.hsync_width() == Some(2)
+    }
+
     /// HSync width in chars; `None` when no HSYNC is produced.
     fn hsync_width(&self) -> Option<u8> {
         self.model.hsync_width(self.regs[3])
@@ -730,6 +729,7 @@ impl Crtc {
             }
         }
 
+        self.early_blank_chars = self.early_blank_chars.saturating_sub(1);
         self.hcc = self.hcc.wrapping_add(1); // XXX check if there is a bit limit in the counter
         self.hdc = self.hdc.wrapping_add(1);
 
@@ -1003,12 +1003,20 @@ impl Crtc {
         // chips that treat it that way: it would otherwise never end)
         // ACCC 15.1: during a HSYNC the C0=R2 condition is not managed, so a
         // HSYNC cannot restart within a HSYNC
-        let early = u8::from(self.model.has_last_line_state() && self.hsync_width() == Some(2));
-        if self.hcc.wrapping_add(early) == self.regs[2] && !self.hsync() && self.hsync_width().is_some() {
+        // R3l=2 (CRTC 0): the Gate Array blanks and takes the mode a character before the pulse
+        // (AMSpiriT probe on HBL's R3=2 pulses), the pulse itself keeps its place for the
+        // interrupt counter
+        if self.hsync_is_two_wide() && self.hcc.wrapping_add(1) == self.regs[2] && !self.hsync() {
+            self.early_blank_chars = 2;
+            self.two_wide_pulse = true;
+        }
+        if !self.hsync() && self.early_blank_chars == 0 {
+            self.two_wide_pulse = false;
+        }
+        if self.hcc == self.regs[2] && !self.hsync() && self.hsync_width().is_some() {
             self.hsc = 0;
             self.on(CrtcPin::HS);
             self.hsync_late_ticks = 0;
-            self.early_hsync = early == 1;
             self.hdc = 0; // XXX I am pretty sure I am not reseting it at the right place
         }
 

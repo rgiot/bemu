@@ -560,9 +560,7 @@ impl Motherboard {
         }
         self.ga.set_last_idle_t(self.cpu.last_idle_t());
         self.ga.set_monitor_hsync_advance(self.crtc.hsync_late_ticks());
-        if let Some(ago) = self.crtc.take_hsync_restart() {
-            self.ga.restart_hsync(ago);
-        }
+        self.ga.set_crtc_hsync_two_wide(self.crtc.hsync_blank_window());
         self.ga.tick();
         if self.ram_banking {
             self.pal.tick();

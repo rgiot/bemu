@@ -418,6 +418,11 @@ pub const MODE_WRITE_DELAY_TICKS: usize = 8;
 /// 6 usec after C0=46). Shaker AE agrees (see `latch_mode`).
 pub const MODE_LATCH_CAP_TICKS: u64 = 6 * 16;
 
+/// With R3l=2 (a CRTC 0) the mode is taken 1 usec after the HSYNC opens, a character before the end of the pulse
+/// (AMSpiriT probe: the switch of HBL's R3=2 pulses comes 1 usec earlier than the end of the HSYNC). The HSYNC
+/// itself, the interrupt counter and the monitor keep the CRTC's timing.
+pub const MODE_LATCH_TWO_WIDE_TICKS: u64 = 16;
+
 /// The acknowledge of an interrupt is heard this much later when the
 /// interrupted instruction ends with at most one idle T-state.
 pub const ACK_LATE_TICKS: u32 = 16;
@@ -920,7 +925,11 @@ pub struct GateArray {
     /// Number of HSYNC falling edges seen so far (diagnostics).
     hsync_ends: u64,
     monitor_hsync_advance: usize,
-    hsync_restart: Option<u8>,
+    /// R3l=2 right now (CRTC 0): the HSYNC-GA period is too short for the monitor; see `MODE_LATCH_TWO_WIDE_TICKS`
+    crtc_hsync_two_wide: bool,
+    /// blanking window of an R3l=2 HSYNC (see `Crtc::hsync_blank_window`), as the GA sees it
+    blank_window: Option<bool>,
+    blank_pipe: [Option<bool>; HSYNC_GA_DELAY_TICKS],
     rgb_previous: RgbLevels,
     rgb_delayed: bool,
     /// GA clock ticks since power-on (timestamps of the RMR mode writes).
@@ -977,7 +986,9 @@ impl Default for GateArray {
             hsync_counter: HSyncCounter::NoHsync,
             hsync_ends: 0,
             monitor_hsync_advance: 0,
-            hsync_restart: None,
+            crtc_hsync_two_wide: false,
+            blank_window: None,
+            blank_pipe: [None; HSYNC_GA_DELAY_TICKS],
             rgb_previous: (0., 0., 0.).into(),
             rgb_delayed: false,
             abs_tick: 0,
@@ -1254,7 +1265,8 @@ impl GateArray {
             let pixel = if mode == Some(VideoMode::Mode2) { computed } else { self.rgb_previous };
             self.rgb_previous = computed;
             self.rgb_delayed = mode != Some(VideoMode::Mode2);
-            if self.hsync_ga || self.get_pin(GateArrayPin::VSYNC) {
+            let blank = self.blank_window.unwrap_or(self.hsync_ga);
+            if blank || self.get_pin(GateArrayPin::VSYNC) {
                 self.rgb = (0., 0., 0.).into();
             } else {
                 self.rgb = pixel;
@@ -1411,9 +1423,11 @@ impl GateArray {
     /// When the CPU acknowledge the interrupt (eg. it is going to jump to the interrupt vector), the Gate Array will reset bit5 of the counter, so the next interrupt can't occur closer than 32 HSync. 
     /// An R2.JIT HSYNC rises late for the black zone, but the monitor is
     /// synchronised as if it had risen on its character (ACCC 14.7.1).
-    /// The CRTC began its HSYNC over (see `Crtc::take_hsync_restart`): count it from now
-    pub fn restart_hsync(&mut self, ticks_ago: u8) {
-        self.hsync_restart = Some(ticks_ago);
+    pub fn set_crtc_hsync_two_wide(&mut self, window: Option<bool>) {
+        self.crtc_hsync_two_wide = window.is_some();
+        self.blank_window = self.blank_pipe[0];
+        self.blank_pipe.rotate_left(1);
+        self.blank_pipe[HSYNC_GA_DELAY_TICKS - 1] = window;
     }
 
     pub fn set_monitor_hsync_advance(&mut self, ticks: u8) {
@@ -1487,16 +1501,13 @@ impl Chip for GateArray {
         else if self.hsync_ga {
             self.hsync_counter.inc();
         }
-        if let Some(ago) = self.hsync_restart.take() {
-            if self.hsync_ga {
-                self.hsync_counter = HSyncCounter::HSync(usize::from(ago));
-                self.mode_latched = false;
-            }
-        }
         if self.hsync_ga && !self.mode_latched {
             if let HSyncCounter::HSync(n) = self.hsync_counter {
                 if n as u64 + 1 >= MODE_LATCH_CAP_TICKS {
                     self.latch_mode(0);
+                }
+                else if self.crtc_hsync_two_wide && n as u64 + 1 >= MODE_LATCH_TWO_WIDE_TICKS {
+                    self.latch_mode(MODE_WRITE_DELAY_TICKS);
                 }
             }
         }
