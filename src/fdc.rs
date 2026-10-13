@@ -355,6 +355,31 @@ impl Fdc {
         self.motor = on;
     }
 
+    /// ST0, ST1 and ST2 of the last command (for debuggers).
+    pub fn status_registers(&self) -> [u8; 3] {
+        [self.st0, self.st1, self.st2]
+    }
+
+    /// The phase the chip is in: "command", "execution" or "result".
+    pub fn phase_name(&self) -> &'static str {
+        match self.phase {
+            Phase::Command => "command",
+            Phase::Execution => "execution",
+            Phase::Result => "result"
+        }
+    }
+
+    /// The command being executed or last executed, as named in the
+    /// datasheet (`ReadData`, `Seek`...).
+    pub fn command_name(&self) -> String {
+        format!("{:?}", self.current_cmd)
+    }
+
+    /// The cylinder the head of `unit` (0-3) is over.
+    pub fn track(&self, unit: usize) -> u8 {
+        self.drives[unit % NB_UNITS].track
+    }
+
     pub fn motor(&self) -> bool {
         self.motor
     }

@@ -205,9 +205,15 @@ pub struct INKR(u8);
 pub struct Ink(u8);
 
 impl Ink {
-    /// The hardware colour number (as written to the gate array, 5 bits).
+    /// The firmware ink number (0-26).
     pub fn number(&self) -> u8 {
         self.0
+    }
+
+    /// The hardware colour number: the 5 bits written to the gate array
+    /// (`0x40 | n` selects it).
+    pub fn hardware_number(&self) -> u8 {
+        cpclib::image::ga::Ink::INKS[self.0 as usize].gate_array_value() & 0x1f
     }
 }
 
@@ -1365,6 +1371,17 @@ impl GateArray {
 
 /// Accessors
 impl GateArray {
+    /// The RMR as last written (`0x80` | interrupt reset | ROM disables |
+    /// mode).
+    pub fn rmr(&self) -> u8 {
+        self.rmr.0
+    }
+
+    /// The pen the next INKR write sets (16 = border).
+    pub fn selected_pen(&self) -> u8 {
+        self.pen().value()
+    }
+
     pub fn current_mode(&self) -> VideoMode {
         self.current_mode
     }

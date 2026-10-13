@@ -64,7 +64,7 @@ use amsrust::fdc::FdcDrive;
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
-use amsrust::debug_server::DebugServer;
+use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::psg::AudioConfig;
 use minifb::{InputCallback, Key, Window, WindowOptions};
 use std::cell::RefCell;
@@ -490,6 +490,9 @@ fn run_frame(
             }
         });
         if let Some(server) = server.as_deref_mut() {
+            let (x, line) = monitor.beam();
+            let (crop_x, crop_y) = monitor.crop_origin();
+            server.set_beam(Beam { x, line, crop_x, crop_y });
             server.after_instruction(motherboard);
             if let Some(pc) = server.take_stop() {
                 eprintln!("debug server: breakpoint at {pc:#06x}");

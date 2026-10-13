@@ -151,8 +151,104 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/history", methods: &["GET"], summary: "last executed instructions (?n=), bytes as fetched and as now", extension: false },
     Route { path: "/api/screenshot", methods: &["GET"], summary: "last complete frame as PNG (768x272, the visible area)", extension: false },
     Route { path: "/api/media", methods: &["POST"], summary: "load a .sna/.dsk (by content) or .bin/.amsdos (?name=, ?drive=)", extension: false },
+    Route { path: "/api/memmap", methods: &["GET"], summary: "what is mapped in each 16K region (ROM, absolute RAM bank), RMR, MMR", extension: false },
+    Route { path: "/api/crtc", methods: &["GET"], summary: "CRTC registers, selected register and counters", extension: false },
+    Route { path: "/api/ga", methods: &["GET"], summary: "Gate Array: mode, pens, inks, RMR and banking", extension: false },
+    Route { path: "/api/psg", methods: &["GET"], summary: "PSG registers, decoded", extension: false },
+    Route { path: "/api/fdc", methods: &["GET"], summary: "FDC status registers, phase, motor and heads", extension: false },
+    Route { path: "/api/beam", methods: &["GET"], summary: "beam position (?crop=1: relative to the screenshot), also in NOPs: nop, line, frame_nop", extension: false },
+    Route { path: "/api/raster_bp", methods: &["GET", "POST"], summary: "beam breakpoint: ?x=&y= (or line=, nop=, frame_nop=), enable=0 clears, add=1 keeps the others", extension: false },
+    Route { path: "/api/counters", methods: &["GET", "POST", "DELETE"], summary: "named NOP counters: list, {name, action: create|reset|start|stop}, delete (?name=)", extension: true },
     Route { path: "/api/doc", methods: &["GET"], summary: "this list", extension: false }
 ];
+
+/// The beam: where the monitor draws, in its ticks (16 per NOP, 1024 for a
+/// 64 NOP line) and lines since the frame started, with the origin of the
+/// visible picture (what the screenshot shows).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Beam {
+    pub x: usize,
+    pub line: usize,
+    pub crop_x: isize,
+    pub crop_y: usize
+}
+
+/// Ticks of the monitor in one NOP (1us), NOPs in a line and lines in a
+/// standard frame: 64 NOPs a line, 19968 a frame.
+pub const BEAM_TICKS_PER_NOP: usize = 16;
+pub const NOPS_PER_LINE: usize = 64;
+pub const LINES_PER_FRAME: usize = 312;
+const BEAM_TICKS_PER_LINE: usize = BEAM_TICKS_PER_NOP * NOPS_PER_LINE;
+
+impl Beam {
+    /// Ticks since the frame started (lines counted as 1024 ticks).
+    fn linear(&self) -> usize {
+        self.line * BEAM_TICKS_PER_LINE + self.x
+    }
+
+    fn nop(&self) -> usize {
+        self.x / BEAM_TICKS_PER_NOP
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "x": self.x,
+            "y": self.line,
+            "nop": self.nop(),
+            "line": self.line,
+            "frame_nop": self.line * NOPS_PER_LINE + self.nop()
+        })
+    }
+}
+
+/// A beam breakpoint: a position in the frame, or (no line) a position in
+/// every line.
+#[derive(Clone, Debug)]
+struct RasterBreakpoint {
+    /// The line; `None`: every line.
+    line: Option<usize>,
+    /// In monitor ticks.
+    x: usize
+}
+
+impl RasterBreakpoint {
+    /// Whether the beam went past it between `before` and `after` (one
+    /// instruction).
+    fn passed(&self, before: Beam, after: Beam) -> bool {
+        match self.line {
+            Some(line) => {
+                let target = line * BEAM_TICKS_PER_LINE + self.x;
+                let (before, after) = (before.linear(), after.linear());
+                if after >= before {
+                    before < target && target <= after
+                }
+                else {
+                    // A new frame started.
+                    target > before || target <= after
+                }
+            },
+            None if after.line == before.line && after.x >= before.x => before.x < self.x && self.x <= after.x,
+            None => self.x > before.x || self.x <= after.x
+        }
+    }
+
+    fn json(&self, index: usize) -> Value {
+        let mut value = json!({ "index": index, "x": self.x, "nop": self.x / BEAM_TICKS_PER_NOP });
+        if let Some(line) = self.line {
+            value["y"] = json!(line);
+            value["line"] = json!(line);
+            value["frame_nop"] = json!(line * NOPS_PER_LINE + self.x / BEAM_TICKS_PER_NOP);
+        }
+        value
+    }
+}
+
+/// A named counter of emulated NOPs (T-states / 4), running or stopped.
+#[derive(Clone, Debug)]
+struct NopCounter {
+    t_states: u64,
+    running: bool
+}
 
 /// The server: owned by the emulation thread.
 pub struct DebugServer {
@@ -188,7 +284,14 @@ pub struct DebugServer {
     /// The instruction about to be executed, recorded once it has been.
     fetched: Option<(u16, [u8; 4])>,
     /// The last complete frame, for `GET /api/screenshot`.
-    last_frame: Option<image::RgbImage>
+    last_frame: Option<image::RgbImage>,
+    /// The beam now and after the previous instruction.
+    beam: Option<Beam>,
+    previous_beam: Option<Beam>,
+    raster_breakpoints: Vec<RasterBreakpoint>,
+    counters: std::collections::BTreeMap<String, NopCounter>,
+    /// T-state counter after the previous instruction, for the counters.
+    counted_t_states: usize
 }
 
 /// AMSpiriT's default depth of `GET /api/history`.
@@ -295,7 +398,12 @@ impl DebugServer {
             history: VecDeque::new(),
             history_size: DEFAULT_HISTORY_SIZE,
             fetched: None,
-            last_frame: None
+            last_frame: None,
+            beam: None,
+            previous_beam: None,
+            raster_breakpoints: Vec::new(),
+            counters: Default::default(),
+            counted_t_states: 0
         }
     }
 
@@ -319,6 +427,13 @@ impl DebugServer {
             Some(last) if last.dimensions() == frame.dimensions() => last.copy_from_slice(frame),
             last => *last = Some(frame.clone())
         }
+    }
+
+    /// Where the monitor's beam is: to call before
+    /// [`Self::after_instruction`] for `/api/beam` and the raster
+    /// breakpoints.
+    pub fn set_beam(&mut self, beam: Beam) {
+        self.previous_beam = self.beam.replace(beam);
     }
 
     /// The breakpoint the CPU stopped on since the last call, if any.
@@ -356,6 +471,7 @@ impl DebugServer {
     pub fn after_instruction(&mut self, motherboard: &mut Motherboard) {
         self.mark_applied();
         let stepped = std::mem::take(&mut self.stepping);
+        self.count_nops(motherboard);
         if let Some(executed) = self.fetched.take() {
             if self.history.len() >= self.history_size {
                 self.history.pop_front();
@@ -379,6 +495,11 @@ impl DebugServer {
             self.advanced.iter().filter(|b| b.hit_by_execution(pc)).cloned().collect();
         for brk in hits {
             self.hit(&brk, None, motherboard);
+        }
+        if let (Some(before), Some(after)) = (self.previous_beam.take(), self.beam) {
+            if self.raster_breakpoints.iter().any(|brk| brk.passed(before, after)) {
+                self.stop(motherboard, json!({ "kind": "raster" }));
+            }
         }
         if stepped {
             self.paused = true;
@@ -425,8 +546,34 @@ impl DebugServer {
         self.last_stop = Some(motherboard.pc());
         let mut event = registers_event(motherboard);
         event["ticks"] = json!(motherboard.t_state_counter().value() / T_STATES_PER_NOP);
+        if let Some(beam) = self.beam {
+            event["beam"] = beam.json();
+        }
+        if !self.counters.is_empty() {
+            event["counters"] = self.counters_json();
+        }
         merge(&mut event, info);
         self.events.publish("z80_bp", &event);
+    }
+
+    /// Add the T-states of the instruction just executed to the running
+    /// counters (a reset of the machine restarts its T-state counter).
+    fn count_nops(&mut self, motherboard: &Motherboard) {
+        let now = motherboard.t_state_counter().value();
+        let elapsed = now.checked_sub(self.counted_t_states).unwrap_or(now) as u64;
+        self.counted_t_states = now;
+        for counter in self.counters.values_mut().filter(|c| c.running) {
+            counter.t_states += elapsed;
+        }
+    }
+
+    fn counters_json(&self) -> Value {
+        Value::Object(
+            self.counters
+                .iter()
+                .map(|(name, counter)| (name.clone(), json!(counter.t_states / T_STATES_PER_NOP as u64)))
+                .collect()
+        )
     }
 
     /// To call once per completed video frame.
@@ -508,6 +655,17 @@ impl DebugServer {
             ("GET", "/api/history") => self.history_list(request, motherboard),
             ("GET", "/api/screenshot") => self.screenshot(),
             ("POST", "/api/media") => self.media(request, motherboard),
+            ("GET", "/api/memmap") => Ok(ApiResponse::ok(memmap(motherboard))),
+            ("GET", "/api/crtc") => Ok(ApiResponse::ok(self.crtc(motherboard))),
+            ("GET", "/api/ga") => Ok(ApiResponse::ok(ga(motherboard))),
+            ("GET", "/api/psg") => Ok(ApiResponse::ok(psg(motherboard))),
+            ("GET", "/api/fdc") => Ok(ApiResponse::ok(fdc(motherboard))),
+            ("GET", "/api/beam") => self.beam_position(request),
+            ("GET", "/api/raster_bp") => Ok(ApiResponse::ok(self.list_raster_breakpoints())),
+            ("POST", "/api/raster_bp") => self.set_raster_breakpoint(request),
+            ("GET", "/api/counters") => Ok(ApiResponse::ok(self.list_counters())),
+            ("POST", "/api/counters") => self.counter_command(request, motherboard),
+            ("DELETE", "/api/counters") => self.delete_counters(request),
             _ => unreachable!("{} {}", request.method, request.path)
         };
         result.unwrap_or_else(ApiError::response)
@@ -531,41 +689,191 @@ impl DebugServer {
     }
 
     fn state(&self, motherboard: &Motherboard) -> Value {
-        use crate::ga::{RgbLevels, VideoMode};
-        let rgb = |levels: RgbLevels| -> u32 {
-            let to_u8 = |v: f32| (v * 255.0 / 100.0).round().clamp(0.0, 255.0) as u32;
-            to_u8(levels.r()) << 16 | to_u8(levels.g()) << 8 | to_u8(levels.b())
-        };
-        let palette = motherboard.ga().palette();
-        let crtc = motherboard.crtc();
-        let psg = motherboard.psg();
-        let psg_word = |low: u8| u16::from_le_bytes([psg.register(low), psg.register(low + 1)]);
         json!({
             "z80": z80(motherboard),
-            "ga": {
-                "mode": match motherboard.ga().active_video_mode() {
-                    VideoMode::Mode0 => 0, VideoMode::Mode1 => 1, VideoMode::Mode2 => 2, VideoMode::Mode3 => 3
-                },
-                "border_idx": palette[16].number(),
-                "border_rgb": rgb(palette[16].into()),
-                "ink_idx": palette[..16].iter().map(|ink| ink.number()).collect::<Vec<_>>(),
-                "ink_rgb": palette[..16].iter().map(|&ink| rgb(ink.into())).collect::<Vec<_>>()
-            },
-            "crtc": {
-                "regs": (0..14).map(|r| crtc.do_read_register(r)).collect::<Vec<_>>(),
-                "selected_reg": crtc.selected_register()
-            },
-            "psg": {
-                "period_a": psg_word(0) & 0xfff, "vol_a": psg.register(8) & 0x1f,
-                "period_b": psg_word(2) & 0xfff, "vol_b": psg.register(9) & 0x1f,
-                "period_c": psg_word(4) & 0xfff, "vol_c": psg.register(10) & 0x1f,
-                "mixer": psg.register(7), "noise": psg.register(6) & 0x1f,
-                "env_period": psg_word(11), "env_shape": psg.register(13) & 0x0f,
-                // Extension: the 16 registers as they are.
-                "regs": (0..16).map(|r| psg.register(r)).collect::<Vec<_>>()
-            },
+            "ga": ga(motherboard),
+            "crtc": self.crtc(motherboard),
+            "psg": psg(motherboard),
+            "fdc": fdc(motherboard),
             "emu": self.emu(motherboard)
         })
+    }
+
+    fn crtc(&self, motherboard: &Motherboard) -> Value {
+        let crtc = motherboard.crtc();
+        let mut value = json!({
+            "type": crtc.crtc_type() as u8,
+            "regs": (0..14).map(|r| crtc.do_read_register(r)).collect::<Vec<_>>(),
+            "selected_reg": crtc.selected_register(),
+            // Extension: the counters (C0, C4, C9, VSYNC, R5 adjust) and
+            // the address the CRTC outputs.
+            "hcc": crtc.hcc,
+            "vcc": crtc.vcc.value(),
+            "vlc": crtc.vlc.value(),
+            "vsc": crtc.vsc,
+            "vtac": crtc.vtac,
+            "ma": crtc.vma()
+        });
+        if let Some(beam) = self.beam {
+            value["rasterline"] = json!(beam.line);
+        }
+        value
+    }
+
+    // ------------------------------------------------------------- beam
+
+    fn beam_position(&self, request: &ApiRequest) -> ApiResult {
+        let beam = self.beam.ok_or_else(|| ApiError::new("no beam position: the emulation is not driving a monitor"))?;
+        let crop = request.param("crop").is_some_and(|v| v != "0");
+        let mut value = beam.json();
+        if crop {
+            value["x"] = json!(beam.x as isize - beam.crop_x);
+            value["y"] = json!(beam.line as isize - beam.crop_y as isize);
+        }
+        merge(&mut value, json!({
+            "cx": beam.crop_x,
+            "cy": beam.crop_y,
+            "cw": SCREENSHOT_SIZE.0,
+            "ch": SCREENSHOT_SIZE.1,
+            "nops_per_line": NOPS_PER_LINE,
+            "nops_per_frame": NOPS_PER_LINE * LINES_PER_FRAME
+        }));
+        Ok(ApiResponse::ok(value))
+    }
+
+    fn list_raster_breakpoints(&self) -> Value {
+        json!({
+            "breakpoints": self.raster_breakpoints.iter().enumerate().map(|(i, b)| b.json(i)).collect::<Vec<_>>()
+        })
+    }
+
+    /// `POST /api/raster_bp`: AMSpiriT's `x`/`y` (beam ticks and lines,
+    /// `crop=1` for picture coordinates), or the position in NOPs: `nop`
+    /// (0-63) in `line` (0-311), `frame_nop` (0-19967); `nop` alone stops
+    /// in every line, `line` alone at its start.
+    fn set_raster_breakpoint(&mut self, request: &ApiRequest) -> ApiResult {
+        let param = |name: &str, max: usize| -> Result<Option<usize>, ApiError> {
+            match request.param(name) {
+                None | Some("") => Ok(None),
+                Some(text) => parse_int(text)
+                    .filter(|&v| (0..=max as i64).contains(&v))
+                    .map(|v| Some(v as usize))
+                    .ok_or_else(|| ApiError::field(name, format!("{name} must be a number from 0 to {max}")))
+            }
+        };
+        let enable = param("enable", 1)?.unwrap_or(1) == 1;
+        let add = param("add", 1)?.unwrap_or(0) == 1;
+        let crop = param("crop", 1)?.unwrap_or(0) == 1;
+        let x = param("x", 0xffff)?;
+        let y = param("y", 0xffff)?;
+        let nop = param("nop", NOPS_PER_LINE - 1)?;
+        let line = param("line", 0xffff)?;
+        let frame_nop = param("frame_nop", NOPS_PER_LINE * LINES_PER_FRAME - 1)?;
+
+        let breakpoint = if let Some(frame_nop) = frame_nop {
+            Some(RasterBreakpoint { line: Some(frame_nop / NOPS_PER_LINE), x: frame_nop % NOPS_PER_LINE * BEAM_TICKS_PER_NOP })
+        }
+        else if nop.is_some() || line.is_some() {
+            Some(RasterBreakpoint { line, x: nop.unwrap_or(0) * BEAM_TICKS_PER_NOP })
+        }
+        else if x.is_some() || y.is_some() {
+            let (dx, dy) = match (crop, self.beam) {
+                (true, Some(beam)) => (beam.crop_x, beam.crop_y as isize),
+                (true, None) => return Err(ApiError::field("crop", "no beam position to crop against yet")),
+                (false, _) => (0, 0)
+            };
+            let x = (x.unwrap_or(0) as isize + dx).max(0) as usize;
+            Some(RasterBreakpoint { line: y.map(|y| (y as isize + dy).max(0) as usize), x })
+        }
+        else {
+            None
+        };
+        if !add || !enable {
+            self.raster_breakpoints.clear();
+        }
+        match (enable, breakpoint) {
+            (true, Some(breakpoint)) => self.raster_breakpoints.push(breakpoint),
+            (true, None) if !add => {},
+            (true, None) => return Err(ApiError::new("add=1 needs a position: x/y, line/nop or frame_nop")),
+            (false, _) => {}
+        }
+        let mut reply = self.list_raster_breakpoints();
+        merge(&mut reply, json!({ "ok": true, "cmd_seq": self.command() }));
+        Ok(ApiResponse::ok(reply))
+    }
+
+    // --------------------------------------------------------- counters
+
+    fn list_counters(&self) -> Value {
+        json!({
+            "counters": self.counters.iter().map(|(name, counter)| json!({
+                "name": name,
+                "nops": counter.t_states / T_STATES_PER_NOP as u64,
+                "running": counter.running
+            })).collect::<Vec<_>>()
+        })
+    }
+
+    /// `POST /api/counters {"name", "action": create|reset|start|stop}`:
+    /// a counter counts the NOPs the emulation runs while it is running
+    /// (from its creation unless created with `"running": false`).
+    fn counter_command(&mut self, request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
+        let body = parse_body(&request.text())?;
+        let name = match find_key(&body, "name") {
+            Some(Value::String(name)) if !name.is_empty() => name.clone(),
+            _ => return Err(ApiError::field("name", "missing field \"name\": the counter's name"))
+        };
+        let action = match find_key(&body, "action") {
+            None => "create",
+            Some(Value::String(action)) => action.as_str(),
+            Some(_) => return Err(ApiError::field("action", "field \"action\" must be a string"))
+        };
+        let running = match find_key(&body, "running") {
+            None => true,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => return Err(ApiError::field("running", "field \"running\" must be a boolean"))
+        };
+        // Count from the instruction about to run.
+        self.count_nops(motherboard);
+        match action {
+            "create" => {
+                if self.counters.contains_key(&name) {
+                    return Err(ApiError::field("name", format!("counter \"{name}\" exists (reset or delete it)")));
+                }
+                self.counters.insert(name, NopCounter { t_states: 0, running });
+            },
+            "reset" | "start" | "stop" => {
+                let counter = self
+                    .counters
+                    .get_mut(&name)
+                    .ok_or_else(|| ApiError::field("name", format!("no counter \"{name}\"")))?;
+                match action {
+                    "reset" => counter.t_states = 0,
+                    "start" => counter.running = true,
+                    _ => counter.running = false
+                }
+            },
+            other => {
+                return Err(ApiError::field("action", format!("unknown action \"{other}\": create, reset, start or stop")))
+            }
+        }
+        let mut reply = self.list_counters();
+        merge(&mut reply, json!({ "ok": true }));
+        Ok(ApiResponse::ok(reply))
+    }
+
+    fn delete_counters(&mut self, request: &ApiRequest) -> ApiResult {
+        match request.param("name") {
+            None => self.counters.clear(),
+            Some(name) => {
+                if self.counters.remove(name).is_none() {
+                    return Err(ApiError::field("name", format!("no counter \"{name}\"")));
+                }
+            }
+        }
+        let mut reply = self.list_counters();
+        merge(&mut reply, json!({ "ok": true }));
+        Ok(ApiResponse::ok(reply))
     }
 
     // --------------------------------------------------------- commands
@@ -946,6 +1254,109 @@ impl DebugServer {
         }
         self.typing_next_at = now + KEY_T_STATES;
     }
+}
+
+/// The visible picture (what `GET /api/screenshot` returns).
+const SCREENSHOT_SIZE: (usize, usize) = (768, 272);
+
+/// `0xRRGGBB` of a GA colour.
+fn rgb(levels: crate::ga::RgbLevels) -> u32 {
+    let to_u8 = |v: f32| (v * 255.0 / 100.0).round().clamp(0.0, 255.0) as u32;
+    to_u8(levels.r()) << 16 | to_u8(levels.g()) << 8 | to_u8(levels.b())
+}
+
+fn ga(motherboard: &Motherboard) -> Value {
+    use crate::ga::VideoMode;
+    let ga = motherboard.ga();
+    let palette = ga.palette();
+    let mmr = motherboard.mmr();
+    json!({
+        "mode": match ga.active_video_mode() {
+            VideoMode::Mode0 => 0, VideoMode::Mode1 => 1, VideoMode::Mode2 => 2, VideoMode::Mode3 => 3
+        },
+        "pen": ga.selected_pen(),
+        // The hardware colour numbers (0x40 | n is the INKR write).
+        "border_idx": palette[16].hardware_number(),
+        "border_rgb": rgb(palette[16].into()),
+        "ink_idx": palette[..16].iter().map(|ink| ink.hardware_number()).collect::<Vec<_>>(),
+        "ink_rgb": palette[..16].iter().map(|&ink| rgb(ink.into())).collect::<Vec<_>>(),
+        "rmr": ga.rmr(),
+        "ram_mode": mmr & 7,
+        "ram_page": (mmr >> 3) & 7,
+        // Extension: firmware ink numbers, ROM enables, interrupt counter.
+        "ink_firmware": palette.iter().map(|ink| ink.number()).collect::<Vec<_>>(),
+        "lower_rom": ga.lower_rom_pagging().is_enabled(),
+        "upper_rom": ga.upper_rom_pagging().is_enabled(),
+        "r52": ga.r52()
+    })
+}
+
+fn psg(motherboard: &Motherboard) -> Value {
+    let psg = motherboard.psg();
+    let word = |low: u8| u16::from_le_bytes([psg.register(low), psg.register(low + 1)]);
+    json!({
+        "period_a": word(0) & 0xfff, "vol_a": psg.register(8) & 0x1f,
+        "period_b": word(2) & 0xfff, "vol_b": psg.register(9) & 0x1f,
+        "period_c": word(4) & 0xfff, "vol_c": psg.register(10) & 0x1f,
+        "mixer": psg.register(7), "noise": psg.register(6) & 0x1f,
+        "env_period": word(11), "env_shape": psg.register(13) & 0x0f,
+        // Extension: the 16 registers as they are, the selected one.
+        "regs": (0..16).map(|r| psg.register(r)).collect::<Vec<_>>(),
+        "selected_reg": psg.selected_register()
+    })
+}
+
+fn fdc(motherboard: &Motherboard) -> Value {
+    use crate::fdc::FdcDrive;
+    let fdc = motherboard.fdc();
+    let [st0, st1, st2] = fdc.status_registers();
+    json!({
+        "msr": fdc.read_status(),
+        "sr0": st0,
+        "sr1": st1,
+        "sr2": st2,
+        "motor": fdc.motor(),
+        "phase": fdc.phase_name(),
+        "command": fdc.command_name(),
+        "tracks": [fdc.track(0), fdc.track(1)],
+        "disks": [fdc.has_disk(FdcDrive::A), fdc.has_disk(FdcDrive::B)]
+    })
+}
+
+/// `GET /api/memmap`: each 16K region of the CPU's view, with the ROM
+/// read there if any and the absolute RAM bank (written there in any case).
+fn memmap(motherboard: &Motherboard) -> Value {
+    let regions: Vec<Value> = (0..4u16)
+        .map(|region| {
+            let base = region * 0x4000;
+            let ram_bank = match motherboard.physical_address_for_write(base) {
+                PhysicalAddress::Ram { bank, .. } => bank,
+                _ => unreachable!("writes always reach RAM")
+            };
+            let mut value = json!({ "base": base, "ram_bank": ram_bank, "ext": ram_bank >= 4 });
+            match motherboard.physical_address(base) {
+                PhysicalAddress::LowerRom { .. } => {
+                    merge(&mut value, json!({ "name": "lower ROM", "rom": true, "rom_bank": 255 }));
+                },
+                PhysicalAddress::UpperRom { rom, .. } => {
+                    merge(&mut value, json!({ "name": format!("upper ROM {rom}"), "rom": true, "rom_bank": rom }));
+                },
+                PhysicalAddress::Ram { bank, .. } => {
+                    merge(&mut value, json!({ "name": format!("RAM B{bank:02X}"), "rom": false }));
+                }
+            }
+            value
+        })
+        .collect();
+    let mmr = motherboard.mmr();
+    json!({
+        "regions": regions,
+        "rmr": motherboard.ga().rmr(),
+        "ram_mode": mmr & 7,
+        "ram_page": (mmr >> 3) & 7,
+        "mmr": mmr,
+        "ram_banks": motherboard.physical_bank_count()
+    })
 }
 
 fn z80(motherboard: &Motherboard) -> Value {
@@ -1384,6 +1795,173 @@ mod test {
 
     fn server() -> DebugServer {
         DebugServer::with_requests(mpsc::channel().1)
+    }
+
+    #[test]
+    fn memmap_and_ga_follow_the_mmr_and_the_inks() {
+        let (mut server, mut mb) = (server(), machine());
+        // LD BC,0x7FC4: OUT (C),C (page 0 bank 0 at 0x4000);
+        // LD C,0: OUT (C),C (pen 0); LD C,0x54: OUT (C),C (hardware 20).
+        mb.write_buffer(0x4000, &[
+            0x01, 0xc4, 0x7f, 0xed, 0x49, 0x0e, 0x00, 0xed, 0x49, 0x0e, 0x54, 0xed, 0x49
+        ]);
+        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        // The code runs from 0x4000 in bank 1: copy it into the bank about
+        // to be mapped there.
+        for i in 0..13 {
+            let byte = mb.read_bank_byte(1, i).unwrap();
+            mb.write_bank_byte(4, i, byte);
+        }
+        run(&mut server, &mut mb, 6);
+        let (status, memmap) = call(&mut server, &mut mb, "GET", "/api/memmap", "");
+        assert_eq!(status, 200);
+        assert_eq!(memmap["ram_mode"], 4);
+        assert_eq!(memmap["regions"][1]["ram_bank"], 4);
+        assert_eq!(memmap["regions"][1]["ext"], true);
+        assert_eq!(memmap["regions"][1]["rom"], false);
+        assert_eq!(memmap["regions"][3]["ram_bank"], 3);
+        let (_, ga) = call(&mut server, &mut mb, "GET", "/api/ga", "");
+        assert_eq!(ga["ink_idx"][0], 20, "{ga}");
+        assert_eq!(ga["ink_firmware"][0], 0);
+        assert_eq!(ga["pen"], 0);
+        for path in ["/api/crtc", "/api/psg", "/api/fdc"] {
+            assert_eq!(call(&mut server, &mut mb, "GET", path, "").0, 200, "{path}");
+        }
+        let (_, state) = call(&mut server, &mut mb, "GET", "/api/state", "");
+        assert_eq!(state["fdc"]["msr"], 128);
+    }
+
+    #[test]
+    fn memmap_names_the_roms() {
+        let (mut server, mut mb) = (server(), MotherboardBuilder::default().build());
+        let (_, memmap) = call(&mut server, &mut mb, "GET", "/api/memmap", "");
+        assert_eq!(memmap["regions"][0]["rom"], true);
+        assert_eq!(memmap["regions"][0]["rom_bank"], 255);
+        assert_eq!(memmap["regions"][0]["ram_bank"], 0, "writes go to the RAM below");
+        assert_eq!(memmap["regions"][3]["rom"], true);
+        assert_eq!(memmap["regions"][3]["rom_bank"], 0);
+    }
+
+    fn beam(x: usize, line: usize) -> Beam {
+        Beam { x, line, crop_x: 126, crop_y: 33 }
+    }
+
+    #[test]
+    fn raster_breakpoints_fire_when_the_beam_passes() {
+        let at = |line, nop| RasterBreakpoint { line, x: nop * BEAM_TICKS_PER_NOP };
+        // Line 100, NOP 10.
+        assert!(at(Some(100), 10).passed(beam(150, 100), beam(170, 100)));
+        assert!(at(Some(100), 10).passed(beam(150, 100), beam(160, 100)));
+        assert!(!at(Some(100), 10).passed(beam(160, 100), beam(200, 100)), "already passed");
+        assert!(!at(Some(100), 10).passed(beam(150, 99), beam(170, 99)));
+        // The start of a line, reached through the end of the previous.
+        assert!(at(Some(100), 0).passed(beam(1000, 99), beam(30, 100)));
+        // Through a new frame.
+        assert!(at(Some(0), 1).passed(beam(1000, 311), beam(40, 0)));
+        assert!(at(Some(311), 63).passed(beam(1000, 311), beam(40, 0)), "the end of the frame");
+        assert!(!at(Some(100), 0).passed(beam(1000, 311), beam(40, 0)));
+        // Every line.
+        assert!(at(None, 10).passed(beam(150, 7), beam(170, 7)));
+        assert!(at(None, 10).passed(beam(150, 8), beam(170, 8)));
+        assert!(at(None, 0).passed(beam(1010, 8), beam(10, 9)));
+        assert!(!at(None, 10).passed(beam(170, 8), beam(200, 8)));
+    }
+
+    #[test]
+    fn raster_bp_positions_in_pixels_or_nops() {
+        let (mut server, mut mb) = (server(), machine());
+        let (status, set) = call(&mut server, &mut mb, "POST", "/api/raster_bp?x=200&y=50", "");
+        assert_eq!(status, 200);
+        assert_eq!(set["breakpoints"][0]["frame_nop"], 50 * 64 + 12);
+        call(&mut server, &mut mb, "POST", "/api/raster_bp?frame_nop=19967&add=1", "");
+        call(&mut server, &mut mb, "POST", "/api/raster_bp?nop=5&add=1", "");
+        let (_, list) = call(&mut server, &mut mb, "GET", "/api/raster_bp", "");
+        assert_eq!(list["breakpoints"][1]["line"], 311);
+        assert_eq!(list["breakpoints"][1]["nop"], 63);
+        assert!(list["breakpoints"][2].get("line").is_none(), "{list}");
+        // Picture coordinates need the beam.
+        assert_eq!(call(&mut server, &mut mb, "POST", "/api/raster_bp?x=0&y=0&crop=1", "").0, 400);
+        server.set_beam(beam(0, 0));
+        let (_, set) = call(&mut server, &mut mb, "POST", "/api/raster_bp?x=2&y=0&crop=1", "");
+        assert_eq!(set["breakpoints"].as_array().unwrap().len(), 1, "replaces");
+        assert_eq!(set["breakpoints"][0]["x"], 128);
+        assert_eq!(set["breakpoints"][0]["line"], 33);
+        assert_eq!(call(&mut server, &mut mb, "POST", "/api/raster_bp?nop=64", "").0, 400);
+        let (_, cleared) = call(&mut server, &mut mb, "POST", "/api/raster_bp?enable=0", "");
+        assert_eq!(cleared["breakpoints"], json!([]));
+        let (_, position) = call(&mut server, &mut mb, "GET", "/api/beam?crop=1", "");
+        assert_eq!((position["x"].clone(), position["y"].clone()), (json!(-126), json!(-33)));
+        assert_eq!(position["nops_per_frame"], 19968);
+    }
+
+    #[test]
+    fn a_raster_breakpoint_stops_the_running_machine_on_its_line() {
+        use crate::monitor::Monitor;
+        let (mut server, mut mb) = (server(), MotherboardBuilder::default().build());
+        let mut monitor = Monitor::default();
+        let events = server.events.subscribe(None).unwrap();
+        let mut step = |server: &mut DebugServer, mb: &mut Motherboard| {
+            mb.execute_next_opcode_with_video(|(rgb, sync)| monitor.receive(rgb, sync));
+            let (x, line) = monitor.beam();
+            let (crop_x, crop_y) = monitor.crop_origin();
+            server.set_beam(Beam { x, line, crop_x, crop_y });
+            server.after_instruction(mb);
+        };
+        // Let the firmware set the CRTC up and the monitor lock.
+        for _ in 0..4 * 19968 / 3 {
+            step(&mut server, &mut mb);
+        }
+        call(&mut server, &mut mb, "POST", "/api/raster_bp?line=200&nop=20", "");
+        for _ in 0..19968 {
+            step(&mut server, &mut mb);
+            if server.paused() {
+                break;
+            }
+        }
+        assert!(server.paused());
+        let (_, position) = call(&mut server, &mut mb, "GET", "/api/beam", "");
+        assert_eq!(position["line"], 200, "{position}");
+        let nop = position["nop"].as_u64().unwrap();
+        assert!((20..20 + 7).contains(&nop), "{position}");
+        let stop = events_of(&events).into_iter().find(|e| e.starts_with("event: z80_bp")).unwrap();
+        assert!(stop.contains(r#""kind":"raster""#) && stop.contains(r#""line":200"#), "{stop}");
+    }
+
+    #[test]
+    fn counters_count_nops_while_running() {
+        let (mut server, mut mb) = (server(), machine());
+        // NOP; NOP; LD A,1 (2 NOPs); JR -5 (3 NOPs).
+        mb.write_buffer(0x4000, &[0x00, 0x00, 0x3e, 0x01, 0x18, 0xfa]);
+        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        server.after_instruction(&mut mb);
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop"}"#);
+        assert_eq!(status, 200);
+        call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"idle","running":false}"#);
+        assert_eq!(call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop"}"#).0, 400, "exists");
+        run(&mut server, &mut mb, 4);
+        let (_, list) = call(&mut server, &mut mb, "GET", "/api/counters", "");
+        assert_eq!(list["counters"][0], json!({ "name": "idle", "nops": 0, "running": false }));
+        assert_eq!(list["counters"][1]["nops"], 7, "{list}");
+        call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop","action":"stop"}"#);
+        run(&mut server, &mut mb, 4);
+        let (_, list) = call(&mut server, &mut mb, "GET", "/api/counters", "");
+        assert_eq!(list["counters"][1]["nops"], 7);
+        call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop","action":"reset"}"#);
+        call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop","action":"start"}"#);
+        run(&mut server, &mut mb, 2);
+        let (_, list) = call(&mut server, &mut mb, "GET", "/api/counters", "");
+        assert_eq!(list["counters"][1]["nops"], 2, "{list}");
+        // In the stop events.
+        let events = server.events.subscribe(None).unwrap();
+        call(&mut server, &mut mb, "POST", "/api/z80_bp", "0x4000");
+        run(&mut server, &mut mb, 4);
+        let stop = events_of(&events).into_iter().find(|e| e.starts_with("event: z80_bp")).unwrap();
+        assert!(stop.contains(r#""counters":{"idle":0,"loop":"#), "{stop}");
+        assert_eq!(call(&mut server, &mut mb, "DELETE", "/api/counters?name=idle", "").0, 200);
+        assert_eq!(call(&mut server, &mut mb, "DELETE", "/api/counters?name=idle", "").0, 400);
+        assert_eq!(call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop","action":"x"}"#).0, 400);
+        let (_, list) = call(&mut server, &mut mb, "DELETE", "/api/counters", "");
+        assert_eq!(list["counters"], json!([]));
     }
 
     #[test]

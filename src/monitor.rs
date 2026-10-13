@@ -135,6 +135,20 @@ impl Monitor {
         Monitor::with_colors(VSYNC_DEBUG_COLOR, HSYNC_DEBUG_COLOR)
     }
 
+    /// Where the beam is: (tick in the line, 16 per usec - so 1024 per 64
+    /// usec line; line since the frame started). The picture's pixel
+    /// (`x`, `y`) is beam (`x + crop_x`, `y + crop_y`), see
+    /// [`Self::crop_origin`].
+    pub fn beam(&self) -> (usize, usize) {
+        (self.x, self.line)
+    }
+
+    /// Where the picture starts in beam coordinates (the first pixel of the
+    /// visible area: the image's (0, 0)).
+    pub fn crop_origin(&self) -> (isize, usize) {
+        (MONITOR_FIRST_PIXEL as isize - self.shift as isize, MONITOR_FIRST_LINE)
+    }
+
     /// Whether a whole frame is waiting to be taken.
     pub fn is_frame_complete(&self) -> bool {
         self.frame.is_some()

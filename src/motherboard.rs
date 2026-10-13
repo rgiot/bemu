@@ -278,6 +278,11 @@ impl Motherboard {
         &mut self.ppi
     }
 
+    /// The PAL's memory mapping register (RAM banking), as last written.
+    pub fn mmr(&self) -> u8 {
+        self.pal.mmr()
+    }
+
     pub fn fdc(&self) -> &Fdc {
         &self.fdc
     }
@@ -1269,6 +1274,11 @@ impl Motherboard {
 
     /// How many 16K RAM banks exist: the base 64K plus the extra pages, on
     /// board or on an expansion card.
+    /// Where a write to `addr` goes: always RAM, whatever ROM is read there.
+    pub fn physical_address_for_write(&self, addr: u16) -> PhysicalAddress {
+        PhysicalAddress::Ram { bank: self.memory_config().bank_at(addr).physical_index(), offset: addr & 0x3fff }
+    }
+
     pub fn physical_bank_count(&self) -> u16 {
         let extra_pages = match self.large_ram_expansion_bank_count() {
             Some(count) => count,
