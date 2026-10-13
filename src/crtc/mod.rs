@@ -107,6 +107,9 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
 ];
 
 /// C0 below which an R7 written with the value of C4 does not start a VSYNC
+/// Ticks the GA's monitor window is advanced by less than the write phase when an HSYNC restarts
+/// (R3 widened on R2's character), measured on HBL's moving-letters screen against AMSpiriT.
+const HSYNC_RESTART_LATE_TRIM: u8 = 3;
 const BLOCKED_R7_C0: u8 = 2;
 
 #[derive(Debug)]
@@ -477,7 +480,9 @@ impl Crtc {
             self.early_hsync = false;
             self.hsc = 0;
             self.hdc = 0;
-            self.hsync_late_ticks = 0;
+            // the monitor still gets the pulse on the character grid (HBL's box edges stay straight on
+            // AMSpiriT): the GA advances its window by the time the write took within this character
+            self.hsync_late_ticks = self.phase_ticks.saturating_sub(HSYNC_RESTART_LATE_TRIM);
             self.hsync_restart = Some(0);
         }
         // ACCC §18.2.2: C4=R6 is considered immediately, whatever C0 (not on
