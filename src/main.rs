@@ -499,10 +499,9 @@ fn run_frame(
             }
         }
     }
-    if frame.is_some() {
-        if let Some(server) = server {
-            server.frame_completed(motherboard);
-        }
+    if let (Some(frame), Some(server)) = (&frame, server) {
+        server.frame_completed(motherboard);
+        server.set_frame(frame);
     }
     frame
 }
@@ -514,7 +513,7 @@ fn run_debug_server(motherboard: &mut Motherboard, server: &mut DebugServer, typ
     let mut monitor = CrtMonitor::default();
     let frame_duration = std::time::Duration::from_micros(19_968);
     let mut deadline = std::time::Instant::now();
-    while !stop_requested() {
+    while !stop_requested() && !server.quit_requested() {
         server.poll(motherboard);
         if server.paused() {
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -582,6 +581,9 @@ fn run_window(
 
         if let Some(server) = server.as_deref_mut() {
             server.poll(motherboard);
+            if server.quit_requested() {
+                break;
+            }
             if server.paused() {
                 // Stopped by the debugger: keep the window alive.
                 window

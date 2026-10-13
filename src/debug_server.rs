@@ -30,7 +30,7 @@
 //! events. Replies identify this emulator with `"frontend":"bemu"`.
 
 use std::collections::{HashSet, VecDeque};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -58,21 +58,38 @@ pub struct ApiRequest {
     pub method: String,
     pub path: String,
     pub query: Vec<(String, String)>,
-    pub body: String
+    /// The raw body (media uploads are binary).
+    pub body: Vec<u8>
+}
+
+impl ApiRequest {
+    /// The body as text (JSON, breakpoint lists).
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
+    }
+
+    fn param(&self, name: &str) -> Option<&str> {
+        self.query.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+    }
 }
 
 /// The answer to an [`ApiRequest`].
 #[derive(Debug, PartialEq)]
 pub struct ApiResponse {
     pub status: u16,
-    pub body: String,
-    /// The `Allow` header of a 405.
-    pub allow: Option<String>
+    pub content_type: &'static str,
+    pub body: Vec<u8>,
+    /// Extra headers (`Allow` of a 405, screenshot geometry).
+    pub headers: Vec<(String, String)>
 }
 
 impl ApiResponse {
     fn json(status: u16, value: Value) -> Self {
-        Self { status, body: value.to_string(), allow: None }
+        Self { status, content_type: "application/json", body: value.to_string().into_bytes(), headers: Vec::new() }
+    }
+
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
     }
 
     fn ok(value: Value) -> Self {
@@ -129,6 +146,9 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/keytype", methods: &["POST"], summary: "type text on the CPC keyboard (\\r = RETURN)", extension: false },
     Route { path: "/api/events", methods: &["GET"], summary: "Server-Sent Events: frame, z80_bp, pause, reset, watch (?topics=)", extension: false },
     Route { path: "/api/breakpoints", methods: &["GET", "POST", "DELETE"], summary: "advanced breakpoints: list, add (JSON or REMU acebreak text), remove (?index=)", extension: true },
+    Route { path: "/api/quit", methods: &["POST"], summary: "leave the emulator", extension: false },
+    Route { path: "/api/history", methods: &["GET"], summary: "last executed instructions (?n=), bytes as fetched and as now", extension: false },
+    Route { path: "/api/screenshot", methods: &["GET"], summary: "last complete frame as PNG (768x272, the visible area)", extension: false },
     Route { path: "/api/doc", methods: &["GET"], summary: "this list", extension: false }
 ];
 
@@ -158,8 +178,19 @@ pub struct DebugServer {
     typed_pressed: Option<Vec<CpcKey>>,
     typing_next_at: usize,
     /// Stops reported (breakpoint hits), for the emulation loop to show.
-    last_stop: Option<u16>
+    last_stop: Option<u16>,
+    quit: bool,
+    /// Executed instructions, oldest first: (PC, 4 bytes as fetched).
+    history: VecDeque<(u16, [u8; 4])>,
+    history_size: usize,
+    /// The instruction about to be executed, recorded once it has been.
+    fetched: Option<(u16, [u8; 4])>,
+    /// The last complete frame, for `GET /api/screenshot`.
+    last_frame: Option<image::RgbImage>
 }
+
+/// AMSpiriT's default depth of `GET /api/history`.
+const DEFAULT_HISTORY_SIZE: usize = 20;
 
 /// One SSE client: the events waiting to be written to it.
 struct SseClient {
@@ -257,7 +288,12 @@ impl DebugServer {
             typing: VecDeque::new(),
             typed_pressed: None,
             typing_next_at: 0,
-            last_stop: None
+            last_stop: None,
+            quit: false,
+            history: VecDeque::new(),
+            history_size: DEFAULT_HISTORY_SIZE,
+            fetched: None,
+            last_frame: None
         }
     }
 
@@ -268,6 +304,19 @@ impl DebugServer {
 
     pub fn pause(&mut self) {
         self.paused = true;
+    }
+
+    /// Whether `POST /api/quit` asked the emulator to leave.
+    pub fn quit_requested(&self) -> bool {
+        self.quit
+    }
+
+    /// Hand the last complete frame over, for `GET /api/screenshot`.
+    pub fn set_frame(&mut self, frame: &image::RgbImage) {
+        match &mut self.last_frame {
+            Some(last) if last.dimensions() == frame.dimensions() => last.copy_from_slice(frame),
+            last => *last = Some(frame.clone())
+        }
     }
 
     /// The breakpoint the CPU stopped on since the last call, if any.
@@ -305,6 +354,12 @@ impl DebugServer {
     pub fn after_instruction(&mut self, motherboard: &mut Motherboard) {
         self.mark_applied();
         let stepped = std::mem::take(&mut self.stepping);
+        if let Some(executed) = self.fetched.take() {
+            if self.history.len() >= self.history_size {
+                self.history.pop_front();
+            }
+            self.history.push_back(executed);
+        }
         // Data accesses of the instruction just executed.
         for access in motherboard.take_bus_accesses() {
             let hits: Vec<AdvancedBreakpoint> =
@@ -326,6 +381,7 @@ impl DebugServer {
         if stepped {
             self.paused = true;
         }
+        self.fetched = Some((pc, instruction_bytes(motherboard, pc)));
         self.report_pause();
         self.type_due_keys(motherboard);
     }
@@ -400,12 +456,9 @@ impl DebugServer {
             return ApiResponse::json(404, json!({ "error": "not found", "path": request.path }));
         };
         if !route.methods.contains(&request.method.as_str()) {
-            let allow = route.methods.join(", ");
-            return ApiResponse {
-                status: 405,
-                body: json!({ "error": "method not allowed", "allow": route.methods }).to_string(),
-                allow: Some(allow)
-            };
+            let mut response = ApiResponse::json(405, json!({ "error": "method not allowed", "allow": route.methods }));
+            response.headers.push(("Allow".to_owned(), route.methods.join(", ")));
+            return response;
         }
         let result = match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/api/ping") => Ok(ApiResponse::ok(json!({
@@ -427,7 +480,8 @@ impl DebugServer {
             },
             ("GET", "/api/config") => Ok(ApiResponse::ok(json!({
                 "crtc_type": motherboard.crtc().crtc_type() as u8,
-                "paused": self.paused
+                "paused": self.paused,
+                "history_size": self.history_size
             }))),
             ("POST", "/api/config") => self.config(request, motherboard),
             ("POST", "/api/z80_bp") => self.set_breakpoints(request, motherboard),
@@ -439,6 +493,12 @@ impl DebugServer {
             ("GET", "/api/events") => Err(ApiError::new("events are streamed by the HTTP server")),
             ("POST", "/api/keytype") => self.keytype(request),
             ("GET", "/api/doc") => Ok(ApiResponse::ok(doc())),
+            ("POST", "/api/quit") => {
+                self.quit = true;
+                Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
+            },
+            ("GET", "/api/history") => self.history_list(request, motherboard),
+            ("GET", "/api/screenshot") => self.screenshot(),
             _ => unreachable!("{} {}", request.method, request.path)
         };
         result.unwrap_or_else(ApiError::response)
@@ -502,7 +562,7 @@ impl DebugServer {
     // --------------------------------------------------------- commands
 
     fn set_z80(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.body)?;
+        let body = parse_body(&request.text())?;
         let words = [("PC", Reg16::Pc), ("SP", Reg16::Sp), ("IX", Reg16::Ix), ("IY", Reg16::Iy)];
         let bytes = [
             ("A", Reg8::A), ("F", Reg8::F), ("B", Reg8::B), ("C", Reg8::C),
@@ -549,7 +609,7 @@ impl DebugServer {
     }
 
     fn write_ram(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.body)?;
+        let body = parse_body(&request.text())?;
         let addr = int_field(&body, "addr", 0, 0xffff)?;
         let bank_count = motherboard.physical_bank_count() as i64;
         let bank = int_field(&body, "bank", 0, bank_count - 1)?.unwrap_or(0) as usize;
@@ -588,7 +648,7 @@ impl DebugServer {
     }
 
     fn exec(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.body)?;
+        let body = parse_body(&request.text())?;
         let addr = int_field(&body, "addr", 0, 0xffff)?.ok_or_else(|| ApiError::field("addr", "missing field \"addr\": the new PC"))?;
         motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr as u16);
         self.ram_seq += 1;
@@ -596,7 +656,7 @@ impl DebugServer {
     }
 
     fn config(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.body)?;
+        let body = parse_body(&request.text())?;
         let bool_field = |name: &str| -> Result<Option<bool>, ApiError> {
             match find_key(&body, name) {
                 None => Ok(None),
@@ -607,8 +667,16 @@ impl DebugServer {
         let paused = bool_field("paused")?;
         let soft = bool_field("do_soft_reset")?.unwrap_or(false);
         let hard = bool_field("do_hard_reset")?.unwrap_or(false);
-        if paused.is_none() && !soft && !hard {
-            return Err(ApiError::new("no recognised field: supported are paused, do_soft_reset, do_hard_reset"));
+        let history_size = int_field(&body, "history_size", 1, 100_000)?;
+        if paused.is_none() && !soft && !hard && history_size.is_none() {
+            return Err(ApiError::new(
+                "no recognised field: supported are paused, do_soft_reset, do_hard_reset, history_size"
+            ));
+        }
+        if let Some(size) = history_size {
+            // Resizing empties the history, as in AMSpiriT.
+            self.history_size = size as usize;
+            self.history.clear();
         }
         if soft || hard {
             // No separate soft reset on a CPC: both are the RESET line.
@@ -628,7 +696,8 @@ impl DebugServer {
         let mut breakpoints = HashSet::new();
         let mut resolved = Vec::new();
         let mut warnings = Vec::new();
-        for entry in request.body.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let text = request.text();
+        for entry in text.split(',').map(str::trim).filter(|e| !e.is_empty()) {
             let location = match entry.split_once(':') {
                 Some((bank, offset)) if bank.starts_with(['B', 'b', 'C', 'c']) => {
                     let decimal = bank.starts_with(['C', 'c']);
@@ -684,7 +753,7 @@ impl DebugServer {
     /// `addr`, `mask`, `size`, `value`, `valmask`, `name`) or as the text of
     /// a REMU `acebreak` entry in `remu`.
     fn add_breakpoint(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.body)?;
+        let body = parse_body(&request.text())?;
         let brk = match find_key(&body, "remu") {
             Some(Value::String(text)) => AdvancedBreakpoint::parse_remu(text).map_err(|e| ApiError::field("remu", e))?,
             Some(_) => return Err(ApiError::field("remu", "field \"remu\" must be a string")),
@@ -721,8 +790,52 @@ impl DebugServer {
         self.exec_breakpoints.insert(motherboard.physical_address(address));
     }
 
+    /// `GET /api/history[?n=N]`: oldest first.
+    fn history_list(&self, request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
+        let n = match request.param("n") {
+            None => self.history.len(),
+            Some(text) => parse_int(text)
+                .filter(|n| (1..=100_000).contains(n))
+                .ok_or_else(|| ApiError::field("n", "parameter \"n\" must be between 1 and 100000"))? as usize
+        };
+        let hex = |bytes: [u8; 4]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
+        let entries: Vec<Value> = self
+            .history
+            .iter()
+            .skip(self.history.len().saturating_sub(n))
+            .map(|&(pc, bytes)| {
+                json!({ "pc": pc, "hex": hex(bytes), "current_hex": hex(instruction_bytes(motherboard, pc)) })
+            })
+            .collect();
+        Ok(ApiResponse::ok(json!(entries)))
+    }
+
+    /// `GET /api/screenshot`: the last complete frame - the visible area,
+    /// as AMSpiriT's default `crop=1` (the full sync-included buffer of
+    /// `crop=0` is not kept: the same area is returned, the `X-Crop-*`
+    /// headers say which).
+    fn screenshot(&self) -> ApiResult {
+        let Some(frame) = &self.last_frame
+        else {
+            return Ok(ApiResponse::json(503, json!({ "error": "no frame available" })));
+        };
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(frame.clone())
+            .write_to(&mut png, image::ImageOutputFormat::Png)
+            .map_err(|e| ApiError::new(format!("PNG encoding failed: {e}")))?;
+        Ok(ApiResponse {
+            status: 200,
+            content_type: "image/png",
+            body: png.into_inner(),
+            headers: vec![
+                ("X-Crop-W".to_owned(), frame.width().to_string()),
+                ("X-Crop-H".to_owned(), frame.height().to_string())
+            ]
+        })
+    }
+
     fn keytype(&mut self, request: &ApiRequest) -> ApiResult {
-        let body = parse_body(&request.body)?;
+        let body = parse_body(&request.text())?;
         let text = match find_key(&body, "text") {
             Some(Value::String(text)) => text.clone(),
             Some(_) => return Err(ApiError::field("text", "field \"text\" must be a string")),
@@ -775,6 +888,11 @@ fn z80(motherboard: &Motherboard) -> Value {
         "IM": match cpu.im() { InterruptMode::Mode0 => 0, InterruptMode::Mode1 => 1, InterruptMode::Mode2 => 2 },
         "ticks": motherboard.t_state_counter().value() / T_STATES_PER_NOP
     })
+}
+
+/// The 4 bytes at `pc`, as the CPU sees them now.
+fn instruction_bytes(motherboard: &Motherboard, pc: u16) -> [u8; 4] {
+    std::array::from_fn(|i| motherboard.read_byte(pc.wrapping_add(i as u16)))
 }
 
 fn hex16(value: u16) -> String {
@@ -1013,8 +1131,8 @@ fn serve(server: tiny_http::Server, sender: Sender<(ApiRequest, Sender<ApiRespon
                 (k.to_owned(), v.to_owned())
             })
             .collect();
-        let mut body = String::new();
-        let _ = request.as_reader().read_to_string(&mut body);
+        let mut body = Vec::new();
+        let _ = request.as_reader().read_to_end(&mut body);
         let api_request = ApiRequest {
             method: request.method().as_str().to_uppercase(),
             path: path.to_owned(),
@@ -1023,20 +1141,18 @@ fn serve(server: tiny_http::Server, sender: Sender<(ApiRequest, Sender<ApiRespon
         };
         let (reply_sender, reply) = mpsc::channel();
         let response = match sender.send((api_request, reply_sender)) {
-            Ok(()) => reply.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| ApiResponse {
-                status: 503,
-                body: json!({ "error": "the emulation did not answer" }).to_string(),
-                allow: None
-            }),
+            Ok(()) => reply
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap_or_else(|_| ApiResponse::json(503, json!({ "error": "the emulation did not answer" }))),
             Err(_) => return // the emulation is gone
         };
-        let mut http = tiny_http::Response::from_string(response.body)
+        let mut http = tiny_http::Response::from_data(response.body)
             .with_status_code(response.status)
-            .with_header(header("Content-Type", "application/json"))
+            .with_header(header("Content-Type", response.content_type))
             .with_header(header("Access-Control-Allow-Origin", "*"))
             .with_header(header("Cache-Control", "no-store"));
-        if let Some(allow) = response.allow {
-            http = http.with_header(header("Allow", &allow));
+        for (name, value) in &response.headers {
+            http = http.with_header(header(name, value));
         }
         let _ = request.respond(http);
     }
@@ -1090,9 +1206,9 @@ mod test {
                 (k.to_owned(), v.to_owned())
             })
             .collect();
-        let request = ApiRequest { method: method.to_owned(), path: path.to_owned(), query, body: body.to_owned() };
+        let request = ApiRequest { method: method.to_owned(), path: path.to_owned(), query, body: body.as_bytes().to_vec() };
         let response = server.handle(&request, motherboard);
-        (response.status, serde_json::from_str(&response.body).unwrap())
+        (response.status, serde_json::from_slice(&response.body).unwrap())
     }
 
     fn server() -> DebugServer {
@@ -1113,10 +1229,10 @@ mod test {
     fn unknown_paths_and_methods() {
         let (mut server, mut mb) = (server(), machine());
         assert_eq!(call(&mut server, &mut mb, "GET", "/api/nothing", "").0, 404);
-        let request = ApiRequest { method: "PUT".into(), path: "/api/ram".into(), query: vec![], body: String::new() };
+        let request = ApiRequest { method: "PUT".into(), path: "/api/ram".into(), query: vec![], body: Vec::new() };
         let response = server.handle(&request, &mut mb);
         assert_eq!(response.status, 405);
-        assert_eq!(response.allow.as_deref(), Some("GET, POST"));
+        assert_eq!(response.header("allow"), Some("GET, POST"));
     }
 
     #[test]
@@ -1288,6 +1404,46 @@ mod test {
     }
 
     #[test]
+    fn history_keeps_the_bytes_as_fetched() {
+        let (mut server, mut mb) = (server(), machine());
+        // LD A,7; XOR A; LD (0x4001),A - the last one zeroes the operand of the first.
+        mb.write_buffer(0x4000, &[0x3e, 0x07, 0xaf, 0x32, 0x01, 0x40, 0x00]);
+        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        server.after_instruction(&mut mb); // what a loop does once before running
+        run(&mut server, &mut mb, 3);
+        let (_, history) = call(&mut server, &mut mb, "GET", "/api/history", "");
+        let history = history.as_array().unwrap();
+        assert_eq!(history.len(), 3);
+        assert_eq!((history[0]["pc"].clone(), history[0]["hex"].clone()), (json!(0x4000), json!("3E07AF32")));
+        assert_eq!(history[0]["current_hex"], "3E00AF32");
+        assert_eq!(history[2]["pc"], 0x4003);
+        assert_eq!(call(&mut server, &mut mb, "GET", "/api/history?n=1", "").1.as_array().unwrap().len(), 1);
+        call(&mut server, &mut mb, "POST", "/api/config", r#"{"history_size":1}"#);
+        assert_eq!(call(&mut server, &mut mb, "GET", "/api/history", "").1.as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn screenshot_is_a_png_of_the_last_frame() {
+        let (mut server, mut mb) = (server(), machine());
+        assert_eq!(call(&mut server, &mut mb, "GET", "/api/screenshot", "").0, 503);
+        server.set_frame(&image::RgbImage::from_pixel(768, 272, image::Rgb([0, 0, 128])));
+        let request = ApiRequest { method: "GET".into(), path: "/api/screenshot".into(), query: vec![], body: Vec::new() };
+        let response = server.handle(&request, &mut mb);
+        assert_eq!((response.status, response.content_type), (200, "image/png"));
+        assert_eq!(response.header("X-Crop-W"), Some("768"));
+        let png = image::load_from_memory(&response.body).unwrap().to_rgb8();
+        assert_eq!(*png.get_pixel(10, 10), image::Rgb([0, 0, 128]));
+    }
+
+    #[test]
+    fn quit_is_reported_to_the_loop() {
+        let (mut server, mut mb) = (server(), machine());
+        assert!(!server.quit_requested());
+        assert_eq!(call(&mut server, &mut mb, "POST", "/api/quit", "").0, 200);
+        assert!(server.quit_requested());
+    }
+
+    #[test]
     fn keytype_reports_autotyping() {
         let (mut server, mut mb) = (server(), machine());
         assert_eq!(call(&mut server, &mut mb, "POST", "/api/keytype", r#"{}"#).0, 400);
@@ -1302,10 +1458,10 @@ mod test {
         let mut server = DebugServer::with_requests(receiver);
         let mut mb = machine();
         let (reply_sender, reply) = mpsc::channel();
-        let request = ApiRequest { method: "GET".into(), path: "/api/state".into(), query: vec![], body: String::new() };
+        let request = ApiRequest { method: "GET".into(), path: "/api/state".into(), query: vec![], body: Vec::new() };
         sender.send((request, reply_sender)).unwrap();
         server.poll(&mut mb);
-        let state: Value = serde_json::from_str(&reply.recv().unwrap().body).unwrap();
+        let state: Value = serde_json::from_slice(&reply.recv().unwrap().body).unwrap();
         assert_eq!(state["crtc"]["regs"].as_array().unwrap().len(), 14);
         assert_eq!(state["ga"]["ink_rgb"].as_array().unwrap().len(), 16);
     }
