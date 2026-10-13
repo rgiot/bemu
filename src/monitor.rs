@@ -34,7 +34,7 @@ const MONITOR_FREE_RUN_LINES: usize = 350;
 /// Once locked, the line oscillator (AFC) only follows an HSYNC that ends
 /// in the last quarter of its period: a pulse half a line away (a second,
 /// cut-short HSYNC of the R3.JIT tests) is ignored.
-const MONITOR_HSYNC_WINDOW_START: usize = RASTER_LINE_LENGTH * 3 / 4;
+const MONITOR_HSYNC_WINDOW_START: usize = RASTER_LINE_LENGTH - 48;
 /// Lines without an accepted HSYNC after which the line oscillator unlocks.
 const MONITOR_HSYNC_LOST_LINES: usize = 4;
 
