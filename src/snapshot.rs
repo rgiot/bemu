@@ -261,6 +261,36 @@ mod breakpoint_test {
     }
 
     #[test]
+    fn breakpoints_of_a_saved_v3_snapshot() {
+        let mut snapshot = Snapshot::default();
+        let mut remu = RemuChunk::empty();
+        remu.add_entry(&RemuEntry::new_breakpoint(0x4000, 0));
+        let mut io = AdvancedRemuBreakPoint::default();
+        io.brk_type = RemuBreakPointType::IO;
+        io.access_mode = RemuBreakPointAccessMode::Write;
+        io.run_mode = RemuBreakPointRunMode::Watch;
+        io.addr = 0x7f00;
+        io.mask = 0xc000;
+        remu.add_entry(&RemuEntry::new_remu_breakpoint(io));
+        snapshot.add_chunk(remu);
+        let mut ace = AceBreakPointChunk::empty();
+        ace.add_breakpoint(AceBreakPoint::new_execution(0x8000, AceBrkRuntimeMode::Break, AceMemMapType::Undefined));
+        snapshot.add_chunk(ace);
+
+        let path = std::env::temp_dir().join(format!("amsrust_breakpoints_{}.sna", std::process::id()));
+        let path = path.to_str().unwrap().to_owned();
+        snapshot.save(&path, SnapshotVersion::V3).unwrap();
+        let breakpoints = load_breakpoints(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let exec: Vec<_> = breakpoints.exec.iter().map(|b| (b.address, b.chunk)).collect();
+        assert_eq!(exec, vec![(0x4000, "REMU"), (0x8000, "BRKC")]);
+        assert_eq!(breakpoints.advanced.len(), 1);
+        assert_eq!(breakpoints.advanced[0].run, crate::breakpoints::RunMode::Watch);
+        assert!(breakpoints.ignored.is_empty(), "{:?}", breakpoints.ignored);
+    }
+
+    #[test]
     fn remu_advanced_entries_written_by_cpclib() {
         let mut chunk = RemuChunk::empty();
         let mut brk = AdvancedRemuBreakPoint::default();

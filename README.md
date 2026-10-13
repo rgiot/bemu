@@ -72,8 +72,20 @@ such as `cpclib-dap`. It runs with `--window` or headless (real time, Ctrl+C to
 quit). `GET /api/doc` lists the implemented endpoints; extensions to the
 AMSpiriT API are flagged there, and `ping` answers `"frontend":"bemu"`.
 
+Beyond the first endpoints (`ping`, `state`, `z80`, `ram` on every 16K bank,
+`exec`, `step`, `config`, `keytype`), it streams Server-Sent Events
+(`GET /api/events`: `frame`, `z80_bp`, `pause`, `reset`, `watch`), takes
+breakpoints on physical locations (`z80_bp` with `Bnn:hhhh`; CPU addresses are
+resolved to the RAM bank or ROM mapped at that time) and, as an extension,
+advanced breakpoints as rasm/basm/ACE describe them (`/api/breakpoints`:
+memory/IO, read/write, stop or watch, masks, sizes, values). A snapshot's
+breakpoints (REMU, ACE `BRKC`, WinAPE `WABP` chunks) are set when it is loaded.
+
 ```sh
 cargo run --release -- --debug-server &
+curl -sN http://127.0.0.1:6128/api/events &                   # follow the events
+curl -s -X POST http://127.0.0.1:6128/api/breakpoints \
+     -d '{"kind":"mem","access":"w","run":"watch","addr":"0xC000","size":16384}' # screen writes
 curl -s -X POST http://127.0.0.1:6128/api/z80_bp -d '0x38'     # break on RST 38
 curl -s http://127.0.0.1:6128/api/z80                          # registers once stopped
 curl -s -X POST http://127.0.0.1:6128/api/step                 # one instruction
