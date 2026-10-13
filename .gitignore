@@ -1,2 +1,8 @@
 /target
 /shaker_results
+
+# Written by the test suite (tests/test_standard_screen.rs)
+/test_raster.png
+/test_standard_screen_pic.png
+# Scratch build directories
+/target-*/
