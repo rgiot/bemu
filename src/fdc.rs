@@ -618,7 +618,7 @@ impl Fdc {
                 self.data_t0 + (pos / 4) * slot + (pos % 4) * BYTE_US
             },
             cmd if cmd.from_cpu() => self.data_t0 + pos * BYTE_US,
-            _ => self.data_t0 + (pos + 1) * BYTE_US
+            _ => self.data_t0 + pos * BYTE_US
         }
     }
 
@@ -1194,8 +1194,9 @@ impl Fdc {
     fn finish_sector(&mut self) {
         let (unit, head, index) = (self.xfer.unit, self.xfer.head, self.xfer.sector);
         if self.timing {
-            // data and CRC have passed under the head
-            self.t_cursor = self.data_t0 + (self.exec_data.len() as u64 + 2) * BYTE_US;
+            // the last byte has passed: the chip reports at once, the CRC is checked as it goes by
+            // (CPCSyntaxError's command timings of Amazing's loader are matched to a few microseconds this way)
+            self.t_cursor = self.data_t0 + (self.exec_data.len() as u64).saturating_sub(1) * BYTE_US;
         }
 
         if self.current_cmd.is_write() {

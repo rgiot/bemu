@@ -48,6 +48,8 @@ pub struct Motherboard {
     /// Microseconds since the start and the PC jump trace (AMSRUST_TRACE_PC=<from us>)
     us: u64,
     trace_pc_from: Option<u64>,
+    trace_pc_to: u64,
+    trace_pc_min: i32,
     last_traced_pc: u16,
     fdc_read_active: bool,
     /// What a read of a port nothing decodes returns.
@@ -101,6 +103,8 @@ impl Default for Motherboard {
             fdc_write_active: false,
             us: 0,
             trace_pc_from: std::env::var("AMSRUST_TRACE_PC").ok().and_then(|v| v.parse().ok()),
+            trace_pc_to: std::env::var("AMSRUST_TRACE_PC_TO").ok().and_then(|v| v.parse().ok()).unwrap_or(u64::MAX),
+            trace_pc_min: std::env::var("AMSRUST_TRACE_PC_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(4),
             last_traced_pc: 0,
             fdc_read_active: false,
             floating_bus: 0xff,
@@ -374,9 +378,9 @@ impl Motherboard {
             self.fdc.advance(1); // one character = one microsecond
             self.us += 1;
             if let Some(from) = self.trace_pc_from {
-                if self.us >= from {
+                if self.us >= from && self.us < self.trace_pc_to {
                     let pc = self.cpu.pc();
-                    if (i32::from(pc) - i32::from(self.last_traced_pc)).abs() > 4 {
+                    if (i32::from(pc) - i32::from(self.last_traced_pc)).abs() > self.trace_pc_min {
                         eprintln!("PC {} {:04X} sp={:04X}", self.us, pc, self.cpu.reg16(Reg16::Sp).value());
                     }
                     self.last_traced_pc = pc;
