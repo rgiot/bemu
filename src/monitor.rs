@@ -43,6 +43,8 @@ const MONITOR_MIN_HSYNC_TICKS: usize = 12;
 /// Lines after the beam started a frame from which the frame oscillator accepts a VSYNC
 /// (Shaker DT: pulses 156 lines apart are not followed, 312 are).
 const MONITOR_VSYNC_WINDOW_START_LINES: usize = 200;
+const MONITOR_VSYNC_BLANK_MIN_TICKS: i64 = 15 * 1024;
+const MONITOR_VSYNC_BLANK_AFTER_TICKS: i64 = 10 * 1024;
 /// Shortest C-VSYNC pulse the monitor reacts to: it integrates the signal.
 const MONITOR_MIN_VSYNC_TICKS: usize = 64;
 
@@ -116,6 +118,8 @@ pub struct Monitor {
     /// from the next line (the pulses it looks at come after the flyback).
     next_shift: i32,
     vsync_color: Rgb<u8>,
+    /// charge of the vertical sync integrator (ticks): the beam stays blanked while it is not empty
+    vint: i64,
     hsync_color: Rgb<u8>,
 }
 
@@ -149,6 +153,7 @@ impl Monitor {
             shift: 0,
             next_shift: 0,
             vsync_color,
+            vint: 0,
             hsync_color
         }
     }
@@ -199,6 +204,17 @@ impl Monitor {
         }
         else {
             self.hsync_run = 0;
+        }
+        // the beam is blanked from the start of a VSYNC pulse for at least 25 lines and for 10 lines
+        // after its end (AMSpiriT's black band on Shaker DT: pulses of 1, 8 and 16 lines)
+        if vsync && self.vsync_run == 0 {
+            self.vint = self.vint.max(MONITOR_VSYNC_BLANK_MIN_TICKS);
+        }
+        if !vsync && self.vsync_run > 0 {
+            self.vint = self.vint.max(MONITOR_VSYNC_BLANK_AFTER_TICKS);
+        }
+        if self.vint > 0 && !vsync {
+            self.vint -= 1;
         }
         if vsync {
             self.vsync_run += 1;
@@ -298,7 +314,7 @@ impl Monitor {
         let y = self.line.wrapping_sub(MONITOR_FIRST_LINE);
         let px = (self.x as isize - MONITOR_FIRST_PIXEL as isize + self.shift as isize) as usize;
         if px < MONITOR_ACTIVE_PIXELS && y < MONITOR_HEIGHT {
-            let pixel = if vsync {
+            let pixel = if vsync || self.vint > 0 {
                 self.vsync_color
             }
             else if hsync && self.hsync_listened {
