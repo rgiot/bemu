@@ -4,7 +4,8 @@
 //! ```text
 //! amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]
 //!         [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]
-//!         [--record file [--seconds N]] [--debug-server [--debug-port N]]
+//!         [--record file [--seconds N]] [--type text [--type-at N]]
+//!         [--debug-server [--debug-port N]]
 //! ```
 //!
 //! With no `--screenshot`/`--window`, drops into the existing interactive
@@ -35,6 +36,15 @@
 //! until the window is closed; otherwise runs headless for `--seconds`
 //! (default 30) of emulated time. Ctrl+C (or SIGTERM) ends a recording
 //! early, the file being finished properly.
+//!
+//! `--type <text>` types `text` on the CPC keyboard once `--type-at`
+//! seconds (default 3) of emulated time have passed ("\n" is RETURN), e.g.
+//! `--dsk demo.dsk --type 'run"demo\n' --record demo.mp4`. Not in the
+//! interactive monitor.
+//!
+//! Breakpoints stored in the snapshot by an assembler or another emulator
+//! (REMU, ACE "BRKC" and WinAPE "WABP" chunks, see `amsrust::snapshot`) are
+//! set in the interactive monitor.
 //!
 //! `--debug-server` starts the HTTP debug server compatible with the
 //! AMSpiriT-Lite web API on `127.0.0.1:6128` (`--debug-port` to change it),
@@ -76,7 +86,9 @@ struct Args {
     mute: bool,
     record: Option<String>,
     debug_server: bool,
-    debug_port: u16
+    debug_port: u16,
+    text: Option<String>,
+    type_at: f64
 }
 
 fn parse_args() -> Args {
@@ -92,7 +104,9 @@ fn parse_args() -> Args {
         mute: false,
         record: None,
         debug_server: false,
-        debug_port: amsrust::debug_server::DEFAULT_PORT
+        debug_port: amsrust::debug_server::DEFAULT_PORT,
+        text: None,
+        type_at: 3.0
     };
 
     let mut it = std::env::args().skip(1);
@@ -121,6 +135,8 @@ fn parse_args() -> Args {
                 args.debug_server = true;
                 args.debug_port = next("--debug-port").parse().expect("--debug-port must be a port number")
             },
+            "--type" => args.text = Some(next("--type").replace("\\n", "\n")),
+            "--type-at" => args.type_at = next("--type-at").parse().expect("--type-at must be a number"),
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -139,7 +155,8 @@ fn print_help() {
     eprintln!(concat!(
         "amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]\n",
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]\n",
-        "        [--record file [--seconds N]] [--debug-server [--debug-port N]]\n",
+        "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
+        "        [--debug-server [--debug-port N]]\n",
         "\n",
         "With no --screenshot/--window, drops into the interactive monitor once\n",
         "everything is loaded ('h' at its prompt lists its commands). With\n",
@@ -150,6 +167,9 @@ fn print_help() {
         "plays the sound too (--mute to silence it). --record capture.mp4 records\n",
         "a video with sound through ffmpeg: what the window shows until it is\n",
         "closed, or without --window --seconds (default 30) run headless.\n",
+        "--type 'run\"demo\\n' types on the CPC keyboard after --type-at seconds\n",
+        "(default 3). Breakpoints of a snapshot's REMU/BRKC/WABP chunks are set\n",
+        "in the interactive monitor.\n",
         "--debug-server serves the AMSpiriT-Lite compatible debug API on\n",
         "127.0.0.1:6128 (GET /api/doc lists the endpoints), with --window or\n",
         "headless."
@@ -187,23 +207,53 @@ fn main() {
     if let Some(path) = &args.dsk_b {
         insert_disc(path, FdcDrive::B, &mut motherboard);
     }
+    let mut breakpoints = amsrust::snapshot::SnapshotBreakpoints::default();
     if let Some(path) = &args.sna {
         amsrust::snapshot::load_sna(&mut motherboard, path).unwrap_or_else(|e| panic!("{e}"));
+        breakpoints = amsrust::snapshot::load_breakpoints(path).unwrap_or_else(|e| panic!("{e}"));
+        for what in &breakpoints.ignored {
+            eprintln!("snapshot breakpoint not supported: {what}");
+        }
+    }
+    let monitor_mode =
+        args.screenshot_dir.is_none() && !args.window && args.record.is_none() && !args.debug_server;
+    if !breakpoints.is_empty() && !monitor_mode && !args.debug_server {
+        eprintln!(
+            "{} snapshot breakpoint(s), used by the interactive monitor and the debug server only",
+            breakpoints.len()
+        );
+    }
+    let mut typist = args.text.as_deref().map(|text| Typist::new(text, args.type_at));
+    if typist.is_some() && monitor_mode {
+        eprintln!("--type is ignored in the interactive monitor");
     }
 
     match args.screenshot_dir {
-        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every),
+        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist),
         None if args.window => {
-            let mut server = start_debug_server(&args);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), server.as_mut())
+            let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut())
         },
-        None if args.debug_server => run_debug_server(&mut motherboard, &mut start_debug_server(&args).unwrap()),
+        None if args.debug_server => {
+            let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
+            run_debug_server(&mut motherboard, &mut server, &mut typist)
+        },
         None if args.record.is_some() => {
-            run_recording(&mut motherboard, args.record.as_deref().unwrap(), args.seconds)
+            run_recording(&mut motherboard, args.record.as_deref().unwrap(), args.seconds, &mut typist)
         },
         None => {
             let mut handle = |_motherboard: &mut amsrust::motherboard::Motherboard| false;
             let mut ctx = MonitorContext::new(Box::new(&mut handle));
+            for breakpoint in &breakpoints.exec {
+                eprintln!("breakpoint at {:#06x} (from the snapshot's {} chunk)", breakpoint.address, breakpoint.chunk);
+                ctx.add_breakpoint(amsrust::debug::BreakPoint::Address(breakpoint.address));
+            }
+            if !breakpoints.advanced.is_empty() {
+                eprintln!(
+                    "{} advanced (memory/IO/watch) breakpoint(s) need --debug-server",
+                    breakpoints.advanced.len()
+                );
+            }
             Monitor::cli_monitoring(&mut motherboard, &mut ctx);
         }
     }
@@ -212,7 +262,75 @@ fn main() {
 /// T-states per second at the CPC's 4MHz clock.
 const T_STATES_PER_SECOND: usize = 4_000_000;
 
-fn run_headless(motherboard: &mut amsrust::motherboard::Motherboard, dir: &str, seconds: u64, every: u64) {
+/// `--type`: the text typed on the CPC keyboard, one character after the
+/// other, each held for 2 frames then released for 2 frames.
+struct Typist {
+    keys: VecDeque<Vec<CpcKey>>,
+    /// T-state at which the next press or release is due.
+    next_at: usize,
+    pressed: Option<Vec<CpcKey>>
+}
+
+/// 40ms: 2 frames, long enough for the firmware's keyboard scan.
+const KEY_T_STATES: usize = T_STATES_PER_SECOND / 25;
+
+impl Typist {
+    fn new(text: &str, at_seconds: f64) -> Self {
+        let keys = text
+            .chars()
+            .filter_map(|c| {
+                let keys = keys_of_char(c);
+                if keys.is_none() {
+                    eprintln!("--type: cannot type {c:?}, skipped");
+                }
+                keys
+            })
+            .collect();
+        Self { keys, next_at: (at_seconds * T_STATES_PER_SECOND as f64) as usize, pressed: None }
+    }
+
+    /// Press or release the keys that are due. Cheap: call it as often as
+    /// wanted (every instruction or every frame).
+    fn update(&mut self, motherboard: &mut Motherboard) {
+        let now = motherboard.t_state_counter().value();
+        if now < self.next_at {
+            // Held keys stay pressed even if something else (the window's
+            // host keyboard) released them meanwhile.
+            for &key in self.pressed.iter().flatten() {
+                motherboard.keyboard_mut().set_pressed(key, true);
+            }
+            return;
+        }
+        let (keys, pressed) = match self.pressed.take() {
+            Some(keys) => (keys, false),
+            None => match self.keys.pop_front() {
+                Some(keys) => (keys, true),
+                None => return
+            }
+        };
+        for &key in &keys {
+            motherboard.keyboard_mut().set_pressed(key, pressed);
+        }
+        if pressed {
+            self.pressed = Some(keys);
+        }
+        self.next_at = now + KEY_T_STATES;
+    }
+}
+
+fn type_due_keys(typist: &mut Option<Typist>, motherboard: &mut Motherboard) {
+    if let Some(typist) = typist {
+        typist.update(motherboard);
+    }
+}
+
+fn run_headless(
+    motherboard: &mut amsrust::motherboard::Motherboard,
+    dir: &str,
+    seconds: u64,
+    every: u64,
+    typist: &mut Option<Typist>
+) {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{dir}: {e}"));
 
     let target_t_states = seconds as usize * T_STATES_PER_SECOND;
@@ -227,6 +345,7 @@ fn run_headless(motherboard: &mut amsrust::motherboard::Motherboard, dir: &str, 
         while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) {
             // between screenshots, run without collecting video (cheaper)
             motherboard.execute_next_opcode_no_video();
+            type_due_keys(typist, motherboard);
         }
         if motherboard.t_state_counter().value() >= target_t_states {
             break;
@@ -237,6 +356,7 @@ fn run_headless(motherboard: &mut amsrust::motherboard::Motherboard, dir: &str, 
         // Capture the next whole frame once due, rather than every tick:
         // matches how the CSL runner and play_demo grab a screenshot.
         while frame.is_none() && motherboard.t_state_counter().value() < target_t_states {
+            type_due_keys(typist, motherboard);
             motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
                 monitor.receive(rgb, sync);
                 // take_frame() consumes it: a later tick within this same
@@ -284,12 +404,13 @@ fn finish_recorder(recorder: recorder::Recorder, path: &str) {
 
 /// `--record` without `--window`: run `seconds` of emulated time headless,
 /// recording every frame and the sound.
-fn run_recording(motherboard: &mut Motherboard, path: &str, seconds: u64) {
+fn run_recording(motherboard: &mut Motherboard, path: &str, seconds: u64, typist: &mut Option<Typist>) {
     motherboard.set_audio_output(Some(RECORD_AUDIO()));
     let mut recorder = start_recorder(path, Some(RECORD_AUDIO()));
     let target_t_states = seconds as usize * T_STATES_PER_SECOND;
     let mut monitor = CrtMonitor::default();
     while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
+        type_due_keys(typist, motherboard);
         let mut frame = None;
         motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
             monitor.receive(rgb, sync);
@@ -325,13 +446,24 @@ const WINDOW_WIDTH: usize = 48 * 8 * 2; // 768
 /// roughly correct 4:3 aspect instead of a squashed one.
 const WINDOW_HEIGHT: usize = 272 * 2;
 
-fn start_debug_server(args: &Args) -> Option<DebugServer> {
+/// Start the debug server if asked, with the snapshot's breakpoints set.
+fn start_debug_server(
+    args: &Args,
+    breakpoints: &amsrust::snapshot::SnapshotBreakpoints,
+    motherboard: &mut Motherboard
+) -> Option<DebugServer> {
     if !args.debug_server {
         return None;
     }
     match DebugServer::start(args.debug_port) {
-        Ok(server) => {
+        Ok(mut server) => {
             eprintln!("debug server: http://127.0.0.1:{}/api/doc", args.debug_port);
+            for breakpoint in &breakpoints.exec {
+                server.add_exec_breakpoint(breakpoint.address, motherboard);
+            }
+            for breakpoint in &breakpoints.advanced {
+                server.add_advanced_breakpoint(breakpoint.clone(), motherboard);
+            }
             Some(server)
         },
         Err(e) => {
@@ -377,7 +509,7 @@ fn run_frame(
 
 /// `--debug-server` without a window: run in real time, driven by the
 /// debug API (Ctrl+C to quit).
-fn run_debug_server(motherboard: &mut Motherboard, server: &mut DebugServer) {
+fn run_debug_server(motherboard: &mut Motherboard, server: &mut DebugServer, typist: &mut Option<Typist>) {
     ctrlc::set_handler(|| STOP.store(true, std::sync::atomic::Ordering::Relaxed)).ok();
     let mut monitor = CrtMonitor::default();
     let frame_duration = std::time::Duration::from_micros(19_968);
@@ -389,6 +521,7 @@ fn run_debug_server(motherboard: &mut Motherboard, server: &mut DebugServer) {
             deadline = std::time::Instant::now();
             continue;
         }
+        type_due_keys(typist, motherboard);
         if run_frame(motherboard, &mut monitor, Some(server)).is_some() {
             // The CPC's own pace.
             deadline += frame_duration;
@@ -407,6 +540,7 @@ fn run_window(
     motherboard: &mut Motherboard,
     sound: bool,
     record: Option<&str>,
+    typist: &mut Option<Typist>,
     mut server: Option<&mut DebugServer>
 ) {
     let mut window = Window::new("amsrust", WINDOW_WIDTH, WINDOW_HEIGHT, WindowOptions {
@@ -443,6 +577,8 @@ fn run_window(
     let mut monitor = CrtMonitor::default();
     while window.is_open() && !stop_requested() {
         update_keyboard(&window, motherboard, typed_combo.advance(&typed_chars));
+        // After the host keyboard, which would release the typed keys.
+        type_due_keys(typist, motherboard);
 
         if let Some(server) = server.as_deref_mut() {
             server.poll(motherboard);
