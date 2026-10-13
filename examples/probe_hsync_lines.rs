@@ -41,7 +41,7 @@ fn main() {
         prev_hs = hs;
         let m = format!("{:?}", mb.ga().active_video_mode());
         if m != prev_mode { mode_changes.push(format!("{}.{}:{}", t_in_line / 16, t_in_line % 16, m)); prev_mode = m; }
-        if dump && t_in_line % 2 == 0 && t_in_line >= 10 * 16 && t_in_line < 40 * 16 {
+        if dump && t_in_line % 2 == 0 && t_in_line >= 0 && t_in_line < 64 * 16 {
             let r = mb.ga().rgb();
             rgbs.push(format!("{}:{:.0}/{:.0}/{:.0}", t_in_line / 2, r.r(), r.g(), r.b()));
         }
@@ -49,7 +49,7 @@ fn main() {
         if c.line_ends != last_ends {
             last_ends = c.line_ends;
             if vs_rises >= 1 && !pulses.is_empty() {
-                if dump { let mut runs: Vec<String> = vec![]; let mut last = String::new(); for r in &rgbs { let (t, v) = r.split_once(':').unwrap(); if v != last { runs.push(format!("{}={}", t, v)); last = v.to_string(); } } println!("{}/{} {}", c.vcc.value(), c.c9(), runs.join(" ")); } else { println!("{}/{} R2={} R3={} [{}] {}", c.vcc.value(), c.c9(), c.regs_r(2), c.regs_r(3), mode_changes.join(" "),
+                if dump { let pal: Vec<String> = mb.ga().palette().iter().take(4).map(|i| format!("{:?}", i)).collect(); print!("pal={:?} mode={:?} ", pal, mb.ga().active_video_mode()); let mut runs: Vec<String> = vec![]; let mut last = String::new(); for r in &rgbs { let (t, v) = r.split_once(':').unwrap(); if v != last { runs.push(format!("{}={}", t, v)); last = v.to_string(); } } println!("{}/{} {}", c.vcc.value(), c.c9(), runs.join(" ")); } else { println!("{}/{} R2={} R3={} [{}] {}", c.vcc.value(), c.c9(), c.regs_r(2), c.regs_r(3), mode_changes.join(" "),
                     pulses.iter().map(|(s, e)| format!("{}.{}-{}.{}", s / 16, s % 16, e / 16, e % 16)).collect::<Vec<_>>().join(" ")); }
             }
             pulses.clear();
