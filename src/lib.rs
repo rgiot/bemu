@@ -24,5 +24,6 @@ pub mod counter;
 pub mod debug;
 pub mod debug_server;
 pub mod breakpoints;
+pub mod basic_program;
 
 mod bits;

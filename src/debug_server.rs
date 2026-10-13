@@ -20,15 +20,21 @@
 //! every 16K bank), `exec`, `step`, `config` (GET/POST: pause/resume,
 //! resets), `z80_bp` (CPU addresses resolved to the RAM bank or ROM holding
 //! them, `Bnn:hhhh` physical locations), `keytype`, `events` (Server-Sent
-//! Events: `frame`, `z80_bp`, `pause`, `reset`), `doc`.
+//! Events: `frame`, `z80_bp`, `pause`, `reset`, `basic_bp`), `doc`, the chips
+//! (`memmap`, `crtc`, `ga`, `psg`, `fdc`), BASIC (`basic`, `basic_state`,
+//! `basic_listing`, `basic_export`, `basic_bp`, `basic_step`, `basic_runto`,
+//! see [`crate::basic_program`]) and the beam (`beam`, `raster_bp`, in
+//! AMSpiriT's video buffer coordinates or in NOPs: 64 a line, 19968 a
+//! frame).
 //!
 //! Extensions to the AMSpiriT API - listed in `/api/doc` with
 //! `"extension":true` - add what debuggers of rasm/basm/ACE programs need:
 //! `/api/breakpoints` for advanced breakpoints (memory/IO watchpoints,
 //! ranges and masks, stop or watch, conditions, see
 //! [`crate::breakpoints`]), the
-//! `watch` event for watch hits, and `kind`/`name`/`access` in `z80_bp`
-//! events. Replies identify this emulator with `"frontend":"bemu"`.
+//! `watch` event for watch hits, `kind`/`name`/`access`/`beam`/`counters`
+//! in `z80_bp` events, and `/api/counters`: named counters of the NOPs
+//! run. Replies identify this emulator with `"frontend":"bemu"`.
 
 use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Write};
@@ -38,6 +44,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use crate::basic_program::{self, BasicState};
 use crate::breakpoints::{AdvancedBreakpoint, BreakpointAccess, BreakpointKind, Condition, ConditionContext, RunMode};
 use crate::csl_runner::keys_of_char;
 use crate::keyboard::CpcKey;
@@ -159,8 +166,39 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/beam", methods: &["GET"], summary: "beam position (?crop=1: relative to the screenshot), also in NOPs: nop, line, frame_nop", extension: false },
     Route { path: "/api/raster_bp", methods: &["GET", "POST"], summary: "beam breakpoint: ?x=&y= (or line=, nop=, frame_nop=), enable=0 clears, add=1 keeps the others", extension: false },
     Route { path: "/api/counters", methods: &["GET", "POST", "DELETE"], summary: "named NOP counters: list, {name, action: create|reset|start|stop}, delete (?name=)", extension: true },
+    Route { path: "/api/basic", methods: &["POST"], summary: "load a BASIC program (text body) in place of the one in RAM (?reset=1, ?run=1)", extension: false },
+    Route { path: "/api/basic_state", methods: &["GET"], summary: "BASIC program and variable areas, line and statement being run", extension: false },
+    Route { path: "/api/basic_export", methods: &["GET"], summary: "the BASIC program in RAM as text", extension: false },
+    Route { path: "/api/basic_listing", methods: &["GET"], summary: "the BASIC program as lines of statements, with their addresses", extension: false },
+    Route { path: "/api/basic_step", methods: &["POST"], summary: "run to the next BASIC statement (?mode=line: line)", extension: false },
+    Route { path: "/api/basic_bp", methods: &["GET", "POST"], summary: "BASIC line breakpoints: comma-separated line numbers, empty clears", extension: false },
+    Route { path: "/api/basic_runto", methods: &["POST"], summary: "run to a BASIC line (?line=) or statement (?addr=), once", extension: false },
     Route { path: "/api/doc", methods: &["GET"], summary: "this list", extension: false }
 ];
+
+/// Where a BASIC step or run-to stops.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BasicTarget {
+    /// The next statement run.
+    Statement,
+    /// The next line, or the same line run again from its start: from
+    /// (line, statement).
+    LineAfter(Option<u16>),
+    /// The start of a line.
+    Line(u16),
+    /// A statement, by its address in `/api/basic_listing`.
+    Address(u16)
+}
+
+/// A program to load once the firmware booted after a reset.
+struct PendingBasic {
+    source: String,
+    run: bool,
+    at_t_states: usize
+}
+
+/// T-states the firmware takes, after a reset, before BASIC is ready.
+const BASIC_BOOT_T_STATES: usize = 4_000_000 * 3 / 2;
 
 /// The beam: where the monitor draws, in its ticks (16 per NOP, 1024 for a
 /// 64 NOP line) and lines since the frame started, with the origin of the
@@ -291,7 +329,11 @@ pub struct DebugServer {
     raster_breakpoints: Vec<RasterBreakpoint>,
     counters: std::collections::BTreeMap<String, NopCounter>,
     /// T-state counter after the previous instruction, for the counters.
-    counted_t_states: usize
+    counted_t_states: usize,
+    basic_breakpoints: std::collections::BTreeSet<u16>,
+    /// A BASIC step (until the next statement or line) or run-to.
+    basic_target: Option<BasicTarget>,
+    pending_basic: Option<PendingBasic>
 }
 
 /// AMSpiriT's default depth of `GET /api/history`.
@@ -403,7 +445,10 @@ impl DebugServer {
             previous_beam: None,
             raster_breakpoints: Vec::new(),
             counters: Default::default(),
-            counted_t_states: 0
+            counted_t_states: 0,
+            basic_breakpoints: Default::default(),
+            basic_target: None,
+            pending_basic: None
         }
     }
 
@@ -496,6 +541,13 @@ impl DebugServer {
         for brk in hits {
             self.hit(&brk, None, motherboard);
         }
+        if (!self.basic_breakpoints.is_empty() || self.basic_target.is_some()) && basic_program::at_statement(motherboard) {
+            self.basic_statement(motherboard);
+        }
+        if self.pending_basic.as_ref().is_some_and(|p| motherboard.t_state_counter().value() >= p.at_t_states) {
+            let pending = self.pending_basic.take().unwrap();
+            self.load_basic(&pending.source, pending.run, motherboard);
+        }
         if let (Some(before), Some(after)) = (self.previous_beam.take(), self.beam) {
             if self.raster_breakpoints.iter().any(|brk| brk.passed(before, after)) {
                 self.stop(motherboard, json!({ "kind": "raster" }));
@@ -554,6 +606,34 @@ impl DebugServer {
         }
         merge(&mut event, info);
         self.events.publish("z80_bp", &event);
+    }
+
+    /// At the start of a BASIC statement: stop on a line breakpoint, at the
+    /// end of a step, at a run-to target.
+    fn basic_statement(&mut self, motherboard: &Motherboard) {
+        let state = BasicState::read(motherboard);
+        let Some(line) = state.line
+        else {
+            return; // direct mode
+        };
+        let reason = match self.basic_target {
+            Some(BasicTarget::Statement) => Some("step"),
+            Some(BasicTarget::LineAfter(from)) if from != Some(line) || state.first_statement => Some("step"),
+            Some(BasicTarget::Line(target)) if target == line && state.first_statement => Some("runto"),
+            Some(BasicTarget::Address(target)) if target == state.stmt_addr => Some("runto"),
+            _ if state.first_statement && self.basic_breakpoints.contains(&line) => Some("breakpoint"),
+            _ => None
+        };
+        if let Some(reason) = reason {
+            self.basic_target = None;
+            self.paused = true;
+            self.last_stop = Some(motherboard.pc());
+            let mut event = json!({ "line": line, "addr": hex16(state.stmt_addr), "reason": reason });
+            if !self.counters.is_empty() {
+                event["counters"] = self.counters_json();
+            }
+            self.events.publish("basic_bp", &event);
+        }
     }
 
     /// Add the T-states of the instruction just executed to the running
@@ -665,6 +745,35 @@ impl DebugServer {
             ("POST", "/api/raster_bp") => self.set_raster_breakpoint(request),
             ("GET", "/api/counters") => Ok(ApiResponse::ok(self.list_counters())),
             ("POST", "/api/counters") => self.counter_command(request, motherboard),
+            ("POST", "/api/basic") => self.basic_load_request(request, motherboard),
+            ("GET", "/api/basic_state") => Ok(ApiResponse::ok(basic_state(motherboard))),
+            ("GET", "/api/basic_export") => Ok(ApiResponse {
+                status: 200,
+                content_type: "text/plain; charset=utf-8",
+                body: basic_program::program(motherboard).map(|p| p.to_string()).unwrap_or_default().into_bytes(),
+                headers: Vec::new()
+            }),
+            ("GET", "/api/basic_listing") => basic_listing(motherboard),
+            ("POST", "/api/basic_step") => {
+                let target = match request.param("mode") {
+                    Some("line") => BasicTarget::LineAfter(BasicState::read(motherboard).line),
+                    None | Some("") | Some("stmt") | Some("statement") => BasicTarget::Statement,
+                    Some(other) => return ApiError::field("mode", format!("unknown mode \"{other}\": line or statement")).response()
+                };
+                Ok(self.run_basic_to(target))
+            },
+            ("GET", "/api/basic_bp") => Ok(ApiResponse::ok(json!({ "lines": self.basic_breakpoints }))),
+            ("POST", "/api/basic_bp") => self.set_basic_breakpoints(request),
+            ("POST", "/api/basic_runto") => {
+                let number = |name: &str| request.param(name).map(|v| parse_int(v).filter(|v| (0..=0xffff).contains(v)));
+                match (number("line"), number("addr")) {
+                    (Some(Some(line)), _) => Ok(self.run_basic_to(BasicTarget::Line(line as u16))),
+                    (None, Some(Some(addr))) => Ok(self.run_basic_to(BasicTarget::Address(addr as u16))),
+                    (Some(None), _) => Err(ApiError::field("line", "line must be a number from 0 to 65535")),
+                    (None, Some(None)) => Err(ApiError::field("addr", "addr must be a number from 0 to 65535")),
+                    (None, None) => Err(ApiError::new("missing ?line= or ?addr="))
+                }
+            },
             ("DELETE", "/api/counters") => self.delete_counters(request),
             _ => unreachable!("{} {}", request.method, request.path)
         };
@@ -695,6 +804,7 @@ impl DebugServer {
             "crtc": self.crtc(motherboard),
             "psg": psg(motherboard),
             "fdc": fdc(motherboard),
+            "beam": self.beam.map(|beam| beam_json(beam)),
             "emu": self.emu(motherboard)
         })
     }
@@ -730,14 +840,8 @@ impl DebugServer {
             value["x"] = json!(beam.x as isize - beam.crop_x);
             value["y"] = json!(beam.line as isize - beam.crop_y as isize);
         }
-        merge(&mut value, json!({
-            "cx": beam.crop_x,
-            "cy": beam.crop_y,
-            "cw": SCREENSHOT_SIZE.0,
-            "ch": SCREENSHOT_SIZE.1,
-            "nops_per_line": NOPS_PER_LINE,
-            "nops_per_frame": NOPS_PER_LINE * LINES_PER_FRAME
-        }));
+        merge(&mut value, beam_crop(beam));
+        merge(&mut value, json!({ "nops_per_line": NOPS_PER_LINE, "nops_per_frame": NOPS_PER_LINE * LINES_PER_FRAME }));
         Ok(ApiResponse::ok(value))
     }
 
@@ -800,6 +904,59 @@ impl DebugServer {
         let mut reply = self.list_raster_breakpoints();
         merge(&mut reply, json!({ "ok": true, "cmd_seq": self.command() }));
         Ok(ApiResponse::ok(reply))
+    }
+
+    // ------------------------------------------------------------ BASIC
+
+    fn run_basic_to(&mut self, target: BasicTarget) -> ApiResponse {
+        self.basic_target = Some(target);
+        self.paused = false;
+        ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() }))
+    }
+
+    fn set_basic_breakpoints(&mut self, request: &ApiRequest) -> ApiResult {
+        let mut lines = std::collections::BTreeSet::new();
+        for entry in request.text().split(',').map(str::trim).filter(|e| !e.is_empty()) {
+            let line = entry
+                .parse::<u16>()
+                .map_err(|_| ApiError::new(format!("{entry}: expected a BASIC line number (0-65535)")))?;
+            lines.insert(line);
+        }
+        self.basic_breakpoints = lines;
+        Ok(ApiResponse::ok(json!({ "ok": true, "lines": self.basic_breakpoints, "cmd_seq": self.command() })))
+    }
+
+    /// `POST /api/basic[?reset=1][&run=1]`: after a reset, the program is
+    /// loaded once the firmware booted.
+    fn basic_load_request(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
+        let flag = |name: &str| request.param(name).is_some_and(|v| v != "0" && !v.is_empty());
+        let source = request.text();
+        // Checked now, to answer 400 rather than fail later.
+        cpclib::basic::BasicProgram::parse(&source)
+            .map_err(|e| ApiError::new(format!("BASIC inject failed: {e:?}")))?;
+        if flag("reset") {
+            motherboard.restart();
+            self.events.publish("reset", &json!({ "hard": true }));
+            self.pending_basic = Some(PendingBasic {
+                source,
+                run: flag("run"),
+                at_t_states: motherboard.t_state_counter().value() + BASIC_BOOT_T_STATES
+            });
+        }
+        else {
+            self.load_basic(&source, flag("run"), motherboard)
+                .map_err(|e| ApiError::new(format!("BASIC inject failed: {e}")))?;
+        }
+        Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
+    }
+
+    fn load_basic(&mut self, source: &str, run: bool, motherboard: &mut Motherboard) -> Result<usize, String> {
+        let size = basic_program::load(motherboard, source)?;
+        self.ram_seq += 1;
+        if run {
+            self.typing.extend("RUN\n".chars().filter_map(keys_of_char));
+        }
+        Ok(size)
     }
 
     // --------------------------------------------------------- counters
@@ -997,7 +1154,7 @@ impl DebugServer {
         }
         if soft || hard {
             // No separate soft reset on a CPC: both are the RESET line.
-            motherboard.reset();
+            motherboard.restart();
             self.events.publish("reset", &json!({ "hard": hard }));
         }
         if let Some(paused) = paused {
@@ -1144,10 +1301,19 @@ impl DebugServer {
             status: 200,
             content_type: "image/png",
             body: png.into_inner(),
-            headers: vec![
-                ("X-Crop-W".to_owned(), frame.width().to_string()),
-                ("X-Crop-H".to_owned(), frame.height().to_string())
+            headers: [
+                ("X-Crop-W", frame.width().to_string()),
+                ("X-Crop-H", frame.height().to_string())
             ]
+            .into_iter()
+            .chain(self.beam.into_iter().flat_map(|beam| [
+                ("X-Crop-X", beam.crop_x.to_string()),
+                ("X-Crop-Y", beam.crop_y.to_string()),
+                ("X-Beam-X", beam.x.to_string()),
+                ("X-Beam-Y", beam.line.to_string())
+            ]))
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect()
         })
     }
 
@@ -1256,6 +1422,47 @@ impl DebugServer {
     }
 }
 
+/// AMSpiriT's `beam` object: the beam in the video buffer (1024 ticks by
+/// 350 lines) and the visible area, plus the position in NOPs.
+fn beam_json(beam: Beam) -> Value {
+    let mut value = beam.json();
+    merge(&mut value, beam_crop(beam));
+    value
+}
+
+fn beam_crop(beam: Beam) -> Value {
+    json!({ "cx": beam.crop_x, "cy": beam.crop_y, "cw": SCREENSHOT_SIZE.0, "ch": SCREENSHOT_SIZE.1 })
+}
+
+fn basic_state(motherboard: &Motherboard) -> Value {
+    let state = BasicState::read(motherboard);
+    json!({
+        "basic_ver": 11,
+        "prog_start": state.prog_start,
+        "txttop": state.txttop,
+        "vartop": state.vartop,
+        "arrend": state.arrend,
+        "prog_size": state.txttop.wrapping_sub(state.prog_start),
+        "var_size": state.vartop.wrapping_sub(state.txttop),
+        "chain_heads_addr": basic_program::VARIABLE_CHAIN_HEADS,
+        "cur_linenum": state.line.unwrap_or(0xffff),
+        "stmt_addr": state.stmt_addr
+    })
+}
+
+fn basic_listing(motherboard: &Motherboard) -> ApiResult {
+    let lines = basic_program::listing(motherboard).map_err(|e| ApiError::new(format!("cannot decode the program: {e}")))?;
+    Ok(ApiResponse::ok(json!({
+        "lines": lines.iter().map(|line| json!({
+            "addr": line.addr,
+            "num": line.number,
+            "stmts": line.statements.iter().map(|s| json!({
+                "addr": s.addr, "end": s.end, "colon": s.colon, "text": s.text, "vars": s.vars
+            })).collect::<Vec<_>>()
+        })).collect::<Vec<_>>()
+    })))
+}
+
 /// The visible picture (what `GET /api/screenshot` returns).
 const SCREENSHOT_SIZE: (usize, usize) = (768, 272);
 
@@ -1318,8 +1525,11 @@ fn fdc(motherboard: &Motherboard) -> Value {
         "motor": fdc.motor(),
         "phase": fdc.phase_name(),
         "command": fdc.command_name(),
-        "tracks": [fdc.track(0), fdc.track(1)],
-        "disks": [fdc.has_disk(FdcDrive::A), fdc.has_disk(FdcDrive::B)]
+        "drives": ([FdcDrive::A, FdcDrive::B]).iter().enumerate().map(|(unit, &drive)| json!({
+            "connected": true,
+            "disk": fdc.has_disk(drive),
+            "track": fdc.track(unit)
+        })).collect::<Vec<_>>()
     })
 }
 
@@ -1333,18 +1543,16 @@ fn memmap(motherboard: &Motherboard) -> Value {
                 PhysicalAddress::Ram { bank, .. } => bank,
                 _ => unreachable!("writes always reach RAM")
             };
-            let mut value = json!({ "base": base, "ram_bank": ram_bank, "ext": ram_bank >= 4 });
+            let mut value = json!({ "base": base, "name": format!("{base:04X}") });
             match motherboard.physical_address(base) {
-                PhysicalAddress::LowerRom { .. } => {
-                    merge(&mut value, json!({ "name": "lower ROM", "rom": true, "rom_bank": 255 }));
-                },
-                PhysicalAddress::UpperRom { rom, .. } => {
-                    merge(&mut value, json!({ "name": format!("upper ROM {rom}"), "rom": true, "rom_bank": rom }));
-                },
+                PhysicalAddress::LowerRom { .. } => merge(&mut value, json!({ "rom": true, "rom_bank": 255 })),
+                PhysicalAddress::UpperRom { rom, .. } => merge(&mut value, json!({ "rom": true, "rom_bank": rom })),
                 PhysicalAddress::Ram { bank, .. } => {
-                    merge(&mut value, json!({ "name": format!("RAM B{bank:02X}"), "rom": false }));
+                    merge(&mut value, json!({ "rom": false, "ram_bank": bank, "ext": bank >= 4 }))
                 }
             }
+            // Extension: where writes go, ROM or not.
+            value["write_bank"] = json!(ram_bank);
             value
         })
         .collect();
@@ -1837,7 +2045,9 @@ mod test {
         let (_, memmap) = call(&mut server, &mut mb, "GET", "/api/memmap", "");
         assert_eq!(memmap["regions"][0]["rom"], true);
         assert_eq!(memmap["regions"][0]["rom_bank"], 255);
-        assert_eq!(memmap["regions"][0]["ram_bank"], 0, "writes go to the RAM below");
+        assert!(memmap["regions"][0].get("ram_bank").is_none(), "only for RAM, as in AMSpiriT");
+        assert_eq!(memmap["regions"][0]["write_bank"], 0, "writes go to the RAM below");
+        assert_eq!(memmap["regions"][1]["name"], "4000");
         assert_eq!(memmap["regions"][3]["rom"], true);
         assert_eq!(memmap["regions"][3]["rom_bank"], 0);
     }
@@ -1962,6 +2172,96 @@ mod test {
         assert_eq!(call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop","action":"x"}"#).0, 400);
         let (_, list) = call(&mut server, &mut mb, "DELETE", "/api/counters", "");
         assert_eq!(list["counters"], json!([]));
+    }
+
+    /// A 6128 booted to BASIC's prompt.
+    fn booted() -> Motherboard {
+        let mut mb = MotherboardBuilder::default().build();
+        while mb.t_state_counter().value() < BASIC_BOOT_T_STATES {
+            mb.execute_next_opcode_no_video();
+        }
+        mb
+    }
+
+    #[test]
+    fn basic_programs_load_list_and_stop_on_lines_and_statements() {
+        let (mut server, mut mb) = (server(), booted());
+        let events = server.events.subscribe(Some(vec!["basic_bp".to_owned()])).unwrap();
+        let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
+        assert_eq!(state["prog_start"], 368, "{state}");
+        assert_eq!(state["prog_size"], 2, "an empty program: {state}");
+        assert_eq!(state["cur_linenum"], 0xffff);
+
+        let source = "10 A=1:B=2\n20 A=A+1:GOTO 20\n";
+        assert_eq!(call(&mut server, &mut mb, "POST", "/api/basic?run=1", "10 GOTO GOTO").0, 400);
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/basic?run=1", source);
+        assert_eq!(status, 200);
+        let (_, listing) = call(&mut server, &mut mb, "GET", "/api/basic_listing", "");
+        let line10 = &listing["lines"][0];
+        assert_eq!((line10["addr"].clone(), line10["num"].clone()), (json!(368), json!(10)), "{listing}");
+        assert_eq!(line10["stmts"][0]["addr"], 371);
+        assert_eq!(line10["stmts"][0]["text"], "A=1");
+        assert_eq!(line10["stmts"][0]["vars"], json!(["A"]));
+        assert_eq!(line10["stmts"][1]["colon"], true);
+        assert_eq!(line10["stmts"][0]["end"], line10["stmts"][1]["addr"]);
+        let line20 = listing["lines"][1].clone();
+        assert_eq!(line20["num"], 20);
+        assert_eq!(line20["stmts"][1]["text"], "GOTO 20", "{listing}");
+        let goto = line20["stmts"][1]["addr"].as_u64().unwrap();
+
+        // Typed RUN reaches line 20.
+        call(&mut server, &mut mb, "POST", "/api/basic_bp", "20");
+        run(&mut server, &mut mb, 3_000_000);
+        assert!(server.paused(), "{:?}", call(&mut server, &mut mb, "GET", "/api/basic_state", ""));
+        let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
+        assert_eq!(state["cur_linenum"], 20);
+        assert_eq!(state["stmt_addr"], line20["stmts"][0]["addr"]);
+        let hits = events_of(&events);
+        assert!(hits[0].contains(r#""line":20"#) && hits[0].contains(r#""reason":"breakpoint""#), "{hits:?}");
+
+        // Statement by statement, then line by line (the same line again).
+        call(&mut server, &mut mb, "POST", "/api/basic_bp", "");
+        call(&mut server, &mut mb, "POST", "/api/basic_step", "");
+        run(&mut server, &mut mb, 100_000);
+        let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
+        assert_eq!(state["stmt_addr"], goto, "{state}");
+        call(&mut server, &mut mb, "POST", "/api/basic_step?mode=line", "");
+        run(&mut server, &mut mb, 100_000);
+        let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
+        assert_eq!((state["cur_linenum"].clone(), state["stmt_addr"].clone()), (json!(20), line20["stmts"][0]["addr"].clone()));
+        call(&mut server, &mut mb, "POST", &format!("/api/basic_runto?addr={goto}"), "");
+        run(&mut server, &mut mb, 100_000);
+        assert!(server.paused());
+        assert_eq!(call(&mut server, &mut mb, "GET", "/api/basic_state", "").1["stmt_addr"], goto);
+        assert!(events_of(&events).iter().any(|e| e.contains(r#""reason":"runto""#)));
+
+        // The variables are where the state says.
+        let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
+        assert!(state["var_size"].as_u64().unwrap() > 0, "{state}");
+        let response = server.handle(
+            &ApiRequest { method: "GET".into(), path: "/api/basic_export".into(), query: vec![], body: vec![] },
+            &mut mb
+        );
+        let text = String::from_utf8(response.body).unwrap();
+        assert!(text.contains("GOTO 20"), "{text}");
+    }
+
+    #[test]
+    fn basic_after_a_reset_loads_once_booted() {
+        let (mut server, mut mb) = (server(), booted());
+        let events = server.events.subscribe(Some(vec!["reset".to_owned()])).unwrap();
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/basic?reset=1&run=1", "10 DIM X(10)\n20 GOTO 20\n");
+        assert_eq!(status, 200);
+        assert_eq!(events_of(&events).len(), 1);
+        call(&mut server, &mut mb, "POST", "/api/basic_bp", "20");
+        run(&mut server, &mut mb, 6_000_000);
+        assert!(server.paused());
+        let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
+        assert_eq!(state["cur_linenum"], 20, "{state}");
+        let (txttop, vartop, arrend) =
+            (state["txttop"].as_u64().unwrap(), state["vartop"].as_u64().unwrap(), state["arrend"].as_u64().unwrap());
+        assert!(txttop > 368 + 2 && vartop >= txttop, "{state}");
+        assert!(arrend >= vartop + 11 * 5, "the array of 11 reals: {state}");
     }
 
     #[test]
