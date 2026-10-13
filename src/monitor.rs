@@ -39,7 +39,7 @@ const MONITOR_HSYNC_WINDOW_START: usize = RASTER_LINE_LENGTH - 48;
 const MONITOR_HSYNC_LOST_LINES: usize = 4;
 
 /// Shortest C-HSYNC pulse (in ticks of 1/16 usec) the monitor reacts to.
-const MONITOR_MIN_HSYNC_TICKS: usize = 16;
+const MONITOR_MIN_HSYNC_TICKS: usize = 12;
 /// Lines after the beam started a frame from which the frame oscillator accepts a VSYNC
 /// (Shaker DT: pulses 156 lines apart are not followed, 312 are).
 const MONITOR_VSYNC_WINDOW_START_LINES: usize = 200;
@@ -62,6 +62,8 @@ const MONITOR_HPULSE_MAX: usize = 128;
 /// characters after (20 before); a pulse within 6 characters belongs to the
 /// same sync complex. The beam follows it by 1 to 3 ticks a line.
 const MONITOR_PULL_DEAD_WIDTH: i32 = 9;
+/// ... but never less than this for a second sync (Shaker D3 with R3l=3: a 1 usec pulse pulls as much as a 2 usec one)
+const MONITOR_PULL_MIN: i32 = 10;
 const MONITOR_PULL_DEADZONE: i64 = 6 * 16;
 const MONITOR_PULL_FLAT_LATE: i64 = 422;
 const MONITOR_PULL_END_LATE: i64 = 496;
@@ -344,7 +346,7 @@ impl Monitor {
         let mut target = 0i32;
         if let (Some(previous), [(other, width)]) = (self.last_sync_start, self.pulses.as_slice()) {
             let after = (*other - previous) as i64; // late for the previous sync
-            let late_pull = ((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12;
+            let late_pull = (((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12).max(MONITOR_PULL_MIN);
             let taper = |pull: i32, distance: i64, flat: i64, end: i64| -> i32 {
                 if distance <= flat {
                     pull
