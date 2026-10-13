@@ -2371,6 +2371,46 @@ mod test {
         assert_eq!(add(&mut server, &mut mb, r#"{"addr":1,"start":5}"#).0, 400);
     }
 
+    /// cpclib-basic's tokenisation against the ROM's own, the line typed
+    /// on a booted 6128. Ignored: cpclib reads `ERROR` after `ON` as a
+    /// variable, and writes small numbers after a keyword as 16-bit
+    /// constants (`&1A`) where the ROM uses `&0E`-`&17`.
+    #[test]
+    #[ignore]
+    fn cpclib_tokenises_as_the_rom() {
+        for line in ["10 ON ERROR GOTO 30", "20 ERROR 5", "30 GOTO 30", "40 A=1:PRINT A"] {
+            let (mut server, mut mb) = (self::server(), booted());
+            call(&mut server, &mut mb, "POST", "/api/keytype", &format!(r#"{{"text":"{line}\r"}}"#));
+            run(&mut server, &mut mb, 1_500_000);
+            let ours = cpclib::basic::BasicProgram::parse(format!("{line}\n")).unwrap().as_bytes();
+            let length = u16::from_le_bytes([mb.read_video_ram_byte(0x170), mb.read_video_ram_byte(0x171)]) as usize;
+            let typed: Vec<u8> = (0x170..0x170 + length as u16 + 2).map(|a| mb.read_video_ram_byte(a)).collect();
+            assert_eq!(ours, typed, "{line}");
+        }
+    }
+
+    #[test]
+    fn basic_flags_are_where_each_rom_keeps_them() {
+        use crate::motherboard::CpcModel;
+        for model in [CpcModel::Cpc464, CpcModel::Cpc6128] {
+            let rom = basic_program::BasicRom::of(model);
+            let (mut server, mut mb) = (server(), booted_model(model));
+            let flag = |mb: &Motherboard, i: usize| mb.read_video_ram_byte(rom.flags[i]);
+            // ERR: the last error's number.
+            call(&mut server, &mut mb, "POST", "/api/basic?run=1", "10 ERROR 5\n");
+            run(&mut server, &mut mb, 3_000_000);
+            assert_eq!(flag(&mb, 1), 5, "{}: ERR", model.name());
+            // AUTO keeps its next line and step after its flag: typed on a
+            // fresh machine, both 10.
+            let (mut auto_server, mut auto_mb) = (self::server(), booted_model(model));
+            call(&mut auto_server, &mut auto_mb, "POST", "/api/keytype", r#"{"text":"AUTO\r"}"#);
+            run(&mut auto_server, &mut auto_mb, 4_000_000);
+            let auto = rom.flags[0];
+            let fields = [auto + 1, auto + 3].map(|a| auto_mb.read_video_ram_byte(a));
+            assert_eq!(fields, [10, 10], "{}: AUTO line and step after {auto:#06x}", model.name());
+        }
+    }
+
     #[test]
     fn ping_identifies_the_frontend() {
         let (mut server, mut mb) = (server(), machine());
