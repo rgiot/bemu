@@ -67,6 +67,13 @@ pub struct Motherboard {
     /// `Some` - see [`Motherboard::watch_bus`].
     bus_log: Option<Vec<BusAccess>>,
 
+    model: CpcModel,
+    /// The MMR banks RAM: a 6128, or a RAM expansion on a 464/664.
+    ram_banking: bool,
+    /// A disc interface (AMSDOS and the FDC ports): a 664/6128, or a
+    /// DDI-1 on a 464.
+    disc_interface: bool,
+
     // Counter of t-states (to be removed later)
     t_state_counter: Counter,
     // Counter of nops
@@ -116,12 +123,70 @@ impl Default for Motherboard {
             psg: Default::default(),
             keyboard: Default::default(),
             bus_log: None,
+            model: CpcModel::default(),
+            ram_banking: true,
+            disc_interface: true,
 
             t_state_counter: Default::default(),
             nops_counter: Default::default(),
         };
         motherboard.stabilize_run();
         motherboard
+    }
+}
+
+/// The CPC models: their ROMs (OS, BASIC 1.0 or 1.1, AMSDOS on the disc
+/// machines) and whether the PAL banking the 6128's second 64K is fitted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CpcModel {
+    Cpc464,
+    Cpc664,
+    #[default]
+    Cpc6128
+}
+
+impl CpcModel {
+    pub const ALL: [CpcModel; 3] = [CpcModel::Cpc464, CpcModel::Cpc664, CpcModel::Cpc6128];
+
+    /// "464", "664" or "6128".
+    pub fn name(&self) -> &'static str {
+        match self {
+            CpcModel::Cpc464 => "464",
+            CpcModel::Cpc664 => "664",
+            CpcModel::Cpc6128 => "6128"
+        }
+    }
+
+    /// The BASIC in ROM: 10 for 1.0, 11 for 1.1.
+    pub fn basic_version(&self) -> u8 {
+        match self {
+            CpcModel::Cpc464 => 10,
+            _ => 11
+        }
+    }
+
+    /// Whether the MMR (&7Fxx, &C0-&FF) banks RAM as bought: the 6128's
+    /// second 64K. A 464/664 gets it from a RAM expansion.
+    pub fn has_ram_banking(&self) -> bool {
+        *self == CpcModel::Cpc6128
+    }
+
+    /// Whether a disc interface is built in (664, 6128). A 464 gets one
+    /// from a DDI-1.
+    pub fn has_disc_interface(&self) -> bool {
+        *self != CpcModel::Cpc464
+    }
+}
+
+impl std::str::FromStr for CpcModel {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let text = text.trim().trim_start_matches(|c: char| c.is_ascii_alphabetic());
+        CpcModel::ALL
+            .into_iter()
+            .find(|model| model.name() == text)
+            .ok_or_else(|| format!("unknown CPC model \"{text}\": 464, 664 or 6128"))
     }
 }
 
@@ -162,6 +227,8 @@ pub struct MotherboardBuilder {
     disable_upper_rom: bool, // false by defualt
     extra_ram_pages: Option<usize>,
     large_ram_expansion_banks: Option<usize>,
+    model: Option<CpcModel>,
+    disc_interface: Option<bool>,
 }
 
 impl MotherboardBuilder {
@@ -176,6 +243,19 @@ impl MotherboardBuilder {
     /// this option existed.
     pub fn set_gate_array_type(&mut self, ga_type: crate::ga::GateArrayType) -> &mut Self {
         self.ga_type = Some(ga_type);
+        self
+    }
+
+    /// The machine: its ROMs and RAM banking (6128 if unset).
+    pub fn set_model(&mut self, model: CpcModel) -> &mut Self {
+        self.model = Some(model);
+        self
+    }
+
+    /// Fit (a DDI-1 on a 464) or remove the disc interface: the model's
+    /// own if unset.
+    pub fn set_disc_interface(&mut self, fitted: bool) -> &mut Self {
+        self.disc_interface = Some(fitted);
         self
     }
 
@@ -224,6 +304,12 @@ impl MotherboardBuilder {
             ..Default::default()
         };
 
+        if let Some(model) = self.model {
+            motherboard.set_model(model);
+        }
+        if let Some(fitted) = self.disc_interface {
+            motherboard.set_disc_interface(fitted);
+        }
         if let Some(brand) = self.brand {
             motherboard.ppi.set_brand(brand);
         }
@@ -471,7 +557,9 @@ impl Motherboard {
             self.ga.restart_hsync(ago);
         }
         self.ga.tick();
-        self.pal.tick();
+        if self.ram_banking {
+            self.pal.tick();
+        }
         if let Some(expansion) = &mut self.large_ram_expansion {
             expansion.tick();
         }
@@ -531,7 +619,9 @@ impl Motherboard {
             // actual write only happens once, on the first such tick.
             if !self.fdc_write_active {
                 self.log_bus(BusAccessKind::IoWrite, addr, byte);
-                if Self::is_fdc_motor_addr(addr) {
+                if !self.disc_interface {
+                    // Nothing on the disc ports.
+                } else if Self::is_fdc_motor_addr(addr) {
                     self.fdc.set_motor(byte & 1 != 0);
                 } else if Self::is_fdc_data_addr(addr) {
                     self.fdc.write_data(byte);
@@ -1170,6 +1260,36 @@ impl Motherboard {
         self.rom_selector.force_upper_rom_number(config.rom_number);
     }
 
+    /// Become a `model`: its ROMs, and RAM banking only on a 6128 (the
+    /// MMR is then back to the base 64K). Restart it afterwards.
+    pub fn set_model(&mut self, model: CpcModel) {
+        self.model = model;
+        self.memory.set_firmware(model);
+        self.ram_banking = model.has_ram_banking();
+        self.set_disc_interface(model.has_disc_interface());
+        self.pal.reset();
+    }
+
+    /// Fit or remove a disc interface (a DDI-1 on a 464): AMSDOS as upper
+    /// ROM 7 and the FDC on its ports.
+    pub fn set_disc_interface(&mut self, fitted: bool) {
+        self.disc_interface = fitted;
+        self.memory.set_amsdos(fitted);
+    }
+
+    pub fn has_disc_interface(&self) -> bool {
+        self.disc_interface
+    }
+
+    /// Whether the MMR banks RAM (6128, or RAM expansion).
+    pub fn has_ram_banking(&self) -> bool {
+        self.ram_banking
+    }
+
+    pub fn model(&self) -> CpcModel {
+        self.model
+    }
+
     pub fn disable_lower_rom(&mut self) {
         self.ga.force_lower_rom_pagging(Flag::Disable);
     }
@@ -1185,6 +1305,8 @@ impl Motherboard {
     /// >512K expansion card (up to 4MB), use [`Self::plug_large_ram_expansion`]
     /// instead - it calls this with the card's own bank count.
     pub fn set_extra_ram_pages(&mut self, pages: usize) {
+        // A RAM expansion decodes the MMR, on any model.
+        self.ram_banking = pages > 0;
         self.memory.set_extra_pages(pages);
     }
 
@@ -1205,6 +1327,7 @@ impl Motherboard {
     /// unreachable, not explicitly resized away, matching the spec's own
     /// note that a real card "replaces", not adds to, that internal page.
     pub fn plug_large_ram_expansion(&mut self, bank_count: usize) {
+        self.ram_banking = true;
         self.large_ram_expansion = Some(LargeRamExpansion::new(bank_count));
     }
 
@@ -1428,9 +1551,9 @@ impl Motherboard {
             self.ga().get_data_from_pins()
         } else if self.crtc().must_execute_tick() {
             self.crtc().get_data_from_pins()
-        } else if Self::is_fdc_status_addr(addr) {
+        } else if self.disc_interface && Self::is_fdc_status_addr(addr) {
             self.fdc.read_status()
-        } else if Self::is_fdc_data_addr(addr) {
+        } else if self.disc_interface && Self::is_fdc_data_addr(addr) {
             self.fdc.read_data()
         } else {
             self.floating_bus
@@ -1745,4 +1868,50 @@ mod test {
         );
     }
 
+}
+
+#[cfg(test)]
+mod model_test {
+    use super::*;
+
+    /// LD BC,&7FC4: OUT (C),C - then write 0x42 at &4000.
+    fn bank_and_write(model: CpcModel, extra_pages: Option<usize>) -> Motherboard {
+        let mut builder = MotherboardBuilder::default();
+        builder.set_model(model).disable_lower_rom().disable_upper_rom();
+        if let Some(pages) = extra_pages {
+            builder.set_extra_ram_pages(pages);
+        }
+        let mut mb = builder.build();
+        // The code runs from &8000.
+        mb.write_buffer(0x8000, &[0x01, 0xc4, 0x7f, 0xed, 0x49, 0x3e, 0x42, 0x32, 0x00, 0x40]);
+        mb.cpu_mut().reg16_mut(crate::z80::Reg16::Pc).set(0x8000);
+        for _ in 0..4 {
+            mb.execute_next_opcode_no_video();
+        }
+        mb
+    }
+
+    #[test]
+    fn ram_banking_needs_the_6128_or_an_expansion() {
+        let mb = bank_and_write(CpcModel::Cpc6128, None);
+        assert_eq!(mb.read_bank_byte(4, 0), Some(0x42), "6128: &4000 is bank 4");
+        let mb = bank_and_write(CpcModel::Cpc464, None);
+        assert_eq!(mb.read_bank_byte(1, 0), Some(0x42), "stock 464: the MMR does nothing");
+        let mb = bank_and_write(CpcModel::Cpc464, Some(1));
+        assert_eq!(mb.read_bank_byte(4, 0), Some(0x42), "464 with a 64K expansion");
+    }
+
+    #[test]
+    fn the_fdc_answers_with_a_disc_interface_only() {
+        let msr = |mb: &mut Motherboard| mb.input_byte(0xfb7e);
+        let mut mb = MotherboardBuilder::default().set_model(CpcModel::Cpc464).build();
+        assert_eq!(msr(&mut mb), 0xff, "464: nothing on &FB7E");
+        assert!(!mb.has_disc_interface());
+        let mut mb = MotherboardBuilder::default().set_model(CpcModel::Cpc464).set_disc_interface(true).build();
+        assert_eq!(msr(&mut mb), 0x80, "464 with a DDI-1");
+        let mut mb = MotherboardBuilder::default().set_model(CpcModel::Cpc664).build();
+        assert_eq!(msr(&mut mb), 0x80);
+        assert_eq!("cpc464".parse::<CpcModel>(), Ok(CpcModel::Cpc464));
+        assert!("6129".parse::<CpcModel>().is_err());
+    }
 }

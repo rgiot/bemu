@@ -10,6 +10,19 @@ Use the example binary below to test the emulator:
 cargo run --example emulator
 ```
 
+### Machines
+
+`--model 464|664|6128` (default 6128) picks the firmware and BASIC (1.0 on the
+464, 1.1 on the others). The 464 and 664 have 64K: `--ram 128` (up to 576)
+adds a RAM expansion, banked through the same `&7Fxx` register as the 6128's
+second 64K. The 664 and 6128 have a disc interface; `--ddi` adds a DDI-1
+(AMSDOS and the FDC) to a 464, and `--no-disc` removes it. In the library:
+`MotherboardBuilder::set_model`, `set_extra_ram_pages`, `set_disc_interface`.
+
+```sh
+cargo run --release -- --model 464 --ram 128 --ddi --window --dsk game.dsk
+```
+
 ## Sound
 
 The PSG (AY-3-8912) is emulated with the [`ym2149`](https://crates.io/crates/ym2149)
@@ -85,7 +98,7 @@ breakpoints (REMU, ACE `BRKC`, WinAPE `WABP` chunks) are set when it is loaded,
 (sna, dsk, bin), `quit`.
 
 The chips are inspected one by one (`memmap`, `crtc`, `ga`, `psg`, `fdc`).
-BASIC programs are debugged natively: `basic` loads a program (`?reset=1`,
+BASIC programs are debugged natively, BASIC 1.0 (464) and 1.1 (664, 6128): `basic` loads a program (`?reset=1`,
 `?run=1`), `basic_state`, `basic_listing` (lines of statements, with the
 addresses the ROM runs them from) and `basic_export` read it, `basic_bp`
 (line breakpoints), `basic_step` (`?mode=line`) and `basic_runto` (`?line=`,

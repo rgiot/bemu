@@ -63,7 +63,7 @@ use amsrust::disc_image::load_dsk;
 use amsrust::fdc::FdcDrive;
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
-use amsrust::motherboard::{Motherboard, MotherboardBuilder};
+use amsrust::motherboard::{CpcModel, Motherboard, MotherboardBuilder};
 use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::psg::AudioConfig;
 use minifb::{InputCallback, Key, Window, WindowOptions};
@@ -76,6 +76,11 @@ mod recorder;
 
 struct Args {
     crtc: CrtcType,
+    model: CpcModel,
+    /// Total RAM in KB (64 = no extra page), if not the model's.
+    ram_kb: Option<usize>,
+    /// Disc interface (a DDI-1 on a 464), if not the model's.
+    disc_interface: Option<bool>,
     dsk_a: Option<String>,
     dsk_b: Option<String>,
     sna: Option<String>,
@@ -94,6 +99,9 @@ struct Args {
 fn parse_args() -> Args {
     let mut args = Args {
         crtc: CrtcType::default(),
+        model: CpcModel::default(),
+        ram_kb: None,
+        disc_interface: None,
         dsk_a: None,
         dsk_b: None,
         sna: None,
@@ -121,6 +129,16 @@ fn parse_args() -> Args {
                     .and_then(|n| CrtcType::try_from(n).ok())
                     .unwrap_or_else(|| panic!("--crtc must be 0-4, got {value:?}"));
             },
+            "--model" => {
+                args.model = next("--model").parse().unwrap_or_else(|e: String| panic!("--model: {e}"))
+            },
+            "--ram" => {
+                let kb: usize = next("--ram").parse().expect("--ram must be a size in KB");
+                assert!(kb >= 64 && kb % 64 == 0 && kb <= 576, "--ram must be 64, 128, ... 576 (KB)");
+                args.ram_kb = Some(kb);
+            },
+            "--ddi" => args.disc_interface = Some(true),
+            "--no-disc" => args.disc_interface = Some(false),
             "--dsk" => args.dsk_a = Some(next("--dsk")),
             "--dsk-b" => args.dsk_b = Some(next("--dsk-b")),
             "--sna" => args.sna = Some(next("--sna")),
@@ -153,11 +171,16 @@ fn parse_args() -> Args {
 
 fn print_help() {
     eprintln!(concat!(
-        "amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]\n",
+        "amsrust [--model 464|664|6128] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
+        "        [--dsk path] [--dsk-b path] [--sna path]\n",
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N]]\n",
         "\n",
+        "--model picks the ROMs (default 6128). The 464 and 664 have 64K and the\n",
+        "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
+        "The 664 and 6128 have a disc interface; --ddi adds a DDI-1 (AMSDOS) to\n",
+        "a 464, --no-disc removes it.\n",
         "With no --screenshot/--window, drops into the interactive monitor once\n",
         "everything is loaded ('h' at its prompt lists its commands). With\n",
         "--screenshot, runs headless for --seconds (default 30), saving a\n",
@@ -199,7 +222,18 @@ fn main() {
             .expect("cannot install the Ctrl+C handler");
     }
 
-    let mut motherboard = MotherboardBuilder::default().set_crtc(args.crtc).enable_interruptions().build();
+    let mut builder = MotherboardBuilder::default();
+    builder.set_crtc(args.crtc).set_model(args.model).enable_interruptions();
+    if let Some(kb) = args.ram_kb {
+        builder.set_extra_ram_pages(kb / 64 - 1);
+    }
+    if let Some(fitted) = args.disc_interface {
+        builder.set_disc_interface(fitted);
+    }
+    let mut motherboard = builder.build();
+    if (args.dsk_a.is_some() || args.dsk_b.is_some()) && !motherboard.has_disc_interface() {
+        eprintln!("--dsk: this {} has no disc interface (--ddi adds one)", args.model.name());
+    }
 
     if let Some(path) = &args.dsk_a {
         insert_disc(path, FdcDrive::A, &mut motherboard);

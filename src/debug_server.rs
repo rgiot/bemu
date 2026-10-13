@@ -788,7 +788,7 @@ impl DebugServer {
             "frames": self.frames,
             "ticks": motherboard.t_state_counter().value() / T_STATES_PER_NOP,
             "paused": self.paused,
-            "cpc_model": "6128",
+            "cpc_model": motherboard.model().name(),
             "crtc_type": motherboard.crtc().crtc_type() as u8,
             "autotyping": !self.typing.is_empty() || self.typed_pressed.is_some(),
             "autotype_remaining": self.typing.len(),
@@ -1437,14 +1437,14 @@ fn beam_crop(beam: Beam) -> Value {
 fn basic_state(motherboard: &Motherboard) -> Value {
     let state = BasicState::read(motherboard);
     json!({
-        "basic_ver": 11,
+        "basic_ver": basic_program::BasicRom::of(motherboard.model()).version,
         "prog_start": state.prog_start,
         "txttop": state.txttop,
         "vartop": state.vartop,
         "arrend": state.arrend,
         "prog_size": state.txttop.wrapping_sub(state.prog_start),
         "var_size": state.vartop.wrapping_sub(state.txttop),
-        "chain_heads_addr": basic_program::VARIABLE_CHAIN_HEADS,
+        "chain_heads_addr": basic_program::BasicRom::of(motherboard.model()).variable_chain_heads,
         "cur_linenum": state.line.unwrap_or(0xffff),
         "stmt_addr": state.stmt_addr
     })
@@ -2176,7 +2176,13 @@ mod test {
 
     /// A 6128 booted to BASIC's prompt.
     fn booted() -> Motherboard {
-        let mut mb = MotherboardBuilder::default().build();
+        booted_model(crate::motherboard::CpcModel::Cpc6128)
+    }
+
+    fn booted_model(model: crate::motherboard::CpcModel) -> Motherboard {
+        let mut builder = MotherboardBuilder::default();
+        builder.set_model(model);
+        let mut mb = builder.build();
         while mb.t_state_counter().value() < BASIC_BOOT_T_STATES {
             mb.execute_next_opcode_no_video();
         }
@@ -2185,10 +2191,18 @@ mod test {
 
     #[test]
     fn basic_programs_load_list_and_stop_on_lines_and_statements() {
-        let (mut server, mut mb) = (server(), booted());
+        for model in crate::motherboard::CpcModel::ALL {
+            basic_program_on(model);
+        }
+    }
+
+    fn basic_program_on(model: crate::motherboard::CpcModel) {
+        let (mut server, mut mb) = (server(), booted_model(model));
+        assert_eq!(call(&mut server, &mut mb, "GET", "/api/ping", "").1["emu"]["cpc_model"], model.name());
         let events = server.events.subscribe(Some(vec!["basic_bp".to_owned()])).unwrap();
         let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
         assert_eq!(state["prog_start"], 368, "{state}");
+        assert_eq!(state["basic_ver"], model.basic_version());
         assert_eq!(state["prog_size"], 2, "an empty program: {state}");
         assert_eq!(state["cur_linenum"], 0xffff);
 
