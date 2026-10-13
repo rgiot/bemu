@@ -23,3 +23,9 @@ Findings against AMSpiriT (single extra pulse, 200 lines of stripes):
   earlier in AMSpiriT; Shaker AR also improves (4.2 % -> 2.6 %). The Crtc starts such a pulse one character
   early (R3l=2) - unless R3 is raised on the character R2 names (HBL's main sync is begun with R3=2 and widened
   at once by an R3 write: it keeps its place and the Gate Array counts it from the write).
+* Waving screens (`gen_wave_probe.py`, R2 from a table, one entry per line; What a Cool Weekend part 2): the
+  monitor's line oscillator is a PLL, not a hard lock. A sync that is `e` ticks off pulls the start of the line by
+  3/8 of `e`, at most 12 ticks a line (step 16 px: 6,4,2,2,1 px; sine: smooth). Early capture 48, late capture
+  36 ticks (B0_B has late pulses of 37-80 that AMSpiriT ignores). A late pulse of 1-2 ticks must be ignored
+  (applying that jitter broke Shaker A). Probes match AMSpiriT within 2-3 px on average.
+

@@ -44,6 +44,11 @@ const MONITOR_MIN_HSYNC_TICKS: usize = 16;
 const MONITOR_MIN_VSYNC_TICKS: usize = 64;
 
 /// Pulses (in ticks) too short or too long to be taken for a line sync.
+/// The phase detector of the line oscillator (see `follow_sync`)
+const MONITOR_PLL_MAX_PULL: i64 = 12;
+const MONITOR_PLL_CAPTURE_EARLY: i64 = 48;
+const MONITOR_PLL_CAPTURE_LATE: i64 = 36;
+
 const MONITOR_HPULSE_MIN: usize = 4;
 const MONITOR_HPULSE_MAX: usize = 128;
 /// A second sync inside a line pulls the picture (the monitor's AFC
@@ -86,6 +91,10 @@ pub struct Monitor {
     free_lines: usize,
     /// A VSYNC has been seen at least once: only then a frame is whole.
     synchronised: bool,
+    /// The line oscillator went round (free) since the last accepted sync
+    ran_free: bool,
+    /// Ticks the beam still waits before the next line starts (a sync that came early)
+    hold: usize,
     /// Ticks since the beginning of time, to date the sync pulses.
     now: u64,
     /// The other sync pulses (start, width) seen since the last line sync.
@@ -121,6 +130,8 @@ impl Monitor {
             locked: false,
             free_lines: 0,
             synchronised: false,
+            ran_free: false,
+            hold: 0,
             now: 0,
             pulses: Vec::new(),
             last_sync_start: None,
@@ -181,10 +192,20 @@ impl Monitor {
 
         // horizontal synchronisation: end of a pulse long enough, or the
         // oscillator running out
+        let x_before = self.x;
+        let was_locked = self.locked;
+        let was_locked_now = was_locked;
         let pulse_end = hsync_pulse > MONITOR_MIN_HSYNC_TICKS
             && !hsync
             && (!self.locked || self.x >= MONITOR_HSYNC_WINDOW_START);
         let free_run = self.x >= RASTER_LINE_LENGTH;
+        // a sync that comes after the oscillator went round only corrects its phase
+        let late_pulse = hsync_pulse > MONITOR_MIN_HSYNC_TICKS
+            && !hsync
+            && !pulse_end
+            && was_locked_now
+            && self.ran_free
+            && (self.x as i64) < MONITOR_PLL_CAPTURE_LATE;
         let line_end = pulse_end || free_run;
         // the sync pulses, dated, for the second-sync discriminator
         if hsync_pulse > 0 && !hsync && !vsync
@@ -214,8 +235,20 @@ impl Monitor {
         if frame_start {
             self.start_frame();
         }
+        if late_pulse {
+            if x_before > 2 {
+                self.follow_sync(x_before, was_locked);
+            } else {
+                self.ran_free = false;
+            }
+        }
         if line_end {
             self.x = 0;
+            if pulse_end {
+                self.follow_sync(x_before, was_locked);
+            } else {
+                self.ran_free = true;
+            }
             self.line += 1;
             if self.line >= MONITOR_FREE_RUN_LINES {
                 // no VSYNC: the frame oscillator rolls the picture
@@ -224,6 +257,10 @@ impl Monitor {
             }
         }
 
+        if self.hold > 0 {
+            self.hold -= 1;
+            return;
+        }
         let y = self.line.wrapping_sub(MONITOR_FIRST_LINE);
         let px = (self.x as isize - MONITOR_FIRST_PIXEL as isize + self.shift as isize) as usize;
         if px < MONITOR_ACTIVE_PIXELS && y < MONITOR_HEIGHT {
@@ -239,6 +276,26 @@ impl Monitor {
             self.texture.put_pixel(px as u32, y as u32, pixel);
         }
         self.x += 1;
+    }
+
+    /// The line oscillator's phase detector: a sync that comes `error` ticks away from where the
+    /// oscillator expected it (negative: early) pulls the start of the line by 3/8 of it, at most
+    /// 12 ticks a line, so a moving HSYNC (the waving screens of What a Cool Weekend) shows a smooth
+    /// curve; measured against AMSpiriT with validation/fuzz/gen_wave_probe.py. Far outside
+    /// that range, or when the oscillator was not locked, the beam simply restarts.
+    fn follow_sync(&mut self, x_before: usize, was_locked: bool) {
+        let error = if self.ran_free { x_before as i64 } else { x_before as i64 - RASTER_LINE_LENGTH as i64 };
+        self.ran_free = false;
+        if !was_locked || error < -MONITOR_PLL_CAPTURE_EARLY || error > MONITOR_PLL_CAPTURE_LATE {
+            return;
+        }
+        let pull = if error.abs() <= 1 { error } else { ((error * 3 + 4 * error.signum()) / 8).clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL) };
+        let start = error - pull; // ticks since the new line start, at this sync
+        if start >= 0 {
+            self.x = start as usize;
+        } else {
+            self.hold = (-start) as usize;
+        }
     }
 
     /// A line sync starting at `start` has been accepted: look at the other
