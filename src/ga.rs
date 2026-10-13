@@ -204,6 +204,13 @@ pub struct INKR(u8);
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Ink(u8);
 
+impl Ink {
+    /// The hardware colour number (as written to the gate array, 5 bits).
+    pub fn number(&self) -> u8 {
+        self.0
+    }
+}
+
 impl From<u8> for Ink {
     fn from(b: u8) -> Ink {
         assert!(b < 27);

@@ -62,3 +62,21 @@ cargo run --release -- --window --dsk game.dsk --record game.mkv
 ```
 
 Ctrl+C stops a recording early; the file is still finished properly.
+
+## Debug server
+
+`--debug-server` serves an HTTP debug API compatible with the
+[AMSpiriT-Lite web API](https://github.com/AMSpiriT-Emulator/amspirit-releases/blob/main/docs/lite/web_api.md)
+on `127.0.0.1:6128` (`--debug-port N` to change it), for debugger front ends
+such as `cpclib-dap`. It runs with `--window` or headless (real time, Ctrl+C to
+quit). `GET /api/doc` lists the implemented endpoints; extensions to the
+AMSpiriT API are flagged there, and `ping` answers `"frontend":"bemu"`.
+
+```sh
+cargo run --release -- --debug-server &
+curl -s -X POST http://127.0.0.1:6128/api/z80_bp -d '0x38'     # break on RST 38
+curl -s http://127.0.0.1:6128/api/z80                          # registers once stopped
+curl -s -X POST http://127.0.0.1:6128/api/step                 # one instruction
+curl -s -X POST http://127.0.0.1:6128/api/config -d '{"paused":false}'
+```
+

@@ -1204,6 +1204,14 @@ impl Motherboard {
         self.memory.read(offset % 0x4000, &config, self.expansion_ram_source())
     }
 
+    /// Write one byte of the base 64K RAM, whatever is mapped for the CPU
+    /// (ROM overlays, extra RAM pages) - the counterpart of
+    /// [`Self::read_video_ram_byte`].
+    pub fn write_base_ram(&mut self, addr: u16, byte: u8) {
+        let Motherboard { memory, large_ram_expansion, .. } = self;
+        memory.write(addr, byte, &MemoryConfig::default(), large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
+    }
+
     /// Read a byte the way the video hardware sees it: always from RAM, even
     /// where a ROM is currently overlaid for the CPU (the gate array fetches
     /// screen bytes from RAM regardless of the CPU's ROM mapping), and
