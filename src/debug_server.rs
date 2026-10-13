@@ -2372,9 +2372,9 @@ mod test {
     }
 
     /// cpclib-basic's tokenisation against the ROM's own, the line typed
-    /// on a booted 6128. Ignored: cpclib reads `ERROR` after `ON` as a
-    /// variable, and writes small numbers after a keyword as 16-bit
-    /// constants (`&1A`) where the ROM uses `&0E`-`&17`.
+    /// on a booted 6128. Ignored until the cpclib checkout carries its
+    /// tokeniser fix (`ON ERROR` read as a variable, small numbers after a
+    /// keyword written as 16-bit constants): it passes with it.
     #[test]
     #[ignore]
     fn cpclib_tokenises_as_the_rom() {
