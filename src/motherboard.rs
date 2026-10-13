@@ -333,6 +333,13 @@ impl Motherboard {
 }
 
 impl Motherboard {
+    /// Press the reset button: the chips are reset and the CPU restarts at
+    /// 0, as at power on (RAM is kept). [`Self::reset`] alone leaves the
+    /// CPU's /WAIT low: it never runs again.
+    pub fn restart(&mut self) {
+        self.stabilize_run();
+    }
+
     #[inline]
     fn stabilize_run(&mut self) {
         self.reset();
