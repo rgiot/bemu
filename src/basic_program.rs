@@ -1,45 +1,96 @@
-//! The Locomotive BASIC 1.1 program and interpreter state in RAM, for
+//! The Locomotive BASIC program and interpreter state in RAM, for
 //! debuggers: where the program and its variables are, the line and
 //! statement being run, the program as lines of statements, and loading a
 //! program in place of the one in memory.
 //!
 //! Everything is read in the base 64K, whatever the CPU's mapping (the
-//! program at `0x0170` sits under the lower ROM). The addresses are those
-//! of the 6128's BASIC 1.1, as used by AMSpiriT and cpclib-dap.
+//! program at `0x0170` sits under the lower ROM). BASIC 1.1 (664, 6128)
+//! keeps its variables where AMSpiriT and cpclib-dap read them; BASIC 1.0
+//! (464) keeps the same block `&19` bytes higher (found by running the
+//! same program on the three ROMs, see [`BasicRom`]).
 
 use cpclib::basic::tokens::{BasicToken, BasicTokenNoPrefix};
 use cpclib::basic::BasicProgram;
 
-use crate::motherboard::Motherboard;
+use crate::motherboard::{CpcModel, Motherboard};
 
-/// The byte before the statement being run (`0` in direct mode).
-pub const CURRENT_STATEMENT: u16 = 0xAE1B;
-/// The line-number field of the line being run (`0` in direct mode).
-pub const CURRENT_LINE_NUMBER_FIELD: u16 = 0xAE1D;
-/// The byte before the program.
-pub const END_OF_RESERVED_AREA: u16 = 0xAE64;
-/// End of the program, start of the variables.
-pub const PROGRAM_END: u16 = 0xAE66;
-pub const VARIABLES_START: u16 = 0xAE68;
-pub const ARRAYS_START: u16 = 0xAE6A;
-pub const ARRAYS_END: u16 = 0xAE6C;
-/// 27 chain heads of the scalar variables (A-Z and `DEF FN`).
-pub const VARIABLE_CHAIN_HEADS: u16 = 0xADB7;
+/// Where a BASIC ROM keeps what a debugger needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BasicRom {
+    /// 10 (1.0) or 11 (1.1).
+    pub version: u8,
+    /// The byte before the statement being run (`0` in direct mode).
+    pub current_statement: u16,
+    /// The line-number field of the line being run (`0` in direct mode).
+    pub current_line_number_field: u16,
+    /// The byte before the program.
+    pub end_of_reserved_area: u16,
+    /// End of the program, start of the variables.
+    pub program_end: u16,
+    pub variables_start: u16,
+    pub arrays_start: u16,
+    pub arrays_end: u16,
+    /// 27 chain heads of the scalar variables (A-Z and `DEF FN`).
+    pub variable_chain_heads: u16,
+    /// Flags a load clears: `AUTO`, `ON ERROR GOTO`, `PROTECT` (only those
+    /// known for this ROM).
+    flags: &'static [u16],
+    /// The ROM's per-statement point: just after it stored the statement's
+    /// address in `current_statement` (`LD (nnnn),HL`, the 3 bytes
+    /// before): reached once per statement run, both pointers fresh.
+    pub statement_hook: u16
+}
+
+impl BasicRom {
+    /// BASIC 1.1 of the 6128.
+    pub const BASIC_6128: BasicRom = BasicRom {
+        version: 11,
+        current_statement: 0xAE1B,
+        current_line_number_field: 0xAE1D,
+        end_of_reserved_area: 0xAE64,
+        program_end: 0xAE66,
+        variables_start: 0xAE68,
+        arrays_start: 0xAE6A,
+        arrays_end: 0xAE6C,
+        variable_chain_heads: 0xADB7,
+        flags: &[0xAC01, 0xAD90, 0xAE2C],
+        statement_hook: 0xDE63
+    };
+    /// BASIC 1.1 of the 664: the same workspace, the code 5 bytes further.
+    pub const BASIC_664: BasicRom = BasicRom { statement_hook: 0xDE68, ..Self::BASIC_6128 };
+    /// BASIC 1.0 of the 464.
+    pub const BASIC_464: BasicRom = BasicRom {
+        version: 10,
+        current_statement: 0xAE34,
+        current_line_number_field: 0xAE36,
+        end_of_reserved_area: 0xAE81,
+        program_end: 0xAE83,
+        variables_start: 0xAE85,
+        arrays_start: 0xAE87,
+        arrays_end: 0xAE89,
+        variable_chain_heads: 0xADD0,
+        flags: &[],
+        statement_hook: 0xDD7F
+    };
+
+    pub fn of(model: CpcModel) -> Self {
+        match model {
+            CpcModel::Cpc464 => Self::BASIC_464,
+            CpcModel::Cpc664 => Self::BASIC_664,
+            CpcModel::Cpc6128 => Self::BASIC_6128
+        }
+    }
+
+    fn of_machine(motherboard: &Motherboard) -> Self {
+        Self::of(motherboard.model())
+    }
+}
+
 const VARIABLE_CHAIN_HEADS_SIZE: u16 = 27 * 2;
-/// `AUTO`, `ON ERROR GOTO` and `PROTECT` flags, cleared by a load.
-const AUTO_FLAG: u16 = 0xAC01;
-const ERROR_FLAG: u16 = 0xAD90;
-const PROTECT_FLAG: u16 = 0xAE2C;
 /// Where a program is loaded.
 pub const PROGRAM_START: u16 = 0x0170;
-/// HIMEM of a 6128 with AMSDOS: a program must end below.
+/// HIMEM with AMSDOS: a program must end below.
 const HIGHEST_PROGRAM_END: u16 = 0xA67B;
-
-/// The ROM's per-statement entry point, just after it stored the
-/// statement's address in [`CURRENT_STATEMENT`] (`LD (&AE1B),HL` at
-/// `0xDE60`): reached once per statement run, with both pointers fresh.
-pub const STATEMENT_HOOK: u16 = 0xDE63;
-const STATEMENT_HOOK_CODE: [u8; 3] = [0x22, 0x1b, 0xae];
 
 fn peek(motherboard: &Motherboard, address: u16) -> u8 {
     motherboard.read_video_ram_byte(address)
@@ -73,14 +124,15 @@ pub struct BasicState {
 
 impl BasicState {
     pub fn read(motherboard: &Motherboard) -> Self {
-        let line_field = deek(motherboard, CURRENT_LINE_NUMBER_FIELD);
-        let stmt_addr = deek(motherboard, CURRENT_STATEMENT);
+        let rom = BasicRom::of_machine(motherboard);
+        let line_field = deek(motherboard, rom.current_line_number_field);
+        let stmt_addr = deek(motherboard, rom.current_statement);
         let line = (line_field != 0).then(|| deek(motherboard, line_field));
         Self {
-            prog_start: deek(motherboard, END_OF_RESERVED_AREA).wrapping_add(1),
-            txttop: deek(motherboard, PROGRAM_END),
-            vartop: deek(motherboard, ARRAYS_START),
-            arrend: deek(motherboard, ARRAYS_END),
+            prog_start: deek(motherboard, rom.end_of_reserved_area).wrapping_add(1),
+            txttop: deek(motherboard, rom.program_end),
+            vartop: deek(motherboard, rom.arrays_start),
+            arrend: deek(motherboard, rom.arrays_end),
             line,
             stmt_addr,
             // The first statement follows the line number's high byte.
@@ -90,16 +142,21 @@ impl BasicState {
 }
 
 /// Whether the CPU is at the BASIC ROM's per-statement point (see
-/// [`STATEMENT_HOOK`]).
+/// [`BasicRom::statement_hook`]), checked against the code before it.
 pub fn at_statement(motherboard: &Motherboard) -> bool {
-    motherboard.pc() == STATEMENT_HOOK
-        && (0..3).all(|i| motherboard.read_byte(STATEMENT_HOOK - 3 + i) == STATEMENT_HOOK_CODE[i as usize])
+    let rom = BasicRom::of_machine(motherboard);
+    let [low, high] = rom.current_statement.to_le_bytes();
+    motherboard.pc() == rom.statement_hook
+        && [0x22, low, high]
+            .iter()
+            .enumerate()
+            .all(|(i, &byte)| motherboard.read_byte(rom.statement_hook - 3 + i as u16) == byte)
 }
 
 /// One statement of a [`ListedLine`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedStatement {
-    /// What [`CURRENT_STATEMENT`] holds while it runs: the byte before it
+    /// What [`BasicRom::current_statement`] holds while it runs: the byte before it
     /// (the line number's high byte, or the `:` before it).
     pub addr: u16,
     /// The `:` or end of line after it (exclusive end).
@@ -213,13 +270,14 @@ pub fn load(motherboard: &mut Motherboard, source: &str) -> Result<usize, String
         motherboard.write_base_ram(start + i as u16, byte);
     }
     let end = end as u16;
-    for pointer in [PROGRAM_END, VARIABLES_START, ARRAYS_START, ARRAYS_END] {
+    let rom = BasicRom::of_machine(motherboard);
+    for pointer in [rom.program_end, rom.variables_start, rom.arrays_start, rom.arrays_end] {
         doke(motherboard, pointer, end);
     }
     for i in 0..VARIABLE_CHAIN_HEADS_SIZE {
-        motherboard.write_base_ram(VARIABLE_CHAIN_HEADS + i, 0);
+        motherboard.write_base_ram(rom.variable_chain_heads + i, 0);
     }
-    for flag in [AUTO_FLAG, ERROR_FLAG, PROTECT_FLAG] {
+    for &flag in rom.flags {
         motherboard.write_base_ram(flag, 0);
     }
     Ok(bytes.len())

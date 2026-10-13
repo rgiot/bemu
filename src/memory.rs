@@ -330,6 +330,22 @@ impl Rom {
     fn os6128() -> Self {
         Self(Bank(*include_bytes!("../roms/os6128.rom")))
     }
+
+    fn os464() -> Self {
+        Self(Bank(*include_bytes!("../roms/os464.rom")))
+    }
+
+    fn basic464() -> Self {
+        Self(Bank(*include_bytes!("../roms/basic464.rom")))
+    }
+
+    fn os664() -> Self {
+        Self(Bank(*include_bytes!("../roms/os664.rom")))
+    }
+
+    fn basic664() -> Self {
+        Self(Bank(*include_bytes!("../roms/basic664.rom")))
+    }
 }
 
 impl From<u8> for PageNumber {
@@ -495,6 +511,24 @@ impl Page {
 }
 
 impl Memory {
+    /// Fit the ROMs of `model`: its OS (lower ROM) and its BASIC (upper
+    /// ROM 0). AMSDOS comes with the disc interface ([`Self::set_amsdos`]).
+    pub fn set_firmware(&mut self, model: crate::motherboard::CpcModel) {
+        use crate::motherboard::CpcModel;
+        let (os, basic) = match model {
+            CpcModel::Cpc464 => (Rom::os464(), Rom::basic464()),
+            CpcModel::Cpc664 => (Rom::os664(), Rom::basic664()),
+            CpcModel::Cpc6128 => (Rom::os6128(), Rom::basic_6128())
+        };
+        self.lower_rom = os;
+        self.upper_roms[0] = Some(basic);
+    }
+
+    /// Fit AMSDOS as upper ROM 7 (a disc interface), or nothing there.
+    pub fn set_amsdos(&mut self, fitted: bool) {
+        self.upper_roms[7] = fitted.then(Rom::amsdos);
+    }
+
     /// Change how many extra 64kb pages are actually fitted, beyond the
     /// base 64kb every CPC has (1 extra page = a stock 128K CPC 6128; the
     /// gate array's page-select field is 3 bits wide, so real hardware
