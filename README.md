@@ -114,6 +114,17 @@ either way: `?x=&y=`, `?line=&nop=`, `?frame_nop=`, or `?nop=` alone for every
 line (`add=1` keeps the others, `enable=0` clears them). Named NOP counters
 (`/api/counters`, an extension) count the NOPs run while they run: create,
 reset, start, stop, delete; stop events report them and the beam.
+Advanced breakpoints drive them: `"start"`, `"stop"`, `"reset"` name the
+counters a hit acts on, and `"run":"count"` only does that (no stop, no
+event), so the NOPs between two points of a running program are measured
+without stopping it. `"after": N` ignores the first N hits, and each
+breakpoint reports its `hits`.
+
+```sh
+curl -s -X POST http://127.0.0.1:6128/api/breakpoints -d '{"addr":"0x4000","run":"count","reset":"t","start":"t"}'
+curl -s -X POST http://127.0.0.1:6128/api/breakpoints -d '{"addr":"0x4100","run":"count","stop":"t"}'
+curl -s http://127.0.0.1:6128/api/counters      # NOPs from 0x4000 to 0x4100, last time through
+```
 
 ```sh
 curl -s -X POST 'http://127.0.0.1:6128/api/raster_bp?line=100&nop=0'  # stop at line 100

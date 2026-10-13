@@ -45,7 +45,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::basic_program::{self, BasicState};
-use crate::breakpoints::{AdvancedBreakpoint, BreakpointAccess, BreakpointKind, Condition, ConditionContext, RunMode};
+use crate::breakpoints::{AdvancedBreakpoint, BreakpointAccess, BreakpointKind, Condition, ConditionContext, CounterAction, RunMode};
 use crate::csl_runner::keys_of_char;
 use crate::keyboard::CpcKey;
 use crate::memory::PhysicalAddress;
@@ -525,10 +525,10 @@ impl DebugServer {
         }
         // Data accesses of the instruction just executed.
         for access in motherboard.take_bus_accesses() {
-            let hits: Vec<AdvancedBreakpoint> =
-                self.advanced.iter().filter(|b| b.hit_by_access(&access)).cloned().collect();
-            for brk in hits {
-                self.hit(&brk, Some(access), motherboard);
+            for index in 0..self.advanced.len() {
+                if self.advanced[index].hit_by_access(&access) {
+                    self.hit(index, Some(access), motherboard);
+                }
             }
         }
         // The instruction about to be executed.
@@ -536,10 +536,10 @@ impl DebugServer {
         if !self.exec_breakpoints.is_empty() && self.exec_breakpoints.contains(&motherboard.physical_address(pc)) {
             self.stop(motherboard, json!({ "kind": "exec" }));
         }
-        let hits: Vec<AdvancedBreakpoint> =
-            self.advanced.iter().filter(|b| b.hit_by_execution(pc)).cloned().collect();
-        for brk in hits {
-            self.hit(&brk, None, motherboard);
+        for index in 0..self.advanced.len() {
+            if self.advanced[index].hit_by_execution(pc) {
+                self.hit(index, None, motherboard);
+            }
         }
         if (!self.basic_breakpoints.is_empty() || self.basic_target.is_some()) && basic_program::at_statement(motherboard) {
             self.basic_statement(motherboard);
@@ -561,15 +561,25 @@ impl DebugServer {
         self.type_due_keys(motherboard);
     }
 
-    /// An advanced breakpoint hit: stop, or only report (watch) - if its
-    /// condition holds.
-    fn hit(&mut self, brk: &AdvancedBreakpoint, access: Option<BusAccess>, motherboard: &Motherboard) {
+    /// An advanced breakpoint hit, if its condition holds: counted, and
+    /// past its pass count, acting on its counters then stopping, reporting
+    /// (watch) or nothing more (count).
+    fn hit(&mut self, index: usize, access: Option<BusAccess>, motherboard: &Motherboard) {
+        let brk = &mut self.advanced[index];
         if let Some(condition) = &brk.condition {
             if !condition.holds(&MachineContext { motherboard, access }) {
                 return;
             }
         }
-        let mut info = json!({ "kind": kind_name(brk.kind) });
+        brk.hits += 1;
+        if brk.hits <= brk.after {
+            return;
+        }
+        let brk = brk.clone();
+        for (action, name) in &brk.counters {
+            self.act_on_counter(*action, name);
+        }
+        let mut info = json!({ "kind": kind_name(brk.kind), "index": index, "hits": brk.hits });
         if let Some(name) = &brk.name {
             info["name"] = json!(name);
         }
@@ -587,9 +597,28 @@ impl DebugServer {
             RunMode::Stop => self.stop(motherboard, info),
             RunMode::Watch => {
                 let mut event = registers_event(motherboard);
+                if !self.counters.is_empty() {
+                    event["counters"] = self.counters_json();
+                }
                 merge(&mut event, info);
                 self.events.publish("watch", &event);
-            }
+            },
+            RunMode::Count => {}
+        }
+    }
+
+    /// A breakpoint's counter action (the instruction just executed is
+    /// already counted).
+    fn act_on_counter(&mut self, action: CounterAction, name: &str) {
+        let counter = match (action, self.counters.get_mut(name)) {
+            (_, Some(counter)) => counter,
+            (CounterAction::Stop, None) => return,
+            (_, None) => self.counters.entry(name.to_owned()).or_insert(NopCounter { t_states: 0, running: false })
+        };
+        match action {
+            CounterAction::Start => counter.running = true,
+            CounterAction::Stop => counter.running = false,
+            CounterAction::Reset => counter.t_states = 0
         }
     }
 
@@ -1726,11 +1755,14 @@ fn breakpoint_json(index: usize, brk: &AdvancedBreakpoint) -> Value {
         "index": index,
         "kind": kind_name(brk.kind),
         "access": match brk.access { BreakpointAccess::Read => "r", BreakpointAccess::Write => "w", BreakpointAccess::ReadWrite => "rw" },
-        "run": match brk.run { RunMode::Stop => "stop", RunMode::Watch => "watch" },
+        "run": match brk.run { RunMode::Stop => "stop", RunMode::Watch => "watch", RunMode::Count => "count" },
         "addr": brk.address, "mask": brk.mask, "size": brk.size,
         "value": brk.value, "valmask": brk.value_mask,
         "name": brk.name,
-        "condition": brk.condition.as_ref().map(Condition::source)
+        "condition": brk.condition.as_ref().map(Condition::source),
+        "counters": brk.counters.iter().map(|(action, name)| json!({ "action": action.name(), "name": name })).collect::<Vec<_>>(),
+        "after": brk.after,
+        "hits": brk.hits
     })
 }
 
@@ -1758,7 +1790,8 @@ fn breakpoint_of_json(body: &Value) -> Result<AdvancedBreakpoint, ApiError> {
     brk.run = match text("run")?.as_deref() {
         None | Some("stop") => RunMode::Stop,
         Some("watch") => RunMode::Watch,
-        Some(_) => return Err(ApiError::field("run", "field \"run\" must be one of stop, watch"))
+        Some("count") => RunMode::Count,
+        Some(_) => return Err(ApiError::field("run", "field \"run\" must be one of stop, watch, count"))
     };
     brk.address = int_field(body, "addr", 0, 0xffff)?.ok_or_else(|| ApiError::field("addr", "missing field \"addr\""))? as u16;
     brk.mask = int_field(body, "mask", 0, 0xffff)?.unwrap_or(0xffff) as u16;
@@ -1776,6 +1809,26 @@ fn breakpoint_of_json(body: &Value) -> Result<AdvancedBreakpoint, ApiError> {
         Some(Value::String(text)) => Some(Condition::parse(text).map_err(|e| ApiError::field("condition", e))?),
         Some(_) => return Err(ApiError::field("condition", "field \"condition\" must be a string"))
     };
+    // "start"/"stop"/"reset": a counter name or a list of them.
+    for action in [CounterAction::Reset, CounterAction::Start, CounterAction::Stop] {
+        let field = action.name();
+        let names = match find_key(body, field) {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::String(name)) => vec![name.clone()],
+            Some(Value::Array(names)) if names.iter().all(Value::is_string) => {
+                names.iter().map(|n| n.as_str().unwrap().to_owned()).collect()
+            },
+            Some(_) => return Err(ApiError::field(field, format!("field \"{field}\" must be a counter name or a list of them")))
+        };
+        if names.iter().any(String::is_empty) {
+            return Err(ApiError::field(field, "a counter name cannot be empty"));
+        }
+        brk.counters.extend(names.into_iter().map(|name| (action, name)));
+    }
+    brk.after = int_field(body, "after", 0, u32::MAX as i64)?.unwrap_or(0) as u64;
+    if brk.run == RunMode::Count && brk.counters.is_empty() {
+        return Err(ApiError::field("run", "run \"count\" needs counters to act on: start, stop or reset"));
+    }
     Ok(brk)
 }
 
@@ -2276,6 +2329,86 @@ mod test {
             (state["txttop"].as_u64().unwrap(), state["vartop"].as_u64().unwrap(), state["arrend"].as_u64().unwrap());
         assert!(txttop > 368 + 2 && vartop >= txttop, "{state}");
         assert!(arrend >= vartop + 11 * 5, "the array of 11 reals: {state}");
+    }
+
+    #[test]
+    fn breakpoints_drive_the_counters_and_count_their_hits() {
+        let (mut server, mut mb) = (server(), machine());
+        // LD B,10; loop: NOP; NOP; DJNZ loop; JR $
+        mb.write_buffer(0x4000, &[0x06, 0x0a, 0x00, 0x00, 0x10, 0xfc, 0x18, 0xfe]);
+        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        let add = |server: &mut DebugServer, mb: &mut Motherboard, body: &str| call(server, mb, "POST", "/api/breakpoints", body);
+        assert_eq!(add(&mut server, &mut mb, r#"{"addr":"0x4002","run":"count","reset":"loop","start":"loop","after":0}"#).0, 200);
+        // Only reset at the first pass: from the second on, keep counting.
+        call(&mut server, &mut mb, "DELETE", "/api/breakpoints", "");
+        add(&mut server, &mut mb, r#"{"addr":"0x4000","run":"count","reset":"loop"}"#);
+        add(&mut server, &mut mb, r#"{"addr":"0x4002","run":"count","start":"loop"}"#);
+        add(&mut server, &mut mb, r#"{"addr":"0x4006","stop":"loop","name":"done"}"#);
+        let events = server.events.subscribe(None).unwrap();
+        run(&mut server, &mut mb, 100);
+        assert!(server.paused());
+        assert_eq!(mb.pc(), 0x4006);
+        let (_, counters) = call(&mut server, &mut mb, "GET", "/api/counters", "");
+        assert_eq!(counters["counters"][0], json!({ "name": "loop", "nops": 9 * 6 + 5, "running": false }), "{counters}");
+        let (_, list) = call(&mut server, &mut mb, "GET", "/api/breakpoints", "");
+        assert_eq!(list["advanced"][1]["hits"], 10);
+        assert_eq!(list["advanced"][1]["counters"], json!([{ "action": "start", "name": "loop" }]));
+        let all = events_of(&events);
+        assert!(!all.iter().any(|e| e.starts_with("event: watch")), "count mode is silent");
+        let stop = all.iter().find(|e| e.starts_with("event: z80_bp")).unwrap();
+        assert!(stop.contains(r#""counters":{"loop":59}"#) && stop.contains(r#""hits":1"#), "{stop}");
+
+        // A pass count: stop at the 5th hit inside the loop.
+        call(&mut server, &mut mb, "DELETE", "/api/breakpoints", "");
+        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        add(&mut server, &mut mb, r#"{"addr":"0x4003","after":4}"#);
+        call(&mut server, &mut mb, "POST", "/api/config", r#"{"paused":false}"#);
+        run(&mut server, &mut mb, 100);
+        assert_eq!((mb.pc(), mb.cpu().reg8(crate::z80::Reg8::B).value()), (0x4003, 6));
+        assert_eq!(call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["advanced"][0]["hits"], 5);
+
+        assert_eq!(add(&mut server, &mut mb, r#"{"addr":1,"run":"count"}"#).0, 400, "count without counters");
+        assert_eq!(add(&mut server, &mut mb, r#"{"addr":1,"start":5}"#).0, 400);
+    }
+
+    /// cpclib-basic's tokenisation against the ROM's own, the line typed
+    /// on a booted 6128. Ignored until the cpclib checkout carries its
+    /// tokeniser fix (`ON ERROR` read as a variable, small numbers after a
+    /// keyword written as 16-bit constants): it passes with it.
+    #[test]
+    #[ignore]
+    fn cpclib_tokenises_as_the_rom() {
+        for line in ["10 ON ERROR GOTO 30", "20 ERROR 5", "30 GOTO 30", "40 A=1:PRINT A"] {
+            let (mut server, mut mb) = (self::server(), booted());
+            call(&mut server, &mut mb, "POST", "/api/keytype", &format!(r#"{{"text":"{line}\r"}}"#));
+            run(&mut server, &mut mb, 1_500_000);
+            let ours = cpclib::basic::BasicProgram::parse(format!("{line}\n")).unwrap().as_bytes();
+            let length = u16::from_le_bytes([mb.read_video_ram_byte(0x170), mb.read_video_ram_byte(0x171)]) as usize;
+            let typed: Vec<u8> = (0x170..0x170 + length as u16 + 2).map(|a| mb.read_video_ram_byte(a)).collect();
+            assert_eq!(ours, typed, "{line}");
+        }
+    }
+
+    #[test]
+    fn basic_flags_are_where_each_rom_keeps_them() {
+        use crate::motherboard::CpcModel;
+        for model in [CpcModel::Cpc464, CpcModel::Cpc6128] {
+            let rom = basic_program::BasicRom::of(model);
+            let (mut server, mut mb) = (server(), booted_model(model));
+            let flag = |mb: &Motherboard, i: usize| mb.read_video_ram_byte(rom.flags[i]);
+            // ERR: the last error's number.
+            call(&mut server, &mut mb, "POST", "/api/basic?run=1", "10 ERROR 5\n");
+            run(&mut server, &mut mb, 3_000_000);
+            assert_eq!(flag(&mb, 1), 5, "{}: ERR", model.name());
+            // AUTO keeps its next line and step after its flag: typed on a
+            // fresh machine, both 10.
+            let (mut auto_server, mut auto_mb) = (self::server(), booted_model(model));
+            call(&mut auto_server, &mut auto_mb, "POST", "/api/keytype", r#"{"text":"AUTO\r"}"#);
+            run(&mut auto_server, &mut auto_mb, 4_000_000);
+            let auto = rom.flags[0];
+            let fields = [auto + 1, auto + 3].map(|a| auto_mb.read_video_ram_byte(a));
+            assert_eq!(fields, [10, 10], "{}: AUTO line and step after {auto:#06x}", model.name());
+        }
     }
 
     #[test]

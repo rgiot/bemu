@@ -32,9 +32,9 @@ pub struct BasicRom {
     pub arrays_end: u16,
     /// 27 chain heads of the scalar variables (A-Z and `DEF FN`).
     pub variable_chain_heads: u16,
-    /// Flags a load clears: `AUTO`, `ON ERROR GOTO`, `PROTECT` (only those
-    /// known for this ROM).
-    flags: &'static [u16],
+    /// What a load clears: the `AUTO` flag, `ERR` (the last error's
+    /// number) and the `PROTECT` flag.
+    pub flags: &'static [u16],
     /// The ROM's per-statement point: just after it stored the statement's
     /// address in `current_statement` (`LD (nnnn),HL`, the 3 bytes
     /// before): reached once per statement run, both pointers fresh.
@@ -69,7 +69,9 @@ impl BasicRom {
         arrays_start: 0xAE87,
         arrays_end: 0xAE89,
         variable_chain_heads: 0xADD0,
-        flags: &[],
+        // Located by the code using them, matched against 1.1's: not all
+        // on the &19 shift of the rest.
+        flags: &[0xAC1C, 0xADAA, 0xAE45],
         statement_hook: 0xDD7F
     };
 
