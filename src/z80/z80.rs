@@ -2196,6 +2196,12 @@ impl Z80 {
      //      dbg!(&self.next_state);
         } else {
             self.next_state = Default::default();
+            // /INT is a level, looked at again by every instruction: a request the gate array
+            // took back meanwhile (RMR bit 4 while interrupts were disabled) must not
+            // come back as an interrupt when EI is executed
+            if !shadowed {
+                self.interruption_received = false;
+            }
         }
     }
     

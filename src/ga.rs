@@ -1479,6 +1479,9 @@ impl Chip for GateArray {
 
         // XXX play with the modulo to handle the appropriate timing
         if !self.get_pin(GateArrayPin::Neg_M1) && !self.get_pin(GateArrayPin::Neg_IORQ) {
+            // the request is held until the CPU answers it
+            self.interrupt_signal_counter = InterruptionSignal::NoSignal;
+            self.set_pin(GateArrayPin::INTERRUPT, true);
             if !self.ack_armed && self.clock % 4 == 0 {
                 self.ack_armed = true;
                 // ACCC §27.3.1/§27.7.1: the Gate Array hears of the acknowledge
@@ -1505,19 +1508,6 @@ impl Chip for GateArray {
             }
         }
        
-        // Check if interrupt signal needs to be cut down
-        if let InterruptionSignal::Signal(ref mut count) = self.interrupt_signal_counter {
-            // cut the signal after 1.4 micro seconds in real life
-            // here we simplify it to 1ms as the cpu is coded in a way that allows it to detect it faster than in real life
-            let limit = 4 /* (1.4 * 16.) as usize  */;
-            *count += 1;
-            if *count == (1.4 * 16.) as usize {
-       //         dbg!("GA stop request interrupt");
-                self.interrupt_signal_counter = InterruptionSignal::NoSignal;
-                self.set_pin(GateArrayPin::INTERRUPT, true);
-            }
-        }
-
         self.generate_pixel();
         self.generate_sync();
     }
