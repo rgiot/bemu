@@ -10,6 +10,7 @@ use amsrust::z80::{HasValue, Reg16};
 
 const PORT_A: u8 = 0xf4;
 const PORT_C: u8 = 0xf6;
+const PORT_CTRL: u8 = 0xf7;
 
 /// LD BC,B<<8; LD A,val; OUT (C),A
 fn emit_out(prog: &mut Vec<u8>, port_high: u8, value: u8) {
@@ -29,9 +30,11 @@ fn emit_in(prog: &mut Vec<u8>, port_high: u8, dest: u16) {
 /// PSG register 14, then trigger a read with that row selected on port C's
 /// low nibble, then read the byte back from port A.
 fn emit_read_row(prog: &mut Vec<u8>, row: u8, dest: u16) {
+    emit_out(prog, PORT_CTRL, 0x82); // port A output: it drives the PSG bus
     emit_out(prog, PORT_A, 14); // register 14 = I/O port A
     emit_out(prog, PORT_C, 0xc0); // BDIR=1,BC1=1 -> latch address
     emit_out(prog, PORT_C, 0x00); // back to inactive
+    emit_out(prog, PORT_CTRL, 0x92); // port A input: the PSG drives the bus for the read
     emit_out(prog, PORT_C, 0x40 | (row & 0x0f)); // BDIR=0,BC1=1 -> read, row selected
     emit_in(prog, PORT_A, dest);
     emit_out(prog, PORT_C, 0x00); // back to inactive

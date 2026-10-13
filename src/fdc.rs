@@ -73,6 +73,53 @@ mod st3 {
     pub const TS: u8 = 1 << 3; // Two-sided
 }
 
+/// Timing of a real drive (the 765 runs at 4 MHz, MFM at 250 kbit/s on a 300 rpm disc).
+const BYTE_US: u64 = 32;
+const TRACK_BYTES: u64 = 6250;
+/// Pause between two bytes of the command and result phases (RQM drops for about 12 us).
+const PHASE_GAP_US: u64 = 12;
+/// Head settling after the last step of a seek.
+const SETTLE_US: u64 = 15_000;
+/// Bytes between the index hole and the first sector's sync (gap 4a, sync, IAM, gap 1).
+const TRACK_HEAD_BYTES: u64 = 146;
+
+/// Where each sector of a track lies, in microseconds after the index hole.
+struct Layout {
+    /// First byte of the ID field (after its sync and address mark), and the byte after its CRC.
+    id_start: Vec<u64>,
+    id_end: Vec<u64>,
+    /// First data byte.
+    data_start: Vec<u64>,
+    /// Length of a revolution.
+    period: u64
+}
+
+impl Layout {
+    fn of(track: &Track) -> Self {
+        let mut pos = TRACK_HEAD_BYTES;
+        let (mut id_start, mut id_end, mut data_start) = (vec![], vec![], vec![]);
+        for sector in &track.sectors {
+            id_start.push((pos + 12 + 4) * BYTE_US);
+            id_end.push((pos + 12 + 4 + 4 + 2) * BYTE_US);
+            data_start.push((pos + 22 + 22 + 12 + 4) * BYTE_US);
+            let len = size_from_code(sector.n).max(1) as u64;
+            pos += 22 + 22 + 12 + 4 + len + 2 + u64::from(track.gap3);
+        }
+        Self {
+            id_start,
+            id_end,
+            data_start,
+            period: pos.max(TRACK_BYTES) * BYTE_US
+        }
+    }
+}
+
+/// The first instant at or after `from` that falls `offset` microseconds after an index hole.
+fn occurrence(from: u64, offset: u64, period: u64) -> u64 {
+    let phase = from % period;
+    from + (offset + period - phase) % period
+}
+
 /// Number of unit-select values the chip can address (US1-US0).
 const NB_UNITS: usize = 4;
 /// A drive head cannot go past the last track its mechanism allows.
@@ -214,7 +261,10 @@ const FMT_D: usize = 5;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandRecord {
     pub command: Vec<u8>,
-    pub result: Vec<u8>
+    pub result: Vec<u8>,
+    /// Microseconds (with drive timing) when the command was complete and when its result began
+    pub start_us: u64,
+    pub end_us: u64
 }
 
 #[derive(Default)]
@@ -291,7 +341,24 @@ pub struct Fdc {
     /// Every command executed so far, when logging was asked for (see
     /// [`Fdc::start_command_log`]): a debugging aid for whoever needs to see
     /// what a driver such as AMSDOS really says to the chip.
-    command_log: Option<Vec<CommandRecord>>
+    command_log: Option<Vec<CommandRecord>>,
+
+    /// Real drive timing (rotation, seek, 32 us a byte) instead of instant transfers.
+    timing: bool,
+    /// Microseconds since the machine started.
+    now_us: u64,
+    /// RQM only rises from this instant on.
+    rqm_at: u64,
+    /// Where the head is on the track, as an instant: the next sector to search starts here.
+    t_cursor: u64,
+    /// The instant the first data byte of the sector being transferred passes under the head.
+    data_t0: u64,
+    /// Step time of the head (set by Specify).
+    step_us: u64,
+    /// Seeks in progress: (done at, unit, track reached, ST0 at the end).
+    seeks: Vec<(u64, usize, u8, u8)>,
+    /// MSR bits D0B-D3B: drives that are stepping.
+    seeking: u8
 }
 
 impl Default for Fdc {
@@ -313,7 +380,15 @@ impl Default for Fdc {
             xfer: Transfer::default(),
             exec_data: Vec::new(),
             exec_pos: 0,
-            command_log: None
+            command_log: None,
+            timing: false,
+            now_us: 0,
+            rqm_at: 0,
+            t_cursor: 0,
+            data_t0: 0,
+            step_us: 12_000,
+            seeks: Vec::new(),
+            seeking: 0
         };
         fdc.reset();
         fdc
@@ -334,6 +409,9 @@ impl Fdc {
         self.result_pos = 0;
         self.exec_data.clear();
         self.exec_pos = 0;
+        self.seeks.clear();
+        self.seeking = 0;
+        self.rqm_at = 0;
         for drive in &mut self.drives {
             drive.track = 0;
             drive.cursor = 0;
@@ -349,6 +427,50 @@ impl Fdc {
     /// The commands recorded since [`Fdc::start_command_log`].
     pub fn command_log(&self) -> &[CommandRecord] {
         self.command_log.as_deref().unwrap_or_default()
+    }
+
+    /// Real drive timing: rotation (200 ms a turn, 32 us a byte), head steps, 12 us between the bytes
+    /// of the command and result phases, overrun when the CPU is too slow. Off, transfers are instant.
+    pub fn set_realistic_timing(&mut self, on: bool) {
+        self.timing = on;
+    }
+
+    /// Microseconds since the machine started (0 without drive timing).
+    pub fn time_us(&self) -> u64 {
+        self.now_us
+    }
+
+    /// Let `us` microseconds pass.
+    pub fn advance(&mut self, us: u64) {
+        if !self.timing {
+            return;
+        }
+        self.now_us += us;
+        // seeks that are over
+        let now = self.now_us;
+        let mut i = 0;
+        while i < self.seeks.len() {
+            if self.seeks[i].0 <= now {
+                let (_, unit, track, st0) = self.seeks.remove(i);
+                self.drives[unit].track = track;
+                self.drives[unit].cursor = 0;
+                self.pending_interrupt[unit] = Some(st0);
+                self.seeking &= !(1 << unit);
+            }
+            else {
+                i += 1;
+            }
+        }
+        // a byte of a read that nobody took before the next one came is lost
+        if self.phase == Phase::Execution
+            && self.st & msr::RQM != 0
+            && !matches!(self.current_cmd, Cmd::FormatTrack)
+            && now >= self.rqm_at + BYTE_US
+        {
+            self.st1 |= 0x10; // OR: overrun
+            self.st0 |= st0::IC_ABNORMAL;
+            self.finish_transfer();
+        }
     }
 
     pub fn set_motor(&mut self, on: bool) {
@@ -391,11 +513,25 @@ impl Fdc {
     // ---- Register access (called directly from Motherboard's I/O dispatch) ----
 
     pub fn read_status(&self) -> u8 {
-        self.st
+        if self.timing {
+            let mut st = self.st | self.seeking;
+            if self.now_us < self.rqm_at {
+                st &= !msr::RQM;
+            }
+            st
+        }
+        else {
+            self.st
+        }
+    }
+
+    /// RQM is up (always, without drive timing).
+    fn rqm_now(&self) -> bool {
+        !self.timing || self.now_us >= self.rqm_at
     }
 
     pub fn write_data(&mut self, val: u8) {
-        if self.st & msr::RQM == 0 || self.st & msr::DIO != 0 {
+        if self.st & msr::RQM == 0 || self.st & msr::DIO != 0 || !self.rqm_now() {
             // Not our turn to accept a byte from the CPU.
             return;
         }
@@ -419,6 +555,9 @@ impl Fdc {
     }
 
     pub fn read_data(&mut self) -> u8 {
+        if !self.rqm_now() {
+            return 0xff;
+        }
         match self.phase {
             Phase::Execution => {
                 if self.st & msr::RQM != 0 && !self.current_cmd.from_cpu() {
@@ -435,6 +574,7 @@ impl Fdc {
             Phase::Result => {
                 let byte = self.result.get(self.result_pos).copied().unwrap_or(0xff);
                 self.result_pos += 1;
+                self.rqm_at = self.now_us + PHASE_GAP_US;
                 if self.result_pos >= self.result.len() {
                     self.go_to_command_phase();
                 }
@@ -451,6 +591,9 @@ impl Fdc {
         self.command.clear();
         self.command_len = 1;
         self.st = msr::RQM;
+        if self.timing {
+            self.rqm_at = self.now_us + PHASE_GAP_US;
+        }
     }
 
     fn go_to_execution_phase(&mut self) {
@@ -459,6 +602,23 @@ impl Fdc {
         self.st = msr::RQM | msr::EXM | msr::CB;
         if !self.current_cmd.from_cpu() {
             self.st |= msr::DIO;
+        }
+        if self.timing {
+            self.rqm_at = self.next_byte_at();
+        }
+    }
+
+    /// The instant the byte `exec_pos` of the transfer passes (read) or is wanted (write).
+    fn next_byte_at(&self) -> u64 {
+        let pos = self.exec_pos as u64;
+        match self.current_cmd {
+            Cmd::FormatTrack => {
+                let size = size_from_code(self.command[FMT_N]) as u64;
+                let slot = (22 + 22 + 12 + 4 + size + 2 + u64::from(self.command[FMT_GPL])) * BYTE_US;
+                self.data_t0 + (pos / 4) * slot + (pos % 4) * BYTE_US
+            },
+            cmd if cmd.from_cpu() => self.data_t0 + pos * BYTE_US,
+            _ => self.data_t0 + (pos + 1) * BYTE_US
         }
     }
 
@@ -469,10 +629,14 @@ impl Fdc {
     fn go_to_result_phase(&mut self) {
         if let Some(record) = self.command_log.as_mut().and_then(|log| log.last_mut()) {
             record.result = self.result.clone();
+            record.end_us = self.t_cursor.max(self.now_us);
         }
         self.phase = Phase::Result;
         self.result_pos = 0;
         self.st = msr::RQM | msr::DIO | msr::CB;
+        if self.timing {
+            self.rqm_at = self.t_cursor.max(self.now_us);
+        }
     }
 
     // ---- Command phase ----
@@ -484,6 +648,7 @@ impl Fdc {
             self.st |= msr::CB;
         }
         self.command.push(val);
+        self.rqm_at = self.now_us + PHASE_GAP_US;
 
         if self.command.len() == self.command_len {
             self.dispatch_command();
@@ -491,10 +656,13 @@ impl Fdc {
     }
 
     fn dispatch_command(&mut self) {
+        self.t_cursor = self.now_us;
         if let Some(log) = &mut self.command_log {
             log.push(CommandRecord {
                 command: self.command.clone(),
-                result: Vec::new()
+                result: Vec::new(),
+                start_us: self.now_us,
+                end_us: 0
             });
         }
 
@@ -512,7 +680,10 @@ impl Fdc {
             Cmd::Recalibrate => self.do_seek_like(0),
             Cmd::Seek => self.do_seek_like(self.command[CMD_C]),
             Cmd::SenseInterruptStatus => self.do_sense_interrupt_status(),
-            Cmd::Specify => self.go_to_command_phase(),
+            Cmd::Specify => {
+                self.step_us = (16 - u64::from(self.command[1] >> 4)) * 2_000;
+                self.go_to_command_phase()
+            },
             Cmd::SenseDriveStatus => self.do_sense_drive_status(),
             Cmd::Invalid => self.do_invalid()
         }
@@ -563,6 +734,23 @@ impl Fdc {
     /// raise the "seek end" interrupt Sense Interrupt Status reports.
     fn do_seek_like(&mut self, target_track: u8) {
         let unit = self.unit();
+        if self.timing {
+            let from = self.drives[unit].track;
+            let to = target_track.min(MAX_TRACK);
+            let steps = u64::from(from.abs_diff(to));
+            let st0 = if self.drives[unit].disc.is_some() {
+                st0::SE | unit as u8
+            }
+            else {
+                st0::IC_ABNORMAL | st0::NR | unit as u8
+            };
+            let done = self.now_us + steps * self.step_us + if steps > 0 { SETTLE_US } else { 1_000 };
+            self.seeks.retain(|seek| seek.1 != unit);
+            self.seeks.push((done, unit, to, st0));
+            self.seeking |= 1 << unit;
+            self.go_to_command_phase();
+            return;
+        }
         let drive = &mut self.drives[unit];
         drive.track = target_track.min(MAX_TRACK);
         drive.cursor = 0;
@@ -609,6 +797,37 @@ impl Fdc {
 
         self.result = vec![st3];
         self.go_to_result_phase();
+    }
+
+    // ---- Drive timing ----
+
+    /// Where the sectors of the track under `unit`'s head are on it (None when unformatted).
+    fn layout(&self, unit: usize, head: u8) -> Option<Layout> {
+        let drive = &self.drives[unit];
+        drive
+            .disc
+            .as_ref()
+            .and_then(|disc| disc.track(head, drive.track))
+            .filter(|track| !track.sectors.is_empty())
+            .map(Layout::of)
+    }
+
+    /// The sector that passes next under the head at `t_cursor` becomes the cursor.
+    fn sync_cursor(&mut self, unit: usize, head: u8) {
+        if !self.timing {
+            return;
+        }
+        if let Some(layout) = self.layout(unit, head) {
+            let phase = self.t_cursor % layout.period;
+            self.drives[unit].cursor = layout.id_start.iter().position(|&start| start >= phase).unwrap_or(0);
+        }
+    }
+
+    /// A search that finds nothing goes on for two turns of the disc.
+    fn lose_two_turns(&mut self) {
+        if self.timing {
+            self.t_cursor += 2 * TRACK_BYTES * BYTE_US;
+        }
     }
 
     // ---- Locating sectors ----
@@ -696,7 +915,17 @@ impl Fdc {
             self.st1 |= st1::MA | st1::ND;
         }
         else {
+            self.sync_cursor(unit, head);
             let cursor = self.drives[unit].cursor;
+            if self.timing {
+                match self.layout(unit, head) {
+                    Some(layout) => {
+                        let index = cursor % layout.id_end.len();
+                        self.t_cursor = occurrence(self.t_cursor, layout.id_end[index], layout.period);
+                    },
+                    None => self.t_cursor += 2 * TRACK_BYTES * BYTE_US
+                }
+            }
             let sectors = self.sectors(unit, head);
             if sectors.is_empty() {
                 self.st0 |= st0::IC_ABNORMAL;
@@ -763,7 +992,13 @@ impl Fdc {
             let count = usize::from(self.xfer.eot).min(self.sectors(unit, self.xfer.head).len());
             self.xfer.track_queue = (0..count).rev().collect();
             self.drives[unit].cursor = 0;
+            if self.timing {
+                // Read Track starts at the index hole
+                let period = self.layout(unit, self.xfer.head).map_or(TRACK_BYTES * BYTE_US, |l| l.period);
+                self.t_cursor = occurrence(self.now_us, 0, period);
+            }
             if !self.next_read_track_sector() {
+                self.lose_two_turns();
                 self.st0 |= st0::IC_ABNORMAL;
                 self.st1 |= st1::MA | st1::ND;
                 self.finish_transfer();
@@ -778,8 +1013,10 @@ impl Fdc {
     /// the command when it cannot be found.
     fn search_and_load(&mut self) {
         loop {
+            self.sync_cursor(self.xfer.unit, self.xfer.head);
             let Some(index) = self.find_sector()
             else {
+                self.lose_two_turns();
                 self.st0 |= st0::IC_ABNORMAL;
                 self.finish_transfer();
                 return;
@@ -825,6 +1062,15 @@ impl Fdc {
 
         self.xfer.sector = index;
         (self.xfer.c, self.xfer.h, self.xfer.r, self.xfer.n) = id;
+        if self.timing {
+            if let Some(layout) = self.layout(unit, head) {
+                if let (Some(&id_end), Some(&data_start)) = (layout.id_end.get(index), layout.data_start.get(index)) {
+                    let t_id = occurrence(self.t_cursor, id_end, layout.period);
+                    self.data_t0 = occurrence(t_id, data_start, layout.period);
+                    self.t_cursor = t_id;
+                }
+            }
+        }
 
         // A sector the medium recorded as unreadable *before its data*: a CRC
         // error in the ID field (DE without DD), no such sector (ND), or no
@@ -932,6 +1178,9 @@ impl Fdc {
         if self.exec_pos < self.exec_data.len() {
             // still transferring the current sector
             self.st |= msr::RQM;
+            if self.timing {
+                self.rqm_at = self.next_byte_at();
+            }
             return;
         }
 
@@ -944,6 +1193,10 @@ impl Fdc {
     /// One sector's data has been fully transferred.
     fn finish_sector(&mut self) {
         let (unit, head, index) = (self.xfer.unit, self.xfer.head, self.xfer.sector);
+        if self.timing {
+            // data and CRC have passed under the head
+            self.t_cursor = self.data_t0 + (self.exec_data.len() as u64 + 2) * BYTE_US;
+        }
 
         if self.current_cmd.is_write() {
             self.store_written_sector(unit, head, index);
@@ -1092,6 +1345,13 @@ impl Fdc {
             return;
         }
 
+        if self.timing {
+            // everything happens in one turn of the disc, from the index hole
+            let turn = TRACK_BYTES * BYTE_US;
+            let t_index = occurrence(self.now_us, 0, turn);
+            self.data_t0 = t_index + TRACK_HEAD_BYTES * BYTE_US;
+            self.t_cursor = t_index + turn;
+        }
         // the CPU now sends one C/H/R/N per sector to create
         self.exec_data = vec![0; usize::from(self.command[FMT_SC]) * 4];
         if self.exec_data.is_empty() {

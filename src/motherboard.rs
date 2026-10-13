@@ -45,6 +45,10 @@ pub struct Motherboard {
     // these track whether the current bus request was already serviced so
     // it's only acted on once, on its first tick.
     fdc_write_active: bool,
+    /// Microseconds since the start and the PC jump trace (AMSRUST_TRACE_PC=<from us>)
+    us: u64,
+    trace_pc_from: Option<u64>,
+    last_traced_pc: u16,
     fdc_read_active: bool,
     /// What a read of a port nothing decodes returns.
     floating_bus: u8,
@@ -85,8 +89,19 @@ impl Default for Motherboard {
             rom_selector: Default::default(),
             memory: Default::default(),
             large_ram_expansion: None,
-            fdc: Default::default(),
+            fdc: {
+                // the drive turns and steps like a real one, unless AMSRUST_FAST_DISC is set
+                let mut fdc = Fdc::default();
+                fdc.set_realistic_timing(std::env::var("AMSRUST_FAST_DISC").is_err());
+                if std::env::var("AMSRUST_FDC_LOG").is_ok() {
+                    fdc.start_command_log();
+                }
+                fdc
+            },
             fdc_write_active: false,
+            us: 0,
+            trace_pc_from: std::env::var("AMSRUST_TRACE_PC").ok().and_then(|v| v.parse().ok()),
+            last_traced_pc: 0,
             fdc_read_active: false,
             floating_bus: 0xff,
             cached_input_byte: 0xff,
@@ -356,6 +371,17 @@ impl Motherboard {
         // safe.
         if self.crtc.is_activated() {
             self.crtc.set_phase_ticks(0);
+            self.fdc.advance(1); // one character = one microsecond
+            self.us += 1;
+            if let Some(from) = self.trace_pc_from {
+                if self.us >= from {
+                    let pc = self.cpu.pc();
+                    if (i32::from(pc) - i32::from(self.last_traced_pc)).abs() > 4 {
+                        eprintln!("PC {} {:04X} sp={:04X}", self.us, pc, self.cpu.reg16(Reg16::Sp).value());
+                    }
+                    self.last_traced_pc = pc;
+                }
+            }
             self.crtc.tick(); // Virtually uses 16 cycles
         }
         else {
@@ -669,9 +695,16 @@ impl Motherboard {
             self.psg.set_register(REG_IO_PORT_A, self.keyboard.line(row_select));
         }
 
-        let data_bus = self.ppi.get_data_a_from_pins();
+        // The bus is shared: the PPI drives it when port A is an output (what the CPU wrote), the PSG
+        // drives it while it is read. Both together fight (we take the AND); the latch survives it, so
+        // the next PSG latch/write cycle still sees what the CPU wrote.
+        let a_out = self.ppi.port_a_is_output();
+        let latch = self.ppi.port_a_latch();
+        let data_bus = if a_out { latch } else { self.ppi.get_data_a_from_pins() };
         if let Some(read_value) = self.psg.bus_cycle(control, data_bus) {
-            self.ppi.set_port_a_input(read_value);
+            self.ppi.set_port_a_input(if a_out { latch & read_value } else { read_value });
+        } else if a_out {
+            self.ppi.set_port_a_input(latch);
         }
 
         // The PSG's CLOCK pin is wired to the gate array's 1MHz output, the

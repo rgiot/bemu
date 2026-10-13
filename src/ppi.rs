@@ -176,6 +176,9 @@ pub struct Ppi {
     mode_c_upper: PpiMode,
 
     direction_a: PpiDirection,
+    /// What the CPU last wrote to port A (the output latch): it drives the pins only when port A is
+    /// an output, and the PSG reading the shared bus must not overwrite it
+    port_a_latch: u8,
     direction_b: PpiDirection,
     direction_c_lower: PpiDirection,
     direction_c_upper: PpiDirection,
@@ -199,6 +202,7 @@ impl Default for Ppi {
             mode_c_upper: Default::default(),
 
             direction_a: Default::default(),
+            port_a_latch: 0,
             direction_b: PpiDirection::Input, // no idea if it is the best choice, but it allows to directly test vsync
             direction_c_lower: Default::default(),
             direction_c_upper: Default::default(),
@@ -253,6 +257,16 @@ impl Ppi {
     /// CPU. `Motherboard` calls this right after a PSG read bus cycle so
     /// the byte is already sitting on port A by the time the CPU's `IN
     /// A,(C)` reaches `execute_tick()`.
+    /// Whether port A drives the data bus shared with the PSG.
+    pub fn port_a_is_output(&self) -> bool {
+        self.direction_a == PpiDirection::Output
+    }
+
+    /// The port A output latch (what the CPU last wrote).
+    pub fn port_a_latch(&self) -> u8 {
+        self.port_a_latch
+    }
+
     pub fn set_port_a_input(&mut self, value: u8) {
         self.set_data_a_on_pins(value);
     }
@@ -355,6 +369,7 @@ impl Chip for Ppi {
                 // comment just below for why this doesn't need
                 // `direction_a` either.
                 let byte = self.get_data_from_pins();
+                self.port_a_latch = byte;
                 self.set_data_a_on_pins(byte);
             } else if !self.get_pin(PpiPin::Neg_RD) {
                 // Reading an input-configured port returns the live input
@@ -453,6 +468,7 @@ impl Chip for Ppi {
                 self.set_control_configuration(byte);
 
                 if self.clears_ports_on_mode_set {
+                    self.port_a_latch = 0;
                     self.set_data_a_on_pins(0);
                     // Real 8255 hardware clears port B's output latch to 0 on a
                     // mode-set write, but in this emulator B0/B1-B3/B4 aren't CPU

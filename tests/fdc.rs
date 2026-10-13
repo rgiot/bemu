@@ -240,6 +240,8 @@ fn motherboard_reads_disk_through_real_io_ports() {
         .disable_upper_rom()
         .build();
     motherboard.fdc_mut().insert_disk(FdcDrive::A, Some(disk)).unwrap();
+    // the program below reads the bytes blindly, without waiting for RQM
+    motherboard.fdc_mut().set_realistic_timing(false);
 
     let mut prog = Vec::new();
     let mut nb_instructions = 0usize;

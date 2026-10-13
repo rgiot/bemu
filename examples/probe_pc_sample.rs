@@ -11,6 +11,7 @@ fn main() {
     let base = std::path::Path::new(&script).parent().unwrap().to_path_buf();
     runner.run_text(&std::fs::read_to_string(&script).unwrap(), base).unwrap();
     let mb = runner.motherboard_mut();
+    println!("start at {} us, keyboard lines {:02X?}", mb.fdc().time_us(), mb.keyboard().lines());
     let mut count: BTreeMap<u16, u32> = BTreeMap::new();
     for _ in 0..ticks {
         mb.tick();
@@ -22,7 +23,7 @@ fn main() {
         println!("{pc:04X} {c}");
     }
     let (pc, _) = v[0];
-    for extra in [0xDE20u16, 0xE950, 0xE9F0] { let b: Vec<String> = (0..64u16).map(|i| format!("{:02X}", mb.read_byte(extra.wrapping_add(i)))).collect(); println!("{extra:04X}: {}", b.join(" ")); }
+    for extra in [0x03E0u16, 0x03F0, 0x0400] { let b: Vec<String> = (0..64u16).map(|i| format!("{:02X}", mb.read_byte(extra.wrapping_add(i)))).collect(); println!("{extra:04X}: {}", b.join(" ")); }
     let start = pc.wrapping_sub(16);
     let bytes: Vec<String> = (0..48u16).map(|i| format!("{:02X}", mb.read_byte(start.wrapping_add(i)))).collect();
     println!("{start:04X}: {}", bytes.join(" "));

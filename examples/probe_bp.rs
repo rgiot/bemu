@@ -33,6 +33,7 @@ fn main() {
             );
             { let cpu = mb.cpu(); println!("  cpu SP={:04X} IX={:04X} IY={:04X} F={:02X} I={:02X} R={:02X} IFF1={}", cpu.reg16(amsrust::z80::Reg16::Sp).value(), cpu.reg16(amsrust::z80::Reg16::Ix).value(), cpu.reg16(amsrust::z80::Reg16::Iy).value(), cpu.reg8(Reg8::F).value(), cpu.reg8(Reg8::I).value(), cpu.reg8(Reg8::R).value(), cpu.iff1()); }
             { let c = mb.crtc(); println!("  crtc regs R0-R9=[{},{},{},{},{},{},{},{},{},{}] selected={} C4={:?} C9={}", c.r0(),c.r1(),c.r2(),c.r3(),c.r4(),c.r5(),c.r6(),c.r7(),c.r8(),c.r9(), c.selected_register(), c.vcc, c.vlc.value()); }
+            println!("  psg r7={:02X} r14={:02X} sel={:?}", mb.psg().register(7), mb.psg().register(14), mb.psg().selected_register());
             n += 1;
             if let (Some(from), 1) = (dump_from, n) {
                 for row in 0..(dump_len / 16) {
