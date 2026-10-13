@@ -1182,8 +1182,13 @@ impl DebugServer {
             self.history.clear();
         }
         if soft || hard {
-            // No separate soft reset on a CPC: both are the RESET line.
-            motherboard.restart();
+            // Soft: the reset button (RAM kept). Hard: power off and on.
+            if hard {
+                motherboard.power_cycle();
+            }
+            else {
+                motherboard.restart();
+            }
             self.events.publish("reset", &json!({ "hard": hard }));
         }
         if let Some(paused) = paused {
@@ -2371,14 +2376,12 @@ mod test {
         assert_eq!(add(&mut server, &mut mb, r#"{"addr":1,"start":5}"#).0, 400);
     }
 
-    /// cpclib-basic's tokenisation against the ROM's own, the line typed
-    /// on a booted 6128. Ignored until the cpclib checkout carries its
-    /// tokeniser fix (`ON ERROR` read as a variable, small numbers after a
-    /// keyword written as 16-bit constants): it passes with it.
+    /// cpclib-basic's tokenisation (what `POST /api/basic` loads) against
+    /// the ROM's own, the line typed on a booted 6128: a program loaded
+    /// through the debug server is the one the CPC would have stored.
     #[test]
-    #[ignore]
     fn cpclib_tokenises_as_the_rom() {
-        for line in ["10 ON ERROR GOTO 30", "20 ERROR 5", "30 GOTO 30", "40 A=1:PRINT A"] {
+        for line in ["10 ON ERROR GOTO 30", "20 ERROR 5", "30 GOTO 30", "40 A=1:PRINT A", "50 DATA 1,2,300", "60 X=RND*100"] {
             let (mut server, mut mb) = (self::server(), booted());
             call(&mut server, &mut mb, "POST", "/api/keytype", &format!(r#"{{"text":"{line}\r"}}"#));
             run(&mut server, &mut mb, 1_500_000);
@@ -2409,6 +2412,19 @@ mod test {
             let fields = [auto + 1, auto + 3].map(|a| auto_mb.read_video_ram_byte(a));
             assert_eq!(fields, [10, 10], "{}: AUTO line and step after {auto:#06x}", model.name());
         }
+    }
+
+    #[test]
+    fn soft_resets_keep_the_ram_hard_ones_clear_it() {
+        let (mut server, mut mb) = (server(), MotherboardBuilder::default().build());
+        mb.write_bank_byte(1, 0x10, 0x42);
+        mb.write_bank_byte(5, 0x10, 0x43);
+        call(&mut server, &mut mb, "POST", "/api/config", r#"{"do_soft_reset":true}"#);
+        assert_eq!((mb.pc(), mb.read_bank_byte(1, 0x10), mb.read_bank_byte(5, 0x10)), (0, Some(0x42), Some(0x43)));
+        call(&mut server, &mut mb, "POST", "/api/config", r#"{"do_hard_reset":true}"#);
+        assert_eq!((mb.read_bank_byte(1, 0x10), mb.read_bank_byte(5, 0x10)), (Some(0), Some(0)));
+        mb.execute_next_opcode_no_video();
+        assert_ne!(mb.pc(), 0, "runs after a hard reset");
     }
 
     #[test]
