@@ -149,6 +149,7 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/quit", methods: &["POST"], summary: "leave the emulator", extension: false },
     Route { path: "/api/history", methods: &["GET"], summary: "last executed instructions (?n=), bytes as fetched and as now", extension: false },
     Route { path: "/api/screenshot", methods: &["GET"], summary: "last complete frame as PNG (768x272, the visible area)", extension: false },
+    Route { path: "/api/media", methods: &["POST"], summary: "load a .sna/.dsk (by content) or .bin/.amsdos (?name=, ?drive=)", extension: false },
     Route { path: "/api/doc", methods: &["GET"], summary: "this list", extension: false }
 ];
 
@@ -499,6 +500,7 @@ impl DebugServer {
             },
             ("GET", "/api/history") => self.history_list(request, motherboard),
             ("GET", "/api/screenshot") => self.screenshot(),
+            ("POST", "/api/media") => self.media(request, motherboard),
             _ => unreachable!("{} {}", request.method, request.path)
         };
         result.unwrap_or_else(ApiError::response)
@@ -834,6 +836,72 @@ impl DebugServer {
         })
     }
 
+    /// `POST /api/media?name=&drive=&crtc=`: the raw file as the body. A
+    /// snapshot or a disc image is recognised by its content, a binary by
+    /// its name (`.bin`/`.amsdos`): with an AMSDOS header it loads at the
+    /// header's address, headerless it needs `name@LOAD[@ENTRY].bin` (hex).
+    /// The CPU jumps only to an `@ENTRY` given in the name; the reply gives
+    /// the header's entry otherwise. A snapshot's breakpoints are set.
+    /// `crtc` is accepted for compatibility: the CRTC is always kept.
+    fn media(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
+        let bytes = &request.body;
+        if bytes.is_empty() {
+            return Err(ApiError::new("empty body: expected the raw media file bytes"));
+        }
+        let name = request.param("name").unwrap_or("");
+        let drive = match request.param("drive") {
+            None | Some("0") => crate::fdc::FdcDrive::A,
+            Some("1") => crate::fdc::FdcDrive::B,
+            Some(_) => return Err(ApiError::field("drive", "parameter \"drive\" must be 0 or 1"))
+        };
+        if let Some(crtc) = request.param("crtc") {
+            if !matches!(crtc, "keep" | "sna") {
+                return Err(ApiError::field("crtc", "parameter \"crtc\" must be one of keep, sna"));
+            }
+        }
+        let lower_name = name.to_ascii_lowercase();
+        let mut reply = json!({ "ok": true });
+        if bytes.starts_with(b"MV - SNA") {
+            let breakpoints = crate::snapshot::load_sna_bytes(motherboard, bytes).map_err(ApiError::new)?;
+            for brk in &breakpoints.exec {
+                self.add_exec_breakpoint(brk.address, motherboard);
+            }
+            for brk in &breakpoints.advanced {
+                self.add_advanced_breakpoint(brk.clone(), motherboard);
+            }
+            reply["media"] = json!("sna");
+            reply["breakpoints"] = json!(breakpoints.len());
+            if !breakpoints.ignored.is_empty() {
+                reply["warnings"] = json!(breakpoints.ignored);
+            }
+        }
+        else if bytes.starts_with(b"MV - CPC") || bytes.starts_with(b"EXTENDED CPC DSK") {
+            let image = crate::disc_image::load_dsk(bytes).map_err(ApiError::new)?;
+            motherboard.fdc_mut().insert_image(drive, Some(image));
+            reply["media"] = json!("dsk");
+        }
+        else if lower_name.ends_with(".bin") || lower_name.ends_with(".amsdos") {
+            let binary = parse_binary(name, bytes).map_err(|e| ApiError::field("name", e))?;
+            motherboard.write_buffer(binary.load, binary.data);
+            if let Some(entry) = binary.jump {
+                motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(entry);
+            }
+            reply["media"] = json!("bin");
+            reply["load"] = json!(binary.load);
+            reply["len"] = json!(binary.data.len());
+            if let Some(entry) = binary.entry {
+                reply["entry"] = json!(entry);
+            }
+        }
+        else {
+            return Err(ApiError::new(
+                "unsupported media: a .sna or .dsk image (recognised by its content), or a .bin/.amsdos named by ?name="
+            ));
+        }
+        reply["cmd_seq"] = json!(self.command());
+        Ok(ApiResponse::ok(reply))
+    }
+
     fn keytype(&mut self, request: &ApiRequest) -> ApiResult {
         let body = parse_body(&request.text())?;
         let text = match find_key(&body, "text") {
@@ -888,6 +956,63 @@ fn z80(motherboard: &Motherboard) -> Value {
         "IM": match cpu.im() { InterruptMode::Mode0 => 0, InterruptMode::Mode1 => 1, InterruptMode::Mode2 => 2 },
         "ticks": motherboard.t_state_counter().value() / T_STATES_PER_NOP
     })
+}
+
+/// A binary to load: where, what, and where to start.
+struct Binary<'b> {
+    load: u16,
+    data: &'b [u8],
+    /// The program's entry (header or name).
+    entry: Option<u16>,
+    /// The entry to jump to: only one given in the name.
+    jump: Option<u16>
+}
+
+/// An AMSDOS header (128 bytes, checksum of bytes 0-66 at 67-68) gives the
+/// load address (21-22), the length (24-25) and the entry (26-27); a
+/// headerless file needs `name@LOAD[@ENTRY].ext`, hex addresses.
+fn parse_binary<'b>(name: &str, bytes: &'b [u8]) -> Result<Binary<'b>, String> {
+    let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    let mut parts = stem.split('@').skip(1);
+    let hex = |text: &str| u16::from_str_radix(text, 16).map_err(|_| format!("{text}: expected a hex address in the name"));
+    let named_load = parts.next().map(hex).transpose()?;
+    let named_entry = parts.next().map(hex).transpose()?;
+
+    let word = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+    let has_header = bytes.len() >= 128 && {
+        let sum: u16 = bytes[..67].iter().map(|&b| b as u16).sum();
+        sum == word(67)
+    };
+    if has_header {
+        let length = (word(24) as usize).min(bytes.len() - 128);
+        return Ok(Binary {
+            load: named_load.unwrap_or(word(21)),
+            data: &bytes[128..128 + length],
+            entry: named_entry.or(Some(word(26))),
+            jump: named_entry
+        });
+    }
+    let load = named_load.ok_or("no AMSDOS header: give the load address in the name, e.g. game@4000.bin")?;
+    Ok(Binary { load, data: bytes, entry: named_entry, jump: named_entry })
+}
+
+/// Decode `%XX` and `+` in a query value.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => out.push(b' '),
+            b'%' if let Some(byte) = text.get(i + 1..i + 3).and_then(|hex| u8::from_str_radix(hex, 16).ok()) => {
+                out.push(byte);
+                i += 2;
+            },
+            b => out.push(b)
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The 4 bytes at `pc`, as the CPU sees them now.
@@ -1128,7 +1253,7 @@ fn serve(server: tiny_http::Server, sender: Sender<(ApiRequest, Sender<ApiRespon
             .filter(|pair| !pair.is_empty())
             .map(|pair| {
                 let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-                (k.to_owned(), v.to_owned())
+                (percent_decode(k), percent_decode(v))
             })
             .collect();
         let mut body = Vec::new();
@@ -1433,6 +1558,78 @@ mod test {
         assert_eq!(response.header("X-Crop-W"), Some("768"));
         let png = image::load_from_memory(&response.body).unwrap().to_rgb8();
         assert_eq!(*png.get_pixel(10, 10), image::Rgb([0, 0, 128]));
+    }
+
+    fn upload(server: &mut DebugServer, mb: &mut Motherboard, query: &str, body: &[u8]) -> (u16, Value) {
+        let query = query
+            .split('&')
+            .filter(|p| !p.is_empty())
+            .map(|p| {
+                let (k, v) = p.split_once('=').unwrap();
+                (k.to_owned(), v.to_owned())
+            })
+            .collect();
+        let request = ApiRequest { method: "POST".into(), path: "/api/media".into(), query, body: body.to_vec() };
+        let response = server.handle(&request, mb);
+        (response.status, serde_json::from_slice(&response.body).unwrap())
+    }
+
+    #[test]
+    fn media_binaries_with_and_without_header() {
+        let (mut server, mut mb) = (server(), machine());
+        let (status, reply) = upload(&mut server, &mut mb, "name=game@4000@4001.bin", &[0xc9, 0x00]);
+        assert_eq!((status, reply["load"].clone(), reply["len"].clone()), (200, json!(0x4000), json!(2)));
+        assert_eq!((mb.read_byte(0x4000), mb.pc()), (0xc9, 0x4001));
+
+        let mut amsdos = vec![0u8; 128];
+        amsdos[21..23].copy_from_slice(&0x8000u16.to_le_bytes());
+        amsdos[24..26].copy_from_slice(&3u16.to_le_bytes());
+        amsdos[26..28].copy_from_slice(&0x8001u16.to_le_bytes());
+        let sum: u16 = amsdos[..67].iter().map(|&b| b as u16).sum();
+        amsdos[67..69].copy_from_slice(&sum.to_le_bytes());
+        amsdos.extend_from_slice(&[1, 2, 3, 4]);
+        let (status, reply) = upload(&mut server, &mut mb, "name=prog.bin", &amsdos);
+        assert_eq!((status, reply["entry"].clone()), (200, json!(0x8001)));
+        assert_eq!((mb.read_byte(0x8000), mb.read_byte(0x8002), mb.read_byte(0x8003)), (1, 3, 0));
+        assert_eq!(mb.pc(), 0x4001, "no @ENTRY in the name: no jump");
+
+        assert_eq!(upload(&mut server, &mut mb, "name=raw.bin", &[0]).0, 400);
+        assert_eq!(upload(&mut server, &mut mb, "name=x.cdt", &[0]).0, 400);
+        assert_eq!(upload(&mut server, &mut mb, "", &[]).0, 400);
+    }
+
+    #[test]
+    fn media_snapshot_sets_its_breakpoints() {
+        use cpclib::sna::*;
+        let (mut server, mut mb) = (server(), machine());
+        let mut snapshot = Snapshot::default();
+        snapshot.set_value(SnapshotFlag::Z80_PC, 0x1234).unwrap();
+        let mut remu = RemuChunk::empty();
+        remu.add_entry(&RemuEntry::new_breakpoint(0x4000, 0));
+        snapshot.add_chunk(remu);
+        let mut bytes = Vec::new();
+        snapshot.write_all(&mut bytes, SnapshotVersion::V3).unwrap();
+        let (status, reply) = upload(&mut server, &mut mb, "name=save.sna", &bytes);
+        assert_eq!((status, reply["media"].clone(), reply["breakpoints"].clone()), (200, json!("sna"), json!(1)));
+        assert_eq!(mb.pc(), 0x1234);
+        assert_eq!(call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["z80_bp"], json!(["B01:0000"]));
+    }
+
+    #[test]
+    fn media_disc_image_goes_to_the_drive() {
+        let (mut server, mut mb) = (server(), machine());
+        let dsk = std::fs::read("tests/fixtures/disctest_data_errors.dsk").unwrap();
+        let (status, reply) = upload(&mut server, &mut mb, "name=a.dsk&drive=1", &dsk);
+        assert_eq!((status, reply["media"].clone()), (200, json!("dsk")));
+        assert!(mb.fdc().image(crate::fdc::FdcDrive::B).is_some());
+        assert_eq!(upload(&mut server, &mut mb, "drive=2", &dsk).0, 400);
+    }
+
+    #[test]
+    fn query_values_are_percent_decoded() {
+        assert_eq!(percent_decode("game%40%34000.bin"), "game@4000.bin");
+        assert_eq!(percent_decode("a+b%2"), "a b%2");
+        assert_eq!(percent_decode("%é9"), "%é9");
     }
 
     #[test]

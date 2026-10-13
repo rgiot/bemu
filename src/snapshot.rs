@@ -21,13 +21,25 @@ use crate::motherboard::Motherboard;
 /// inserting a disc still leaves those in place).
 pub fn load_sna(motherboard: &mut Motherboard, path: &str) -> Result<(), String> {
     let snapshot = Snapshot::load(path).map_err(|e| format!("{path}: {e}"))?;
+    load_snapshot(motherboard, &snapshot)
+}
+
+/// [`load_sna`] from the bytes of a `.SNA` file; also returns the
+/// breakpoints it carries (see [`load_breakpoints`]).
+pub fn load_sna_bytes(motherboard: &mut Motherboard, bytes: &[u8]) -> Result<SnapshotBreakpoints, String> {
+    let snapshot = Snapshot::from_buffer(bytes.to_vec())?;
+    load_snapshot(motherboard, &snapshot)?;
+    Ok(breakpoints_of_snapshot(&snapshot))
+}
+
+fn load_snapshot(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(), String> {
     let word = |flag: SnapshotFlag| -> u16 {
         snapshot.get_value(&flag).as_u16().unwrap_or_else(|| panic!("{flag:?} is not a plain value"))
     };
     let byte = |flag: SnapshotFlag| -> u8 { word(flag) as u8 };
 
     load_registers(motherboard, &word, &byte);
-    load_memory(motherboard, &snapshot)?;
+    load_memory(motherboard, snapshot)?;
     load_crtc(motherboard, &byte);
     load_gate_array(motherboard, &byte);
     load_psg(motherboard, &byte);
@@ -149,11 +161,15 @@ impl SnapshotBreakpoints {
 /// The breakpoints of the snapshot at `path`.
 pub fn load_breakpoints(path: &str) -> Result<SnapshotBreakpoints, String> {
     let snapshot = Snapshot::load(path).map_err(|e| format!("{path}: {e}"))?;
+    Ok(breakpoints_of_snapshot(&snapshot))
+}
+
+fn breakpoints_of_snapshot(snapshot: &Snapshot) -> SnapshotBreakpoints {
     let mut breakpoints = SnapshotBreakpoints::default();
     for chunk in snapshot.chunks() {
         breakpoints_of_chunk(chunk.code().as_str(), chunk.data(), &mut breakpoints);
     }
-    Ok(breakpoints)
+    breakpoints
 }
 
 fn breakpoints_of_chunk(code: &str, data: &[u8], breakpoints: &mut SnapshotBreakpoints) {
