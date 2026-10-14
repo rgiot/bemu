@@ -21,3 +21,7 @@ takes a screenshot every 5 seconds:
 
 `../../examples/probe_pc_sample.rs` lists what the Z80 is doing when a demo waits (the ovfprev prompt is a BASIC INPUT).
 | amazing | Logon System, The Amazing Megademo (rev 2, 2021; cpcrulez.fr/f/9ta). All CRTCs: it prints `CRTC 0 detected`, then a one-line rupture (RVI/RVLL) intro with a QR code page | `RUN"AMAZING"` |
+| camenbert4 | Arkos, Camenbert 4 (C-Meeting 2004, scene.org). Loader says `CRTC n DETECTED` on a real machine; amsrust (CRTC 1) says `EMULATOR DETECTED : CRTC 1` and the plasma is green where AMSpiriT draws a rainbow: a good test of the limits | `RUN"-CAMENB4"` |
+| stillone | iMPACT, Still The One (2023). Needs CRTC 1 and the 512K DK'tronics RAM (`memory_exp 4`, CSL v1.1) | `RUN"STO.BAS"` |
+| sp97 | Benediction, System Party 97. Menu: 1 = Eliot's part (an interlude that waits for key `1`, then a maze), 2 = Rainbird's part (the waving rasters; `sp97.csl` starts the menu, the screenshots after are the menu itself: press `2`). The file name has a quote: `a$="-SP"+CHR$(39)+"97":RUN a$` | see script |
+

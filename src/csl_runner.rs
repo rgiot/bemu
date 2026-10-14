@@ -103,6 +103,8 @@ pub struct CslRunner {
     motherboard: Motherboard,
     /// Chosen by `crtc_select`, applied at the next `reset`.
     crtc: CrtcType,
+    /// Chosen by `memory_exp`, applied at the next `reset`.
+    memory_exp: cpclib_csl::MemoryExpansion,
     disc: [Option<DiscImage>; 2],
     key_delays: KeyDelays,
     key_events: VecDeque<KeyEvent>,
@@ -138,7 +140,8 @@ impl CslRunner {
     pub fn new(output_dir: impl Into<PathBuf>) -> Self {
         let crtc = CrtcType::default();
         CslRunner {
-            motherboard: Self::machine(crtc),
+            motherboard: Self::machine(crtc, cpclib_csl::MemoryExpansion::Kb128),
+            memory_exp: cpclib_csl::MemoryExpansion::Kb128,
             crtc,
             disc: [None, None],
             key_delays: KeyDelays::default(),
@@ -183,11 +186,17 @@ impl CslRunner {
         self.manifest = Some(MANIFEST.get_or_init(Manifest::bundled));
     }
 
-    fn machine(crtc: CrtcType) -> Motherboard {
-        MotherboardBuilder::default()
-            .set_crtc(crtc)
-            .enable_interruptions()
-            .build()
+    fn machine(crtc: CrtcType, memory: cpclib_csl::MemoryExpansion) -> Motherboard {
+        use cpclib_csl::MemoryExpansion::*;
+        let mut builder = MotherboardBuilder::default();
+        builder.set_crtc(crtc).enable_interruptions();
+        match memory {
+            Kb128 => {},
+            Kb256Standard | Kb256Silicon => { builder.set_extra_ram_pages(3); },
+            Kb512DkTronics => { builder.set_extra_ram_pages(7); },
+            Mb4 => { builder.plug_large_ram_expansion(64); },
+        }
+        builder.build()
     }
 
     /// The machine being driven.
@@ -248,6 +257,7 @@ impl CslRunner {
             CslVersion(_) | Comment(_) | Empty => {},
             InstructionWithComment(inner, _) => return self.execute(inner),
             CrtcSelect(model) => self.crtc = crtc_type(*model),
+            MemoryExp(expansion) => self.memory_exp = *expansion,
             Reset(_) => self.reset(),
             Wait(us) => self.run_for(*us),
             WaitVsyncOffOn => self.wait_vsync_off_on(),
@@ -289,7 +299,7 @@ impl CslRunner {
             eprintln!("[{:>9} µs] reset, CRTC {}", self.elapsed_us(), self.crtc as u8);
         }
         self.elapsed_before_reset_us = self.elapsed_us();
-        let mut previous = std::mem::replace(&mut self.motherboard, Self::machine(self.crtc));
+        let mut previous = std::mem::replace(&mut self.motherboard, Self::machine(self.crtc, self.memory_exp));
         // The sound recorded so far (and its settings) outlives the machine.
         self.motherboard.psg_mut().take_audio_output_from(previous.psg_mut());
         for (unit, disc) in self.disc.iter().enumerate() {

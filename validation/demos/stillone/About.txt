@@ -1,0 +1,34 @@
+Still the One
+(c)iMPACT 25th Of December 2023
+------------------
+
+Music by : Tomchi (From Atari ST)
+  Gfx by : Kris and Hwikaa
+ Code by : Ast
+-------------------
+Configuration : Amstrad Cpc - Crtc 1 - 512k (X-Mem)
+
+If you want to run perfectly still the one on emulator, use Caprice Forever WIP 2023-10-15.
+
+Thanks to Roudoudou for his advices and help about some curves (Shenron will now be better than ever!)
+
+Greetings to all People we meet during Bnd Coding Party #3.
+
+Kisses to iMPACT Family : Cmp, Demoniak, Drill, Kris and Sid ! All the best for U...
+
+We want more Cpc and Plus productions...
+We give you rendez-vous in 2024.
+Bye,
+
+Ast^iMPACT.
+-------------------
+26.12.23 : Fix Dk'Tronics (Ace & Offset's cpc will work now!)
+-------------------
+
+Tools used : 
+Orgams, iMPdraw, ConviMGCPC, PackCPC, ymCruncher.
+
+As always, all code was made on real Hardware on my Amstrad Cpc, Crtc 1, x-mem, x-mass, albireo...
+
+Youtube (live) : https://www.youtube.com/watch?v=TNVO9XhQChI
+
