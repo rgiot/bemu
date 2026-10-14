@@ -191,6 +191,12 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
+    /// CRTC 1 (ACCC 17.4.2): VMA' takes its value at the end of the character where C0=R1 held, an R1
+    /// written during that character (R1.JIT) cancels it.
+    fn r1_jit_cancels_vma_latch(&self) -> bool {
+        false
+    }
+
     /// CRTC 1 (ACCC 11.6): the "rupture for dummies" bug of R5.
     fn has_rfd(&self) -> bool {
         false

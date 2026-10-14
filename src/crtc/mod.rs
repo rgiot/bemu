@@ -235,6 +235,8 @@ pub struct Crtc {
     /// CRTC 1 (ACCC 11.6): a rupture for dummies is running: VMA is reloaded from R12/R13 at the
     /// start of every line until the C9=R9 test at C0=R1 passes (it depends on the frame parity)
     rfd_active: bool,
+    /// CRTC 1: the address VMA' will take at the end of this character if C0=R1 still holds
+    vma_latch_pending: Option<u16>,
     /// C9 had reached R9 on the first of them: C4 moves on the second.
     r0_zero_c4_pending: bool,
     /// R6 was 0 during this frame's first line: the C4=R6 conflict of ACCC §18.3.2.
@@ -288,6 +290,7 @@ impl Default for Crtc {
             ivm_lines: false,
             interlace_extra_line: false,
             rfd_active: false,
+            vma_latch_pending: None,
             r0_zero_c4_pending: false,
             r6_zero_seen: false,
             noise: 0x2545_f491,
@@ -475,7 +478,7 @@ impl Crtc {
                         parity_c9 = c4_odd_r9_even;
                     }
                     self.parity_frame = self.parity_frame && (parity_c9 ^ c4_odd_r9_even);
-                    self.vlc = (c9 >> 1).into();
+                    self.vlc = ((c9 & !1) | u8::from(parity_c9)).into();
                     self.parity_c9 = parity_c9;
                 } else {
                     // IVM goes idle: ParityFrame = ParityC9, C9 keeps its bit 0 as ParityC9
@@ -635,7 +638,7 @@ impl Crtc {
             // ACCC 11.2.2: on CRTC 0 there is no C5, C9 itself counts the lines of
             // the adjustment (and so goes out on RA)
             self.vtac & 0x1f
-        } else if self.ivm_lines {
+        } else if self.ivm_lines && !self.model.frame_parity_toggles() {
             (self.vlc.value() << 1 | u8::from(self.parity_c9)) & 0x1f
         } else {
             self.vlc.value()
@@ -654,7 +657,10 @@ impl Crtc {
 
     /// Whether C9 is on the last line of the character row.
     fn c9_is_last(&self) -> bool {
-        if self.ivm_lines {
+        if self.ivm_lines && self.model.frame_parity_toggles() {
+            // CRTC 1 (ACCC 19.8.2): the test excludes bit 0
+            self.vlc.value() & 0x1e == self.regs[9] & 0x1e
+        } else if self.ivm_lines {
             let r9 = self.regs[9];
             self.c9_vma() == (r9 + ((r9 ^ u8::from(self.parity_c9)) & 1)) & 0x1f
         } else {
@@ -733,13 +739,21 @@ impl Crtc {
     /// test is made with the frame parity: on an even frame it fails and the row repeats, on an
     /// odd one it passes, VMA' is updated and the RFD is over.
     fn latch_next_row_address(&mut self) {
+        if self.model.r1_jit_cancels_vma_latch() {
+            self.vma_latch_pending = Some(self.crtc_vma);
+            return;
+        }
+        self.commit_next_row_address(self.crtc_vma);
+    }
+
+    fn commit_next_row_address(&mut self, vma: u16) {
         if self.rfd_active {
             if !self.parity_frame {
                 return;
             }
             self.rfd_active = false;
         }
-        self.crtc_vma_prime = self.crtc_vma;
+        self.crtc_vma_prime = vma;
     }
 
     /// VSync in lines
@@ -768,6 +782,13 @@ impl Crtc {
 
     /// Run all the CRTC machinery that compute the next CRTC address
     fn update_memory_address(&mut self) {
+        // CRTC 1 (ACCC 17.4.2): the character where C0=R1 has run its course: VMA' is updated only if
+        // R1 still names it (no R1.JIT during it)
+        if let Some(vma) = self.vma_latch_pending.take() {
+            if self.hcc == self.regs[1] {
+                self.commit_next_row_address(vma);
+            }
+        }
         if self.hsync() {
             // ACCC §14.4: C3l is a 4-bit counter. Lowering R3l below it
             // during HSYNC (R3.JIT) makes it overflow and reach R3l on
@@ -937,24 +958,26 @@ impl Crtc {
                     self.parity_frame
                 };
             } else {
-                // CRTC 1 interlace video mode (ACCC 19.8.2): C9 counts by 2 and its bit 0 is the
-                // parity of the lines shown; the row ends when C9 and R9 match without it
+                // CRTC 1 interlace video mode (ACCC 19.8.2): C9 is incremented by 1 more when R9 is even,
+                // the row ends when C9 and R9 match without bit 0, and C9 then restarts from ParityC9
                 let ivm_now = self.model.frame_parity_toggles() && self.regs[8] & 3 == 3;
-                if ivm_now && !self.ivm_lines {
-                    let c9 = self.vlc.value();
-                    self.parity_c9 = c9 & 1 != 0;
-                    self.vlc = (c9 >> 1).into();
-                } else if !ivm_now && self.ivm_lines {
-                    // ACCC 19.5.3: leaving IVM, ParityFrame takes ParityC9
-                    self.vlc = self.c9_vma().into();
-                    self.parity_frame = self.parity_c9;
-                }
                 self.ivm_lines = ivm_now;
                 let row_end = if ivm_now {
-                    let end = self.vlc.value() >= self.regs[9] >> 1;
-                    if !end {
-                        self.vlc += 1;
+                    let r9 = self.regs[9];
+                    let mut c9 = self.vlc.value();
+                    if r9 & 1 == 0 {
+                        c9 = (c9 + 1) & 0x1f;
                     }
+                    let end = c9 & 0x1e == r9 & 0x1e;
+                    if end {
+                        if r9 & 1 == 0 {
+                            self.parity_c9 = !self.parity_c9;
+                        }
+                        c9 = u8::from(self.parity_c9);
+                    } else {
+                        c9 = (c9 + 1 + (r9 & 1)) & 0x1f;
+                    }
+                    self.vlc = c9.into();
                     end
                 } else {
                     self.vlc += 1;
@@ -963,10 +986,9 @@ impl Crtc {
 
                 // This is the end of a char line
                 if row_end {
-                    if ivm_now && self.regs[9] & 1 == 0 {
-                        self.parity_c9 = !self.parity_c9;
+                    if !ivm_now {
+                        self.vlc.reset();
                     }
-                    self.vlc.reset();
                     self.vcc += 1;
 
                     if self.vcc == self.regs[4] + 1 {

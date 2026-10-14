@@ -68,6 +68,10 @@ impl CrtcModel for Crtc1 {
         true
     }
 
+    fn r1_jit_cancels_vma_latch(&self) -> bool {
+        true
+    }
+
     fn frame_parity_toggles(&self) -> bool {
         true
     }
