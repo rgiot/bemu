@@ -1061,7 +1061,7 @@ impl Crtc {
             && self.hcc == self.regs[0]
             && matches!(skew, DisplaySkew::Delayed(d) if d > 0);
         self.border_history.rotate_right(1);
-        let by_r1 = if self.model.has_last_line_state() {
+        let by_r1 = if self.model.has_last_line_state() || self.model.r6_zero_is_border() {
             // ACCC §17.4/§17.5: the BORDER R1 is a state set by the C0=R1
             // equality (or R1=0), cleared when a line starts; raising R1
             // afterwards does not bring the display back before the next line
