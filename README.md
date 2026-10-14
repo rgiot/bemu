@@ -85,7 +85,11 @@ Ctrl+C stops a recording early; the file is still finished properly.
 on `127.0.0.1:6128` (`--debug-port N` to change it), for debugger front ends
 such as `cpclib-dap`. It runs with `--window` or headless (real time, Ctrl+C to
 quit). `GET /api/doc` lists the implemented endpoints; extensions to the
-AMSpiriT API are flagged there, and `ping` answers `"frontend":"bemu"`.
+AMSpiriT API are flagged there, and `ping` answers `"frontend":"bemu"`. The
+API documents itself: `/api/doc?endpoint=ram` gives an endpoint's query
+parameters, body fields, answer and an example, `/api/doc?format=openapi` the
+whole API as OpenAPI 3 (for Swagger UI or client generators), and
+`/api/doc?format=html` a page to read in a browser.
 
 Beyond the first endpoints (`ping`, `state`, `z80`, `ram` on every 16K bank,
 `exec`, `step`, `config`, `keytype`), it streams Server-Sent Events
