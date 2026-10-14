@@ -586,6 +586,12 @@ impl Crtc {
     }
 
     /// The register the next data write goes to (diagnostics).
+    /// Register `r` as last written (0 past R17), for debuggers: unlike
+    /// [`Self::do_read_register`], whatever the CRTC type lets the CPU read.
+    pub fn register_value(&self, r: u8) -> u8 {
+        self.regs.get(usize::from(r)).copied().unwrap_or(0)
+    }
+
     pub fn selected_register(&self) -> u8 {
         self.ar
     }
