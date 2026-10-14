@@ -6,6 +6,8 @@ disk_insert 'sp97.dsk'
 key_delay 70000 70000 400000
 key_output 'a$="-SP"+CHR$(39)+"97":RUN a$\(RET)'
 wait 5000000
+key_output '2'
+wait 4000000
 screenshot_name 'sp97_01'
 screenshot
 wait 5000000
