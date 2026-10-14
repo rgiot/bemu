@@ -16,7 +16,7 @@ fn main() {
         let c = mb.crtc();
         if c.line_ends != last {
             last = c.line_ends;
-            println!("C4={} C9={} R4={} R7={} R9={} R5={} vs={}", c.vcc.value(), c.c9(), c.regs_r(4), c.regs_r(7), c.regs_r(9), c.regs_r(5), c.vsync());
+            println!("C4={} C9={} R4={} R7={} R9={} R5={} vs={} R8={}", c.vcc.value(), c.c9(), c.regs_r(4), c.regs_r(7), c.regs_r(9), c.regs_r(5), c.vsync(), c.regs_r(8));
             n += 1;
         }
     }

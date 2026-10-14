@@ -30,7 +30,7 @@ def main():
     results = sys.argv[1]
     top = int(sys.argv[2]) if len(sys.argv) > 2 else 25
     best = {}
-    for f in sorted(glob.glob(results + "/**/*_CRTC0_*.png", recursive=True)):
+    for f in sorted(glob.glob(results + "/**/*_CRTC" + os.environ.get("CRTC", "0") + "_*.png", recursive=True)):
         n = os.path.basename(f)[:-4]
         base = re.sub(r"_\d+$", "", n)
         r = REFS / f"{base}.webp"

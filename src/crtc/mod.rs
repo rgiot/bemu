@@ -582,7 +582,7 @@ impl Crtc {
 
     /// CRTC 0, R8=1 or 3: the two interlace modes (ACCC §19.3).
     fn interlaced(&self) -> bool {
-        self.model.has_last_line_state() && self.regs[8] & 1 != 0
+        self.model.supports_interlace() && self.regs[8] & 1 != 0
     }
 
     /// CRTC 0, R8=3: interlace sync and video mode.
@@ -886,22 +886,51 @@ impl Crtc {
                     self.parity_frame
                 };
             } else {
-                self.vlc += 1;
-
+                // CRTC 1 interlace video mode (ACCC 19.8.2): C9 counts by 2 and its bit 0 is the
+                // parity of the lines shown; the row ends when C9 and R9 match without it
+                let ivm_now = self.model.frame_parity_toggles() && self.regs[8] & 3 == 3;
+                if ivm_now && !self.ivm_lines {
+                    let c9 = self.vlc.value();
+                    self.parity_c9 = c9 & 1 != 0;
+                    self.vlc = (c9 >> 1).into();
+                } else if !ivm_now && self.ivm_lines {
+                    // ACCC 19.5.3: leaving IVM, ParityFrame takes ParityC9
+                    self.vlc = self.c9_vma().into();
+                    self.parity_frame = self.parity_c9;
+                }
+                self.ivm_lines = ivm_now;
+                let row_end = if ivm_now {
+                    let end = self.vlc.value() >= self.regs[9] >> 1;
+                    if !end {
+                        self.vlc += 1;
+                    }
+                    end
+                } else {
+                    self.vlc += 1;
+                    self.vlc == self.regs[9] + 1
+                };
 
                 // This is the end of a char line
-                if self.vlc == self.regs[9] + 1 {
+                if row_end {
+                    if ivm_now && self.regs[9] & 1 == 0 {
+                        self.parity_c9 = !self.parity_c9;
+                    }
                     self.vlc.reset();
                     self.vcc += 1;
 
                     if self.vcc == self.regs[4] + 1 {
-                        if self.regs[5] == 0 {
+                        // ACCC 19.6.2 (CRTC 1): an additional line follows the R5 lines on
+                        // the even frames of the interlace modes
+                        let extra = self.interlaced() && self.model.frame_parity_toggles() && !self.parity_frame;
+                        if self.regs[5] == 0 && !extra {
                             // This is the end of the screen
                             self.vcc.reset();
+                            new_frame = true;
                         } else {
                             // Enter vertical total adjust instead of
                             // immediately starting the next frame.
                             self.in_vertical_adjust = true;
+                            self.interlace_extra_line = extra;
                             self.vtac = 0;
                         }
                     }
@@ -911,6 +940,9 @@ impl Crtc {
             // ACCC §19.5.2: ParityFrame takes ParityR6 when a frame starts;
             // ParityR6 anticipates the next frame's parity each time C4
             // reaches R6.
+            if self.model.frame_parity_toggles() && new_frame {
+                self.parity_frame = !self.parity_frame;
+            }
             if self.model.has_last_line_state() {
                 if new_frame {
                     self.parity_frame = self.parity_r6;

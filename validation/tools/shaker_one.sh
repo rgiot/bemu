@@ -12,7 +12,7 @@ MOD="$1"; KEY="$2"; TAG="$3"
 cd "$REPO"
 cargo build --release --example run_shaker_suite 2>&1 | grep -E "^error" -A8 || true
 if [ "$KEY" = "-" ]; then
-  BUNDLE="$WORK/bundle"; NAME="res_${MOD}_${TAG}"
+  BUNDLE="$WORK/${BUNDLE_DIR:-bundle}"; NAME="res_${MOD}_${TAG}"
 else
   python3 "$HERE/shaker_one_test.py" "$MOD" "$KEY" "$WORK/bundle_${MOD}${KEY//[^A-Za-z0-9]/}" >/dev/null
   BUNDLE="$WORK/bundle_${MOD}${KEY//[^A-Za-z0-9]/}"; NAME="res_${MOD}${KEY//[^A-Za-z0-9]/}_${TAG}"

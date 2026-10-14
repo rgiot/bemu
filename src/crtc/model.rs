@@ -161,6 +161,17 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
+    /// The chip has the two interlace modes (R8 bit 0, ACCC 19): an additional line and a
+    /// MID-VSYNC on the even frames. CRTC 0 is handled by its own counters.
+    fn supports_interlace(&self) -> bool {
+        self.has_last_line_state()
+    }
+
+    /// CRTC 1 (ACCC 19.5.3): ParityFrame simply switches at each frame start, whatever R8.
+    fn frame_parity_toggles(&self) -> bool {
+        false
+    }
+
     /// CRTC 0 and 2 (ACCC 17.6.2): when C0 reaches R0 with the display still
     /// on (R1 not reached), they send BORDER ON to the Gate Array 0.5 usec too
     /// early: one byte (half a character) of border before C0 returns to 0.

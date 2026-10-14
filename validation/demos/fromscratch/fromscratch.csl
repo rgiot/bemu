@@ -1,0 +1,97 @@
+csl_version 1.0
+crtc_select 1
+reset
+wait 3000000
+disk_insert 'fromscratch.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"-SCRATCH"\(RET)'
+wait 12000000
+screenshot_name 'fromscratch_01'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_02'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_03'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_04'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_05'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_06'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_07'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_08'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_09'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_10'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_11'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_12'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_13'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_14'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_15'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_16'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_17'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_18'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_19'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_20'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_21'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_22'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_23'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_24'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_25'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_26'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_27'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_28'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_29'
+screenshot
+wait 12000000
+screenshot_name 'fromscratch_30'
+screenshot

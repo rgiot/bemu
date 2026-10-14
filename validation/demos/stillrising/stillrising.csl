@@ -1,0 +1,97 @@
+csl_version 1.0
+crtc_select 1
+reset
+wait 3000000
+disk_insert 'stillrising.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"-RISING"\(RET)'
+wait 12000000
+screenshot_name 'stillrising_01'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_02'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_03'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_04'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_05'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_06'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_07'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_08'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_09'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_10'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_11'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_12'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_13'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_14'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_15'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_16'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_17'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_18'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_19'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_20'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_21'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_22'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_23'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_24'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_25'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_26'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_27'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_28'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_29'
+screenshot
+wait 12000000
+screenshot_name 'stillrising_30'
+screenshot
