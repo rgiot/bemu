@@ -5,7 +5,7 @@
 //! amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]
 //!         [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]
 //!         [--record file [--seconds N]] [--type text [--type-at N]]
-//!         [--debug-server [--debug-port N]]
+//!         [--debug-server [--debug-port N] [--debug-paused]]
 //! ```
 //!
 //! With no `--screenshot`/`--window`, drops into the existing interactive
@@ -92,6 +92,8 @@ struct Args {
     record: Option<String>,
     debug_server: bool,
     debug_port: u16,
+    /// Start paused, for a debugger to arm its breakpoints first.
+    debug_paused: bool,
     text: Option<String>,
     type_at: f64
 }
@@ -113,6 +115,7 @@ fn parse_args() -> Args {
         record: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
+        debug_paused: false,
         text: None,
         type_at: 3.0
     };
@@ -149,6 +152,10 @@ fn parse_args() -> Args {
             "--mute" => args.mute = true,
             "--record" => args.record = Some(next("--record")),
             "--debug-server" => args.debug_server = true,
+            "--debug-paused" => {
+                args.debug_server = true;
+                args.debug_paused = true;
+            },
             "--debug-port" => {
                 args.debug_server = true;
                 args.debug_port = next("--debug-port").parse().expect("--debug-port must be a port number")
@@ -175,7 +182,7 @@ fn print_help() {
         "        [--dsk path] [--dsk-b path] [--sna path]\n",
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
-        "        [--debug-server [--debug-port N]]\n",
+        "        [--debug-server [--debug-port N] [--debug-paused]]\n",
         "\n",
         "--model picks the ROMs (default 6128). The 464 and 664 have 64K and the\n",
         "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
@@ -195,7 +202,8 @@ fn print_help() {
         "in the interactive monitor.\n",
         "--debug-server serves the AMSpiriT-Lite compatible debug API on\n",
         "127.0.0.1:6128 (GET /api/doc lists the endpoints), with --window or\n",
-        "headless."
+        "headless. --debug-paused starts it paused, for a debugger to set its\n",
+        "breakpoints before anything runs."
     ));
 }
 
@@ -492,6 +500,15 @@ fn start_debug_server(
     if !args.debug_server {
         return None;
     }
+    if args.sna.is_none() {
+        // A powered-on machine: boot the firmware to BASIC's prompt before
+        // serving, so a debugger that connects at once (and loads a BASIC
+        // program, reads BASIC's state) finds BASIC up rather than a boot in
+        // progress. Run flat out, about half a second.
+        while motherboard.t_state_counter().value() < amsrust::debug_server::BASIC_BOOT_T_STATES {
+            motherboard.execute_next_opcode_no_video();
+        }
+    }
     match DebugServer::start(args.debug_port) {
         Ok(mut server) => {
             eprintln!("debug server: http://127.0.0.1:{}/api/doc", args.debug_port);
@@ -500,6 +517,11 @@ fn start_debug_server(
             }
             for breakpoint in &breakpoints.advanced {
                 server.add_advanced_breakpoint(breakpoint.clone(), motherboard);
+            }
+            if args.debug_paused {
+                // Nothing has run yet: the debugger arms its breakpoints,
+                // then resumes (POST /api/config {"paused":false}).
+                server.pause();
             }
             Some(server)
         },
@@ -551,10 +573,11 @@ fn run_frame(
 fn run_debug_server(motherboard: &mut Motherboard, server: &mut DebugServer, typist: &mut Option<Typist>) {
     ctrlc::set_handler(|| STOP.store(true, std::sync::atomic::Ordering::Relaxed)).ok();
     let mut monitor = CrtMonitor::default();
+    monitor.keep_full_frames();
     let frame_duration = std::time::Duration::from_micros(19_968);
     let mut deadline = std::time::Instant::now();
     while !stop_requested() && !server.quit_requested() {
-        server.poll(motherboard);
+        server.poll_with(motherboard, Some(&monitor));
         if server.paused() {
             std::thread::sleep(std::time::Duration::from_millis(2));
             deadline = std::time::Instant::now();
@@ -614,13 +637,16 @@ fn run_window(
     // One whole frame per redraw, locked to the emulator's real VSYNC, not
     // to a fixed t-state count.
     let mut monitor = CrtMonitor::default();
+    if server.is_some() {
+        monitor.keep_full_frames();
+    }
     while window.is_open() && !stop_requested() {
         update_keyboard(&window, motherboard, typed_combo.advance(&typed_chars));
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, motherboard);
 
         if let Some(server) = server.as_deref_mut() {
-            server.poll(motherboard);
+            server.poll_with(motherboard, Some(&monitor));
             if server.quit_requested() {
                 break;
             }

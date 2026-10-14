@@ -84,7 +84,8 @@ Ctrl+C stops a recording early; the file is still finished properly.
 [AMSpiriT-Lite web API](https://github.com/AMSpiriT-Emulator/amspirit-releases/blob/main/docs/lite/web_api.md)
 on `127.0.0.1:6128` (`--debug-port N` to change it), for debugger front ends
 such as `cpclib-dap`. It runs with `--window` or headless (real time, Ctrl+C to
-quit). `GET /api/doc` lists the implemented endpoints; extensions to the
+quit; `--debug-paused` starts it paused, so a debugger sets its breakpoints
+before anything runs). `GET /api/doc` lists the implemented endpoints; extensions to the
 AMSpiriT API are flagged there, and `ping` answers `"frontend":"bemu"`.
 
 Beyond the first endpoints (`ping`, `state`, `z80`, `ram` on every 16K bank,
@@ -95,8 +96,10 @@ resolved to the RAM bank or ROM mapped at that time) and, as an extension,
 advanced breakpoints as rasm/basm/ACE describe them (`/api/breakpoints`:
 memory/IO, read/write, stop or watch, masks, sizes, values, and conditions
 such as `A == #12 && peek(HL) <> 0` or `value & %1000`). A snapshot's
-breakpoints (REMU, ACE `BRKC`, WinAPE `WABP` and rasm/basm `BRKS` chunks) are set when it is loaded,
-`--sna` or `POST /api/media`. Also: `history`, `screenshot` (PNG), `media`
+breakpoints (REMU, ACE `BRKC`, WinAPE `WABP` and rasm/basm `BRKS` chunks) are
+set when it is loaded, `--sna` or `POST /api/media`. Also: `history`, `screenshot` (PNG: the visible
+area, or with `crop=0` the whole 1024x350 frame, sync and borders included;
+`live=1` the frame being drawn, `full=0` over the previous one), `media`
 (sna, dsk, bin), `quit`.
 
 The chips are inspected one by one (`memmap`, `crtc`, `ga`, `psg`, `fdc`).

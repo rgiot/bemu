@@ -49,6 +49,7 @@ use crate::breakpoints::{AdvancedBreakpoint, BreakpointAccess, BreakpointKind, C
 use crate::csl_runner::keys_of_char;
 use crate::keyboard::CpcKey;
 use crate::memory::PhysicalAddress;
+use crate::monitor::Monitor;
 use crate::motherboard::{BusAccess, BusAccessKind, Motherboard};
 use crate::z80::{HasValue, InterruptMode, Reg16, Reg8};
 
@@ -156,7 +157,7 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/breakpoints", methods: &["GET", "POST", "DELETE"], summary: "advanced breakpoints: list, add (JSON or REMU acebreak text), remove (?index=)", extension: true },
     Route { path: "/api/quit", methods: &["POST"], summary: "leave the emulator", extension: false },
     Route { path: "/api/history", methods: &["GET"], summary: "last executed instructions (?n=), bytes as fetched and as now", extension: false },
-    Route { path: "/api/screenshot", methods: &["GET"], summary: "last complete frame as PNG (768x272, the visible area)", extension: false },
+    Route { path: "/api/screenshot", methods: &["GET"], summary: "frame as PNG: crop=1 visible 768x272 | crop=0 whole 1024x350; live=1 the frame being drawn; full=0 over the previous one", extension: false },
     Route { path: "/api/media", methods: &["POST"], summary: "load a .sna/.dsk (by content) or .bin/.amsdos (?name=, ?drive=)", extension: false },
     Route { path: "/api/memmap", methods: &["GET"], summary: "what is mapped in each 16K region (ROM, absolute RAM bank), RMR, MMR", extension: false },
     Route { path: "/api/crtc", methods: &["GET"], summary: "CRTC registers, selected register and counters", extension: false },
@@ -198,7 +199,7 @@ struct PendingBasic {
 }
 
 /// T-states the firmware takes, after a reset, before BASIC is ready.
-const BASIC_BOOT_T_STATES: usize = 4_000_000 * 3 / 2;
+pub const BASIC_BOOT_T_STATES: usize = 4_000_000 * 3 / 2;
 
 /// The beam: where the monitor draws, in its ticks (16 per NOP, 1024 for a
 /// 64 NOP line) and lines since the frame started, with the origin of the
@@ -488,8 +489,15 @@ impl DebugServer {
 
     /// Answer every pending request.
     pub fn poll(&mut self, motherboard: &mut Motherboard) {
+        self.poll_with(motherboard, None);
+    }
+
+    /// [`Self::poll`], with the monitor drawing the picture: a screenshot
+    /// can then show the frame being drawn (`live=1`) and the whole frame
+    /// (`crop=0`, see [`Monitor::keep_full_frames`]).
+    pub fn poll_with(&mut self, motherboard: &mut Motherboard, monitor: Option<&Monitor>) {
         while let Ok((request, reply)) = self.requests.try_recv() {
-            let response = self.handle(&request, motherboard);
+            let response = self.handle_with(&request, motherboard, monitor);
             let _ = reply.send(response);
         }
         // Paused: nothing will run after the commands, they are applied.
@@ -715,6 +723,16 @@ impl DebugServer {
 
     /// Route `request`.
     pub fn handle(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResponse {
+        self.handle_with(request, motherboard, None)
+    }
+
+    /// [`Self::handle`], with the monitor (see [`Self::poll_with`]).
+    pub fn handle_with(
+        &mut self,
+        request: &ApiRequest,
+        motherboard: &mut Motherboard,
+        monitor: Option<&Monitor>
+    ) -> ApiResponse {
         let Some(route) = ROUTES.iter().find(|route| route.path == request.path)
         else {
             return ApiResponse::json(404, json!({ "error": "not found", "path": request.path }));
@@ -762,7 +780,7 @@ impl DebugServer {
                 Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
             },
             ("GET", "/api/history") => self.history_list(request, motherboard),
-            ("GET", "/api/screenshot") => self.screenshot(),
+            ("GET", "/api/screenshot") => self.screenshot(request, monitor),
             ("POST", "/api/media") => self.media(request, motherboard),
             ("GET", "/api/memmap") => Ok(ApiResponse::ok(memmap(motherboard))),
             ("GET", "/api/crtc") => Ok(ApiResponse::ok(self.crtc(motherboard))),
@@ -971,6 +989,12 @@ impl DebugServer {
                 run: flag("run"),
                 at_t_states: motherboard.t_state_counter().value() + BASIC_BOOT_T_STATES
             });
+        }
+        else if motherboard.t_state_counter().value() < BASIC_BOOT_T_STATES {
+            // Just powered on, the firmware still booting: BASIC would clear
+            // the program as it starts. Loaded once it is up, like after a
+            // reset (a debugger that starts the emulator injects at once).
+            self.pending_basic = Some(PendingBasic { source, run: flag("run"), at_t_states: BASIC_BOOT_T_STATES });
         }
         else {
             self.load_basic(&source, flag("run"), motherboard)
@@ -1318,36 +1342,84 @@ impl DebugServer {
         Ok(ApiResponse::ok(json!(entries)))
     }
 
-    /// `GET /api/screenshot`: the last complete frame - the visible area,
-    /// as AMSpiriT's default `crop=1` (the full sync-included buffer of
-    /// `crop=0` is not kept: the same area is returned, the `X-Crop-*`
-    /// headers say which).
-    fn screenshot(&self) -> ApiResult {
-        let Some(frame) = &self.last_frame
-        else {
-            return Ok(ApiResponse::json(503, json!({ "error": "no frame available" })));
+    /// `GET /api/screenshot[?crop=][&live=][&full=]`, as AMSpiriT:
+    /// - `crop=1` (default) the visible area (768x272), `crop=0` the whole
+    ///   frame (1024x350, sync and borders included, the beam's coordinates);
+    /// - `live=1` (default while paused) the frame being drawn, `live=0` the
+    ///   last complete one;
+    /// - `full=1` (default) the frame alone (black where the beam has not
+    ///   been), `full=0` the frame being drawn over the previous one.
+    ///
+    /// `crop=0` and `live=1` need the monitor (the emulator's loop, not a
+    /// bare `handle`).
+    fn screenshot(&self, request: &ApiRequest, monitor: Option<&Monitor>) -> ApiResult {
+        let flag = |name: &str, default: bool| -> Result<bool, ApiError> {
+            match request.param(name) {
+                None | Some("") => Ok(default),
+                Some("0") => Ok(false),
+                Some("1") => Ok(true),
+                Some(_) => Err(ApiError::field(name, format!("{name} must be 0 or 1")))
+            }
         };
+        let crop = flag("crop", true)?;
+        let live = flag("live", self.paused)?;
+        let alone = flag("full", true)?;
+        let no_frame = || Ok(ApiResponse::json(503, json!({ "error": "no frame available" })));
+
+        let settled = if crop { self.last_frame.as_ref() } else { monitor.and_then(Monitor::full_frame) };
+        let drawing = match (live, monitor) {
+            (true, Some(monitor)) if crop => Some(monitor.image_in_progress()),
+            (true, Some(monitor)) => monitor.full_frame_in_progress(),
+            _ => None
+        };
+        if !crop && monitor.and_then(Monitor::full_frame_in_progress).is_none() {
+            return Ok(ApiResponse::json(
+                503,
+                json!({ "error": "whole frames are not kept here (crop=0 needs the emulator's monitor)" })
+            ));
+        }
+        // Where the beam is in the returned picture: what is drawn so far.
+        let (origin_x, origin_y) = match (crop, self.beam) {
+            (true, Some(beam)) => (beam.crop_x, beam.crop_y as isize),
+            _ => (0, 0)
+        };
+        let image = match drawing {
+            Some(drawing) if alone || settled.is_none() => drawing.clone(),
+            Some(drawing) => {
+                let beam = self.beam.unwrap_or_default();
+                composite(
+                    drawing,
+                    settled.unwrap(),
+                    beam.line as isize - origin_y,
+                    beam.x as isize - origin_x
+                )
+            },
+            None => match settled {
+                Some(settled) => settled.clone(),
+                None => return no_frame()
+            }
+        };
+
         let mut png = std::io::Cursor::new(Vec::new());
-        image::DynamicImage::ImageRgb8(frame.clone())
+        let (width, height) = image.dimensions();
+        image::DynamicImage::ImageRgb8(image)
             .write_to(&mut png, image::ImageOutputFormat::Png)
             .map_err(|e| ApiError::new(format!("PNG encoding failed: {e}")))?;
+        let mut headers = vec![
+            ("X-Crop-W", width.to_string()),
+            ("X-Crop-H", height.to_string()),
+            ("X-Crop-X", origin_x.to_string()),
+            ("X-Crop-Y", origin_y.to_string())
+        ];
+        if let Some(beam) = self.beam {
+            headers.push(("X-Beam-X", beam.x.to_string()));
+            headers.push(("X-Beam-Y", beam.line.to_string()));
+        }
         Ok(ApiResponse {
             status: 200,
             content_type: "image/png",
             body: png.into_inner(),
-            headers: [
-                ("X-Crop-W", frame.width().to_string()),
-                ("X-Crop-H", frame.height().to_string())
-            ]
-            .into_iter()
-            .chain(self.beam.into_iter().flat_map(|beam| [
-                ("X-Crop-X", beam.crop_x.to_string()),
-                ("X-Crop-Y", beam.crop_y.to_string()),
-                ("X-Beam-X", beam.x.to_string()),
-                ("X-Beam-Y", beam.line.to_string())
-            ]))
-            .map(|(name, value)| (name.to_owned(), value))
-            .collect()
+            headers: headers.into_iter().map(|(name, value)| (name.to_owned(), value)).collect()
         })
     }
 
@@ -1437,6 +1509,10 @@ impl DebugServer {
         if self.typing.is_empty() && self.typed_pressed.is_none() {
             return;
         }
+        // Keys typed for a program not loaded yet (`RUN`) wait for it.
+        if self.pending_basic.is_some() && self.typed_pressed.is_none() {
+            return;
+        }
         let now = motherboard.t_state_counter().value();
         if now < self.typing_next_at {
             return;
@@ -1499,6 +1575,23 @@ fn basic_listing(motherboard: &Motherboard) -> ApiResult {
 
 /// The visible picture (what `GET /api/screenshot` returns).
 const SCREENSHOT_SIZE: (usize, usize) = (768, 272);
+
+/// The frame being drawn over the previous one: `drawing` where the beam
+/// has been (the rows before `row`, and `row` up to `column`), `previous`
+/// elsewhere.
+fn composite(drawing: &image::RgbImage, previous: &image::RgbImage, row: isize, column: isize) -> image::RgbImage {
+    let mut out = previous.clone();
+    if out.dimensions() != drawing.dimensions() {
+        return drawing.clone();
+    }
+    for (x, y, pixel) in drawing.enumerate_pixels() {
+        let (x, y) = (x as isize, y as isize);
+        if y < row || (y == row && x < column) {
+            out.put_pixel(x as u32, y as u32, *pixel);
+        }
+    }
+    out
+}
 
 /// `0xRRGGBB` of a GA colour.
 fn rgb(levels: crate::ga::RgbLevels) -> u32 {
@@ -2319,6 +2412,20 @@ mod test {
     }
 
     #[test]
+    fn basic_sent_while_the_firmware_boots_waits_for_it() {
+        // Sent the moment the machine is powered on, then RUN typed: the
+        // program is loaded once BASIC is up, and RUN after it.
+        let (mut server, mut mb) = (server(), MotherboardBuilder::default().build());
+        call(&mut server, &mut mb, "POST", "/api/basic", "10 GOTO 10\n");
+        call(&mut server, &mut mb, "POST", "/api/keytype", r#"{"text":"RUN\r"}"#);
+        call(&mut server, &mut mb, "POST", "/api/basic_bp", "10");
+        run(&mut server, &mut mb, 4_000_000);
+        assert!(server.paused(), "line 10 reached");
+        let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
+        assert_eq!((state["prog_start"].clone(), state["cur_linenum"].clone()), (json!(368), json!(10)), "{state}");
+    }
+
+    #[test]
     fn basic_after_a_reset_loads_once_booted() {
         let (mut server, mut mb) = (server(), booted());
         let events = server.events.subscribe(Some(vec!["reset".to_owned()])).unwrap();
@@ -2653,6 +2760,82 @@ mod test {
         assert_eq!(call(&mut server, &mut mb, "GET", "/api/history?n=1", "").1.as_array().unwrap().len(), 1);
         call(&mut server, &mut mb, "POST", "/api/config", r#"{"history_size":1}"#);
         assert_eq!(call(&mut server, &mut mb, "GET", "/api/history", "").1.as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn screenshots_whole_live_and_composite() {
+        use crate::monitor::{FULL_FRAME_HEIGHT, FULL_FRAME_WIDTH};
+        let (mut server, mut mb) = (server(), MotherboardBuilder::default().build());
+        let mut monitor = Monitor::default();
+        let shot = |server: &mut DebugServer, mb: &mut Motherboard, monitor: Option<&Monitor>, query: &str| {
+            let query = query
+                .split('&')
+                .filter(|p| !p.is_empty())
+                .map(|p| {
+                    let (k, v) = p.split_once('=').unwrap();
+                    (k.to_owned(), v.to_owned())
+                })
+                .collect();
+            let request = ApiRequest { method: "GET".into(), path: "/api/screenshot".into(), query, body: Vec::new() };
+            let response = server.handle_with(&request, mb, monitor);
+            let picture = (response.status == 200)
+                .then(|| image::load_from_memory(&response.body).unwrap().to_rgb8());
+            (response.status, picture, response.header("X-Crop-X").map(str::to_owned))
+        };
+        assert_eq!(shot(&mut server, &mut mb, Some(&monitor), "crop=0").0, 503, "whole frames not kept");
+        monitor.keep_full_frames();
+        // Three frames, the firmware's border drawn, then half of one.
+        let mut frames = 0;
+        let mut step = |server: &mut DebugServer, mb: &mut Motherboard, monitor: &mut Monitor| {
+            let mut done = None;
+            mb.execute_next_opcode_with_video(|(rgb, sync)| {
+                monitor.receive(rgb, sync);
+                if done.is_none() {
+                    done = monitor.take_frame();
+                }
+            });
+            let (x, line) = monitor.beam();
+            let (crop_x, crop_y) = monitor.crop_origin();
+            server.set_beam(Beam { x, line, crop_x, crop_y });
+            if let Some(frame) = done {
+                server.set_frame(&frame);
+                return true;
+            }
+            false
+        };
+        while frames < 3 {
+            if step(&mut server, &mut mb, &mut monitor) {
+                frames += 1;
+            }
+        }
+        while monitor.beam().1 < 170 {
+            step(&mut server, &mut mb, &mut monitor);
+        }
+
+        let (status, whole, origin) = shot(&mut server, &mut mb, Some(&monitor), "crop=0&live=0");
+        let whole = whole.unwrap();
+        assert_eq!((status, whole.dimensions()), (200, (FULL_FRAME_WIDTH, FULL_FRAME_HEIGHT)));
+        assert_eq!(origin.as_deref(), Some("0"));
+        let visible = shot(&mut server, &mut mb, Some(&monitor), "").1.unwrap();
+        assert_eq!(visible.dimensions(), (768, 272));
+        // The visible area is inside the whole frame, where the crop says.
+        let (cx, cy) = monitor.crop_origin();
+        assert_eq!(*whole.get_pixel(cx as u32 + 10, cy as u32 + 100), *visible.get_pixel(10, 100));
+
+        // Live: the half drawn, black below the beam; over the previous frame
+        // with full=0.
+        let below = 250;
+        let live = shot(&mut server, &mut mb, Some(&monitor), "crop=0&live=1").1.unwrap();
+        assert_eq!(*live.get_pixel(500, below), image::Rgb([0, 0, 0]), "not drawn yet");
+        let composite = shot(&mut server, &mut mb, Some(&monitor), "crop=0&live=1&full=0").1.unwrap();
+        assert_eq!(*composite.get_pixel(500, below), *whole.get_pixel(500, below), "the previous frame");
+        assert_eq!(*composite.get_pixel(500, 100), *live.get_pixel(500, 100), "what is drawn");
+        assert_ne!(*whole.get_pixel(500, below), image::Rgb([0, 0, 0]), "a border is drawn there");
+
+        // Without the monitor: the last frame, and no whole frame.
+        assert_eq!(shot(&mut server, &mut mb, None, "crop=0").0, 503);
+        assert_eq!(shot(&mut server, &mut mb, None, "live=1").0, 200);
+        assert_eq!(shot(&mut server, &mut mb, None, "crop=2").0, 400);
     }
 
     #[test]
