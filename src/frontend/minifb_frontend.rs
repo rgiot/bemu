@@ -24,8 +24,6 @@ impl InputCallback for CharQueue {
 
 pub struct MinifbFrontend {
     window: Window,
-    width: usize,
-    height: usize,
     typed: CharQueue
 }
 
@@ -35,7 +33,7 @@ impl MinifbFrontend {
             .map_err(|e| format!("failed to open a window: {e}"))?;
         let typed = CharQueue::default();
         window.set_input_callback(Box::new(typed.clone()));
-        Ok(Self { window, width, height, typed })
+        Ok(Self { window, typed })
     }
 }
 
@@ -55,9 +53,9 @@ impl Frontend for MinifbFrontend {
         }
     }
 
-    fn present(&mut self, pixels: &[u32]) -> Result<(), String> {
+    fn present(&mut self, pixels: &[u32], (width, height): (usize, usize)) -> Result<(), String> {
         self.window
-            .update_with_buffer(pixels, self.width, self.height)
+            .update_with_buffer(pixels, width, height)
             .map_err(|e| format!("failed to redraw the window: {e}"))
     }
 }
@@ -82,5 +80,5 @@ same_names!(
     Minus, LeftBracket, RightBracket, Backslash, Semicolon, Apostrophe, Comma,
     Period, Slash, Backquote, Equal,
     NumPad0, NumPad1, NumPad2, NumPad3, NumPad4, NumPad5, NumPad6, NumPad7, NumPad8, NumPad9,
-    NumPadDot, NumPadEnter
+    NumPadDot, NumPadEnter, F9
 );

@@ -10,6 +10,10 @@
 //! GPU shader) instead of hand-written pixel patterns and data-dependent
 //! smoothing, and light is summed in linear space.
 //!
+//! Light is linear in the beam's current and the picture is stored as
+//! `light^(1/2)` (see [`GAMMA`]): squares and square roots are what the SIMD
+//! units do natively.
+//!
 //! One output pixel belongs to one phosphor slot, lit by one gun only:
 //! `R G B` repeat every triad. What reaches the eye is
 //! `light(x, y) = beam_c(u, v) * coverage(slot geometry, beam_c)`, optionally
@@ -22,6 +26,10 @@ pub const SRC_WIDTH: usize = 768;
 pub const SRC_HEIGHT: usize = 272;
 /// Triads across the source width: 480, as ACE-DL's 1.875 output ratio.
 pub const TRIADS_ACROSS: usize = 480;
+
+/// Exponent of the phosphors' response to the gun's level, the one of the
+/// stored pictures: sRGB's is about 2.2, this is the cheap approximation.
+pub const GAMMA: f32 = 2.0;
 
 /// The tubes (and ACE-DL render modes) that can be approximated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,8 +90,6 @@ pub struct CrtParams {
     /// Growth in px of a slot at full beam intensity: bright pixels bleed
     /// over the slot's edges.
     pub spill: f32,
-    /// Exponent of the phosphors' response to the gun's level.
-    pub gamma: f32,
     /// Light of a slot reaching its two horizontal neighbours (glass).
     pub halation: f32,
     /// Brightness relative to [`Self::white_norm`]'s calibration, where a
@@ -105,7 +111,6 @@ impl CrtParams {
             beam_sigma_h: 0.5,
             beam_sigma_v: 0.38,
             spill: 0.5,
-            gamma: 2.2,
             halation: 0.10,
             gain: 3.0
         };

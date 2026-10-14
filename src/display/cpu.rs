@@ -24,7 +24,6 @@ use image::RgbImage;
 const TAPS: usize = 4;
 /// Zeros on each side of a linear scanline, for the taps near the edges.
 const PAD: usize = 2;
-const ENCODE_STEPS: usize = 16384;
 
 struct Column {
     /// Index (before padding) of the first tap, in monitor pixels.
@@ -50,8 +49,7 @@ struct Tables {
     channel_masks: [Vec<f32>; 3],
     /// `gain` and the calibration of the mask's losses.
     scale: f32,
-    linear: [f32; 256],
-    encode: Vec<u8>
+    linear: [f32; 256]
 }
 
 impl Tables {
@@ -96,13 +94,10 @@ impl Tables {
 
         let mut linear = [0.0f32; 256];
         for (level, l) in linear.iter_mut().enumerate() {
-            *l = (level as f32 / 255.0).powf(p.gamma);
+            *l = (level as f32 / 255.0).powi(2);
         }
-        let encode = (0..ENCODE_STEPS)
-            .map(|i| (255.0 * (i as f32 / (ENCODE_STEPS - 1) as f32).powf(1.0 / p.gamma)).round() as u8)
-            .collect();
 
-        Self { columns, rows, mask, channel_masks, scale: p.gain * p.white_norm(), linear, encode }
+        Self { columns, rows, mask, channel_masks, scale: p.gain * p.white_norm(), linear }
     }
 }
 
@@ -179,7 +174,6 @@ impl CpuCrt {
         // light of each gun, with `slot` zeros on each side for the halation
         let mut lit = [vec![0.0f32; out_w + 2 * slot], vec![0.0f32; out_w + 2 * slot], vec![0.0f32; out_w + 2 * slot]];
         let (h, centre) = (params.halation, 1.0 - 2.0 * params.halation);
-        let max_index = (ENCODE_STEPS - 1) as f32;
 
         for (n, out) in dst.chunks_exact_mut(out_w).enumerate() {
             let y = first + n;
@@ -188,20 +182,29 @@ impl CpuCrt {
             let distance = &tables.mask[y % pitch];
             let [r, g, b] = &mut lit;
             let masks = &tables.channel_masks;
-            for x in 0..out_w {
+            let n = out_w;
+            // Equal-length slices, so the loops below have no bounds checks
+            // and vectorise.
+            let (la, lb, distance) = (&la[..n], &lb[..n], &distance[..n]);
+            let (m0, m1, m2) = (&masks[0][slot..][..n], &masks[1][slot..][..n], &masks[2][slot..][..n]);
+            let (rc, gc, bc) = (&mut r[slot..][..n], &mut g[slot..][..n], &mut b[slot..][..n]);
+            for x in 0..n {
                 let level = mix.a * la[x] + mix.b * lb[x];
                 let light = level * coverage(distance[x], params.spill, level) * tables.scale;
-                r[x + slot] = light * masks[0][x + slot];
-                g[x + slot] = light * masks[1][x + slot];
-                b[x + slot] = light * masks[2][x + slot];
+                rc[x] = light * m0[x];
+                gc[x] = light * m1[x];
+                bc[x] = light * m2[x];
             }
-            let encode = |light: f32| tables.encode[(light.clamp(0.0, 1.0) * max_index + 0.5) as usize] as u32;
-            for x in 0..out_w {
-                let at = x + slot;
-                let red = centre * r[at] + h * (r[at - slot] + r[at + slot]);
-                let green = centre * g[at] + h * (g[at - slot] + g[at + slot]);
-                let blue = centre * b[at] + h * (b[at - slot] + b[at + slot]);
-                out[x] = encode(red) << 16 | encode(green) << 8 | encode(blue);
+            let encode = |light: f32| (light.clamp(0.0, 1.0).sqrt() * 255.0 + 0.5) as i32;
+            let (r_l, r_c, r_r) = (&r[..n], &r[slot..][..n], &r[2 * slot..][..n]);
+            let (g_l, g_c, g_r) = (&g[..n], &g[slot..][..n], &g[2 * slot..][..n]);
+            let (b_l, b_c, b_r) = (&b[..n], &b[slot..][..n], &b[2 * slot..][..n]);
+            let out = &mut out[..n];
+            for x in 0..n {
+                let red = centre * r_c[x] + h * (r_l[x] + r_r[x]);
+                let green = centre * g_c[x] + h * (g_l[x] + g_r[x]);
+                let blue = centre * b_c[x] + h * (b_l[x] + b_r[x]);
+                out[x] = (encode(red) << 16 | encode(green) << 8 | encode(blue)) as u32;
             }
         }
     }
@@ -266,7 +269,7 @@ mod test {
     /// Straightforward per-pixel implementation of the model, without any
     /// table: what the optimised passes must match.
     fn reference(p: &CrtParams, src: &RgbImage, x: usize, y: usize) -> u32 {
-        let lin = |v: u8| (v as f32 / 255.0).powf(p.gamma);
+        let lin = |v: u8| (v as f32 / 255.0).powi(2);
         let level_at = |x: usize, y: usize| -> f32 {
             let slot = p.slot_px();
             let u = ((x / slot) as f32 + 0.5) * slot as f32 / p.x_ratio();
@@ -305,7 +308,7 @@ mod test {
             level * coverage(p.slot_distance(x as usize, y), p.spill, level) * p.gain * p.white_norm()
         };
         let slot = p.slot_px() as isize;
-        let encode = |l: f32| (255.0 * l.clamp(0.0, 1.0).powf(1.0 / p.gamma)).round() as u32;
+        let encode = |l: f32| (255.0 * l.clamp(0.0, 1.0).sqrt()).round() as u32;
         let channel = |c: usize| {
             let x = x as isize;
             encode((1.0 - 2.0 * p.halation) * light(x, c) + p.halation * (light(x - slot, c) + light(x + slot, c)))

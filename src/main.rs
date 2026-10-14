@@ -57,7 +57,8 @@
 //! software expects a particular disc already in the drive.
 
 use amsrust::csl_runner::keys_of_char;
-use amsrust::display::DisplayFilter;
+use amsrust::display::{DisplayFilter, DisplayMode};
+use amsrust::input::HostKey;
 use amsrust::debug::{Monitor, MonitorContext};
 use amsrust::disc_image::load_dsk;
 use amsrust::fdc::FdcDrive;
@@ -148,7 +149,7 @@ fn main() {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut()),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), filter.as_mut())
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display)
         },
         None if args.debug_server => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
@@ -475,8 +476,9 @@ fn run_window(
     record: Option<&str>,
     typist: &mut Option<Typist>,
     mut server: Option<&mut DebugServer>,
-    filter: &mut dyn DisplayFilter
+    mut mode: DisplayMode
 ) {
+    let mut filter = mode.filter();
     let (width, height) = filter.output_size();
     let mut window = MinifbFrontend::open("amsrust", width, height).unwrap_or_else(|e| panic!("{e}"));
     // Cap redraws (and so input polling and emulated speed) at the CPC's
@@ -499,6 +501,7 @@ fn run_window(
 
     let mut host_keyboard = HostKeyboard::default();
     let mut buffer = vec![0u32; width * height];
+    let mut f9_was_down = false;
 
     // One whole frame per redraw, locked to the emulator's real VSYNC, not
     // to a fixed t-state count.
@@ -507,7 +510,18 @@ fn run_window(
         monitor.keep_full_frames();
     }
     while window.is_open() && !stop_requested() {
-        host_keyboard.apply(motherboard, &window.poll_input());
+        let input = window.poll_input();
+        // F9 cycles the display (not while recording: a video has one size).
+        let f9_down = input.down.contains(&HostKey::F9);
+        if f9_down && !f9_was_down && recorder.is_none() {
+            mode = mode.next();
+            filter = mode.filter();
+            let (width, height) = filter.output_size();
+            buffer = vec![0u32; width * height];
+            eprintln!("display: {mode:?}");
+        }
+        f9_was_down = f9_down;
+        host_keyboard.apply(motherboard, &input);
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, motherboard);
 
@@ -518,7 +532,7 @@ fn run_window(
             }
             if server.paused() {
                 // Stopped by the debugger: keep the window alive.
-                window.present(&buffer).unwrap_or_else(|e| panic!("{e}"));
+                window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
                 std::thread::sleep(std::time::Duration::from_millis(15));
                 continue;
             }
@@ -539,7 +553,7 @@ fn run_window(
         }
         play_frame_audio(audio.as_ref(), &samples, &window);
 
-        window.present(&buffer).unwrap_or_else(|e| panic!("{e}"));
+        window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
     }
 
     if let (Some(recorder), Some(path)) = (recorder, record) {

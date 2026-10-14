@@ -39,6 +39,17 @@ impl DisplayMode {
         self == Self::Raw
     }
 
+    /// The next mode, cycling through all of them (what F9 does).
+    pub fn next(self) -> Self {
+        match self {
+            Self::Raw => Self::Crt(CrtProfile::Ctm644),
+            Self::Crt(CrtProfile::Ctm644) => Self::Crt(CrtProfile::Trinitron),
+            Self::Crt(CrtProfile::Trinitron) => Self::Crt(CrtProfile::Gt65),
+            Self::Crt(CrtProfile::Gt65) => Self::Crt(CrtProfile::AtariColor),
+            Self::Crt(CrtProfile::AtariColor) => Self::Raw
+        }
+    }
+
     /// The filter implementing this mode.
     pub fn filter(self) -> Box<dyn DisplayFilter> {
         match self {
@@ -132,6 +143,19 @@ mod test {
         assert_eq!("raw".parse::<DisplayMode>(), Ok(DisplayMode::Raw));
         assert_eq!("ctm".parse::<DisplayMode>(), Ok(DisplayMode::Crt(CrtProfile::Ctm644)));
         assert!("nope".parse::<DisplayMode>().is_err());
+    }
+
+    #[test]
+    fn next_cycles_through_every_mode() {
+        let start = DisplayMode::Raw;
+        let mut mode = start.next();
+        let mut seen = vec![start];
+        while mode != start {
+            assert!(!seen.contains(&mode));
+            seen.push(mode);
+            mode = mode.next();
+        }
+        assert_eq!(seen.len(), 5);
     }
 
     #[test]

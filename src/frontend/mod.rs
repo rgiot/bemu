@@ -22,7 +22,7 @@ pub trait Frontend {
     /// The host keyboard state since the previous poll.
     fn poll_input(&mut self) -> HostInput;
 
-    /// Show `pixels` (0RGB, the `width * height` the frontend was created
-    /// with).
-    fn present(&mut self, pixels: &[u32]) -> Result<(), String>;
+    /// Show `pixels`: 0RGB, `width * height` of them. The size may change
+    /// from one call to the other (the window then scales the picture).
+    fn present(&mut self, pixels: &[u32], size: (usize, usize)) -> Result<(), String>;
 }
