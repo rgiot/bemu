@@ -297,7 +297,8 @@ mod test {
 ///   microsecond in it, 0-63);
 /// - the memory: `MemPage` (the 64K expansion page), `MemBankMode` (the 16K
 ///   bank mapping mode, 0-7), `LowerROMOn`, `UpperROMOn`, `UpperROMNum`,
-///   and for the Plus `LowerROMNum`, `LowerROMAdr`, `ASICPageOn` (0 here);
+///   and for the Plus `LowerROMNum`, `LowerROMAdr`, `ASICPageOn` (0 here)
+///   and `ASICPageOff` (1: no ASIC page is ever mapped);
 /// - for memory/IO breakpoints the access's `ADDRESS` (`ADDR`) and `VALUE`;
 /// - `peek(x)` / `deek(x)`: the byte / little-endian word at `x`, as the CPU
 ///   sees memory.
@@ -347,7 +348,7 @@ pub const VARIABLES: &[&str] = &[
     "C4", "C5", "C9", "CRTCR0", "CRTCR1", "CRTCR2", "CRTCR3", "CRTCR4", "CRTCR5", "CRTCR6", "CRTCR7", "CRTCR8",
     "CRTCR9", "CRTCR10", "CRTCR11", "CRTCR12", "CRTCR13", "CRTCR14", "CRTCR15", "CRTCR16", "CRTCR17", "CRTCSEL",
     "LINECOUNT", "LINECYCLE", "MEMPAGE", "MEMBANKMODE", "LOWERROMON", "UPPERROMON", "LOWERROMNUM", "UPPERROMNUM",
-    "LOWERROMADR", "ASICPAGEON"
+    "LOWERROMADR", "ASICPAGEON", "ASICPAGEOFF"
 ];
 
 impl Condition {
@@ -726,7 +727,7 @@ mod condition_test {
         assert!(holds("a == #12 && !(hl != 0xc000)"));
         // Names are case-insensitive, ACE's misspelling included.
         for name in ["FlagZ", "flagnz", "C0", "c3h", "C3V", "CrtcR12", "CRTCSEL", "LineCount", "linecycle", "MemPage",
-            "MemBankMode", "LowerROMOn", "LowerrROMOn", "UpperROMNum", "ASICPageOn", "IXl", "iyh"]
+            "MemBankMode", "LowerROMOn", "LowerrROMOn", "UpperROMNum", "ASICPageOn", "ASICPageOff", "IXl", "iyh"]
         {
             assert!(Condition::parse(&format!("{name} >= 0")).is_ok(), "{name}");
         }

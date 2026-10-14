@@ -1844,6 +1844,7 @@ impl MachineContext<'_> {
             "UPPERROMNUM" => Some(motherboard.upper_rom_number() as i64),
             // A Plus's: no ASIC here, the lower ROM is the firmware's at 0.
             "LOWERROMNUM" | "LOWERROMADR" | "ASICPAGEON" => Some(0),
+            "ASICPAGEOFF" => Some(1),
             _ => None
         }
     }
@@ -2409,7 +2410,7 @@ mod test {
         // BASIC running: the upper ROM (BASIC, ROM 0) paged in at times; the
         // number is read, whatever it is now.
         assert!(holds(&format!("UpperROMNum = {}", mb.upper_rom_number())));
-        assert!(holds("ASICPageOn = 0 AND LowerROMNum = 0 AND LowerROMAdr = 0"));
+        assert!(holds("ASICPageOn = 0 AND ASICPageOff = 1 AND LowerROMNum = 0 AND LowerROMAdr = 0"));
         // No monitor: no beam, the raster variables are 0.
         let headless = MachineContext { motherboard: &mb, access: None, beam: None };
         assert!(!Condition::parse("LineCount OR LineCycle").unwrap().holds(&headless));
