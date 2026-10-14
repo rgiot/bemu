@@ -185,6 +185,17 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
+    /// CRTC 1 (ACCC 18.2.3): like CRTC 0 and 2, C4=R6 latches the BORDER, but R6=0 is a BORDER
+    /// of its own while it stays 0 and there is no first line conflict.
+    fn r6_zero_is_border(&self) -> bool {
+        false
+    }
+
+    /// CRTC 1 (ACCC 11.6): the "rupture for dummies" bug of R5.
+    fn has_rfd(&self) -> bool {
+        false
+    }
+
     /// ACCC 17.5: an R1=0 written while C0=0 is still in time to raise the
     /// BORDER on CRTC 0, 1 and 2 ("too late" on CRTC 3 and 4).
     fn acknowledges_r1_zero_on_c0_zero(&self) -> bool {

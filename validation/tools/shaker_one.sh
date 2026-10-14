@@ -14,8 +14,8 @@ cargo build --release --example run_shaker_suite 2>&1 | grep -E "^error" -A8 || 
 if [ "$KEY" = "-" ]; then
   BUNDLE="$WORK/${BUNDLE_DIR:-bundle}"; NAME="res_${MOD}_${TAG}"
 else
-  python3 "$HERE/shaker_one_test.py" "$MOD" "$KEY" "$WORK/bundle_${MOD}${KEY//[^A-Za-z0-9]/}" >/dev/null
-  BUNDLE="$WORK/bundle_${MOD}${KEY//[^A-Za-z0-9]/}"; NAME="res_${MOD}${KEY//[^A-Za-z0-9]/}_${TAG}"
+  python3 "$HERE/shaker_one_test.py" "$MOD" "$KEY" "$WORK/bundle_${MOD}${KEY//[^A-Za-z0-9]/}${BUNDLE_DIR:+_$BUNDLE_DIR}" >/dev/null
+  BUNDLE="$WORK/bundle_${MOD}${KEY//[^A-Za-z0-9]/}${BUNDLE_DIR:+_$BUNDLE_DIR}"; NAME="res_${MOD}${KEY//[^A-Za-z0-9]/}_${TAG}"
 fi
 rm -rf "$WORK/$NAME"; mkdir -p "$WORK/$NAME"
 ./target/release/examples/run_shaker_suite "$BUNDLE" "$WORK/$NAME" "$MOD" > "$WORK/$NAME.log" 2>&1

@@ -12,6 +12,6 @@ import pathlib
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 WORK = pathlib.Path(os.environ.get("SHAKER_WORK", os.path.expanduser("~/shaker_work")))
-BUNDLE = WORK / "bundle"
+BUNDLE = WORK / os.environ.get("BUNDLE_DIR", "bundle")
 REFS = WORK / "ref" / "ams"
 TESTS = WORK / "tests.json"

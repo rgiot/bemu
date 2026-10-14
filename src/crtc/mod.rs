@@ -232,6 +232,9 @@ pub struct Crtc {
     ivm_lines: bool,
     /// An extra interlace line follows the R5 lines of this frame.
     interlace_extra_line: bool,
+    /// CRTC 1 (ACCC 11.6): a rupture for dummies is running: VMA is reloaded from R12/R13 at the
+    /// start of every line until the C9=R9 test at C0=R1 passes (it depends on the frame parity)
+    rfd_active: bool,
     /// C9 had reached R9 on the first of them: C4 moves on the second.
     r0_zero_c4_pending: bool,
     /// R6 was 0 during this frame's first line: the C4=R6 conflict of ACCC §18.3.2.
@@ -284,6 +287,7 @@ impl Default for Crtc {
             parity_c9: false,
             ivm_lines: false,
             interlace_extra_line: false,
+            rfd_active: false,
             r0_zero_c4_pending: false,
             r6_zero_seen: false,
             noise: 0x2545_f491,
@@ -439,6 +443,8 @@ impl Crtc {
         }
         let mask = self.model.write_mask(r);
         let previous_r3l = self.regs[3] & 0x0f;
+        let previous_r5 = self.regs[5];
+        let previous_r8 = self.regs[8];
         let previous_r0 = self.regs[0];
         // ACCC 16.4.1.1: R7 given the value of C4 on C0=0/1 is a BLOCKED VSYNC: it
         // does not start, nor can it until C4 or R7 changes
@@ -453,6 +459,37 @@ impl Crtc {
         }
         if let Some(register) = self.regs.get_mut(usize::from(r)) {
             *register = v & mask;
+        }
+        // ACCC §19.5.3 (CRTC 1): the parities follow R8 as soon as it is written
+        if r == 8 && self.model.frame_parity_toggles() {
+            let was_ivm = previous_r8 & 3 == 3;
+            let is_ivm = self.regs[8] & 3 == 3;
+            if was_ivm != is_ivm {
+                let c4_odd_r9_even = self.vcc.value() & 1 != 0 && self.regs[9] & 1 == 0;
+                let c9 = self.c9_vma();
+                // 3rd microsecond: ParityC9 = C9.0 xor (C4.0 and not R9.0)
+                let mut parity_c9 = (c9 & 1 != 0) ^ c4_odd_r9_even;
+                if is_ivm {
+                    // 4th microsecond: IVM becomes active
+                    if !self.parity_frame {
+                        parity_c9 = c4_odd_r9_even;
+                    }
+                    self.parity_frame = self.parity_frame && (parity_c9 ^ c4_odd_r9_even);
+                    self.vlc = (c9 >> 1).into();
+                    self.parity_c9 = parity_c9;
+                } else {
+                    // IVM goes idle: ParityFrame = ParityC9, C9 keeps its bit 0 as ParityC9
+                    self.parity_frame = parity_c9;
+                    self.vlc = ((c9 & !1) | u8::from(parity_c9)).into();
+                }
+                self.ivm_lines = is_ivm;
+            }
+        }
+        // ACCC §11.6 (CRTC 1): R5 raised from 0 on C0=R0 starts a rupture for dummies
+        if r == 5 && self.model.has_rfd() && previous_r5 & 0x1f == 0 && self.regs[5] & 0x1f != 0
+            && self.hcc == self.regs[0]
+        {
+            self.rfd_active = true;
         }
         // ACCC §13.7.2: R0 enlarged out of 1 when C0=1 and C9=R9 overflows C4
         // (even if C4<>R4); the step itself lands at C0=2.
@@ -494,7 +531,7 @@ impl Crtc {
         // row) and the BORDER starts at once.
         if r == 1 && self.hcc == self.regs[1] && (self.regs[1] != 0 || self.hcc != 0 || self.model.acknowledges_r1_zero_on_c0_zero()) {
             if self.c9_is_last() {
-                self.crtc_vma_prime = self.crtc_vma;
+                self.latch_next_row_address();
             }
             self.border_history[0] = true;
             self.r1_latch = true;
@@ -569,6 +606,7 @@ impl Crtc {
     /// each character is BORDER) as long as R1 has not been reached.
     pub fn r6_conflict_second_byte_is_border(&self) -> bool {
         self.model.latches_r6_border()
+            && !self.model.r6_zero_is_border()
             && self.vcc == 0
             && self.vlc == 0
             && self.regs[6] == 0
@@ -676,7 +714,7 @@ impl Crtc {
             // CRTC 1 (ACCC §17.4.2): while C4=0, VMA *itself* (not VMA') is
             // reloaded from R12/R13 directly, line by line - the offset can
             // be changed on each of that row's scan lines, not just once.
-            if self.vcc == 0 {
+            if self.vcc == 0 || self.rfd_active {
                 self.crtc_vma = self.base_address();
                 return;
             }
@@ -689,6 +727,19 @@ impl Crtc {
             self.crtc_vma_prime = self.base_address();
         }
         self.crtc_vma = self.crtc_vma_prime;
+    }
+
+    /// VMA' takes the address of the next row (C9=R9 at C0=R1). During an RFD (ACCC 11.6.1) the
+    /// test is made with the frame parity: on an even frame it fails and the row repeats, on an
+    /// odd one it passes, VMA' is updated and the RFD is over.
+    fn latch_next_row_address(&mut self) {
+        if self.rfd_active {
+            if !self.parity_frame {
+                return;
+            }
+            self.rfd_active = false;
+        }
+        self.crtc_vma_prime = self.crtc_vma;
     }
 
     /// VSync in lines
@@ -750,7 +801,7 @@ impl Crtc {
             && self.hcc != self.regs[0].wrapping_add(1)
             && self.c9_is_last()
         {
-            self.crtc_vma_prime = self.crtc_vma;
+            self.latch_next_row_address();
         }
 
         if self.hcc == self.regs[0].wrapping_add(1) {
@@ -1002,7 +1053,16 @@ impl Crtc {
             DisplaySkew::Delayed(chars) => self.border_history[usize::from(chars)],
             DisplaySkew::Blanked => true,
         };
-        let vertical_border = if self.model.latches_r6_border() {
+        let vertical_border = if self.model.r6_zero_is_border() {
+            // CRTC 1 (ACCC 18.2.3)
+            if self.hcc == 0 && self.vcc == 0 && self.vlc == 0 {
+                self.r6_border = false;
+            }
+            if self.vcc == self.regs[6] {
+                self.r6_border = true;
+            }
+            self.r6_border || self.regs[6] == 0
+        } else if self.model.latches_r6_border() {
             let first_line = self.vcc == 0 && self.vlc == 0;
             if self.hcc == 0 && first_line {
                 self.r6_border = false;

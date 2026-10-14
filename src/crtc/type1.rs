@@ -56,6 +56,18 @@ impl CrtcModel for Crtc1 {
         true
     }
 
+    fn latches_r6_border(&self) -> bool {
+        true
+    }
+
+    fn r6_zero_is_border(&self) -> bool {
+        true
+    }
+
+    fn has_rfd(&self) -> bool {
+        true
+    }
+
     fn frame_parity_toggles(&self) -> bool {
         true
     }
