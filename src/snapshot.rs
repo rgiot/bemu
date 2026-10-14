@@ -168,7 +168,8 @@ fn load_psg(motherboard: &mut Motherboard, byte: &impl Fn(SnapshotFlag) -> u8) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotBreakpoint {
     pub address: u16,
-    /// The chunk it comes from: "REMU", "BRKC" (ACE) or "WABP" (WinAPE).
+    /// The chunk it comes from: "REMU", "BRKC" (ACE), "BRKS" (rasm/basm for
+    /// WinAPE) or "WABP" (WinAPE).
     pub chunk: &'static str
 }
 
@@ -205,6 +206,10 @@ fn breakpoints_of_snapshot(snapshot: &Snapshot) -> SnapshotBreakpoints {
     for chunk in snapshot.chunks() {
         breakpoints_of_chunk(chunk.code().as_str(), chunk.data(), &mut breakpoints);
     }
+    // Assemblers write the same breakpoint to several chunks (REMU, BRKS
+    // and BRKC for basm and rasm): one each.
+    let mut seen = std::collections::HashSet::new();
+    breakpoints.exec.retain(|b| seen.insert(b.address));
     breakpoints
 }
 
@@ -213,6 +218,7 @@ fn breakpoints_of_chunk(code: &str, data: &[u8], breakpoints: &mut SnapshotBreak
     match code {
         "REMU" => remu_breakpoints(data, exec, advanced, ignored),
         "BRKC" => ace_breakpoints(data, exec, ignored),
+        "BRKS" => brks_breakpoints(data, exec),
         "WABP" => winape_breakpoints(data, exec, ignored),
         _ => {}
     }
@@ -262,16 +268,34 @@ fn remu_breakpoints(
 }
 
 /// ACE (BRKC): 216-byte records, byte 0 the type (0 = execution), bytes
-/// 4-5 the address, high byte first (cpcwiki "Snapshot#BRKC").
+/// 4-5 the address, high byte first (cpcwiki "Snapshot#BRKC", as cpclib and
+/// basm write it), the name at 144. rasm writes the address low byte first
+/// and names its records "breakpoint<index>": read that way when so named.
 fn ace_breakpoints(data: &[u8], breakpoints: &mut Vec<SnapshotBreakpoint>, ignored: &mut Vec<String>) {
-    for record in data.chunks_exact(216) {
+    for (index, record) in data.chunks_exact(216).enumerate() {
         if record[0] == 0 {
-            let address = u16::from_be_bytes([record[4], record[5]]);
+            let name = &record[144..208];
+            let name = &name[..name.iter().position(|&b| b == 0).unwrap_or(name.len())];
+            let address = if name == format!("breakpoint{index}").as_bytes() {
+                u16::from_le_bytes([record[4], record[5]])
+            }
+            else {
+                u16::from_be_bytes([record[4], record[5]])
+            };
             breakpoints.push(SnapshotBreakpoint { address, chunk: "BRKC" });
         }
         else {
             ignored.push(format!("BRKC: breakpoint of type {} (memory/port)", record[0]));
         }
+    }
+}
+
+/// BRKS (written by rasm and basm for WinAPE, unofficial): 5-byte records,
+/// the address low byte first, 0 for the base 64K or 1 for the extended
+/// RAM (ignored), a zeroed condition.
+fn brks_breakpoints(data: &[u8], breakpoints: &mut Vec<SnapshotBreakpoint>) {
+    for record in data.chunks_exact(5) {
+        breakpoints.push(SnapshotBreakpoint { address: u16::from_le_bytes([record[0], record[1]]), chunk: "BRKS" });
     }
 }
 
@@ -418,6 +442,50 @@ mod breakpoint_test {
         chunk.add_breakpoint(AceBreakPoint::new_execution(0x1234, AceBrkRuntimeMode::Break, AceMemMapType::Undefined));
         chunk.add_breakpoint(AceBreakPoint::new_execution(0xbeef, AceBrkRuntimeMode::Break, AceMemMapType::Undefined));
         assert_eq!(parse("BRKC", chunk.data()), (vec![0x1234, 0xbeef], 0));
+    }
+
+    #[test]
+    fn ace_execution_breakpoints_written_by_rasm() {
+        // rasm -sb: the address low byte first, named "breakpoint<index>".
+        let mut chunk = Vec::new();
+        for (index, address) in [0x4000u16, 0x1234].into_iter().enumerate() {
+            let mut record = [0u8; 216];
+            record[4..6].copy_from_slice(&address.to_le_bytes());
+            let name = format!("breakpoint{index}");
+            record[144..144 + name.len()].copy_from_slice(name.as_bytes());
+            chunk.extend_from_slice(&record);
+        }
+        assert_eq!(parse("BRKC", &chunk), (vec![0x4000, 0x1234], 0));
+        // Another name: high byte first.
+        chunk[144..155].copy_from_slice(b"breakpoint7");
+        assert_eq!(parse("BRKC", &chunk), (vec![0x0040, 0x1234], 0));
+    }
+
+    #[test]
+    fn brks_breakpoints_written_by_rasm_and_basm() {
+        assert_eq!(parse("BRKS", &[0x00, 0x40, 0, 0, 0, 0x38, 0x00, 1, 0, 0]), (vec![0x4000, 0x0038], 0));
+    }
+
+    /// `tests/fixtures/basm_breakpoints.asm` assembled by basm (cpclib):
+    /// an execution breakpoint in REMU, BRKS and BRKC, a memory watch and
+    /// an IO breakpoint with a condition as REMU `acebreak` entries.
+    #[test]
+    fn breakpoints_of_a_basm_snapshot() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/basm_breakpoints.sna");
+        let breakpoints = load_breakpoints(path).unwrap();
+        assert!(breakpoints.ignored.is_empty(), "{:?}", breakpoints.ignored);
+        let exec: Vec<_> = breakpoints.exec.iter().map(|b| b.address).collect();
+        assert_eq!(exec, vec![0x4000]);
+        let advanced: Vec<_> = breakpoints
+            .advanced
+            .iter()
+            .map(|b| (b.kind, b.address, b.size, b.run, b.name.as_deref(), b.condition.is_some()))
+            .collect();
+        use crate::breakpoints::{BreakpointKind, RunMode};
+        assert_eq!(advanced, vec![
+            (BreakpointKind::Memory, 0xc000, 16, RunMode::Watch, Some("screen"), false),
+            (BreakpointKind::Io, 0x7f00, 1, RunMode::Stop, Some("ink"), true),
+        ]);
     }
 
     #[test]

@@ -43,7 +43,7 @@
 //! interactive monitor.
 //!
 //! Breakpoints stored in the snapshot by an assembler or another emulator
-//! (REMU, ACE "BRKC" and WinAPE "WABP" chunks, see `amsrust::snapshot`) are
+//! (REMU, ACE "BRKC", WinAPE "WABP" and "BRKS" chunks, see `amsrust::snapshot`) are
 //! set in the interactive monitor.
 //!
 //! `--debug-server` starts the HTTP debug server compatible with the
@@ -198,7 +198,7 @@ fn print_help() {
         "a video with sound through ffmpeg: what the window shows until it is\n",
         "closed, or without --window --seconds (default 30) run headless.\n",
         "--type 'run\"demo\\n' types on the CPC keyboard after --type-at seconds\n",
-        "(default 3). Breakpoints of a snapshot's REMU/BRKC/WABP chunks are set\n",
+        "(default 3). Breakpoints of a snapshot's REMU/BRKC/BRKS/WABP chunks are set\n",
         "in the interactive monitor.\n",
         "--debug-server serves the AMSpiriT-Lite compatible debug API on\n",
         "127.0.0.1:6128 (GET /api/doc lists the endpoints), with --window or\n",
