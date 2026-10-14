@@ -137,6 +137,15 @@ fn indexed_cb(op: u8) -> Vec<Cycle> {
 /// 0 to 3. `taken` is for conditional branches, `repeat` for the block
 /// instructions that go round again.
 pub(crate) fn idle_tail(prefix: OpcodePrefix, op: u8, taken: bool, repeat: bool) -> u8 {
+    // A halted CPU executes nothing: it only waits, so an interrupt is heard
+    // inside the HALT cycle like in an instruction ending with idle
+    // T-states, not at the end of a full 4 T-state cycle. Measured with
+    // validation/demos/rhino (a raster routine synchronised by EI + HALT):
+    // AMSpiriT and a third emulator wake the CPU 1 us before a 4 T-state
+    // NOP-like cycle would.
+    if prefix == OpcodePrefix::None && op == 0x76 {
+        return 2;
+    }
     let cycles = match prefix {
         OpcodePrefix::None => unprefixed(op, taken),
         OpcodePrefix::Cb => cb(op),
@@ -160,6 +169,13 @@ mod tests {
 
     fn idle(prefix: OpcodePrefix, op: u8) -> u8 {
         idle_tail(prefix, op, false, false)
+    }
+
+    #[test]
+    fn a_halted_cpu_hears_an_interrupt_in_its_last_microsecond() {
+        assert!(idle(OpcodePrefix::None, 0x76) >= 2);
+        // an ordinary NOP does not
+        assert_eq!(idle(OpcodePrefix::None, 0x00), 0);
     }
 
     #[test]

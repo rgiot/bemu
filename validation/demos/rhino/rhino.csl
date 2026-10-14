@@ -1,0 +1,12 @@
+csl_version 1.0
+crtc_select 1
+reset
+wait 6000000
+disk_insert '../../rhino_mdr.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"-RHINO"\(RET)'
+wait 25000000
+key_output ' '
+wait 6000000
+screenshot_name 'rhino_01'
+screenshot
