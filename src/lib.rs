@@ -23,6 +23,8 @@ pub mod motherboard;
 pub mod counter;
 pub mod debug;
 pub mod debug_server;
+pub mod display;
+pub mod input;
 pub mod breakpoints;
 pub mod basic_program;
 

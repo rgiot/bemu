@@ -3,8 +3,8 @@
 //!
 //! Every frame the monitor completes is piped as raw RGB to an external
 //! `ffmpeg`, at the CPC's own frame rate: a frame is 312 lines of 64us,
-//! 19968us, i.e. 15625/312 (~50.08) frames per second. Each scanline is
-//! doubled, as in the window, for a 4:3 picture. The PSG samples go to a
+//! 19968us, i.e. 15625/312 (~50.08) frames per second. The frames are the
+//! ones the `--display` filter produces, as in the window. The PSG samples go to a
 //! temporary raw file; when the recording ends a second `ffmpeg` pass muxes
 //! them with the video. Both are produced in emulated time, so picture and
 //! sound stay in sync even when the emulation runs slower than real time.
@@ -31,17 +31,17 @@ pub struct Recorder {
     video_only: PathBuf,
     audio: Option<(AudioConfig, PathBuf, BufWriter<std::fs::File>)>,
     frames: usize,
-    /// Reused for the doubled RGB rows of each frame.
+    /// Reused for the RGB bytes of each frame.
     rgb: Vec<u8>
 }
 
 impl Recorder {
-    /// Start recording `width`x`height` frames (before line doubling), with
-    /// the PSG's samples in the `audio` format if any.
+    /// Start recording `width`x`height` frames, with the PSG's samples in
+    /// the `audio` format if any.
     pub fn start(output: &Path, width: usize, height: usize, audio: Option<AudioConfig>) -> Result<Self, String> {
         check_ffmpeg()?;
         let video_only = temporary(output, "video.mkv");
-        let size = format!("{width}x{}", height * 2);
+        let size = format!("{width}x{height}");
         let mut command = Command::new("ffmpeg");
         command
             .args(["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24"])
@@ -75,24 +75,16 @@ impl Recorder {
             video_only,
             audio,
             frames: 0,
-            rgb: Vec::with_capacity(width * height * 2 * 3)
+            rgb: Vec::with_capacity(width * height * 3)
         })
     }
 
-    /// Add one frame (any size: cropped or padded with black to the
-    /// recording's).
-    pub fn frame(&mut self, frame: &image::RgbImage) -> Result<(), String> {
+    /// Add one frame of 0RGB pixels, `width * height` of them.
+    pub fn frame(&mut self, pixels: &[u32]) -> Result<(), String> {
+        assert_eq!(pixels.len(), self.width * self.height, "the frame is not the recording's size");
         self.rgb.clear();
-        let row_bytes = self.width * 3;
-        let copied = (frame.width() as usize).min(self.width) * 3;
-        for y in 0..self.height {
-            let start = self.rgb.len();
-            if y < frame.height() as usize {
-                let row = &frame.as_raw()[y * frame.width() as usize * 3..][..copied];
-                self.rgb.extend_from_slice(row);
-            }
-            self.rgb.resize(start + row_bytes, 0);
-            self.rgb.extend_from_within(start..start + row_bytes);
+        for &pixel in pixels {
+            self.rgb.extend_from_slice(&[(pixel >> 16) as u8, (pixel >> 8) as u8, pixel as u8]);
         }
         self.frames_in
             .write_all(&self.rgb)

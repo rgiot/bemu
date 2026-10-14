@@ -1,0 +1,129 @@
+//! Post-processing of the monitor's frames for display and recording.
+//!
+//! The [`crate::monitor::Monitor`] produces an "ideal" picture, one pixel per
+//! 16MHz tick; a [`DisplayFilter`] turns it into what is shown (and recorded).
+//! [`RawFilter`] is that ideal picture, with its scanlines doubled; other
+//! filters approximate a real CRT. Filters only ever see completed frames, so
+//! the screenshots of the test suites (which use the monitor's frames
+//! directly) are not affected.
+
+use image::RgbImage;
+use std::str::FromStr;
+
+/// Width of the raw output: the monitor's active width (`48 * 8 * 2`).
+pub const RAW_WIDTH: usize = 48 * 8 * 2; // 768
+/// Height of the raw output: each of the monitor's 272 lines drawn twice,
+/// for a roughly correct 4:3 aspect instead of a squashed one.
+pub const RAW_HEIGHT: usize = 272 * 2;
+
+/// What `--display` selects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DisplayMode {
+    /// The monitor's ideal picture, scanlines doubled.
+    #[default]
+    Raw
+}
+
+impl DisplayMode {
+    pub const NAMES: &'static str = "raw";
+
+    pub fn is_raw(self) -> bool {
+        self == Self::Raw
+    }
+
+    /// The filter implementing this mode.
+    pub fn filter(self) -> Box<dyn DisplayFilter> {
+        match self {
+            Self::Raw => Box::new(RawFilter)
+        }
+    }
+}
+
+impl FromStr for DisplayMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "raw" => Ok(Self::Raw),
+            other => Err(format!("unknown display {other:?} (expected {})", Self::NAMES))
+        }
+    }
+}
+
+/// Turns a monitor frame into the picture to display, in 0RGB pixels.
+pub trait DisplayFilter {
+    /// `(width, height)` of the picture produced for the monitor's frames.
+    /// Fixed over the filter's life, so a window or a recording can be sized
+    /// from it.
+    fn output_size(&self) -> (usize, usize);
+
+    /// Fill `dst` (`width * height` pixels, see [`Self::output_size`]) from
+    /// `src`. A `src` smaller than expected is letterboxed in black.
+    fn render(&mut self, src: &RgbImage, dst: &mut [u32]);
+
+    /// A freshly allocated, filtered `src`.
+    fn render_to_image(&mut self, src: &RgbImage) -> RgbImage {
+        let (width, height) = self.output_size();
+        let mut buffer = vec![0u32; width * height];
+        self.render(src, &mut buffer);
+        let mut image = RgbImage::new(width as u32, height as u32);
+        for (pixel, packed) in image.pixels_mut().zip(&buffer) {
+            pixel.0 = [(packed >> 16) as u8, (packed >> 8) as u8, *packed as u8];
+        }
+        image
+    }
+}
+
+/// The monitor's picture as is, each scanline drawn twice.
+pub struct RawFilter;
+
+impl DisplayFilter for RawFilter {
+    fn output_size(&self) -> (usize, usize) {
+        (RAW_WIDTH, RAW_HEIGHT)
+    }
+
+    fn render(&mut self, src: &RgbImage, dst: &mut [u32]) {
+        dst.fill(0);
+        let width = (src.width() as usize).min(RAW_WIDTH);
+        let height = (src.height() as usize).min(RAW_HEIGHT / 2);
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = src.get_pixel(x as u32, y as u32);
+                let packed = (pixel[0] as u32) << 16 | (pixel[1] as u32) << 8 | pixel[2] as u32;
+                dst[(y * 2) * RAW_WIDTH + x] = packed;
+                dst[(y * 2 + 1) * RAW_WIDTH + x] = packed;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn raw_doubles_each_line_and_letterboxes() {
+        let mut src = RgbImage::new(2, 1);
+        src.put_pixel(0, 0, image::Rgb([1, 2, 3]));
+        src.put_pixel(1, 0, image::Rgb([255, 0, 0]));
+        let mut dst = vec![7u32; RAW_WIDTH * RAW_HEIGHT];
+        RawFilter.render(&src, &mut dst);
+        assert_eq!(dst[0], 0x010203);
+        assert_eq!(dst[1], 0xFF0000);
+        assert_eq!(dst[RAW_WIDTH], 0x010203);
+        assert_eq!(dst[2], 0);
+        assert_eq!(dst[2 * RAW_WIDTH], 0);
+    }
+
+    #[test]
+    fn mode_parses() {
+        assert_eq!("raw".parse::<DisplayMode>(), Ok(DisplayMode::Raw));
+        assert!("nope".parse::<DisplayMode>().is_err());
+    }
+
+    #[test]
+    fn render_to_image_has_the_output_size() {
+        let image = RawFilter.render_to_image(&RgbImage::new(768, 272));
+        assert_eq!((image.width() as usize, image.height() as usize), (RAW_WIDTH, RAW_HEIGHT));
+    }
+}
