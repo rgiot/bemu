@@ -7,6 +7,12 @@
 //! the screenshots of the test suites (which use the monitor's frames
 //! directly) are not affected.
 
+mod cpu;
+pub mod crt;
+
+pub use cpu::CpuCrt;
+pub use crt::{CrtParams, CrtProfile};
+
 use image::RgbImage;
 use std::str::FromStr;
 
@@ -21,11 +27,13 @@ pub const RAW_HEIGHT: usize = 272 * 2;
 pub enum DisplayMode {
     /// The monitor's ideal picture, scanlines doubled.
     #[default]
-    Raw
+    Raw,
+    /// An approximation of a CRT, see [`crt`].
+    Crt(CrtProfile)
 }
 
 impl DisplayMode {
-    pub const NAMES: &'static str = "raw";
+    pub const NAMES: &'static str = "raw|ctm|trinitron|gt65|atari";
 
     pub fn is_raw(self) -> bool {
         self == Self::Raw
@@ -34,7 +42,8 @@ impl DisplayMode {
     /// The filter implementing this mode.
     pub fn filter(self) -> Box<dyn DisplayFilter> {
         match self {
-            Self::Raw => Box::new(RawFilter)
+            Self::Raw => Box::new(RawFilter),
+            Self::Crt(profile) => Box::new(CpuCrt::new(profile.params()))
         }
     }
 }
@@ -45,7 +54,10 @@ impl FromStr for DisplayMode {
     fn from_str(s: &str) -> Result<Self, String> {
         match s {
             "raw" => Ok(Self::Raw),
-            other => Err(format!("unknown display {other:?} (expected {})", Self::NAMES))
+            other => other
+                .parse()
+                .map(Self::Crt)
+                .map_err(|_| format!("unknown display {other:?} (expected {})", Self::NAMES))
         }
     }
 }
@@ -118,6 +130,7 @@ mod test {
     #[test]
     fn mode_parses() {
         assert_eq!("raw".parse::<DisplayMode>(), Ok(DisplayMode::Raw));
+        assert_eq!("ctm".parse::<DisplayMode>(), Ok(DisplayMode::Crt(CrtProfile::Ctm644)));
         assert!("nope".parse::<DisplayMode>().is_err());
     }
 
