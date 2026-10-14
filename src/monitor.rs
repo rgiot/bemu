@@ -81,6 +81,9 @@ pub struct Monitor {
     texture: RgbImage,
     /// The last whole frame, until taken.
     frame: Option<RgbImage>,
+    /// The whole frames, sync and borders included, when asked for (see
+    /// [`Monitor::keep_full_frames`]).
+    full: Option<FullFrames>,
     /// Beam position: ticks since the last line start; lines since the last
     /// frame start.
     x: usize,
@@ -134,6 +137,7 @@ impl Monitor {
         Monitor {
             texture: RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32),
             frame: None,
+            full: None,
             x: 0,
             line: 0,
             hsync_run: 0,
@@ -175,6 +179,36 @@ impl Monitor {
     /// visible area: the image's (0, 0)).
     pub fn crop_origin(&self) -> (isize, usize) {
         (MONITOR_FIRST_PIXEL as isize - self.shift as isize, MONITOR_FIRST_LINE)
+    }
+
+    /// Keep the whole frames as well: every tick of every line, sync and
+    /// borders included, [`FULL_FRAME_WIDTH`] by [`FULL_FRAME_HEIGHT`] in the
+    /// beam's own coordinates ([`Self::beam`]) - AMSpiriT's physical video
+    /// buffer. For debuggers; costs a second picture drawn.
+    pub fn keep_full_frames(&mut self) {
+        if self.full.is_none() {
+            self.full = Some(FullFrames {
+                drawing: RgbImage::new(FULL_FRAME_WIDTH, FULL_FRAME_HEIGHT),
+                done: None
+            });
+        }
+    }
+
+    /// The last whole frame drawn, if kept.
+    pub fn full_frame(&self) -> Option<&RgbImage> {
+        self.full.as_ref().and_then(|full| full.done.as_ref())
+    }
+
+    /// The whole frame being drawn, if kept: black where the beam has not
+    /// been yet.
+    pub fn full_frame_in_progress(&self) -> Option<&RgbImage> {
+        self.full.as_ref().map(|full| &full.drawing)
+    }
+
+    /// The visible picture being drawn: black where the beam has not been
+    /// yet.
+    pub fn image_in_progress(&self) -> &RgbImage {
+        &self.texture
     }
 
     /// Whether a whole frame is waiting to be taken.
@@ -313,7 +347,9 @@ impl Monitor {
         }
         let y = self.line.wrapping_sub(MONITOR_FIRST_LINE);
         let px = (self.x as isize - MONITOR_FIRST_PIXEL as isize + self.shift as isize) as usize;
-        if px < MONITOR_ACTIVE_PIXELS && y < MONITOR_HEIGHT {
+        let visible = px < MONITOR_ACTIVE_PIXELS && y < MONITOR_HEIGHT;
+        let in_full = self.full.is_some() && self.x < FULL_FRAME_WIDTH as usize && self.line < FULL_FRAME_HEIGHT as usize;
+        if visible || in_full {
             let pixel = if vsync || self.vint > 0 {
                 self.vsync_color
             }
@@ -323,7 +359,12 @@ impl Monitor {
             else {
                 pixel_of(rgb)
             };
-            self.texture.put_pixel(px as u32, y as u32, pixel);
+            if visible {
+                self.texture.put_pixel(px as u32, y as u32, pixel);
+            }
+            if let (true, Some(full)) = (in_full, &mut self.full) {
+                full.drawing.put_pixel(self.x as u32, self.line as u32, pixel);
+            }
         }
         self.x += 1;
     }
@@ -405,8 +446,29 @@ impl Monitor {
             &mut self.texture,
             RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32)
         ));
+        if let Some(full) = &mut self.full {
+            // The two buffers swap: the one drawn becomes the last frame,
+            // the older one is blanked and drawn next.
+            let done = full
+                .done
+                .get_or_insert_with(|| RgbImage::new(FULL_FRAME_WIDTH, FULL_FRAME_HEIGHT));
+            std::mem::swap(&mut full.drawing, done);
+            full.drawing.fill(0);
+        }
         self.line = 0;
     }
+}
+
+/// The whole frame: a 64 usec line of 16MHz ticks, and the lines the frame
+/// oscillator runs when no VSYNC comes.
+pub const FULL_FRAME_WIDTH: u32 = RASTER_LINE_LENGTH as u32;
+pub const FULL_FRAME_HEIGHT: u32 = MONITOR_FREE_RUN_LINES as u32;
+
+/// The whole frames: the one being drawn and the last one.
+#[derive(Debug, Clone)]
+struct FullFrames {
+    drawing: RgbImage,
+    done: Option<RgbImage>
 }
 
 /// RGB intensities (percent) to 8-bit pixels.

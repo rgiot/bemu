@@ -551,10 +551,11 @@ fn run_frame(
 fn run_debug_server(motherboard: &mut Motherboard, server: &mut DebugServer, typist: &mut Option<Typist>) {
     ctrlc::set_handler(|| STOP.store(true, std::sync::atomic::Ordering::Relaxed)).ok();
     let mut monitor = CrtMonitor::default();
+    monitor.keep_full_frames();
     let frame_duration = std::time::Duration::from_micros(19_968);
     let mut deadline = std::time::Instant::now();
     while !stop_requested() && !server.quit_requested() {
-        server.poll(motherboard);
+        server.poll_with(motherboard, Some(&monitor));
         if server.paused() {
             std::thread::sleep(std::time::Duration::from_millis(2));
             deadline = std::time::Instant::now();
@@ -614,13 +615,16 @@ fn run_window(
     // One whole frame per redraw, locked to the emulator's real VSYNC, not
     // to a fixed t-state count.
     let mut monitor = CrtMonitor::default();
+    if server.is_some() {
+        monitor.keep_full_frames();
+    }
     while window.is_open() && !stop_requested() {
         update_keyboard(&window, motherboard, typed_combo.advance(&typed_chars));
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, motherboard);
 
         if let Some(server) = server.as_deref_mut() {
-            server.poll(motherboard);
+            server.poll_with(motherboard, Some(&monitor));
             if server.quit_requested() {
                 break;
             }
