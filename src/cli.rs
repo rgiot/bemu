@@ -4,6 +4,9 @@ use amsrust::crtc::CrtcType;
 use amsrust::display::DisplayMode;
 use amsrust::motherboard::CpcModel;
 
+/// ACE-DL's own: ink black is a dark grey, not the 0 of the blanking.
+pub const DEFAULT_BLACK_LEVEL: u8 = 8;
+
 pub struct Args {
     pub crtc: CrtcType,
     pub model: CpcModel,
@@ -30,7 +33,10 @@ pub struct Args {
     /// and the screenshots.
     pub display: DisplayMode,
     /// Render the CRT on the GPU (needs the `crt-gpu` feature).
-    pub gpu: bool
+    pub gpu: bool,
+    /// Level a black ink is drawn at, above the blanking and the sync
+    /// pulses (0, blacker than black); not with the debug server.
+    pub black_level: u8
 }
 
 pub fn parse_args() -> Args {
@@ -54,7 +60,8 @@ pub fn parse_args() -> Args {
         text: None,
         type_at: 3.0,
         display: DisplayMode::default(),
-        gpu: false
+        gpu: false,
+        black_level: DEFAULT_BLACK_LEVEL
     };
 
     let mut it = std::env::args().skip(1);
@@ -99,6 +106,9 @@ pub fn parse_args() -> Args {
             },
             "--type" => args.text = Some(next("--type").replace("\\n", "\n")),
             "--type-at" => args.type_at = next("--type-at").parse().expect("--type-at must be a number"),
+            "--black-level" => {
+                args.black_level = next("--black-level").parse().expect("--black-level must be 0-255")
+            },
             "--crt-gpu" => args.gpu = true,
             "--display" => {
                 args.display = next("--display").parse().unwrap_or_else(|e: String| panic!("--display: {e}"))
@@ -125,6 +135,7 @@ fn print_help() {
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu]]\n",
+        "        [--black-level 0-255]\n",
         "\n",
         "--model picks the ROMs (default 6128). The 464 and 664 have 64K and the\n",
         "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
@@ -146,7 +157,9 @@ fn print_help() {
         "recording and the screenshots (raw: the monitor's ideal picture; ctm,\n",
         "trinitron, gt65, atari: CRT approximations). F9 cycles them in the\n",
         "window (not while recording). --crt-gpu renders them on the GPU (a build\n",
-        "with --features crt-gpu).\n",
+        "with --features crt-gpu). --black-level (default 8) is what a black ink is\n",
+        "drawn at: on a real tube it is a dark grey, blanking and sync being\n",
+        "blacker (0); without the debug server, whose pictures stay exact.\n",
         "--debug-server serves the AMSpiriT-Lite compatible debug API on\n",
         "127.0.0.1:6128 (GET /api/doc lists the endpoints), with --window or\n",
         "headless. --debug-paused starts it paused, for a debugger to set its\n",

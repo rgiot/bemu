@@ -124,6 +124,8 @@ pub struct Monitor {
     /// charge of the vertical sync integrator (ticks): the beam stays blanked while it is not empty
     vint: i64,
     hsync_color: Rgb<u8>,
+    /// Level (0-255) the beam draws a black ink at: see [`Monitor::with_black_level`].
+    black_level: u8
 }
 
 impl Default for Monitor {
@@ -158,8 +160,21 @@ impl Monitor {
             next_shift: 0,
             vsync_color,
             vint: 0,
-            hsync_color
+            hsync_color,
+            black_level: 0
         }
+    }
+
+    /// A monitor whose black ink is drawn at `level` (0-255, the other
+    /// levels scaled between it and white) instead of 0. On a real tube the
+    /// black of an ink is a dark grey, while the beam is cut during the
+    /// horizontal and vertical blanking and the sync pulses: blacker than
+    /// black. Raising the black level keeps them apart in the picture (what
+    /// is not drawn, blanking and sync stay 0). The default is 0, which the
+    /// tests and the debug API's pictures rely on.
+    pub fn with_black_level(mut self, level: u8) -> Self {
+        self.black_level = level;
+        self
     }
 
     /// Generate a debug monitor that colours vbl and vsync
@@ -357,7 +372,7 @@ impl Monitor {
                 self.hsync_color
             }
             else {
-                pixel_of(rgb)
+                pixel_of(rgb, self.black_level)
             };
             if visible {
                 self.texture.put_pixel(px as u32, y as u32, pixel);
@@ -471,15 +486,35 @@ struct FullFrames {
     done: Option<RgbImage>
 }
 
-/// RGB intensities (percent) to 8-bit pixels.
-fn pixel_of(rgb: RgbLevels) -> Rgb<u8> {
-    let to_u8 = |v: f32| -> u8 { (v * 255f32 / 100.0).min(255f32) as u8 };
+/// RGB intensities (percent) to 8-bit pixels, 0% being drawn at `black`.
+fn pixel_of(rgb: RgbLevels, black: u8) -> Rgb<u8> {
+    let range = 255.0 - black as f32;
+    let to_u8 = |v: f32| -> u8 { (black as f32 + v * range / 100.0).min(255f32) as u8 };
     Rgb([to_u8(rgb.r()), to_u8(rgb.g()), to_u8(rgb.b())])
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// A black ink is above the blanking and the sync pulses, which stay 0.
+    #[test]
+    fn a_black_level_lifts_ink_black_only() {
+        assert_eq!(pixel_of((0., 0., 0.).into(), 8), Rgb([8, 8, 8]));
+        assert_eq!(pixel_of((100., 100., 100.).into(), 8), Rgb([255, 255, 255]));
+        let mut mon = Monitor::default().with_black_level(8);
+        // lines of black ink, with an HSYNC pulse in each
+        for _ in 0..(MONITOR_FIRST_LINE + 3) {
+            feed(&mut mon, 736, (0., 0., 0.), false, false);
+            feed(&mut mon, 64, (0., 0., 0.), false, true);
+            feed(&mut mon, 224, (0., 0., 0.), false, false);
+        }
+        let picture = mon.image_in_progress();
+        let inks = picture.pixels().filter(|p| p.0 == [8, 8, 8]).count();
+        let blanked = picture.pixels().filter(|p| p.0 == [0, 0, 0]).count();
+        assert!(inks > 0, "no black ink drawn");
+        assert!(blanked > 0, "the unvisited part of the frame stays at 0");
+    }
 
     fn feed(mon: &mut Monitor, ticks: usize, rgb: (f32, f32, f32), vsync: bool, hsync: bool) {
         for _ in 0..ticks {
@@ -502,8 +537,8 @@ mod test {
 
     #[test]
     fn test_color() {
-        assert_eq!(pixel_of((0., 0., 0.).into()), Rgb([0, 0, 0]));
-        assert_eq!(pixel_of((100., 100., 100.).into()), Rgb([255, 255, 255]));
+        assert_eq!(pixel_of((0., 0., 0.).into(), 0), Rgb([0, 0, 0]));
+        assert_eq!(pixel_of((100., 100., 100.).into(), 0), Rgb([255, 255, 255]));
     }
 
     #[test]

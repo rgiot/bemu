@@ -78,6 +78,11 @@ mod recorder;
 
 use cli::{parse_args, Args};
 
+/// The monitor for a picture to look at: its black ink above the blanking.
+fn viewing_monitor(black_level: u8) -> CrtMonitor {
+    CrtMonitor::default().with_black_level(black_level)
+}
+
 fn insert_disc(path: &str, drive: FdcDrive, motherboard: &mut amsrust::motherboard::Motherboard) {
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let image = load_dsk(&bytes).unwrap_or_else(|e| panic!("{path}: {e}"));
@@ -146,17 +151,17 @@ fn main() {
     }
 
     match args.screenshot_dir {
-        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut()),
+        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut(), args.black_level),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu)
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu, args.black_level)
         },
         None if args.debug_server => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
             run_debug_server(&mut motherboard, &mut server, &mut typist)
         },
         None if args.record.is_some() => {
-            run_recording(&mut motherboard, args.record.as_deref().unwrap(), args.seconds, &mut typist, filter.as_mut())
+            run_recording(&mut motherboard, args.record.as_deref().unwrap(), args.seconds, &mut typist, filter.as_mut(), args.black_level)
         },
         None => {
             let mut handle = |_motherboard: &mut amsrust::motherboard::Motherboard| false;
@@ -248,7 +253,8 @@ fn run_headless(
     every: u64,
     typist: &mut Option<Typist>,
     mode: amsrust::display::DisplayMode,
-    filter: &mut dyn DisplayFilter
+    filter: &mut dyn DisplayFilter,
+    black_level: u8
 ) {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{dir}: {e}"));
 
@@ -270,7 +276,7 @@ fn run_headless(
             break;
         }
 
-        let mut monitor = CrtMonitor::default();
+        let mut monitor = viewing_monitor(black_level);
         let mut frame = None;
         // Capture the next whole frame once due, rather than every tick:
         // matches how the CSL runner and play_demo grab a screenshot.
@@ -330,14 +336,15 @@ fn run_recording(
     path: &str,
     seconds: u64,
     typist: &mut Option<Typist>,
-    filter: &mut dyn DisplayFilter
+    filter: &mut dyn DisplayFilter,
+    black_level: u8
 ) {
     motherboard.set_audio_output(Some(RECORD_AUDIO()));
     let mut recorder = start_recorder(path, Some(RECORD_AUDIO()), filter.output_size());
     let (width, height) = filter.output_size();
     let mut buffer = vec![0u32; width * height];
     let target_t_states = seconds as usize * T_STATES_PER_SECOND;
-    let mut monitor = CrtMonitor::default();
+    let mut monitor = viewing_monitor(black_level);
     while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
         type_due_keys(typist, motherboard);
         let mut frame = None;
@@ -477,7 +484,8 @@ fn run_window(
     typist: &mut Option<Typist>,
     mut server: Option<&mut DebugServer>,
     mut mode: DisplayMode,
-    gpu: bool
+    gpu: bool,
+    black_level: u8
 ) {
     let mut filter = mode.filter_on(gpu);
     let (width, height) = filter.output_size();
@@ -506,7 +514,8 @@ fn run_window(
 
     // One whole frame per redraw, locked to the emulator's real VSYNC, not
     // to a fixed t-state count.
-    let mut monitor = CrtMonitor::default();
+    // The debug server's pictures stay exact: no lifted black.
+    let mut monitor = if server.is_some() { CrtMonitor::default() } else { viewing_monitor(black_level) };
     if server.is_some() {
         monitor.keep_full_frames();
     }
