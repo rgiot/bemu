@@ -28,7 +28,9 @@ pub struct Args {
     pub type_at: f64,
     /// How the monitor's frames are filtered for the window, the recording
     /// and the screenshots.
-    pub display: DisplayMode
+    pub display: DisplayMode,
+    /// Render the CRT on the GPU (needs the `crt-gpu` feature).
+    pub gpu: bool
 }
 
 pub fn parse_args() -> Args {
@@ -51,7 +53,8 @@ pub fn parse_args() -> Args {
         debug_paused: false,
         text: None,
         type_at: 3.0,
-        display: DisplayMode::default()
+        display: DisplayMode::default(),
+        gpu: false
     };
 
     let mut it = std::env::args().skip(1);
@@ -96,6 +99,7 @@ pub fn parse_args() -> Args {
             },
             "--type" => args.text = Some(next("--type").replace("\\n", "\n")),
             "--type-at" => args.type_at = next("--type-at").parse().expect("--type-at must be a number"),
+            "--crt-gpu" => args.gpu = true,
             "--display" => {
                 args.display = next("--display").parse().unwrap_or_else(|e: String| panic!("--display: {e}"))
             },
@@ -120,7 +124,7 @@ fn print_help() {
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]]\n",
-        "        [--display raw|ctm|trinitron|gt65|atari]\n",
+        "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu]]\n",
         "\n",
         "--model picks the ROMs (default 6128). The 464 and 664 have 64K and the\n",
         "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
@@ -141,7 +145,8 @@ fn print_help() {
         "--display picks how the picture is rendered, in the window, the\n",
         "recording and the screenshots (raw: the monitor's ideal picture; ctm,\n",
         "trinitron, gt65, atari: CRT approximations). F9 cycles them in the\n",
-        "window (not while recording).\n",
+        "window (not while recording). --crt-gpu renders them on the GPU (a build\n",
+        "with --features crt-gpu).\n",
         "--debug-server serves the AMSpiriT-Lite compatible debug API on\n",
         "127.0.0.1:6128 (GET /api/doc lists the endpoints), with --window or\n",
         "headless. --debug-paused starts it paused, for a debugger to set its\n",

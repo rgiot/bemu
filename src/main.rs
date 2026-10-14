@@ -94,7 +94,7 @@ fn stop_requested() -> bool {
 
 fn main() {
     let args = parse_args();
-    let mut filter = args.display.filter();
+    let mut filter = args.display.filter_on(args.gpu);
     if args.record.is_some() {
         // Only when recording: elsewhere (the interactive monitor) Ctrl+C
         // keeps its usual meaning.
@@ -149,7 +149,7 @@ fn main() {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut()),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display)
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu)
         },
         None if args.debug_server => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
@@ -476,9 +476,10 @@ fn run_window(
     record: Option<&str>,
     typist: &mut Option<Typist>,
     mut server: Option<&mut DebugServer>,
-    mut mode: DisplayMode
+    mut mode: DisplayMode,
+    gpu: bool
 ) {
-    let mut filter = mode.filter();
+    let mut filter = mode.filter_on(gpu);
     let (width, height) = filter.output_size();
     let mut window = MinifbFrontend::open("amsrust", width, height).unwrap_or_else(|e| panic!("{e}"));
     // Cap redraws (and so input polling and emulated speed) at the CPC's
@@ -515,7 +516,7 @@ fn run_window(
         let f9_down = input.down.contains(&HostKey::F9);
         if f9_down && !f9_was_down && recorder.is_none() {
             mode = mode.next();
-            filter = mode.filter();
+            filter = mode.filter_on(gpu);
             let (width, height) = filter.output_size();
             buffer = vec![0u32; width * height];
             eprintln!("display: {mode:?}");

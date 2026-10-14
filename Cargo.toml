@@ -33,6 +33,9 @@ ym2149 = "0.9.1"
 cpal = { version = "0.18.2", optional = true }
 ctrlc = { version = "3.5.2", features = ["termination"] }
 tiny_http = "0.12"
+# GPU CRT filter (`--features crt-gpu`), see src/display/gpu.rs
+wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "vulkan"] }
+bytemuck = { version = "1", optional = true, features = ["derive"] }
 
 [patch.crates-io]
 cpclib = {path = "../rust.cpcdemotools/cpclib/"}
@@ -52,3 +55,5 @@ default = ["audio"]
 # headers: libasound2-dev / alsa-lib-devel). On by default; a build without
 # an audio system library uses `--no-default-features`.
 audio = ["dep:cpal"]
+# The CRT display filter on the GPU (wgpu), besides the CPU one.
+crt-gpu = ["dep:wgpu", "dep:bytemuck"]

@@ -9,9 +9,13 @@
 
 mod cpu;
 pub mod crt;
+#[cfg(feature = "crt-gpu")]
+mod gpu;
 
 pub use cpu::CpuCrt;
 pub use crt::{CrtParams, CrtProfile};
+#[cfg(feature = "crt-gpu")]
+pub use gpu::GpuCrt;
 
 use image::RgbImage;
 use std::str::FromStr;
@@ -50,11 +54,28 @@ impl DisplayMode {
         }
     }
 
-    /// The filter implementing this mode.
+    /// The filter implementing this mode, on the CPU.
     pub fn filter(self) -> Box<dyn DisplayFilter> {
+        self.filter_on(false)
+    }
+
+    /// The filter implementing this mode, on the GPU if `gpu` and possible
+    /// (built with `crt-gpu` and an adapter available), else on the CPU.
+    pub fn filter_on(self, gpu: bool) -> Box<dyn DisplayFilter> {
         match self {
             Self::Raw => Box::new(RawFilter),
-            Self::Crt(profile) => Box::new(CpuCrt::new(profile.params()))
+            Self::Crt(profile) => {
+                if gpu {
+                    #[cfg(feature = "crt-gpu")]
+                    match GpuCrt::new(profile.params()) {
+                        Ok(filter) => return Box::new(filter),
+                        Err(e) => eprintln!("{e}: the CRT is rendered on the CPU"),
+                    }
+                    #[cfg(not(feature = "crt-gpu"))]
+                    eprintln!("built without the crt-gpu feature: the CRT is rendered on the CPU");
+                }
+                Box::new(CpuCrt::new(profile.params()))
+            }
         }
     }
 }
