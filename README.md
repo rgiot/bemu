@@ -95,7 +95,7 @@ resolved to the RAM bank or ROM mapped at that time) and, as an extension,
 advanced breakpoints as rasm/basm/ACE describe them (`/api/breakpoints`:
 memory/IO, read/write, stop or watch, masks, sizes, values, and conditions
 such as `A == #12 && peek(HL) <> 0` or `value & %1000`). A snapshot's
-breakpoints (REMU, ACE `BRKC`, WinAPE `WABP` chunks) are set when it is loaded,
+breakpoints (REMU, ACE `BRKC`, WinAPE `WABP` and rasm/basm `BRKS` chunks) are set when it is loaded,
 `--sna` or `POST /api/media`. Also: `history`, `screenshot` (PNG), `media`
 (sna, dsk, bin), `quit`.
 
