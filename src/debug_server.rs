@@ -36,6 +36,8 @@
 //! in `z80_bp` events, and `/api/counters`: named counters of the NOPs
 //! run. Replies identify this emulator with `"frontend":"bemu"`.
 
+mod api_doc;
+
 use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -174,7 +176,7 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/basic_step", methods: &["POST"], summary: "run to the next BASIC statement (?mode=line: line)", extension: false },
     Route { path: "/api/basic_bp", methods: &["GET", "POST"], summary: "BASIC line breakpoints: comma-separated line numbers, empty clears", extension: false },
     Route { path: "/api/basic_runto", methods: &["POST"], summary: "run to a BASIC line (?line=) or statement (?addr=), once", extension: false },
-    Route { path: "/api/doc", methods: &["GET"], summary: "this list", extension: false }
+    Route { path: "/api/doc", methods: &["GET"], summary: "this documentation: ?endpoint= one in detail, ?format=openapi|html", extension: false }
 ];
 
 /// Where a BASIC step or run-to stops.
@@ -774,7 +776,7 @@ impl DebugServer {
             // through `handle` directly.
             ("GET", "/api/events") => Err(ApiError::new("events are streamed by the HTTP server")),
             ("POST", "/api/keytype") => self.keytype(request),
-            ("GET", "/api/doc") => Ok(ApiResponse::ok(doc())),
+            ("GET", "/api/doc") => doc(request),
             ("POST", "/api/quit") => {
                 self.quit = true;
                 Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
@@ -1966,18 +1968,23 @@ fn read_ram(request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
     Ok(ApiResponse::ok(body))
 }
 
-fn doc() -> Value {
-    let endpoints: Vec<Value> = ROUTES
-        .iter()
-        .map(|route| {
-            let mut endpoint = json!({ "path": route.path, "methods": route.methods, "summary": route.summary });
-            if route.extension {
-                endpoint["extension"] = json!(true);
-            }
-            endpoint
-        })
-        .collect();
-    json!({ "frontend": "bemu", "endpoints": endpoints })
+/// `GET /api/doc[?endpoint=][&format=json|openapi|html]`.
+fn doc(request: &ApiRequest) -> ApiResult {
+    match (request.param("format").unwrap_or("json"), request.param("endpoint")) {
+        ("json", None) => Ok(ApiResponse::ok(api_doc::index())),
+        ("json", Some(name)) => match api_doc::endpoint(name) {
+            Some(value) => Ok(ApiResponse::ok(value)),
+            None => Err(ApiError::field("endpoint", format!("no endpoint \"{name}\" (GET /api/doc lists them)")))
+        },
+        ("openapi", _) => Ok(ApiResponse::ok(api_doc::openapi())),
+        ("html", _) => Ok(ApiResponse {
+            status: 200,
+            content_type: "text/html; charset=utf-8",
+            body: api_doc::html().into_bytes(),
+            headers: Vec::new()
+        }),
+        (other, _) => Err(ApiError::field("format", format!("unknown format \"{other}\": json, openapi or html")))
+    }
 }
 
 // ------------------------------------------------------------- bodies
