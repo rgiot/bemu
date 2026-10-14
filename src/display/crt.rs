@@ -105,7 +105,7 @@ impl CrtParams {
             triad_px: 3,
             rows_per_line: 4,
             slot_pitch_lines: 1.0,
-            slot_fill: (0.82, 0.78),
+            slot_fill: (0.82, 0.72),
             corner_radius: 0.45,
             stagger: 0.5,
             beam_sigma_h: 0.5,
