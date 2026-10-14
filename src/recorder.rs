@@ -42,13 +42,16 @@ impl Recorder {
         check_ffmpeg()?;
         let video_only = temporary(output, "video.mkv");
         let size = format!("{width}x{}", height * 2);
-        let encoder = Command::new("ffmpeg")
+        let mut command = Command::new("ffmpeg");
+        command
             .args(["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24"])
             .args(["-s", &size, "-framerate", FRAME_RATE, "-i", "-"])
             // Lossless intermediate: the final pass picks the real codec.
             .args(["-c:v", "ffv1"])
             .arg(&video_only)
-            .stdin(Stdio::piped())
+            .stdin(Stdio::piped());
+        detach_from_terminal_signals(&mut command);
+        let encoder = command
             .spawn()
             .map_err(|e| format!("cannot start ffmpeg: {e}"))?;
         let mut encoder = encoder;
@@ -119,7 +122,12 @@ impl Recorder {
         drop(self.frames_in);
         let status = self.encoder.wait().map_err(|e| e.to_string())?;
         if !status.success() {
-            return Err(format!("ffmpeg failed ({status})"));
+            return Err(format!(
+                "the ffmpeg video encoder failed ({status}) while recording {}; its own message, if any, is above. \
+                 The frames received so far are in {}",
+                self.output.display(),
+                self.video_only.display()
+            ));
         }
 
         let mut mux = Command::new("ffmpeg");
@@ -140,9 +148,29 @@ impl Recorder {
             let _ = std::fs::remove_file(path);
         }
         if !status.success() {
-            return Err(format!("ffmpeg failed to write {} ({status})", self.output.display()));
+            return Err(format!(
+                "ffmpeg failed to write {} ({status}); its own message, if any, is above",
+                self.output.display()
+            ));
         }
         Ok(self.frames)
+    }
+}
+
+/// Ctrl+C is sent to the whole foreground process group: without this the
+/// encoder would be killed at the same time as the emulator, before the last
+/// frames are flushed, and fail with an unexplained exit status 255.
+fn detach_from_terminal_signals(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
     }
 }
 
