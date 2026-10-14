@@ -410,7 +410,10 @@ pub const MODE_UPDATE_MIN_HSYNC_TICKS: u64 = 17;
 /// CRTC's HSYNC ends. HBL's multi-mode lines write `OUT mode` 6 to 8 ticks
 /// before that end and the real machine still latches the previous mode,
 /// while Shaker AE (cap path, R3=14) puts the limit exactly on the cap.
-pub const MODE_WRITE_DELAY_TICKS: usize = 8;
+/// Camenbert 4's plasma (RMR written 7 ticks before the latch of an R3=2
+/// HSYNC, mode 0/1 every line) is a rainbow on AMSpiriT only if that write
+/// is seen: 6, not 8 (Shaker A/B/C/D and the HBL screens do not change).
+pub const MODE_WRITE_DELAY_TICKS: usize = 6;
 
 /// The Gate Array takes the video mode when its HSYNC-GA period ends, which is
 /// R3 usec after the HSYNC opens but "capped at 6 usec" (ACCC 9.3.1; the
