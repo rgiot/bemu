@@ -280,20 +280,40 @@ mod test {
 /// A breakpoint condition: an expression on the machine state, true when
 /// not 0.
 ///
-/// Syntax (case-insensitive), C-like:
-/// - values: numbers (decimal, `0x`/`#`/`&`/`$` or trailing `h` hex, `%`
-///   binary), the registers (`A`..`L`, `F`, `I`, `R`, `IXH`/`IXL`/`IYH`/
-///   `IYL`, `AF`, `BC`, `DE`, `HL`, `IX`, `IY`, `SP`, `PC`, the alternate set
-///   `A'`..`HL'`), `IFF1`, `IFF2`, `IM`, and for memory/IO breakpoints the
-///   access's `ADDRESS` (`ADDR`) and `VALUE`;
-/// - `peek(x)` / `deek(x)`: the byte / little-endian word at `x`, as the CPU
-///   sees memory;
-/// - operators, loosest first: `||`, `&&`, `|`, `^`, `&`, `==` `=` `!=`
-///   `<>`, `<` `<=` `>` `>=`, `<<` `>>`, `+` `-`, `*` `/` `%`, then the unary
-///   `!` `~` `-`, and parentheses.
+/// The language is ACE's (see <https://roudoudou.com/ACE-DL/breakpoints.html>),
+/// which basm, rasm and ACE write in snapshots, written like BASIC; the C
+/// spellings of the same operators are accepted too. Case-insensitive.
 ///
-/// As in C, `&`, `|` and `^` bind looser than the comparisons:
-/// `value & 0xC0 == 0x80` is `value & (0xC0 == 0x80)`, write
+/// - numbers: decimal, hexadecimal with `&`, `#`, `$`, `0x` or a trailing
+///   `h`, binary with `%` or `&x`;
+/// - the registers (`A`..`L`, `F`, `I`, `R`, `IXh`/`IXl`/`IYh`/`IYl`, `AF`,
+///   `BC`, `DE`, `HL`, `IX`, `IY`, `SP`, `PC`, the alternate set `A'`..`HL'`),
+///   `IFF1`, `IFF2`, `IM`, the flags `FlagZ`, `FlagNZ`, `FlagC`, `FlagNC`,
+///   `FlagP`, `FlagM`, `FlagPO`, `FlagPE` (1 or 0);
+/// - the CRTC: its counters `C0` (character), `C3H` (HSYNC width), `C3V`
+///   (VSYNC height), `C4` (character row), `C5` (adjust), `C9` (raster line
+///   in the row), its registers `CrtcR0`..`CrtcR17` and `CrtcSel`;
+/// - the beam: `LineCount` (the raster line) and `LineCycle` (the
+///   microsecond in it, 0-63);
+/// - the memory: `MemPage` (the 64K expansion page), `MemBankMode` (the 16K
+///   bank mapping mode, 0-7), `LowerROMOn`, `UpperROMOn`, `UpperROMNum`,
+///   and for the Plus `LowerROMNum`, `LowerROMAdr`, `ASICPageOn` (0 here)
+///   and `ASICPageOff` (1: no ASIC page is ever mapped);
+/// - for memory/IO breakpoints the access's `ADDRESS` (`ADDR`) and `VALUE`;
+/// - `peek(x)` / `deek(x)`: the byte / little-endian word at `x`, as the CPU
+///   sees memory.
+///
+/// Operators, loosest first (BASIC's order, the C ones slotted in):
+/// `||`; `&&`; `XOR`; `OR`; `AND`; `NOT`; `|`; `&`; `=` `==` `<>` `!=`;
+/// `<` `<=` `>` `>=`; `<<` `>>`; `+` `-`; `MOD` `%`; `\` (integer
+/// division); `*` `/`; the unary `-` `+` `!` `~`; `^` (power); parentheses.
+///
+/// As in BASIC, a comparison is -1 when true and 0 when false, and `AND`,
+/// `OR`, `XOR` and `NOT` work on the bits - so `NOT (A = 1)` and
+/// `A = 1 AND B = 2` mean what they say. `NOT` binds looser than the
+/// comparisons (`NOT A = 1` is `NOT (A = 1)`); `^` is a power, not an
+/// exclusive or (that is `XOR`). As in C, `&` and `|` bind looser than the
+/// comparisons: `value & 0xC0 == 0x80` is `value & (0xC0 == 0x80)`, write
 /// `(value & 0xC0) == 0x80`.
 ///
 /// Arithmetic is on 64-bit integers; a division by 0 gives 0.
@@ -324,7 +344,11 @@ pub trait ConditionContext {
 pub const VARIABLES: &[&str] = &[
     "A", "F", "B", "C", "D", "E", "H", "L", "I", "R", "IXH", "IXL", "IYH", "IYL", "AF", "BC", "DE", "HL", "IX", "IY",
     "SP", "PC", "A'", "F'", "B'", "C'", "D'", "E'", "H'", "L'", "AF'", "BC'", "DE'", "HL'", "IFF1", "IFF2", "IM",
-    "ADDRESS", "VALUE"
+    "ADDRESS", "VALUE", "FLAGZ", "FLAGNZ", "FLAGC", "FLAGNC", "FLAGP", "FLAGM", "FLAGPO", "FLAGPE", "C0", "C3H", "C3V",
+    "C4", "C5", "C9", "CRTCR0", "CRTCR1", "CRTCR2", "CRTCR3", "CRTCR4", "CRTCR5", "CRTCR6", "CRTCR7", "CRTCR8",
+    "CRTCR9", "CRTCR10", "CRTCR11", "CRTCR12", "CRTCR13", "CRTCR14", "CRTCR15", "CRTCR16", "CRTCR17", "CRTCSEL",
+    "LINECOUNT", "LINECYCLE", "MEMPAGE", "MEMBANKMODE", "LOWERROMON", "UPPERROMON", "LOWERROMNUM", "UPPERROMNUM",
+    "LOWERROMADR", "ASICPAGEON", "ASICPAGEOFF"
 ];
 
 impl Condition {
@@ -359,9 +383,12 @@ enum Token {
 
 /// Operators, longest first so that `<=` wins over `<`.
 const OPERATORS: &[&str] = &[
-    "||", "&&", "==", "!=", "<>", "<=", ">=", "<<", ">>", "|", "^", "&", "=", "<", ">", "+", "-", "*", "/", "%", "!",
-    "~"
+    "||", "&&", "==", "!=", "<>", "<=", ">=", "<<", ">>", "|", "^", "&", "=", "<", ">", "+", "-", "*", "/", "\\", "%",
+    "!", "~"
 ];
+
+/// The operators written as words, as BASIC writes them.
+const WORD_OPERATORS: &[&str] = &["AND", "OR", "XOR", "NOT", "MOD"];
 
 fn tokenize(source: &str) -> Result<Vec<Token>, String> {
     let chars: Vec<char> = source.chars().collect();
@@ -377,6 +404,21 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
         else if c == '(' || c == ')' {
             tokens.push(if c == '(' { Token::Open } else { Token::Close });
             i += 1;
+        }
+        else if value_expected
+            && c == '&'
+            && matches!(chars.get(i + 1), Some('x' | 'X'))
+            && chars.get(i + 2).is_some_and(|d| matches!(d, '0' | '1'))
+        {
+            let start = i + 2;
+            i = start;
+            while i < chars.len() && matches!(chars[i], '0' | '1') {
+                i += 1;
+            }
+            let digits: String = chars[start..i].iter().collect();
+            tokens.push(Token::Number(
+                i64::from_str_radix(&digits, 2).map_err(|_| format!("condition {source:?}: bad number &x{digits}"))?
+            ));
         }
         else if value_expected && (c == '#' || c == '&' || c == '$' || c == '%') && chars.get(i + 1).is_some_and(|d| d.is_ascii_hexdigit()) {
             let radix = if c == '%' { 2 } else { 16 };
@@ -415,7 +457,11 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
             if chars.get(i) == Some(&'\'') {
                 i += 1;
             }
-            tokens.push(Token::Name(chars[start..i].iter().collect::<String>().to_ascii_uppercase()));
+            let name = chars[start..i].iter().collect::<String>().to_ascii_uppercase();
+            match WORD_OPERATORS.iter().find(|word| **word == name) {
+                Some(word) => tokens.push(Token::Operator(word)),
+                None => tokens.push(Token::Name(name))
+            }
         }
         else {
             let rest: String = chars[i..].iter().collect();
@@ -431,18 +477,27 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
 }
 
 /// Binary operators by binding strength (index = level, loosest first).
+/// `NOT` (a prefix) sits at its own level, [`NOT_LEVEL`].
 const LEVELS: &[&[&str]] = &[
     &["||"],
     &["&&"],
+    &["XOR"],
+    &["OR"],
+    &["AND"],
+    &["NOT"],
     &["|"],
-    &["^"],
     &["&"],
     &["==", "=", "!=", "<>"],
     &["<", "<=", ">", ">="],
     &["<<", ">>"],
     &["+", "-"],
-    &["*", "/", "%"]
+    &["MOD", "%"],
+    &["\\"],
+    &["*", "/"]
 ];
+
+/// BASIC's `NOT`: looser than the comparisons, tighter than `AND`.
+const NOT_LEVEL: usize = 5;
 
 struct Parser {
     tokens: Vec<Token>,
@@ -460,6 +515,14 @@ impl Parser {
         if level == LEVELS.len() {
             return self.unary();
         }
+        if level == NOT_LEVEL {
+            if self.tokens.get(self.position) == Some(&Token::Operator("NOT")) {
+                self.position += 1;
+                let operand = self.expression(NOT_LEVEL)?;
+                return Ok(CondExpr::Unary('N', Box::new(operand)));
+            }
+            return self.expression(level + 1);
+        }
         let mut left = self.expression(level + 1)?;
         while let Some(Token::Operator(op)) = self.tokens.get(self.position) {
             let Some(op) = LEVELS[level].iter().find(|o| *o == op)
@@ -473,12 +536,25 @@ impl Parser {
         Ok(left)
     }
 
+    /// The unary operators, then `^`: tighter than them, as in BASIC
+    /// (`-2^2` is -4).
     fn unary(&mut self) -> Result<CondExpr, String> {
+        if let Some(Token::Operator(op @ ("!" | "~" | "-" | "+"))) = self.tokens.get(self.position).cloned() {
+            self.position += 1;
+            let operand = self.unary()?;
+            return Ok(if op == "+" { operand } else { CondExpr::Unary(op.chars().next().unwrap(), Box::new(operand)) });
+        }
+        let mut left = self.primary()?;
+        while self.tokens.get(self.position) == Some(&Token::Operator("^")) {
+            self.position += 1;
+            let right = self.primary()?;
+            left = CondExpr::Binary("^", Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+
+    fn primary(&mut self) -> Result<CondExpr, String> {
         match self.next() {
-            Some(Token::Operator(op @ ("!" | "~" | "-" | "+"))) => {
-                let operand = self.unary()?;
-                Ok(if op == "+" { operand } else { CondExpr::Unary(op.chars().next().unwrap(), Box::new(operand)) })
-            },
             Some(Token::Number(n)) => Ok(CondExpr::Number(n)),
             Some(Token::Open) => {
                 let inner = self.expression(0)?;
@@ -498,15 +574,38 @@ impl Parser {
                 Ok(CondExpr::Peek(Box::new(address), name == "DEEK"))
             },
             Some(Token::Name(name)) => {
-                let name = if name == "ADDR" { "ADDRESS".to_owned() } else { name };
+                let name = match name.as_str() {
+                    "ADDR" => "ADDRESS".to_owned(),
+                    // As ACE's own documentation spells it.
+                    "LOWERRROMON" => "LOWERROMON".to_owned(),
+                    _ => name
+                };
                 VARIABLES
                     .iter()
                     .find(|v| **v == name)
                     .map(|v| CondExpr::Variable(v))
-                    .ok_or_else(|| format!("unknown name {name} (registers, IFF1, IFF2, IM, ADDRESS, VALUE, peek, deek)"))
+                    .ok_or_else(|| {
+                        format!("unknown name {name} (registers, flags, CRTC, LineCount, MemPage..., ADDRESS, VALUE, peek, deek)")
+                    })
             },
             other => Err(format!("expected a value, found {other:?}"))
         }
+    }
+}
+
+/// BASIC's truth: -1, every bit set, so that `AND`, `OR` and `NOT` on bits
+/// are also the logical ones.
+fn truth(holds: bool) -> i64 {
+    if holds { -1 } else { 0 }
+}
+
+/// `l ^ r` on integers; a negative power is 0 (or 1 / -1 for a base of 1 / -1).
+fn power(l: i64, r: i64) -> i64 {
+    match (l, r) {
+        (1, _) => 1,
+        (-1, _) => if r % 2 == 0 { 1 } else { -1 },
+        (_, r) if r < 0 => 0,
+        _ => l.wrapping_pow(r.min(u32::MAX as i64) as u32)
     }
 }
 
@@ -522,31 +621,32 @@ fn evaluate(expr: &CondExpr, context: &dyn ConditionContext) -> i64 {
         CondExpr::Unary(op, operand) => {
             let v = evaluate(operand, context);
             match op {
-                '!' => (v == 0) as i64,
-                '~' => !v,
+                '!' => truth(v == 0),
+                '~' | 'N' => !v,
                 _ => v.wrapping_neg()
             }
         },
         CondExpr::Binary(op, left, right) => {
             let (l, r) = (evaluate(left, context), evaluate(right, context));
             match *op {
-                "||" => (l != 0 || r != 0) as i64,
-                "&&" => (l != 0 && r != 0) as i64,
-                "|" => l | r,
-                "^" => l ^ r,
-                "&" => l & r,
-                "==" | "=" => (l == r) as i64,
-                "!=" | "<>" => (l != r) as i64,
-                "<" => (l < r) as i64,
-                "<=" => (l <= r) as i64,
-                ">" => (l > r) as i64,
-                ">=" => (l >= r) as i64,
+                "||" => truth(l != 0 || r != 0),
+                "&&" => truth(l != 0 && r != 0),
+                "|" | "OR" => l | r,
+                "XOR" => l ^ r,
+                "&" | "AND" => l & r,
+                "^" => power(l, r),
+                "==" | "=" => truth(l == r),
+                "!=" | "<>" => truth(l != r),
+                "<" => truth(l < r),
+                "<=" => truth(l <= r),
+                ">" => truth(l > r),
+                ">=" => truth(l >= r),
                 "<<" => l.wrapping_shl(r as u32),
                 ">>" => l.wrapping_shr(r as u32),
                 "+" => l.wrapping_add(r),
                 "-" => l.wrapping_sub(r),
                 "*" => l.wrapping_mul(r),
-                "/" => if r == 0 { 0 } else { l.wrapping_div(r) },
+                "/" | "\\" => if r == 0 { 0 } else { l.wrapping_div(r) },
                 _ => if r == 0 { 0 } else { l.wrapping_rem(r) }
             }
         }
@@ -593,6 +693,44 @@ mod condition_test {
         assert!(holds("A > 1 || 1 / 0"));
         assert!(!holds("~0 == 0"));
         assert!(holds("-1 < 0 && 7 % 4 == 3 && 1 << 4 == 16"));
+    }
+
+    fn value(source: &str) -> i64 {
+        evaluate(&Condition::parse(source).unwrap_or_else(|e| panic!("{e}")).expr, &Fake)
+    }
+
+    /// ACE's language (roudoudou.com/ACE-DL/breakpoints.html): BASIC-like.
+    #[test]
+    fn ace_conditions() {
+        // Numbers: &, #, 0x hexadecimal; %, &x binary.
+        assert_eq!(value("&x101 + %11 + &10 + #10 + 0x10"), 5 + 3 + 48);
+        // BASIC truth and word operators, on the bits.
+        assert_eq!(value("A = &12"), -1);
+        assert_eq!(value("A = 1"), 0);
+        assert!(holds("A = &12 AND HL = &C000"));
+        assert!(holds("A = 1 OR HL = &C000"));
+        assert!(holds("NOT A = 1"), "NOT is looser than the comparison");
+        assert!(holds("NOT (A = 1) AND NOT (HL <> &C000)"));
+        assert!(!holds("A = &12 XOR HL = &C000"));
+        assert_eq!(value("NOT 0"), -1);
+        assert_eq!(value("6 AND 3"), 2);
+        assert_eq!(value("6 OR 3"), 7);
+        assert_eq!(value("6 XOR 3"), 5);
+        // Arithmetic: ^ is a power, \ integer division, MOD.
+        assert_eq!(value("2 ^ 3 ^ 2"), 64, "left to right, as in BASIC");
+        assert_eq!(value("-2 ^ 2"), -4, "^ before the unary minus");
+        assert_eq!(value("2 * 3 ^ 2"), 18);
+        assert_eq!(value("7 \\ 2 + 7 MOD 4"), 6);
+        assert_eq!(value("17 MOD 5 * 2"), 7, "MOD looser than *: 17 MOD 10");
+        assert_eq!(value("1 + 2 = 3 AND 2 < 3"), -1);
+        // The C spellings still work, with C's ^ gone to XOR.
+        assert!(holds("a == #12 && !(hl != 0xc000)"));
+        // Names are case-insensitive, ACE's misspelling included.
+        for name in ["FlagZ", "flagnz", "C0", "c3h", "C3V", "CrtcR12", "CRTCSEL", "LineCount", "linecycle", "MemPage",
+            "MemBankMode", "LowerROMOn", "LowerrROMOn", "UpperROMNum", "ASICPageOn", "ASICPageOff", "IXl", "iyh"]
+        {
+            assert!(Condition::parse(&format!("{name} >= 0")).is_ok(), "{name}");
+        }
     }
 
     #[test]

@@ -182,7 +182,13 @@ pub(super) const OPERATIONS: &[Operation] = &[
             b("value", "integer", "byte read or written to match, under valmask"),
             b("valmask", "integer", "bits of value compared (default 0: any value)"),
             b("name", "string", "shown in its events"),
-            b("condition", "string", "an expression, e.g. A == #12 && peek(HL) <> 0, or value & %1000"),
+            b(
+                "condition",
+                "string",
+                "ACE's condition language (BASIC-like: A = &12 AND NOT FlagZ, LineCount > 100, CrtcR12 = &30, \
+                 MOD, \\, ^ power; registers, flags, CRTC C0..C9 and CrtcR0..17, beam, MemPage...) or C operators \
+                 (A == #12 && peek(HL) <> 0, value & %1000)"
+            ),
             b("start", "string", "counter name(s) started on a hit (a string or a list)"),
             b("stop", "string", "counter name(s) stopped on a hit"),
             b("reset", "string", "counter name(s) reset on a hit"),

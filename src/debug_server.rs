@@ -577,7 +577,7 @@ impl DebugServer {
     fn hit(&mut self, index: usize, access: Option<BusAccess>, motherboard: &Motherboard) {
         let brk = &mut self.advanced[index];
         if let Some(condition) = &brk.condition {
-            if !condition.holds(&MachineContext { motherboard, access }) {
+            if !condition.holds(&MachineContext { motherboard, access, beam: self.beam }) {
                 return;
             }
         }
@@ -1773,7 +1773,9 @@ fn percent_decode(text: &str) -> String {
 /// What a breakpoint condition reads: the machine, and the access that hit.
 struct MachineContext<'m> {
     motherboard: &'m Motherboard,
-    access: Option<BusAccess>
+    access: Option<BusAccess>,
+    /// For `LineCount`/`LineCycle`: the beam, when a monitor drives it.
+    beam: Option<Beam>
 }
 
 impl ConditionContext for MachineContext<'_> {
@@ -1796,12 +1798,55 @@ impl ConditionContext for MachineContext<'_> {
             "IM" => Some(match cpu.im() { InterruptMode::Mode0 => 0, InterruptMode::Mode1 => 1, InterruptMode::Mode2 => 2 }),
             "ADDRESS" => self.access.map(|a| a.address as i64),
             "VALUE" => self.access.map(|a| a.value as i64),
-            _ => None
+            _ => self.ace_variable(name)
         }
     }
 
     fn peek(&self, address: u16) -> u8 {
         self.motherboard.read_byte(address)
+    }
+}
+
+impl MachineContext<'_> {
+    /// ACE's variables beyond the registers: flags, CRTC, beam, memory.
+    fn ace_variable(&self, name: &str) -> Option<i64> {
+        let motherboard = self.motherboard;
+        let flags = motherboard.cpu().reg8(Reg8::F).get();
+        let flag = |bit: u8, set: bool| Some(((flags >> bit & 1 == 1) == set) as i64);
+        let crtc = motherboard.crtc();
+        let mmr = motherboard.mmr();
+        let ga = motherboard.ga();
+        if let Some(number) = name.strip_prefix("CRTCR").and_then(|n| n.parse::<u8>().ok()) {
+            return Some(crtc.register_value(number) as i64);
+        }
+        match name {
+            "FLAGZ" => flag(6, true),
+            "FLAGNZ" => flag(6, false),
+            "FLAGC" => flag(0, true),
+            "FLAGNC" => flag(0, false),
+            "FLAGM" => flag(7, true),
+            "FLAGP" => flag(7, false),
+            "FLAGPE" => flag(2, true),
+            "FLAGPO" => flag(2, false),
+            "C0" => Some(crtc.hcc as i64),
+            "C3H" => Some(crtc.hsc as i64),
+            "C3V" => Some(crtc.vsc as i64),
+            "C4" => Some(crtc.vcc.value() as i64),
+            "C5" => Some(crtc.vtac as i64),
+            "C9" => Some(crtc.vlc.value() as i64),
+            "CRTCSEL" => Some(crtc.selected_register() as i64),
+            "LINECOUNT" => self.beam.map(|beam| beam.line as i64),
+            "LINECYCLE" => self.beam.map(|beam| beam.nop() as i64),
+            "MEMPAGE" => Some((mmr >> 3 & 7) as i64),
+            "MEMBANKMODE" => Some((mmr & 7) as i64),
+            "LOWERROMON" => Some(ga.lower_rom_pagging().is_enabled() as i64),
+            "UPPERROMON" => Some(ga.upper_rom_pagging().is_enabled() as i64),
+            "UPPERROMNUM" => Some(motherboard.upper_rom_number() as i64),
+            // A Plus's: no ASIC here, the lower ROM is the firmware's at 0.
+            "LOWERROMNUM" | "LOWERROMADR" | "ASICPAGEON" => Some(0),
+            "ASICPAGEOFF" => Some(1),
+            _ => None
+        }
     }
 }
 
@@ -2345,6 +2390,30 @@ mod test {
             mb.execute_next_opcode_no_video();
         }
         mb
+    }
+
+    /// ACE's condition variables, read from a booted 6128.
+    #[test]
+    fn ace_condition_variables_read_the_machine() {
+        let mut mb = booted();
+        mb.cpu_mut().reg8_mut(Reg8::F).set(0b0100_0001); // Z and C
+        let beam = Beam { x: 10 * BEAM_TICKS_PER_NOP + 3, line: 100, crop_x: 0, crop_y: 0 };
+        let context = MachineContext { motherboard: &mb, access: None, beam: Some(beam) };
+        let holds = |source: &str| Condition::parse(source).unwrap().holds(&context);
+        assert!(holds("FlagZ AND FlagC AND NOT FlagNZ AND FlagNC = 0"));
+        assert!(holds("FlagP = 1 AND FlagM = 0 AND FlagPO = 1"));
+        // The firmware's CRTC set-up.
+        assert!(holds("CrtcR0 = 63 AND CrtcR1 = 40 AND CrtcR2 = 46 AND CrtcR6 = 25 AND CrtcR7 = 30"));
+        assert!(holds("C0 <= CrtcR0 AND C4 <= CrtcR4 AND C9 <= CrtcR9"));
+        assert!(holds("LineCount = 100 AND LineCycle = 10"));
+        assert!(holds("MemBankMode = 0 AND MemPage = 0"));
+        // BASIC running: the upper ROM (BASIC, ROM 0) paged in at times; the
+        // number is read, whatever it is now.
+        assert!(holds(&format!("UpperROMNum = {}", mb.upper_rom_number())));
+        assert!(holds("ASICPageOn = 0 AND ASICPageOff = 1 AND LowerROMNum = 0 AND LowerROMAdr = 0"));
+        // No monitor: no beam, the raster variables are 0.
+        let headless = MachineContext { motherboard: &mb, access: None, beam: None };
+        assert!(!Condition::parse("LineCount OR LineCycle").unwrap().holds(&headless));
     }
 
     #[test]

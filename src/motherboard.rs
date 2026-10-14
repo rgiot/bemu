@@ -384,6 +384,11 @@ impl Motherboard {
     }
 
     /// The PAL's memory mapping register (RAM banking), as last written.
+    /// The upper ROM selected (the last number written to &DFxx).
+    pub fn upper_rom_number(&self) -> u8 {
+        self.rom_selector.upper_rom_number()
+    }
+
     pub fn mmr(&self) -> u8 {
         self.pal.mmr()
     }
