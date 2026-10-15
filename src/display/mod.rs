@@ -15,7 +15,7 @@ mod gpu;
 pub use cpu::CpuCrt;
 pub use crt::{CrtParams, CrtProfile};
 #[cfg(feature = "crt-gpu")]
-pub use gpu::GpuCrt;
+pub use gpu::{wait_for, CrtPass, FrameTexture, GpuCrt};
 
 use image::RgbImage;
 use std::str::FromStr;
@@ -41,6 +41,14 @@ impl DisplayMode {
 
     pub fn is_raw(self) -> bool {
         self == Self::Raw
+    }
+
+    /// Size of the pictures of this mode.
+    pub fn output_size(self) -> (usize, usize) {
+        match self {
+            Self::Raw => (RAW_WIDTH, RAW_HEIGHT),
+            Self::Crt(profile) => profile.params().output_size()
+        }
     }
 
     /// The next mode, cycling through all of them (what F9 does).

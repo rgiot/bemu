@@ -36,6 +36,8 @@ tiny_http = "0.12"
 # GPU CRT filter (`--features crt-gpu`), see src/display/gpu.rs
 wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "vulkan"] }
 bytemuck = { version = "1", optional = true, features = ["derive"] }
+# `--frontend winit`: a window drawn by the GPU, see src/frontend/winit_gpu.rs
+winit = { version = "0.30", optional = true }
 
 [patch.crates-io]
 cpclib = {path = "../rust.cpcdemotools/cpclib/"}
@@ -57,3 +59,5 @@ default = ["audio"]
 audio = ["dep:cpal"]
 # The CRT display filter on the GPU (wgpu), besides the CPU one.
 crt-gpu = ["dep:wgpu", "dep:bytemuck"]
+# A winit + wgpu window that shows the (CRT) picture without reading it back.
+gpu-window = ["crt-gpu", "dep:winit"]
