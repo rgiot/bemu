@@ -12,6 +12,7 @@ the same SSM code: the best match counts.
 """
 import glob
 import os
+import pathlib
 import re
 import sys
 
@@ -30,11 +31,13 @@ def main():
     results = sys.argv[1]
     top = int(sys.argv[2]) if len(sys.argv) > 2 else 25
     best = {}
+    # REFS_DIR: another set of references, e.g. ams_shaker_refs.py's (CRTC 1-4)
+    refs = pathlib.Path(os.environ["REFS_DIR"]) if "REFS_DIR" in os.environ else REFS
     for f in sorted(glob.glob(results + "/**/*_CRTC" + os.environ.get("CRTC", "0") + "_*.png", recursive=True)):
         n = os.path.basename(f)[:-4]
         base = re.sub(r"_\d+$", "", n)
-        r = REFS / f"{base}.webp"
-        if not r.exists():
+        r = next((p for p in (refs / f"{base}.webp", refs / f"{base}.png") if p.exists()), None)
+        if r is None:
             continue
         try:
             Image.open(r).load()
