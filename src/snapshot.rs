@@ -5,6 +5,10 @@
 //! path (see [`crate::ga::GateArray::write_register`]) rather than by
 //! reconstructing the resulting state by hand, wherever that path exists.
 //!
+//! The CRTC takes its registers as stored (not written: a write has side
+//! effects in the middle of a frame), its selected register and, from version
+//! 3, its counters.
+//!
 //! Not restored: PPI port latches (no public way to force one without
 //! reconstructing its mode first) and the FDD motor/track flags (a disc
 //! given on its own command line is inserted stopped at track 0 already).
@@ -15,6 +19,7 @@
 use cpclib::sna::{Snapshot, SnapshotFlag};
 
 use crate::breakpoints::AdvancedBreakpoint;
+use crate::crtc::CrtcCounters;
 use crate::motherboard::{CpcModel, Motherboard};
 
 /// Load `path` into `motherboard`. Registers, RAM and the CRTC/GA/PSG are
@@ -43,7 +48,7 @@ fn load_snapshot(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(
     load_model(motherboard, snapshot);
     load_registers(motherboard, &word, &byte);
     load_memory(motherboard, snapshot)?;
-    load_crtc(motherboard, &byte);
+    load_crtc(motherboard, snapshot, &byte);
     load_gate_array(motherboard, &byte);
     load_psg(motherboard, &byte);
 
@@ -121,11 +126,32 @@ fn load_memory(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(),
     Ok(())
 }
 
-fn load_crtc(motherboard: &mut Motherboard, byte: &impl Fn(SnapshotFlag) -> u8) {
-    let crtc = motherboard.crtc_mut();
-    for register in 0..=17u8 {
-        crtc.do_write_register(register, byte(SnapshotFlag::CRTC_REG(Some(register as usize))));
+/// The registers as stored, the selected one, and from version 3 the counters
+/// (&A9 C0, &AB C4, &AC C9, &AD adjust, &AE HSYNC width counter, &AF VSYNC width
+/// counter, &B0 flags: bit 0 VSYNC, bit 1 HSYNC, bit 7 vertical adjust). cpclib
+/// names &AE VSWC and &AF HSWC: the format has them the other way round.
+fn load_crtc(motherboard: &mut Motherboard, snapshot: &Snapshot, byte: &impl Fn(SnapshotFlag) -> u8) {
+    use SnapshotFlag::*;
+
+    let mut regs = [0u8; 18];
+    for (register, value) in regs.iter_mut().enumerate() {
+        *value = byte(CRTC_REG(Some(register)));
     }
+    let counters = (snapshot.version_header() >= 3).then(|| {
+        let flags = byte(CRTC_STATE);
+        CrtcCounters {
+            hcc: byte(CRTC_HCC),
+            vcc: byte(CRTC_CLC),
+            vlc: byte(CRTC_RLC),
+            vtac: byte(CRTC_VAC),
+            hsc: byte(CRTC_VSWC),
+            vsc: byte(CRTC_HSWC),
+            vsync: flags & 1 != 0,
+            hsync: flags & 2 != 0,
+            in_vertical_adjust: flags & 0x80 != 0
+        }
+    });
+    motherboard.crtc_mut().restore(&regs, byte(CRTC_SEL), counters);
 }
 
 fn load_gate_array(motherboard: &mut Motherboard, byte: &impl Fn(SnapshotFlag) -> u8) {
@@ -364,6 +390,51 @@ mod breakpoint_test {
         assert_eq!(breakpoints.advanced.len(), 1);
         assert_eq!(breakpoints.advanced[0].run, crate::breakpoints::RunMode::Watch);
         assert!(breakpoints.ignored.is_empty(), "{:?}", breakpoints.ignored);
+    }
+
+    fn load_crtc_snapshot(version: SnapshotVersion, values: &[(SnapshotFlag, u16)]) -> Motherboard {
+        let mut snapshot = Snapshot::default();
+        for (flag, value) in values {
+            snapshot.set_value(flag.clone(), *value).unwrap();
+        }
+        let path = std::env::temp_dir().join(format!("amsrust_crtc_{}_{version:?}.sna", std::process::id()));
+        let path = path.to_str().unwrap().to_owned();
+        snapshot.save(&path, version).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        load_sna_bytes(&mut motherboard, &bytes).unwrap();
+        motherboard
+    }
+
+    /// The CRTC registers are restored as stored (R0=0 used to swallow the R4, R5
+    /// and R9 replayed after it), with the selected register and, in version 3,
+    /// the counters.
+    #[test]
+    fn the_crtc_is_restored_as_saved() {
+        use SnapshotFlag::*;
+        let regs = [(0, 0), (4, 20), (5, 3), (9, 5), (1, 32), (12, 0x10), (7, 12)];
+        let mut values: Vec<_> = regs.iter().map(|&(r, v)| (CRTC_REG(Some(r)), v)).collect();
+        values.push((CRTC_SEL, 12));
+        values.extend([
+            (CRTC_HCC, 10), (CRTC_CLC, 7), (CRTC_RLC, 2), (CRTC_VAC, 0),
+            (CRTC_VSWC, 0), (CRTC_HSWC, 3), (CRTC_STATE, 1)
+        ]);
+        let motherboard = load_crtc_snapshot(SnapshotVersion::V3, &values);
+        let crtc = motherboard.crtc();
+        for (r, v) in regs {
+            assert_eq!(crtc.regs_r(r), v as u8, "R{r}");
+        }
+        assert_eq!(crtc.selected_register(), 12);
+        let counters = crtc.counters();
+        assert_eq!((counters.hcc, counters.vcc, counters.vlc, counters.vsc), (10, 7, 2, 3));
+        assert!(counters.vsync && !counters.hsync && !counters.in_vertical_adjust);
+
+        // version 2 has no counters: the top of a frame
+        let motherboard = load_crtc_snapshot(SnapshotVersion::V2, &values);
+        let counters = motherboard.crtc().counters();
+        assert_eq!((counters.hcc, counters.vcc, counters.vlc), (0, 0, 0));
+        assert_eq!(motherboard.crtc().regs_r(4), 20);
     }
 
     /// A snapshot saved as `version`, its CPC type and MMR set, loaded

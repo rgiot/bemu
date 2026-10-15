@@ -1271,7 +1271,76 @@ impl Crtc {
     }
 }
 
+/// The CRTC counters of a version 3 snapshot (offsets &A9-&B1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CrtcCounters {
+    /// C0
+    pub hcc: u8,
+    /// C4
+    pub vcc: u8,
+    /// C9
+    pub vlc: u8,
+    /// the vertical total adjust counter
+    pub vtac: u8,
+    /// C3l
+    pub hsc: u8,
+    /// C3h
+    pub vsc: u8,
+    pub hsync: bool,
+    pub vsync: bool,
+    pub in_vertical_adjust: bool
+}
+
 impl Crtc {
+    /// Restores the CRTC from a snapshot: the registers as stored (no write side
+    /// effect: they are not written in the middle of a frame), the selected
+    /// register and, from a version 3 snapshot, the counters. Without counters
+    /// the CRTC restarts at the top of a frame.
+    pub fn restore(&mut self, regs: &[u8; 18], selected: u8, counters: Option<CrtcCounters>) {
+        self.reset();
+        for (r, &v) in regs.iter().enumerate() {
+            self.regs[r] = v & self.model.write_mask(r as u8);
+        }
+        self.ar = selected & 0b11111;
+        let c = counters.unwrap_or_default();
+        self.hcc = c.hcc;
+        self.vcc = (c.vcc & 0x7f).into();
+        self.vlc = (c.vlc & 0x1f).into();
+        self.vtac = c.vtac;
+        self.hsc = c.hsc & 0x0f;
+        self.vsc = c.vsc & 0x0f;
+        self.in_vertical_adjust = c.in_vertical_adjust;
+        self.adjust_counts_to_r5 = c.in_vertical_adjust;
+        self.last_line = false;
+        self.vsync_running = c.vsync;
+        self.set_pin(CrtcPin::VS, c.vsync);
+        self.set_pin(CrtcPin::HS, c.hsync);
+        // VMA as the standard frame has it: the row starts R1 characters after the previous one
+        let row = if c.in_vertical_adjust { 0 } else { u16::from(c.vcc & 0x7f) };
+        let row_start = self.base_address().wrapping_add(row * u16::from(self.regs[1])) & 0x3fff;
+        self.crtc_vma = row_start.wrapping_add(u16::from(c.hcc)) & 0x3fff;
+        self.crtc_vma_prime = if self.c9_is_last() && c.hcc > self.regs[1] {
+            row_start.wrapping_add(u16::from(self.regs[1])) & 0x3fff
+        } else {
+            row_start
+        };
+    }
+
+    /// The counters, as a version 3 snapshot stores them.
+    pub fn counters(&self) -> CrtcCounters {
+        CrtcCounters {
+            hcc: self.hcc,
+            vcc: self.vcc.value(),
+            vlc: self.vlc.value(),
+            vtac: self.vtac,
+            hsc: self.hsc,
+            vsc: self.vsc,
+            hsync: self.hsync(),
+            vsync: self.vsync(),
+            in_vertical_adjust: self.in_vertical_adjust
+        }
+    }
+
     /// Check if the CRTC as generated a VSYNC
     /// (A ghost VSYNC, see [`CrtcModel::ghost_vsync_during_hsync`], runs without the VS pin.)
     pub fn vsync(&self) -> bool {
