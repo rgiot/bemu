@@ -10,6 +10,13 @@
 //! winit 0.30 wants to own the event loop; `pump_app_events` lets the
 //! emulator keep its own loop, polling the events once per frame.
 //!
+//! F11 toggles fullscreen. When the monitor offers a video mode at its own size
+//! and about 50 Hz (the CPC's rate), that mode is taken (exclusive fullscreen):
+//! the presents then follow the screen's vertical sync (FIFO), one CPC frame per
+//! refresh, and the frontend stops pacing on its own clock. Otherwise the window
+//! goes borderless fullscreen at the desktop's rate; F11 again goes back to the
+//! window. F4 closes the emulator. Neither is a CPC key.
+//!
 //! Keyboard: the keys held are the *logical* ones (what the layout says the
 //! key is), as the minifb frontend reports them, with the characters typed:
 //! see `amsrust::input` for how the two are combined.
@@ -27,7 +34,8 @@ use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, KeyLocation, NamedKey, PhysicalKey};
 use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
-use winit::window::{Window, WindowId};
+use winit::monitor::VideoModeHandle;
+use winit::window::{Fullscreen, Window, WindowId};
 
 /// The window's initial width, in logical pixels.
 const INITIAL_WIDTH: f64 = 1152.0;
@@ -322,7 +330,57 @@ struct App {
     held: HashMap<PhysicalKey, HostKey>,
     typed: Vec<char>,
     closed: bool,
-    error: Option<String>
+    error: Option<String>,
+    /// F11 asked for fullscreen (kept here: the window manager may refuse it).
+    fullscreen: bool,
+    /// Fullscreen in a ~50 Hz video mode: the vertical sync paces the frames.
+    vsync_paced: bool
+}
+
+/// A video mode of `window`'s monitor at its own size (or the largest) and within
+/// half a hertz of 50, the deepest colours first.
+fn fifty_hertz_mode(window: &Window) -> Option<VideoModeHandle> {
+    let monitor = window.current_monitor()?;
+    let size = monitor.size();
+    monitor
+        .video_modes()
+        .filter(|mode| (49_500..=50_500).contains(&mode.refresh_rate_millihertz()))
+        .max_by_key(|mode| (mode.size() == size, mode.size().width * mode.size().height, mode.bit_depth()))
+}
+
+impl App {
+    /// F11: fullscreen in a 50 Hz mode when there is one, borderless otherwise; back
+    /// to the window.
+    fn toggle_fullscreen(&mut self) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        self.fullscreen = !self.fullscreen;
+        if !self.fullscreen {
+            window.set_fullscreen(None);
+            window.set_cursor_visible(true);
+            self.vsync_paced = false;
+            return;
+        }
+        match fifty_hertz_mode(window) {
+            Some(mode) => {
+                eprintln!(
+                    "fullscreen {}x{} at {:.3} Hz",
+                    mode.size().width,
+                    mode.size().height,
+                    f64::from(mode.refresh_rate_millihertz()) / 1000.0
+                );
+                window.set_fullscreen(Some(Fullscreen::Exclusive(mode)));
+                self.vsync_paced = true;
+            },
+            None => {
+                eprintln!("fullscreen: no 50 Hz video mode on this monitor, borderless at the desktop's rate");
+                window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                self.vsync_paced = false;
+            }
+        }
+        window.set_cursor_visible(false);
+    }
 }
 
 impl ApplicationHandler for App {
@@ -356,6 +414,13 @@ impl ApplicationHandler for App {
             },
             WindowEvent::KeyboardInput { event, .. } => {
                 match event.state {
+                    // F4 closes the emulator
+                    ElementState::Pressed if event.logical_key == Key::Named(NamedKey::F4) => self.closed = true,
+                    ElementState::Pressed if event.logical_key == Key::Named(NamedKey::F11) => {
+                        if !event.repeat {
+                            self.toggle_fullscreen();
+                        }
+                    },
                     ElementState::Pressed => {
                         if let Some(key) = host_key(&event) {
                             self.held.insert(event.physical_key, key);
@@ -399,7 +464,9 @@ impl WinitGpuFrontend {
                 held: HashMap::new(),
                 typed: Vec::new(),
                 closed: false,
-                error: None
+                error: None,
+                fullscreen: false,
+                vsync_paced: false
             },
             frame_time: None,
             deadline: Instant::now()
@@ -425,8 +492,13 @@ impl WinitGpuFrontend {
         }
     }
 
-    /// Wait for the end of the frame when the rate is capped.
+    /// Wait for the end of the frame when the rate is capped (not in a 50 Hz
+    /// fullscreen mode: the vertical sync, FIFO, does it).
     fn pace(&mut self) {
+        if self.app.vsync_paced {
+            self.deadline = Instant::now();
+            return;
+        }
         if let Some(frame_time) = self.frame_time {
             self.deadline += frame_time;
             let now = Instant::now();
