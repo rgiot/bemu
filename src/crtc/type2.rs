@@ -7,6 +7,10 @@ use super::type1::WRITE_MASK;
 pub struct Crtc2;
 
 impl CrtcModel for Crtc2 {
+    fn ghost_vsync_during_hsync(&self) -> bool {
+        true
+    }
+
     fn crtc_type(&self) -> CrtcType {
         CrtcType::Crtc2
     }

@@ -172,6 +172,15 @@ pub struct Crtc {
     two_wide_pulse: bool,
     /// ACCC 16.4.1: a CRTC 0 VSYNC begun in the middle of a line does not count that line
     vsync_skips_first_line_end: bool,
+    /// The VSYNC ended while C4 still equals R7: it does not start again
+    /// before C4 moves (next row or frame) or R7 changes (AMSpiriT, CPCSE)
+    vsync_ended_on_r7: bool,
+    /// The VSYNC runs (counted by C3h). The VS pin follows it, except for a ghost VSYNC
+    /// (see [`CrtcModel::ghost_vsync_during_hsync`]).
+    vsync_running: bool,
+    /// CRTC 0 (ACCC §13.2.2): the line reached C0=2, which validates the VSYNC test of the
+    /// next C0=0 (cancelled there): with R0<2 no VSYNC starts
+    vsync_authorized: bool,
     /// Number of line ends (C0 back to 0 through R0) since reset; for tests and tools
     pub line_ends: u64,
     /// Motherboard ticks since the last character clock edge (0..15).
@@ -271,6 +280,9 @@ impl Default for Crtc {
             early_blank_chars: 0,
             two_wide_pulse: false,
             vsync_skips_first_line_end: false,
+            vsync_ended_on_r7: false,
+            vsync_running: false,
+            vsync_authorized: true,
             line_ends: 0,
             phase_ticks: 0,
             r1_latch: false,
@@ -453,7 +465,7 @@ impl Crtc {
         // does not start, nor can it until C4 or R7 changes
         if r == 7
             && self.model.has_last_line_state()
-            && !self.get_pin(CrtcPin::VS)
+            && !self.vsync()
             && self.vcc.value() == v & mask
             && self.vcc.value() != self.regs[7]
             && self.hcc < BLOCKED_R7_C0
@@ -795,6 +807,7 @@ impl Crtc {
                 self.commit_next_row_address(vma);
             }
         }
+        let hsync_before = self.hsync();
         if self.hsync() {
             // ACCC §14.4: C3l is a 4-bit counter. Lowering R3l below it
             // during HSYNC (R3.JIT) makes it overflow and reach R3l on
@@ -847,7 +860,9 @@ impl Crtc {
                     // (16 lines more), and a width of 16 is the counter back at 0
                     self.vsc = (self.vsc + 1) & 0x0f;
                     if self.vsc == self.vsync_height() & 0x0f {
+                        self.vsync_running = false;
                         self.off(CrtcPin::VS);
+                        self.vsync_ended_on_r7 = self.vcc == self.regs[7];
                     }
                 }
             }
@@ -883,6 +898,7 @@ impl Crtc {
             }
             let mut new_frame = false;
             let vcc_before = self.vcc.value();
+            let adjust_before = self.in_vertical_adjust;
             if skip_counters {
                 // frozen
             } else if self.r0_enlarge_c9_to_r5 {
@@ -986,8 +1002,11 @@ impl Crtc {
                     self.vlc = c9.into();
                     end
                 } else {
+                    // compared before the increment: C9 is a 5-bit counter, so with R9=31 the
+                    // incremented value (0) never equals R9+1 (32)
+                    let end = self.vlc == self.regs[9];
                     self.vlc += 1;
-                    self.vlc == self.regs[9] + 1
+                    end
                 };
 
                 // This is the end of a char line
@@ -995,9 +1014,12 @@ impl Crtc {
                     if !ivm_now {
                         self.vlc.reset();
                     }
+                    // compared before the increment: C4 is a 7-bit counter, so with R4=127 the
+                    // incremented value (0) never equals R4+1 (128)
+                    let last_row = self.vcc == self.regs[4];
                     self.vcc += 1;
 
-                    if self.vcc == self.regs[4] + 1 {
+                    if last_row {
                         // ACCC 19.6.2 (CRTC 1): an additional line follows the R5 lines on
                         // the even frames of the interlace modes
                         let extra = self.interlaced() && self.model.frame_parity_toggles() && !self.parity_frame;
@@ -1008,12 +1030,21 @@ impl Crtc {
                         } else {
                             // Enter vertical total adjust instead of
                             // immediately starting the next frame.
+                            if self.model.adjust_keeps_c4() {
+                                self.vcc = self.regs[4].into();
+                            }
                             self.in_vertical_adjust = true;
                             self.interlace_extra_line = extra;
                             self.vtac = 0;
                         }
                     }
                 }
+            }
+
+            // a new row (or frame, C4 back to 0 with R4=0, or adjustment, C4 kept on R4 on
+            // CRTC 3/4) may start a VSYNC again
+            if new_frame || self.vcc.value() != vcc_before || (self.in_vertical_adjust && !adjust_before) {
+                self.vsync_ended_on_r7 = false;
             }
 
             // ACCC §19.5.2: ParityFrame takes ParityR6 when a frame starts;
@@ -1146,18 +1177,37 @@ impl Crtc {
         let mid_vsync_wait = self.interlaced() && !self.parity_frame && self.hcc < self.regs[0] / 2;
         // a blocked VSYNC (see r7_match) is released when C4 and R7 differ
         let protected = self.model.has_last_line_state();
-        if protected && !self.get_pin(CrtcPin::VS) && self.vcc != self.regs[7] {
+        if protected && !self.vsync() && self.vcc != self.regs[7] {
             self.r7_match = false;
         }
-        if self.vcc == self.regs[7]
-            && !self.get_pin(CrtcPin::VS)
+        if self.vcc != self.regs[7] {
+            self.vsync_ended_on_r7 = false;
+        }
+        let vsync_wanted = self.vcc == self.regs[7]
+            && !self.vsync()
+            && !self.vsync_ended_on_r7
             && !mid_vsync_wait
-            && !(protected && self.r7_match)
-        {
+            && !(protected && self.r7_match);
+        if vsync_wanted && protected && !self.vsync_authorized {
+            // ACCC §13.2.2: refused, and this C4=R7 occurrence is spent
+            self.vsync_ended_on_r7 = true;
+        } else if vsync_wanted {
             self.vsc = 0;
             // ACCC 16.4.1: the line counter of a VSYNC begun mid-line starts at the next C0=0
             self.vsync_skips_first_line_end = protected && self.hcc > 0;
-            self.on(CrtcPin::VS); // Activate Vsync
+            self.vsync_running = true;
+            // the HSYNC window runs up to the character where the HSYNC ends
+            let ghost = self.model.ghost_vsync_during_hsync()
+                && self.regs[2] != 0
+                && (self.hsync() || hsync_before);
+            self.set_pin(CrtcPin::VS, !ghost); // Activate Vsync
+        }
+        if protected {
+            if self.hcc == 2 {
+                self.vsync_authorized = true;
+            } else if self.hcc == 0 {
+                self.vsync_authorized = false;
+            }
         }
 
         self.reload_vma_if_needed();
@@ -1223,8 +1273,9 @@ impl Crtc {
 
 impl Crtc {
     /// Check if the CRTC as generated a VSYNC
+    /// (A ghost VSYNC, see [`CrtcModel::ghost_vsync_during_hsync`], runs without the VS pin.)
     pub fn vsync(&self) -> bool {
-        self.get_pin(CrtcPin::VS)
+        self.vsync_running
     }
 
     /// Check if the CRTC as generated a HSYNC
@@ -1298,6 +1349,38 @@ impl Chip for Crtc {
         self.in_vertical_adjust = false;
         // the counters sit on the last line of the frame
         self.last_line = self.model.has_last_line_state();
+        // nothing of the previous run survives a reset
+        self.vsc = 0;
+        self.hsc = 0;
+        self.hdc = 0;
+        self.additional_armed = false;
+        self.additional_r5 = false;
+        self.r0_enlarge_steps_c4 = false;
+        self.r0_enlarge_c9_to_r5 = false;
+        self.adjust_counts_to_r5 = false;
+        self.r7_match = false;
+        self.early_blank_chars = 0;
+        self.two_wide_pulse = false;
+        self.vsync_skips_first_line_end = false;
+        self.vsync_ended_on_r7 = false;
+        self.vsync_running = false;
+        self.vsync_authorized = true;
+        self.r1_latch = false;
+        self.r1_zero_late = false;
+        self.hsync_late_ticks = 0;
+        self.vertical_border = false;
+        self.border_history = [false; 3];
+        self.r6_border = false;
+        self.r0_zero_wraps = 0;
+        self.parity_frame = false;
+        self.parity_r6 = false;
+        self.parity_c9 = false;
+        self.ivm_lines = false;
+        self.interlace_extra_line = false;
+        self.rfd_active = false;
+        self.vma_latch_pending = None;
+        self.r0_zero_c4_pending = false;
+        self.r6_zero_seen = false;
 
         self.set_pin(CrtcPin::DE, true);
         self.set_pin(CrtcPin::HS, false);
@@ -1698,5 +1781,137 @@ mod test {
             lines += 1;
         }
         assert_eq!(lines, 1 + 8);
+    }
+
+    /// Steps character by character, with a bound so a missing VSYNC fails instead of hanging.
+    fn step_while(crtc: &mut Crtc, vsync: bool) {
+        for _ in 0..1_000_000 {
+            if crtc.vsync() != vsync {
+                return;
+            }
+            crtc.update_memory_address();
+        }
+        panic!("VSYNC stuck {}", if vsync { "high" } else { "low" });
+    }
+
+    /// (VSYNC length, VSYNC period) in scan lines, after a few frames to settle.
+    fn vsync_and_frame_lines(crtc: &mut Crtc) -> (u64, u64) {
+        for _ in 0..3 {
+            step_while(crtc, false);
+            step_while(crtc, true);
+        }
+        step_while(crtc, false);
+        let start = crtc.line_ends;
+        step_while(crtc, true);
+        let high = crtc.line_ends - start;
+        step_while(crtc, false);
+        (high, crtc.line_ends - start)
+    }
+
+    fn crtc_with(kind: CrtcType, regs: &[(u8, u8)]) -> Crtc {
+        let mut crtc = Crtc::from(kind);
+        for &(r, v) in regs {
+            crtc.do_write_register(r, v);
+        }
+        crtc
+    }
+
+    const ALL_TYPES: [CrtcType; 5] = [CrtcType::Crtc0, CrtcType::Crtc1, CrtcType::Crtc2, CrtcType::Crtc3, CrtcType::Crtc4];
+
+    /// C9 is a 5-bit counter: rows of 32 lines (R9=31) still end, on every CRTC
+    /// (AMSpiriT Lite and CPCSE: 8 rows of 32 lines make a 256-line frame).
+    #[test]
+    fn test_rows_of_32_lines() {
+        for kind in ALL_TYPES {
+            let mut crtc = crtc_with(kind, &[(9, 31), (4, 7), (7, 2), (6, 6)]);
+            let width = u64::from(crtc.vsync_height());
+            assert_eq!(vsync_and_frame_lines(&mut crtc), (width, 8 * 32), "{kind:?}");
+        }
+    }
+
+    /// C4 is a 7-bit counter: with R4=127 the frame still ends after row 127 and
+    /// takes its R5 lines (AMSpiriT Lite and CPCSE: 128 + 4 lines).
+    #[test]
+    fn test_r4_127_keeps_the_adjust_lines() {
+        for kind in ALL_TYPES {
+            let mut crtc = crtc_with(kind, &[(9, 0), (4, 127), (5, 4), (7, 100), (6, 50)]);
+            assert_eq!(vsync_and_frame_lines(&mut crtc).1, 128 + 4, "{kind:?}");
+        }
+    }
+
+    /// A VSYNC that ends while C4 still equals R7 does not start again on the
+    /// same row (AMSpiriT Lite and CPCSE: R3=&1E gives 1 line, not the whole row).
+    #[test]
+    fn test_vsync_does_not_restart_on_the_same_row() {
+        for kind in [CrtcType::Crtc0, CrtcType::Crtc3, CrtcType::Crtc4] {
+            for (r3, lines) in [(0x1e, 1), (0x4e, 4)] {
+                let mut crtc = crtc_with(kind, &[(3, r3)]);
+                assert_eq!(vsync_and_frame_lines(&mut crtc), (lines, 39 * 8), "{kind:?} R3={r3:#x}");
+            }
+        }
+        // rows longer than the 16 lines of a CRTC 1/2 VSYNC
+        for kind in ALL_TYPES {
+            let mut crtc = crtc_with(kind, &[(9, 31), (4, 7), (7, 2), (6, 6)]);
+            let width = u64::from(crtc.vsync_height());
+            assert_eq!(vsync_and_frame_lines(&mut crtc).0, width, "{kind:?}");
+        }
+    }
+
+    /// One-row frames (R4=0): C4 stays 0, yet each frame has its VSYNC. On CRTC 3/4
+    /// C4 also stays 0 for the R5 lines (ACCC §18.2.4), where a VSYNC starts again and
+    /// runs on into the next frame's: 16 lines (AMSpiriT Lite and CPCSE).
+    #[test]
+    fn test_vsync_every_frame_of_a_single_row() {
+        for kind in ALL_TYPES {
+            let mut crtc = crtc_with(kind, &[(4, 0), (9, 31), (5, 8), (7, 0), (6, 0)]);
+            let width = u64::from(crtc.vsync_height());
+            let high = if crtc.model.adjust_keeps_c4() { 8 + width } else { width };
+            assert_eq!(vsync_and_frame_lines(&mut crtc), (high, 32 + 8), "{kind:?}");
+        }
+    }
+
+    /// A reset forgets the transient state of the previous run.
+    #[test]
+    fn test_reset_clears_the_vsync_state() {
+        let mut crtc = crtc_with(CrtcType::Crtc0, &[(3, 0x1e)]);
+        step_while(&mut crtc, false);
+        step_while(&mut crtc, true);
+        crtc.reset();
+        assert!(!crtc.vsync_ended_on_r7 && !crtc.r7_match && !crtc.vsync_skips_first_line_end);
+    }
+
+    /// ACCC §13.2.2: a CRTC 0 line must reach C0=2 for the next C0=0 to start a
+    /// VSYNC, so with R0=1 there is none (AMSpiriT Lite and CPCSE); CRTC 1 has it.
+    #[test]
+    fn test_crtc0_no_vsync_with_r0_1() {
+        let regs = [(0, 1), (1, 1), (2, 1), (3, 0x81)];
+        let mut crtc = crtc_with(CrtcType::Crtc0, &regs);
+        for _ in 0..200_000 {
+            crtc.update_memory_address();
+            assert!(!crtc.vsync());
+        }
+        let mut crtc = crtc_with(CrtcType::Crtc1, &regs);
+        step_while(&mut crtc, false);
+    }
+
+    /// ACCC §16.4.3: on CRTC 2 a VSYNC condition met during the HSYNC (R0=31, the
+    /// HSYNC of R2=24 runs past C0=0) is a GHOST VSYNC: it runs, the pin stays low
+    /// (CPCSE). With R2=0 it is a real one.
+    #[test]
+    fn test_crtc2_ghost_vsync_during_hsync() {
+        let mut crtc = crtc_with(CrtcType::Crtc2, &[(0, 31), (1, 20), (2, 24)]);
+        let (ran, _) = vsync_and_frame_lines(&mut crtc);
+        assert_eq!(ran, 16);
+        for _ in 0..100_000 {
+            crtc.update_memory_address();
+            assert!(!crtc.get_pin(CrtcPin::VS));
+        }
+        let mut crtc = crtc_with(CrtcType::Crtc2, &[(0, 31), (1, 20), (2, 0)]);
+        step_while(&mut crtc, false);
+        assert!(crtc.get_pin(CrtcPin::VS));
+        // the other chips have no ghost
+        let mut crtc = crtc_with(CrtcType::Crtc0, &[(0, 31), (1, 20), (2, 24)]);
+        step_while(&mut crtc, false);
+        assert!(crtc.get_pin(CrtcPin::VS));
     }
 }

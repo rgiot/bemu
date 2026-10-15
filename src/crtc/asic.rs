@@ -28,6 +28,10 @@ impl Asic {
 }
 
 impl CrtcModel for Asic {
+    fn adjust_keeps_c4(&self) -> bool {
+        true
+    }
+
     fn acknowledges_r1_zero_on_c0_zero(&self) -> bool {
         false
     }
