@@ -22,8 +22,10 @@ const RASTER_LINE_LENGTH: usize = 64 * 16;
 /// 8 usec (the 15th character after C0=R2, with a 4 usec C-HSYNC) after the
 /// end of the C-HSYNC; 272 lines, from the 34th after the start of the VSYNC.
 /// Three pixels earlier than that: where AMSpiriT puts the 640 pixels of a
-/// standard screen (x=64..703 of its 768 wide picture).
-const MONITOR_FIRST_PIXEL: usize = 8 * 16 - 2;
+/// standard screen (x=64..703 of its 768 wide picture). The Gate Array's output comes out
+/// [`crate::ga::PALETTE_LOOKUP_LAG_TICKS`] after its pixels are resolved, so the picture starts that
+/// much later.
+const MONITOR_FIRST_PIXEL: usize = 8 * 16 - 2 + crate::ga::PALETTE_LOOKUP_LAG_TICKS;
 const MONITOR_ACTIVE_PIXELS: usize = 48 * 16;
 const MONITOR_HEIGHT: usize = 272;
 const MONITOR_FIRST_LINE: usize = 33;

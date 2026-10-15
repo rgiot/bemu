@@ -68,6 +68,7 @@ use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::psg::AudioConfig;
+use cli::FrontendKind;
 use frontend::{Frontend, MinifbFrontend};
 use std::collections::VecDeque;
 
@@ -154,7 +155,7 @@ fn main() {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut(), args.black_level),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu, args.black_level)
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu, args.black_level, args.frontend)
         },
         None if args.debug_server => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
@@ -485,11 +486,27 @@ fn run_window(
     mut server: Option<&mut DebugServer>,
     mut mode: DisplayMode,
     gpu: bool,
-    black_level: u8
+    black_level: u8,
+    frontend: FrontendKind
 ) {
+    let (width, height) = mode.output_size();
+    let mut window: Box<dyn Frontend> = match frontend {
+        FrontendKind::Minifb => {
+            Box::new(MinifbFrontend::open("amsrust", width, height).unwrap_or_else(|e| panic!("{e}")))
+        },
+        #[cfg(feature = "gpu-window")]
+        FrontendKind::Winit => {
+            Box::new(frontend::WinitGpuFrontend::open((width, height)).unwrap_or_else(|e| panic!("{e}")))
+        },
+        #[cfg(not(feature = "gpu-window"))]
+        FrontendKind::Winit => panic!("--frontend winit needs a build with --features gpu-window")
+    };
+    // A frontend that draws the frames itself needs a picture from the filter
+    // only to record it...
+    let direct = window.direct();
+    // ...and then on the CPU: such a frontend draws on the GPU by itself.
+    let gpu = gpu && !direct;
     let mut filter = mode.filter_on(gpu);
-    let (width, height) = filter.output_size();
-    let mut window = MinifbFrontend::open("amsrust", width, height).unwrap_or_else(|e| panic!("{e}"));
     // Cap redraws (and so input polling and emulated speed) at the CPC's
     // own real refresh rate rather than running full tilt.
     window.set_target_fps(50);
@@ -542,7 +559,12 @@ fn run_window(
             }
             if server.paused() {
                 // Stopped by the debugger: keep the window alive.
-                window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
+                if direct {
+                    window.redraw().unwrap_or_else(|e| panic!("{e}"));
+                }
+                else {
+                    window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
+                }
                 std::thread::sleep(std::time::Duration::from_millis(15));
                 continue;
             }
@@ -552,7 +574,9 @@ fn run_window(
             continue; // paused mid-frame
         };
 
-        filter.render(&frame, &mut buffer);
+        if !direct || recorder.is_some() {
+            filter.render(&frame, &mut buffer);
+        }
         let samples = motherboard.take_audio_samples();
         if let Some(recorder) = &mut recorder {
             let recorded = recorder.samples(&samples).and_then(|()| recorder.frame(&buffer));
@@ -561,9 +585,14 @@ fn run_window(
                 break;
             }
         }
-        play_frame_audio(audio.as_ref(), &samples, &window);
+        play_frame_audio(audio.as_ref(), &samples, window.as_ref());
 
-        window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
+        if direct {
+            window.present_frame(&frame, mode).unwrap_or_else(|e| panic!("{e}"));
+        }
+        else {
+            window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
+        }
     }
 
     if let (Some(recorder), Some(path)) = (recorder, record) {

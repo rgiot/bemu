@@ -1,0 +1,488 @@
+//! [`Frontend`] on winit and wgpu: the window is drawn by the GPU.
+//!
+//! The monitor's frame is uploaded as a texture; for a CRT display the shader
+//! pass of `amsrust::display::CrtPass` (the one of the GPU filter, see
+//! `crt.wgsl`) draws the tube's picture in a texture of its own size, and a
+//! blit scales it, letterboxed, to the window with a linear filter. Nothing is
+//! read back: the CPU never sees the filtered picture (a recording asks for a
+//! CPU filter next to it).
+//!
+//! winit 0.30 wants to own the event loop; `pump_app_events` lets the
+//! emulator keep its own loop, polling the events once per frame.
+//!
+//! Keyboard: the keys held are the *logical* ones (what the layout says the
+//! key is), as the minifb frontend reports them, with the characters typed:
+//! see `amsrust::input` for how the two are combined.
+
+use super::Frontend;
+use amsrust::display::{wait_for, CrtParams, CrtPass, DisplayMode, FrameTexture, RAW_HEIGHT, RAW_WIDTH};
+use amsrust::input::{HostInput, HostKey};
+use image::RgbImage;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use winit::application::ApplicationHandler;
+use winit::dpi::LogicalSize;
+use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{Key, KeyLocation, NamedKey, PhysicalKey};
+use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
+use winit::window::{Window, WindowId};
+
+/// The window's initial width, in logical pixels.
+const INITIAL_WIDTH: f64 = 1152.0;
+
+/// The picture of a CRT display, in its own texture.
+struct CrtState {
+    mode: DisplayMode,
+    pass: CrtPass,
+    target: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    size: (usize, usize)
+}
+
+struct Gfx {
+    surface: wgpu::Surface<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    frame: FrameTexture,
+    blit: wgpu::RenderPipeline,
+    blit_layout: wgpu::BindGroupLayout,
+    nearest: wgpu::Sampler,
+    linear: wgpu::Sampler,
+    raw_bind_group: wgpu::BindGroup,
+    crt: Option<CrtState>,
+    /// What the last frame showed, for [`Frontend::redraw`].
+    shown: Option<DisplayMode>
+}
+
+impl Gfx {
+    fn new(window: Arc<Window>) -> Result<Self, String> {
+        let size = window.inner_size();
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let surface = instance.create_surface(window).map_err(|e| format!("cannot draw in the window: {e}"))?;
+        let adapter = wait_for(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: Some(&surface),
+            ..Default::default()
+        }))
+        .map_err(|e| format!("no GPU adapter: {e}"))?;
+        let (device, queue) = wait_for(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+            .map_err(|e| format!("cannot use the GPU: {e}"))?;
+
+        let capabilities = surface.get_capabilities(&adapter);
+        // The picture is already encoded: no automatic sRGB conversion.
+        let format = capabilities
+            .formats
+            .iter()
+            .copied()
+            .find(|f| !f.is_srgb())
+            .unwrap_or(capabilities.formats[0]);
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: size.width.max(1),
+            height: size.height.max(1),
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: capabilities.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2
+        };
+        surface.configure(&device, &config);
+
+        let frame = FrameTexture::new(&device);
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("blit"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("blit.wgsl").into())
+        });
+        let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false
+                    },
+                    count: None
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None
+                }
+            ]
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&blit_layout],
+            push_constant_ranges: &[]
+        });
+        let blit = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("blit"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[]
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(format.into())]
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None
+        });
+        let sampler = |filter| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                mag_filter: filter,
+                min_filter: filter,
+                ..Default::default()
+            })
+        };
+        let (nearest, linear) = (sampler(wgpu::FilterMode::Nearest), sampler(wgpu::FilterMode::Linear));
+        let raw_bind_group = Self::bind_group(&device, &blit_layout, frame.view(), &nearest);
+        Ok(Self { surface, device, queue, config, frame, blit, blit_layout, nearest, linear, raw_bind_group, crt: None, shown: None })
+    }
+
+    fn bind_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) }
+            ]
+        })
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 && (width, height) != (self.config.width, self.config.height) {
+            self.config.width = width;
+            self.config.height = height;
+            self.surface.configure(&self.device, &self.config);
+        }
+    }
+
+    /// Make `mode`'s pass the current one.
+    fn use_mode(&mut self, mode: DisplayMode) {
+        let DisplayMode::Crt(profile) = mode else {
+            return;
+        };
+        if self.crt.as_ref().is_some_and(|crt| crt.mode == mode) {
+            return;
+        }
+        let params: CrtParams = profile.params();
+        let pass = CrtPass::new(&self.device, &params, &self.frame);
+        let target = CrtPass::create_target(&self.device, &params, wgpu::TextureUsages::TEXTURE_BINDING);
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = Self::bind_group(&self.device, &self.blit_layout, &view, &self.linear);
+        self.crt = Some(CrtState { mode, pass, target, bind_group, size: params.output_size() });
+    }
+
+    /// Draw `mode`'s picture of the frame already uploaded.
+    fn draw(&mut self, mode: DisplayMode) -> Result<(), String> {
+        let surface_texture = match self.surface.get_current_texture() {
+            Ok(texture) => texture,
+            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                self.surface.configure(&self.device, &self.config);
+                return Ok(());
+            },
+            Err(wgpu::SurfaceError::Timeout) => return Ok(()),
+            Err(e) => return Err(format!("cannot draw in the window: {e}"))
+        };
+        let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+        let (bind_group, (picture_w, picture_h)) = match (mode, self.crt.as_ref()) {
+            (DisplayMode::Crt(_), Some(crt)) => {
+                crt.pass.encode(&mut encoder, &crt.target.create_view(&wgpu::TextureViewDescriptor::default()));
+                (&crt.bind_group, crt.size)
+            },
+            _ => (&self.raw_bind_group, (RAW_WIDTH, RAW_HEIGHT))
+        };
+
+        // the picture, as large as the window allows, centred
+        let (window_w, window_h) = (self.config.width as f32, self.config.height as f32);
+        let scale = (window_w / picture_w as f32).min(window_h / picture_h as f32);
+        let (w, h) = (picture_w as f32 * scale, picture_h as f32 * scale);
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("window"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store }
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None
+            });
+            pass.set_viewport((window_w - w) / 2.0, (window_h - h) / 2.0, w, h, 0.0, 1.0);
+            pass.set_pipeline(&self.blit);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        self.queue.submit([encoder.finish()]);
+        surface_texture.present();
+        self.shown = Some(mode);
+        Ok(())
+    }
+}
+
+/// The logical key as the CPC keyboard table (`amsrust::input`) knows it.
+fn host_key(event: &KeyEvent) -> Option<HostKey> {
+    use HostKey as H;
+    let numpad = event.location == KeyLocation::Numpad;
+    match &event.logical_key {
+        Key::Named(named) => Some(match named {
+            NamedKey::Space => H::Space,
+            NamedKey::Enter if numpad => H::NumPadEnter,
+            NamedKey::Enter => H::Enter,
+            NamedKey::Shift if event.location == KeyLocation::Right => H::RightShift,
+            NamedKey::Shift => H::LeftShift,
+            NamedKey::Control if event.location == KeyLocation::Right => H::RightCtrl,
+            NamedKey::Control => H::LeftCtrl,
+            // AltGr is not Alt: it types characters (see the typed ones)
+            NamedKey::Alt if event.location == KeyLocation::Right => H::RightAlt,
+            NamedKey::Alt => H::LeftAlt,
+            NamedKey::CapsLock => H::CapsLock,
+            NamedKey::Tab => H::Tab,
+            NamedKey::Escape => H::Escape,
+            NamedKey::Backspace => H::Backspace,
+            NamedKey::Delete => H::Delete,
+            NamedKey::ArrowUp => H::Up,
+            NamedKey::ArrowDown => H::Down,
+            NamedKey::ArrowLeft => H::Left,
+            NamedKey::ArrowRight => H::Right,
+            NamedKey::F9 => H::F9,
+            _ => return None
+        }),
+        Key::Character(text) => {
+            let mut chars = text.chars();
+            let (Some(c), None) = (chars.next(), chars.next())
+            else {
+                return None;
+            };
+            let numpad_digits = [
+                H::NumPad0, H::NumPad1, H::NumPad2, H::NumPad3, H::NumPad4, H::NumPad5, H::NumPad6, H::NumPad7,
+                H::NumPad8, H::NumPad9
+            ];
+            let digits = [H::Key0, H::Key1, H::Key2, H::Key3, H::Key4, H::Key5, H::Key6, H::Key7, H::Key8, H::Key9];
+            let letters = [
+                H::A, H::B, H::C, H::D, H::E, H::F, H::G, H::H, H::I, H::J, H::K, H::L, H::M, H::N, H::O, H::P, H::Q,
+                H::R, H::S, H::T, H::U, H::V, H::W, H::X, H::Y, H::Z
+            ];
+            let c = c.to_ascii_lowercase();
+            Some(match c {
+                'a'..='z' => letters[c as usize - 'a' as usize],
+                '0'..='9' if numpad => numpad_digits[c as usize - '0' as usize],
+                '0'..='9' => digits[c as usize - '0' as usize],
+                '.' if numpad => H::NumPadDot,
+                '-' => H::Minus,
+                '[' => H::LeftBracket,
+                ']' => H::RightBracket,
+                '\\' => H::Backslash,
+                ';' => H::Semicolon,
+                '\'' => H::Apostrophe,
+                ',' => H::Comma,
+                '.' => H::Period,
+                '/' => H::Slash,
+                '`' => H::Backquote,
+                '=' => H::Equal,
+                _ => return None
+            })
+        },
+        _ => None
+    }
+}
+
+struct App {
+    /// Logical size of the window to open.
+    size: (f64, f64),
+    window: Option<Arc<Window>>,
+    gfx: Option<Gfx>,
+    /// Keys held, by physical key, so that a release is matched with its
+    /// press whatever the modifiers made of the logical key meanwhile.
+    held: HashMap<PhysicalKey, HostKey>,
+    typed: Vec<char>,
+    closed: bool,
+    error: Option<String>
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        let attributes = Window::default_attributes()
+            .with_title("amsrust")
+            .with_inner_size(LogicalSize::new(self.size.0, self.size.1));
+        match event_loop.create_window(attributes) {
+            Ok(window) => {
+                let window = Arc::new(window);
+                match Gfx::new(window.clone()) {
+                    Ok(gfx) => self.gfx = Some(gfx),
+                    Err(e) => self.error = Some(e)
+                }
+                self.window = Some(window);
+            },
+            Err(e) => self.error = Some(format!("failed to open a window: {e}"))
+        }
+    }
+
+    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        match event {
+            WindowEvent::CloseRequested => self.closed = true,
+            WindowEvent::Resized(size) => {
+                if let Some(gfx) = &mut self.gfx {
+                    gfx.resize(size.width, size.height);
+                }
+            },
+            WindowEvent::KeyboardInput { event, .. } => {
+                match event.state {
+                    ElementState::Pressed => {
+                        if let Some(key) = host_key(&event) {
+                            self.held.insert(event.physical_key, key);
+                        }
+                        // what the layout makes of the key and the modifiers
+                        if let Some(text) = &event.text {
+                            self.typed.extend(text.chars().filter(|c| !c.is_control()));
+                        }
+                    },
+                    ElementState::Released => {
+                        self.held.remove(&event.physical_key);
+                    }
+                }
+            },
+            WindowEvent::Focused(false) => self.held.clear(),
+            _ => {}
+        }
+    }
+}
+
+pub struct WinitGpuFrontend {
+    event_loop: EventLoop<()>,
+    app: App,
+    /// Time between two presents, if capped.
+    frame_time: Option<Duration>,
+    deadline: Instant
+}
+
+impl WinitGpuFrontend {
+    /// A window for pictures of `picture` pixels (for its shape and size).
+    pub fn open(picture: (usize, usize)) -> Result<Self, String> {
+        let event_loop = EventLoop::new().map_err(|e| format!("cannot start the event loop: {e}"))?;
+        let width = INITIAL_WIDTH;
+        let size = (width, width * picture.1 as f64 / picture.0 as f64);
+        let mut frontend = Self {
+            event_loop,
+            app: App {
+                size,
+                window: None,
+                gfx: None,
+                held: HashMap::new(),
+                typed: Vec::new(),
+                closed: false,
+                error: None
+            },
+            frame_time: None,
+            deadline: Instant::now()
+        };
+        // the window and the GPU come up on the first events
+        for _ in 0..100 {
+            frontend.pump();
+            if frontend.app.gfx.is_some() || frontend.app.error.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        match frontend.app.error.take() {
+            Some(e) => Err(e),
+            None if frontend.app.gfx.is_none() => Err("the window did not open".to_owned()),
+            None => Ok(frontend)
+        }
+    }
+
+    fn pump(&mut self) {
+        if let PumpStatus::Exit(_) = self.event_loop.pump_app_events(Some(Duration::ZERO), &mut self.app) {
+            self.app.closed = true;
+        }
+    }
+
+    /// Wait for the end of the frame when the rate is capped.
+    fn pace(&mut self) {
+        if let Some(frame_time) = self.frame_time {
+            self.deadline += frame_time;
+            let now = Instant::now();
+            if self.deadline > now {
+                std::thread::sleep(self.deadline - now);
+            }
+            else {
+                self.deadline = now;
+            }
+        }
+    }
+
+    fn gfx(&mut self) -> Result<&mut Gfx, String> {
+        self.app.gfx.as_mut().ok_or_else(|| "no window".to_owned())
+    }
+}
+
+impl Frontend for WinitGpuFrontend {
+    fn is_open(&self) -> bool {
+        !self.app.closed
+    }
+
+    fn set_target_fps(&mut self, fps: usize) {
+        self.frame_time = (fps > 0).then(|| Duration::from_secs_f64(1.0 / fps as f64));
+        self.deadline = Instant::now();
+    }
+
+    fn poll_input(&mut self) -> HostInput {
+        self.pump();
+        HostInput {
+            down: self.app.held.values().copied().collect(),
+            typed: std::mem::take(&mut self.app.typed)
+        }
+    }
+
+    fn present(&mut self, _pixels: &[u32], _size: (usize, usize)) -> Result<(), String> {
+        Err("this frontend draws the monitor's frames itself (present_frame)".to_owned())
+    }
+
+    fn direct(&self) -> bool {
+        true
+    }
+
+    fn present_frame(&mut self, frame: &RgbImage, mode: DisplayMode) -> Result<(), String> {
+        let gfx = self.gfx()?;
+        gfx.use_mode(mode);
+        gfx.frame.upload(&gfx.queue, frame);
+        gfx.draw(mode)?;
+        self.pace();
+        Ok(())
+    }
+
+    fn redraw(&mut self) -> Result<(), String> {
+        let gfx = self.gfx()?;
+        let mode = gfx.shown.unwrap_or_default();
+        gfx.use_mode(mode);
+        gfx.draw(mode)
+    }
+}

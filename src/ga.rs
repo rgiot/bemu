@@ -396,6 +396,21 @@ impl INKR {
 /// restored).
 pub const HSYNC_GA_DELAY_TICKS: usize = 2;
 
+/// Ticks (16 per microsecond) between the Gate Array knowing the pen of a pixel and the ink being
+/// looked up in the palette for the output: a palette write acts on the pixels that are 4 ticks
+/// away from the output, mid-byte, not at the next video byte. Measured on Rhino-Raster
+/// (validation/demos/rhino: pen switches timed to the microsecond): 4 matches ACE-DL exactly (0
+/// pixels differ), 5 matches AMSpiriT Lite 1.13/1.16 (0 pixels differ); the two differ by one pixel.
+pub const PALETTE_LOOKUP_LAG_TICKS: usize = 4;
+
+/// What a tick of the video output shows, before the palette turns it into a colour.
+#[derive(Clone, Copy, Debug)]
+enum Shown {
+    /// Blanking: nothing, whatever the palette is.
+    Black,
+    Pen(Pen)
+}
+
 /// Shortest HSYNC (in GA ticks, 16 per microsecond) that updates the video
 /// mode: ACCC 9.3.1, "a HSYNC of at least 2 usec is required for the graphic
 /// mode update" (R3 = 1 never changes the mode). The GA counts whole
@@ -578,6 +593,13 @@ impl PixelAutomata {
 
     /// XXX Can only be called in a valid state;
     pub fn generate_pixel(&mut self, border: bool) -> RgbLevels {
+        let palette = *self.palette().unwrap();
+        let pen = self.generate_pen(border);
+        palette[pen.value() as usize].into()
+    }
+
+    /// The pen of the next pixel (the automaton advances); the ink it stands for is the palette's business
+    pub fn generate_pen(&mut self, border: bool) -> Pen {
         let pen = if border {
             Pen::Border
         } else {
@@ -590,9 +612,8 @@ impl PixelAutomata {
             }
         };
 
-        let ink = self.palette().unwrap()[pen.value() as usize];
         self.next_state();
-        ink.into()
+        pen
     }
 
     pub fn get_mode0_pen(&mut self) -> Pen {
@@ -933,7 +954,7 @@ pub struct GateArray {
     /// blanking window of an R3l=2 HSYNC (see `Crtc::hsync_blank_window`), as the GA sees it
     blank_window: Option<bool>,
     blank_pipe: [Option<bool>; HSYNC_GA_DELAY_TICKS],
-    rgb_previous: RgbLevels,
+    shown_previous: Shown,
     rgb_delayed: bool,
     /// GA clock ticks since power-on (timestamps of the RMR mode writes).
     abs_tick: u64,
@@ -961,6 +982,10 @@ pub struct GateArray {
     inkr: INKR,
 
     palette: [Ink; 17],
+    /// The last outputs, newest first: the ink of `[PALETTE_LOOKUP_LAG_TICKS]` is looked up now
+    shown_ring: [Shown; PALETTE_LOOKUP_LAG_TICKS + 1],
+    /// [`PALETTE_LOOKUP_LAG_TICKS`], but for tests that look at the pixel stream itself
+    lookup_lag: usize,
 
     /// The video mode used to generate the pixels
     current_mode: VideoMode,
@@ -992,7 +1017,7 @@ impl Default for GateArray {
             crtc_hsync_two_wide: false,
             blank_window: None,
             blank_pipe: [None; HSYNC_GA_DELAY_TICKS],
-            rgb_previous: (0., 0., 0.).into(),
+            shown_previous: Shown::Black,
             rgb_delayed: false,
             abs_tick: 0,
             hsync_pipe: [false; HSYNC_GA_DELAY_TICKS],
@@ -1032,6 +1057,8 @@ impl Default for GateArray {
                 Ink(0),
             ],
 
+            shown_ring: [Shown::Black; PALETTE_LOOKUP_LAG_TICKS + 1],
+            lookup_lag: PALETTE_LOOKUP_LAG_TICKS,
             current_mode: VideoMode::Mode0,
             pixel_automata: PixelAutomata::default(),
             rgb: RGB_PERCENTAGE_LEVELS_PER_INK[0],
@@ -1243,12 +1270,12 @@ impl GateArray {
     /// Here, we do not care of where we are; it is up to the monitor to properly place these pixels at the right place thanks to other synchronization messages
     /// We assume that the automata is in a valid state
     fn generate_pixel(&mut self) {
-        if self.pixel_automata.is_done() {
-            //     dbg!("Here some pixel are expected, but we do not know what as to be produced...");
+        let shown = if self.pixel_automata.is_done() {
             // the last pixel of a delayed (non MODE 2) byte still comes out
-            self.rgb = if self.rgb_delayed { self.rgb_previous } else { (0., 0., 0.).into() };
-            self.rgb_previous = (0., 0., 0.).into();
+            let shown = if self.rgb_delayed { self.shown_previous } else { Shown::Black };
+            self.shown_previous = Shown::Black;
             self.rgb_delayed = false;
+            shown
         } else {
             // Always advance the automaton, even while blanked by HSYNC/
             // VSYNC - real hardware's pixel serialiser keeps running
@@ -1259,22 +1286,27 @@ impl GateArray {
             // to know exactly where the switch landed). Only the
             // *displayed* output is blanked below - not consumption.
             let mode = self.pixel_automata.mode();
-            let computed = self
-                .pixel_automata
-                .generate_pixel(!self.get_pin(GateArrayPin::DISPEN));
+            let computed = Shown::Pen(self.pixel_automata.generate_pen(!self.get_pin(GateArrayPin::DISPEN)));
             // ACCC §9.3 (GA 40007/8/10): the pixels of MODE 2 are displayed one
             // pixel earlier than those of the other modes (the BORDER stops and
             // starts one pixel earlier too); the other modes are what we delay
-            let pixel = if mode == Some(VideoMode::Mode2) { computed } else { self.rgb_previous };
-            self.rgb_previous = computed;
+            let pixel = if mode == Some(VideoMode::Mode2) { computed } else { self.shown_previous };
+            self.shown_previous = computed;
             self.rgb_delayed = mode != Some(VideoMode::Mode2);
             let blank = self.blank_window.unwrap_or(self.hsync_ga);
             if blank || self.get_pin(GateArrayPin::VSYNC) {
-                self.rgb = (0., 0., 0.).into();
+                Shown::Black
             } else {
-                self.rgb = pixel;
+                pixel
             }
-        }
+        };
+        // The ink is looked up in the palette as it is now, a few ticks after the pen was known.
+        self.shown_ring.rotate_right(1);
+        self.shown_ring[0] = shown;
+        self.rgb = match self.shown_ring[self.lookup_lag] {
+            Shown::Black => (0., 0., 0.).into(),
+            Shown::Pen(pen) => self.palette[pen.value() as usize].into()
+        };
     }
 
     /// Generate the synchronization data for the CTM
@@ -1835,9 +1867,29 @@ mod test {
         assert_eq!(ga.upper_rom_pagging(), Flag::Enable);
     }
 
+    /// A palette write acts on the pixels already resolved but not yet output (Rhino-Raster's pen
+    /// switches are timed to the pixel), not from the next video byte on.
+    #[test]
+    fn a_palette_write_acts_in_the_middle_of_a_byte() {
+        let mut ga = GateArray::default();
+        ga.set_pin(GateArrayPin::DISPEN, true);
+        ga.current_mode = VideoMode::Mode2;
+        ga.force_active_video_mode(VideoMode::Mode2);
+        ga.palette[1] = Ink(1);
+        ga.set_memory_byte(0xFF); // eight pixels of pen 1
+        for _ in 0..6 {
+            ga.tick();
+        }
+        assert_eq!(ga.rgb(), Ink(1).to_rgb_levels());
+        ga.set_ink(Pen::from(1), Ink(2));
+        ga.tick();
+        assert_eq!(ga.rgb(), Ink(2).to_rgb_levels(), "the pixel of the same byte, still in the lag");
+    }
+
     #[test]
     fn test_mode2_pixels_generation() {
         let mut ga = GateArray::default();
+        ga.lookup_lag = 0;
         ga.set_pin(GateArrayPin::DISPEN, true);
         ga.current_mode = VideoMode::Mode2;
         ga.force_active_video_mode(VideoMode::Mode2);
@@ -1960,6 +2012,7 @@ mod test {
     }
 
     fn check_expected_inks(ga: &mut GateArray, expected: &[RgbLevels; 8]) {
+        ga.lookup_lag = 0;
         assert!(!ga.pixel_automata.is_done());
         // the pixels of the other modes than MODE 2 come out one tick late
         let delayed = ga.pixel_automata.mode() != Some(VideoMode::Mode2);
