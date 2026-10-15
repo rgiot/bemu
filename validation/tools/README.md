@@ -47,6 +47,24 @@ import `_work.py` next to them). Needs python3 with numpy and Pillow.
    then `demo_compare.py OURS CPCSE_SHOTS` (animated demos differ by timing, a
    static scene that differs is a bug).
 
+## CRTC differential test (bemu, AMSpiriT Lite, CPCSE)
+
+`crtc_diff.py` times VSYNC from inside the machine (PPI port B bit 0: four
+lengths and periods) for 27 register sets on each CRTC type, in the three
+emulators at once, and prints the sets where they disagree:
+
+    cargo build --release
+    ./crtc_diff.py                            # CRTC 0-4, ~45 min
+    ./crtc_diff.py --types 2 --only R0=       # a subset
+    ./crtc_diff.py --emus bemu,cpcse          # without AMSpiriT
+
+AMSpiriT Lite is the Linux AppImage (`--appimage-extract` into
+`$SHAKER_WORK/amspirit`), run headless under `xvfb-run` through its web API;
+CPCSE needs `build_cpcse_oracle.sh`. Known disagreements, last run: CRTC 3's
+VSYNC width (AMSpiriT always 16 lines, CPCSE and bemu follow R3h), interlace on
+CRTC 2/3/4 (not emulated by bemu) and CRTC 2 R0=31 (AMSpiriT lets one ghost
+VSYNC out of ~3 through, CPCSE and bemu none).
+
 ## Metric
 
 4x8-pixel blocks whose summed channel difference is above 90, reference rows
