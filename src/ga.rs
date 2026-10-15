@@ -397,14 +397,16 @@ impl INKR {
 pub const HSYNC_GA_DELAY_TICKS: usize = 2;
 
 /// Ticks (16 per microsecond) between the Gate Array knowing the pen of a pixel and the colour
-/// being output. A palette write acts on pixels that are still in this pipeline (mid-byte), not
-/// at the next video byte; the number of pixels it reaches back depends on the chip, see
-/// [`GateArrayType::palette_write_delay_ticks`]: 4 ticks for the GA 40010, 5 for the 40007/8,
-/// which process the bits of the VRAM byte 1/16 us ahead (ACCC 9.1). Measured on Rhino-Raster
-/// (validation/demos/rhino: pen switches timed to the microsecond): 4 matches ACE-DL exactly (0
-/// pixels differ), 5 matches AMSpiriT Lite 1.13/1.16 (0 pixels differ, but for the tiny black
-/// pixel that the extra tick lets through before a switch).
-pub const PALETTE_LOOKUP_LAG_TICKS: usize = 5;
+/// being output: the video byte is read from RAM about a microsecond before it is displayed, and the
+/// ink is looked up in the palette only on the way out. A palette write therefore acts on pixels
+/// already fetched, mid-byte and even the microsecond before, not at the next video byte; how far
+/// back depends on the chip, see [`GateArrayType::palette_write_delay_ticks`]: 20 ticks for the GA
+/// 40010, 21 for the 40007/8, which process the bits of the VRAM byte 1/16 us ahead (ACCC 9.1).
+/// Measured on Rhino-Raster (validation/demos/rhino: pen switches timed to the microsecond after an
+/// EI+HALT): 20 matches ACE-DL exactly (0 pixels differ), 21 AMSpiriT Lite 1.13/1.16 (0 pixels
+/// differ, its tiny black pixel included), with the interrupt timing left as it is (Dream End and
+/// Shaker A3 rule out moving the interrupt or the CRTC writes instead).
+pub const PALETTE_LOOKUP_LAG_TICKS: usize = 21;
 
 /// What a tick of the video output shows, before the palette turns it into a colour.
 #[derive(Clone, Copy, Debug)]
@@ -1900,17 +1902,20 @@ mod test {
             ga.current_mode = VideoMode::Mode2;
             ga.force_active_video_mode(VideoMode::Mode2);
             ga.palette[1] = Ink(1);
+            // a short pipeline: one byte is enough to see a write act on its own pixels
+            ga.lookup_lag = 4;
             ga.set_memory_byte(0xFF); // eight pixels of pen 1
+            let tick = |ga: &mut GateArray| ga.tick();
             for _ in 0..7 {
-                ga.tick();
+                tick(&mut ga);
             }
             assert_eq!(ga.rgb(), Ink(1).to_rgb_levels());
             ga.set_ink(Pen::from(1), Ink(2));
             for _ in 1..ticks_to_show {
-                ga.tick();
+                tick(&mut ga);
                 assert_eq!(ga.rgb(), Ink(1).to_rgb_levels(), "{ga_type:?}: too early");
             }
-            ga.tick();
+            tick(&mut ga);
             assert_eq!(ga.rgb(), Ink(2).to_rgb_levels(), "{ga_type:?}: the pixel of the same byte, still in the lag");
         }
     }

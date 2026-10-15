@@ -45,7 +45,7 @@ fn rhino(gate_array: &str) -> RgbImage {
 }
 
 #[test]
-#[ignore = "slow: plays the demo; and fails for now: the CPU leaves the EI+HALT 1 us late (the HALT special case that fixed it broke Dream End and was reverted)"]
+#[ignore = "slow: plays the demo"]
 fn both_gate_arrays_match_their_reference_emulators() {
     let amspirit = image::open("validation/demos/rhino/amspirit_1.13.4_crtc1.png").unwrap().to_rgb8();
     let ace = image::open("validation/demos/rhino/ace_dl.png").unwrap().to_rgb8();
