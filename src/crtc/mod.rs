@@ -476,7 +476,7 @@ impl Crtc {
             *register = v & mask;
         }
         // ACCC §19.5.3 (CRTC 1): the parities follow R8 as soon as it is written
-        if r == 8 && self.model.frame_parity_toggles() {
+        if r == 8 && self.model.has_interlace_video() {
             let was_ivm = previous_r8 & 3 == 3;
             let is_ivm = self.regs[8] & 3 == 3;
             if was_ivm != is_ivm {
@@ -982,7 +982,7 @@ impl Crtc {
             } else {
                 // CRTC 1 interlace video mode (ACCC 19.8.2): C9 is incremented by 1 more when R9 is even,
                 // the row ends when C9 and R9 match without bit 0, and C9 then restarts from ParityC9
-                let ivm_now = self.model.frame_parity_toggles() && self.regs[8] & 3 == 3;
+                let ivm_now = self.model.has_interlace_video() && self.regs[8] & 3 == 3;
                 self.ivm_lines = ivm_now;
                 let row_end = if ivm_now {
                     let r9 = self.regs[9];
@@ -1982,5 +1982,35 @@ mod test {
         let mut crtc = crtc_with(CrtcType::Crtc0, &[(0, 31), (1, 20), (2, 24)]);
         step_while(&mut crtc, false);
         assert!(crtc.get_pin(CrtcPin::VS));
+    }
+
+    /// Interlace sync (R8=1, and R8=3 on CRTC 2): VSYNC every 312.5 lines, the
+    /// half line alternating (AMSpiriT Lite and CPCSE), on CRTC 1 to 4.
+    #[test]
+    fn test_interlace_sync_on_crtc_1_to_4() {
+        for kind in [CrtcType::Crtc1, CrtcType::Crtc2, CrtcType::Crtc3, CrtcType::Crtc4] {
+            for r8 in [1, 3] {
+                if r8 == 3 && kind != CrtcType::Crtc2 {
+                    continue; // interlace video: CRTC 1 has its own, CRTC 3/4 not emulated
+                }
+                let mut crtc = crtc_with(kind, &[(8, r8)]);
+                vsync_and_frame_lines(&mut crtc);
+                // characters between VSYNC starts: 312.5 lines of 64 on average
+                let mut chars = Vec::new();
+                for _ in 0..4 {
+                    let mut n = 0u64;
+                    while crtc.vsync() {
+                        crtc.update_memory_address();
+                        n += 1;
+                    }
+                    while !crtc.vsync() {
+                        crtc.update_memory_address();
+                        n += 1;
+                    }
+                    chars.push(n);
+                }
+                assert_eq!(chars.iter().sum::<u64>(), 4 * 20000, "{kind:?} R8={r8}: {chars:?}");
+            }
+        }
     }
 }

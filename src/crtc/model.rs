@@ -181,8 +181,16 @@ pub trait CrtcModel: Debug + Sync {
     }
 
     /// CRTC 1 (ACCC 19.5.3): ParityFrame simply switches at each frame start, whatever R8.
+    /// Also the interlace sync of CRTC 2, 3 and 4 (an additional line on the even frames).
     fn frame_parity_toggles(&self) -> bool {
         false
+    }
+
+    /// CRTC 1 (ACCC 19.8.2): R8=3 counts C9 for the interlace video mode. On CRTC 2,
+    /// 3 and 4 R8=3 only gives the interlace sync here (AMSpiriT Lite and CPCSE time
+    /// it as R8=1 on CRTC 2; the CRTC 0 like video mode of CRTC 3/4 is not emulated).
+    fn has_interlace_video(&self) -> bool {
+        self.frame_parity_toggles()
     }
 
     /// CRTC 0 and 2 (ACCC 17.6.2): when C0 reaches R0 with the display still
