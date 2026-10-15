@@ -161,6 +161,12 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
+    /// CRTC 3/4: an R0 lowered below C0 ends the line at once (C0 >= R0); the other chips
+    /// let C0 count on to 255 and wrap (AMSpiriT Lite and CPCSE, Shaker A3/A5-A7 R0 ruptures).
+    fn line_ends_past_r0(&self) -> bool {
+        false
+    }
+
     /// CRTC 3/4 (ACCC §11.1, §18.2.4): C4 is not incremented for the vertical adjustment, it
     /// stays on R4 (CRTC 1 and 2 take R4+1).
     fn adjust_keeps_c4(&self) -> bool {
