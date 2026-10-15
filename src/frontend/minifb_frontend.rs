@@ -38,8 +38,9 @@ impl MinifbFrontend {
 }
 
 impl Frontend for MinifbFrontend {
+    /// Until the window is closed, or F4 pressed.
     fn is_open(&self) -> bool {
-        self.window.is_open()
+        self.window.is_open() && !self.window.is_key_down(Key::F4)
     }
 
     fn set_target_fps(&mut self, fps: usize) {

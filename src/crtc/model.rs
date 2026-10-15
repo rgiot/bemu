@@ -218,6 +218,13 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
+    /// CRTC 2 (ACCC §13.4, §20.3.3): the frame starts at VMA', which takes R12/R13 at C0=R1
+    /// on the frame's last line (or last adjustment line) instead of VMA. Other chips load
+    /// R12/R13 at the frame's first line.
+    fn frame_address_from_vma_prime(&self) -> bool {
+        false
+    }
+
     /// CRTC 1 (ACCC 17.4.2): VMA' takes its value at the end of the character where C0=R1 held, an R1
     /// written during that character (R1.JIT) cancels it.
     fn r1_jit_cancels_vma_latch(&self) -> bool {
