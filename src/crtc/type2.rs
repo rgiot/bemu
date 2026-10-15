@@ -7,6 +7,20 @@ use super::type1::WRITE_MASK;
 pub struct Crtc2;
 
 impl CrtcModel for Crtc2 {
+    /// Interlace sync (R8 bit 0): the period alternates by half a line, as on CRTC 1
+    /// (AMSpiriT Lite and CPCSE).
+    fn supports_interlace(&self) -> bool {
+        true
+    }
+
+    fn frame_parity_toggles(&self) -> bool {
+        true
+    }
+
+    fn has_interlace_video(&self) -> bool {
+        false
+    }
+
     fn ghost_vsync_during_hsync(&self) -> bool {
         true
     }
