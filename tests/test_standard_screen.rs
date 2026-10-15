@@ -22,7 +22,24 @@ fn beginning_steps(ga: &mut GateArray, crtc: &mut Crtc) {
     assert_eq!(ga.get_pin(GateArrayPin::CCLK), crtc.get_pin(CrtcPin::CCLK),);
 }
 
+/// What a tick's output must be, once it has gone through the Gate Array's output pipeline.
+#[derive(Clone, Copy)]
+enum Expected {
+    /// The first ticks of a delayed mode: nothing to check
+    Unknown,
+    Black,
+    /// The border ink, whatever the palette is when it comes out (the ink is looked up then)
+    Border,
+    /// One of the four inks of mode 1
+    Mode1
+}
+
 thread_local! {
+    /// The expectations of the last [`PALETTE_LOOKUP_LAG_TICKS`] ticks: the colour of a pixel comes
+    /// out that many ticks after the pen was known.
+    static PIPELINE: std::cell::RefCell<std::collections::VecDeque<Expected>> =
+        std::cell::RefCell::new(std::collections::VecDeque::new());
+
     /// Was the previous pixel a border one? The pixels of the modes other than
     /// MODE 2 come out one tick late (MODE 2 is displayed a pixel earlier).
     static PREVIOUS_BORDER: std::cell::Cell<Option<(bool, [Ink; 17])>> = std::cell::Cell::new(None);
@@ -38,6 +55,7 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     } else {
         previous.unwrap_or((true, *ga.palette()))
     };
+    let palette_before_tick = *ga.palette();
     // ga cycles
     ga.tick();
     if crtc.is_activated() {
@@ -52,20 +70,43 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     // after the CRTC raises/lowers it)
     let hsync = ga.hsync_ga();
 
-    if !vsync && !hsync && !unknown {
+    let expected_now = if !vsync && !hsync && !unknown {
         if is_border {
-            assert_eq!(rgb, palette[16].to_rgb_levels())
+            Expected::Border
         } else {
-            // check mode 1 colors
-            assert!(
-                rgb == palette[0].to_rgb_levels()
-                    || rgb == palette[1].to_rgb_levels()
-                    || rgb == palette[2].to_rgb_levels()
-                    || rgb == palette[3].to_rgb_levels()
-            );
+            Expected::Mode1
         }
-    } else {
-        assert_eq!(RgbLevels::from((0., 0., 0.)), rgb);
+    }
+    else if unknown {
+        Expected::Unknown
+    }
+    else {
+        Expected::Black
+    };
+    let expected = PIPELINE.with(|queue| {
+        let mut queue = queue.borrow_mut();
+        queue.push_back(expected_now);
+        if queue.len() > PALETTE_LOOKUP_LAG_TICKS {
+            queue.pop_front()
+        }
+        else {
+            None
+        }
+    });
+    match expected {
+        None | Some(Expected::Unknown) => {},
+        Some(Expected::Black) => assert_eq!(RgbLevels::from((0., 0., 0.)), rgb),
+        // the palette of the tick, or of the one before (the chip may see it a tick late)
+        Some(Expected::Border) => assert!(
+            [*ga.palette(), palette_before_tick].iter().any(|p| p[16].to_rgb_levels() == rgb),
+            "{rgb:?} is not the border ink"
+        ),
+        Some(Expected::Mode1) => assert!(
+            [*ga.palette(), palette_before_tick]
+                .iter()
+                .any(|p| (0..4).any(|pen| p[pen].to_rgb_levels() == rgb)),
+            "{rgb:?} is none of the palette's"
+        )
     }
 
     // let rgb : RgbLevels= palette[1].to_rgb_levels();
