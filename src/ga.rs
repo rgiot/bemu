@@ -396,12 +396,15 @@ impl INKR {
 /// restored).
 pub const HSYNC_GA_DELAY_TICKS: usize = 2;
 
-/// Ticks (16 per microsecond) between the Gate Array knowing the pen of a pixel and the ink being
-/// looked up in the palette for the output: a palette write acts on the pixels that are 4 ticks
-/// away from the output, mid-byte, not at the next video byte. Measured on Rhino-Raster
+/// Ticks (16 per microsecond) between the Gate Array knowing the pen of a pixel and the colour
+/// being output. A palette write acts on pixels that are still in this pipeline (mid-byte), not
+/// at the next video byte; the number of pixels it reaches back depends on the chip, see
+/// [`GateArrayType::palette_write_delay_ticks`]: 4 ticks for the GA 40010, 5 for the 40007/8,
+/// which process the bits of the VRAM byte 1/16 us ahead (ACCC 9.1). Measured on Rhino-Raster
 /// (validation/demos/rhino: pen switches timed to the microsecond): 4 matches ACE-DL exactly (0
-/// pixels differ), 5 matches AMSpiriT Lite 1.13/1.16 (0 pixels differ); the two differ by one pixel.
-pub const PALETTE_LOOKUP_LAG_TICKS: usize = 4;
+/// pixels differ), 5 matches AMSpiriT Lite 1.13/1.16 (0 pixels differ, but for the tiny black
+/// pixel that the extra tick lets through before a switch).
+pub const PALETTE_LOOKUP_LAG_TICKS: usize = 5;
 
 /// What a tick of the video output shows, before the palette turns it into a colour.
 #[derive(Clone, Copy, Debug)]
@@ -915,6 +918,18 @@ impl GateArrayType {
     /// bits allowing for the constitution of the colour number"), so by
     /// the time a mode switch is recognised, they have one *more*
     /// genuinely real bit available and one *fewer* position to pad.
+    /// Ticks the palette is late for the pixels of the output pipeline of
+    /// [`PALETTE_LOOKUP_LAG_TICKS`]: a palette write reaches the pixels whose pen was known
+    /// `PALETTE_LOOKUP_LAG_TICKS - delay` ticks ago. The 40007/8 are one tick ahead of the 40010
+    /// (ACCC 9.1, "in advance of 1/16 MHz when it processes the bits of the byte fetched from
+    /// VRAM"), so their writes reach one more pixel back.
+    pub fn palette_write_delay_ticks(&self) -> usize {
+        match self {
+            GateArrayType::Ga40010 => 1,
+            GateArrayType::Ga40007_8 => 0,
+        }
+    }
+
     fn reconstruction_lead(&self) -> u8 {
         match self {
             GateArrayType::Ga40010 => 0,
@@ -986,6 +1001,8 @@ pub struct GateArray {
     shown_ring: [Shown; PALETTE_LOOKUP_LAG_TICKS + 1],
     /// [`PALETTE_LOOKUP_LAG_TICKS`], but for tests that look at the pixel stream itself
     lookup_lag: usize,
+    /// The palette as it was at the previous tick, for the chips whose writes are a tick late
+    palette_previous: [Ink; 17],
 
     /// The video mode used to generate the pixels
     current_mode: VideoMode,
@@ -1059,6 +1076,7 @@ impl Default for GateArray {
 
             shown_ring: [Shown::Black; PALETTE_LOOKUP_LAG_TICKS + 1],
             lookup_lag: PALETTE_LOOKUP_LAG_TICKS,
+            palette_previous: [Ink(0); 17],
             current_mode: VideoMode::Mode0,
             pixel_automata: PixelAutomata::default(),
             rgb: RGB_PERCENTAGE_LEVELS_PER_INK[0],
@@ -1256,6 +1274,7 @@ impl GateArray {
 
     pub fn set_palette(&mut self, palette: [Ink; 17]) {
         self.palette = palette;
+        self.palette_previous = palette;
     }
 
     pub fn set_video_mode(&mut self, mode: VideoMode) {
@@ -1303,10 +1322,12 @@ impl GateArray {
         // The ink is looked up in the palette as it is now, a few ticks after the pen was known.
         self.shown_ring.rotate_right(1);
         self.shown_ring[0] = shown;
+        let palette = if self.ga_type.palette_write_delay_ticks() == 0 { &self.palette } else { &self.palette_previous };
         self.rgb = match self.shown_ring[self.lookup_lag] {
             Shown::Black => (0., 0., 0.).into(),
-            Shown::Pen(pen) => self.palette[pen.value() as usize].into()
+            Shown::Pen(pen) => palette[pen.value() as usize].into()
         };
+        self.palette_previous = self.palette;
     }
 
     /// Generate the synchronization data for the CTM
@@ -1868,28 +1889,37 @@ mod test {
     }
 
     /// A palette write acts on the pixels already resolved but not yet output (Rhino-Raster's pen
-    /// switches are timed to the pixel), not from the next video byte on.
+    /// switches are timed to the pixel), not from the next video byte on - and one pixel later on
+    /// the 40010 than on the 40007/8.
     #[test]
     fn a_palette_write_acts_in_the_middle_of_a_byte() {
-        let mut ga = GateArray::default();
-        ga.set_pin(GateArrayPin::DISPEN, true);
-        ga.current_mode = VideoMode::Mode2;
-        ga.force_active_video_mode(VideoMode::Mode2);
-        ga.palette[1] = Ink(1);
-        ga.set_memory_byte(0xFF); // eight pixels of pen 1
-        for _ in 0..6 {
+        for (ga_type, ticks_to_show) in [(GateArrayType::Ga40007_8, 1), (GateArrayType::Ga40010, 2)] {
+            let mut ga = GateArray::default();
+            ga.set_gate_array_type(ga_type);
+            ga.set_pin(GateArrayPin::DISPEN, true);
+            ga.current_mode = VideoMode::Mode2;
+            ga.force_active_video_mode(VideoMode::Mode2);
+            ga.palette[1] = Ink(1);
+            ga.set_memory_byte(0xFF); // eight pixels of pen 1
+            for _ in 0..7 {
+                ga.tick();
+            }
+            assert_eq!(ga.rgb(), Ink(1).to_rgb_levels());
+            ga.set_ink(Pen::from(1), Ink(2));
+            for _ in 1..ticks_to_show {
+                ga.tick();
+                assert_eq!(ga.rgb(), Ink(1).to_rgb_levels(), "{ga_type:?}: too early");
+            }
             ga.tick();
+            assert_eq!(ga.rgb(), Ink(2).to_rgb_levels(), "{ga_type:?}: the pixel of the same byte, still in the lag");
         }
-        assert_eq!(ga.rgb(), Ink(1).to_rgb_levels());
-        ga.set_ink(Pen::from(1), Ink(2));
-        ga.tick();
-        assert_eq!(ga.rgb(), Ink(2).to_rgb_levels(), "the pixel of the same byte, still in the lag");
     }
 
     #[test]
     fn test_mode2_pixels_generation() {
         let mut ga = GateArray::default();
         ga.lookup_lag = 0;
+        ga.ga_type = GateArrayType::Ga40007_8;
         ga.set_pin(GateArrayPin::DISPEN, true);
         ga.current_mode = VideoMode::Mode2;
         ga.force_active_video_mode(VideoMode::Mode2);
@@ -2013,6 +2043,7 @@ mod test {
 
     fn check_expected_inks(ga: &mut GateArray, expected: &[RgbLevels; 8]) {
         ga.lookup_lag = 0;
+        ga.ga_type = GateArrayType::Ga40007_8;
         assert!(!ga.pixel_automata.is_done());
         // the pixels of the other modes than MODE 2 come out one tick late
         let delayed = ga.pixel_automata.mode() != Some(VideoMode::Mode2);

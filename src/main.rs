@@ -109,6 +109,9 @@ fn main() {
     }
 
     let mut builder = MotherboardBuilder::default();
+    if let Some(ga_type) = args.gate_array {
+        builder.set_gate_array_type(ga_type);
+    }
     builder.set_crtc(args.crtc).set_model(args.model).enable_interruptions();
     if let Some(kb) = args.ram_kb {
         builder.set_extra_ram_pages(kb / 64 - 1);

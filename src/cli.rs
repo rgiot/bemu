@@ -44,6 +44,8 @@ pub struct Args {
     /// Render the CRT on the GPU (needs the `crt-gpu` feature).
     pub gpu: bool,
     pub frontend: FrontendKind,
+    /// Gate Array fitted, if not the default (40010).
+    pub gate_array: Option<amsrust::ga::GateArrayType>,
     /// Level a black ink is drawn at, above the blanking and the sync
     /// pulses (0, blacker than black); not with the debug server.
     pub black_level: u8
@@ -72,6 +74,7 @@ pub fn parse_args() -> Args {
         display: DisplayMode::default(),
         gpu: false,
         frontend: FrontendKind::Minifb,
+        gate_array: None,
         black_level: DEFAULT_BLACK_LEVEL
     };
 
@@ -120,6 +123,13 @@ pub fn parse_args() -> Args {
             "--black-level" => {
                 args.black_level = next("--black-level").parse().expect("--black-level must be 0-255")
             },
+            "--ga" => {
+                args.gate_array = Some(match next("--ga").as_str() {
+                    "40010" => amsrust::ga::GateArrayType::Ga40010,
+                    "40007" | "40008" => amsrust::ga::GateArrayType::Ga40007_8,
+                    other => panic!("--ga must be 40007, 40008 or 40010, got {other:?}")
+                })
+            },
             "--frontend" => {
                 args.frontend = match next("--frontend").as_str() {
                     "minifb" => FrontendKind::Minifb,
@@ -153,7 +163,7 @@ fn print_help() {
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu]]\n",
-        "        [--black-level 0-255] [--frontend minifb|winit]\n",
+        "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
         "--model picks the ROMs (default 6128). The 464 and 664 have 64K and the\n",
         "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
@@ -179,7 +189,8 @@ fn print_help() {
         "drawn at: on a real tube it is a dark grey, blanking and sync being\n",
         "blacker (0); without the debug server, whose pictures stay exact.\n",
         "--frontend winit (a build with --features gpu-window) opens a window the\n",
-        "GPU draws, the CRT included, with nothing read back.\n",
+        "GPU draws, the CRT included, with nothing read back. --ga picks the Gate\n",
+        "Array (default 40010): the 40007/8 are one pixel ahead (palette writes).\n",
         "--debug-server serves the AMSpiriT-Lite compatible debug API on\n",
         "127.0.0.1:6128 (GET /api/doc lists the endpoints), with --window or\n",
         "headless. --debug-paused starts it paused, for a debugger to set its\n",
