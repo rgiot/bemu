@@ -536,6 +536,12 @@ impl Crtc {
             self.r6_border = true;
             self.set_pin(CrtcPin::DE, false);
         }
+        // CRTC 1 (ACCC §18.3.3): R6=0 written on the first line of a frame (C4=R6=0)
+        // makes the BORDER final for the rest of the frame
+        if r == 6 && self.model.r6_zero_is_border() && self.regs[6] == 0 && self.vcc == 0 && self.vlc == 0 {
+            self.r6_border = true;
+            self.set_pin(CrtcPin::DE, false);
+        }
         // ACCC §17.5: R1=0 written after C0=0 is too late for this line
         if r == 1 && self.regs[1] == 0 && self.hcc > 0 {
             self.r1_zero_late = true;
@@ -1117,7 +1123,10 @@ impl Crtc {
             if self.hcc == 0 && self.vcc == 0 && self.vlc == 0 {
                 self.r6_border = false;
             }
-            if self.vcc == self.regs[6] {
+            // R6=0 is a live BORDER, not a latched one: C4=R6=0 at the frame start does
+            // not latch it, so the display comes back as soon as R6 leaves 0 (Shaker A3,
+            // "border state not irreversible", AMSpiriT Lite and CPCSE)
+            if self.vcc == self.regs[6] && self.regs[6] != 0 {
                 self.r6_border = true;
             }
             self.r6_border || self.regs[6] == 0
@@ -2012,5 +2021,40 @@ mod test {
                 assert_eq!(chars.iter().sum::<u64>(), 4 * 20000, "{kind:?} R8={r8}: {chars:?}");
             }
         }
+    }
+
+    /// CRTC 1: R6=0 is a live BORDER. Set on the last line, it is not latched by the
+    /// next frame's C4=R6=0: R6 back to 25 brings the display back (Shaker A3,
+    /// AMSpiriT Lite and CPCSE). Written on the first line of a frame it is final.
+    #[test]
+    fn test_crtc1_r6_zero_border_is_not_latched() {
+        let mut crtc = crtc_with(CrtcType::Crtc1, &[]);
+        while !(crtc.vcc == crtc.regs[4] && crtc.vlc == crtc.regs[9]) {
+            crtc.update_memory_address();
+        }
+        crtc.do_write_register(6, 0);
+        while crtc.vcc != 1 {
+            crtc.update_memory_address();
+            assert!(!crtc.get_pin(CrtcPin::DE) || crtc.hcc >= crtc.regs[1] || crtc.vcc != 0, "R6=0: border");
+        }
+        crtc.do_write_register(6, 25);
+        while crtc.hcc != 5 {
+            crtc.update_memory_address();
+        }
+        assert!(crtc.get_pin(CrtcPin::DE), "R6 back to 25: display");
+
+        // R6=0 written on the first line of the frame: BORDER until the next frame
+        while !(crtc.vcc == 0 && crtc.vlc == 0 && crtc.hcc == 5) {
+            crtc.update_memory_address();
+        }
+        crtc.do_write_register(6, 0);
+        while crtc.vcc != 1 {
+            crtc.update_memory_address();
+        }
+        crtc.do_write_register(6, 25);
+        while crtc.hcc != 5 {
+            crtc.update_memory_address();
+        }
+        assert!(!crtc.get_pin(CrtcPin::DE), "R6=0 on C4=C9=0: final border");
     }
 }
