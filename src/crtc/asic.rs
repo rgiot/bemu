@@ -28,6 +28,10 @@ impl Asic {
 }
 
 impl CrtcModel for Asic {
+    fn line_ends_past_r0(&self) -> bool {
+        true
+    }
+
     /// Interlace sync (R8 bit 0): the period alternates by half a line, as on CRTC 1
     /// (AMSpiriT Lite and CPCSE).
     fn supports_interlace(&self) -> bool {

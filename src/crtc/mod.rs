@@ -774,6 +774,12 @@ impl Crtc {
         self.crtc_vma_prime = vma;
     }
 
+    /// C0 has gone past R0: the line is over (on CRTC 3/4 also when R0 was lowered below C0).
+    fn line_total_reached(&self) -> bool {
+        self.hcc == self.regs[0].wrapping_add(1)
+            || (self.model.line_ends_past_r0() && self.regs[0] != 0xff && self.hcc > self.regs[0])
+    }
+
     /// VSync in lines
     fn vsync_height(&self) -> u8 {
         self.model.vsync_width(self.regs[3])
@@ -838,13 +844,13 @@ impl Crtc {
         // The counter does not reach R0+1: it wraps to 0 instead (ACCC
         // §17.2.2: with R1>R0, C0 is never equal to R1 and VMA' is stuck).
         if self.hcc == self.regs[1]
-            && self.hcc != self.regs[0].wrapping_add(1)
+            && !self.line_total_reached()
             && self.c9_is_last()
         {
             self.latch_next_row_address();
         }
 
-        if self.hcc == self.regs[0].wrapping_add(1) {
+        if self.line_total_reached() {
             // This is the end of the line, we have to trigger all the other stuffs
             self.hcc = 0;
             self.line_ends += 1;
@@ -2010,6 +2016,25 @@ mod test {
                     chars.push(n);
                 }
                 assert_eq!(chars.iter().sum::<u64>(), 4 * 20000, "{kind:?} R8={r8}: {chars:?}");
+            }
+        }
+    }
+
+    /// CRTC 3/4 end the line as soon as R0 is lowered below C0; CRTC 0 lets C0 count on to
+    /// 255 (AMSpiriT Lite and CPCSE, Shaker A5-A7: R0=3 ruptures).
+    #[test]
+    fn test_asic_line_ends_when_r0_is_lowered_below_c0() {
+        for (kind, at_once) in [(CrtcType::Crtc4, true), (CrtcType::Crtc3, true), (CrtcType::Crtc0, false)] {
+            let mut crtc = crtc_with(kind, &[]);
+            while crtc.hcc != 40 {
+                crtc.update_memory_address();
+            }
+            let ends = crtc.line_ends;
+            crtc.do_write_register(0, 10);
+            crtc.update_memory_address();
+            assert_eq!(crtc.line_ends == ends + 1, at_once, "{kind:?}");
+            if !at_once {
+                assert_eq!(crtc.hcc, 41);
             }
         }
     }
