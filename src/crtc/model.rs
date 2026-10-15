@@ -161,6 +161,19 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
+    /// CRTC 3/4 (ACCC §11.1, §18.2.4): C4 is not incremented for the vertical adjustment, it
+    /// stays on R4 (CRTC 1 and 2 take R4+1).
+    fn adjust_keeps_c4(&self) -> bool {
+        false
+    }
+
+    /// CRTC 2 (ACCC §16.4.3): a VSYNC condition met while a HSYNC runs (C0 from R2 to R2+R3,
+    /// counted by C3 so it wraps past R0) makes a GHOST VSYNC: counted, but kept off the pin.
+    /// R2=0 is the exception (§15.4.4, §15.6): the condition is then detected early enough.
+    fn ghost_vsync_during_hsync(&self) -> bool {
+        false
+    }
+
     /// The chip has the two interlace modes (R8 bit 0, ACCC 19): an additional line and a
     /// MID-VSYNC on the even frames. CRTC 0 is handled by its own counters.
     fn supports_interlace(&self) -> bool {
