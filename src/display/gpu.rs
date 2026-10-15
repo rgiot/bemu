@@ -11,6 +11,7 @@
 //! presents the texture itself would skip that read-back.
 
 use super::crt::{CrtParams, SRC_HEIGHT, SRC_WIDTH};
+#[cfg(not(target_arch = "wasm32"))]
 use super::DisplayFilter;
 use image::RgbImage;
 
@@ -224,7 +225,9 @@ impl CrtPass {
     }
 }
 
-/// The CRT filter on the GPU, with the picture read back (a [`DisplayFilter`]).
+/// The CRT filter on the GPU, with the picture read back (a [`DisplayFilter`]). Not in a web
+/// page, where nothing waits for the GPU: there the page presents [`CrtPass`]'s target itself.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct GpuCrt {
     params: CrtParams,
     device: wgpu::Device,
@@ -237,6 +240,7 @@ pub struct GpuCrt {
     padded_row: usize
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
     let mut future = std::pin::pin!(future);
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -249,10 +253,12 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
 }
 
 /// Wait for a future of the (native) wgpu API, which are ready at once.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn wait_for<F: std::future::Future>(future: F) -> F::Output {
     block_on(future)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl GpuCrt {
     /// Fails (with a message) when no usable adapter is available.
     pub fn new(params: CrtParams) -> Result<Self, String> {
@@ -278,6 +284,7 @@ impl GpuCrt {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl DisplayFilter for GpuCrt {
     fn output_size(&self) -> (usize, usize) {
         self.params.output_size()
