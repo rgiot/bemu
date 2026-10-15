@@ -416,6 +416,16 @@ enum Shown {
     Pen(Pen)
 }
 
+/// Ticks between the mode being latched and the pixels switching to it. The reconstruction of the
+/// byte being displayed (ACCC 9.3.4.3) assumes the switch lands on its 5th pixel-M2 (a MODE 1 line
+/// resumes on its 4th pixel-M2, then the new mode); applied one tick earlier, a MODE 2 -> 0 switch
+/// padded one bit too few and a MODE 1 one was not reconstructed at all. Measured on HBL's girl
+/// screen against AMSpiriT v2.04b's two Gate Arrays: with this tick, the five columns of pixels
+/// that differ between the chips (x=516/500/484 in MODE 2 -> 0, 468/388 in MODE 1 -> 0, 4 pixels
+/// wide, 6 to 36 lines, colours 10 and 8) are the ones AMSpiriT shows; the 40010's picture does
+/// not change.
+pub const MODE_SWITCH_DELAY_TICKS: u8 = 1;
+
 /// Shortest HSYNC (in GA ticks, 16 per microsecond) that updates the video
 /// mode: ACCC 9.3.1, "a HSYNC of at least 2 usec is required for the graphic
 /// mode update" (R3 = 1 never changes the mode). The GA counts whole
@@ -981,6 +991,8 @@ pub struct GateArray {
     hsync_ga_prev: bool,
     /// Video mode decided at the last HSYNC end, applied one pixel later.
     pending_mode: Option<VideoMode>,
+    /// Ticks left before the pending mode applies (see [`MODE_SWITCH_DELAY_TICKS`])
+    pending_mode_wait: u8,
     /// The RMR video mode over the last ticks, newest first: a mode write
     /// only reaches the latch `MODE_WRITE_DELAY_TICKS` after it was made.
     mode_history: [VideoMode; MODE_WRITE_DELAY_TICKS + 1],
@@ -1043,6 +1055,7 @@ impl Default for GateArray {
             hsync_ga: false,
             hsync_ga_prev: false,
             pending_mode: None,
+            pending_mode_wait: 0,
             mode_history: [VideoMode::Mode1; MODE_WRITE_DELAY_TICKS + 1],
             mode_latched: false,
             interrupt_delay: None,
@@ -1148,6 +1161,7 @@ impl GateArray {
         self.mode_latched = true;
         if new_mode != self.current_mode {
             self.pending_mode = Some(new_mode);
+            self.pending_mode_wait = MODE_SWITCH_DELAY_TICKS;
         }
     }
 
@@ -1546,7 +1560,9 @@ impl Chip for GateArray {
 
         // a mode decided at the previous HSYNC end changes one pixel after
         // the display came back (the first pixel is still in the old mode)
-        if let Some(new_mode) = self.pending_mode.take() {
+        if self.pending_mode.is_some() && self.pending_mode_wait > 0 {
+            self.pending_mode_wait -= 1;
+        } else if let Some(new_mode) = self.pending_mode.take() {
             self.apply_video_mode(new_mode);
         }
 
