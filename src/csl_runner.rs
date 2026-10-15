@@ -116,6 +116,8 @@ pub struct CslRunner {
     screenshot_dir: PathBuf,
     /// Base directory for the discs and the scripts loaded by name.
     base_dir: PathBuf,
+    /// Where `snapshot_load` looks (`snapshot_dir`), else `base_dir`.
+    snapshot_dir: Option<PathBuf>,
     /// Count of screenshots per file stem, to keep repeated codes apart.
     taken: HashMap<String, usize>,
     /// The beam is always followed, so that a screenshot is the last whole frame the
@@ -153,6 +155,7 @@ impl CslRunner {
             screenshot_name: None,
             screenshot_dir: output_dir.into(),
             base_dir: PathBuf::from("."),
+            snapshot_dir: None,
             taken: HashMap::new(),
             monitor: Monitor::default(),
             last_frame: None,
@@ -297,6 +300,8 @@ impl CslRunner {
                     self.report.ignored.push(format!("screenshot: {error}"));
                 }
             },
+            SnapshotDir(dir) => self.snapshot_dir = Some(resolve(&self.base_dir, dir.as_str())),
+            SnapshotLoad(name) => self.load_snapshot(name.as_str())?,
             CslLoad(name) => return Ok(Some(self.find_script(name.as_str())?)),
             other => self.report.ignored.push(other.to_string())
         }
@@ -318,6 +323,18 @@ impl CslRunner {
         }
         self.key_events.clear();
         self.keys_busy_until = 0;
+    }
+
+    /// `snapshot_load`: the machine takes the snapshot's state (its CRTC type stays the
+    /// one `crtc_select` chose); pending keys are dropped.
+    fn load_snapshot(&mut self, name: &str) -> Result<(), String> {
+        let dir = self.snapshot_dir.clone().unwrap_or_else(|| self.base_dir.clone());
+        let path = resolve(&dir, name);
+        let bytes = std::fs::read(&path).map_err(|e| format!("snapshot_load {}: {e}", path.display()))?;
+        crate::snapshot::load_sna_bytes(&mut self.motherboard, &bytes)?;
+        self.key_events.clear();
+        self.keys_busy_until = 0;
+        Ok(())
     }
 
     fn insert_disc(&mut self, drive_letter: Drive, filename: &str) -> Result<(), String> {
@@ -808,6 +825,25 @@ mod test {
         let base = Path::new("/base");
         assert_eq!(resolve(base, r"sub\SHAKE.CSL"), Path::new("/base/sub/SHAKE.CSL"));
         assert_eq!(resolve(base, r"Z:\tmp\a.dsk"), Path::new("/tmp/a.dsk"));
+    }
+
+    /// `snapshot_load` (looked up in `snapshot_dir`) gives the machine the snapshot's state.
+    #[test]
+    fn snapshot_load_restores_the_machine() {
+        use cpclib::sna::{Snapshot, SnapshotFlag, SnapshotVersion};
+        let dir = std::env::temp_dir().join(format!("amsrust_csl_sna_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("snaps")).unwrap();
+        let mut snapshot = Snapshot::default();
+        snapshot.set_value(SnapshotFlag::Z80_PC, 0x4000).unwrap();
+        snapshot.set_value(SnapshotFlag::CRTC_REG(Some(1)), 32).unwrap();
+        snapshot.save(dir.join("snaps").join("T.SNA").to_str().unwrap(), SnapshotVersion::V2).unwrap();
+
+        let mut runner = CslRunner::new(dir.join("out"));
+        let report = runner.run_text("csl_version 1.0\nsnapshot_dir 'snaps'\nsnapshot_load 'T.SNA'\n", &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        report.unwrap();
+        assert_eq!(runner.motherboard.crtc().regs_r(1), 32);
+        assert_ne!(runner.motherboard.pc(), 0, "the snapshot's PC (then a few frames run)");
     }
 
     #[test]

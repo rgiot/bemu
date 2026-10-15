@@ -6,3 +6,6 @@
 /test_standard_screen_pic.png
 # Scratch build directories
 /target-*/
+
+# Python bytecode of the validation tools
+__pycache__/

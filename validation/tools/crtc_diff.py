@@ -174,7 +174,8 @@ def start(emulator, crtc, port):
         command = [BEMU, "--debug-server", "--debug-port", str(port), "--crtc", str(crtc)]
     else:
         command = ["xvfb-run", "-a", AMS, "--crtc", str(crtc), "--turbo", "--no-splash", "--web-port", str(port), "--model", "6128", "-l", "EN", "--reset"]
-    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+                               start_new_session=True)
     for _ in range(120):
         try:
             api(port, "/api/ping")
@@ -290,9 +291,10 @@ def main():
                 print("\n".join(lines), flush=True)
                 report.append({"crtc": crtc, "config": name, "regs": regs, "results": results, "same": ok})
         finally:
+            # its own process groups only (xvfb-run and AMSpiriT under it), not
+            # another AMSpiriT running on the machine
             for process in procs.values():
-                process.kill()
-            subprocess.run(["pkill", "-x", "amspirit-lite-s"], stderr=subprocess.DEVNULL)
+                os.killpg(process.pid, 9)
             time.sleep(1)
     with open(os.path.join(WORK, "crtc_diff.json"), "w") as out:
         json.dump(report, out, indent=1)
