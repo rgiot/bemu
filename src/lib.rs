@@ -22,6 +22,8 @@ pub mod motherboard;
 
 pub mod counter;
 pub mod debug;
+// an HTTP server on a socket, with threads: not in a web page
+#[cfg(not(target_arch = "wasm32"))]
 pub mod debug_server;
 pub mod display;
 pub mod input;

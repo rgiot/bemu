@@ -10,10 +10,7 @@ edition = "2021"
 num = "0.4.0"
 num_enum = "0.5.1"
 itertools = "0.10.0"
-cpclib = {path = "../rust.cpcdemotools/cpclib"}
-cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm"}
 cpclib-macros = {path = "../rust.cpcdemotools/cpclib-macros"}
-cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens"}
 cpclib-disc = {path = "../rust.cpcdemotools/cpclib-disc", default-features = false}
 cpclib-csl = {path = "../rust.cpcdemotools/cpclib-csl"}
 serde = {version = "1", features = ["derive"]}
@@ -27,17 +24,33 @@ derive_more = "0.99.13"
 image = "0.23.14"
 tuple-map = "0.4.0"
 smallvec = "1.6.1"
+ym2149 = "0.9.1"
+bytemuck = { version = "1", optional = true, features = ["derive"] }
+
+# The desktop: terminal monitor, debug server, windows, sound, and cpclib with its defaults.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cpclib = {path = "../rust.cpcdemotools/cpclib"}
+cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm"}
+cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens"}
 rustyline = "8.2.0" # Make not mandaotry
 minifb = "0.28.0"
-ym2149 = "0.9.1"
 cpal = { version = "0.18.2", optional = true }
 ctrlc = { version = "3.5.2", features = ["termination"] }
 tiny_http = "0.12"
 # GPU CRT filter (`--features crt-gpu`), see src/display/gpu.rs
 wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "vulkan"] }
-bytemuck = { version = "1", optional = true, features = ["derive"] }
 # `--frontend winit`: a window drawn by the GPU, see src/frontend/winit_gpu.rs
 winit = { version = "0.30", optional = true }
+
+# A web page (see web/): no terminal, sockets, threads or native windows; the CRT on WebGPU.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cpclib = {path = "../rust.cpcdemotools/cpclib", default-features = false}
+cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm", default-features = false}
+cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens", default-features = false}
+wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "webgpu"] }
+getrandom = { version = "0.2", features = ["js"] }
+# getrandom 0.3 also needs `getrandom_backend="wasm_js"`, see .cargo/config.toml
+getrandom-03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 
 [patch.crates-io]
 cpclib = {path = "../rust.cpcdemotools/cpclib/"}

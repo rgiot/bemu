@@ -7,15 +7,20 @@
 //! the screenshots of the test suites (which use the monitor's frames
 //! directly) are not affected.
 
+// The CRT on the CPU runs on threads: a web page has the GPU one (WebGPU) instead.
+#[cfg(not(target_arch = "wasm32"))]
 mod cpu;
 pub mod crt;
 #[cfg(feature = "crt-gpu")]
 mod gpu;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use cpu::CpuCrt;
 pub use crt::{CrtParams, CrtProfile};
 #[cfg(feature = "crt-gpu")]
-pub use gpu::{wait_for, CrtPass, FrameTexture, GpuCrt};
+pub use gpu::{CrtPass, FrameTexture};
+#[cfg(all(feature = "crt-gpu", not(target_arch = "wasm32")))]
+pub use gpu::{wait_for, GpuCrt};
 
 use image::RgbImage;
 use std::str::FromStr;
@@ -63,12 +68,14 @@ impl DisplayMode {
     }
 
     /// The filter implementing this mode, on the CPU.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn filter(self) -> Box<dyn DisplayFilter> {
         self.filter_on(false)
     }
 
     /// The filter implementing this mode, on the GPU if `gpu` and possible
     /// (built with `crt-gpu` and an adapter available), else on the CPU.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn filter_on(self, gpu: bool) -> Box<dyn DisplayFilter> {
         match self {
             Self::Raw => Box::new(RawFilter),

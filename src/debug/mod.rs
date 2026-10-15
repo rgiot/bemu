@@ -20,7 +20,9 @@ mod stepable;
 use stepable::StepInto;
 use interpretor::*;
 
+#[cfg(not(target_arch = "wasm32"))]
 use rustyline::error::ReadlineError;
+#[cfg(not(target_arch = "wasm32"))]
 use rustyline::Editor;
 
 
@@ -231,8 +233,9 @@ impl Monitor {
 
 
 
-    /// Wrap the motherboard around a cli interface
+    /// Wrap the motherboard around a cli interface (a terminal: not in a web page)
     /// TODO handle special case as the one of zexdoc where prints are emulated
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn cli_monitoring(motherboard: &mut Motherboard, ctx: &mut MonitorContext) {
          // `()` can be used when no completer is required
         let mut rl = Editor::<()>::new();

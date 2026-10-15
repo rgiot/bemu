@@ -350,6 +350,8 @@ impl TryFrom<&AnyDisc> for DiscImage {
                 dsk.to_buffer(&mut bytes);
                 Self::from_bytes(&bytes)
             },
+            // cpclib-disc knows HFE images on the desktop only (its `hfe` feature wraps a C library)
+            #[cfg(not(target_arch = "wasm32"))]
             AnyDisc::Hfe(_) => Err("HFE images are not supported by the FDC yet".to_owned())
         }
     }
