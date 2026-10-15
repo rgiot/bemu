@@ -1,0 +1,97 @@
+csl_version 1.0
+crtc_select 0
+reset
+wait 6000000
+disk_insert 'scrollf.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"SCROLLF"\(RET)'
+wait 5000000
+screenshot_name 'scrollf_01'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_02'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_03'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_04'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_05'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_06'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_07'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_08'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_09'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_10'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_11'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_12'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_13'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_14'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_15'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_16'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_17'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_18'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_19'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_20'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_21'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_22'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_23'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_24'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_25'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_26'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_27'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_28'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_29'
+screenshot
+wait 5000000
+screenshot_name 'scrollf_30'
+screenshot
