@@ -99,8 +99,163 @@ struct KeyEvent {
     pressed: bool
 }
 
+/// Where a script's files come from: the files around it on disc ([`FsFiles`]), or files
+/// given as bytes ([`MemFiles`], what a web page has).
+pub trait CslFiles {
+    /// The script `name` names (`csl_load`, or the one started), from `base_dir`: its path,
+    /// whose directory the files it names are looked up from, and its text.
+    fn script(&mut self, base_dir: &Path, name: &str) -> Result<(PathBuf, String), String>;
+    /// The disc image `disk_insert` names, from `base_dir`. A substitute (a script naming a disc
+    /// it does not ship with) is noted in `notes`.
+    fn disc(&mut self, base_dir: &Path, name: &str, notes: &mut Vec<String>) -> Result<Vec<u8>, String>;
+    /// The snapshot `snapshot_load` names, in `dir`.
+    fn snapshot(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
+}
+
+/// Where the screenshots go.
+pub trait ScreenshotSink {
+    /// Keep `frame` as `file` (`<name>.png`) of the screenshot directory `dir`; returns its path.
+    fn save(&mut self, dir: &Path, file: &str, frame: &image::RgbImage) -> Result<PathBuf, String>;
+}
+
+/// The files of the file system, as the CSL players look them up: case-insensitively, in the
+/// script's directory and its parents.
+#[derive(Default)]
+pub struct FsFiles;
+
+impl CslFiles for FsFiles {
+    fn script(&mut self, base_dir: &Path, name: &str) -> Result<(PathBuf, String), String> {
+        let path = resolve(base_dir, name);
+        let found = [path.clone(), path.with_extension("csl"), path.with_extension("CSL")]
+            .into_iter()
+            .find_map(|candidate| find_case_insensitive(&candidate))
+            .ok_or_else(|| format!("no script {}", path.display()))?;
+        let text = read_text(&found)?;
+        Ok((found, text))
+    }
+
+    fn disc(&mut self, base_dir: &Path, name: &str, notes: &mut Vec<String>) -> Result<Vec<u8>, String> {
+        // The Shaker scripts sit in one directory per module while the disc
+        // is shared by all of them: look in the parent directories too.
+        let path = base_dir
+            .ancestors()
+            .take(3)
+            .find_map(|dir| find_case_insensitive(&resolve(dir, name)))
+            .or_else(|| only_disc_image_nearby(base_dir, name, notes))
+            .unwrap_or_else(|| resolve(base_dir, name));
+        std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    fn snapshot(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+        let path = resolve(dir, name);
+        std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+}
+
+/// Files given as bytes, by name: the directories a script names them with are ignored and the
+/// case does not matter.
+#[derive(Default, Clone)]
+pub struct MemFiles {
+    files: HashMap<String, Vec<u8>>
+}
+
+impl MemFiles {
+    pub fn insert(&mut self, name: &str, bytes: Vec<u8>) {
+        self.files.insert(file_key(name), bytes);
+    }
+
+    fn get(&self, name: &str) -> Option<&Vec<u8>> {
+        self.files.get(&file_key(name))
+    }
+}
+
+/// The file name of `name` (a CSL path, maybe with `\`), lower case.
+fn file_key(name: &str) -> String {
+    name.replace('\\', "/").rsplit('/').next().unwrap_or_default().to_lowercase()
+}
+
+impl CslFiles for MemFiles {
+    fn script(&mut self, _base_dir: &Path, name: &str) -> Result<(PathBuf, String), String> {
+        let bytes = [name.to_owned(), format!("{name}.csl")]
+            .iter()
+            .find_map(|candidate| self.get(candidate))
+            .ok_or_else(|| format!("no script {name}"))?;
+        let text = String::from_utf8_lossy(bytes);
+        Ok((PathBuf::from(file_key(name)), text.trim_start_matches('\u{feff}').to_owned()))
+    }
+
+    fn disc(&mut self, _base_dir: &Path, name: &str, notes: &mut Vec<String>) -> Result<Vec<u8>, String> {
+        if let Some(bytes) = self.get(name) {
+            return Ok(bytes.clone());
+        }
+        // as on disc: the only disc image given stands in for one the script names wrongly
+        let mut discs = self.files.iter().filter(|(file, _)| file.ends_with(".dsk"));
+        match (discs.next(), discs.next()) {
+            (Some((file, bytes)), None) => {
+                notes.push(format!("disk_insert: {name:?} not found, using {file} instead"));
+                Ok(bytes.clone())
+            },
+            _ => Err(format!("{name}: no such disc image"))
+        }
+    }
+
+    fn snapshot(&mut self, _dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+        self.get(name).cloned().ok_or_else(|| format!("{name}: no such snapshot"))
+    }
+}
+
+/// Screenshots saved as PNG files.
+#[derive(Default)]
+pub struct PngFiles;
+
+impl ScreenshotSink for PngFiles {
+    fn save(&mut self, dir: &Path, file: &str, frame: &image::RgbImage) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        let path = dir.join(file);
+        frame.save(&path).map_err(|e| e.to_string())?;
+        Ok(path)
+    }
+}
+
+/// What [`CslRunner::advance`] stopped on.
+#[derive(Debug)]
+pub enum Progress {
+    /// The time given is spent; the script goes on.
+    Running,
+    /// The monitor completed a frame ([`CslRunner::last_frame`]); the script goes on.
+    Frame,
+    /// The script is over.
+    Done(CslReport)
+}
+
+/// The instruction being played, while it takes emulated time.
+enum Wait {
+    /// `wait`: until this T-state.
+    Until(usize),
+    /// `wait_vsyncoffon`, first until the VSYNC is off...
+    VsyncOff,
+    /// ...then until it is on.
+    VsyncOn,
+    /// `wait_ssm0000` / `wait_ssm`: until the code is raised, or the deadline.
+    Ssm {
+        code: u16,
+        deadline: usize,
+        instruction: &'static str,
+        raised: bool
+    },
+    /// `wait_driveonoff`: until the motor has gone on then off `count` times, or the deadline.
+    DriveOnOff {
+        count: u32,
+        done: u32,
+        on: bool,
+        deadline: usize
+    }
+}
+
 pub struct CslRunner {
     motherboard: Motherboard,
+    /// The machine the script's settings apply to (see [`Self::set_machine`]).
+    base: MotherboardBuilder,
     /// Chosen by `crtc_select`, applied at the next `reset`.
     crtc: CrtcType,
     /// Chosen by `gate_array`, applied at the next `reset`.
@@ -108,6 +263,11 @@ pub struct CslRunner {
     /// Chosen by `memory_exp`, applied at the next `reset`.
     memory_exp: cpclib_csl::MemoryExpansion,
     disc: [Option<DiscImage>; 2],
+    files: Box<dyn CslFiles>,
+    screenshots: Box<dyn ScreenshotSink>,
+    /// The instructions left to play, and the one playing.
+    script: VecDeque<CslInstruction>,
+    waiting: Option<Wait>,
     key_delays: KeyDelays,
     key_events: VecDeque<KeyEvent>,
     /// When the last scheduled key event is over, in T-states of this machine.
@@ -124,6 +284,8 @@ pub struct CslRunner {
     /// monitor displayed when it was requested (what AMSpiriT saves).
     monitor: Monitor,
     last_frame: Option<image::RgbImage>,
+    /// The monitor completed a frame since [`Self::advance`] last said so.
+    new_frame: bool,
     /// Machines are rebuilt on reset; this accumulates their time.
     elapsed_before_reset_us: u64,
     /// Print each screenshot and reset as it happens.
@@ -140,15 +302,26 @@ pub struct CslRunner {
 }
 
 impl CslRunner {
-    /// `output_dir` receives the screenshots.
+    /// `output_dir` receives the screenshots; the files come from the file system.
     pub fn new(output_dir: impl Into<PathBuf>) -> Self {
+        Self::with_io(Box::new(FsFiles), Box::new(PngFiles), output_dir)
+    }
+
+    /// The files come from `files`, the screenshots (of `output_dir`) go to `screenshots`.
+    pub fn with_io(files: Box<dyn CslFiles>, screenshots: Box<dyn ScreenshotSink>, output_dir: impl Into<PathBuf>) -> Self {
+        let base = MotherboardBuilder::default();
         let crtc = CrtcType::default();
         CslRunner {
-            motherboard: Self::machine(crtc, crate::ga::GateArrayType::default(), cpclib_csl::MemoryExpansion::Kb128),
+            motherboard: Self::machine(base, crtc, crate::ga::GateArrayType::default(), cpclib_csl::MemoryExpansion::Kb128),
+            base,
             gate_array: crate::ga::GateArrayType::default(),
             memory_exp: cpclib_csl::MemoryExpansion::Kb128,
             crtc,
             disc: [None, None],
+            files,
+            screenshots,
+            script: VecDeque::new(),
+            waiting: None,
             key_delays: KeyDelays::default(),
             key_events: VecDeque::new(),
             keys_busy_until: 0,
@@ -159,12 +332,27 @@ impl CslRunner {
             taken: HashMap::new(),
             monitor: Monitor::default(),
             last_frame: None,
+            new_frame: false,
             elapsed_before_reset_us: 0,
             verbose: false,
             module: None,
             manifest: None,
             wait_timeout_us: DEFAULT_WAIT_TIMEOUT_US,
             report: CslReport::default()
+        }
+    }
+
+    /// The machine (model, CRTC, Gate Array, memory, brand...) the script starts with and
+    /// `reset` rebuilds; the script's `crtc_select`, `gate_array` and `memory_exp` change it at
+    /// its next `reset`. The machine is rebuilt now.
+    pub fn set_machine(&mut self, machine: MotherboardBuilder) {
+        self.base = machine;
+        self.crtc = machine.crtc();
+        self.gate_array = machine.gate_array_type();
+        self.memory_exp = cpclib_csl::MemoryExpansion::Kb128;
+        self.motherboard = Self::machine(self.base, self.crtc, self.gate_array, self.memory_exp);
+        for (unit, disc) in self.disc.iter().enumerate() {
+            self.motherboard.fdc_mut().insert_image(drive(unit), disc.clone());
         }
     }
 
@@ -192,9 +380,15 @@ impl CslRunner {
         self.manifest = Some(MANIFEST.get_or_init(Manifest::bundled));
     }
 
-    fn machine(crtc: CrtcType, gate_array: crate::ga::GateArrayType, memory: cpclib_csl::MemoryExpansion) -> Motherboard {
+    /// `memory`: `Kb128` keeps the memory of `base`.
+    fn machine(
+        base: MotherboardBuilder,
+        crtc: CrtcType,
+        gate_array: crate::ga::GateArrayType,
+        memory: cpclib_csl::MemoryExpansion
+    ) -> Motherboard {
         use cpclib_csl::MemoryExpansion::*;
-        let mut builder = MotherboardBuilder::default();
+        let mut builder = base;
         builder.set_crtc(crtc).set_gate_array_type(gate_array).enable_interruptions();
         match memory {
             Kb128 => {},
@@ -214,6 +408,11 @@ impl CslRunner {
         &mut self.motherboard
     }
 
+    /// The last whole frame the monitor displayed.
+    pub fn last_frame(&self) -> Option<&image::RgbImage> {
+        self.last_frame.as_ref()
+    }
+
     /// Emulated microseconds played since the runner was created.
     pub fn elapsed_us(&self) -> u64 {
         self.elapsed_before_reset_us + (self.motherboard.t_state_counter().value() / T_STATES_PER_UNIT) as u64
@@ -221,43 +420,145 @@ impl CslRunner {
 
     /// Play a whole script file (following its `csl_load` chain).
     pub fn run_file(&mut self, path: impl AsRef<Path>) -> Result<CslReport, String> {
-        let mut next = Some(path.as_ref().to_path_buf());
-        while let Some(path) = next.take() {
-            let text = read_text(&path)?;
-            let script = parse_csl_with_rich_errors(&text, Some(path.display().to_string()))
-                .map_err(|e| format!("{}: {e:?}", path.display()))?;
-            self.base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-            next = self.run_instructions(script.iter())?;
-        }
-        self.report.elapsed_us = self.elapsed_us();
-        Ok(std::mem::take(&mut self.report))
+        self.start_file(path)?;
+        self.run_to_end()
     }
 
     /// Play a script given as text; discs are looked up in `base_dir`.
     pub fn run_text(&mut self, text: &str, base_dir: impl Into<PathBuf>) -> Result<CslReport, String> {
-        self.base_dir = base_dir.into();
-        let script = parse_csl_with_rich_errors(text, None).map_err(|e| format!("{e:?}"))?;
-        if let Some(next) = self.run_instructions(script.iter())? {
-            return self.run_file(next);
-        }
-        self.report.elapsed_us = self.elapsed_us();
-        Ok(std::mem::take(&mut self.report))
+        self.start_text(text, base_dir)?;
+        self.run_to_end()
     }
 
-    /// Returns the script to chain to, if any.
-    fn run_instructions<'a>(
-        &mut self,
-        instructions: impl Iterator<Item = &'a CslInstruction>
-    ) -> Result<Option<PathBuf>, String> {
-        for instruction in instructions {
-            if let Some(next) = self.execute(instruction)? {
-                return Ok(Some(next));
+    fn run_to_end(&mut self) -> Result<CslReport, String> {
+        loop {
+            if let Progress::Done(report) = self.advance(usize::MAX)? {
+                return Ok(report);
             }
         }
-        Ok(None)
     }
 
-    fn execute(&mut self, instruction: &CslInstruction) -> Result<Option<PathBuf>, String> {
+    /// Start a script file, played by [`Self::advance`].
+    pub fn start_file(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
+        let name = path.as_ref().to_string_lossy().into_owned();
+        self.load_script(&name, Path::new(""))
+    }
+
+    /// Start a script given as text, played by [`Self::advance`]; its files are looked up
+    /// from `base_dir`.
+    pub fn start_text(&mut self, text: &str, base_dir: impl Into<PathBuf>) -> Result<(), String> {
+        self.base_dir = base_dir.into();
+        let script = parse_csl_with_rich_errors(text, None).map_err(|e| format!("{e:?}"))?;
+        self.script = script.iter().cloned().collect();
+        self.waiting = None;
+        Ok(())
+    }
+
+    /// The script `name` (from `dir`) replaces what is left of the one playing.
+    fn load_script(&mut self, name: &str, dir: &Path) -> Result<(), String> {
+        let (path, text) = self.files.script(dir, name)?;
+        let script = parse_csl_with_rich_errors(&text, Some(path.display().to_string()))
+            .map_err(|e| format!("{}: {e:?}", path.display()))?;
+        self.base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        self.script = script.iter().cloned().collect();
+        self.waiting = None;
+        Ok(())
+    }
+
+    /// Play the script for about `t_states` T-states of emulated time, stopping early when the
+    /// monitor completes a frame or the script ends.
+    pub fn advance(&mut self, t_states: usize) -> Result<Progress, String> {
+        let mut spent = 0usize;
+        loop {
+            match &self.waiting {
+                None => match self.script.pop_front() {
+                    Some(instruction) => self.execute(&instruction)?,
+                    None => {
+                        self.report.elapsed_us = self.elapsed_us();
+                        return Ok(Progress::Done(std::mem::take(&mut self.report)));
+                    }
+                },
+                Some(_) => {
+                    if self.wait_is_over() {
+                        self.waiting = None;
+                        continue;
+                    }
+                    let before = self.motherboard.t_state_counter().value();
+                    let codes = self.step();
+                    spent = spent.saturating_add(self.motherboard.t_state_counter().value().saturating_sub(before));
+                    if let Some(Wait::Ssm { code, raised, .. }) = &mut self.waiting {
+                        *raised |= codes.contains(code);
+                    }
+                }
+            }
+            if std::mem::take(&mut self.new_frame) {
+                return Ok(Progress::Frame);
+            }
+            if spent >= t_states {
+                return Ok(Progress::Running);
+            }
+        }
+    }
+
+    /// Whether the instruction playing is over, checked before each machine step.
+    fn wait_is_over(&mut self) -> bool {
+        let now = self.motherboard.t_state_counter().value();
+        match self.waiting.as_mut() {
+            None => true,
+            Some(Wait::Until(target)) => now >= *target,
+            Some(Wait::VsyncOff) => {
+                if !self.motherboard.crtc().vsync() {
+                    self.waiting = Some(Wait::VsyncOn);
+                }
+                false
+            },
+            Some(Wait::VsyncOn) => self.motherboard.crtc().vsync(),
+            Some(Wait::Ssm { code, deadline, instruction, raised }) => {
+                if *raised {
+                    return true;
+                }
+                if now < *deadline {
+                    return false;
+                }
+                let note = format!(
+                    "{instruction}: gave up waiting for SSM code {code:04X} after {} µs (PC {:04X})",
+                    self.wait_timeout_us,
+                    self.motherboard.pc()
+                );
+                self.note(note);
+                true
+            },
+            Some(Wait::DriveOnOff { count, done, on, deadline }) => {
+                if now >= *deadline {
+                    let note = format!("wait_driveonoff: gave up after {} µs, motor never cycled {count} time(s)", self.wait_timeout_us);
+                    self.note(note);
+                    return true;
+                }
+                let motor = self.motherboard.fdc().motor();
+                if !*on && motor {
+                    *on = true;
+                }
+                else if *on && !motor {
+                    *on = false;
+                    *done += 1;
+                    if *done >= (*count).max(1) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    /// A note of the report, printed too when verbose.
+    fn note(&mut self, note: String) {
+        if self.verbose {
+            eprintln!("[{:>9} µs] {note}", self.elapsed_us());
+        }
+        self.report.ignored.push(note);
+    }
+
+    fn execute(&mut self, instruction: &CslInstruction) -> Result<(), String> {
         use CslInstruction::*;
         match instruction {
             CslVersion(_) | Comment(_) | Empty => {},
@@ -273,11 +574,24 @@ impl CslRunner {
             },
             MemoryExp(expansion) => self.memory_exp = *expansion,
             Reset(_) => self.reset(),
-            Wait(us) => self.run_for(*us),
-            WaitVsyncOffOn => self.wait_vsync_off_on(),
-            WaitSsm0000 => self.wait_ssm_0000(),
-            WaitSsm(code) => self.wait_ssm(*code),
-            WaitDriveOnOff(count) => self.wait_drive_on_off(*count),
+            Wait(us) => {
+                let target = self.motherboard.t_state_counter().value() + *us as usize * T_STATES_PER_UNIT;
+                self.waiting = Some(self::Wait::Until(target));
+            },
+            WaitVsyncOffOn => self.waiting = Some(self::Wait::VsyncOff),
+            WaitSsm0000 => self.wait_for_ssm_code(SSM_WAIT_RELEASE, "wait_ssm0000"),
+            // `wait_ssm <code>` (CSL v1.5): like `wait_ssm0000`, but for any code - including one a
+            // `screenshot`-triggering value like `0xFFFE` would also raise, since this only waits
+            // for it, it does not suppress the screenshot that code still asks for (see
+            // [`Self::after_instruction`]).
+            WaitSsm(code) => self.wait_for_ssm_code(*code, "wait_ssm"),
+            // `wait_driveonoff [<count>]`: waits for the FDC's own motor line to go on then off
+            // again, `count` times (default 1).
+            WaitDriveOnOff(count) => {
+                let deadline = self.motherboard.t_state_counter().value()
+                    + self.wait_timeout_us as usize * T_STATES_PER_UNIT * (*count).max(1) as usize;
+                self.waiting = Some(self::Wait::DriveOnOff { count: *count, done: 0, on: false, deadline });
+            },
             DiskInsert { drive, filename } => self.insert_disc(*drive, filename.as_str())?,
             DiskDir(dir) => self.base_dir = resolve(&self.base_dir, dir.as_str()),
             KeyDelay {
@@ -302,10 +616,13 @@ impl CslRunner {
             },
             SnapshotDir(dir) => self.snapshot_dir = Some(resolve(&self.base_dir, dir.as_str())),
             SnapshotLoad(name) => self.load_snapshot(name.as_str())?,
-            CslLoad(name) => return Ok(Some(self.find_script(name.as_str())?)),
+            CslLoad(name) => {
+                let dir = self.base_dir.clone();
+                self.load_script(name.as_str(), &dir).map_err(|e| format!("csl_load: {e}"))?;
+            },
             other => self.report.ignored.push(other.to_string())
         }
-        Ok(None)
+        Ok(())
     }
 
     // ------------------------------------------------------------- machine
@@ -315,7 +632,10 @@ impl CslRunner {
             eprintln!("[{:>9} µs] reset, CRTC {}", self.elapsed_us(), self.crtc as u8);
         }
         self.elapsed_before_reset_us = self.elapsed_us();
-        let mut previous = std::mem::replace(&mut self.motherboard, Self::machine(self.crtc, self.gate_array, self.memory_exp));
+        let mut previous = std::mem::replace(
+            &mut self.motherboard,
+            Self::machine(self.base, self.crtc, self.gate_array, self.memory_exp)
+        );
         // The sound recorded so far (and its settings) outlives the machine.
         self.motherboard.psg_mut().take_audio_output_from(previous.psg_mut());
         for (unit, disc) in self.disc.iter().enumerate() {
@@ -329,8 +649,7 @@ impl CslRunner {
     /// one `crtc_select` chose); pending keys are dropped.
     fn load_snapshot(&mut self, name: &str) -> Result<(), String> {
         let dir = self.snapshot_dir.clone().unwrap_or_else(|| self.base_dir.clone());
-        let path = resolve(&dir, name);
-        let bytes = std::fs::read(&path).map_err(|e| format!("snapshot_load {}: {e}", path.display()))?;
+        let bytes = self.files.snapshot(&dir, name).map_err(|e| format!("snapshot_load {e}"))?;
         crate::snapshot::load_sna_bytes(&mut self.motherboard, &bytes)?;
         self.key_events.clear();
         self.keys_busy_until = 0;
@@ -338,17 +657,8 @@ impl CslRunner {
     }
 
     fn insert_disc(&mut self, drive_letter: Drive, filename: &str) -> Result<(), String> {
-        // The Shaker scripts sit in one directory per module while the disc
-        // is shared by all of them: look in the parent directories too.
-        let path = self
-            .base_dir
-            .ancestors()
-            .take(3)
-            .find_map(|dir| find_case_insensitive(&resolve(dir, filename)))
-            .or_else(|| self.only_disc_image_nearby(filename))
-            .unwrap_or_else(|| resolve(&self.base_dir, filename));
-        let image = load_dsk(&std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let bytes = self.files.disc(&self.base_dir, filename, &mut self.report.ignored)?;
+        let image = load_dsk(&bytes).map_err(|e| format!("{filename}: {e}"))?;
         let unit = match drive_letter {
             Drive::A => 0,
             Drive::B => 1
@@ -358,60 +668,7 @@ impl CslRunner {
         Ok(())
     }
 
-    /// Published Shaker scripts have shipped with a `disk_insert` naming a
-    /// disc from a previous release that is no longer in the package (e.g.
-    /// `SHAKER-A-0.CSL` still says `shaker26.dsk`, present only as
-    /// `shaker27.dsk`) - real players reportedly get away with this because
-    /// whatever disc the emulator already had mounted stays in the drive
-    /// when the named one fails to load. Since there is nothing "already
-    /// mounted" here, the fallback instead looks for the one disc image
-    /// that actually sits near the script and uses that.
-    fn only_disc_image_nearby(&mut self, wanted: &str) -> Option<PathBuf> {
-        let mut found: Vec<PathBuf> = Vec::new();
-        for dir in self.base_dir.ancestors().take(3) {
-            let Ok(entries) = std::fs::read_dir(dir) else { continue };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let is_disc = path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("dsk"));
-                if is_disc && !found.contains(&path) {
-                    found.push(path);
-                }
-            }
-            if !found.is_empty() {
-                break; // a closer directory's discs take priority
-            }
-        }
-        match found.as_slice() {
-            [only] => {
-                self.report.ignored.push(format!(
-                    "disk_insert: {wanted:?} not found, using {} instead",
-                    only.display()
-                ));
-                Some(only.clone())
-            },
-            _ => None // none, or too ambiguous to guess
-        }
-    }
-
-    fn find_script(&self, name: &str) -> Result<PathBuf, String> {
-        let path = resolve(&self.base_dir, name);
-        [path.clone(), path.with_extension("csl"), path.with_extension("CSL")]
-            .into_iter()
-            .find_map(|candidate| find_case_insensitive(&candidate))
-            .ok_or_else(|| format!("csl_load: no script {}", path.display()))
-    }
-
     // ---------------------------------------------------------------- time
-
-    /// Run the machine for `us` emulated microseconds.
-    fn run_for(&mut self, us: u64) {
-        let target = self.motherboard.t_state_counter().value() + us as usize * T_STATES_PER_UNIT;
-        while self.motherboard.t_state_counter().value() < target {
-            self.step();
-        }
-    }
 
     /// One instruction, then whatever it made happen: due key events and SSM
     /// requests. Returns the SSM codes it raised.
@@ -420,6 +677,7 @@ impl CslRunner {
         self.motherboard.execute_next_opcode_with_video(|(rgb, sync)| monitor.receive(rgb, sync));
         if let Some(frame) = self.monitor.take_frame() {
             self.last_frame = Some(frame);
+            self.new_frame = true;
         }
         self.after_instruction()
     }
@@ -446,68 +704,11 @@ impl CslRunner {
         codes
     }
 
-    fn wait_ssm_0000(&mut self) {
-        self.wait_for_ssm_code(SSM_WAIT_RELEASE, "wait_ssm0000");
-    }
-
-    /// `wait_ssm <code>` (CSL v1.5): like `wait_ssm0000`, but for any code -
-    /// including one a `screenshot`-triggering value like `0xFFFE` would
-    /// also raise, since this only waits for it, it does not suppress the
-    /// screenshot that code still asks for (see [`Self::after_instruction`]).
-    fn wait_ssm(&mut self, code: u16) {
-        self.wait_for_ssm_code(code, "wait_ssm");
-    }
-
-    fn wait_for_ssm_code(&mut self, code: u16, instruction: &str) {
-        // bounded: a script waiting for a code that never comes must not
-        // hang an unattended run forever
+    /// Bounded: a script waiting for a code that never comes must not hang an unattended run
+    /// forever.
+    fn wait_for_ssm_code(&mut self, code: u16, instruction: &'static str) {
         let deadline = self.motherboard.t_state_counter().value() + self.wait_timeout_us as usize * T_STATES_PER_UNIT;
-        while self.motherboard.t_state_counter().value() < deadline {
-            if self.step().contains(&code) {
-                return;
-            }
-        }
-        let note = format!(
-            "{instruction}: gave up waiting for SSM code {code:04X} after {} µs (PC {:04X})",
-            self.wait_timeout_us,
-            self.motherboard.pc()
-        );
-        if self.verbose {
-            eprintln!("[{:>9} µs] {note}", self.elapsed_us());
-        }
-        self.report.ignored.push(note);
-    }
-
-    /// `wait_driveonoff [<count>]`: waits for the FDC's own motor line to go
-    /// on then off again, `count` times (default 1).
-    fn wait_drive_on_off(&mut self, count: u32) {
-        let deadline = self.motherboard.t_state_counter().value()
-            + self.wait_timeout_us as usize * T_STATES_PER_UNIT * count.max(1) as usize;
-        for _ in 0..count.max(1) {
-            while !self.motherboard.fdc().motor() && self.motherboard.t_state_counter().value() < deadline {
-                self.step();
-            }
-            while self.motherboard.fdc().motor() && self.motherboard.t_state_counter().value() < deadline {
-                self.step();
-            }
-            if self.motherboard.t_state_counter().value() >= deadline {
-                let note = format!("wait_driveonoff: gave up after {} µs, motor never cycled {count} time(s)", self.wait_timeout_us);
-                if self.verbose {
-                    eprintln!("[{:>9} µs] {note}", self.elapsed_us());
-                }
-                self.report.ignored.push(note);
-                return;
-            }
-        }
-    }
-
-    fn wait_vsync_off_on(&mut self) {
-        while self.motherboard.crtc().vsync() {
-            self.step();
-        }
-        while !self.motherboard.crtc().vsync() {
-            self.step();
-        }
+        self.waiting = Some(Wait::Ssm { code, deadline, instruction, raised: false });
     }
 
     // ------------------------------------------------------------ keyboard
@@ -585,6 +786,7 @@ impl CslRunner {
             });
             self.apply_due_key_events();
             self.last_frame = self.monitor.take_frame();
+            self.new_frame |= self.last_frame.is_some();
         }
         let frame = self.last_frame.clone().unwrap();
 
@@ -605,9 +807,7 @@ impl CslRunner {
         };
         *count += 1;
 
-        std::fs::create_dir_all(&self.screenshot_dir).map_err(|e| e.to_string())?;
-        let path = self.screenshot_dir.join(file);
-        frame.save(&path).map_err(|e| e.to_string())?;
+        let path = self.screenshots.save(&self.screenshot_dir, &file, &frame)?;
         if self.verbose {
             eprintln!("[{:>9} µs] {}", self.elapsed_us(), path.display());
         }
@@ -622,6 +822,43 @@ impl CslRunner {
 }
 
 // ---------------------------------------------------------------- helpers
+
+/// Published Shaker scripts have shipped with a `disk_insert` naming a
+/// disc from a previous release that is no longer in the package (e.g.
+/// `SHAKER-A-0.CSL` still says `shaker26.dsk`, present only as
+/// `shaker27.dsk`) - real players reportedly get away with this because
+/// whatever disc the emulator already had mounted stays in the drive
+/// when the named one fails to load. Since there is nothing "already
+/// mounted" here, the fallback instead looks for the one disc image
+/// that actually sits near the script and uses that.
+fn only_disc_image_nearby(base_dir: &Path, wanted: &str, notes: &mut Vec<String>) -> Option<PathBuf> {
+    let mut found: Vec<PathBuf> = Vec::new();
+    for dir in base_dir.ancestors().take(3) {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_disc = path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("dsk"));
+            if is_disc && !found.contains(&path) {
+                found.push(path);
+            }
+        }
+        if !found.is_empty() {
+            break; // a closer directory's discs take priority
+        }
+    }
+    match found.as_slice() {
+        [only] => {
+            notes.push(format!(
+                "disk_insert: {wanted:?} not found, using {} instead",
+                only.display()
+            ));
+            Some(only.clone())
+        },
+        _ => None // none, or too ambiguous to guess
+    }
+}
 
 fn drive(unit: usize) -> FdcDrive {
     if unit == 0 {
@@ -844,6 +1081,65 @@ mod test {
         report.unwrap();
         assert_eq!(runner.motherboard.crtc().regs_r(1), 32);
         assert_ne!(runner.motherboard.pc(), 0, "the snapshot's PC (then a few frames run)");
+    }
+
+    /// Screenshots kept in memory, shared with the test.
+    #[derive(Clone, Default)]
+    struct Collected(std::rc::Rc<std::cell::RefCell<Vec<(String, image::RgbImage)>>>);
+
+    impl ScreenshotSink for Collected {
+        fn save(&mut self, dir: &Path, file: &str, frame: &image::RgbImage) -> Result<PathBuf, String> {
+            self.0.borrow_mut().push((file.to_owned(), frame.clone()));
+            Ok(dir.join(file))
+        }
+    }
+
+    /// Played a little at a time, a script does exactly what it does in one go: the same
+    /// emulated time, codes and screenshots, and the frames come out on the way.
+    #[test]
+    fn a_script_advanced_step_by_step_plays_as_in_one_go() {
+        let script = "csl_version 1.0\ncrtc_select 1\nreset\nwait 1500000\nkey_output 'print 1\\(RET)'\n\
+                      wait 600000\nwait_vsyncoffon\nscreenshot\nwait 20000\nscreenshot\n";
+        let whole = Collected::default();
+        let mut runner = CslRunner::with_io(Box::new(MemFiles::default()), Box::new(whole.clone()), "out");
+        let expected = runner.run_text(script, ".").unwrap();
+
+        let steps = Collected::default();
+        let mut runner = CslRunner::with_io(Box::new(MemFiles::default()), Box::new(steps.clone()), "out");
+        runner.start_text(script, ".").unwrap();
+        let mut frames = 0;
+        let report = loop {
+            match runner.advance(5_000).unwrap() {
+                Progress::Running => {},
+                Progress::Frame => frames += 1,
+                Progress::Done(report) => break report
+            }
+        };
+        assert_eq!(report.elapsed_us, expected.elapsed_us);
+        assert_eq!(report.ssm_codes, expected.ssm_codes);
+        assert_eq!(report.ignored, expected.ignored);
+        assert_eq!(*steps.0.borrow(), *whole.0.borrow(), "the same screenshots");
+        assert_eq!(steps.0.borrow().len(), 2);
+        assert!((100..110).contains(&frames), "a frame every 20ms: {frames}");
+    }
+
+    /// Files given as bytes are found by their name whatever the directory and case a script
+    /// names them with; the only disc image given stands in for a disc not given.
+    #[test]
+    fn files_given_as_bytes_are_found_by_name() {
+        let mut files = MemFiles::default();
+        files.insert("Shaker27.DSK", vec![1]);
+        files.insert("next.csl", b"\xef\xbb\xbfcsl_version 1.0".to_vec());
+        let mut notes = Vec::new();
+        let base = Path::new("x");
+        assert_eq!(files.disc(base, r"Z:\discs\SHAKER27.dsk", &mut notes), Ok(vec![1]));
+        assert!(notes.is_empty());
+        assert_eq!(files.disc(base, "shaker26.dsk", &mut notes), Ok(vec![1]));
+        assert_eq!(notes.len(), 1, "the substitution is noted");
+        assert_eq!(files.script(base, "NEXT").map(|(_, text)| text), Ok("csl_version 1.0".to_owned()));
+        assert!(files.snapshot(base, "a.sna").is_err());
+        files.insert("other.dsk", vec![2]);
+        assert!(files.disc(base, "shaker26.dsk", &mut notes).is_err(), "two discs: no guess");
     }
 
     #[test]
