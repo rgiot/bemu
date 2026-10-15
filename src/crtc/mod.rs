@@ -1161,6 +1161,11 @@ impl Crtc {
         }
 
         self.reload_vma_if_needed();
+        // CRTC 1 (ACCC 17.5/20.3.2): with R1=0 the condition C0=R1 is met at the first character of
+        // the line: on its last scan line VMA' takes VMA as it is at the beginning of this line
+        if self.hcc == 0 && self.regs[1] == 0 && self.model.r1_jit_cancels_vma_latch() && self.c9_is_last() {
+            self.latch_next_row_address();
+        }
         self.set_address_on_pins(); // set the address in the pins
     }
 
