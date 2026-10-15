@@ -843,6 +843,12 @@ impl Crtc {
             // the next lap (R3l=0 included: "0 is treated as a value to
             // reach"), except on CRTC 1 where R3l=0 cancels the HSYNC.
             self.hsc = (self.hsc + 1) & 0x0f;
+            // an R3l=2 written during the pulse (HBL's panel: R3=7 then 2 on C0=R2+1) makes it a
+            // short pulse too, not blanked from then on - if it still ends at 2 (written later, C3l
+            // has passed 2 and the pulse runs on: Shaker AY C keeps it black)
+            if self.hsync_is_two_wide() && self.hsc <= 2 {
+                self.two_wide_pulse = true;
+            }
             let r3l = self.regs[3] & 0x0f;
             if self.hsc == r3l || (r3l == 0 && self.model.zero_r3_cancels_running_hsync()) {
                 self.off(CrtcPin::HS);
