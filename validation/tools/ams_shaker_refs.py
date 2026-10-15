@@ -17,7 +17,8 @@ The scripts are adapted on the way: their `csl_load` chaining is removed and
 the program names follow the disc (the -1..-4 scripts still RUN"SHAKE26x",
 shaker27.dsk holds SHAKE27x), and AMSpiriT's waits and key delays are scaled
 to its timing (see ams_timing). The same scripts, as the `-0` of each module, make
-$SHAKER_WORK/bundle_c<n>, for bemu's side of the comparison:
+$SHAKER_WORK/bundle_c<n>, for bemu's side of the comparison (CRTC 3 is played
+on a 6128+, AMSpiriT's only machine with it: the rest of the Plus differs):
 
   BUNDLE_DIR=bundle_c1 ./shaker_one.sh A - 1
 """
@@ -65,10 +66,14 @@ def run(module, crtc):
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     shutil.copy(SHAKER / "shaker27.dsk", work / "shaker27.dsk")
-    (work / "run.csl").write_text(ams_timing(script(module, crtc)), encoding="latin-1")
+    text = script(module, crtc)
+    if crtc == 3:
+        # AMSpiriT has CRTC 3 on a 6128+ only, which boots into its menu: F1 for BASIC
+        text = re.sub(r"(?m)^(\s*disk_insert)", r"key_output '\\(FN1)'\nwait 6000000\n\1", text, count=1)
+    (work / "run.csl").write_text(ams_timing(text), encoding="latin-1")
     env = dict(os.environ, SDL_AUDIODRIVER="dummy")
     command = ["xvfb-run", "-a", str(AMS), "--reset", "--no-splash", "--crtc", str(crtc),
-               "--model", "6128", "-l", "EN", "--web-port", str(6400 + crtc), "--ssm",
+               "--model", "6128+" if crtc == 3 else "6128", "-l", "EN", "--web-port", str(6400 + crtc), "--ssm",
                "--script", "run.csl", "--save-log", "ams.log"]
     process = subprocess.Popen(command, cwd=work, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                start_new_session=True)
