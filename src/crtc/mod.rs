@@ -545,9 +545,7 @@ impl Crtc {
         // R1: the video pointer is updated (on the last scan line of the
         // row) and the BORDER starts at once.
         if r == 1 && self.hcc == self.regs[1] && (self.regs[1] != 0 || self.hcc != 0 || self.model.acknowledges_r1_zero_on_c0_zero()) {
-            if self.c9_is_last() {
-                self.latch_next_row_address();
-            }
+            self.r1_reached();
             self.border_history[0] = true;
             self.r1_latch = true;
             if let DisplaySkew::Delayed(chars) = self.model.display_skew(self.regs[8]) {
@@ -743,7 +741,7 @@ impl Crtc {
                 return;
             }
         }
-        else if self.vcc == 0 && self.vlc == 0 {
+        else if self.vcc == 0 && self.vlc == 0 && !self.model.frame_address_from_vma_prime() {
             // CRTC 0, 2, 3, 4 (ACCC §20.3/§17.4.1): only the frame's very
             // first line refreshes VMA' from R12/R13 before handing it to
             // VMA - every other line just replays whatever VMA' was left
@@ -751,6 +749,25 @@ impl Crtc {
             self.crtc_vma_prime = self.base_address();
         }
         self.crtc_vma = self.crtc_vma_prime;
+    }
+
+    /// C0=R1: VMA' takes the address of the next row on a row's last line, or R12/R13 on the
+    /// frame's last line on CRTC 2 (see [`CrtcModel::frame_address_from_vma_prime`]).
+    fn r1_reached(&mut self) {
+        if self.model.frame_address_from_vma_prime() && self.is_frame_last_line() {
+            self.crtc_vma_prime = self.base_address();
+        } else if self.c9_is_last() {
+            self.latch_next_row_address();
+        }
+    }
+
+    /// The last line of the frame: C4=R4 and C9=R9, or the last line of the adjustment.
+    fn is_frame_last_line(&self) -> bool {
+        if self.in_vertical_adjust {
+            self.vtac.saturating_add(1) >= self.regs[5].saturating_add(u8::from(self.interlace_extra_line))
+        } else {
+            self.vcc == self.regs[4] && self.c9_is_last()
+        }
     }
 
     /// VMA' takes the address of the next row (C9=R9 at C0=R1). During an RFD (ACCC 11.6.1) the
@@ -837,11 +854,8 @@ impl Crtc {
         // this condition true a second time on the same line.
         // The counter does not reach R0+1: it wraps to 0 instead (ACCC
         // §17.2.2: with R1>R0, C0 is never equal to R1 and VMA' is stuck).
-        if self.hcc == self.regs[1]
-            && self.hcc != self.regs[0].wrapping_add(1)
-            && self.c9_is_last()
-        {
-            self.latch_next_row_address();
+        if self.hcc == self.regs[1] && self.hcc != self.regs[0].wrapping_add(1) {
+            self.r1_reached();
         }
 
         if self.hcc == self.regs[0].wrapping_add(1) {
@@ -2011,6 +2025,27 @@ mod test {
                 }
                 assert_eq!(chars.iter().sum::<u64>(), 4 * 20000, "{kind:?} R8={r8}: {chars:?}");
             }
+        }
+    }
+
+    /// CRTC 2 (ACCC §13.4): the frame starts at VMA', which takes R12/R13 at C0=R1 on the
+    /// frame's last line. R12/R13 written after that only count from the frame after
+    /// (AMSpiriT Lite and CPCSE: Shaker AO, R1>R0, starts every frame from the stale VMA').
+    /// CRTC 0 takes R12/R13 at the frame's first line.
+    #[test]
+    fn test_crtc2_frame_starts_at_vma_prime() {
+        for (kind, delayed) in [(CrtcType::Crtc2, true), (CrtcType::Crtc0, false)] {
+            let mut crtc = crtc_with(kind, &[]);
+            // the last line of the frame, past C0=R1
+            while !(crtc.vcc == crtc.regs[4] && crtc.vlc == crtc.regs[9] && crtc.hcc == crtc.regs[1] + 2) {
+                crtc.update_memory_address();
+            }
+            crtc.do_write_register(12, 0x10);
+            while !(crtc.vcc == 0 && crtc.vlc == 0 && crtc.hcc == 1) {
+                crtc.update_memory_address();
+            }
+            let expected = if delayed { 0x3000 } else { 0x1000 };
+            assert_eq!(crtc.crtc_vma & 0x3fc0, expected, "{kind:?}");
         }
     }
 }
