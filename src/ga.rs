@@ -416,6 +416,14 @@ enum Shown {
     Pen(Pen)
 }
 
+/// Ticks the black zone of an R3l=2 HSYNC (the window the CRTC opens a character before the pulse,
+/// see `Crtc::hsync_blank_window`) comes after it, the mode latch, the interrupt and the C-HSYNC
+/// keeping their timing. Measured on HBL's moving letters against AMSpiriT Lite 1.16: both edges of
+/// the black boxes (x=259..354 and ..515 on the 768 wide picture) come 2 pixels later than we drew
+/// them, the picture's own edges being where they were. The ordinary HSYNC's black zone does not
+/// move (Shaker A's AT/AY tests: 1.690 as is, 1.775 delayed too).
+pub const BLANK_DELAY_TICKS: usize = 2;
+
 /// Ticks between the mode being latched and the pixels switching to it. The reconstruction of the
 /// byte being displayed (ACCC 9.3.4.3) assumes the switch lands on its 5th pixel-M2 (a MODE 1 line
 /// resumes on its 4th pixel-M2, then the new mode); applied one tick earlier, a MODE 2 -> 0 switch
@@ -982,6 +990,8 @@ pub struct GateArray {
     blank_window: Option<bool>,
     blank_pipe: [Option<bool>; HSYNC_GA_DELAY_TICKS],
     shown_previous: Shown,
+    /// The last blanking states, newest first (see [`BLANK_DELAY_TICKS`])
+    blank_ring: [Option<bool>; BLANK_DELAY_TICKS + 1],
     rgb_delayed: bool,
     /// GA clock ticks since power-on (timestamps of the RMR mode writes).
     abs_tick: u64,
@@ -1049,6 +1059,7 @@ impl Default for GateArray {
             blank_window: None,
             blank_pipe: [None; HSYNC_GA_DELAY_TICKS],
             shown_previous: Shown::Black,
+            blank_ring: [None; BLANK_DELAY_TICKS + 1],
             rgb_delayed: false,
             abs_tick: 0,
             hsync_pipe: [false; HSYNC_GA_DELAY_TICKS],
@@ -1328,7 +1339,11 @@ impl GateArray {
             let pixel = if mode == Some(VideoMode::Mode2) { computed } else { self.shown_previous };
             self.shown_previous = computed;
             self.rgb_delayed = mode != Some(VideoMode::Mode2);
-            let blank = self.blank_window.unwrap_or(self.hsync_ga);
+            // the black zone of an R3l=2 window comes BLANK_DELAY_TICKS later (see the constant); the
+            // HSYNC-GA's own blanking does not
+            self.blank_ring.rotate_right(1);
+            self.blank_ring[0] = self.blank_window;
+            let blank = self.blank_ring[BLANK_DELAY_TICKS].unwrap_or(self.hsync_ga);
             if blank || self.get_pin(GateArrayPin::VSYNC) {
                 Shown::Black
             } else {

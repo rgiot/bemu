@@ -1188,6 +1188,11 @@ impl Crtc {
             self.two_wide_pulse = false;
         }
         if self.hcc == self.regs[2] && !self.hsync() && self.hsync_width().is_some() {
+            // R3l=2 written just before the pulse (HBL's panel writes R3=2 on C0=R2-1): too late for the
+            // early window, the pulse itself is still not blanked
+            if self.hsync_is_two_wide() {
+                self.two_wide_pulse = true;
+            }
             self.hsc = 0;
             self.on(CrtcPin::HS);
             self.hsync_late_ticks = 0;
