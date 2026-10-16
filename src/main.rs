@@ -158,7 +158,7 @@ fn main() {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut(), args.black_level),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu, args.black_level, args.frontend)
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu, args.black_level, args.frontend, args.turbo)
         },
         None if args.debug_server => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
@@ -490,7 +490,8 @@ fn run_window(
     mut mode: DisplayMode,
     gpu: bool,
     black_level: u8,
-    frontend: FrontendKind
+    frontend: FrontendKind,
+    mut turbo: bool
 ) {
     let (width, height) = mode.output_size();
     let mut window: Box<dyn Frontend> = match frontend {
@@ -512,13 +513,11 @@ fn run_window(
     let mut filter = mode.filter_on(gpu);
     // Cap redraws (and so input polling and emulated speed) at the CPC's
     // own real refresh rate rather than running full tilt.
-    window.set_target_fps(50);
-
     let audio = open_audio(sound, motherboard);
-    if audio.is_some() {
-        // The audio device's clock paces the emulation instead.
-        window.set_target_fps(0);
-    }
+    // The audio device's clock paces the emulation instead, if there is one; at full speed
+    // nothing does.
+    let paced_fps = if audio.is_some() { 0 } else { 50 };
+    window.set_target_fps(if turbo { 0 } else { paced_fps });
     // The recording takes the sound in the device's format if it plays it.
     let mut recorder = record.map(|path| {
         let config = motherboard.psg().audio_config().unwrap_or_else(|| {
@@ -531,6 +530,13 @@ fn run_window(
     let mut host_keyboard = HostKeyboard::default();
     let mut buffer = vec![0u32; width * height];
     let mut f9_was_down = false;
+    let mut f10_was_down = false;
+    // at full speed, the frames shown (at most 50 a second: presenting each would hold the
+    // emulation back to the display's rate)
+    let mut last_present = std::time::Instant::now();
+    if turbo {
+        eprintln!("speed: full (F10 for real time)");
+    }
 
     // One whole frame per redraw, locked to the emulator's real VSYNC, not
     // to a fixed t-state count.
@@ -551,6 +557,14 @@ fn run_window(
             eprintln!("display: {mode:?}");
         }
         f9_was_down = f9_down;
+        // F10 toggles full speed
+        let f10_down = input.down.contains(&HostKey::F10);
+        if f10_down && !f10_was_down {
+            turbo = !turbo;
+            window.set_target_fps(if turbo { 0 } else { paced_fps });
+            eprintln!("speed: {}", if turbo { "full" } else { "real time" });
+        }
+        f10_was_down = f10_down;
         host_keyboard.apply(motherboard, &input);
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, motherboard);
@@ -588,7 +602,17 @@ fn run_window(
                 break;
             }
         }
-        play_frame_audio(audio.as_ref(), &samples, window.as_ref());
+        if turbo {
+            // the sound of a fast-forward is dropped, and only some frames are shown
+            if last_present.elapsed() < std::time::Duration::from_millis(20) {
+                monitor.recycle(frame);
+                continue;
+            }
+            last_present = std::time::Instant::now();
+        }
+        else {
+            play_frame_audio(audio.as_ref(), &samples, window.as_ref());
+        }
 
         if direct {
             window.present_frame(&frame, mode).unwrap_or_else(|e| panic!("{e}"));
