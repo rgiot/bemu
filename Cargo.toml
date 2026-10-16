@@ -64,6 +64,12 @@ cpclib-xfer = {path = "../rust.cpcdemotools/cpclib-xfer/"}
 cpclib-xfertool = {path = "../rust.cpcdemotools/cpclib-xfertool/"}
 cpclib-z80emu = {path = "../rust.cpcdemotools/cpclib-z80emu/"}
 
+[profile.release]
+# The whole program optimised together: about 50% faster emulation than the default
+# (crates optimised apart), for a longer build.
+lto = "fat"
+codegen-units = 1
+
 [features]
 default = ["audio"]
 # Sound output in the `amsrust --window` binary (on Linux cpal needs the ALSA

@@ -31,3 +31,4 @@ pub mod breakpoints;
 pub mod basic_program;
 
 mod bits;
+mod history;
