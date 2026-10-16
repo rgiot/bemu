@@ -78,7 +78,8 @@ pub struct CslReport {
 struct KeyDelays {
     press: u64,
     after_key: u64,
-    after_cr: u64
+    /// Waited once a whole `key_output` is typed (the third `key_delay` value).
+    after_output: u64
 }
 
 impl Default for KeyDelays {
@@ -87,7 +88,7 @@ impl Default for KeyDelays {
         KeyDelays {
             press: 70_000,
             after_key: 70_000,
-            after_cr: 400_000
+            after_output: 400_000
         }
     }
 }
@@ -319,7 +320,7 @@ impl CslRunner {
                 self.key_delays = KeyDelays {
                     press: *press_delay,
                     after_key: delay_after_key.unwrap_or(*press_delay),
-                    after_cr: delay_after_cr.unwrap_or(*press_delay)
+                    after_output: delay_after_cr.unwrap_or(*press_delay)
                 }
             },
             KeyOutput(output) => self.schedule_keys(output.elements()),
@@ -543,6 +544,13 @@ impl CslRunner {
 
     // ------------------------------------------------------------ keyboard
 
+    /// `key_output`: types the keys one after the other and only then lets the script go on: each key
+    /// is held `press` and followed by `after_key`, and the third `key_delay` value is waited once the
+    /// whole output is typed (the standard says "after a CR"). The Shaker scripts are timed that way
+    /// (CPCSyntaxError plays them so too): their waits after a key are often shorter than the test
+    /// they wait for (`wait 2200000 ; 2315008` for AI's second screen) and only add up with the
+    /// typing time, otherwise the next key lands while the test still runs and the rest of the
+    /// module is out of step.
     fn schedule_keys(&mut self, elements: &[KeyElement]) {
         let now = self.motherboard.t_state_counter().value();
         let mut at = self.keys_busy_until.max(now);
@@ -559,12 +567,6 @@ impl CslRunner {
                 self.report.ignored.push(format!("key {element}"));
                 continue;
             };
-            let after = if matches!(element, KeyElement::Special(SpecialKey::Return | SpecialKey::Enter)) {
-                delays.after_cr
-            }
-            else {
-                delays.after_key
-            };
             self.key_events.push_back(KeyEvent {
                 due_t_states: at,
                 keys: keys.clone(),
@@ -577,10 +579,14 @@ impl CslRunner {
                 pressed: false
             });
             if !std::mem::take(&mut no_delay_next) {
-                at += units(after);
+                at += units(delays.after_key);
             }
         }
+        at += units(delays.after_output);
         self.keys_busy_until = at;
+        while self.motherboard.t_state_counter().value() < at {
+            self.step();
+        }
     }
 
     fn apply_due_key_events(&mut self) {
