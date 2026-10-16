@@ -23,8 +23,9 @@ pub enum HostKey {
     Period, Slash, Backquote, Equal,
     NumPad0, NumPad1, NumPad2, NumPad3, NumPad4, NumPad5, NumPad6, NumPad7, NumPad8, NumPad9,
     NumPadDot, NumPadEnter,
-    /// Not a CPC key: the emulator's own, e.g. cycling the display.
-    F9
+    /// Not CPC keys: the emulator's own (F9 cycles the display, F10 toggles full speed).
+    F9,
+    F10
 }
 
 /// What a frontend reports on each poll.
@@ -78,6 +79,10 @@ impl TypedCombo {
     /// How many frames (at the CPC's own ~50Hz redraw rate) to hold a
     /// typed character's key combo down for.
     pub const HOLD_FRAMES: u8 = 4;
+    /// Frames with nothing pressed between two typed characters: without them the next
+    /// character's keys come in the scan that releases the last one's, and the firmware takes
+    /// them together (`2+2` pasted gave `2+"`: the Shift of `+` on the last `2`; `ll` one `l`).
+    pub const RELEASE_FRAMES: u8 = 2;
 
     /// The combo to force on this frame: continues holding whatever's
     /// already in progress, else starts holding the next queued
@@ -89,7 +94,7 @@ impl TypedCombo {
             while let Some(c) = typed.pop() {
                 if let Some(keys) = keys_of_char(c) {
                     self.keys = keys;
-                    self.frames_left = Self::HOLD_FRAMES;
+                    self.frames_left = Self::HOLD_FRAMES + Self::RELEASE_FRAMES;
                     break;
                 }
             }
@@ -97,7 +102,8 @@ impl TypedCombo {
         if self.frames_left > 0 {
             self.frames_left -= 1;
         }
-        &self.keys
+        // held, then released for RELEASE_FRAMES before the next character
+        if self.frames_left >= Self::RELEASE_FRAMES { &self.keys } else { &[] }
     }
 }
 
@@ -250,6 +256,24 @@ mod test {
             }
         }
         assert!(released, "a typed combo must eventually release, not stick forever");
+    }
+
+    /// Two typed characters are apart: their keys are never pressed in the same frame, and all
+    /// keys are up for a while between them (`+` then `2`: the Shift of `+` is up before `2`).
+    #[test]
+    fn typed_characters_are_released_before_the_next_one() {
+        let mut typed = TypedChars::default();
+        typed.push('+');
+        typed.push('2');
+        let mut combo = TypedCombo::default();
+        let frames: Vec<Vec<CpcKey>> = (0..20).map(|_| combo.advance(&mut typed).to_vec()).collect();
+        let plus = keys_of_char('+').unwrap();
+        let two = keys_of_char('2').unwrap();
+        let held_plus = frames.iter().position(|keys| *keys != plus).unwrap();
+        assert_eq!(held_plus, usize::from(TypedCombo::HOLD_FRAMES));
+        let gap = frames[held_plus..].iter().take_while(|keys| keys.is_empty()).count();
+        assert_eq!(gap, usize::from(TypedCombo::RELEASE_FRAMES));
+        assert_eq!(frames[held_plus + gap], two, "then the 2, without the Shift");
     }
 
     /// A character `keys_of_char` doesn't know how to type is just skipped,

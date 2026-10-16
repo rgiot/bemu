@@ -51,7 +51,9 @@ pub struct Emulator {
     /// Keys held, by physical key (`KeyboardEvent.code`), so that a release matches its press
     /// whatever the modifiers made of the key meanwhile.
     held: HashMap<String, HostKey>,
-    typed: Vec<char>
+    typed: Vec<char>,
+    /// Frames completed, see [`Self::frame_count`].
+    frames: u64
 }
 
 #[wasm_bindgen]
@@ -80,7 +82,8 @@ impl Emulator {
             audio_rate: None,
             keyboard: HostKeyboard::default(),
             held: HashMap::new(),
-            typed: Vec::new()
+            typed: Vec::new(),
+            frames: 0
         })
     }
 
@@ -207,15 +210,49 @@ impl Emulator {
 
     /// Run the machine to its next frame, and show it.
     pub fn run_frame(&mut self) -> Result<(), JsError> {
+        self.advance_frame()?;
+        self.redraw()
+    }
+
+    /// Run the machine to its next frame without showing it ([`Self::redraw`] shows the last
+    /// one): several frames a refresh, at more than real time, only the last needs drawing.
+    pub fn advance_frame(&mut self) -> Result<(), JsError> {
         let step = self.csl.as_mut().map(runner_frame);
         match step {
             Some(step) => self.csl_frame(step)?,
             None => self.free_frame()
         }
-        if let Some(frame) = &self.frame {
-            self.gfx.show(frame, self.display).map_err(|e| JsError::new(&e))?;
-        }
         Ok(())
+    }
+
+    /// Frames the machine produced since it was created (for the page's speed figures).
+    pub fn frame_count(&self) -> f64 {
+        self.frames as f64
+    }
+
+    /// Type `text` on the keyboard, a character after the other as the host's typed characters
+    /// are (`\n` is RETURN). Not while a CSL script plays: the keyboard is the script's.
+    pub fn type_text(&mut self, text: &str) {
+        self.typed.extend(text.chars().filter(|&c| c != '\r'));
+    }
+
+    /// The last frame, as a PNG file of the monitor's picture (768x272, raw); none before the
+    /// first frame.
+    pub fn screenshot(&self) -> Result<Option<Vec<u8>>, JsError> {
+        let Some(frame) = &self.frame else {
+            return Ok(None);
+        };
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(frame.clone())
+            .write_to(&mut png, image::ImageOutputFormat::Png)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(Some(png))
+    }
+
+    /// The DSK image in drive 0 (A) or 1 (B), as the machine has written it; none if empty.
+    pub fn disc_image(&self, drive: u8) -> Option<Vec<u8>> {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        machine.fdc().image(fdc_drive(usize::from(drive.min(1)))).map(DiscImage::to_bytes)
     }
 
     /// Show the last frame again.
@@ -292,6 +329,7 @@ impl Emulator {
     fn csl_frame(&mut self, step: Step) -> Result<(), JsError> {
         match step {
             Step::Frame => {
+                self.frames += 1;
                 // the script's frame, copied in the one already allocated
                 if let Some(source) = self.csl.as_ref().and_then(CslRunner::last_frame) {
                     match &mut self.frame {
@@ -332,6 +370,7 @@ impl Emulator {
             let monitor = &mut self.monitor;
             self.motherboard.execute_next_opcode_with_video(|(rgb, sync)| monitor.receive(rgb, sync));
             if let Some(frame) = self.monitor.take_frame() {
+                self.frames += 1;
                 // the previous frame is drawn in next
                 if let Some(previous) = self.frame.replace(frame) {
                     self.monitor.recycle(previous);

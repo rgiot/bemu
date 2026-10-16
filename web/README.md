@@ -66,6 +66,7 @@ and `fetch` don't work from `file://`.
   - `webgpu` (default `true`): `false` keeps to Canvas 2D.
   - `wasmUrl`: where `bemu_web_bg.wasm` is, if not next to `bemu.js`.
   - `fullscreenKey` (default `'F11'`, or `null` for none).
+  - `turboKey` (default `'F10'`, or `null` for none): toggles full speed, see "Speed".
   - `autoStart` (default `false`).
 
 **Methods** (a file `source` is a URL, a `File`/`Blob`, an `ArrayBuffer` or a typed array):
@@ -73,6 +74,8 @@ and `fetch` don't work from `file://`.
 | method | |
 |---|---|
 | `start()`, `pause()`, `reset()` | run, stop, switch the machine off and on |
+| `stepFrame()` | while paused: one more frame, shown |
+| `setSpeed(speed)` | `1` (real time), another factor (`2`, `0.5`…), or `'max'` (full speed), see "Speed" |
 | `configure(config)` | a new machine; the discs stay in |
 | `setDisplay(name)` | `'raw'` or a CRT profile |
 | `insertDisc(drive, source)`, `eject(drive)` | a DSK image in drive `'A'` or `'B'` |
@@ -80,8 +83,11 @@ and `fetch` don't work from `file://`.
 | `addFile(name, source)` | a file a CSL script names (`disk_insert`, `snapshot_load`, `csl_load`) |
 | `runCsl(script, { files })` | play a CSL script live, see below |
 | `stopCsl()` | stop the script; its machine goes on |
+| `typeText(text)` | type `text` on the CPC's keyboard (`\n` is RETURN), a paste; not while a script plays |
+| `screenshot()` | the last frame as a PNG file (`Uint8Array`, the raw 768×272 picture), or `undefined` |
+| `getDisc(drive)` | the DSK image in drive `'A'` or `'B'`, with what the CPC wrote on it (`Uint8Array`), or `undefined` |
 | `fullscreen()` | toggle fullscreen (also `F11` on the emulator) |
-| `setVolume(v)` | `0` to `1` |
+| `setVolume(v)`, `setMuted(muted)` | `0` to `1`; silence the sound or bring it back |
 | `on(event, fn)`, `off(event, fn)` | events, see below |
 | `destroy()` | stop and release everything: listeners, sound, wasm memory |
 
@@ -91,11 +97,15 @@ and `fetch` don't work from `file://`.
 - `running`.
 - `cslRunning`.
 - `vsyncPaced`: whether frames follow a 50 Hz display, see "Timing".
+- `speed`: `1`, another factor, or `Infinity` (full speed).
+- `muted`.
 
 **Events:**
 - `'screenshot'`: `{ name, png }`, where `png` is a `Uint8Array` holding a PNG file;
 - `'csl-done'`: `{ screenshots, ssmCodes, ignored, elapsedUs }`, or `{ error }`;
 - `'error'`: an `Error` from the emulation, which pauses.
+- `'stats'`: once a second while running, `{ fps, speed }`: the frames emulated in that second,
+  and the times real time they make (`1` is a real CPC).
 
 ### CSL scripts
 
@@ -119,12 +129,32 @@ emu.on('csl-done', (report) => console.log(report));
 await emu.runCsl('https://example.org/SHAKER-A-0.CSL', { files: { 'shaker27.dsk': 'https://example.org/shaker27.dsk' } });
 ```
 
+### Speed
+
+`setSpeed(speed)`, or the `turboKey` (F10) on the emulator, which toggles full speed:
+- **`1`**: real time, paced as described in "Timing". The only speed with sound.
+- **another factor** (`2`, `4`, `0.5`…): that many times real time, by the browser's clock.
+- **`'max'`**: as fast as the computer can. The page keeps most of each display refresh for
+  the emulation and shows its last frame. Useful to skip a loader or play a CSL script quickly.
+
+At any speed but `1` the sound is dropped: it would play late or at the wrong pitch. The
+'stats' event tells how fast it actually runs.
+
+```js
+emu.setSpeed('max');
+await emu.insertDisc('A', 'game.dsk');
+emu.typeText('run"game\n');
+emu.on('stats', ({ speed }) => console.log(`${speed.toFixed(1)}× real time`));
+setTimeout(() => emu.setSpeed(1), 10000); // back to real time once it has loaded
+```
+
 ### Keyboard, sound, fullscreen
 - **Keyboard:**
   - The emulator takes the keys while its canvas has the focus (a click gives it).
   - Keys follow the host layout, as in the desktop windows: a key typing `a` is the CPC's `A`.
     Typed characters (`é`, `@`…) go through the CPC's own key combinations.
-  - Function keys and Ctrl/Meta shortcuts are left to the browser.
+  - Function keys and Ctrl/Meta shortcuts are left to the browser, except the emulator's own:
+    `F10` (full speed) and `F11` (fullscreen), which the options can change or turn off.
 - **Sound:** browsers only allow it after a click or a key, so it starts with the first click or
   key in the emulator.
 - **Fullscreen:** the browser's Fullscreen API on the canvas.

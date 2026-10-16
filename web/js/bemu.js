@@ -14,6 +14,12 @@ const FRAME_MS = 312 * 64 / 1000;
 /** Sound kept ahead of the speakers, in seconds. */
 const AUDIO_TARGET_S = 0.06;
 const AUDIO_MAX_S = 0.25;
+/** At more than real time, the emulation takes this share of each animation frame (the rest is
+ * the page's: drawing, input), between these many milliseconds: on a computer too slow to keep
+ * up, the refreshes get longer and so does the emulation's share. */
+const BUSY_SHARE = 0.9;
+const BUSY_MIN_MS = 40;
+const BUSY_MAX_MS = 100;
 
 let wasm;
 function loadWasm(url) {
@@ -90,13 +96,19 @@ export class Bemu {
     #audio = null;
     #audioStarting = null;
     #volume = 1;
+    #muted = false;
+    /** Times real time: 1, more, or Infinity (as fast as possible). */
+    #speed = 1;
+    /** The speed F10 goes back to from full speed. */
+    #lastSpeed = 1;
+    #stats = { since: undefined, frames: 0 };
     #resizeObserver = null;
     #destroyed = false;
 
     constructor(canvas, core, options) {
         this.#canvas = canvas;
         this.#core = core;
-        this.#options = { fullscreenKey: 'F11', ...options };
+        this.#options = { fullscreenKey: 'F11', turboKey: 'F10', ...options };
         core.on_screenshot((name, png) => this.#emit('screenshot', { name, png }));
         core.on_csl_done((report) => this.#emit('csl-done', report));
 
@@ -128,8 +140,14 @@ export class Bemu {
     get cslRunning() { return this.#core.csl_running(); }
     /** Whether the frames follow the display's own 50 Hz refresh. */
     get vsyncPaced() { return this.#vsyncPaced; }
+    /** Times real time: 1, another factor, or Infinity (full speed). */
+    get speed() { return this.#speed; }
 
-    /** `fn(detail)` on 'screenshot' ({ name, png }), 'csl-done' (report) or 'error' (Error). */
+    /**
+     * `fn(detail)` on 'screenshot' ({ name, png }), 'csl-done' (report), 'error' (Error) or
+     * 'stats' (each second while running: { fps, speed }, the frames emulated a second and the
+     * times real time they make).
+     */
     on(event, fn) {
         if (!this.#listeners.has(event)) this.#listeners.set(event, new Set());
         this.#listeners.get(event).add(fn);
@@ -172,11 +190,44 @@ export class Bemu {
     }
     stopCsl() { this.#core.stop_csl(); }
 
+    /**
+     * How fast the emulation runs: 1 (real time, the default), another factor (2: twice as
+     * fast...), or 'max' / Infinity (as fast as the computer can, the picture shown at the
+     * display's rate). The sound only plays at real time. The `turboKey` (F10) toggles full speed.
+     */
+    setSpeed(speed) {
+        const value = speed === 'max' ? Infinity : Number(speed);
+        if (!(value > 0)) throw new RangeError(`speed must be a positive number or 'max', not ${speed}`);
+        if (value !== 1) this.#core.audio_samples(); // what is queued is dropped, not played late
+        this.#speed = value;
+        this.#owed = 0;
+    }
+
+    /** Type `text` on the CPC's keyboard (\n is RETURN), as if typed: a paste. */
+    typeText(text) { this.#core.type_text(String(text)); }
+
+    /** While paused: one more frame, shown. */
+    stepFrame() {
+        if (this.#running) return;
+        this.#safely(() => {
+            this.#core.advance_frame();
+            this.#core.audio_samples();
+            this.#core.redraw();
+        });
+    }
+
+    /** The last frame as a PNG file (Uint8Array, the monitor's 768x272 picture), or undefined. */
+    screenshot() { return this.#core.screenshot(); }
+
+    /** The DSK image in drive 'A' or 'B' with what the CPC wrote on it (Uint8Array), or undefined. */
+    getDisc(drive) { return this.#core.disc_image(driveNumber(drive)); }
+
     start() {
         if (this.#running || this.#destroyed) return;
         this.#running = true;
         this.#lastTime = undefined;
         this.#owed = 0;
+        this.#stats.since = undefined;
         this.#frameRequest = requestAnimationFrame((time) => this.#tick(time));
     }
     pause() {
@@ -195,8 +246,14 @@ export class Bemu {
     /** 0 (silent) to 1. Sound starts with the first click or key in the emulator. */
     setVolume(volume) {
         this.#volume = Math.max(0, Math.min(1, volume));
-        if (this.#audio) this.#audio.gain.gain.value = this.#volume;
+        this.#applyVolume();
     }
+    /** Silence the sound, or bring it back at its volume. */
+    setMuted(muted) {
+        this.#muted = Boolean(muted);
+        this.#applyVolume();
+    }
+    get muted() { return this.#muted; }
 
     destroy() {
         this.pause();
@@ -258,6 +315,17 @@ export class Bemu {
             if (!event.repeat) this.fullscreen();
             return;
         }
+        if (this.#options.turboKey && event.key === this.#options.turboKey) {
+            event.preventDefault();
+            if (!event.repeat) {
+                if (this.#speed === Infinity) this.setSpeed(this.#lastSpeed);
+                else {
+                    this.#lastSpeed = this.#speed;
+                    this.setSpeed(Infinity);
+                }
+            }
+            return;
+        }
         this.#core.key_down(event.code, event.key, event.ctrlKey || event.metaKey);
         // the page does not scroll or move the focus on the CPC's keys
         if (this.#isCpcKey(event)) event.preventDefault();
@@ -269,7 +337,7 @@ export class Bemu {
             const context = new AudioContext({ latencyHint: 'interactive' });
             await context.audioWorklet.addModule(new URL('./audio-worklet.js', import.meta.url));
             const node = new AudioWorkletNode(context, 'bemu-audio', { outputChannelCount: [2] });
-            const gain = new GainNode(context, { gain: this.#volume });
+            const gain = new GainNode(context, { gain: this.#muted ? 0 : this.#volume });
             node.connect(gain).connect(context.destination);
             this.#core.enable_audio(context.sampleRate);
             this.#audio = { context, node, gain, sent: 0, startedAt: context.currentTime };
@@ -285,12 +353,18 @@ export class Bemu {
         return audio.sent / audio.context.sampleRate - played;
     }
 
+    #applyVolume() {
+        if (this.#audio) this.#audio.gain.gain.value = this.#muted ? 0 : this.#volume;
+    }
+
+    /** A frame emulated, not drawn; its sound queued at real time, dropped otherwise. */
     #runFrame() {
-        this.#core.run_frame();
+        this.#core.advance_frame();
+        this.#stats.frames++;
         const audio = this.#audio;
         if (!audio) return;
         const samples = this.#core.audio_samples();
-        if (samples.length === 0) return;
+        if (samples.length === 0 || this.#speed !== 1) return;
         if (this.#audioBuffered() > AUDIO_MAX_S) return; // too far ahead: drop
         audio.sent = Math.max(audio.sent, (audio.context.currentTime - audio.startedAt) * audio.context.sampleRate);
         audio.sent += samples.length / 2;
@@ -305,9 +379,30 @@ export class Bemu {
         this.#lastTime = time;
         this.#measureRefresh(elapsed);
         this.#safely(() => {
+            this.#emitStats(time);
+            const budget = Math.min(Math.max(elapsed * BUSY_SHARE, BUSY_MIN_MS), BUSY_MAX_MS);
+            if (this.#speed === Infinity) {
+                // full speed: frames for most of the refresh, the last one shown
+                const start = performance.now();
+                do this.#runFrame(); while (performance.now() - start < budget);
+                this.#core.redraw();
+                return;
+            }
+            if (this.#speed !== 1) {
+                // n times real time, by the browser's clock
+                this.#owed = Math.min(this.#owed + elapsed * this.#speed, 4 * this.#speed * FRAME_MS);
+                const start = performance.now();
+                while (this.#owed >= FRAME_MS && performance.now() - start < budget) {
+                    this.#runFrame();
+                    this.#owed -= FRAME_MS;
+                }
+                this.#core.redraw();
+                return;
+            }
             if (this.#vsyncPaced) {
                 // one CPC frame per refresh of a 50 Hz display
                 this.#runFrame();
+                this.#core.redraw();
                 return;
             }
             let frames;
@@ -321,8 +416,23 @@ export class Bemu {
             }
             frames = Math.max(0, Math.min(frames, 4));
             for (let i = 0; i < frames; i++) this.#runFrame();
-            if (frames === 0) this.#core.redraw();
+            this.#core.redraw();
         });
+    }
+
+    /** The 'stats' event, once a second. */
+    #emitStats(time) {
+        const stats = this.#stats;
+        if (stats.since === undefined) {
+            stats.since = time;
+            stats.frames = 0;
+            return;
+        }
+        if (time - stats.since < 1000) return;
+        const fps = stats.frames * 1000 / (time - stats.since);
+        stats.since = time;
+        stats.frames = 0;
+        this.#emit('stats', { fps, speed: fps * FRAME_MS / 1000 });
     }
 
     /** Whether the display refreshes at about 50 Hz, from the last 60 animation frames. */
