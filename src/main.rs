@@ -596,6 +596,8 @@ fn run_window(
         else {
             window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
         }
+        // the next frame is drawn in this one
+        monitor.recycle(frame);
     }
 
     if let (Some(recorder), Some(path)) = (recorder, record) {

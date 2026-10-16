@@ -28,7 +28,10 @@ fn main() {
             if video {
                 motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
                     monitor.receive(rgb, sync);
-                    frames += monitor.take_frame().is_some() as usize;
+                    if let Some(frame) = monitor.take_frame() {
+                        frames += 1;
+                        monitor.recycle(frame);
+                    }
                 });
             }
             else {
