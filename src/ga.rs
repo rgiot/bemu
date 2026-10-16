@@ -1,5 +1,6 @@
 use std::ops::BitAndAssign;
 
+use crate::history::History;
 use crate::bits::*;
 use crate::chip::*;
 use crate::memory::Flag;
@@ -994,15 +995,15 @@ pub struct GateArray {
     crtc_hsync_two_wide: bool,
     /// blanking window of an R3l=2 HSYNC (see `Crtc::hsync_blank_window`), as the GA sees it
     blank_window: Option<bool>,
-    blank_pipe: [Option<bool>; HSYNC_GA_DELAY_TICKS],
+    blank_pipe: History<Option<bool>, HSYNC_GA_DELAY_TICKS>,
     shown_previous: Shown,
     /// The last blanking states, newest first (see [`BLANK_DELAY_TICKS`])
-    blank_ring: [Option<bool>; BLANK_DELAY_TICKS + 1],
+    blank_ring: History<Option<bool>, { BLANK_DELAY_TICKS + 1 }>,
     rgb_delayed: bool,
     /// GA clock ticks since power-on (timestamps of the RMR mode writes).
     abs_tick: u64,
     /// The CRTC HSYNC as the GA sees it (see [`HSYNC_GA_DELAY_TICKS`]).
-    hsync_pipe: [bool; HSYNC_GA_DELAY_TICKS],
+    hsync_pipe: History<bool, HSYNC_GA_DELAY_TICKS>,
     hsync_ga: bool,
     hsync_ga_prev: bool,
     /// Video mode decided at the last HSYNC end, applied one pixel later.
@@ -1011,7 +1012,7 @@ pub struct GateArray {
     pending_mode_wait: u8,
     /// The RMR video mode over the last ticks, newest first: a mode write
     /// only reaches the latch `MODE_WRITE_DELAY_TICKS` after it was made.
-    mode_history: [VideoMode; MODE_WRITE_DELAY_TICKS + 1],
+    mode_history: History<VideoMode, { MODE_WRITE_DELAY_TICKS + 1 }>,
     /// The mode of this HSYNC pulse was already taken (6 usec cap reached).
     mode_latched: bool,
     /// Ticks left before the INT line rises (see `schedule_interrupt`).
@@ -1028,7 +1029,7 @@ pub struct GateArray {
 
     palette: [Ink; 17],
     /// The last outputs, newest first: the ink of `[PALETTE_LOOKUP_LAG_TICKS]` is looked up now
-    shown_ring: [Shown; PALETTE_LOOKUP_LAG_TICKS + 1],
+    shown_ring: History<Shown, { PALETTE_LOOKUP_LAG_TICKS + 1 }>,
     /// [`PALETTE_LOOKUP_LAG_TICKS`], but for tests that look at the pixel stream itself
     lookup_lag: usize,
     /// The palette as it was at the previous tick, for the chips whose writes are a tick late
@@ -1063,17 +1064,17 @@ impl Default for GateArray {
             monitor_hsync_advance: 0,
             crtc_hsync_two_wide: false,
             blank_window: None,
-            blank_pipe: [None; HSYNC_GA_DELAY_TICKS],
+            blank_pipe: History::new(None),
             shown_previous: Shown::Black,
-            blank_ring: [None; BLANK_DELAY_TICKS + 1],
+            blank_ring: History::new(None),
             rgb_delayed: false,
             abs_tick: 0,
-            hsync_pipe: [false; HSYNC_GA_DELAY_TICKS],
+            hsync_pipe: History::new(false),
             hsync_ga: false,
             hsync_ga_prev: false,
             pending_mode: None,
             pending_mode_wait: 0,
-            mode_history: [VideoMode::Mode1; MODE_WRITE_DELAY_TICKS + 1],
+            mode_history: History::new(VideoMode::Mode1),
             mode_latched: false,
             interrupt_delay: None,
             last_idle_t: 0,
@@ -1106,7 +1107,7 @@ impl Default for GateArray {
                 Ink(0),
             ],
 
-            shown_ring: [Shown::Black; PALETTE_LOOKUP_LAG_TICKS + 1],
+            shown_ring: History::new(Shown::Black),
             lookup_lag: PALETTE_LOOKUP_LAG_TICKS,
             palette_previous: [Ink(0); 17],
             current_mode: VideoMode::Mode0,
@@ -1174,7 +1175,7 @@ impl GateArray {
     /// `OUT mode2` lands right at the end of an R3=2 HSYNC and must not replace
     /// the mode0 written long before.
     fn latch_mode(&mut self, lag: usize) {
-        let new_mode = self.mode_history[lag];
+        let new_mode = self.mode_history.get(lag);
         self.mode_latched = true;
         if new_mode != self.current_mode {
             self.pending_mode = Some(new_mode);
@@ -1347,9 +1348,8 @@ impl GateArray {
             self.rgb_delayed = mode != Some(VideoMode::Mode2);
             // the black zone of an R3l=2 window comes BLANK_DELAY_TICKS later (see the constant); the
             // HSYNC-GA's own blanking does not
-            self.blank_ring.rotate_right(1);
-            self.blank_ring[0] = self.blank_window;
-            let blank = self.blank_ring[BLANK_DELAY_TICKS].unwrap_or(self.hsync_ga);
+            self.blank_ring.push(self.blank_window);
+            let blank = self.blank_ring.get(BLANK_DELAY_TICKS).unwrap_or(self.hsync_ga);
             if blank || self.get_pin(GateArrayPin::VSYNC) {
                 Shown::Black
             } else {
@@ -1357,10 +1357,9 @@ impl GateArray {
             }
         };
         // The ink is looked up in the palette as it is now, a few ticks after the pen was known.
-        self.shown_ring.rotate_right(1);
-        self.shown_ring[0] = shown;
+        self.shown_ring.push(shown);
         let palette = if self.ga_type.palette_write_delay_ticks() == 0 { &self.palette } else { &self.palette_previous };
-        self.rgb = match self.shown_ring[self.lookup_lag] {
+        self.rgb = match self.shown_ring.get(self.lookup_lag) {
             Shown::Black => (0., 0., 0.).into(),
             Shown::Pen(pen) => palette[pen.value() as usize].into()
         };
@@ -1518,9 +1517,7 @@ impl GateArray {
     /// synchronised as if it had risen on its character (ACCC 14.7.1).
     pub fn set_crtc_hsync_two_wide(&mut self, window: Option<bool>) {
         self.crtc_hsync_two_wide = window.is_some();
-        self.blank_window = self.blank_pipe[0];
-        self.blank_pipe.rotate_left(1);
-        self.blank_pipe[HSYNC_GA_DELAY_TICKS - 1] = window;
+        self.blank_window = self.blank_pipe.delay(window);
     }
 
     pub fn set_monitor_hsync_advance(&mut self, ticks: u8) {
@@ -1554,8 +1551,7 @@ impl Chip for GateArray {
     /// Change the screen mode when hsync is set
     fn pre_tick(&mut self) {
         self.abs_tick += 1;
-        self.mode_history.rotate_right(1);
-        self.mode_history[0] = self.rmr.video_mode();
+        self.mode_history.push(self.rmr.video_mode());
         if self.is_upfront(GateArrayPin::VSYNC) {
             //vsync occured
             self.vsync_counter = VSyncCounter::VSync(0);
@@ -1566,9 +1562,7 @@ impl Chip for GateArray {
 
         // the HSYNC as the GA sees it, a few pixels after the CRTC raised it
         self.hsync_ga_prev = self.hsync_ga;
-        self.hsync_ga = self.hsync_pipe[0];
-        self.hsync_pipe.rotate_left(1);
-        self.hsync_pipe[HSYNC_GA_DELAY_TICKS - 1] = self.get_pin(GateArrayPin::HSYNC);
+        self.hsync_ga = self.hsync_pipe.delay(self.get_pin(GateArrayPin::HSYNC));
 
         if let Some(left) = self.interrupt_delay {
             if left <= 1 {
