@@ -464,6 +464,12 @@ pub const MODE_LATCH_CAP_TICKS: u64 = 6 * 16;
 /// itself, the interrupt counter and the monitor keep the CRTC's timing.
 pub const MODE_LATCH_TWO_WIDE_TICKS: u64 = 16;
 
+/// At that R3l=2 latch, mode writes of the last this many ticks are not seen yet (one tick less than
+/// [`MODE_WRITE_DELAY_TICKS`] at the HSYNC-GA end). Scroll Factory's title picture writes mode 0 from C0=13 on,
+/// inside an R3=2 HSYNC at R2=13, 6 ticks before that latch: AMSpiriT draws the right part in mode 0
+/// (pixel-identical with 5), with 6 it stayed in mode 1. HBL, OSC4, Camenbert 4, Dream End and Shaker A/C do not change.
+pub const MODE_WRITE_DELAY_TWO_WIDE_TICKS: usize = 5;
+
 /// The acknowledge of an interrupt is heard this much later when the
 /// interrupted instruction ends with at most one idle T-state.
 pub const ACK_LATE_TICKS: u32 = 16;
@@ -1596,7 +1602,7 @@ impl Chip for GateArray {
                     self.latch_mode(0);
                 }
                 else if self.crtc_hsync_two_wide && n as u64 + 1 >= MODE_LATCH_TWO_WIDE_TICKS {
-                    self.latch_mode(MODE_WRITE_DELAY_TICKS);
+                    self.latch_mode(MODE_WRITE_DELAY_TWO_WIDE_TICKS);
                 }
             }
         }
