@@ -50,6 +50,69 @@ impl CrtProfile {
     pub fn params(self) -> CrtParams {
         CrtParams::from_profile(self)
     }
+
+    /// The bulge of the tube's glass, `(kx, ky)` of [`Warp`] at curvature 1: the 14" monitors
+    /// of the CPC (CTM644, GT65) curve both ways, the Trinitron's cylinder only across, the TV the
+    /// most. Eyeballed, not measured.
+    pub fn curvature(self) -> (f32, f32) {
+        match self {
+            CrtProfile::Ctm644 | CrtProfile::Gt65 => (0.025, 0.035),
+            CrtProfile::Trinitron => (0.0, 0.025),
+            CrtProfile::AtariColor => (0.035, 0.045)
+        }
+    }
+}
+
+/// The curved glass of the tube, as the viewer sees the flat picture through it: a barrel warp
+/// of the whole picture (the CRT model's output), with the glass's rounded corners. The same
+/// formula runs on the CPU ([`super::Curved`]) and in the GPU blit (`blit.wgsl`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Warp {
+    /// Horizontal and vertical bulge: a point at (x, y) of [-1, 1]² shows the flat picture's
+    /// `(x (1 + kx y²), y (1 + ky x²))`.
+    pub k: (f32, f32),
+    /// Radius of the glass's corners, in half-sizes of the picture.
+    pub corner: f32
+}
+
+impl Warp {
+    pub const FLAT: Warp = Warp { k: (0.0, 0.0), corner: 0.0 };
+
+    /// The glass of `profile`, its bulge times `scale` (0: flat).
+    pub fn of(profile: CrtProfile, scale: f32) -> Self {
+        if scale <= 0.0 {
+            return Self::FLAT;
+        }
+        let (kx, ky) = profile.curvature();
+        Warp { k: (kx * scale, ky * scale), corner: 0.08 }
+    }
+
+    pub fn is_flat(&self) -> bool {
+        *self == Self::FLAT
+    }
+
+    /// For the point `(u, v)` of the output, in [0, 1]²: the point of the flat picture seen there
+    /// and how much of it, 1 inside the glass, 0 outside and a ramp across its edge, `pixel`
+    /// being an output pixel's size in the same units.
+    pub fn source(&self, u: f32, v: f32, pixel: (f32, f32)) -> (f32, f32, f32) {
+        let (x, y) = (2.0 * u - 1.0, 2.0 * v - 1.0);
+        let wx = x * (1.0 + self.k.0 * y * y);
+        let wy = y * (1.0 + self.k.1 * x * x);
+        let alpha = if self.is_flat() {
+            1.0
+        }
+        else {
+            // distance to the rounded rectangle |w| <= 1 (negative inside), in half-sizes
+            let r = self.corner;
+            let qx = wx.abs() - (1.0 - r);
+            let qy = wy.abs() - (1.0 - r);
+            let outside = qx.max(0.0).hypot(qy.max(0.0));
+            let distance = outside + qx.max(qy).min(0.0) - r;
+            // a pixel is 2 * pixel half-sizes
+            (0.5 - distance / (2.0 * pixel.0.min(pixel.1))).clamp(0.0, 1.0)
+        };
+        ((wx + 1.0) / 2.0, (wy + 1.0) / 2.0, alpha)
+    }
 }
 
 impl FromStr for CrtProfile {

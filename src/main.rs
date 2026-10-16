@@ -100,7 +100,7 @@ fn stop_requested() -> bool {
 
 fn main() {
     let args = parse_args();
-    let mut filter = args.display.filter_on(args.gpu);
+    let mut filter = args.display.filter_on(args.gpu, args.curvature);
     if args.record.is_some() {
         // Only when recording: elsewhere (the interactive monitor) Ctrl+C
         // keeps its usual meaning.
@@ -158,7 +158,7 @@ fn main() {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut(), args.black_level),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu, args.black_level, args.frontend, args.turbo)
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo)
         },
         None if args.debug_server => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
@@ -494,6 +494,7 @@ fn run_window(
     mut server: Option<&mut DebugServer>,
     mut mode: DisplayMode,
     gpu: bool,
+    curvature: f32,
     black_level: u8,
     frontend: FrontendKind,
     mut turbo: bool
@@ -505,7 +506,7 @@ fn run_window(
         },
         #[cfg(feature = "gpu-window")]
         FrontendKind::Winit => {
-            Box::new(frontend::WinitGpuFrontend::open((width, height)).unwrap_or_else(|e| panic!("{e}")))
+            Box::new(frontend::WinitGpuFrontend::open((width, height), curvature).unwrap_or_else(|e| panic!("{e}")))
         },
         #[cfg(not(feature = "gpu-window"))]
         FrontendKind::Winit => panic!("--frontend winit needs a build with --features gpu-window")
@@ -515,7 +516,7 @@ fn run_window(
     let direct = window.direct();
     // ...and then on the CPU: such a frontend draws on the GPU by itself.
     let gpu = gpu && !direct;
-    let mut filter = mode.filter_on(gpu);
+    let mut filter = mode.filter_on(gpu, curvature);
     // Cap redraws (and so input polling and emulated speed) at the CPC's
     // own real refresh rate rather than running full tilt.
     let audio = open_audio(sound, motherboard);
@@ -556,7 +557,7 @@ fn run_window(
         let f9_down = input.down.contains(&HostKey::F9);
         if f9_down && !f9_was_down && recorder.is_none() {
             mode = mode.next();
-            filter = mode.filter_on(gpu);
+            filter = mode.filter_on(gpu, curvature);
             let (width, height) = filter.output_size();
             buffer = vec![0u32; width * height];
             eprintln!("display: {mode:?}");
