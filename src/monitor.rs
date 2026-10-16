@@ -127,7 +127,12 @@ pub struct Monitor {
     vint: i64,
     hsync_color: Rgb<u8>,
     /// Level (0-255) the beam draws a black ink at: see [`Monitor::with_black_level`].
-    black_level: u8
+    black_level: u8,
+    /// The last levels converted (their bits) and their pixel: the levels change far less
+    /// often than every tick.
+    last_levels: Option<([u32; 3], Rgb<u8>)>,
+    /// A frame given back ([`Monitor::recycle`]), drawn next instead of a new one.
+    spare: Option<RgbImage>
 }
 
 impl Default for Monitor {
@@ -163,7 +168,9 @@ impl Monitor {
             vsync_color,
             vint: 0,
             hsync_color,
-            black_level: 0
+            black_level: 0,
+            last_levels: None,
+            spare: None
         }
     }
 
@@ -176,7 +183,29 @@ impl Monitor {
     /// tests and the debug API's pictures rely on.
     pub fn with_black_level(mut self, level: u8) -> Self {
         self.black_level = level;
+        self.last_levels = None;
         self
+    }
+
+    /// Give back a frame of [`Self::take_frame`] that is no longer needed: a later frame is drawn
+    /// in it rather than in a newly allocated one.
+    pub fn recycle(&mut self, frame: RgbImage) {
+        if frame.dimensions() == (MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32) {
+            self.spare = Some(frame);
+        }
+    }
+
+    /// The pixel of `rgb`, the last one's again when the levels did not change.
+    fn pixel(&mut self, rgb: RgbLevels) -> Rgb<u8> {
+        let bits = [rgb.r().to_bits(), rgb.g().to_bits(), rgb.b().to_bits()];
+        match self.last_levels {
+            Some((last, pixel)) if last == bits => pixel,
+            _ => {
+                let pixel = pixel_of(rgb, self.black_level);
+                self.last_levels = Some((bits, pixel));
+                pixel
+            }
+        }
     }
 
     /// Generate a debug monitor that colours vbl and vsync
@@ -374,10 +403,13 @@ impl Monitor {
                 self.hsync_color
             }
             else {
-                pixel_of(rgb, self.black_level)
+                self.pixel(rgb)
             };
             if visible {
-                self.texture.put_pixel(px as u32, y as u32, pixel);
+                // `visible`: inside the texture
+                let at = (y * MONITOR_ACTIVE_PIXELS + px) * 3;
+                let texture: &mut [u8] = &mut self.texture;
+                texture[at..at + 3].copy_from_slice(&pixel.0);
             }
             if let (true, Some(full)) = (in_full, &mut self.full) {
                 full.drawing.put_pixel(self.x as u32, self.line as u32, pixel);
@@ -459,10 +491,14 @@ impl Monitor {
     }
 
     fn end_frame(&mut self) {
-        self.frame = Some(std::mem::replace(
-            &mut self.texture,
-            RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32)
-        ));
+        let next = match self.spare.take() {
+            Some(mut spare) => {
+                spare.fill(0);
+                spare
+            },
+            None => RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32)
+        };
+        self.frame = Some(std::mem::replace(&mut self.texture, next));
         if let Some(full) = &mut self.full {
             // The two buffers swap: the one drawn becomes the last frame,
             // the older one is blanked and drawn next.
