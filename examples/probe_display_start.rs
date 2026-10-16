@@ -48,7 +48,7 @@ fn main() {
             }
             if y == line && (from..to).contains(&px) {
                 println!(
-                    "x={px:4} rgb=({:3.0},{:3.0},{:3.0}) DISPEN={} hsync_ga={} mode={:?} next={:?} rmr={:02x} crtc_hsync={}",
+                    "x={px:4} rgb=({:3.0},{:3.0},{:3.0}) DISPEN={} hsync_ga={} mode={:?} next={:?} rmr={:02x} crtc_hsync={} C0={} crtc_DE={}",
                     rgb.r(),
                     rgb.g(),
                     rgb.b(),
@@ -57,7 +57,9 @@ fn main() {
                     mb.ga().active_video_mode(),
                     mb.ga().next_video_mode(),
                     mb.ga().rmr(),
-                    mb.crtc().hsync() as u8
+                    mb.crtc().hsync() as u8,
+                    mb.crtc().hcc,
+                    mb.crtc().get_pin(amsrust::crtc::CrtcPin::DE) as u8
                 );
             }
         }

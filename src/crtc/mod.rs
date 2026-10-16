@@ -192,6 +192,10 @@ pub struct Crtc {
     /// How many ticks late the running HSYNC rose compared to its C0=R2
     /// character (R2.JIT, ACCC 14.7.1: the monitor sync does not move).
     hsync_late_ticks: u8,
+    /// The HSYNC ended as C0 reached its current value: C0=R2 is not looked at on that character
+    /// (CRTC 0 only, Shaker AT E: R2 moved during the pulse to where it ends does not start another
+    /// one; CRTCs 1-4 start it, AT E and BCOPY A there).
+    hsync_ended_on_char: bool,
     /// Diagnostics: every register write as (C0, C4, C9, register, value).
     write_log: Option<Vec<(u8, u8, u8, u8, u8)>>,
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
@@ -288,6 +292,7 @@ impl Default for Crtc {
             r1_latch: false,
             r1_zero_late: false,
             hsync_late_ticks: 0,
+            hsync_ended_on_char: false,
             write_log: None,
             crtc_vma: 0,
             crtc_vma_prime: 0,
@@ -837,6 +842,7 @@ impl Crtc {
             }
         }
         let hsync_before = self.hsync();
+        self.hsync_ended_on_char = false;
         if self.hsync() {
             // ACCC §14.4: C3l is a 4-bit counter. Lowering R3l below it
             // during HSYNC (R3.JIT) makes it overflow and reach R3l on
@@ -852,6 +858,7 @@ impl Crtc {
             let r3l = self.regs[3] & 0x0f;
             if self.hsc == r3l || (r3l == 0 && self.model.zero_r3_cancels_running_hsync()) {
                 self.off(CrtcPin::HS);
+                self.hsync_ended_on_char = self.crtc_type() == CrtcType::Crtc0;
             }
         }
 
@@ -1199,7 +1206,7 @@ impl Crtc {
         if !self.hsync() && self.early_blank_chars == 0 {
             self.two_wide_pulse = false;
         }
-        if self.hcc == self.regs[2] && !self.hsync() && self.hsync_width().is_some() {
+        if self.hcc == self.regs[2] && !self.hsync() && !self.hsync_ended_on_char && self.hsync_width().is_some() {
             // R3l=2 written just before the pulse (HBL's panel writes R3=2 on C0=R2-1): too late for the
             // early window, the pulse itself is still not blanked
             if self.hsync_is_two_wide() {
