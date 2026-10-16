@@ -296,6 +296,16 @@ impl MotherboardBuilder {
         self
     }
 
+    /// The CRTC chosen (the default one if unset).
+    pub fn crtc(&self) -> CrtcType {
+        self.crtc_type.unwrap_or_default()
+    }
+
+    /// The Gate Array chosen (the default one if unset).
+    pub fn gate_array_type(&self) -> crate::ga::GateArrayType {
+        self.ga_type.unwrap_or_default()
+    }
+
     pub fn build(self) -> Motherboard {
         let crtc_type = self.crtc_type.unwrap_or_default();
 
