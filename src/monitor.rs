@@ -74,6 +74,8 @@ const MONITOR_PULL_MIN: i32 = 10;
 const MONITOR_PULL_DEADZONE: i64 = 6 * 16;
 const MONITOR_PULL_FLAT_LATE: i64 = 422;
 const MONITOR_PULL_END_LATE: i64 = 496;
+/// A second sync up to this far ahead of the line sync still pulls (see `discriminate`).
+const MONITOR_PULL_END_EARLY: i64 = 12 * 16;
 
 const HSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 128, 255]);
 const VSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 64, 255]);
@@ -465,8 +467,15 @@ impl Monitor {
             if after > MONITOR_PULL_DEADZONE && after < MONITOR_PULL_END_LATE {
                 target = -taper(late_pull, after, MONITOR_PULL_FLAT_LATE, MONITOR_PULL_END_LATE);
             }
-            // a second sync BEFORE the line sync does not pull the picture: AMSpiriT shows
-            // no shift for an extra pulse 12 to 28 us ahead (validation/fuzz/gen_pull_probe.py)
+            // a second sync BEFORE the line sync pulls the picture right only when it is close: by
+            // (width - 3) / 5 ticks starting 6 to 12 usec ahead (Shaker D3 B/C/D 8-11, R2=#23/#24 before
+            // the line sync at #2E: 9 and 6 pixels for 3 and 2 usec; a 1 usec one is left alone, D3 D is
+            // half a microsecond off as a whole for another reason), not at all from 12 to 28 usec
+            // ahead (validation/fuzz/gen_pull_probe.py)
+            let before = start as i64 - *other as i64;
+            if target == 0 && before > MONITOR_PULL_DEADZONE && before <= MONITOR_PULL_END_EARLY && *width >= 24 {
+                target = (*width - 3).max(0) / 5;
+            }
         }
         self.shift = self.next_shift;
         if target == 0 {
