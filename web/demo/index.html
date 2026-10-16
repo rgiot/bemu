@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bemu demo</title>
+<style>
+  :root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
+  body { margin: 0 auto; padding: 16px; max-width: 1100px; }
+  #cpc { width: 100%; aspect-ratio: 768 / 544; background: black; border-radius: 6px; }
+  #cpc canvas:focus { outline: 2px solid #4a8; }
+  form, .row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 12px 0; }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+  #drop { border: 2px dashed #888; border-radius: 6px; padding: 12px; text-align: center; }
+  #drop.over { border-color: #4a8; }
+  #shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+  #shots figure { margin: 0; font-size: 12px; } #shots img { width: 100%; }
+  #status { font-family: monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>bemu</h1>
+<div id="cpc"></div>
+
+<form id="config">
+  <label>Model <select name="model"><option>464</option><option>664</option><option selected>6128</option></select></label>
+  <label>CRTC <select name="crtc"><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+  <label>Gate Array <select name="gateArray"><option>40007</option><option>40008</option><option selected>40010</option></select></label>
+  <label>RAM (KB) <select name="ramKb"><option value="">model's</option><option>64</option><option>128</option><option>256</option><option>576</option><option value="4160">4 MB</option></select></label>
+  <label>Disc interface <select name="discInterface"><option value="">model's</option><option value="true">yes</option><option value="false">no</option></select></label>
+  <label>Brand <select name="brand"><option>amstrad</option><option>schneider</option><option>awa</option><option>orion</option></select></label>
+  <label>Display <select name="display"><option>raw</option><option>ctm</option><option>trinitron</option><option>gt65</option><option>atari</option></select></label>
+  <button type="submit">Apply (resets)</button>
+</form>
+
+<div class="row">
+  <button id="start">Start</button><button id="pause">Pause</button><button id="reset">Reset</button>
+  <button id="fullscreen">Fullscreen (F11)</button>
+  <label>Volume <input id="volume" type="range" min="0" max="1" step="0.05" value="1"></label>
+</div>
+
+<div id="drop">
+  Drop .dsk (drive A, or B with Shift), .sna, .csl and the files a script names here, or pick them:
+  <input id="files" type="file" multiple accept=".dsk,.sna,.csl">
+</div>
+<p id="status"></p>
+<div id="shots"></div>
+
+<script type="module">
+import { Bemu } from '../pkg/bemu.js';
+
+const params = new URLSearchParams(location.search);
+const form = document.querySelector('#config');
+const status = (text) => document.querySelector('#status').textContent = text;
+
+// the configuration: the form, set from the URL (?model=464&crtc=1&ga=40010&display=ctm...)
+for (const [key, name] of [['model', 'model'], ['crtc', 'crtc'], ['ga', 'gateArray'], ['ram', 'ramKb'],
+                           ['ddi', 'discInterface'], ['brand', 'brand'], ['display', 'display']]) {
+  if (params.has(key)) form.elements[name].value = params.get(key);
+}
+function config() {
+  const c = {};
+  for (const element of form.elements) {
+    if (!element.name || element.value === '') continue;
+    c[element.name] = ['crtc', 'ramKb'].includes(element.name) ? Number(element.value)
+      : element.name === 'discInterface' ? element.value === 'true' : element.value;
+  }
+  return c;
+}
+
+const emu = await Bemu.create(document.querySelector('#cpc'), config());
+window.emu = emu; // for the console (and the tests)
+emu.on('error', (error) => status(`error: ${error.message ?? error}`));
+emu.on('screenshot', ({ name, png }) => {
+  const figure = document.createElement('figure');
+  const img = document.createElement('img');
+  img.src = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
+  figure.append(img, name);
+  document.querySelector('#shots').append(figure);
+});
+emu.on('csl-done', (report) => status(report.error ? `CSL error: ${report.error}` :
+  `CSL done: ${report.screenshots.length} screenshots, ${(report.elapsedUs / 1e6).toFixed(1)} s emulated` +
+  (report.ignored.length ? `\nnotes:\n  ${report.ignored.join('\n  ')}` : '')));
+
+form.addEventListener('submit', (event) => { event.preventDefault(); emu.configure(config()); });
+form.elements.display.addEventListener('change', () => emu.setDisplay(form.elements.display.value));
+document.querySelector('#start').onclick = () => emu.start();
+document.querySelector('#pause').onclick = () => emu.pause();
+document.querySelector('#reset').onclick = () => emu.reset();
+document.querySelector('#fullscreen').onclick = () => emu.fullscreen();
+document.querySelector('#volume').oninput = (event) => emu.setVolume(Number(event.target.value));
+
+// files: discs and snapshots go in at once, a script plays with all the files given so far
+async function take(files, driveB) {
+  let script = null;
+  for (const file of files) {
+    const name = file.name.toLowerCase();
+    await emu.addFile(file.name, file);
+    if (name.endsWith('.dsk')) await emu.insertDisc(driveB ? 'B' : 'A', file);
+    else if (name.endsWith('.sna')) await emu.loadSnapshot(file);
+    else if (name.endsWith('.csl')) script = file;
+  }
+  if (script) {
+    document.querySelector('#shots').replaceChildren();
+    status(`playing ${script.name}...`);
+    await emu.runCsl(script);
+  }
+  emu.start();
+  emu.canvas.focus();
+}
+document.querySelector('#files').onchange = (event) => take(event.target.files, false).catch((e) => status(e.message));
+const drop = document.querySelector('#drop');
+drop.ondragover = (event) => { event.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = (event) => {
+  event.preventDefault();
+  drop.classList.remove('over');
+  take(event.dataTransfer.files, event.shiftKey).catch((e) => status(e.message));
+};
+
+// files from the URL: ?dsk=URL&dskb=URL&sna=URL&csl=URL&files=URL1,URL2 (named after their URLs)
+try {
+  for (const url of (params.get('files') ?? '').split(',').filter(Boolean)) {
+    await emu.addFile(decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()), url);
+  }
+  if (params.has('dsk')) await emu.insertDisc('A', params.get('dsk'));
+  if (params.has('dskb')) await emu.insertDisc('B', params.get('dskb'));
+  if (params.has('sna')) await emu.loadSnapshot(params.get('sna'));
+  if (params.has('csl')) { status('playing the script...'); await emu.runCsl(params.get('csl')); }
+} catch (error) {
+  status(error.message);
+}
+emu.start();
+status(document.querySelector('#status').textContent || `running on ${emu.backend}; click the screen to type and hear it`);
+</script>
+</body>
+</html>
