@@ -69,10 +69,8 @@ pub trait Chip {
         debug_assert_eq!(pin.count_ones(), 1);
 
         let ref mut buffer = self.pins_buffer_mut().1;
-        *buffer &= pin.not(); // Keep ALL other bits
-        if value {
-            *buffer |= pin; // Set the bit activated
-        }
+        // all the other bits kept, this one set to `value`, without a branch
+        *buffer = (*buffer & pin.not()) | (pin & u64::from(value).wrapping_neg());
     }
 
     fn off(&mut self, pin: Self::PinType) {
@@ -262,10 +260,17 @@ pub fn sync_pins<C1: Chip, C2: Chip, const COUNT: usize>(
 ) {
     //   assert_eq!(pins1.len(), pins2.len());
 
-    use itertools::zip;
-    for (pin1, pin2) in zip(pins1.iter(), pins2.iter()) {
-        chip2.set_pin(*pin2, chip1.get_pin(*pin1));
+    // as `chip2.set_pin(pin2, chip1.get_pin(pin1))` pin by pin, with the pins of each chip read and
+    // written once (millions of times a second: `Motherboard::sync_chips_pins`)
+    let source = chip1.pins_buffer().1;
+    let mut destination = chip2.pins_buffer().1;
+    for (&pin1, &pin2) in pins1.iter().zip(pins2.iter()) {
+        let (pin1, pin2): (u64, u64) = (pin1.into(), pin2.into());
+        debug_assert!(pin1.count_ones() == 1 && pin2.count_ones() == 1);
+        let value = u64::from(source & pin1 != 0);
+        destination = (destination & !pin2) | (pin2 & value.wrapping_neg());
     }
+    chip2.pins_buffer_mut().1 = destination;
 }
 
 #[cfg(test)]
