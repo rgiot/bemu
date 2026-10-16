@@ -583,7 +583,8 @@ impl PixelOrder {
 /// This is this strcuture that has the responsibility to produce the colors
 #[derive(Debug)]
 pub enum PixelAutomata {
-    AvailablePixel(PixelOrder, u8, VideoMode, [Ink; 17]),
+    /// The pixel to produce next, of the byte, in its mode (the pens: the palette is applied later).
+    AvailablePixel(PixelOrder, u8, VideoMode),
     NeedToReadMemory,
 }
 
@@ -594,9 +595,9 @@ impl Default for PixelAutomata {
 }
 
 impl PixelAutomata {
-    /// The new automaton depends on the byte to display, its video mode and the palette
-    pub fn new(b: u8, m: VideoMode, p: [Ink; 17]) -> Self {
-        PixelAutomata::AvailablePixel(PixelOrder::Pixel1, b, m, p)
+    /// The new automaton depends on the byte to display and its video mode
+    pub fn new(b: u8, m: VideoMode) -> Self {
+        PixelAutomata::AvailablePixel(PixelOrder::Pixel1, b, m)
     }
 
     /// Automaton is over when pixel 8 is produced
@@ -609,23 +610,13 @@ impl PixelAutomata {
 
     /// Select the next step (no computation is involved there)
     fn next_state(&mut self) {
-        *self = match self {
-            PixelAutomata::AvailablePixel(s, b, m, p) => {
-                if s.is_last() {
-                    PixelAutomata::NeedToReadMemory
-                } else {
-                    PixelAutomata::AvailablePixel(s.next(), *b, *m, *p)
-                }
+        if let PixelAutomata::AvailablePixel(step, _, _) = self {
+            if step.is_last() {
+                *self = PixelAutomata::NeedToReadMemory;
+            } else {
+                *step = step.next();
             }
-            PixelAutomata::NeedToReadMemory => PixelAutomata::NeedToReadMemory,
         }
-    }
-
-    /// XXX Can only be called in a valid state;
-    pub fn generate_pixel(&mut self, border: bool) -> RgbLevels {
-        let palette = *self.palette().unwrap();
-        let pen = self.generate_pen(border);
-        palette[pen.value() as usize].into()
     }
 
     /// The pen of the next pixel (the automaton advances); the ink it stands for is the palette's business
@@ -647,8 +638,8 @@ impl PixelAutomata {
     }
 
     pub fn get_mode0_pen(&mut self) -> Pen {
-        match (self.step(), self.byte(), self.palette()) {
-            (Some(step), Some(byte), Some(pal)) => {
+        match (self.step(), self.byte()) {
+            (Some(step), Some(byte)) => {
                 let pens = BYTE_TO_MODE0_PENS[byte as usize];
                 match step {
                     PixelOrder::Pixel1
@@ -665,8 +656,8 @@ impl PixelAutomata {
         }
     }
     pub fn get_mode1_pen(&mut self) -> Pen {
-        match (self.step(), self.byte(), self.palette()) {
-            (Some(step), Some(byte), Some(pal)) => {
+        match (self.step(), self.byte()) {
+            (Some(step), Some(byte)) => {
                 let pens = BYTE_TO_MODE1_PENS[byte as usize];
                 match step {
                     PixelOrder::Pixel1 | PixelOrder::Pixel2 => pens.0,
@@ -680,8 +671,8 @@ impl PixelAutomata {
     }
 
     pub fn get_mode2_pen(&mut self) -> Pen {
-        match (self.step(), self.byte(), self.palette()) {
-            (Some(step), Some(byte), Some(pal)) => {
+        match (self.step(), self.byte()) {
+            (Some(step), Some(byte)) => {
                 let pens = BYTE_TO_MODE2_PENS[byte as usize];
                 match step {
                     PixelOrder::Pixel1 => pens.0,
@@ -704,29 +695,21 @@ impl PixelAutomata {
 
     pub fn step(&self) -> Option<&PixelOrder> {
         match self {
-            PixelAutomata::AvailablePixel(s, _, _, _) => Some(s),
+            PixelAutomata::AvailablePixel(s, _, _) => Some(s),
             PixelAutomata::NeedToReadMemory => None,
         }
     }
 
     pub fn mode(&self) -> Option<VideoMode> {
         match self {
-            PixelAutomata::AvailablePixel(_, _, m, _) => Some(*m),
+            PixelAutomata::AvailablePixel(_, _, m) => Some(*m),
             PixelAutomata::NeedToReadMemory => None,
         }
     }
 
     pub fn byte(&self) -> Option<u8> {
         match self {
-            PixelAutomata::AvailablePixel(_, b, _, _) => Some(*b),
-            PixelAutomata::NeedToReadMemory => None,
-        }
-    }
-
-    /// Return the palette needed to display the byte
-    pub fn palette(&self) -> Option<&[Ink; 17]> {
-        match self {
-            PixelAutomata::AvailablePixel(_, _, _, p) => Some(p),
+            PixelAutomata::AvailablePixel(_, b, _) => Some(*b),
             PixelAutomata::NeedToReadMemory => None,
         }
     }
@@ -764,14 +747,14 @@ impl PixelAutomata {
             // ACCC's own tables): nothing was ever missed, so this must
             // stay a pure no-op regardless of what the caller does.
             return match self {
-                PixelAutomata::AvailablePixel(step, byte, mode, palette) => {
-                    PixelAutomata::AvailablePixel(*step, *byte, *mode, *palette)
+                PixelAutomata::AvailablePixel(step, byte, mode) => {
+                    PixelAutomata::AvailablePixel(*step, *byte, *mode)
                 }
                 PixelAutomata::NeedToReadMemory => PixelAutomata::NeedToReadMemory,
             };
         }
         match self {
-            PixelAutomata::AvailablePixel(step, byte, VideoMode::Mode1, palette)
+            PixelAutomata::AvailablePixel(step, byte, VideoMode::Mode1)
                 if *step == PixelOrder::Pixel5 =>
             {
                 // ACCC 9.3.4.3.3 (CRTC 0/1/2): the display resumes on the 4th
@@ -797,15 +780,15 @@ impl PixelAutomata {
                     VideoMode::Mode2 => (bit(5) << 3) | (bit(4) << 2) | (bit(3) << 1) | bit(2),
                     VideoMode::Mode1 => *byte,
                 };
-                PixelAutomata::AvailablePixel(PixelOrder::Pixel5, virtual_byte, new_mode, *palette)
+                PixelAutomata::AvailablePixel(PixelOrder::Pixel5, virtual_byte, new_mode)
             }
-            PixelAutomata::AvailablePixel(step, byte, VideoMode::Mode2, palette) => {
+            PixelAutomata::AvailablePixel(step, byte, VideoMode::Mode2) => {
                 // MODE 2 pixels run one pixel-M2 ahead of the other modes'
                 // (ACCC 9.3.4.3.1: it resumes on the 5th pixel, bit counter 5)
                 let consumed = step.already_generated() + 1;
                 let missed = consumed.saturating_sub(ga_type.reconstruction_lead());
                 if missed == 0 {
-                    return PixelAutomata::AvailablePixel(PixelOrder::Pixel1, *byte, new_mode, *palette);
+                    return PixelAutomata::AvailablePixel(PixelOrder::Pixel1, *byte, new_mode);
                 }
                 let remaining = 8 - missed;
                 let pad_byte = if ga_type.missed_bit_pad() == 1 { 0xFFu8 } else { 0x00u8 };
@@ -816,10 +799,10 @@ impl PixelAutomata {
                 // mode treats the recovered bits "as if they were the 1st
                 // bits of a byte" (§9.3.4.3.1), not a continuation of the
                 // old mode's own pixel count.
-                PixelAutomata::AvailablePixel(PixelOrder::Pixel1, virtual_byte, new_mode, *palette)
+                PixelAutomata::AvailablePixel(PixelOrder::Pixel1, virtual_byte, new_mode)
             }
-            PixelAutomata::AvailablePixel(step, byte, _old_mode, palette) => {
-                PixelAutomata::AvailablePixel(*step, *byte, new_mode, *palette)
+            PixelAutomata::AvailablePixel(step, byte, _old_mode) => {
+                PixelAutomata::AvailablePixel(*step, *byte, new_mode)
             }
             PixelAutomata::NeedToReadMemory => PixelAutomata::NeedToReadMemory,
         }
@@ -1294,12 +1277,7 @@ impl GateArray {
     /// Set the video memory byte that serves the the next 8 RGB signal generation
     pub fn set_memory_byte(&mut self, b: u8) {
         // assert!(self.pixel_automata.is_done()); may be false in tests
-        self.pixel_automata = PixelAutomata::AvailablePixel(
-            PixelOrder::Pixel1,
-            b,
-            self.active_video_mode(),
-            self.palette.clone(),
-        );
+        self.pixel_automata = PixelAutomata::new(b, self.active_video_mode());
     }
 
     pub fn set_ink(&mut self, pen: Pen, ink: Ink) {
@@ -1746,7 +1724,7 @@ mod test {
             7 => PixelOrder::Pixel8,
             _ => unreachable!(),
         };
-        PixelAutomata::AvailablePixel(step, byte, VideoMode::Mode2, [Ink(0); 17])
+        PixelAutomata::AvailablePixel(step, byte, VideoMode::Mode2)
     }
 
     #[test]
@@ -1781,7 +1759,7 @@ mod test {
     #[test]
     fn mode1_to_other_modes_matches_accc_table() {
         let byte = 0b1011_0110u8; // b5=1 b4=1 b3=0 b2=1 b1=1 b0=0
-        let at = || PixelAutomata::AvailablePixel(PixelOrder::Pixel5, byte, VideoMode::Mode1, [Ink(0); 17]);
+        let at = || PixelAutomata::AvailablePixel(PixelOrder::Pixel5, byte, VideoMode::Mode1);
         // MODE 0: colour (pad, b3, b1, b5) = (0,0,1,1) on a 40010, (1,0,1,1) on a 40007/8
         for (ga, pad) in [(GateArrayType::Ga40010, 0u8), (GateArrayType::Ga40007_8, 1u8)] {
             let r = at().reconstruct_for_mode_switch(VideoMode::Mode0, ga);
@@ -1830,7 +1808,7 @@ mod test {
             // because there's nothing to reconstruct: the position itself
             // is what picks the correct still-real "second half" of the
             // byte (e.g. `get_mode0_pen`'s Pixel5-8 branch).
-            let automaton = PixelAutomata::AvailablePixel(PixelOrder::Pixel5, byte, old_mode, [Ink(0); 17]);
+            let automaton = PixelAutomata::AvailablePixel(PixelOrder::Pixel5, byte, old_mode);
             for ga_type in [GateArrayType::Ga40010, GateArrayType::Ga40007_8] {
                 let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode1, ga_type);
                 assert_eq!(reconstructed.byte(), Some(byte));
@@ -2044,8 +2022,9 @@ mod test {
         let pens = BYTE_TO_MODE1_PENS[byte as usize];
         println!("List of pens to use {:?}", &pens);
 
-        let automata_palette = ga.pixel_automata.palette().unwrap();
-        assert_eq!(automata_palette, &palette);
+        // the pens are looked up in the Gate Array's palette
+        let automata_palette = *ga.palette();
+        assert_eq!(automata_palette, palette);
         let inks = [
             automata_palette[pens.0.value() as usize],
             automata_palette[pens.1.value() as usize],
