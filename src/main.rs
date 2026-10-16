@@ -481,6 +481,11 @@ fn run_debug_server(motherboard: &mut Motherboard, server: &mut DebugServer, typ
     }
 }
 
+/// T-states of a CPC frame (312 lines of 64 µs at 4 MHz).
+const FRAME_T_STATES: usize = 312 * 64 * 4;
+/// At full speed, a frame is shown this often (50 a second).
+const FRAME_SHOWN_EVERY: std::time::Duration = std::time::Duration::from_millis(20);
+
 fn run_window(
     motherboard: &mut Motherboard,
     sound: bool,
@@ -586,6 +591,18 @@ fn run_window(
                 continue;
             }
         }
+        // At full speed the frames not shown run without any picture (a quarter faster): one
+        // frame's time, then the next loop. A recording and the debug server see every frame.
+        let unseen = turbo && recorder.is_none() && server.is_none() && last_present.elapsed() < FRAME_SHOWN_EVERY;
+        motherboard.set_video(!unseen);
+        if unseen {
+            let end = motherboard.t_state_counter().value() + FRAME_T_STATES;
+            while motherboard.t_state_counter().value() < end {
+                motherboard.execute_next_opcode_no_video();
+            }
+            motherboard.take_audio_samples();
+            continue;
+        }
         let Some(frame) = run_frame(motherboard, &mut monitor, server.as_deref_mut())
         else {
             continue; // paused mid-frame
@@ -604,7 +621,7 @@ fn run_window(
         }
         if turbo {
             // the sound of a fast-forward is dropped, and only some frames are shown
-            if last_present.elapsed() < std::time::Duration::from_millis(20) {
+            if last_present.elapsed() < FRAME_SHOWN_EVERY {
                 monitor.recycle(frame);
                 continue;
             }

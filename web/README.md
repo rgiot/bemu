@@ -134,8 +134,13 @@ await emu.runCsl('https://example.org/SHAKER-A-0.CSL', { files: { 'shaker27.dsk'
 `setSpeed(speed)`, or the `turboKey` (F10) on the emulator, which toggles full speed:
 - **`1`**: real time, paced as described in "Timing". The only speed with sound.
 - **another factor** (`2`, `4`, `0.5`…): that many times real time, by the browser's clock.
-- **`'max'`**: as fast as the computer can. The page keeps most of each display refresh for
-  the emulation and shows its last frame. Useful to skip a loader or play a CSL script quickly.
+- **`'max'`**: as fast as the computer can. The page gives most of each display refresh to
+  the emulation and shows one frame of it. Useful to skip a loader or play a CSL script quickly.
+
+Above real time, the frames nobody will see run without any picture (the Gate Array makes no
+pixels), about a third faster than shown ones; only the last frame of each refresh is made and
+shown. The machine runs exactly the same either way. A CSL script keeps all its pictures, since
+its screenshots need them.
 
 At any speed but `1` the sound is dropped: it would play late or at the wrong pitch. The
 'stats' event tells how fast it actually runs.

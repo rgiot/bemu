@@ -380,6 +380,12 @@ impl Motherboard {
         &mut self.crtc
     }
 
+    /// Generate the picture (the default), or not: frames nobody sees (a fast-forward) run faster
+    /// without it, with no other difference to the machine. See [`GateArray::set_video`].
+    pub fn set_video(&mut self, on: bool) {
+        self.ga.set_video(on);
+    }
+
     pub fn ga(&self) -> &GateArray {
         &self.ga
     }
@@ -580,7 +586,8 @@ impl Motherboard {
         // The gate array owns the video bus: when its pixel pipeline is
         // empty it fetches the byte at the address the CRTC currently
         // exposes (MA/RA), whatever ROM is overlaid for the CPU.
-        if self.ga.need_memory_byte() {
+        // (no picture, no fetch: see `set_video`)
+        if self.ga.video() && self.ga.need_memory_byte() {
             let address = self
                 .ga
                 .video_fetch_address(self.crtc.get_address_from_pins());
@@ -1907,6 +1914,22 @@ mod test {
 #[cfg(test)]
 mod model_test {
     use super::*;
+
+    /// Without the picture ([`Motherboard::set_video`]) the machine runs exactly as with it:
+    /// the same CPU state and memory after 2 s from the boot, only no pixels made.
+    #[test]
+    fn a_machine_without_picture_runs_as_with_it() {
+        let run = |video: bool| {
+            let mut mb = MotherboardBuilder::default().enable_interruptions().build();
+            mb.set_video(video);
+            while mb.t_state_counter().value() < 8_000_000 {
+                mb.execute_next_opcode_no_video();
+            }
+            let memory: Vec<u8> = (0..=0xffffu16).map(|addr| mb.read_byte(addr)).collect();
+            (mb.t_state_counter().value(), mb.pc(), mb.cpu().af(), mb.cpu().hl(), mb.cpu().sp(), memory)
+        };
+        assert!(run(true) == run(false));
+    }
 
     /// LD BC,&7FC4: OUT (C),C - then write 0x42 at &4000.
     fn bank_and_write(model: CpcModel, extra_pages: Option<usize>) -> Motherboard {
