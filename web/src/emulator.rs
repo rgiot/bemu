@@ -23,7 +23,9 @@ use crate::gfx::Gfx;
 use crate::keys;
 
 /// T-states after which a frame is given up (a machine that never synchronises): two frames.
-const MAX_FRAME_T_STATES: usize = 2 * 79_872;
+const MAX_FRAME_T_STATES: usize = 2 * FRAME_T_STATES;
+/// T-states of a CPC frame: 312 lines of 64 µs at 4 MHz.
+const FRAME_T_STATES: usize = 312 * 64 * 4;
 /// T-states a CSL script plays between two looks at the frame it may have completed.
 const CSL_SLICE_T_STATES: usize = 20_000;
 
@@ -225,6 +227,24 @@ impl Emulator {
         Ok(())
     }
 
+    /// Run the machine for a frame's time without any picture: a frame nobody will see (above real
+    /// time, all but the last frame of a refresh), about a quarter faster. A CSL script keeps its
+    /// picture (its screenshots need it).
+    pub fn advance_frame_unseen(&mut self) -> Result<(), JsError> {
+        if self.csl.is_some() {
+            return self.advance_frame();
+        }
+        self.apply_keyboard();
+        self.motherboard.set_video(false);
+        let end = self.motherboard.t_state_counter().value() + FRAME_T_STATES;
+        while self.motherboard.t_state_counter().value() < end {
+            self.motherboard.execute_next_opcode_no_video();
+        }
+        self.motherboard.set_video(true);
+        self.frames += 1;
+        Ok(())
+    }
+
     /// Frames the machine produced since it was created (for the page's speed figures).
     pub fn frame_count(&self) -> f64 {
         self.frames as f64
@@ -360,11 +380,7 @@ impl Emulator {
 
     /// The page's machine, with the host keyboard, to its next frame.
     fn free_frame(&mut self) {
-        let input = HostInput {
-            down: self.held.values().copied().collect(),
-            typed: std::mem::take(&mut self.typed)
-        };
-        self.keyboard.apply(&mut self.motherboard, &input);
+        self.apply_keyboard();
         let start = self.motherboard.t_state_counter().value();
         loop {
             let monitor = &mut self.monitor;
@@ -381,6 +397,17 @@ impl Emulator {
                 return;
             }
         }
+    }
+}
+
+impl Emulator {
+    /// The host keyboard to the page's machine, once a frame.
+    fn apply_keyboard(&mut self) {
+        let input = HostInput {
+            down: self.held.values().copied().collect(),
+            typed: std::mem::take(&mut self.typed)
+        };
+        self.keyboard.apply(&mut self.motherboard, &input);
     }
 }
 

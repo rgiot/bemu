@@ -357,9 +357,14 @@ export class Bemu {
         if (this.#audio) this.#audio.gain.gain.value = this.#muted ? 0 : this.#volume;
     }
 
-    /** A frame emulated, not drawn; its sound queued at real time, dropped otherwise. */
-    #runFrame() {
-        this.#core.advance_frame();
+    /**
+     * A frame emulated, not drawn; its sound queued at real time, dropped otherwise. `unseen`: no
+     * frame of it is shown (above real time, all but the last of a refresh), it runs without
+     * any picture.
+     */
+    #runFrame(unseen = false) {
+        if (unseen) this.#core.advance_frame_unseen();
+        else this.#core.advance_frame();
         this.#stats.frames++;
         const audio = this.#audio;
         if (!audio) return;
@@ -382,9 +387,10 @@ export class Bemu {
             this.#emitStats(time);
             const budget = Math.min(Math.max(elapsed * BUSY_SHARE, BUSY_MIN_MS), BUSY_MAX_MS);
             if (this.#speed === Infinity) {
-                // full speed: frames for most of the refresh, the last one shown
+                // full speed: frames without picture for most of the refresh, then one shown
                 const start = performance.now();
-                do this.#runFrame(); while (performance.now() - start < budget);
+                while (performance.now() - start < budget) this.#runFrame(true);
+                this.#runFrame();
                 this.#core.redraw();
                 return;
             }
@@ -392,7 +398,11 @@ export class Bemu {
                 // n times real time, by the browser's clock
                 this.#owed = Math.min(this.#owed + elapsed * this.#speed, 4 * this.#speed * FRAME_MS);
                 const start = performance.now();
-                while (this.#owed >= FRAME_MS && performance.now() - start < budget) {
+                while (this.#owed >= 2 * FRAME_MS && performance.now() - start < budget) {
+                    this.#runFrame(true);
+                    this.#owed -= FRAME_MS;
+                }
+                if (this.#owed >= FRAME_MS) {
                     this.#runFrame();
                     this.#owed -= FRAME_MS;
                 }
