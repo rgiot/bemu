@@ -1,31 +1,37 @@
 //! The last values of a signal, for the per-tick delay lines of the chips.
 
+/// Slots of every history: a power of two, so that the index wraps with a mask (no branch, no
+/// bounds check), at least the longest history (22 ticks of palette lookup).
+const SLOTS: usize = 32;
+
 /// The last `N` values pushed, newest first ([`Self::get`] by age). A push moves an index, not
 /// the values: rotating the arrays a tick at a time took a fifth of the emulation's time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct History<T, const N: usize> {
-    values: [T; N],
+    values: [T; SLOTS],
     /// Index of the newest value.
     newest: usize
 }
 
 impl<T: Copy, const N: usize> History<T, N> {
+    const FITS: () = assert!(N > 0 && N <= SLOTS, "a history longer than SLOTS");
+
     /// A history of `N` times `value`.
     pub fn new(value: T) -> Self {
-        Self { values: [value; N], newest: 0 }
+        let () = Self::FITS;
+        Self { values: [value; SLOTS], newest: 0 }
     }
 
     /// `value` is the newest; the oldest goes.
     pub fn push(&mut self, value: T) {
-        self.newest = if self.newest == 0 { N - 1 } else { self.newest - 1 };
+        self.newest = self.newest.wrapping_sub(1) & (SLOTS - 1);
         self.values[self.newest] = value;
     }
 
     /// The value pushed `age` pushes ago (0: the newest), `age < N`.
     pub fn get(&self, age: usize) -> T {
         debug_assert!(age < N);
-        let index = self.newest + age;
-        self.values[if index >= N { index - N } else { index }]
+        self.values[(self.newest + age) & (SLOTS - 1)]
     }
 
     /// The value of the delay line of `N` ticks: what was pushed `N` pushes ago, then `value` is
