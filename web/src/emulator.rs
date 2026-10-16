@@ -240,7 +240,8 @@ impl Emulator {
 
 /// What a step of the script gave.
 enum Step {
-    Frame(RgbImage),
+    /// A frame completed: `CslRunner::last_frame`.
+    Frame,
     Done(Result<CslReport, String>),
     Nothing
 }
@@ -250,7 +251,7 @@ fn runner_frame(runner: &mut CslRunner) -> Step {
     let mut played = 0;
     while played < MAX_FRAME_T_STATES {
         match runner.advance(CSL_SLICE_T_STATES) {
-            Ok(Progress::Frame) => return Step::Frame(runner.last_frame().cloned().unwrap_or_default()),
+            Ok(Progress::Frame) => return Step::Frame,
             Ok(Progress::Running) => played += CSL_SLICE_T_STATES,
             Ok(Progress::Done(report)) => return Step::Done(Ok(report)),
             Err(e) => return Step::Done(Err(e))
@@ -290,7 +291,15 @@ impl Emulator {
 
     fn csl_frame(&mut self, step: Step) -> Result<(), JsError> {
         match step {
-            Step::Frame(frame) => self.frame = Some(frame),
+            Step::Frame => {
+                // the script's frame, copied in the one already allocated
+                if let Some(source) = self.csl.as_ref().and_then(CslRunner::last_frame) {
+                    match &mut self.frame {
+                        Some(frame) if frame.dimensions() == source.dimensions() => frame.copy_from_slice(source),
+                        frame => *frame = Some(source.clone())
+                    }
+                }
+            },
             Step::Nothing => {},
             Step::Done(result) => {
                 let mut runner = self.csl.take().expect("a script plays");
@@ -323,7 +332,10 @@ impl Emulator {
             let monitor = &mut self.monitor;
             self.motherboard.execute_next_opcode_with_video(|(rgb, sync)| monitor.receive(rgb, sync));
             if let Some(frame) = self.monitor.take_frame() {
-                self.frame = Some(frame);
+                // the previous frame is drawn in next
+                if let Some(previous) = self.frame.replace(frame) {
+                    self.monitor.recycle(previous);
+                }
                 return;
             }
             if self.motherboard.t_state_counter().value().wrapping_sub(start) > MAX_FRAME_T_STATES {
