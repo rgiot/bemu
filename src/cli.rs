@@ -45,6 +45,8 @@ pub struct Args {
     pub display: DisplayMode,
     /// Render the CRT on the GPU (needs the `crt-gpu` feature).
     pub gpu: bool,
+    /// How curved a CRT's glass is, times its profile's bulge (0: flat).
+    pub curvature: f32,
     pub frontend: FrontendKind,
     /// Gate Array fitted, if not the default (40010).
     pub gate_array: Option<amsrust::ga::GateArrayType>,
@@ -76,6 +78,7 @@ pub fn parse_args() -> Args {
         type_at: 3.0,
         display: DisplayMode::default(),
         gpu: false,
+        curvature: 1.0,
         frontend: FrontendKind::Minifb,
         gate_array: None,
         black_level: DEFAULT_BLACK_LEVEL
@@ -142,6 +145,13 @@ pub fn parse_args() -> Args {
                 }
             },
             "--crt-gpu" => args.gpu = true,
+            "--curvature" => {
+                args.curvature = next("--curvature")
+                    .parse()
+                    .ok()
+                    .filter(|c: &f32| (0.0..=4.0).contains(c))
+                    .unwrap_or_else(|| panic!("--curvature must be a number from 0 (flat) to 4"))
+            },
             "--display" => {
                 args.display = next("--display").parse().unwrap_or_else(|e: String| panic!("--display: {e}"))
             },
@@ -166,7 +176,7 @@ fn print_help() {
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]]\n",
-        "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu]]\n",
+        "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
         "--model picks the ROMs (default 6128). The 464 and 664 have 64K and the\n",
@@ -191,7 +201,9 @@ fn print_help() {
         "recording and the screenshots (raw: the monitor's ideal picture; ctm,\n",
         "trinitron, gt65, atari: CRT approximations). F9 cycles them in the\n",
         "window (not while recording). --crt-gpu renders them on the GPU (a build\n",
-        "with --features crt-gpu). --black-level (default 8) is what a black ink is\n",
+        "with --features crt-gpu). The CRTs are seen through their curved glass:\n",
+        "--curvature scales its bulge (default 1, 0 for a flat picture).\n",
+        "--black-level (default 8) is what a black ink is\n",
         "drawn at: on a real tube it is a dark grey, blanking and sync being\n",
         "blacker (0); without the debug server, whose pictures stay exact.\n",
         "--frontend winit (a build with --features gpu-window) opens a window the\n",

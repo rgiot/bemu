@@ -167,6 +167,12 @@ export class Bemu {
         if (!this.#running) this.#safely(() => this.#core.redraw());
     }
 
+    /** How curved a CRT's glass is, times its profile's bulge: 0 (flat) to 4, 1 by default. */
+    setCurvature(curvature) {
+        this.#core.set_curvature(curvature);
+        if (!this.#running) this.#safely(() => this.#core.redraw());
+    }
+
     /** A DSK image in drive 'A' or 'B', from a URL, a File/Blob or bytes. */
     async insertDisc(drive, source) { this.#core.insert_disc(driveNumber(drive), await bytesOf(source)); }
     eject(drive) { this.#core.eject(driveNumber(drive)); }

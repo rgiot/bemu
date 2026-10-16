@@ -35,6 +35,8 @@ type Callback = Rc<RefCell<Option<Function>>>;
 pub struct Emulator {
     config: Config,
     display: DisplayMode,
+    /// See `Config::curvature`.
+    curvature: f32,
     gfx: Gfx,
     /// The machine, when no script plays it.
     motherboard: Motherboard,
@@ -67,12 +69,14 @@ impl Emulator {
         console_error_panic_hook::set_once();
         let config = Config::from_js(config).map_err(|e| JsError::new(&e))?;
         let display = config.display().map_err(|e| JsError::new(&e))?;
+        let curvature = config.curvature().map_err(|e| JsError::new(&e))?;
         let motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
         let gfx = Gfx::new(canvas, webgpu).await.map_err(|e| JsError::new(&e))?;
         Ok(Emulator {
             monitor: Monitor::default().with_black_level(config.black_level()),
             config,
             display,
+            curvature,
             gfx,
             motherboard,
             frame: None,
@@ -98,9 +102,11 @@ impl Emulator {
     pub fn configure(&mut self, config: JsValue) -> Result<(), JsError> {
         let config = Config::from_js(config).map_err(|e| JsError::new(&e))?;
         let display = config.display().map_err(|e| JsError::new(&e))?;
+        let curvature = config.curvature().map_err(|e| JsError::new(&e))?;
         let motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
         self.config = config;
         self.display = display;
+        self.curvature = curvature;
         self.csl = None;
         self.replace_machine(motherboard);
         Ok(())
@@ -118,6 +124,14 @@ impl Emulator {
     pub fn set_display(&mut self, name: &str) -> Result<(), JsError> {
         self.display = name.parse().map_err(|e: String| JsError::new(&e))?;
         self.config.display = Some(name.to_owned());
+        Ok(())
+    }
+
+    /// How curved a CRT's glass is, times its profile's bulge: 0 (flat) to 4 (WebGPU only).
+    pub fn set_curvature(&mut self, curvature: f32) -> Result<(), JsError> {
+        let config = Config { curvature: Some(curvature), ..self.config.clone() };
+        self.curvature = config.curvature().map_err(|e| JsError::new(&e))?;
+        self.config = config;
         Ok(())
     }
 
@@ -278,7 +292,7 @@ impl Emulator {
     /// Show the last frame again.
     pub fn redraw(&mut self) -> Result<(), JsError> {
         if let Some(frame) = &self.frame {
-            self.gfx.show(frame, self.display).map_err(|e| JsError::new(&e))?;
+            self.gfx.show(frame, self.display, self.curvature).map_err(|e| JsError::new(&e))?;
         }
         Ok(())
     }
