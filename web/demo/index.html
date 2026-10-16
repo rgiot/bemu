@@ -37,6 +37,17 @@
   <button id="start">Start</button><button id="pause">Pause</button><button id="reset">Reset</button>
   <button id="fullscreen">Fullscreen (F11)</button>
   <label>Volume <input id="volume" type="range" min="0" max="1" step="0.05" value="1"></label>
+  <label><input id="mute" type="checkbox"> Mute</label>
+</div>
+<div class="row">
+  <label>Speed <select id="speed"><option value="1">real time</option><option value="2">2&times;</option>
+    <option value="4">4&times;</option><option value="max">full (F10)</option></select></label>
+  <button id="step" title="one frame, while paused">Step frame</button>
+  <span id="stats"></span>
+</div>
+<div class="row">
+  <input id="text" placeholder="text to type, e.g. cat" size="30"> <button id="type">Type it</button>
+  <button id="shot">Screenshot</button> <button id="saveA">Save disc A</button>
 </div>
 
 <div id="drop">
@@ -89,6 +100,32 @@ document.querySelector('#pause').onclick = () => emu.pause();
 document.querySelector('#reset').onclick = () => emu.reset();
 document.querySelector('#fullscreen').onclick = () => emu.fullscreen();
 document.querySelector('#volume').oninput = (event) => emu.setVolume(Number(event.target.value));
+document.querySelector('#mute').onchange = (event) => emu.setMuted(event.target.checked);
+const speed = document.querySelector('#speed');
+speed.onchange = () => { emu.setSpeed(speed.value); emu.canvas.focus(); };
+document.querySelector('#step').onclick = () => emu.stepFrame();
+emu.on('stats', ({ fps, speed: times }) =>
+  document.querySelector('#stats').textContent = `${fps.toFixed(1)} frames/s, ${times.toFixed(2)}\u00d7 real time`);
+document.querySelector('#type').onclick = () => {
+  emu.typeText(document.querySelector('#text').value + '\n');
+  emu.canvas.focus();
+};
+function download(bytes, name, type) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([bytes], { type }));
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+document.querySelector('#shot').onclick = () => {
+  const png = emu.screenshot();
+  if (png) download(png, 'bemu.png', 'image/png');
+};
+document.querySelector('#saveA').onclick = () => {
+  const dsk = emu.getDisc('A');
+  if (dsk) download(dsk, 'disc-a.dsk', 'application/octet-stream');
+  else status('no disc in drive A');
+};
 
 // files: discs and snapshots go in at once, a script plays with all the files given so far
 async function take(files, driveB) {

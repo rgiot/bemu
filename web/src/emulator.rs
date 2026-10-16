@@ -23,7 +23,9 @@ use crate::gfx::Gfx;
 use crate::keys;
 
 /// T-states after which a frame is given up (a machine that never synchronises): two frames.
-const MAX_FRAME_T_STATES: usize = 2 * 79_872;
+const MAX_FRAME_T_STATES: usize = 2 * FRAME_T_STATES;
+/// T-states of a CPC frame: 312 lines of 64 µs at 4 MHz.
+const FRAME_T_STATES: usize = 312 * 64 * 4;
 /// T-states a CSL script plays between two looks at the frame it may have completed.
 const CSL_SLICE_T_STATES: usize = 20_000;
 
@@ -51,7 +53,9 @@ pub struct Emulator {
     /// Keys held, by physical key (`KeyboardEvent.code`), so that a release matches its press
     /// whatever the modifiers made of the key meanwhile.
     held: HashMap<String, HostKey>,
-    typed: Vec<char>
+    typed: Vec<char>,
+    /// Frames completed, see [`Self::frame_count`].
+    frames: u64
 }
 
 #[wasm_bindgen]
@@ -80,7 +84,8 @@ impl Emulator {
             audio_rate: None,
             keyboard: HostKeyboard::default(),
             held: HashMap::new(),
-            typed: Vec::new()
+            typed: Vec::new(),
+            frames: 0
         })
     }
 
@@ -207,15 +212,67 @@ impl Emulator {
 
     /// Run the machine to its next frame, and show it.
     pub fn run_frame(&mut self) -> Result<(), JsError> {
+        self.advance_frame()?;
+        self.redraw()
+    }
+
+    /// Run the machine to its next frame without showing it ([`Self::redraw`] shows the last
+    /// one): several frames a refresh, at more than real time, only the last needs drawing.
+    pub fn advance_frame(&mut self) -> Result<(), JsError> {
         let step = self.csl.as_mut().map(runner_frame);
         match step {
             Some(step) => self.csl_frame(step)?,
             None => self.free_frame()
         }
-        if let Some(frame) = &self.frame {
-            self.gfx.show(frame, self.display).map_err(|e| JsError::new(&e))?;
-        }
         Ok(())
+    }
+
+    /// Run the machine for a frame's time without any picture: a frame nobody will see (above real
+    /// time, all but the last frame of a refresh), about a quarter faster. A CSL script keeps its
+    /// picture (its screenshots need it).
+    pub fn advance_frame_unseen(&mut self) -> Result<(), JsError> {
+        if self.csl.is_some() {
+            return self.advance_frame();
+        }
+        self.apply_keyboard();
+        self.motherboard.set_video(false);
+        let end = self.motherboard.t_state_counter().value() + FRAME_T_STATES;
+        while self.motherboard.t_state_counter().value() < end {
+            self.motherboard.execute_next_opcode_no_video();
+        }
+        self.motherboard.set_video(true);
+        self.frames += 1;
+        Ok(())
+    }
+
+    /// Frames the machine produced since it was created (for the page's speed figures).
+    pub fn frame_count(&self) -> f64 {
+        self.frames as f64
+    }
+
+    /// Type `text` on the keyboard, a character after the other as the host's typed characters
+    /// are (`\n` is RETURN). Not while a CSL script plays: the keyboard is the script's.
+    pub fn type_text(&mut self, text: &str) {
+        self.typed.extend(text.chars().filter(|&c| c != '\r'));
+    }
+
+    /// The last frame, as a PNG file of the monitor's picture (768x272, raw); none before the
+    /// first frame.
+    pub fn screenshot(&self) -> Result<Option<Vec<u8>>, JsError> {
+        let Some(frame) = &self.frame else {
+            return Ok(None);
+        };
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(frame.clone())
+            .write_to(&mut png, image::ImageOutputFormat::Png)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(Some(png))
+    }
+
+    /// The DSK image in drive 0 (A) or 1 (B), as the machine has written it; none if empty.
+    pub fn disc_image(&self, drive: u8) -> Option<Vec<u8>> {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        machine.fdc().image(fdc_drive(usize::from(drive.min(1)))).map(DiscImage::to_bytes)
     }
 
     /// Show the last frame again.
@@ -292,6 +349,7 @@ impl Emulator {
     fn csl_frame(&mut self, step: Step) -> Result<(), JsError> {
         match step {
             Step::Frame => {
+                self.frames += 1;
                 // the script's frame, copied in the one already allocated
                 if let Some(source) = self.csl.as_ref().and_then(CslRunner::last_frame) {
                     match &mut self.frame {
@@ -322,16 +380,13 @@ impl Emulator {
 
     /// The page's machine, with the host keyboard, to its next frame.
     fn free_frame(&mut self) {
-        let input = HostInput {
-            down: self.held.values().copied().collect(),
-            typed: std::mem::take(&mut self.typed)
-        };
-        self.keyboard.apply(&mut self.motherboard, &input);
+        self.apply_keyboard();
         let start = self.motherboard.t_state_counter().value();
         loop {
             let monitor = &mut self.monitor;
             self.motherboard.execute_next_opcode_with_video(|(rgb, sync)| monitor.receive(rgb, sync));
             if let Some(frame) = self.monitor.take_frame() {
+                self.frames += 1;
                 // the previous frame is drawn in next
                 if let Some(previous) = self.frame.replace(frame) {
                     self.monitor.recycle(previous);
@@ -342,6 +397,17 @@ impl Emulator {
                 return;
             }
         }
+    }
+}
+
+impl Emulator {
+    /// The host keyboard to the page's machine, once a frame.
+    fn apply_keyboard(&mut self) {
+        let input = HostInput {
+            down: self.held.values().copied().collect(),
+            typed: std::mem::take(&mut self.typed)
+        };
+        self.keyboard.apply(&mut self.motherboard, &input);
     }
 }
 

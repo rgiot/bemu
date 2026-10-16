@@ -14,12 +14,15 @@ fn main() {
     let options: Vec<String> = args.collect();
     let audio = options.iter().any(|o| o == "audio").then(|| AudioConfig::stereo(48_000));
     let video = options.iter().any(|o| o == "video");
+    // `dark`: no picture at all, the Gate Array's pixels included (a fast-forward)
+    let dark = options.iter().any(|o| o == "dark");
     let mut monitor = Monitor::default();
     let mut frames = 0usize;
 
     let start = Instant::now();
     let mut motherboard = MotherboardBuilder::default().enable_interruptions().build();
     motherboard.set_audio_output(audio);
+    motherboard.set_video(!dark);
     println!("build: {:.2}s", start.elapsed().as_secs_f64());
     for second in 0..seconds {
         let start = Instant::now();

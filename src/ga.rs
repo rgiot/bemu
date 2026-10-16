@@ -991,6 +991,8 @@ pub struct GateArray {
     monitor_hsync_advance: usize,
     /// R3l=2 right now (CRTC 0): the HSYNC-GA period is too short for the monitor; see `MODE_LATCH_TWO_WIDE_TICKS`
     crtc_hsync_two_wide: bool,
+    /// The pixels are generated (see [`GateArray::set_video`]).
+    video: bool,
     /// blanking window of an R3l=2 HSYNC (see `Crtc::hsync_blank_window`), as the GA sees it
     blank_window: Option<bool>,
     blank_pipe: History<Option<bool>, HSYNC_GA_DELAY_TICKS>,
@@ -1066,6 +1068,7 @@ impl Default for GateArray {
             hsync_ends: 0,
             monitor_hsync_advance: 0,
             crtc_hsync_two_wide: false,
+            video: true,
             blank_window: None,
             blank_pipe: History::new(None),
             shown_previous: Shown::Black,
@@ -1141,6 +1144,19 @@ impl WriteDataChip for GateArray {}
 impl GateArray {
     pub fn palette(&self) -> &[Ink; 17] {
         &self.palette
+    }
+
+    /// Generate the pixels (the default), or not, for frames nobody sees (a fast-forward): the
+    /// RGB output is then black. Everything else (sync, interrupts, modes, palette) goes on.
+    pub fn video(&self) -> bool {
+        self.video
+    }
+
+    pub fn set_video(&mut self, on: bool) {
+        self.video = on;
+        if !on {
+            self.rgb = (0., 0., 0.).into();
+        }
     }
     /// Gate array works at 16Mhz and divide it to generate signals for other chips.
     /// CPU is at 4 Mhz
@@ -1655,8 +1671,10 @@ impl Chip for GateArray {
                 self.ack_countdown = Some(left - 1);
             }
         }
-       
-        self.generate_pixel();
+
+        if self.video {
+            self.generate_pixel();
+        }
         self.generate_sync();
     }
 
