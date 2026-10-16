@@ -56,7 +56,7 @@ def ams_timing(text):
 def names(module):
     manifest = json.loads((SHAKER / "shakerland_manifest.json").read_text())
     return {
-        int(s["hex"], 16): f"{t['id']}_CRTC{{crtc}}_{s['subTest']}"
+        int(s["hex"], 16): f"{t['id']}_CRTC{{crtc}}_" + (f"{s['subfolder']}_" if s.get("subfolder") else "") + s["subTest"]
         for t in manifest["tests"] if t["module"] == module for s in t["subtests"]
     }
 
