@@ -979,6 +979,21 @@ pub struct GateArray {
     ga_type: GateArrayType,
 
     vsync_counter: VSyncCounter,
+    /// ACCC 16.2.3's V26: HSYNC ends counted since the CRTC's VSYNC rose (`None` once 26 is reached). The
+    /// Gate Array, not the CRTC, times the vertical sync: black from the VSYNC start until the 26th HSYNC
+    /// ends, the C-VSYNC for the monitor from the end of the 2nd HSYNC to the end of the 6th, whatever
+    /// the length of the CRTC's VSYNC (a new one starts the count again).
+    v26: Option<u8>,
+    /// The CRTC's HSYNC ended when its VSYNC rose (an HSYNC up to C0=R0): the Gate Array hears of that
+    /// end a few ticks later, but it does not count in V26 (AMSpiriT: R2+R3l=64 does not move the
+    /// picture; only an HSYNC running past C0=0 does, ACCC 16.2.2).
+    v26_ignores_next_end: bool,
+    /// C-VSYNC (ACCC's SIG_GA_VSYNC).
+    c_vsync: bool,
+    /// The black of the VSYNC (ACCC's CBLACK_VSYNC).
+    vsync_black: bool,
+    /// CRTCs 3 and 4 (the ASICs): the C-VSYNC is only sent while the CRTC's VSYNC is still active (ACCC 16.2.5).
+    c_vsync_needs_crtc_vsync: bool,
     /// HSYNC ends to wait after a VSYNC start before the R52 sync: 2, or 1
     /// when the VSYNC rises inside an HSYNC with R52 above 50.
     vsync_sync_hsyncs: usize,
@@ -1057,6 +1072,11 @@ impl Default for GateArray {
             ga_type: GateArrayType::default(),
 
             vsync_counter: VSyncCounter::NoVsync,
+            v26: None,
+            v26_ignores_next_end: false,
+            c_vsync: false,
+            vsync_black: false,
+            c_vsync_needs_crtc_vsync: false,
             vsync_sync_hsyncs: 2,
             vsync_ignores_next_end: false,
             hsync_counter: HSyncCounter::NoHsync,
@@ -1350,7 +1370,7 @@ impl GateArray {
             // HSYNC-GA's own blanking does not
             self.blank_ring.push(self.blank_window);
             let blank = self.blank_ring.get(BLANK_DELAY_TICKS).unwrap_or(self.hsync_ga);
-            if blank || self.get_pin(GateArrayPin::VSYNC) {
+            if blank || self.vsync_black {
                 Shown::Black
             } else {
                 pixel
@@ -1376,7 +1396,7 @@ impl GateArray {
         };
 
         self.sync = Sync {
-            vsync: self.get_pin(GateArrayPin::VSYNC),
+            vsync: self.c_vsync && (!self.c_vsync_needs_crtc_vsync || self.get_pin(GateArrayPin::VSYNC)),
             hsync,
         }
     }
@@ -1391,6 +1411,24 @@ impl GateArray {
             HSyncCounter::NoHsync => 0,
         };
         self.hsync_counter = HSyncCounter::NoHsync;
+
+        if std::mem::take(&mut self.v26_ignores_next_end) {
+            // an HSYNC the CRTC ended before its VSYNC rose (see the flag)
+        }
+        else if let Some(count) = self.v26 {
+            let count = count + 1;
+            match count {
+                2 => self.c_vsync = true,
+                6 => self.c_vsync = false,
+                _ => {}
+            }
+            if count >= 26 {
+                self.vsync_black = false;
+                self.v26 = None;
+            } else {
+                self.v26 = Some(count);
+            }
+        }
 
         // the mode is normally taken when the HSYNC-GA period ends: here only
         // if the 6 usec cap was not reached first (see `latch_mode`)
@@ -1508,6 +1546,11 @@ impl GateArray {
         self.ga_type = ga_type;
     }
 
+    /// CRTCs 3 and 4: the C-VSYNC also needs the CRTC's VSYNC (see `c_vsync_needs_crtc_vsync`).
+    pub fn set_c_vsync_needs_crtc_vsync(&mut self, needs: bool) {
+        self.c_vsync_needs_crtc_vsync = needs;
+    }
+
     pub fn r52(&self) -> u8 {
         *self.r52.deref()
     }
@@ -1555,6 +1598,9 @@ impl Chip for GateArray {
         if self.is_upfront(GateArrayPin::VSYNC) {
             //vsync occured
             self.vsync_counter = VSyncCounter::VSync(0);
+            self.v26 = Some(0);
+            self.vsync_black = true;
+            self.v26_ignores_next_end = !self.get_pin(GateArrayPin::HSYNC) && self.hsync_ga;
             let pin_active = self.get_pin(GateArrayPin::HSYNC);
             self.vsync_sync_hsyncs = if pin_active && self.r52.deref() > &50 { 1 } else { 2 };
             self.vsync_ignores_next_end = !pin_active && self.hsync_ga;

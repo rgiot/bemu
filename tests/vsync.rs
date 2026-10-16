@@ -31,31 +31,38 @@ fn test_crtc_vsync_distribution() {
 
 }
 
+/// The monitor's C-VSYNC is the Gate Array's (ACCC 16.2.3): it begins at the end of the 2nd HSYNC of
+/// the CRTC's VSYNC and ends at the end of the 6th, while the CRTC's VSYNC (16 lines) goes on.
 #[test]
 fn test_ga_vsync_generation() {
-		// build a CPC that only execute NOP
-		let mut motherboard = MotherboardBuilder::default()
+	let mut motherboard = MotherboardBuilder::default()
 		.disable_lower_rom()
-		.disable_upper_rom()	
+		.disable_upper_rom()
 		.build();
-;
-
 
 	while !motherboard.crtc().vsync() {
 		motherboard.tick();
 	}
-
-	let res = motherboard.tick();
-	assert!(res.1.vsync);
-
-
+	let mut hsync_ends = 0;
+	let mut hsync_before = motherboard.crtc().hsync();
+	let mut c_vsync_seen = Vec::new();
 	while motherboard.crtc().vsync() {
-		motherboard.tick();
+		let (_, sync) = motherboard.tick();
+		let hsync = motherboard.crtc().hsync();
+		if hsync_before && !hsync {
+			hsync_ends += 1;
+		}
+		hsync_before = hsync;
+		c_vsync_seen.push((hsync_ends, sync.vsync));
 	}
-
-	let res = motherboard.tick();
-	assert!(!res.1.vsync);
-
+	for (ends, c_vsync) in c_vsync_seen {
+		match ends {
+			0 | 1 => assert!(!c_vsync, "no C-VSYNC before the end of the 2nd HSYNC"),
+			3..=5 => assert!(c_vsync, "C-VSYNC from the 2nd to the 6th HSYNC end"),
+			7.. => assert!(!c_vsync, "no C-VSYNC after the 6th HSYNC end"),
+			_ => {} // the GA hears of the HSYNC end a few ticks after the CRTC
+		}
+	}
 }
 
 

@@ -331,6 +331,9 @@ impl MotherboardBuilder {
         motherboard
             .ppi
             .set_clears_ports_on_mode_set(crtc_type != CrtcType::Crtc3);
+        motherboard
+            .ga
+            .set_c_vsync_needs_crtc_vsync(matches!(crtc_type, CrtcType::Crtc3 | CrtcType::Crtc4));
 
         if self.disable_lower_rom {
             motherboard.disable_lower_rom();

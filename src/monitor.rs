@@ -20,7 +20,8 @@ use image::*;
 const RASTER_LINE_LENGTH: usize = 64 * 16;
 /// What a CTM 644 shows (ACCC 23.2, 23.3, 24): 48 usec of a line, starting
 /// 8 usec (the 15th character after C0=R2, with a 4 usec C-HSYNC) after the
-/// end of the C-HSYNC; 272 lines, from the 34th after the start of the VSYNC.
+/// end of the C-HSYNC; 272 lines, from the 34th after the start of the VSYNC (the 32nd after the frame
+/// oscillator restarted: the C-VSYNC begins at the end of the 2nd HSYNC of the VSYNC).
 /// Three pixels earlier than that: where AMSpiriT puts the 640 pixels of a
 /// standard screen (x=64..703 of its 768 wide picture). The Gate Array's output comes out
 /// [`crate::ga::PALETTE_LOOKUP_LAG_TICKS`] after its pixels are resolved, so the picture starts that
@@ -28,7 +29,10 @@ const RASTER_LINE_LENGTH: usize = 64 * 16;
 const MONITOR_FIRST_PIXEL: usize = 8 * 16 - 2 + crate::ga::PALETTE_LOOKUP_LAG_TICKS;
 const MONITOR_ACTIVE_PIXELS: usize = 48 * 16;
 const MONITOR_HEIGHT: usize = 272;
-const MONITOR_FIRST_LINE: usize = 33;
+const MONITOR_FIRST_LINE: usize = 31;
+/// The row a line is drawn on is the time since the frame oscillator restarted, in lines, plus this
+/// (ticks): Shaker B0 (vertical sub-pixel scroll) and DT on AMSpiriT put the rows within 1536..2048.
+const MONITOR_ROW_PHASE_TICKS: u64 = 1792;
 /// Lines the frame oscillator runs when no VSYNC comes (a little more than
 /// a 50Hz frame, so a VSYNC always arrives first when there is one).
 const MONITOR_FREE_RUN_LINES: usize = 350;
@@ -45,10 +49,9 @@ const MONITOR_MIN_HSYNC_TICKS: usize = 12;
 /// Lines after the beam started a frame from which the frame oscillator accepts a VSYNC
 /// (Shaker DT: pulses 156 lines apart are not followed, 312 are).
 const MONITOR_VSYNC_WINDOW_START_LINES: usize = 200;
-const MONITOR_VSYNC_BLANK_MIN_TICKS: i64 = 15 * 1024;
-const MONITOR_VSYNC_BLANK_AFTER_TICKS: i64 = 10 * 1024;
-/// Shortest C-VSYNC pulse the monitor reacts to: it integrates the signal.
-const MONITOR_MIN_VSYNC_TICKS: usize = 64;
+/// Shortest sync pulse the frame oscillator reacts to: it integrates the signal, and a CTM needs more
+/// than 11-12 usec (ACCC 16.2.4; Shaker DT J: an 8 usec C-VSYNC makes the picture roll).
+const MONITOR_MIN_VSYNC_TICKS: usize = 12 * 16;
 
 /// Pulses (in ticks) too short or too long to be taken for a line sync.
 /// The phase detector of the line oscillator (see `follow_sync`)
@@ -123,8 +126,8 @@ pub struct Monitor {
     /// from the next line (the pulses it looks at come after the flyback).
     next_shift: i32,
     vsync_color: Rgb<u8>,
-    /// charge of the vertical sync integrator (ticks): the beam stays blanked while it is not empty
-    vint: i64,
+    /// When the frame oscillator last restarted (`now` ticks).
+    frame_t0: u64,
     hsync_color: Rgb<u8>,
     /// Level (0-255) the beam draws a black ink at: see [`Monitor::with_black_level`].
     black_level: u8,
@@ -166,7 +169,7 @@ impl Monitor {
             shift: 0,
             next_shift: 0,
             vsync_color,
-            vint: 0,
+            frame_t0: 0,
             hsync_color,
             black_level: 0,
             last_levels: None,
@@ -275,8 +278,13 @@ impl Monitor {
 
     /// Handle the information sent from the CPC by the GA, one 16MHz tick.
     pub fn receive(&mut self, rgb: RgbLevels, Sync { vsync, hsync }: Sync) {
+        // The Gate Array sends one composite signal, C-SYNC = C-HSYNC XNOR C-VSYNC (ACCC 16.2.2): the
+        // sync is active when exactly one of them is. The monitor separates it itself: the line
+        // oscillator follows the ends of its pulses, the frame oscillator a pulse long enough. When a
+        // C-VSYNC begins right where a C-HSYNC ends (R3l <= 6), the two make one pulse.
+        let sync = hsync != vsync;
         let hsync_pulse = self.hsync_run;
-        if hsync {
+        if sync {
             if self.hsync_run == 0 {
                 self.hsync_listened = !self.locked || self.x >= MONITOR_HSYNC_WINDOW_START;
             }
@@ -285,24 +293,14 @@ impl Monitor {
         else {
             self.hsync_run = 0;
         }
-        // the beam is blanked from the start of a VSYNC pulse for at least 25 lines and for 10 lines
-        // after its end (AMSpiriT's black band on Shaker DT: pulses of 1, 8 and 16 lines)
-        if vsync && self.vsync_run == 0 {
-            self.vint = self.vint.max(MONITOR_VSYNC_BLANK_MIN_TICKS);
-        }
-        if !vsync && self.vsync_run > 0 {
-            self.vint = self.vint.max(MONITOR_VSYNC_BLANK_AFTER_TICKS);
-        }
-        if self.vint > 0 && !vsync {
-            self.vint -= 1;
-        }
-        if vsync {
+        if sync {
             self.vsync_run += 1;
         }
         else {
             self.vsync_run = 0;
             self.vsync_seen = false;
         }
+        let hsync = sync;
 
         // vertical synchronisation: the beam flies back to the top
         let mut frame_start = false;
@@ -379,7 +377,9 @@ impl Monitor {
             } else {
                 self.ran_free = true;
             }
-            self.line += 1;
+            // the frame deflection is a ramp in time: a line is drawn where the beam is when it starts,
+            // however many line flybacks the sync pulses of the VSYNC made
+            self.line = ((self.now - self.frame_t0 + MONITOR_ROW_PHASE_TICKS) / RASTER_LINE_LENGTH as u64) as usize;
             if self.line >= MONITOR_FREE_RUN_LINES {
                 // no VSYNC: the frame oscillator rolls the picture
                 self.end_frame();
@@ -396,7 +396,7 @@ impl Monitor {
         let visible = px < MONITOR_ACTIVE_PIXELS && y < MONITOR_HEIGHT;
         let in_full = self.full.is_some() && self.x < FULL_FRAME_WIDTH as usize && self.line < FULL_FRAME_HEIGHT as usize;
         if visible || in_full {
-            let pixel = if vsync || self.vint > 0 {
+            let pixel = if vsync {
                 self.vsync_color
             }
             else if hsync && self.hsync_listened {
@@ -487,6 +487,7 @@ impl Monitor {
             self.texture = RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32);
             self.line = 0;
         }
+        self.frame_t0 = self.now;
         self.synchronised = true;
     }
 
@@ -508,6 +509,7 @@ impl Monitor {
             std::mem::swap(&mut full.drawing, done);
             full.drawing.fill(0);
         }
+        self.frame_t0 = self.now;
         self.line = 0;
     }
 }

@@ -43,6 +43,10 @@ thread_local! {
     /// Was the previous pixel a border one? The pixels of the modes other than
     /// MODE 2 come out one tick late (MODE 2 is displayed a pixel earlier).
     static PREVIOUS_BORDER: std::cell::Cell<Option<(bool, [Ink; 17])>> = std::cell::Cell::new(None);
+
+    /// The black of the VSYNC (ACCC 16.2.3): from the CRTC's VSYNC start until 26 HSYNCs have ended,
+    /// whatever the VSYNC length. (previous VSYNC pin, previous HSYNC, HSYNC ends left)
+    static VSYNC_BLACK: std::cell::Cell<(bool, bool, u8)> = std::cell::Cell::new((false, false, 0));
 }
 
 fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
@@ -65,7 +69,19 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     let rgb = ga.rgb();
     palette[0].to_rgb_levels();
 
-    let vsync = ga.get_pin(GateArrayPin::VSYNC);
+    let vsync = VSYNC_BLACK.with(|state| {
+        let (vsync_before, hsync_before, mut left) = state.get();
+        let vsync_pin = ga.get_pin(GateArrayPin::VSYNC);
+        let hsync_now = ga.hsync_ga();
+        if vsync_pin && !vsync_before {
+            left = 26;
+        }
+        if hsync_before && !hsync_now && left > 0 {
+            left -= 1;
+        }
+        state.set((vsync_pin, hsync_now, left));
+        left > 0
+    });
     // the display is blanked by the HSYNC as the GA sees it (a few pixels
     // after the CRTC raises/lowers it)
     let hsync = ga.hsync_ga();
