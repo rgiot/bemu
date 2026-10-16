@@ -24,13 +24,17 @@ struct RawTest {
 struct RawSubTest {
     #[serde(rename = "subTest")]
     sub_test: String,
-    hex: String
+    hex: String,
+    /// B1's sub-tests repeat their names in several R9 settings (`R9E7`, `R9E6`...).
+    #[serde(default)]
+    subfolder: Option<String>
 }
 
 /// One entry: `module` ('A'-'E') and the 16-bit SSM code both identify it.
 pub struct TestId {
     pub test_id: String,
-    pub sub_test: String
+    pub sub_test: String,
+    pub subfolder: Option<String>
 }
 
 /// Maps `(module, SSM code)` to the test/sub-test the site knows it as.
@@ -61,7 +65,8 @@ impl Manifest {
                     (module, code),
                     TestId {
                         test_id: test.id.clone(),
-                        sub_test: sub.sub_test
+                        sub_test: sub.sub_test,
+                        subfolder: sub.subfolder
                     }
                 );
             }
@@ -81,6 +86,7 @@ impl Manifest {
     /// (e.g. module E, whose tests are not published there yet).
     pub fn file_stem(&self, module: char, crtc: u8, code: u16) -> String {
         match self.lookup(module, code) {
+            Some(TestId { test_id, sub_test, subfolder: Some(folder) }) => format!("{test_id}_CRTC{crtc}_{folder}_{sub_test}"),
             Some(test) => format!("{}_CRTC{crtc}_{}", test.test_id, test.sub_test),
             None => format!("{module}_CRTC{crtc}_{code:04X}")
         }
@@ -99,6 +105,14 @@ mod test {
         assert_eq!(found.test_id, "A1");
         assert_eq!(found.sub_test, "A");
         assert_eq!(manifest.file_stem('A', 0, 0x0001), "A1_CRTC0_A");
+    }
+
+    /// B1 names its pictures after the R9 setting too, as the site does (`B1_CRTC1_R9E7_K1.webp`).
+    #[test]
+    fn a_subfolder_is_part_of_the_name() {
+        let manifest = Manifest::bundled();
+        assert_eq!(manifest.file_stem('B', 1, 0x03E5), "B1_CRTC1_R9E7_K1");
+        assert_eq!(manifest.file_stem('B', 1, 0x03E7), "B1_CRTC1_R9E6_K1");
     }
 
     #[test]

@@ -78,7 +78,8 @@ pub struct CslReport {
 struct KeyDelays {
     press: u64,
     after_key: u64,
-    after_cr: u64
+    /// Waited once a whole `key_output` is typed (the third `key_delay` value).
+    after_output: u64
 }
 
 impl Default for KeyDelays {
@@ -87,7 +88,7 @@ impl Default for KeyDelays {
         KeyDelays {
             press: 70_000,
             after_key: 70_000,
-            after_cr: 400_000
+            after_output: 400_000
         }
     }
 }
@@ -223,7 +224,7 @@ impl CslRunner {
     pub fn run_file(&mut self, path: impl AsRef<Path>) -> Result<CslReport, String> {
         let mut next = Some(path.as_ref().to_path_buf());
         while let Some(path) = next.take() {
-            let text = read_text(&path)?;
+            let text = self.apply_errata(read_text(&path)?);
             let script = parse_csl_with_rich_errors(&text, Some(path.display().to_string()))
                 .map_err(|e| format!("{}: {e:?}", path.display()))?;
             self.base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -236,12 +237,43 @@ impl CslRunner {
     /// Play a script given as text; discs are looked up in `base_dir`.
     pub fn run_text(&mut self, text: &str, base_dir: impl Into<PathBuf>) -> Result<CslReport, String> {
         self.base_dir = base_dir.into();
-        let script = parse_csl_with_rich_errors(text, None).map_err(|e| format!("{e:?}"))?;
+        let text = self.apply_errata(text.to_owned());
+        let script = parse_csl_with_rich_errors(&text, None).map_err(|e| format!("{e:?}"))?;
         if let Some(next) = self.run_instructions(script.iter())? {
             return self.run_file(next);
         }
         self.report.elapsed_us = self.elapsed_us();
         Ok(std::mem::take(&mut self.report))
+    }
+
+    /// Published scripts that cannot work as written, corrected before they are played (each
+    /// change is listed in the report's `ignored`). Shaker 2.7's module A scripts wait 14 s after
+    /// the AU key ('U') before pressing SPACE, a wait written for Shaker 2.6: 2.7 added a 9th AU
+    /// sub-test (about 1.6 s more), so the SPACE lands while AU still runs, the next key ('I') is
+    /// spent leaving AU's result screen and the AI screens are never reached. The wait becomes
+    /// 16 s, as CPCSyntaxError does.
+    fn apply_errata(&mut self, text: String) -> String {
+        if !text.contains("SHAKE27A") {
+            return text;
+        }
+        let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+        let instruction = |line: &str| line.split(';').next().unwrap_or("").trim().to_owned();
+        for n in 0..lines.len() {
+            if instruction(&lines[n]) != "key_output 'U'" {
+                continue;
+            }
+            let Some(w) = (n + 1..lines.len()).find(|&w| !instruction(&lines[w]).is_empty()) else {
+                continue;
+            };
+            if instruction(&lines[w]) == "wait 14000000" {
+                lines[w] = "wait 16000000".to_owned();
+                self.report.ignored.push(format!(
+                    "erratum: line {}, wait after key 'U' 14000000 -> 16000000 (Shaker 2.7's AU has a 9th sub-test)",
+                    w + 1
+                ));
+            }
+        }
+        lines.join("\n") + "\n"
     }
 
     /// Returns the script to chain to, if any.
@@ -288,7 +320,7 @@ impl CslRunner {
                 self.key_delays = KeyDelays {
                     press: *press_delay,
                     after_key: delay_after_key.unwrap_or(*press_delay),
-                    after_cr: delay_after_cr.unwrap_or(*press_delay)
+                    after_output: delay_after_cr.unwrap_or(*press_delay)
                 }
             },
             KeyOutput(output) => self.schedule_keys(output.elements()),
@@ -512,6 +544,13 @@ impl CslRunner {
 
     // ------------------------------------------------------------ keyboard
 
+    /// `key_output`: types the keys one after the other and only then lets the script go on: each key
+    /// is held `press` and followed by `after_key`, and the third `key_delay` value is waited once the
+    /// whole output is typed (the standard says "after a CR"). The Shaker scripts are timed that way
+    /// (CPCSyntaxError plays them so too): their waits after a key are often shorter than the test
+    /// they wait for (`wait 2200000 ; 2315008` for AI's second screen) and only add up with the
+    /// typing time, otherwise the next key lands while the test still runs and the rest of the
+    /// module is out of step.
     fn schedule_keys(&mut self, elements: &[KeyElement]) {
         let now = self.motherboard.t_state_counter().value();
         let mut at = self.keys_busy_until.max(now);
@@ -528,12 +567,6 @@ impl CslRunner {
                 self.report.ignored.push(format!("key {element}"));
                 continue;
             };
-            let after = if matches!(element, KeyElement::Special(SpecialKey::Return | SpecialKey::Enter)) {
-                delays.after_cr
-            }
-            else {
-                delays.after_key
-            };
             self.key_events.push_back(KeyEvent {
                 due_t_states: at,
                 keys: keys.clone(),
@@ -546,10 +579,14 @@ impl CslRunner {
                 pressed: false
             });
             if !std::mem::take(&mut no_delay_next) {
-                at += units(after);
+                at += units(delays.after_key);
             }
         }
+        at += units(delays.after_output);
         self.keys_busy_until = at;
+        while self.motherboard.t_state_counter().value() < at {
+            self.step();
+        }
     }
 
     fn apply_due_key_events(&mut self) {
@@ -844,6 +881,19 @@ mod test {
         report.unwrap();
         assert_eq!(runner.motherboard.crtc().regs_r(1), 32);
         assert_ne!(runner.motherboard.pc(), 0, "the snapshot's PC (then a few frames run)");
+    }
+
+    /// Shaker 2.7 module A: the wait after the AU key is lengthened, nothing else changes.
+    #[test]
+    fn shaker_27_au_wait_erratum() {
+        let mut runner = CslRunner::new(std::env::temp_dir());
+        let script = "key_output 'RUN\"SHAKE27A\"\\(RET)'\nkey_output 'U'\n; comment\nwait 14000000\t; 11803953+1007210\nkey_output 'Y'\nwait 14000000\n";
+        let fixed = runner.apply_errata(script.to_owned());
+        assert_eq!(fixed.lines().nth(3), Some("wait 16000000"));
+        assert_eq!(fixed.lines().nth(5), Some("wait 14000000"), "only the wait after 'U'");
+        assert_eq!(runner.report.ignored.len(), 1);
+        let other = "key_output 'U'\nwait 14000000\n";
+        assert_eq!(runner.apply_errata(other.to_owned()), other, "not a Shaker 2.7 module A script");
     }
 
     #[test]
