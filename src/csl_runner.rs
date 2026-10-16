@@ -233,6 +233,8 @@ pub enum Progress {
 enum Wait {
     /// `wait`: until this T-state.
     Until(usize),
+    /// `key_output`: until this T-state, the keys typed and the third `key_delay` waited.
+    Typing(usize),
     /// `wait_vsyncoffon`, first until the VSYNC is off...
     VsyncOff,
     /// ...then until it is on.
@@ -299,7 +301,9 @@ pub struct CslRunner {
     manifest: Option<&'static Manifest>,
     /// See [`Self::set_wait_timeout_us`].
     wait_timeout_us: u64,
-    report: CslReport
+    report: CslReport,
+    /// The SSM codes raised while the last `key_output` was typed, for the `wait_ssm` after it.
+    ssm_while_typing: Vec<u16>
 }
 
 impl CslRunner {
@@ -339,7 +343,8 @@ impl CslRunner {
             module: None,
             manifest: None,
             wait_timeout_us: DEFAULT_WAIT_TIMEOUT_US,
-            report: CslReport::default()
+            report: CslReport::default(),
+            ssm_while_typing: Vec::new()
         }
     }
 
@@ -519,8 +524,10 @@ impl CslRunner {
                     let before = self.motherboard.t_state_counter().value();
                     let codes = self.step();
                     spent = spent.saturating_add(self.motherboard.t_state_counter().value().saturating_sub(before));
-                    if let Some(Wait::Ssm { code, raised, .. }) = &mut self.waiting {
-                        *raised |= codes.contains(code);
+                    match &mut self.waiting {
+                        Some(Wait::Ssm { code, raised, .. }) => *raised |= codes.contains(code),
+                        Some(Wait::Typing(_)) => self.ssm_while_typing.extend(codes),
+                        _ => {}
                     }
                 }
             }
@@ -538,7 +545,7 @@ impl CslRunner {
         let now = self.motherboard.t_state_counter().value();
         match self.waiting.as_mut() {
             None => true,
-            Some(Wait::Until(target)) => now >= *target,
+            Some(Wait::Until(target) | Wait::Typing(target)) => now >= *target,
             Some(Wait::VsyncOff) => {
                 if !self.motherboard.crtc().vsync() {
                     self.waiting = Some(Wait::VsyncOn);
@@ -676,6 +683,7 @@ impl CslRunner {
         }
         self.key_events.clear();
         self.keys_busy_until = 0;
+        self.ssm_while_typing.clear();
     }
 
     /// `snapshot_load`: the machine takes the snapshot's state (its CRTC type stays the
@@ -739,7 +747,15 @@ impl CslRunner {
 
     /// Bounded: a script waiting for a code that never comes must not hang an unattended run
     /// forever.
+    ///
+    /// A code the program raised while the previous `key_output` was still being typed counts:
+    /// the script's `key_output ' '` then `wait_ssm0000` waits for the program's answer to the key,
+    /// which comes before `key_output` is over (it also waits the third `key_delay`, 400 ms in
+    /// the Shaker scripts). Without it every such wait ran into its timeout (Shaker module E).
     fn wait_for_ssm_code(&mut self, code: u16, instruction: &'static str) {
+        if std::mem::take(&mut self.ssm_while_typing).contains(&code) {
+            return;
+        }
         let deadline = self.motherboard.t_state_counter().value() + self.wait_timeout_us as usize * T_STATES_PER_UNIT;
         self.waiting = Some(Wait::Ssm { code, deadline, instruction, raised: false });
     }
@@ -787,7 +803,8 @@ impl CslRunner {
         at += units(delays.after_output);
         self.keys_busy_until = at;
         // the script goes on once the keys are typed
-        self.waiting = Some(Wait::Until(at));
+        self.ssm_while_typing.clear();
+        self.waiting = Some(Wait::Typing(at));
     }
 
     fn apply_due_key_events(&mut self) {
