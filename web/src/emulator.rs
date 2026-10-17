@@ -141,6 +141,39 @@ impl Emulator {
         self.discs[unit] = None;
     }
 
+    /// A CDT (or TZX) tape in the cassette deck, rewound, PLAY down: it plays when the CPC starts
+    /// the motor. Returns what was skipped of it.
+    pub fn insert_tape(&mut self, bytes: &[u8]) -> Result<Vec<String>, JsError> {
+        let tape = amsrust::tape::Tape::from_cdt(bytes).map_err(|e| JsError::new(&e))?;
+        let notes = tape.notes.clone();
+        self.machine().insert_tape(Some(tape));
+        Ok(notes)
+    }
+
+    pub fn eject_tape(&mut self) {
+        self.machine().insert_tape(None);
+    }
+
+    /// The deck's keys: "play", "stop" or "rewind".
+    pub fn tape_control(&mut self, key: &str) -> Result<(), JsError> {
+        let deck = self.machine().tape_deck_mut().ok_or_else(|| JsError::new("no tape inserted"))?;
+        match key {
+            "play" => deck.set_playing(true),
+            "stop" => deck.set_playing(false),
+            "rewind" => deck.rewind(),
+            other => return Err(JsError::new(&format!("{other}: play, stop or rewind"))),
+        }
+        Ok(())
+    }
+
+    /// Where the tape is, in seconds from its start, and whether PLAY is down; none without a tape.
+    pub fn tape_position(&self) -> Option<Vec<f64>> {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        machine
+            .tape_deck()
+            .map(|deck| vec![deck.position_seconds(), deck.tape().duration_seconds(), f64::from(u8::from(deck.playing()))])
+    }
+
     /// Load an SNA snapshot in the machine.
     pub fn load_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsError> {
         amsrust::snapshot::load_sna_bytes(self.machine(), bytes)
@@ -335,6 +368,8 @@ impl Emulator {
         for (unit, disc) in self.discs.iter().enumerate() {
             motherboard.fdc_mut().insert_image(fdc_drive(unit), disc.clone());
         }
+        // the deck keeps its tape, where it is
+        motherboard.take_tape_deck_from(&mut self.motherboard);
         self.motherboard = motherboard;
         self.monitor = Monitor::default().with_black_level(self.config.black_level());
     }
