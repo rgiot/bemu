@@ -183,6 +183,12 @@ fn main() {
             Monitor::cli_monitoring(&mut motherboard, &mut ctx);
         }
     }
+    if let Some(path) = &args.save_sna {
+        match amsrust::snapshot::save_sna(&motherboard, path) {
+            Ok(()) => eprintln!("snapshot saved: {path}"),
+            Err(e) => eprintln!("cannot save the snapshot: {e}")
+        }
+    }
 }
 
 /// T-states per second at the CPC's 4MHz clock.
@@ -247,6 +253,18 @@ impl Typist {
 fn type_due_keys(typist: &mut Option<Typist>, motherboard: &mut Motherboard) {
     if let Some(typist) = typist {
         typist.update(motherboard);
+    }
+}
+
+/// The machine's state in `bemu_<n>.sna`, the first `n` free in the current directory.
+fn save_snapshot(motherboard: &Motherboard) {
+    let path = (0..)
+        .map(|n| format!("bemu_{n:04}.sna"))
+        .find(|path| !std::path::Path::new(path).exists())
+        .expect("a free name");
+    match amsrust::snapshot::save_sna(motherboard, &path) {
+        Ok(()) => eprintln!("snapshot saved: {path}"),
+        Err(e) => eprintln!("cannot save the snapshot: {e}")
     }
 }
 
@@ -536,6 +554,7 @@ fn run_window(
     let mut buffer = vec![0u32; width * height];
     let mut f9_was_down = false;
     let mut f10_was_down = false;
+    let mut f7_was_down = false;
     // at full speed, the frames shown (at most 50 a second: presenting each would hold the
     // emulation back to the display's rate)
     let mut last_present = std::time::Instant::now();
@@ -570,6 +589,12 @@ fn run_window(
             eprintln!("speed: {}", if turbo { "full" } else { "real time" });
         }
         f10_was_down = f10_down;
+        // F7 saves a snapshot, in the current directory
+        let f7_down = input.down.contains(&HostKey::F7);
+        if f7_down && !f7_was_down {
+            save_snapshot(motherboard);
+        }
+        f7_was_down = f7_down;
         host_keyboard.apply(motherboard, &input);
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, motherboard);

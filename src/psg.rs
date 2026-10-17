@@ -286,6 +286,11 @@ impl Psg {
 
     /// Set a register directly (snapshot loading, register 14 mirroring
     /// the keyboard): sound registers are forwarded to the chip too.
+    /// Select the register the next access reaches (a snapshot's), as a latch-address would.
+    pub fn select_register(&mut self, idx: u8) {
+        self.selected_register = Some(idx & 0x0f);
+    }
+
     pub fn set_register(&mut self, idx: u8, value: u8) {
         let idx = idx & 0x0f;
         self.registers[idx as usize] = value;

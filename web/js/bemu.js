@@ -222,6 +222,9 @@ export class Bemu {
     /** The DSK image in drive 'A' or 'B' with what the CPC wrote on it (Uint8Array), or undefined. */
     getDisc(drive) { return this.#core.disc_image(driveNumber(drive)); }
 
+    /** The machine's state as an SNA snapshot file (Uint8Array, version 3), for loadSnapshot later. */
+    saveSnapshot() { return this.#core.save_snapshot(); }
+
     start() {
         if (this.#running || this.#destroyed) return;
         this.#running = true;

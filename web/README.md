@@ -80,6 +80,7 @@ and `fetch` don't work from `file://`.
 | `setDisplay(name)` | `'raw'` or a CRT profile |
 | `insertDisc(drive, source)`, `eject(drive)` | a DSK image in drive `'A'` or `'B'` |
 | `loadSnapshot(source)` | an SNA snapshot |
+| `saveSnapshot()` | the machine's state as an SNA file (`Uint8Array`, version 3), to save or give back to `loadSnapshot` |
 | `addFile(name, source)` | a file a CSL script names (`disk_insert`, `snapshot_load`, `csl_load`) |
 | `runCsl(script, { files })` | play a CSL script live, see below |
 | `stopCsl()` | stop the script; its machine goes on |
