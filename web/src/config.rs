@@ -7,7 +7,7 @@ use amsrust::motherboard::{CpcModel, MotherboardBuilder};
 use amsrust::ppi::Brand;
 use serde::Deserialize;
 
-/// `{ model, crtc, gateArray, ramKb, discInterface, brand, display, blackLevel }`, each optional:
+/// `{ model, crtc, gateArray, ramKb, discInterface, language, brand, display, blackLevel }`, each optional:
 /// a 6128 with its own disc interface, CRTC 0, Gate Array 40010, raw display by default.
 #[derive(Deserialize, Default, Clone, Debug)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
@@ -22,6 +22,8 @@ pub struct Config {
     pub ram_kb: Option<usize>,
     /// A disc interface fitted (a DDI-1 on a 464) or removed; the model's own if unset.
     pub disc_interface: Option<bool>,
+    /// "en" (the default) or "fr": the French 6128's ROMs, AZERTY keyboard.
+    pub language: Option<String>,
     /// The name of the boot banner: "amstrad", "schneider", "awa", "orion", "saisho", "solavox",
     /// "triumph" or "isp".
     pub brand: Option<String>,
@@ -71,6 +73,14 @@ impl Config {
         }
         if let Some(brand) = &self.brand {
             builder.set_brand(brand_of(brand)?);
+        }
+        match self.language.as_deref() {
+            None | Some("en") => {},
+            Some("fr") if self.model.as_deref().is_none_or(|model| model == "6128") => {
+                builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
+            },
+            Some("fr") => return Err("language fr: there are French ROMs for the 6128 only".to_owned()),
+            Some(other) => return Err(format!("language must be en or fr, not {other:?}"))
         }
         Ok(builder)
     }
@@ -126,5 +136,9 @@ mod test {
         assert!(config(r#"{"model": "6129"}"#).unwrap().machine().is_err());
         assert!(config(r#"{"display": "tv"}"#).unwrap().display().is_err());
         assert!(config(r#"{"colour": true}"#).is_err(), "unknown fields are refused");
+        let french = config(r#"{"language": "fr"}"#).unwrap().machine().unwrap().build();
+        assert_eq!(french.keyboard_layout(), amsrust::keyboard::KeyboardLayout::French);
+        assert!(config(r#"{"language": "fr", "model": "464"}"#).unwrap().machine().is_err());
+        assert!(config(r#"{"language": "de"}"#).unwrap().machine().is_err());
     }
 }

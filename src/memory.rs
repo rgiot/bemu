@@ -512,13 +512,16 @@ impl Page {
 
 impl Memory {
     /// Fit the ROMs of `model`: its OS (lower ROM) and its BASIC (upper
-    /// ROM 0). AMSDOS comes with the disc interface ([`Self::set_amsdos`]).
-    pub fn set_firmware(&mut self, model: crate::motherboard::CpcModel) {
+    /// ROM 0), French ones for a 6128 with the French layout. AMSDOS comes with the disc interface
+    /// ([`Self::set_amsdos`]).
+    pub fn set_firmware(&mut self, model: crate::motherboard::CpcModel, layout: crate::keyboard::KeyboardLayout) {
+        use crate::keyboard::KeyboardLayout;
         use crate::motherboard::CpcModel;
-        let (os, basic) = match model {
-            CpcModel::Cpc464 => (Rom::os464(), Rom::basic464()),
-            CpcModel::Cpc664 => (Rom::os664(), Rom::basic664()),
-            CpcModel::Cpc6128 => (Rom::os6128(), Rom::basic_6128())
+        let (os, basic) = match (model, layout) {
+            (CpcModel::Cpc464, _) => (Rom::os464(), Rom::basic464()),
+            (CpcModel::Cpc664, _) => (Rom::os664(), Rom::basic664()),
+            (CpcModel::Cpc6128, KeyboardLayout::Uk) => (Rom::os6128(), Rom::basic_6128()),
+            (CpcModel::Cpc6128, KeyboardLayout::French) => (Rom::os6128_azerty(), Rom::basic_6128_azerty())
         };
         self.lower_rom = os;
         self.upper_roms[0] = Some(basic);

@@ -23,6 +23,8 @@ pub struct Args {
     pub ram_kb: Option<usize>,
     /// Disc interface (a DDI-1 on a 464), if not the model's.
     pub disc_interface: Option<bool>,
+    /// `--french`: the French 6128 ROMs, AZERTY keyboard.
+    pub french: bool,
     pub dsk_a: Option<String>,
     pub dsk_b: Option<String>,
     pub sna: Option<String>,
@@ -59,6 +61,7 @@ pub fn parse_args() -> Args {
         model: CpcModel::default(),
         ram_kb: None,
         disc_interface: None,
+        french: false,
         dsk_a: None,
         dsk_b: None,
         sna: None,
@@ -103,6 +106,7 @@ pub fn parse_args() -> Args {
             },
             "--ddi" => args.disc_interface = Some(true),
             "--no-disc" => args.disc_interface = Some(false),
+            "--french" => args.french = true,
             "--dsk" => args.dsk_a = Some(next("--dsk")),
             "--dsk-b" => args.dsk_b = Some(next("--dsk-b")),
             "--sna" => args.sna = Some(next("--sna")),
@@ -161,7 +165,7 @@ pub fn parse_args() -> Args {
 
 fn print_help() {
     eprintln!(concat!(
-        "amsrust [--model 464|664|6128] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
+        "amsrust [--model 464|664|6128] [--french] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
         "        [--dsk path] [--dsk-b path] [--sna path]\n",
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
@@ -169,7 +173,8 @@ fn print_help() {
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
-        "--model picks the ROMs (default 6128). The 464 and 664 have 64K and the\n",
+        "--model picks the ROMs (default 6128); --french the French ones of the 6128,\n",
+        "with its AZERTY keyboard (typed text and keys follow it). The 464 and 664 have 64K and the\n",
         "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
         "The 664 and 6128 have a disc interface; --ddi adds a DDI-1 (AMSDOS) to\n",
         "a 464, --no-disc removes it.\n",

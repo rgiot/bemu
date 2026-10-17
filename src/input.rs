@@ -8,7 +8,7 @@
 //! is testable without any window.
 
 use crate::csl_runner::keys_of_char;
-use crate::keyboard::CpcKey;
+use crate::keyboard::{CpcKey, KeyboardLayout};
 use crate::motherboard::Motherboard;
 use std::collections::VecDeque;
 
@@ -89,10 +89,15 @@ impl TypedCombo {
     /// character's combo (skipping any character `keys_of_char` doesn't
     /// know how to type), else nothing.
     pub fn advance(&mut self, typed: &mut TypedChars) -> &[CpcKey] {
+        self.advance_on(typed, KeyboardLayout::Uk)
+    }
+
+    /// [`Self::advance`] for a machine whose keys type `layout`.
+    pub fn advance_on(&mut self, typed: &mut TypedChars, layout: KeyboardLayout) -> &[CpcKey] {
         if self.frames_left == 0 {
             self.keys.clear();
             while let Some(c) = typed.pop() {
-                if let Some(keys) = keys_of_char(c) {
+                if let Some(keys) = layout.keys_of_char(c) {
                     self.keys = keys;
                     self.frames_left = Self::HOLD_FRAMES + Self::RELEASE_FRAMES;
                     break;
@@ -129,15 +134,50 @@ impl HostKeyboard {
         for &c in &input.typed {
             self.typed.push(c);
         }
-        let combo = self.combo.advance(&mut self.typed);
+        let layout = motherboard.keyboard_layout();
+        let combo = self.combo.advance_on(&mut self.typed, layout);
         let matrix = motherboard.keyboard_mut();
-        for key in HOST_KEY_MAP {
-            matrix.set_pressed(key.1, any_host_key_pressed(HOST_KEY_MAP, key.1, |k| input.down.contains(&k)));
+        if layout == KeyboardLayout::Uk {
+            for key in HOST_KEY_MAP {
+                matrix.set_pressed(key.1, any_host_key_pressed(HOST_KEY_MAP, key.1, |k| input.down.contains(&k)));
+            }
+        }
+        else {
+            // A letter goes where the layout has it (an AZERTY CPC's A is the UK Q). The UK
+            // punctuation keys are left to the typed characters: their places hold letters here.
+            // every key the table names starts up (a typed character's key included: the
+            // layout moves letters onto places no host key maps to any more)
+            let mut pressed: Vec<(CpcKey, bool)> = Vec::new();
+            for (_, key) in HOST_KEY_MAP {
+                if !pressed.iter().any(|(k, _)| k == key) {
+                    pressed.push((*key, false));
+                }
+            }
+            for (host, key) in HOST_KEY_MAP {
+                if is_uk_punctuation(*key) {
+                    continue;
+                }
+                let target = layout.key_labelled(*key);
+                let down = input.down.contains(host);
+                match pressed.iter_mut().find(|(k, _)| *k == target) {
+                    Some((_, held)) => *held |= down,
+                    None => pressed.push((target, down))
+                }
+            }
+            for (key, down) in pressed {
+                matrix.set_pressed(key, down);
+            }
         }
         for key in combo {
             matrix.set_pressed(*key, true);
         }
     }
+}
+
+/// The keys of the UK punctuation, which hold letters on other layouts.
+fn is_uk_punctuation(key: CpcKey) -> bool {
+    use CpcKey::*;
+    matches!(key, Caret | Minus | At | Colon | Semicolon | Slash | Dot | Comma | OpenBracket | CloseBracket | Backslash)
 }
 
 /// Whether `target` should be considered pressed: any host key `map`s to it
@@ -284,5 +324,23 @@ mod test {
         typed.push('\u{1}'); // unmapped control code
         let mut combo = TypedCombo::default();
         assert!(combo.advance(&mut typed).is_empty());
+    }
+
+    /// On the French layout, a typed character's key is released afterwards even where no host
+    /// key maps any more (`,` is the UK M's place).
+    #[test]
+    fn french_typed_keys_are_released() {
+        use crate::keyboard::KeyboardLayout;
+        let mut builder = crate::motherboard::MotherboardBuilder::default();
+        builder.set_keyboard_layout(KeyboardLayout::French);
+        let mut machine = builder.build();
+        let mut keyboard = HostKeyboard::default();
+        let typed = HostInput { typed: vec![','], ..Default::default() };
+        keyboard.apply(&mut machine, &typed);
+        assert!(machine.keyboard_mut().is_pressed(CpcKey::M), "the French , key");
+        for _ in 0..TypedCombo::HOLD_FRAMES + TypedCombo::RELEASE_FRAMES {
+            keyboard.apply(&mut machine, &HostInput::default());
+        }
+        assert!(!machine.keyboard_mut().is_pressed(CpcKey::M));
     }
 }
