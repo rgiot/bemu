@@ -196,6 +196,13 @@ pub struct Crtc {
     /// (CRTC 0 only, Shaker AT E: R2 moved during the pulse to where it ends does not start another
     /// one; CRTCs 1-4 start it, AT E and BCOPY A there).
     hsync_ended_on_char: bool,
+    /// CRTC 2 (ACCC 12.4.1): "Last Line" (C4 and C9 go to 0 on the next line, decided on C0==0 or by an
+    /// R4/R9 update and never cancelled during the line), "Last Line Management" (an R4/R9 update may
+    /// still set it: not on the frame's first line) and "Previous Last Line" (C4==R4 and C9==R9 on the
+    /// last character of the HSYNC: the next C0==0 does not take the line as a last one again).
+    c2_last_line: bool,
+    c2_last_line_management: bool,
+    c2_previous_last_line: bool,
     /// Diagnostics: every register write as (C0, C4, C9, register, value).
     write_log: Option<Vec<(u8, u8, u8, u8, u8)>>,
     /// The Horizontal Sync Counter counts the number of cycles during a HSYNC. This is shown in light blue when the CRTC Horizontal Sync period is active.
@@ -293,6 +300,9 @@ impl Default for Crtc {
             r1_zero_late: false,
             hsync_late_ticks: 0,
             hsync_ended_on_char: false,
+            c2_last_line: false,
+            c2_last_line_management: true,
+            c2_previous_last_line: false,
             write_log: None,
             crtc_vma: 0,
             crtc_vma_prime: 0,
@@ -479,6 +489,9 @@ impl Crtc {
         }
         if let Some(register) = self.regs.get_mut(usize::from(r)) {
             *register = v & mask;
+        }
+        if self.crtc_type() == CrtcType::Crtc2 {
+            self.crtc2_register_update(r);
         }
         // ACCC §19.5.3 (CRTC 1): the parities follow R8 as soon as it is written
         if r == 8 && self.model.has_interlace_video() {
@@ -695,6 +708,31 @@ impl Crtc {
         }
     }
 
+    /// CRTC 2, C0==0 (ACCC 12.4.1): the line is a last line when C4==R4 and C9==R9 (the R9 of the
+    /// previous line: an update on this C0 comes too late), unless the previous line already was one
+    /// or an HSYNC starts here; R4/R9 updates may still make it one, except on a frame's first line.
+    fn crtc2_line_start(&mut self) {
+        self.c2_last_line = !self.in_vertical_adjust
+            && self.vcc == self.regs[4]
+            && self.vlc == self.regs[9]
+            && !self.c2_previous_last_line
+            && self.regs[2] != 0;
+        self.c2_last_line_management = !(self.vcc.value() == 0 && self.vlc.value() == 0);
+    }
+
+    /// CRTC 2: an R4/R9 update outside HSYNC can make the current line the last one (ACCC 12.4.1).
+    fn crtc2_register_update(&mut self, r: u8) {
+        if matches!(r, 4 | 9)
+            && !self.c2_last_line
+            && self.c2_last_line_management
+            && !self.hsync()
+            && !self.in_vertical_adjust
+            && !(r == 9 && self.hcc == 0)
+        {
+            self.c2_last_line = self.vcc == self.regs[4] && self.vlc == self.regs[9];
+        }
+    }
+
     /// ACCC 12.2: while C0<2, CRTC 0 decides whether this is the frame's
     /// last line; it no longer looks at R4/R9 afterwards.
     fn assess_last_line(&mut self) {
@@ -857,6 +895,12 @@ impl Crtc {
             }
             let r3l = self.regs[3] & 0x0f;
             if self.hsc == r3l || (r3l == 0 && self.model.zero_r3_cancels_running_hsync()) {
+                if self.crtc_type() == CrtcType::Crtc2 {
+                    self.c2_previous_last_line = self.vcc == self.regs[4] && self.vlc == self.regs[9];
+                    if !self.c2_previous_last_line {
+                        self.c2_last_line_management = true;
+                    }
+                }
                 self.off(CrtcPin::HS);
                 self.hsync_ended_on_char = self.crtc_type() == CrtcType::Crtc0;
             }
@@ -1047,6 +1091,8 @@ impl Crtc {
                     self.vlc += 1;
                     end
                 };
+                // CRTC 2: a "Last Line" sends C9 (and C4) back to 0 whatever R9 became since
+                let row_end = row_end || (self.crtc_type() == CrtcType::Crtc2 && self.c2_last_line);
 
                 // This is the end of a char line
                 if row_end {
@@ -1055,7 +1101,11 @@ impl Crtc {
                     }
                     // compared before the increment: C4 is a 7-bit counter, so with R4=127 the
                     // incremented value (0) never equals R4+1 (128)
-                    let last_row = self.vcc == self.regs[4];
+                    let last_row = if self.crtc_type() == CrtcType::Crtc2 {
+                        self.c2_last_line
+                    } else {
+                        self.vcc == self.regs[4]
+                    };
                     self.vcc += 1;
 
                     if last_row {
@@ -1078,6 +1128,10 @@ impl Crtc {
                         }
                     }
                 }
+            }
+
+            if self.crtc_type() == CrtcType::Crtc2 {
+                self.crtc2_line_start();
             }
 
             // a new row (or frame, C4 back to 0 with R4=0, or adjustment, C4 kept on R4 on
