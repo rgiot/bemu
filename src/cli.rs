@@ -45,6 +45,10 @@ pub struct Args {
     /// `--overlay`: the timing overlay shown (window) or drawn (screenshots).
     pub overlay: bool,
     pub record: Option<String>,
+    /// `--record-ym file`: the AY's registers frame by frame, as a YM6 file.
+    pub record_ym: Option<String>,
+    /// `--record-wav file`: the sound as a WAV file.
+    pub record_wav: Option<String>,
     /// `--save-sna path`: the machine's state saved there when the run ends.
     pub save_sna: Option<String>,
     pub debug_server: bool,
@@ -96,6 +100,8 @@ pub fn parse_args() -> Args {
         watch: false,
         overlay: false,
         record: None,
+        record_ym: None,
+        record_wav: None,
         save_sna: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
@@ -184,6 +190,8 @@ pub fn parse_args() -> Args {
                 }
             },
             "--crt-gpu" => args.gpu = true,
+            "--record-ym" => args.record_ym = Some(next("--record-ym")),
+            "--record-wav" => args.record_wav = Some(next("--record-wav")),
             "--watch" => args.watch = true,
             "--save-sna" => args.save_sna = Some(next("--save-sna")),
             "--overlay" => args.overlay = true,
@@ -216,7 +224,7 @@ fn print_help() {
         "amsrust [--model 464|664|6128] [--french] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
         "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path] [--watch]\n",
         "        [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute] [--turbo]]\n",
-        "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
+        "        [--record file [--seconds N]] [--record-ym file] [--record-wav file] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
@@ -243,6 +251,9 @@ fn print_help() {
         "when the run ends (headless, recording, window closed). --record capture.mp4 records\n",
         "a video with sound through ffmpeg: what the window shows until it is\n",
         "closed, or without --window --seconds (default 30) run headless.\n",
+        "--record-ym file.ym saves the AY's registers once a frame (on the VSYNC) as a YM6\n",
+        "file, --record-wav file.wav the sound, until the run ends (headless, recording,\n",
+        "window closed; the sound of full speed is not kept).\n",
         "--type 'run\"demo\\n' types on the CPC keyboard after --type-at seconds\n",
         "(default 3). --watch takes the --sna/--dsk/--dsk-b/--cdt files again when they change\n",
         "(with --window or --debug-server), for an edit, assemble, see loop: a disc or tape goes\n",

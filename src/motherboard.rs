@@ -1017,7 +1017,12 @@ impl Motherboard {
         // CRTC-sourced: video timing signals, to PPI (VSYNC -> port B bit
         // 0) and the gate array (VSYNC/HSYNC/DISPEN).
         if crtc_changed {
-            self.ppi.set_pin(PpiPin::B0, self.crtc.get_pin(CrtcPin::VS));
+            let vsync = self.crtc.get_pin(CrtcPin::VS);
+            if vsync && !self.ppi.get_pin(PpiPin::B0) && self.psg.logs_frames() {
+                // a frame begins: the sound export's tick
+                self.psg.log_frame();
+            }
+            self.ppi.set_pin(PpiPin::B0, vsync);
             sync_pins(
                 &self.crtc,
                 &[CrtcPin::VS, CrtcPin::HS, CrtcPin::DE],
