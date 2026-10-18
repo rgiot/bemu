@@ -163,6 +163,7 @@ fn main() {
             breakpoints.len()
         );
     }
+    start_sound_export(&args, &mut motherboard);
     let mut typist = args.text.as_deref().map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout()));
     if typist.is_some() && monitor_mode {
         eprintln!("--type is ignored in the interactive monitor");
@@ -201,10 +202,108 @@ fn main() {
             Monitor::cli_monitoring(&mut motherboard, &mut ctx);
         }
     }
+    finish_sound_export(&mut motherboard);
     if let Some(path) = &args.save_sna {
         match amsrust::snapshot::save_sna(&motherboard, path) {
             Ok(()) => eprintln!("snapshot saved: {path}"),
             Err(e) => eprintln!("cannot save the snapshot: {e}")
+        }
+    }
+}
+
+/// `--record-ym` / `--record-wav`: the sound exported, see `amsrust::sound_export`.
+struct SoundExport {
+    ym: Option<String>,
+    wav_path: Option<String>,
+    /// Opened with the first samples, at the rate they come at.
+    wav: Option<amsrust::sound_export::WavWriter<std::io::BufWriter<std::fs::File>>>
+}
+
+thread_local! {
+    static SOUND_EXPORT: std::cell::RefCell<Option<SoundExport>> = const { std::cell::RefCell::new(None) };
+}
+/// Whether the WAV export runs: checked first, as the loops call [`poll_sound_export`] often.
+static WAV_EXPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn start_sound_export(args: &Args, motherboard: &mut Motherboard) {
+    if args.record_ym.is_none() && args.record_wav.is_none() {
+        return;
+    }
+    if args.record_ym.is_some() {
+        motherboard.psg_mut().log_frames(true);
+    }
+    if args.record_wav.is_some() {
+        if motherboard.psg().audio_config().is_none() {
+            motherboard.set_audio_output(Some(RECORD_AUDIO()));
+        }
+        WAV_EXPORT.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    SOUND_EXPORT.with(|export| {
+        *export.borrow_mut() = Some(SoundExport { ym: args.record_ym.clone(), wav_path: args.record_wav.clone(), wav: None })
+    });
+}
+
+/// Samples the main loop took: into the WAV file.
+fn export_samples(motherboard: &Motherboard, samples: &[f32]) {
+    if !WAV_EXPORT.load(std::sync::atomic::Ordering::Relaxed) || samples.is_empty() {
+        return;
+    }
+    SOUND_EXPORT.with(|export| {
+        let mut export = export.borrow_mut();
+        let Some(export) = export.as_mut() else { return };
+        if export.wav.is_none() {
+            let (Some(path), Some(config)) = (&export.wav_path, motherboard.psg().audio_config()) else { return };
+            let opened = std::fs::File::create(path).and_then(|file| {
+                amsrust::sound_export::WavWriter::new(
+                    std::io::BufWriter::new(file),
+                    config.sample_rate,
+                    config.nb_channels() as u16
+                )
+            });
+            match opened {
+                Ok(wav) => export.wav = Some(wav),
+                Err(e) => {
+                    eprintln!("{path}: {e}");
+                    WAV_EXPORT.store(false, std::sync::atomic::Ordering::Relaxed);
+                    return;
+                }
+            }
+        }
+        if let Some(Err(e)) = export.wav.as_mut().map(|wav| wav.samples(samples)) {
+            eprintln!("WAV export stopped: {e}");
+            WAV_EXPORT.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+}
+
+/// For the loops that take no samples themselves (headless, debug server): a frame's samples
+/// at a time.
+fn poll_sound_export(motherboard: &mut Motherboard) {
+    if WAV_EXPORT.load(std::sync::atomic::Ordering::Relaxed)
+        && motherboard.psg().pending_samples() >= 2048
+    {
+        let samples = motherboard.take_audio_samples();
+        export_samples(motherboard, &samples);
+    }
+}
+
+fn finish_sound_export(motherboard: &mut Motherboard) {
+    let samples = motherboard.take_audio_samples();
+    export_samples(motherboard, &samples);
+    WAV_EXPORT.store(false, std::sync::atomic::Ordering::Relaxed);
+    let Some(export) = SOUND_EXPORT.with(|export| export.borrow_mut().take()) else { return };
+    if let (Some(wav), Some(path)) = (export.wav, &export.wav_path) {
+        match wav.finish() {
+            Ok(_) => eprintln!("sound saved: {path}"),
+            Err(e) => eprintln!("{path}: {e}")
+        }
+    }
+    if let Some(path) = &export.ym {
+        let frames = motherboard.psg_mut().take_logged_frames();
+        let song = std::path::Path::new(path).file_stem().map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+        match std::fs::write(path, amsrust::sound_export::ym6(&frames, 50, &song)) {
+            Ok(()) => eprintln!("{path}: {} frames of AY registers", frames.len()),
+            Err(e) => eprintln!("{path}: {e}")
         }
     }
 }
@@ -405,12 +504,14 @@ fn run_headless(
             while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) {
                 motherboard.execute_next_opcode_no_video();
                 type_due_keys(typist, motherboard);
+                poll_sound_export(motherboard);
             }
             let mut monitor = viewing_monitor(black_level);
             motherboard.watch_io_writes(show_overlay);
             let mut seen = 0u64;
             while motherboard.t_state_counter().value() < target_t_states {
                 type_due_keys(typist, motherboard);
+                poll_sound_export(motherboard);
                 let mut frame = None;
                 motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
                     monitor.receive(rgb, sync);
@@ -443,6 +544,7 @@ fn run_headless(
             // between screenshots, run without collecting video (cheaper)
             motherboard.execute_next_opcode_no_video();
             type_due_keys(typist, motherboard);
+            poll_sound_export(motherboard);
         }
         if motherboard.t_state_counter().value() >= target_t_states {
             break;
@@ -456,6 +558,7 @@ fn run_headless(
         // matches how the CSL runner and play_demo grab a screenshot.
         while frame.is_none() && motherboard.t_state_counter().value() < target_t_states {
             type_due_keys(typist, motherboard);
+            poll_sound_export(motherboard);
             motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
                 monitor.receive(rgb, sync);
                 // take_frame() consumes it: a later tick within this same
@@ -533,9 +636,9 @@ fn run_recording(
         });
         if let Some(frame) = frame {
             filter.render(&frame, &mut buffer);
-            let recorded = recorder
-                .samples(&motherboard.take_audio_samples())
-                .and_then(|()| recorder.frame(&buffer));
+            let samples = motherboard.take_audio_samples();
+            export_samples(motherboard, &samples);
+            let recorded = recorder.samples(&samples).and_then(|()| recorder.frame(&buffer));
             if let Err(e) = recorded {
                 eprintln!("{e}");
                 std::process::exit(1);
@@ -660,6 +763,7 @@ fn run_debug_server(
             reloader.poll(motherboard, typist);
         }
         type_due_keys(typist, motherboard);
+        poll_sound_export(motherboard);
         if run_frame(motherboard, &mut monitor, Some(server), None).is_some() {
             // The CPC's own pace.
             deadline += frame_duration;
@@ -833,6 +937,7 @@ fn run_window(
             filter.render(&frame, &mut buffer);
         }
         let samples = motherboard.take_audio_samples();
+        export_samples(motherboard, &samples);
         if let Some(recorder) = &mut recorder {
             let recorded = recorder.samples(&samples).and_then(|()| recorder.frame(&buffer));
             if let Err(e) = recorded {

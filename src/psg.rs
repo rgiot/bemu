@@ -245,7 +245,18 @@ pub struct Psg {
     prescaler: u8,
     /// Output level of channels A, B, C (0.0..=1.0) after the last step.
     levels: [f32; 3],
-    audio: Option<AudioOutput>
+    audio: Option<AudioOutput>,
+    /// The registers once per frame, when logged (a YM export).
+    frame_log: Option<FrameLog>
+}
+
+/// The registers frame by frame, as a YM file keeps them.
+#[derive(Default)]
+struct FrameLog {
+    frames: Vec<[u8; 16]>,
+    /// R13 written since the last frame: the envelope restarts (a YM file marks "not written"
+    /// with &FF).
+    r13_written: bool
 }
 
 impl Default for Psg {
@@ -259,7 +270,8 @@ impl Default for Psg {
             clock_pin: false,
             prescaler: 0,
             levels: [0.0; 3],
-            audio: None
+            audio: None,
+            frame_log: None
         };
         // The datasheet's reset clears every register; the crate's own
         // reset sets R7 to 0x3F instead. Keep the chip in line with
@@ -276,8 +288,37 @@ impl Psg {
     /// the samples not taken yet are kept: the host's sound stream goes on.
     pub fn reset(&mut self) {
         let audio = self.audio.take();
+        let frame_log = self.frame_log.take();
         *self = Self::default();
         self.audio = audio;
+        self.frame_log = frame_log;
+    }
+
+    /// Keep (`true`) or not the registers once per frame, for [`Self::take_logged_frames`].
+    pub fn log_frames(&mut self, log: bool) {
+        self.frame_log = log.then(FrameLog::default);
+    }
+
+    pub fn logs_frames(&self) -> bool {
+        self.frame_log.is_some()
+    }
+
+    /// A frame begins (the CRTC's VSYNC): note the registers, R13 as &FF when not written
+    /// since the last frame.
+    pub fn log_frame(&mut self) {
+        if let Some(log) = &mut self.frame_log {
+            let mut frame = [0u8; 16];
+            frame[..14].copy_from_slice(&self.registers[..14]);
+            if !std::mem::take(&mut log.r13_written) {
+                frame[13] = 0xff;
+            }
+            log.frames.push(frame);
+        }
+    }
+
+    /// The frames noted since the last call.
+    pub fn take_logged_frames(&mut self) -> Vec<[u8; 16]> {
+        self.frame_log.as_mut().map(|log| std::mem::take(&mut log.frames)).unwrap_or_default()
     }
 
     pub fn register(&self, idx: u8) -> u8 {
@@ -294,6 +335,11 @@ impl Psg {
     pub fn set_register(&mut self, idx: u8, value: u8) {
         let idx = idx & 0x0f;
         self.registers[idx as usize] = value;
+        if idx == 13 {
+            if let Some(log) = &mut self.frame_log {
+                log.r13_written = true;
+            }
+        }
         if idx < NB_SOUND_REGISTERS {
             self.chip.write_register(idx, value);
         }
