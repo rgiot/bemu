@@ -1373,6 +1373,13 @@ impl Crtc {
         };
     }
 
+    /// The registers as stored, as a snapshot stores them.
+    pub fn registers(&self) -> [u8; 18] {
+        let mut regs = [0; 18];
+        regs.copy_from_slice(&self.regs[..18]);
+        regs
+    }
+
     /// The counters, as a version 3 snapshot stores them.
     pub fn counters(&self) -> CrtcCounters {
         CrtcCounters {

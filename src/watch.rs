@@ -12,7 +12,8 @@ const POLL: Duration = Duration::from_millis(250);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Sna,
-    Dsk(FdcDrive)
+    Dsk(FdcDrive),
+    Cdt
 }
 
 /// A file's modification time and size: a change of either is a new file.

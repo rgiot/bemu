@@ -56,7 +56,7 @@
 //! registers (see `amsrust::snapshot`); apply it after `--dsk` if the
 //! software expects a particular disc already in the drive.
 
-use amsrust::csl_runner::keys_of_char;
+
 use amsrust::display::{DisplayFilter, DisplayMode};
 use amsrust::input::HostKey;
 use amsrust::debug::{Monitor, MonitorContext};
@@ -66,6 +66,7 @@ use amsrust::input::HostKeyboard;
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
+use amsrust::overlay::Overlay;
 use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::psg::AudioConfig;
 use cli::FrontendKind;
@@ -120,6 +121,9 @@ fn main() {
     if let Some(fitted) = args.disc_interface {
         builder.set_disc_interface(fitted);
     }
+    if args.french {
+        builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
+    }
     let mut motherboard = builder.build();
     if (args.dsk_a.is_some() || args.dsk_b.is_some()) && !motherboard.has_disc_interface() {
         eprintln!("--dsk: this {} has no disc interface (--ddi adds one)", args.model.name());
@@ -130,6 +134,15 @@ fn main() {
     }
     if let Some(path) = &args.dsk_b {
         insert_disc(path, FdcDrive::B, &mut motherboard);
+    }
+    if let Some(path) = &args.cdt {
+        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let tape = amsrust::tape::Tape::from_cdt(&bytes).unwrap_or_else(|e| panic!("{path}: {e}"));
+        for note in &tape.notes {
+            eprintln!("{path}: {note}");
+        }
+        eprintln!("{path}: {:.0} s of tape", tape.duration_seconds());
+        motherboard.insert_tape(Some(tape));
     }
     let mut breakpoints = amsrust::snapshot::SnapshotBreakpoints::default();
     if let Some(path) = &args.sna {
@@ -150,7 +163,7 @@ fn main() {
             breakpoints.len()
         );
     }
-    let mut typist = args.text.as_deref().map(|text| Typist::new(text, args.type_at));
+    let mut typist = args.text.as_deref().map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout()));
     if typist.is_some() && monitor_mode {
         eprintln!("--type is ignored in the interactive monitor");
     }
@@ -160,10 +173,10 @@ fn main() {
     }
 
     match args.screenshot_dir {
-        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut(), args.black_level),
+        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut(), args.black_level, args.overlay),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo)
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay)
         },
         None if args.debug_server => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
@@ -188,6 +201,12 @@ fn main() {
             Monitor::cli_monitoring(&mut motherboard, &mut ctx);
         }
     }
+    if let Some(path) = &args.save_sna {
+        match amsrust::snapshot::save_sna(&motherboard, path) {
+            Ok(()) => eprintln!("snapshot saved: {path}"),
+            Err(e) => eprintln!("cannot save the snapshot: {e}")
+        }
+    }
 }
 
 /// T-states per second at the CPC's 4MHz clock.
@@ -206,11 +225,11 @@ struct Typist {
 const KEY_T_STATES: usize = T_STATES_PER_SECOND / 25;
 
 impl Typist {
-    fn new(text: &str, at_seconds: f64) -> Self {
+    fn new(text: &str, at_seconds: f64, layout: amsrust::keyboard::KeyboardLayout) -> Self {
         let keys = text
             .chars()
             .filter_map(|c| {
-                let keys = keys_of_char(c);
+                let keys = layout.keys_of_char(c);
                 if keys.is_none() {
                     eprintln!("--type: cannot type {c:?}, skipped");
                 }
@@ -263,11 +282,12 @@ impl Reloader {
         let files = [
             (args.sna.clone(), watch::Kind::Sna),
             (args.dsk_a.clone(), watch::Kind::Dsk(FdcDrive::A)),
-            (args.dsk_b.clone(), watch::Kind::Dsk(FdcDrive::B))
+            (args.dsk_b.clone(), watch::Kind::Dsk(FdcDrive::B)),
+            (args.cdt.clone(), watch::Kind::Cdt)
         ];
         let watcher = watch::Watcher::new(files.into_iter().filter_map(|(path, kind)| path.map(|path| (path, kind))));
         if watcher.is_empty() {
-            eprintln!("--watch: nothing to watch (--sna, --dsk, --dsk-b)");
+            eprintln!("--watch: nothing to watch (--sna, --dsk, --dsk-b, --cdt)");
         }
         else {
             eprintln!("watching {}", watcher.paths().collect::<Vec<_>>().join(", "));
@@ -276,11 +296,11 @@ impl Reloader {
     }
 
     /// Take the files that changed:
-    /// - a disc goes in the drive again;
+    /// - a disc goes in the drive again, a tape in the deck (rewound);
     /// - then the snapshot, if there is one, is loaded again (when it changed, or the disc did:
     ///   the machine starts again from it);
-    /// - without a snapshot, a new disc switches the machine off and on, and `--type` is typed
-    ///   again.
+    /// - without a snapshot, a new disc or tape switches the machine off and on, and `--type` is
+    ///   typed again.
     fn poll(&mut self, motherboard: &mut Motherboard, typist: &mut Option<Typist>) {
         let changed = self.watcher.changed();
         if changed.is_empty() {
@@ -297,6 +317,19 @@ impl Reloader {
                     },
                     Err(e) => eprintln!("{path}: changed, but {e}")
                 },
+                watch::Kind::Cdt => {
+                    let tape = std::fs::read(path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|bytes| amsrust::tape::Tape::from_cdt(&bytes));
+                    match tape {
+                        Ok(tape) => {
+                            motherboard.insert_tape(Some(tape));
+                            eprintln!("{path}: changed, inserted again");
+                            restart = true;
+                        },
+                        Err(e) => eprintln!("{path}: changed, but {e}")
+                    }
+                },
                 watch::Kind::Sna => restart = true
             }
         }
@@ -311,7 +344,8 @@ impl Reloader {
             None => {
                 motherboard.power_cycle();
                 let now = motherboard.t_state_counter().value() as f64 / T_STATES_PER_SECOND as f64;
-                *typist = self.text.as_deref().map(|text| Typist::new(text, now + self.type_at));
+                let layout = motherboard.keyboard_layout();
+                *typist = self.text.as_deref().map(|text| Typist::new(text, now + self.type_at, layout));
                 eprintln!("machine switched off and on");
             }
         }
@@ -324,6 +358,18 @@ fn type_due_keys(typist: &mut Option<Typist>, motherboard: &mut Motherboard) {
     }
 }
 
+/// The machine's state in `bemu_<n>.sna`, the first `n` free in the current directory.
+fn save_snapshot(motherboard: &Motherboard) {
+    let path = (0..)
+        .map(|n| format!("bemu_{n:04}.sna"))
+        .find(|path| !std::path::Path::new(path).exists())
+        .expect("a free name");
+    match amsrust::snapshot::save_sna(motherboard, &path) {
+        Ok(()) => eprintln!("snapshot saved: {path}"),
+        Err(e) => eprintln!("cannot save the snapshot: {e}")
+    }
+}
+
 fn run_headless(
     motherboard: &mut amsrust::motherboard::Motherboard,
     dir: &str,
@@ -332,9 +378,11 @@ fn run_headless(
     typist: &mut Option<Typist>,
     mode: amsrust::display::DisplayMode,
     filter: &mut dyn DisplayFilter,
-    black_level: u8
+    black_level: u8,
+    show_overlay: bool
 ) {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{dir}: {e}"));
+    let mut overlay = show_overlay.then(Overlay::default);
 
     let target_t_states = seconds as usize * T_STATES_PER_SECOND;
     let every_t_states = (every.max(1) as usize * T_STATES_PER_SECOND).max(1);
@@ -356,6 +404,8 @@ fn run_headless(
 
         let mut monitor = viewing_monitor(black_level);
         let mut frame = None;
+        // the writes of the frame captured only
+        motherboard.watch_io_writes(show_overlay);
         // Capture the next whole frame once due, rather than every tick:
         // matches how the CSL runner and play_demo grab a screenshot.
         while frame.is_none() && motherboard.t_state_counter().value() < target_t_states {
@@ -369,11 +419,18 @@ fn run_headless(
                     frame = monitor.take_frame();
                 }
             });
+            if let Some(overlay) = &mut overlay {
+                note_io_writes(overlay, motherboard, &monitor);
+            }
         }
-        let Some(frame) = frame
+        motherboard.watch_io_writes(false);
+        let Some(mut frame) = frame
         else {
             break; // ran out of time mid-frame
         };
+        if let Some(overlay) = &mut overlay {
+            overlay.draw_and_clear(&mut frame);
+        }
 
         let path = format!("{dir}/frame_{shot:04}.png");
         // The raw mode keeps the monitor's own frame, as the test suites do.
@@ -495,7 +552,8 @@ fn start_debug_server(
 fn run_frame(
     motherboard: &mut Motherboard,
     monitor: &mut CrtMonitor,
-    mut server: Option<&mut DebugServer>
+    mut server: Option<&mut DebugServer>,
+    mut overlay: Option<&mut Overlay>
 ) -> Option<image::RgbImage> {
     let mut frame = None;
     while frame.is_none() {
@@ -505,6 +563,9 @@ fn run_frame(
                 frame = monitor.take_frame();
             }
         });
+        if let Some(overlay) = overlay.as_deref_mut() {
+            note_io_writes(overlay, motherboard, monitor);
+        }
         if let Some(server) = server.as_deref_mut() {
             let (x, line) = monitor.beam();
             let (crop_x, crop_y) = monitor.crop_origin();
@@ -523,6 +584,14 @@ fn run_frame(
         server.set_frame(frame);
     }
     frame
+}
+
+/// The I/O writes of the last instruction on the overlay, where the beam is.
+fn note_io_writes(overlay: &mut Overlay, motherboard: &mut Motherboard, monitor: &CrtMonitor) {
+    let (beam, origin) = (monitor.beam(), monitor.crop_origin());
+    for (port, value) in motherboard.take_io_writes() {
+        overlay.note(port, value, beam, origin);
+    }
 }
 
 /// `--debug-server` without a window: run in real time, driven by the
@@ -549,7 +618,7 @@ fn run_debug_server(
             reloader.poll(motherboard, typist);
         }
         type_due_keys(typist, motherboard);
-        if run_frame(motherboard, &mut monitor, Some(server)).is_some() {
+        if run_frame(motherboard, &mut monitor, Some(server), None).is_some() {
             // The CPC's own pace.
             deadline += frame_duration;
             let now = std::time::Instant::now();
@@ -580,7 +649,8 @@ fn run_window(
     curvature: f32,
     black_level: u8,
     frontend: FrontendKind,
-    mut turbo: bool
+    mut turbo: bool,
+    show_overlay: bool
 ) {
     let (width, height) = mode.output_size();
     let mut window: Box<dyn Frontend> = match frontend {
@@ -620,6 +690,10 @@ fn run_window(
     let mut buffer = vec![0u32; width * height];
     let mut f9_was_down = false;
     let mut f10_was_down = false;
+    let mut f7_was_down = false;
+    let mut f6_was_down = false;
+    let mut overlay = show_overlay.then(Overlay::default);
+    motherboard.watch_io_writes(show_overlay);
     // at full speed, the frames shown (at most 50 a second: presenting each would hold the
     // emulation back to the display's rate)
     let mut last_present = std::time::Instant::now();
@@ -657,6 +731,20 @@ fn run_window(
         if let Some(reloader) = reloader {
             reloader.poll(motherboard, typist);
         }
+        // F7 saves a snapshot, in the current directory
+        let f7_down = input.down.contains(&HostKey::F7);
+        if f7_down && !f7_was_down {
+            save_snapshot(motherboard);
+        }
+        f7_was_down = f7_down;
+        // F6 shows or hides the timing overlay
+        let f6_down = input.down.contains(&HostKey::F6);
+        if f6_down && !f6_was_down {
+            overlay = if overlay.is_some() { None } else { Some(Overlay::default()) };
+            motherboard.watch_io_writes(overlay.is_some());
+            eprintln!("timing overlay: {}", if overlay.is_some() { "on" } else { "off" });
+        }
+        f6_was_down = f6_down;
         host_keyboard.apply(motherboard, &input);
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, motherboard);
@@ -688,12 +776,16 @@ fn run_window(
                 motherboard.execute_next_opcode_no_video();
             }
             motherboard.take_audio_samples();
+            motherboard.take_io_writes().for_each(drop);
             continue;
         }
-        let Some(frame) = run_frame(motherboard, &mut monitor, server.as_deref_mut())
+        let Some(mut frame) = run_frame(motherboard, &mut monitor, server.as_deref_mut(), overlay.as_mut())
         else {
             continue; // paused mid-frame
         };
+        if let Some(overlay) = &mut overlay {
+            overlay.draw_and_clear(&mut frame);
+        }
 
         if !direct || recorder.is_some() {
             filter.render(&frame, &mut buffer);

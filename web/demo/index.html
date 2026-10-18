@@ -28,6 +28,7 @@
   <label>Gate Array <select name="gateArray"><option>40007</option><option>40008</option><option selected>40010</option></select></label>
   <label>RAM (KB) <select name="ramKb"><option value="">model's</option><option>64</option><option>128</option><option>256</option><option>576</option><option value="4160">4 MB</option></select></label>
   <label>Disc interface <select name="discInterface"><option value="">model's</option><option value="true">yes</option><option value="false">no</option></select></label>
+  <label>Language <select name="language"><option>en</option><option>fr</option></select></label>
   <label>Brand <select name="brand"><option>amstrad</option><option>schneider</option><option>awa</option><option>orion</option></select></label>
   <label>Display <select name="display"><option>raw</option><option>ctm</option><option>trinitron</option><option>gt65</option><option>atari</option></select></label>
   <label>Curvature <input name="curvature" type="range" min="0" max="2" step="0.25" value="1"></label>
@@ -48,12 +49,12 @@
 </div>
 <div class="row">
   <input id="text" placeholder="text to type, e.g. cat" size="30"> <button id="type">Type it</button>
-  <button id="shot">Screenshot</button> <button id="saveA">Save disc A</button>
+  <button id="shot">Screenshot</button> <button id="saveA">Save disc A</button> <button id="saveSna">Save snapshot</button>
 </div>
 
 <div id="drop">
-  Drop .dsk (drive A, or B with Shift), .sna, .csl and the files a script names here, or pick them:
-  <input id="files" type="file" multiple accept=".dsk,.sna,.csl">
+  Drop .dsk (drive A, or B with Shift), .cdt, .sna, .csl and the files a script names here, or pick them:
+  <input id="files" type="file" multiple accept=".dsk,.cdt,.sna,.csl">
 </div>
 <p id="status"></p>
 <div id="shots"></div>
@@ -67,7 +68,7 @@ const status = (text) => document.querySelector('#status').textContent = text;
 
 // the configuration: the form, set from the URL (?model=464&crtc=1&ga=40010&display=ctm...)
 for (const [key, name] of [['model', 'model'], ['crtc', 'crtc'], ['ga', 'gateArray'], ['ram', 'ramKb'],
-                           ['ddi', 'discInterface'], ['brand', 'brand'], ['display', 'display'], ['curvature', 'curvature']]) {
+                           ['ddi', 'discInterface'], ['lang', 'language'], ['brand', 'brand'], ['display', 'display'], ['curvature', 'curvature']]) {
   if (params.has(key)) form.elements[name].value = params.get(key);
 }
 function config() {
@@ -128,6 +129,7 @@ document.querySelector('#saveA').onclick = () => {
   if (dsk) download(dsk, 'disc-a.dsk', 'application/octet-stream');
   else status('no disc in drive A');
 };
+document.querySelector('#saveSna').onclick = () => download(emu.saveSnapshot(), 'bemu.sna', 'application/octet-stream');
 
 // files: discs and snapshots go in at once, a script plays with all the files given so far
 async function take(files, driveB) {
@@ -137,6 +139,7 @@ async function take(files, driveB) {
     await emu.addFile(file.name, file);
     if (name.endsWith('.dsk')) await emu.insertDisc(driveB ? 'B' : 'A', file);
     else if (name.endsWith('.sna')) await emu.loadSnapshot(file);
+    else if (name.endsWith('.cdt')) await emu.insertTape(file);
     else if (name.endsWith('.csl')) script = file;
   }
   if (script) {
@@ -157,13 +160,14 @@ drop.ondrop = (event) => {
   take(event.dataTransfer.files, event.shiftKey).catch((e) => status(e.message));
 };
 
-// files from the URL: ?dsk=URL&dskb=URL&sna=URL&csl=URL&files=URL1,URL2 (named after their URLs)
+// files from the URL: ?dsk=URL&dskb=URL&cdt=URL&sna=URL&csl=URL&files=URL1,URL2 (named after their URLs)
 try {
   for (const url of (params.get('files') ?? '').split(',').filter(Boolean)) {
     await emu.addFile(decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()), url);
   }
   if (params.has('dsk')) await emu.insertDisc('A', params.get('dsk'));
   if (params.has('dskb')) await emu.insertDisc('B', params.get('dskb'));
+  if (params.has('cdt')) await emu.insertTape(params.get('cdt'));
   if (params.has('sna')) await emu.loadSnapshot(params.get('sna'));
   if (params.has('csl')) { status('playing the script...'); await emu.runCsl(params.get('csl')); }
 } catch (error) {

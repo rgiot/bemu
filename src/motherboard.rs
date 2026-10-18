@@ -34,6 +34,8 @@ pub struct Motherboard {
     /// `None` is a stock machine - the common case, and the default.
     large_ram_expansion: Option<LargeRamExpansion>,
     fdc: Fdc,
+    /// The cassette deck, with a tape in it.
+    tape: Option<Box<crate::tape::TapeDeck>>,
     // The FDC isn't a pin-level `Chip` (see fdc.rs), so unlike the other
     // peripherals its register writes/reads aren't naturally idempotent
     // across repeated calls: a single Z80 `OUT`/`IN` instruction's bus
@@ -66,6 +68,8 @@ pub struct Motherboard {
     /// The CPU's bus accesses, recorded for debuggers (watchpoints) while
     /// `Some` - see [`Motherboard::watch_bus`].
     bus_log: Option<Vec<BusAccess>>,
+    /// The I/O writes `(port, value)` since they were last taken, when watched.
+    io_writes: Option<Vec<(u16, u8)>>,
 
     model: CpcModel,
     /// The MMR banks RAM: a 6128, or a RAM expansion on a 464/664.
@@ -73,6 +77,8 @@ pub struct Motherboard {
     /// A disc interface (AMSDOS and the FDC ports): a 664/6128, or a
     /// DDI-1 on a 464.
     disc_interface: bool,
+    /// The ROMs' language, so what the keys type.
+    keyboard_layout: crate::keyboard::KeyboardLayout,
 
     // Counter of t-states (to be removed later)
     t_state_counter: Counter,
@@ -111,6 +117,7 @@ impl Default for Motherboard {
                 }
                 fdc
             },
+            tape: None,
             fdc_write_active: false,
             us: 0,
             trace_pc_from: std::env::var("AMSRUST_TRACE_PC").ok().and_then(|v| v.parse().ok()),
@@ -123,9 +130,11 @@ impl Default for Motherboard {
             psg: Default::default(),
             keyboard: Default::default(),
             bus_log: None,
+            io_writes: None,
             model: CpcModel::default(),
             ram_banking: true,
             disc_interface: true,
+            keyboard_layout: Default::default(),
 
             t_state_counter: Default::default(),
             nops_counter: Default::default(),
@@ -221,6 +230,7 @@ pub struct MotherboardBuilder {
     /// (bits 1-3) to pick which name ("Amstrad", "Schneider", ...) to print
     /// in the boot banner.
     brand: Option<Brand>,
+    keyboard_layout: Option<crate::keyboard::KeyboardLayout>,
     /// If interruption are allowed
     enable_interruptions: bool, // false by default
     disable_lower_rom: bool, // false by default
@@ -256,6 +266,12 @@ impl MotherboardBuilder {
     /// own if unset.
     pub fn set_disc_interface(&mut self, fitted: bool) -> &mut Self {
         self.disc_interface = Some(fitted);
+        self
+    }
+
+    /// The French ROMs (AZERTY keyboard), on a 6128 only, or the English ones.
+    pub fn set_keyboard_layout(&mut self, layout: crate::keyboard::KeyboardLayout) -> &mut Self {
+        self.keyboard_layout = Some(layout);
         self
     }
 
@@ -319,6 +335,11 @@ impl MotherboardBuilder {
         }
         if let Some(fitted) = self.disc_interface {
             motherboard.set_disc_interface(fitted);
+        }
+        if let Some(layout) = self.keyboard_layout {
+            if let Err(e) = motherboard.set_keyboard_layout(layout) {
+                eprintln!("{e}");
+            }
         }
         if let Some(brand) = self.brand {
             motherboard.ppi.set_brand(brand);
@@ -425,6 +446,28 @@ impl Motherboard {
 
     pub fn fdc_mut(&mut self) -> &mut Fdc {
         &mut self.fdc
+    }
+
+    /// Put `tape` in the cassette deck (rewound, PLAY down: it plays when the CPC starts the
+    /// motor); `None` ejects it.
+    pub fn insert_tape(&mut self, tape: Option<crate::tape::Tape>) {
+        self.tape = tape.map(|tape| Box::new(crate::tape::TapeDeck::new(tape)));
+        if self.tape.is_none() {
+            self.ppi.set_pin(PpiPin::B7, false);
+        }
+    }
+
+    /// The cassette deck of `other` comes here, as it is (a reset machine keeps its deck).
+    pub fn take_tape_deck_from(&mut self, other: &mut Motherboard) {
+        self.tape = other.tape.take();
+    }
+
+    pub fn tape_deck(&self) -> Option<&crate::tape::TapeDeck> {
+        self.tape.as_deref()
+    }
+
+    pub fn tape_deck_mut(&mut self) -> Option<&mut crate::tape::TapeDeck> {
+        self.tape.as_deref_mut()
     }
 
     pub fn psg(&self) -> &Psg {
@@ -540,6 +583,11 @@ impl Motherboard {
         if self.crtc.is_activated() {
             self.crtc.set_phase_ticks(0);
             self.fdc.advance(1); // one character = one microsecond
+            if let Some(tape) = &mut self.tape {
+                // the cassette motor relay is port C's bit 4, the head's level port B's bit 7
+                tape.advance_us(self.ppi.get_pin(PpiPin::C4));
+                self.ppi.set_pin(PpiPin::B7, tape.level());
+            }
             self.us += 1;
             if let Some(from) = self.trace_pc_from {
                 if self.us >= from && self.us < self.trace_pc_to {
@@ -660,6 +708,9 @@ impl Motherboard {
             // actual write only happens once, on the first such tick.
             if !self.fdc_write_active {
                 self.log_bus(BusAccessKind::IoWrite, addr, byte);
+                if let Some(writes) = &mut self.io_writes {
+                    writes.push((addr, byte));
+                }
                 if !self.disc_interface {
                     // Nothing on the disc ports.
                 } else if Self::is_fdc_motor_addr(addr) {
@@ -1305,7 +1356,11 @@ impl Motherboard {
     /// MMR is then back to the base 64K). Restart it afterwards.
     pub fn set_model(&mut self, model: CpcModel) {
         self.model = model;
-        self.memory.set_firmware(model);
+        if model != CpcModel::Cpc6128 {
+            // French ROMs exist for the 6128 only
+            self.keyboard_layout = Default::default();
+        }
+        self.memory.set_firmware(model, self.keyboard_layout);
         self.ram_banking = model.has_ram_banking();
         self.set_disc_interface(model.has_disc_interface());
         self.pal.reset();
@@ -1325,6 +1380,21 @@ impl Motherboard {
     /// Whether the MMR banks RAM (6128, or RAM expansion).
     pub fn has_ram_banking(&self) -> bool {
         self.ram_banking
+    }
+
+    /// Fit the French ROMs (AZERTY) or the English ones: the French ones exist for the 6128 only.
+    pub fn set_keyboard_layout(&mut self, layout: crate::keyboard::KeyboardLayout) -> Result<(), String> {
+        if layout == crate::keyboard::KeyboardLayout::French && self.model != CpcModel::Cpc6128 {
+            return Err(format!("there are French ROMs for the 6128 only, not the {}", self.model.name()));
+        }
+        self.keyboard_layout = layout;
+        self.memory.set_firmware(self.model, layout);
+        Ok(())
+    }
+
+    /// What the keys type, as the ROMs fitted say.
+    pub fn keyboard_layout(&self) -> crate::keyboard::KeyboardLayout {
+        self.keyboard_layout
     }
 
     pub fn model(&self) -> CpcModel {
@@ -1349,6 +1419,18 @@ impl Motherboard {
         // A RAM expansion decodes the MMR, on any model.
         self.ram_banking = pages > 0;
         self.memory.set_extra_pages(pages);
+    }
+
+    /// All the RAM, as a snapshot stores it: the main 64K then, when RAM is banked, each extra
+    /// page of the machine (not the banks of a large expansion card).
+    pub fn ram_dump(&self) -> Vec<u8> {
+        let mut ram = self.memory.page_dump(None);
+        if self.ram_banking {
+            for page in 0..self.memory.extra_pages() {
+                ram.extend(self.memory.page_dump(Some(page)));
+            }
+        }
+        ram
     }
 
     /// How many extra 64kb RAM pages are currently fitted.
@@ -1454,6 +1536,17 @@ impl Motherboard {
     /// for [`Self::take_bus_accesses`]. Watching does not change timing.
     pub fn watch_bus(&mut self, watch: bool) {
         self.bus_log = watch.then(Vec::new);
+    }
+
+    /// Record (`true`) or not (the default) the I/O writes alone, for [`Self::take_io_writes`]
+    /// (a timing overlay): cheaper than [`Self::watch_bus`].
+    pub fn watch_io_writes(&mut self, watch: bool) {
+        self.io_writes = watch.then(Vec::new);
+    }
+
+    /// The I/O writes `(port, value)` since the last call (none when not watching).
+    pub fn take_io_writes(&mut self) -> impl Iterator<Item = (u16, u8)> + '_ {
+        self.io_writes.iter_mut().flat_map(|writes| writes.drain(..))
     }
 
     /// The accesses recorded since the last call (empty when not watching).
