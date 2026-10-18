@@ -28,6 +28,7 @@
   <label>Gate Array <select name="gateArray"><option>40007</option><option>40008</option><option selected>40010</option></select></label>
   <label>RAM (KB) <select name="ramKb"><option value="">model's</option><option>64</option><option>128</option><option>256</option><option>576</option><option value="4160">4 MB</option></select></label>
   <label>Disc interface <select name="discInterface"><option value="">model's</option><option value="true">yes</option><option value="false">no</option></select></label>
+  <label>Language <select name="language"><option>en</option><option>fr</option></select></label>
   <label>Brand <select name="brand"><option>amstrad</option><option>schneider</option><option>awa</option><option>orion</option></select></label>
   <label>Display <select name="display"><option>raw</option><option>ctm</option><option>trinitron</option><option>gt65</option><option>atari</option></select></label>
   <label>Curvature <input name="curvature" type="range" min="0" max="2" step="0.25" value="1"></label>
@@ -48,7 +49,7 @@
 </div>
 <div class="row">
   <input id="text" placeholder="text to type, e.g. cat" size="30"> <button id="type">Type it</button>
-  <button id="shot">Screenshot</button> <button id="saveA">Save disc A</button>
+  <button id="shot">Screenshot</button> <button id="saveA">Save disc A</button> <button id="saveSna">Save snapshot</button>
 </div>
 
 <div id="drop">
@@ -67,7 +68,7 @@ const status = (text) => document.querySelector('#status').textContent = text;
 
 // the configuration: the form, set from the URL (?model=464&crtc=1&ga=40010&display=ctm...)
 for (const [key, name] of [['model', 'model'], ['crtc', 'crtc'], ['ga', 'gateArray'], ['ram', 'ramKb'],
-                           ['ddi', 'discInterface'], ['brand', 'brand'], ['display', 'display'], ['curvature', 'curvature']]) {
+                           ['ddi', 'discInterface'], ['lang', 'language'], ['brand', 'brand'], ['display', 'display'], ['curvature', 'curvature']]) {
   if (params.has(key)) form.elements[name].value = params.get(key);
 }
 function config() {
@@ -128,6 +129,7 @@ document.querySelector('#saveA').onclick = () => {
   if (dsk) download(dsk, 'disc-a.dsk', 'application/octet-stream');
   else status('no disc in drive A');
 };
+document.querySelector('#saveSna').onclick = () => download(emu.saveSnapshot(), 'bemu.sna', 'application/octet-stream');
 
 // files: discs and snapshots go in at once, a script plays with all the files given so far
 async function take(files, driveB) {

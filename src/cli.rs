@@ -23,6 +23,8 @@ pub struct Args {
     pub ram_kb: Option<usize>,
     /// Disc interface (a DDI-1 on a 464), if not the model's.
     pub disc_interface: Option<bool>,
+    /// `--french`: the French 6128 ROMs, AZERTY keyboard.
+    pub french: bool,
     pub dsk_a: Option<String>,
     pub dsk_b: Option<String>,
     /// `--cdt path`: a tape in the cassette deck, PLAY down.
@@ -30,14 +32,21 @@ pub struct Args {
     pub sna: Option<String>,
     pub screenshot_dir: Option<String>,
     pub seconds: u64,
-    pub every: u64,
+    /// How often a screenshot is taken.
+    pub every: Every,
+    /// `--from S`: the first screenshot at S seconds.
+    pub from: f64,
     pub window: bool,
     pub mute: bool,
     /// `--turbo`: the window starts at full speed (F10 toggles it).
     pub turbo: bool,
+    /// `--watch`: the files are taken again when they change.
+    pub watch: bool,
     /// `--overlay`: the timing overlay shown (window) or drawn (screenshots).
     pub overlay: bool,
     pub record: Option<String>,
+    /// `--save-sna path`: the machine's state saved there when the run ends.
+    pub save_sna: Option<String>,
     pub debug_server: bool,
     pub debug_port: u16,
     /// Start paused, for a debugger to arm its breakpoints first.
@@ -59,24 +68,35 @@ pub struct Args {
     pub black_level: u8
 }
 
+/// `--every`: seconds apart, or frames apart.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Every {
+    Seconds(f64),
+    Frames(u64)
+}
+
 pub fn parse_args() -> Args {
     let mut args = Args {
         crtc: CrtcType::default(),
         model: CpcModel::default(),
         ram_kb: None,
         disc_interface: None,
+        french: false,
         dsk_a: None,
         dsk_b: None,
         cdt: None,
         sna: None,
         screenshot_dir: None,
         seconds: 30,
-        every: 2,
+        every: Every::Seconds(2.0),
+        from: 0.0,
         window: false,
         mute: false,
         turbo: false,
+        watch: false,
         overlay: false,
         record: None,
+        save_sna: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
         debug_paused: false,
@@ -112,13 +132,25 @@ pub fn parse_args() -> Args {
             },
             "--ddi" => args.disc_interface = Some(true),
             "--no-disc" => args.disc_interface = Some(false),
+            "--french" => args.french = true,
             "--dsk" => args.dsk_a = Some(next("--dsk")),
             "--dsk-b" => args.dsk_b = Some(next("--dsk-b")),
             "--cdt" => args.cdt = Some(next("--cdt")),
             "--sna" => args.sna = Some(next("--sna")),
             "--screenshot" => args.screenshot_dir = Some(next("--screenshot")),
             "--seconds" => args.seconds = next("--seconds").parse().expect("--seconds must be a number"),
-            "--every" => args.every = next("--every").parse().expect("--every must be a number"),
+            "--every" => {
+                let value = next("--every");
+                args.every = match value.strip_suffix('f') {
+                    Some(frames) => Every::Frames(
+                        frames.parse().ok().filter(|n| *n > 0).expect("--every Nf: N must be a whole number of frames, from 1")
+                    ),
+                    None => Every::Seconds(
+                        value.parse().ok().filter(|s: &f64| *s > 0.0).expect("--every must be seconds, or frames as Nf")
+                    )
+                }
+            },
+            "--from" => args.from = next("--from").parse().ok().filter(|s: &f64| *s >= 0.0).expect("--from must be seconds"),
             "--window" => args.window = true,
             "--mute" => args.mute = true,
             "--turbo" => args.turbo = true,
@@ -152,6 +184,8 @@ pub fn parse_args() -> Args {
                 }
             },
             "--crt-gpu" => args.gpu = true,
+            "--watch" => args.watch = true,
+            "--save-sna" => args.save_sna = Some(next("--save-sna")),
             "--overlay" => args.overlay = true,
             "--curvature" => {
                 args.curvature = next("--curvature")
@@ -179,15 +213,16 @@ pub fn parse_args() -> Args {
 
 fn print_help() {
     eprintln!(concat!(
-        "amsrust [--model 464|664|6128] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
-        "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path]\n",
-        "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute] [--turbo]]\n",
+        "amsrust [--model 464|664|6128] [--french] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
+        "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path] [--watch]\n",
+        "        [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
-        "--model picks the ROMs (default 6128). The 464 and 664 have 64K and the\n",
+        "--model picks the ROMs (default 6128); --french the French ones of the 6128,\n",
+        "with its AZERTY keyboard (typed text and keys follow it). The 464 and 664 have 64K and the\n",
         "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
         "The 664 and 6128 have a disc interface; --ddi adds a DDI-1 (AMSDOS) to\n",
         "a 464, --no-disc removes it. --cdt puts a tape (CDT/TZX) in the cassette\n",
@@ -196,16 +231,23 @@ fn print_help() {
         "With no --screenshot/--window, drops into the interactive monitor once\n",
         "everything is loaded ('h' at its prompt lists its commands). With\n",
         "--screenshot, runs headless for --seconds (default 30), saving a\n",
-        "screenshot every --every seconds (default 2). With --window, opens a\n",
+        "screenshot every --every seconds (default 2), or every N frames with --every Nf\n",
+        "(1f: each frame, for following an effect frame by frame), from --from seconds\n",
+        "(default 0). With --window, opens a\n",
         "live, playable window redrawn at the CPC's own ~50Hz, keyboard included\n",
         "- close the window to quit. Built with --features audio, the window\n",
         "plays the sound too (--mute to silence it). F10 toggles full speed: the\n",
         "emulation runs as fast as it can, silent, the picture shown 50 times a\n",
-        "second (--turbo starts so). --record capture.mp4 records\n",
+        "second (--turbo starts so). F7 saves the machine's state in a snapshot,\n",
+        "bemu_0000.sna (then 0001...) in the current directory. --save-sna saves it\n",
+        "when the run ends (headless, recording, window closed). --record capture.mp4 records\n",
         "a video with sound through ffmpeg: what the window shows until it is\n",
         "closed, or without --window --seconds (default 30) run headless.\n",
         "--type 'run\"demo\\n' types on the CPC keyboard after --type-at seconds\n",
-        "(default 3). Breakpoints of a snapshot's REMU/BRKC/BRKS/WABP chunks are set\n",
+        "(default 3). --watch takes the --sna/--dsk/--dsk-b/--cdt files again when they change\n",
+        "(with --window or --debug-server), for an edit, assemble, see loop: a disc or tape goes\n",
+        "in again, then the snapshot is loaded again; without a snapshot the machine is switched\n",
+        "off and on and --type typed again. Breakpoints of a snapshot's REMU/BRKC/BRKS/WABP chunks are set\n",
         "in the interactive monitor.\n",
         "--display picks how the picture is rendered, in the window, the\n",
         "recording and the screenshots (raw: the monitor's ideal picture; ctm,\n",

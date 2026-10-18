@@ -262,6 +262,33 @@ impl Ppi {
         self.direction_a == PpiDirection::Output
     }
 
+    /// The control word that set the ports' modes and directions (the inverse of a mode set).
+    pub fn control_word(&self) -> u8 {
+        let input = |direction: &PpiDirection| u8::from(*direction == PpiDirection::Input);
+        let mode_a = match self.mode_a {
+            PpiMode::Mode0 => 0,
+            PpiMode::Mode1 => 1,
+            PpiMode::Mode2 => 2
+        };
+        0x80 | mode_a << 5
+            | input(&self.direction_a) << 4
+            | input(&self.direction_c_upper) << 3
+            | u8::from(self.mode_b == PpiMode::Mode1) << 2
+            | input(&self.direction_b) << 1
+            | input(&self.direction_c_lower)
+    }
+
+    /// Restore a snapshot's PPI: the control word's modes and directions (without the clearing
+    /// of a mode set), port A's output latch and port C.
+    pub fn restore(&mut self, control: u8, port_a: u8, port_c: u8) {
+        self.set_control_configuration(control | 0x80);
+        self.port_a_latch = port_a;
+        if self.port_a_is_output() {
+            self.set_data_a_on_pins(port_a);
+        }
+        self.set_data_c_on_pins(port_c);
+    }
+
     /// The port A output latch (what the CPU last wrote).
     pub fn port_a_latch(&self) -> u8 {
         self.port_a_latch

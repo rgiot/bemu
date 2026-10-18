@@ -280,3 +280,146 @@ mod test {
         assert_eq!(KeyboardMatrix::default().line(12), 0xff);
     }
 }
+
+/// Every key of the matrix, in no particular order.
+pub const ALL_KEYS: &[CpcKey] = {
+    use CpcKey::*;
+    &[
+        A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, Digit0, Digit1, Digit2,
+        Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Space, Return, Shift, Control, CapsLock, Tab, Esc,
+        Del, Clr, Copy, CursorUp, CursorDown, CursorLeft, CursorRight, Caret, Minus, At, Colon, Semicolon, Slash,
+        Dot, Comma, OpenBracket, CloseBracket, Backslash, Keypad0, Keypad1, Keypad2, Keypad3, Keypad4, Keypad5,
+        Keypad6, Keypad7, Keypad8, Keypad9, KeypadDot, KeypadEnter, Joy0Up, Joy0Down, Joy0Left, Joy0Right,
+        Joy0Fire2, Joy0Fire1
+    ]
+};
+
+/// The key at `line * 8 + bit` of the matrix (the firmware's key number).
+pub fn key_at(index: usize) -> Option<CpcKey> {
+    ALL_KEYS.iter().copied().find(|key| {
+        let (line, bit) = key.matrix_position();
+        usize::from(line) * 8 + usize::from(bit) == index
+    })
+}
+
+/// What the keys type: the key translation tables of the firmware (the lower ROM), so UK
+/// (QWERTY, the English ROMs) or French (AZERTY, the French 6128's ROMs).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum KeyboardLayout {
+    #[default]
+    Uk,
+    French
+}
+
+/// Where the 6128's (and 664's) firmware keeps its key translation tables: 80 bytes without a
+/// modifier, then 80 with Shift, then 80 with Control.
+const KEY_TABLES: usize = 0x1eef;
+
+impl KeyboardLayout {
+    /// The firmware's tables: normal, then Shift.
+    fn tables(self) -> &'static [u8] {
+        let rom: &'static [u8] = match self {
+            Self::Uk => include_bytes!("../roms/os6128.rom"),
+            Self::French => include_bytes!("../roms/os6128_azerty.rom")
+        };
+        &rom[KEY_TABLES..KEY_TABLES + 160]
+    }
+
+    /// The code the firmware gives `c`: the French ROMs show ISO 646-FR, where é, è, à, ç, ù, §
+    /// and ° take the codes of `{`, `}`, `@`, `\`, `|`, `]` and `[`.
+    fn code_of(self, c: char) -> Option<u8> {
+        let c = match (self, c) {
+            (_, '\n') => '\r',
+            (Self::French, 'é') => '{',
+            (Self::French, 'è') => '}',
+            (Self::French, 'à') => '@',
+            (Self::French, 'ç') => '\\',
+            (Self::French, 'ù') => '|',
+            (Self::French, '§') => ']',
+            (Self::French, '°') => '[',
+            (_, c) => c
+        };
+        u8::try_from(c).ok().filter(|code| code.is_ascii())
+    }
+
+    /// The keys to hold down together to type `c` (Shift and a key, or a key alone).
+    pub fn keys_of_char(self, c: char) -> Option<Vec<CpcKey>> {
+        if self == Self::Uk {
+            return crate::csl_runner::keys_of_char(c);
+        }
+        let code = self.code_of(c)?;
+        let (normal, shifted) = self.tables().split_at(80);
+        // the keyboard's keys only: the joystick's line has letters too
+        let keyboard = |index: &usize| *index < 72 || *index == 79;
+        if let Some(index) = (0..80).filter(keyboard).find(|&index| normal[index] == code) {
+            return key_at(index).map(|key| vec![key]);
+        }
+        let index = (0..80).filter(keyboard).find(|&index| shifted[index] == code)?;
+        key_at(index).map(|key| vec![CpcKey::Shift, key])
+    }
+
+    /// The key a host key labelled as the UK `key` (a letter) is here: the one that types the same
+    /// letter (`A` is where the UK `Q` is on an AZERTY keyboard). Other keys stay where they are.
+    pub fn key_labelled(self, key: CpcKey) -> CpcKey {
+        if self == Self::Uk {
+            return key;
+        }
+        let (line, bit) = key.matrix_position();
+        let uk = KeyboardLayout::Uk.tables()[usize::from(line) * 8 + usize::from(bit)];
+        if !uk.is_ascii_lowercase() {
+            return key;
+        }
+        self.tables()[..80].iter().position(|&k| k == uk).and_then(key_at).unwrap_or(key)
+    }
+}
+
+#[cfg(test)]
+mod layout_test {
+    use super::*;
+
+    #[test]
+    fn every_matrix_position_has_one_key() {
+        for index in 0..80 {
+            let keys = ALL_KEYS.iter().filter(|key| {
+                let (line, bit) = key.matrix_position();
+                usize::from(line) * 8 + usize::from(bit) == index
+            });
+            assert!(keys.count() <= 1, "{index}");
+        }
+    }
+
+    #[test]
+    fn azerty_types_through_the_french_tables() {
+        use CpcKey::*;
+        let fr = KeyboardLayout::French;
+        assert_eq!(fr.keys_of_char('a'), Some(vec![Q]));
+        assert_eq!(fr.keys_of_char('Z'), Some(vec![Shift, W]));
+        assert_eq!(fr.keys_of_char('m'), Some(vec![Colon]));
+        assert_eq!(fr.keys_of_char('1'), Some(vec![Shift, Digit1]));
+        assert_eq!(fr.keys_of_char('é'), Some(vec![Digit2]));
+        assert_eq!(fr.keys_of_char('"'), Some(vec![Digit3]));
+        assert_eq!(fr.keys_of_char('\n'), Some(vec![Return]));
+        assert_eq!(fr.key_labelled(A), Q);
+        assert_eq!(fr.key_labelled(M), Colon);
+        assert_eq!(fr.key_labelled(Digit1), Digit1);
+        assert_eq!(KeyboardLayout::Uk.keys_of_char('a'), Some(vec![A]));
+    }
+
+    /// The French ROMs come with the layout, on a 6128 only.
+    #[test]
+    fn the_french_roms_are_fitted_on_a_6128() {
+        use crate::motherboard::{CpcModel, MotherboardBuilder};
+        let mut builder = MotherboardBuilder::default();
+        builder.set_keyboard_layout(KeyboardLayout::French);
+        let mut machine = builder.build();
+        assert_eq!(machine.keyboard_layout(), KeyboardLayout::French);
+        // the ROMs' own key table, as the machine reads it
+        let rom = |machine: &crate::motherboard::Motherboard| machine.read_byte(0x1eef + 67);
+        assert_eq!(rom(&machine), b'a', "the French OS: the UK Q key types a");
+        assert!(machine.set_keyboard_layout(KeyboardLayout::Uk).is_ok());
+        assert_eq!(rom(&machine), b'q');
+        machine.set_model(CpcModel::Cpc464);
+        assert!(machine.set_keyboard_layout(KeyboardLayout::French).is_err());
+        assert_eq!(machine.keyboard_layout(), KeyboardLayout::Uk);
+    }
+}
