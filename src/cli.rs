@@ -28,7 +28,10 @@ pub struct Args {
     pub sna: Option<String>,
     pub screenshot_dir: Option<String>,
     pub seconds: u64,
-    pub every: u64,
+    /// How often a screenshot is taken.
+    pub every: Every,
+    /// `--from S`: the first screenshot at S seconds.
+    pub from: f64,
     pub window: bool,
     pub mute: bool,
     /// `--turbo`: the window starts at full speed (F10 toggles it).
@@ -55,6 +58,13 @@ pub struct Args {
     pub black_level: u8
 }
 
+/// `--every`: seconds apart, or frames apart.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Every {
+    Seconds(f64),
+    Frames(u64)
+}
+
 pub fn parse_args() -> Args {
     let mut args = Args {
         crtc: CrtcType::default(),
@@ -66,7 +76,8 @@ pub fn parse_args() -> Args {
         sna: None,
         screenshot_dir: None,
         seconds: 30,
-        every: 2,
+        every: Every::Seconds(2.0),
+        from: 0.0,
         window: false,
         mute: false,
         turbo: false,
@@ -111,7 +122,18 @@ pub fn parse_args() -> Args {
             "--sna" => args.sna = Some(next("--sna")),
             "--screenshot" => args.screenshot_dir = Some(next("--screenshot")),
             "--seconds" => args.seconds = next("--seconds").parse().expect("--seconds must be a number"),
-            "--every" => args.every = next("--every").parse().expect("--every must be a number"),
+            "--every" => {
+                let value = next("--every");
+                args.every = match value.strip_suffix('f') {
+                    Some(frames) => Every::Frames(
+                        frames.parse().ok().filter(|n| *n > 0).expect("--every Nf: N must be a whole number of frames, from 1")
+                    ),
+                    None => Every::Seconds(
+                        value.parse().ok().filter(|s: &f64| *s > 0.0).expect("--every must be seconds, or frames as Nf")
+                    )
+                }
+            },
+            "--from" => args.from = next("--from").parse().ok().filter(|s: &f64| *s >= 0.0).expect("--from must be seconds"),
             "--window" => args.window = true,
             "--mute" => args.mute = true,
             "--turbo" => args.turbo = true,
@@ -173,7 +195,7 @@ fn print_help() {
     eprintln!(concat!(
         "amsrust [--model 464|664|6128] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
         "        [--dsk path] [--dsk-b path] [--sna path]\n",
-        "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute] [--turbo]]\n",
+        "        [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
@@ -186,7 +208,9 @@ fn print_help() {
         "With no --screenshot/--window, drops into the interactive monitor once\n",
         "everything is loaded ('h' at its prompt lists its commands). With\n",
         "--screenshot, runs headless for --seconds (default 30), saving a\n",
-        "screenshot every --every seconds (default 2). With --window, opens a\n",
+        "screenshot every --every seconds (default 2), or every N frames with --every Nf\n",
+        "(1f: each frame, for following an effect frame by frame), from --from seconds\n",
+        "(default 0). With --window, opens a\n",
         "live, playable window redrawn at the CPC's own ~50Hz, keyboard included\n",
         "- close the window to quit. Built with --features audio, the window\n",
         "plays the sound too (--mute to silence it). F10 toggles full speed: the\n",

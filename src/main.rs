@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]
-//!         [--screenshot dir [--seconds N] [--every N]] [--window [--mute]]
+//!         [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute]]
 //!         [--record file [--seconds N]] [--type text [--type-at N]] [--display raw]
 //!         [--debug-server [--debug-port N] [--debug-paused]]
 //! ```
@@ -155,7 +155,7 @@ fn main() {
     }
 
     match args.screenshot_dir {
-        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut(), args.black_level),
+        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, args.from, &mut typist, args.display, filter.as_mut(), args.black_level),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
             run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo)
@@ -254,7 +254,8 @@ fn run_headless(
     motherboard: &mut amsrust::motherboard::Motherboard,
     dir: &str,
     seconds: u64,
-    every: u64,
+    every: cli::Every,
+    from: f64,
     typist: &mut Option<Typist>,
     mode: amsrust::display::DisplayMode,
     filter: &mut dyn DisplayFilter,
@@ -263,12 +264,50 @@ fn run_headless(
     std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{dir}: {e}"));
 
     let target_t_states = seconds as usize * T_STATES_PER_SECOND;
-    let every_t_states = (every.max(1) as usize * T_STATES_PER_SECOND).max(1);
-    // The first screenshot is taken as soon as a frame is available (0
-    // isn't reached by running first), the rest paced `every` seconds
-    // apart from there.
-    let mut next_shot_at = 0;
+    // The first screenshot is taken as soon as a frame is available from
+    // `from`, the rest paced `every` apart from there.
+    let mut next_shot_at = (from * T_STATES_PER_SECOND as f64) as usize;
     let mut shot = 0usize;
+    let save = |frame: &image::RgbImage, shot: usize, filter: &mut dyn DisplayFilter, at: usize| {
+        let path = format!("{dir}/frame_{shot:04}.png");
+        // The raw mode keeps the monitor's own frame, as the test suites do.
+        let saved = if mode.is_raw() { frame.save(&path) } else { filter.render_to_image(frame).save(&path) };
+        saved.unwrap_or_else(|e| panic!("{path}: {e}"));
+        eprintln!("[{:>9.3}s] {path}", at as f64 / T_STATES_PER_SECOND as f64);
+    };
+
+    let every_t_states = match every {
+        cli::Every::Seconds(seconds) => ((seconds * T_STATES_PER_SECOND as f64) as usize).max(1),
+        cli::Every::Frames(frames) => {
+            // One monitor follows the beam all along: every frame is whole and in order.
+            while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) {
+                motherboard.execute_next_opcode_no_video();
+                type_due_keys(typist, motherboard);
+            }
+            let mut monitor = viewing_monitor(black_level);
+            let mut seen = 0u64;
+            while motherboard.t_state_counter().value() < target_t_states {
+                type_due_keys(typist, motherboard);
+                let mut frame = None;
+                motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
+                    monitor.receive(rgb, sync);
+                    if frame.is_none() {
+                        frame = monitor.take_frame();
+                    }
+                });
+                if let Some(frame) = frame {
+                    if seen % frames == 0 {
+                        save(&frame, shot, filter, motherboard.t_state_counter().value());
+                        shot += 1;
+                    }
+                    seen += 1;
+                    monitor.recycle(frame);
+                }
+            }
+            eprintln!("{shot} screenshot(s) over {seconds}s emulated, saved to {dir}/");
+            return;
+        }
+    };
 
     while motherboard.t_state_counter().value() < target_t_states {
         while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) {
@@ -301,11 +340,7 @@ fn run_headless(
             break; // ran out of time mid-frame
         };
 
-        let path = format!("{dir}/frame_{shot:04}.png");
-        // The raw mode keeps the monitor's own frame, as the test suites do.
-        let saved = if mode.is_raw() { frame.save(&path) } else { filter.render_to_image(&frame).save(&path) };
-        saved.unwrap_or_else(|e| panic!("{path}: {e}"));
-        eprintln!("[{:>6}s] {path}", motherboard.t_state_counter().value() / T_STATES_PER_SECOND);
+        save(&frame, shot, filter, motherboard.t_state_counter().value());
         shot += 1;
         next_shot_at = motherboard.t_state_counter().value() + every_t_states;
     }
