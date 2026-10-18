@@ -322,6 +322,12 @@ impl Emulator {
         machine.fdc().image(fdc_drive(usize::from(drive.min(1)))).map(DiscImage::to_bytes)
     }
 
+    /// The machine's state as a version 3 SNA file (the script's machine while one plays).
+    pub fn save_snapshot(&self) -> Result<Vec<u8>, JsError> {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        amsrust::snapshot::save_sna_bytes(machine).map_err(|e| JsError::new(&e))
+    }
+
     /// Show the last frame again.
     pub fn redraw(&mut self) -> Result<(), JsError> {
         if let Some(frame) = &self.frame {

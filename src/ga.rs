@@ -1549,6 +1549,11 @@ impl GateArray {
         *self.r52.deref()
     }
 
+    /// Restore the interrupt counter (a snapshot's).
+    pub fn set_r52(&mut self, value: u8) {
+        self.r52 = Bit8Max6::from(value & 0x3f);
+    }
+
     /// When the CPU acknowledge the interrupt (eg. it is going to jump to the interrupt vector), the Gate Array will reset bit5 of the counter, so the next interrupt can't occur closer than 32 HSync. 
     /// An R2.JIT HSYNC rises late for the black zone, but the monitor is
     /// synchronised as if it had risen on its character (ACCC 14.7.1).

@@ -555,6 +555,15 @@ impl Memory {
         }
     }
 
+    /// The 64K of RAM of `page`: the main memory for `None`, else that extra page.
+    pub fn page_dump(&self, page: Option<usize>) -> Vec<u8> {
+        let page = match page {
+            None => &self.main_memory,
+            Some(page) => &self.additional_memory[page]
+        };
+        page.0.iter().flat_map(|bank| bank.0.iter().copied()).collect()
+    }
+
     /// How many extra 64kb pages are currently fitted (see
     /// [`Memory::set_extra_pages`]).
     pub fn extra_pages(&self) -> usize {

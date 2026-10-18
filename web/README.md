@@ -84,6 +84,7 @@ and `fetch` don't work from `file://`.
 | `insertTape(source)`, `ejectTape()` | a CDT tape in the cassette deck, PLAY down: it plays when the CPC starts the motor (`RUN"` on a 464, `\|TAPE` first on a 664/6128); returns what was skipped of it |
 | `tapeControl(key)` | the deck's keys: `'play'`, `'stop'`, `'rewind'` |
 | `loadSnapshot(source)` | an SNA snapshot |
+| `saveSnapshot()` | the machine's state as an SNA file (`Uint8Array`, version 3), to save or give back to `loadSnapshot` |
 | `addFile(name, source)` | a file a CSL script names (`disk_insert`, `tape_insert`, `snapshot_load`, `csl_load`) |
 | `runCsl(script, { files })` | play a CSL script live, see below |
 | `stopCsl()` | stop the script; its machine goes on |

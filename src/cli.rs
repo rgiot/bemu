@@ -38,6 +38,8 @@ pub struct Args {
     /// `--overlay`: the timing overlay shown (window) or drawn (screenshots).
     pub overlay: bool,
     pub record: Option<String>,
+    /// `--save-sna path`: the machine's state saved there when the run ends.
+    pub save_sna: Option<String>,
     pub debug_server: bool,
     pub debug_port: u16,
     /// Start paused, for a debugger to arm its breakpoints first.
@@ -77,6 +79,7 @@ pub fn parse_args() -> Args {
         turbo: false,
         overlay: false,
         record: None,
+        save_sna: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
         debug_paused: false,
@@ -152,6 +155,7 @@ pub fn parse_args() -> Args {
                 }
             },
             "--crt-gpu" => args.gpu = true,
+            "--save-sna" => args.save_sna = Some(next("--save-sna")),
             "--overlay" => args.overlay = true,
             "--curvature" => {
                 args.curvature = next("--curvature")
@@ -180,7 +184,7 @@ pub fn parse_args() -> Args {
 fn print_help() {
     eprintln!(concat!(
         "amsrust [--model 464|664|6128] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
-        "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path]\n",
+        "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path]\n",
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]]\n",
@@ -201,7 +205,9 @@ fn print_help() {
         "- close the window to quit. Built with --features audio, the window\n",
         "plays the sound too (--mute to silence it). F10 toggles full speed: the\n",
         "emulation runs as fast as it can, silent, the picture shown 50 times a\n",
-        "second (--turbo starts so). --record capture.mp4 records\n",
+        "second (--turbo starts so). F7 saves the machine's state in a snapshot,\n",
+        "bemu_0000.sna (then 0001...) in the current directory. --save-sna saves it\n",
+        "when the run ends (headless, recording, window closed). --record capture.mp4 records\n",
         "a video with sound through ffmpeg: what the window shows until it is\n",
         "closed, or without --window --seconds (default 30) run headless.\n",
         "--type 'run\"demo\\n' types on the CPC keyboard after --type-at seconds\n",

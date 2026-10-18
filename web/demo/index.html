@@ -48,7 +48,7 @@
 </div>
 <div class="row">
   <input id="text" placeholder="text to type, e.g. cat" size="30"> <button id="type">Type it</button>
-  <button id="shot">Screenshot</button> <button id="saveA">Save disc A</button>
+  <button id="shot">Screenshot</button> <button id="saveA">Save disc A</button> <button id="saveSna">Save snapshot</button>
 </div>
 
 <div id="drop">
@@ -128,6 +128,7 @@ document.querySelector('#saveA').onclick = () => {
   if (dsk) download(dsk, 'disc-a.dsk', 'application/octet-stream');
   else status('no disc in drive A');
 };
+document.querySelector('#saveSna').onclick = () => download(emu.saveSnapshot(), 'bemu.sna', 'application/octet-stream');
 
 // files: discs and snapshots go in at once, a script plays with all the files given so far
 async function take(files, driveB) {

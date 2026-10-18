@@ -193,6 +193,12 @@ fn main() {
             Monitor::cli_monitoring(&mut motherboard, &mut ctx);
         }
     }
+    if let Some(path) = &args.save_sna {
+        match amsrust::snapshot::save_sna(&motherboard, path) {
+            Ok(()) => eprintln!("snapshot saved: {path}"),
+            Err(e) => eprintln!("cannot save the snapshot: {e}")
+        }
+    }
 }
 
 /// T-states per second at the CPC's 4MHz clock.
@@ -257,6 +263,18 @@ impl Typist {
 fn type_due_keys(typist: &mut Option<Typist>, motherboard: &mut Motherboard) {
     if let Some(typist) = typist {
         typist.update(motherboard);
+    }
+}
+
+/// The machine's state in `bemu_<n>.sna`, the first `n` free in the current directory.
+fn save_snapshot(motherboard: &Motherboard) {
+    let path = (0..)
+        .map(|n| format!("bemu_{n:04}.sna"))
+        .find(|path| !std::path::Path::new(path).exists())
+        .expect("a free name");
+    match amsrust::snapshot::save_sna(motherboard, &path) {
+        Ok(()) => eprintln!("snapshot saved: {path}"),
+        Err(e) => eprintln!("cannot save the snapshot: {e}")
     }
 }
 
@@ -571,6 +589,7 @@ fn run_window(
     let mut buffer = vec![0u32; width * height];
     let mut f9_was_down = false;
     let mut f10_was_down = false;
+    let mut f7_was_down = false;
     let mut f6_was_down = false;
     let mut overlay = show_overlay.then(Overlay::default);
     motherboard.watch_io_writes(show_overlay);
@@ -608,6 +627,12 @@ fn run_window(
             eprintln!("speed: {}", if turbo { "full" } else { "real time" });
         }
         f10_was_down = f10_down;
+        // F7 saves a snapshot, in the current directory
+        let f7_down = input.down.contains(&HostKey::F7);
+        if f7_down && !f7_was_down {
+            save_snapshot(motherboard);
+        }
+        f7_was_down = f7_down;
         // F6 shows or hides the timing overlay
         let f6_down = input.down.contains(&HostKey::F6);
         if f6_down && !f6_was_down {

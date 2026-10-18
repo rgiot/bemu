@@ -1387,6 +1387,18 @@ impl Motherboard {
         self.memory.set_extra_pages(pages);
     }
 
+    /// All the RAM, as a snapshot stores it: the main 64K then, when RAM is banked, each extra
+    /// page of the machine (not the banks of a large expansion card).
+    pub fn ram_dump(&self) -> Vec<u8> {
+        let mut ram = self.memory.page_dump(None);
+        if self.ram_banking {
+            for page in 0..self.memory.extra_pages() {
+                ram.extend(self.memory.page_dump(Some(page)));
+            }
+        }
+        ram
+    }
+
     /// How many extra 64kb RAM pages are currently fitted.
     pub fn extra_ram_pages(&self) -> usize {
         self.memory.extra_pages()
