@@ -196,6 +196,8 @@ pub struct Crtc {
     /// (CRTC 0 only, Shaker AT E: R2 moved during the pulse to where it ends does not start another
     /// one; CRTCs 1-4 start it, AT E and BCOPY A there).
     hsync_ended_on_char: bool,
+    /// CRTC 3/4: register writes waiting to land (ticks left, register, value).
+    delayed_writes: Vec<(u8, u8, u8)>,
     /// CRTC 2 (ACCC 12.4.1): "Last Line" (C4 and C9 go to 0 on the next line, decided on C0==0 or by an
     /// R4/R9 update and never cancelled during the line), "Last Line Management" (an R4/R9 update may
     /// still set it: not on the frame's first line) and "Previous Last Line" (C4==R4 and C9==R9 on the
@@ -300,6 +302,7 @@ impl Default for Crtc {
             r1_zero_late: false,
             hsync_late_ticks: 0,
             hsync_ended_on_char: false,
+            delayed_writes: Vec::new(),
             c2_last_line: false,
             c2_last_line_management: true,
             c2_previous_last_line: false,
@@ -342,6 +345,9 @@ impl From<CrtcType> for Crtc {
         crtc
     }
 }
+
+/// CRTC 3/4 (the ASICs): a register write lands this many ticks (1 usec) after the I/O cycle.
+const ASIC_WRITE_DELAY_TICKS: u8 = 16;
 
 impl Crtc {
     pub fn r0(&self) -> u8 {
@@ -411,11 +417,19 @@ impl Crtc {
         self.ar = reg & 0b11111;
     }
 
-    /// Execute the CRTC register write
+    /// Execute the CRTC register write. The ASICs (CRTC 3 and 4) take it 1 usec later (ACCC 13.5: "the
+    /// I/O takes place with 1 us delay, which implies placing the OUT 1 usec before those that would be
+    /// done on a CRTC 1").
     pub fn write_crtc_register(&mut self) {
         let val = self.get_data_from_pins();
         if self.is_register_writable(self.ar) {
-            self.do_write_register(self.ar, val);
+            // (R3 excepted: the ASIC's HSYNC already comes a character late, see `CrtcModel`; delaying
+            // R3 too puts Shaker AY F and BI B-D on CRTC 4 away from the real CPC)
+            if matches!(self.crtc_type(), CrtcType::Crtc3 | CrtcType::Crtc4) && self.ar != 3 {
+                self.delayed_writes.push((ASIC_WRITE_DELAY_TICKS, self.ar, val));
+            } else {
+                self.do_write_register(self.ar, val);
+            }
         }
     }
 
@@ -598,9 +612,22 @@ impl Crtc {
         }
     }
 
-    /// The motherboard tells where in the character clock this tick falls.
+    /// The motherboard tells where in the character clock this tick falls (every tick: the ASICs'
+    /// delayed register writes land then).
     pub fn set_phase_ticks(&mut self, phase: u8) {
         self.phase_ticks = phase;
+        if !self.delayed_writes.is_empty() {
+            let mut i = 0;
+            while i < self.delayed_writes.len() {
+                self.delayed_writes[i].0 -= 1;
+                if self.delayed_writes[i].0 == 0 {
+                    let (_, r, v) = self.delayed_writes.remove(i);
+                    self.do_write_register(r, v);
+                } else {
+                    i += 1;
+                }
+            }
+        }
     }
 
     pub fn phase_ticks(&self) -> u8 {
