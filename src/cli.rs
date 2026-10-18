@@ -35,6 +35,8 @@ pub struct Args {
     pub mute: bool,
     /// `--turbo`: the window starts at full speed (F10 toggles it).
     pub turbo: bool,
+    /// `--overlay`: the timing overlay shown (window) or drawn (screenshots).
+    pub overlay: bool,
     pub record: Option<String>,
     pub debug_server: bool,
     pub debug_port: u16,
@@ -73,6 +75,7 @@ pub fn parse_args() -> Args {
         window: false,
         mute: false,
         turbo: false,
+        overlay: false,
         record: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
@@ -149,6 +152,7 @@ pub fn parse_args() -> Args {
                 }
             },
             "--crt-gpu" => args.gpu = true,
+            "--overlay" => args.overlay = true,
             "--curvature" => {
                 args.curvature = next("--curvature")
                     .parse()
@@ -212,6 +216,10 @@ fn print_help() {
         "--black-level (default 8) is what a black ink is\n",
         "drawn at: on a real tube it is a dark grey, blanking and sync being\n",
         "blacker (0); without the debug server, whose pictures stay exact.\n",
+        "--overlay draws where the CPU wrote to the CRTC and the Gate Array, on the\n",
+        "screenshots and in the window (F6 shows or hides it there): a short bar where\n",
+        "the beam was, CRTC R0-R9 cyan, R12/R13 orange, other registers white, register\n",
+        "selects grey, inks yellow (pen selects dark yellow), mode/ROMs magenta, RAM green.\n",
         "--frontend winit (a build with --features gpu-window) opens a window the\n",
         "GPU draws, the CRT included, with nothing read back; F11 toggles its\n",
         "fullscreen (a 50 Hz video mode when the monitor has one: frames on the\n",
