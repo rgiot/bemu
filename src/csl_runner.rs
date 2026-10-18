@@ -111,6 +111,8 @@ pub trait CslFiles {
     fn disc(&mut self, base_dir: &Path, name: &str, notes: &mut Vec<String>) -> Result<Vec<u8>, String>;
     /// The snapshot `snapshot_load` names, in `dir`.
     fn snapshot(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
+    /// The tape `tape_insert` names, in `dir`.
+    fn tape(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
 }
 
 /// Where the screenshots go.
@@ -149,6 +151,12 @@ impl CslFiles for FsFiles {
 
     fn snapshot(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String> {
         let path = resolve(dir, name);
+        std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    fn tape(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+        let path = resolve(dir, name);
+        let path = find_case_insensitive(&path).unwrap_or(path);
         std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
     }
 }
@@ -202,6 +210,10 @@ impl CslFiles for MemFiles {
 
     fn snapshot(&mut self, _dir: &Path, name: &str) -> Result<Vec<u8>, String> {
         self.get(name).cloned().ok_or_else(|| format!("{name}: no such snapshot"))
+    }
+
+    fn tape(&mut self, _dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+        self.get(name).cloned().ok_or_else(|| format!("{name}: no such tape"))
     }
 }
 
@@ -281,6 +293,8 @@ pub struct CslRunner {
     base_dir: PathBuf,
     /// Where `snapshot_load` looks (`snapshot_dir`), else `base_dir`.
     snapshot_dir: Option<PathBuf>,
+    /// Where `tape_insert` looks (`tape_dir`), else `base_dir`.
+    tape_dir: Option<PathBuf>,
     /// Count of screenshots per file stem, to keep repeated codes apart.
     taken: HashMap<String, usize>,
     /// The beam is always followed, so that a screenshot is the last whole frame the
@@ -334,6 +348,7 @@ impl CslRunner {
             screenshot_dir: output_dir.into(),
             base_dir: PathBuf::from("."),
             snapshot_dir: None,
+            tape_dir: None,
             taken: HashMap::new(),
             monitor: Monitor::default(),
             last_frame: None,
@@ -656,6 +671,30 @@ impl CslRunner {
             },
             SnapshotDir(dir) => self.snapshot_dir = Some(resolve(&self.base_dir, dir.as_str())),
             SnapshotLoad(name) => self.load_snapshot(name.as_str())?,
+            TapeDir(dir) => self.tape_dir = Some(resolve(&self.base_dir, dir.as_str())),
+            TapeInsert(name) => {
+                let dir = self.tape_dir.clone().unwrap_or_else(|| self.base_dir.clone());
+                let bytes = self.files.tape(&dir, name.as_str()).map_err(|e| format!("tape_insert {e}"))?;
+                let tape = crate::tape::Tape::from_cdt(&bytes).map_err(|e| format!("tape_insert {name}: {e}"))?;
+                self.report.ignored.extend(tape.notes.iter().map(|note| format!("tape_insert {name}: {note}")));
+                self.motherboard.insert_tape(Some(tape));
+                // inserted, not playing: tape_play presses PLAY
+                if let Some(deck) = self.motherboard.tape_deck_mut() {
+                    deck.set_playing(false);
+                }
+            },
+            TapePlay | TapeStop => {
+                let playing = matches!(instruction, TapePlay);
+                match self.motherboard.tape_deck_mut() {
+                    Some(deck) => deck.set_playing(playing),
+                    None => self.report.ignored.push(format!("{instruction}: no tape inserted"))
+                }
+            },
+            TapeRewind => {
+                if let Some(deck) = self.motherboard.tape_deck_mut() {
+                    deck.rewind();
+                }
+            },
             CslLoad(name) => {
                 let dir = self.base_dir.clone();
                 self.load_script(name.as_str(), &dir).map_err(|e| format!("csl_load: {e}"))?;
@@ -678,6 +717,7 @@ impl CslRunner {
         );
         // The sound recorded so far (and its settings) outlives the machine.
         self.motherboard.psg_mut().take_audio_output_from(previous.psg_mut());
+        self.motherboard.take_tape_deck_from(&mut previous);
         for (unit, disc) in self.disc.iter().enumerate() {
             self.motherboard.fdc_mut().insert_image(drive(unit), disc.clone());
         }

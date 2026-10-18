@@ -27,7 +27,9 @@ pub enum HostKey {
     /// toggles full speed).
     F7,
     F9,
-    F10
+    F10,
+    /// F6 shows or hides the timing overlay.
+    F6
 }
 
 /// What a frontend reports on each poll.

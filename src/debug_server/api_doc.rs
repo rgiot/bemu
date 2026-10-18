@@ -231,15 +231,15 @@ pub(super) const OPERATIONS: &[Operation] = &[
     op(
         "POST",
         "/api/media",
-        "Load a snapshot (its breakpoints set), insert a disc, or load a binary.",
-        "{ok, media: sna|dsk|bin, cmd_seq, breakpoints?, warnings?, load?, len?, entry?}"
+        "Load a snapshot (its breakpoints set), insert a disc or a tape (PLAY down), or load a binary.",
+        "{ok, media: sna|dsk|cdt|bin, cmd_seq, breakpoints?, warnings?, load?, len?, entry?}"
     )
     .params(&[
         q("name", "string", "the file's name: .bin/.amsdos (an AMSDOS header is used when there is one)"),
         q("drive", "integer", "drive for a disc: 0 (A, default) or 1 (B)"),
         q("crtc", "string", "keep or sna (accepted; the CRTC is kept)")
     ])
-    .raw_body("application/octet-stream", "the file: .sna and .dsk are recognised by their content"),
+    .raw_body("application/octet-stream", "the file: .sna, .dsk and .cdt are recognised by their content"),
     op(
         "GET",
         "/api/snapshot",
