@@ -37,6 +37,8 @@ pub struct Args {
     pub mute: bool,
     /// `--turbo`: the window starts at full speed (F10 toggles it).
     pub turbo: bool,
+    /// `--watch`: the files are taken again when they change.
+    pub watch: bool,
     /// `--overlay`: the timing overlay shown (window) or drawn (screenshots).
     pub overlay: bool,
     pub record: Option<String>,
@@ -80,6 +82,7 @@ pub fn parse_args() -> Args {
         window: false,
         mute: false,
         turbo: false,
+        watch: false,
         overlay: false,
         record: None,
         save_sna: None,
@@ -159,6 +162,7 @@ pub fn parse_args() -> Args {
                 }
             },
             "--crt-gpu" => args.gpu = true,
+            "--watch" => args.watch = true,
             "--save-sna" => args.save_sna = Some(next("--save-sna")),
             "--overlay" => args.overlay = true,
             "--curvature" => {
@@ -188,7 +192,7 @@ pub fn parse_args() -> Args {
 fn print_help() {
     eprintln!(concat!(
         "amsrust [--model 464|664|6128] [--french] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
-        "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path]\n",
+        "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path] [--watch]\n",
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]]\n",
@@ -216,7 +220,10 @@ fn print_help() {
         "a video with sound through ffmpeg: what the window shows until it is\n",
         "closed, or without --window --seconds (default 30) run headless.\n",
         "--type 'run\"demo\\n' types on the CPC keyboard after --type-at seconds\n",
-        "(default 3). Breakpoints of a snapshot's REMU/BRKC/BRKS/WABP chunks are set\n",
+        "(default 3). --watch takes the --sna/--dsk/--dsk-b/--cdt files again when they change\n",
+        "(with --window or --debug-server), for an edit, assemble, see loop: a disc or tape goes\n",
+        "in again, then the snapshot is loaded again; without a snapshot the machine is switched\n",
+        "off and on and --type typed again. Breakpoints of a snapshot's REMU/BRKC/BRKS/WABP chunks are set\n",
         "in the interactive monitor.\n",
         "--display picks how the picture is rendered, in the window, the\n",
         "recording and the screenshots (raw: the monitor's ideal picture; ctm,\n",
