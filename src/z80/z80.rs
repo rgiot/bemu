@@ -352,6 +352,18 @@ pub struct Z80 {
     /// vector is being read (address `I<<8 | #FF`, the data bus being pulled up).
     im2_stage: u8,
 
+    /// A non-maskable interrupt is waiting for the end of the instruction.
+    nmi_pending: bool,
+    /// The interrupt being answered is an NMI: its M1 is an ordinary read (no acknowledge), and
+    /// it calls &0066.
+    nmi_in_progress: bool,
+    /// The low byte of the IM 2 table entry, put on the bus by the device that interrupts (a
+    /// Z80 CTC); none, the data bus floats at &FF as on a bare CPC.
+    interrupt_vector: Option<u8>,
+    /// An interrupt acknowledge cycle (M1 with IORQ) happened since the last
+    /// [`Self::take_interrupt_acknowledge`].
+    interrupt_acknowledged: bool,
+
     /// Where the instruction being executed started, and what it is - to know
     /// where its last T-state falls (see `tstates`).
     instr_start_pc: u16,
@@ -518,7 +530,7 @@ impl Z80 {
         /// This method obtains it
         fn get_read_address_from_opcode_information(&self) -> u16 {
             if self.im2_stage == 2 {
-                return (u16::from(self.reg8(Reg8::I).get()) << 8) | 0xff;
+                return (u16::from(self.reg8(Reg8::I).get()) << 8) | u16::from(self.interrupt_vector.unwrap_or(0xff));
             }
             self.get_address_from_address_source(
                 &self.opcode_information.as_ref().unwrap().read_address,
@@ -1156,7 +1168,7 @@ impl Z80 {
                 }
 
                 Mnemonic::Halt => {
-                    if self.interruption_received && self.iff1 {
+                    if (self.interruption_received && self.iff1) || self.nmi_pending {
                         // Nothing more to do here: instruction_finished(),
                         // called right after this for every instruction
                         // alike, independently checks interruption_received
@@ -1548,7 +1560,8 @@ impl Z80 {
                 self.pc = self.wz;
                 self.sp.inc();
                 self.sp.inc();
-                self.iff2 = self.iff1;
+                // the end of an NMI handler: interrupts as they were before it
+                self.iff1 = self.iff2;
             }          
             
             
@@ -2169,6 +2182,13 @@ impl Z80 {
         if shadowed {
             self.ei_shadow -= 1;
         }
+        if std::mem::take(&mut self.nmi_pending) {
+            // NMI: not maskable; IFF2 keeps IFF1 for the RETN that ends it
+            self.iff1 = false;
+            self.nmi_in_progress = true;
+            self.next_state = MCycle::new_interruption();
+            return;
+        }
         if self.interruption_received
         && self.iff1
         && !shadowed/*
@@ -2233,10 +2253,40 @@ impl Z80 {
         self.last_idle_t
     }
 
+    /// The pin an M1 cycle requests with: IORQ for an interrupt acknowledge, MREQ for an
+    /// opcode fetch and for an NMI's (an ordinary read of the opcode, then ignored).
+    fn m1_request_pin(&self) -> Z80Pin {
+        if self.nmi_in_progress { Z80Pin::Neg_MREQ } else { self.next_state.read_pin_type().unwrap() }
+    }
+
+    /// Request a non-maskable interrupt (the falling edge of /NMI): taken at the end of the
+    /// instruction, whatever IFF1 says.
+    pub fn trigger_nmi(&mut self) {
+        self.nmi_pending = true;
+    }
+
+    /// The low byte of the IM 2 vector the interrupting device gives, `None` for the floating
+    /// bus (&FF).
+    pub fn set_interrupt_vector(&mut self, vector: Option<u8>) {
+        self.interrupt_vector = vector;
+    }
+
+    /// Whether an interrupt acknowledge cycle happened since the last call.
+    pub fn take_interrupt_acknowledge(&mut self) -> bool {
+        std::mem::take(&mut self.interrupt_acknowledged)
+    }
+
     /// Handcraft a call to let the CPU jump in 0x38
     fn simulate_call_0x38_after_fetch(&mut self) {      
         self.opcode_information = Some(&OPCODE_PREFIX[0xcd]);
         self.ir.set(0xcd);
+        if std::mem::take(&mut self.nmi_in_progress) {
+            // NMI: a call to &0066 right after its M1 (11 T-states: 3 us here)
+            self.wz.set(0x66);
+            self.im2_stage = 0;
+            self.next_state = MCycle::Write(TState::T1, 0);
+            return;
+        }
         let im2 = self.im == InterruptMode::Mode2;
         self.wz.set(if im2 { 0 } else { 0x38 });
         self.im2_stage = u8::from(im2);
@@ -2498,7 +2548,11 @@ impl Chip for Z80 {
                     self.pc.inc();
                 }
                 
-                self.set_pin(self.next_state.read_pin_type().unwrap(), false);
+                let request = self.m1_request_pin();
+                if request == Z80Pin::Neg_IORQ && self.next_state.is_interruption() {
+                    self.interrupt_acknowledged = true;
+                }
+                self.set_pin(request, false);
                 self.set_pin(Z80Pin::Neg_RD, false);
                 self.set_pin(Z80Pin::Neg_M1, false);
                 self.set_pin(Z80Pin::Neg_RFSH, true);
@@ -2507,7 +2561,8 @@ impl Chip for Z80 {
             }
             MCycle::InterruptM1(TState::T2) => {
                 self.set_pin(Z80Pin::Neg_RD, true);
-                self.set_pin(self.next_state.read_pin_type().unwrap(), true);
+                let request = self.m1_request_pin();
+                self.set_pin(request, true);
                 self.set_pin(Z80Pin::Neg_M1, true);
                 self.set_pin(Z80Pin::Neg_RFSH, false);
                 self.set_address_on_pins(self.refresh_addr);
