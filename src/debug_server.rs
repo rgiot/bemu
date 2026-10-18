@@ -160,7 +160,7 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/quit", methods: &["POST"], summary: "leave the emulator", extension: false },
     Route { path: "/api/history", methods: &["GET"], summary: "last executed instructions (?n=), bytes as fetched and as now", extension: false },
     Route { path: "/api/screenshot", methods: &["GET"], summary: "frame as PNG: crop=1 visible 768x272 | crop=0 whole 1024x350; live=1 the frame being drawn; full=0 over the previous one", extension: false },
-    Route { path: "/api/media", methods: &["POST"], summary: "load a .sna/.dsk (by content) or .bin/.amsdos (?name=, ?drive=)", extension: false },
+    Route { path: "/api/media", methods: &["POST"], summary: "load a .sna/.dsk/.cdt (by content) or .bin/.amsdos (?name=, ?drive=)", extension: false },
     Route { path: "/api/memmap", methods: &["GET"], summary: "what is mapped in each 16K region (ROM, absolute RAM bank), RMR, MMR", extension: false },
     Route { path: "/api/crtc", methods: &["GET"], summary: "CRTC registers, selected register and counters", extension: false },
     Route { path: "/api/ga", methods: &["GET"], summary: "Gate Array: mode, pens, inks, RMR and banking", extension: false },
@@ -1468,6 +1468,14 @@ impl DebugServer {
             let image = crate::disc_image::load_dsk(bytes).map_err(ApiError::new)?;
             motherboard.fdc_mut().insert_image(drive, Some(image));
             reply["media"] = json!("dsk");
+        }
+        else if bytes.starts_with(b"ZXTape!") {
+            let tape = crate::tape::Tape::from_cdt(bytes).map_err(ApiError::new)?;
+            if !tape.notes.is_empty() {
+                reply["warnings"] = json!(tape.notes);
+            }
+            motherboard.insert_tape(Some(tape));
+            reply["media"] = json!("cdt");
         }
         else if lower_name.ends_with(".bin") || lower_name.ends_with(".amsdos") {
             let binary = parse_binary(name, bytes).map_err(|e| ApiError::field("name", e))?;
@@ -2962,6 +2970,9 @@ mod test {
 
         assert_eq!(upload(&mut server, &mut mb, "name=raw.bin", &[0]).0, 400);
         assert_eq!(upload(&mut server, &mut mb, "name=x.cdt", &[0]).0, 400);
+        let cdt = crate::tape::cdt_of_binary("x", 0x4000, 0x4000, &[0xc9], 2000);
+        assert_eq!(upload(&mut server, &mut mb, "name=x.cdt", &cdt).1["media"], json!("cdt"));
+        assert!(mb.tape_deck().is_some_and(|deck| deck.playing()));
         assert_eq!(upload(&mut server, &mut mb, "", &[]).0, 400);
     }
 

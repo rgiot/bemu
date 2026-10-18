@@ -34,6 +34,8 @@ pub struct Motherboard {
     /// `None` is a stock machine - the common case, and the default.
     large_ram_expansion: Option<LargeRamExpansion>,
     fdc: Fdc,
+    /// The cassette deck, with a tape in it.
+    tape: Option<Box<crate::tape::TapeDeck>>,
     // The FDC isn't a pin-level `Chip` (see fdc.rs), so unlike the other
     // peripherals its register writes/reads aren't naturally idempotent
     // across repeated calls: a single Z80 `OUT`/`IN` instruction's bus
@@ -111,6 +113,7 @@ impl Default for Motherboard {
                 }
                 fdc
             },
+            tape: None,
             fdc_write_active: false,
             us: 0,
             trace_pc_from: std::env::var("AMSRUST_TRACE_PC").ok().and_then(|v| v.parse().ok()),
@@ -427,6 +430,28 @@ impl Motherboard {
         &mut self.fdc
     }
 
+    /// Put `tape` in the cassette deck (rewound, PLAY down: it plays when the CPC starts the
+    /// motor); `None` ejects it.
+    pub fn insert_tape(&mut self, tape: Option<crate::tape::Tape>) {
+        self.tape = tape.map(|tape| Box::new(crate::tape::TapeDeck::new(tape)));
+        if self.tape.is_none() {
+            self.ppi.set_pin(PpiPin::B7, false);
+        }
+    }
+
+    /// The cassette deck of `other` comes here, as it is (a reset machine keeps its deck).
+    pub fn take_tape_deck_from(&mut self, other: &mut Motherboard) {
+        self.tape = other.tape.take();
+    }
+
+    pub fn tape_deck(&self) -> Option<&crate::tape::TapeDeck> {
+        self.tape.as_deref()
+    }
+
+    pub fn tape_deck_mut(&mut self) -> Option<&mut crate::tape::TapeDeck> {
+        self.tape.as_deref_mut()
+    }
+
     pub fn psg(&self) -> &Psg {
         &self.psg
     }
@@ -540,6 +565,11 @@ impl Motherboard {
         if self.crtc.is_activated() {
             self.crtc.set_phase_ticks(0);
             self.fdc.advance(1); // one character = one microsecond
+            if let Some(tape) = &mut self.tape {
+                // the cassette motor relay is port C's bit 4, the head's level port B's bit 7
+                tape.advance_us(self.ppi.get_pin(PpiPin::C4));
+                self.ppi.set_pin(PpiPin::B7, tape.level());
+            }
             self.us += 1;
             if let Some(from) = self.trace_pc_from {
                 if self.us >= from && self.us < self.trace_pc_to {

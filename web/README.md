@@ -81,8 +81,10 @@ and `fetch` don't work from `file://`.
 | `setDisplay(name)` | `'raw'` or a CRT profile |
 | `setCurvature(c)` | how curved a CRT's glass is, as the `curvature` configuration |
 | `insertDisc(drive, source)`, `eject(drive)` | a DSK image in drive `'A'` or `'B'` |
+| `insertTape(source)`, `ejectTape()` | a CDT tape in the cassette deck, PLAY down: it plays when the CPC starts the motor (`RUN"` on a 464, `\|TAPE` first on a 664/6128); returns what was skipped of it |
+| `tapeControl(key)` | the deck's keys: `'play'`, `'stop'`, `'rewind'` |
 | `loadSnapshot(source)` | an SNA snapshot |
-| `addFile(name, source)` | a file a CSL script names (`disk_insert`, `snapshot_load`, `csl_load`) |
+| `addFile(name, source)` | a file a CSL script names (`disk_insert`, `tape_insert`, `snapshot_load`, `csl_load`) |
 | `runCsl(script, { files })` | play a CSL script live, see below |
 | `stopCsl()` | stop the script; its machine goes on |
 | `typeText(text)` | type `text` on the CPC's keyboard (`\n` is RETURN), a paste; not while a script plays |
@@ -101,6 +103,7 @@ and `fetch` don't work from `file://`.
 - `vsyncPaced`: whether frames follow a 50 Hz display, see "Timing".
 - `speed`: `1`, another factor, or `Infinity` (full speed).
 - `muted`.
+- `tape`: `{ position, duration, playing }` (seconds), or `undefined` without a tape.
 
 **Events:**
 - `'screenshot'`: `{ name, png }`, where `png` is a `Uint8Array` holding a PNG file;

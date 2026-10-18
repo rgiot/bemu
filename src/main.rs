@@ -130,6 +130,15 @@ fn main() {
     if let Some(path) = &args.dsk_b {
         insert_disc(path, FdcDrive::B, &mut motherboard);
     }
+    if let Some(path) = &args.cdt {
+        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let tape = amsrust::tape::Tape::from_cdt(&bytes).unwrap_or_else(|e| panic!("{path}: {e}"));
+        for note in &tape.notes {
+            eprintln!("{path}: {note}");
+        }
+        eprintln!("{path}: {:.0} s of tape", tape.duration_seconds());
+        motherboard.insert_tape(Some(tape));
+    }
     let mut breakpoints = amsrust::snapshot::SnapshotBreakpoints::default();
     if let Some(path) = &args.sna {
         amsrust::snapshot::load_sna(&mut motherboard, path).unwrap_or_else(|e| panic!("{e}"));

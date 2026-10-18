@@ -52,8 +52,8 @@
 </div>
 
 <div id="drop">
-  Drop .dsk (drive A, or B with Shift), .sna, .csl and the files a script names here, or pick them:
-  <input id="files" type="file" multiple accept=".dsk,.sna,.csl">
+  Drop .dsk (drive A, or B with Shift), .cdt, .sna, .csl and the files a script names here, or pick them:
+  <input id="files" type="file" multiple accept=".dsk,.cdt,.sna,.csl">
 </div>
 <p id="status"></p>
 <div id="shots"></div>
@@ -137,6 +137,7 @@ async function take(files, driveB) {
     await emu.addFile(file.name, file);
     if (name.endsWith('.dsk')) await emu.insertDisc(driveB ? 'B' : 'A', file);
     else if (name.endsWith('.sna')) await emu.loadSnapshot(file);
+    else if (name.endsWith('.cdt')) await emu.insertTape(file);
     else if (name.endsWith('.csl')) script = file;
   }
   if (script) {
@@ -157,13 +158,14 @@ drop.ondrop = (event) => {
   take(event.dataTransfer.files, event.shiftKey).catch((e) => status(e.message));
 };
 
-// files from the URL: ?dsk=URL&dskb=URL&sna=URL&csl=URL&files=URL1,URL2 (named after their URLs)
+// files from the URL: ?dsk=URL&dskb=URL&cdt=URL&sna=URL&csl=URL&files=URL1,URL2 (named after their URLs)
 try {
   for (const url of (params.get('files') ?? '').split(',').filter(Boolean)) {
     await emu.addFile(decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()), url);
   }
   if (params.has('dsk')) await emu.insertDisc('A', params.get('dsk'));
   if (params.has('dskb')) await emu.insertDisc('B', params.get('dskb'));
+  if (params.has('cdt')) await emu.insertTape(params.get('cdt'));
   if (params.has('sna')) await emu.loadSnapshot(params.get('sna'));
   if (params.has('csl')) { status('playing the script...'); await emu.runCsl(params.get('csl')); }
 } catch (error) {
