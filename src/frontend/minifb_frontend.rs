@@ -81,5 +81,6 @@ same_names!(
     Minus, LeftBracket, RightBracket, Backslash, Semicolon, Apostrophe, Comma,
     Period, Slash, Backquote, Equal,
     NumPad0, NumPad1, NumPad2, NumPad3, NumPad4, NumPad5, NumPad6, NumPad7, NumPad8, NumPad9,
-    NumPadDot, NumPadEnter, F9, F10
+    NumPadDot, NumPadEnter, F9, F10,
+    F6
 );

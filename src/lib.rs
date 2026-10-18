@@ -11,6 +11,7 @@ pub mod pal;
 pub mod ppi;
 pub mod psg;
 pub mod shakerland;
+pub mod overlay;
 pub mod snapshot;
 pub mod z80;
 

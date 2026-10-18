@@ -66,6 +66,8 @@ pub struct Motherboard {
     /// The CPU's bus accesses, recorded for debuggers (watchpoints) while
     /// `Some` - see [`Motherboard::watch_bus`].
     bus_log: Option<Vec<BusAccess>>,
+    /// The I/O writes `(port, value)` since they were last taken, when watched.
+    io_writes: Option<Vec<(u16, u8)>>,
 
     model: CpcModel,
     /// The MMR banks RAM: a 6128, or a RAM expansion on a 464/664.
@@ -123,6 +125,7 @@ impl Default for Motherboard {
             psg: Default::default(),
             keyboard: Default::default(),
             bus_log: None,
+            io_writes: None,
             model: CpcModel::default(),
             ram_banking: true,
             disc_interface: true,
@@ -660,6 +663,9 @@ impl Motherboard {
             // actual write only happens once, on the first such tick.
             if !self.fdc_write_active {
                 self.log_bus(BusAccessKind::IoWrite, addr, byte);
+                if let Some(writes) = &mut self.io_writes {
+                    writes.push((addr, byte));
+                }
                 if !self.disc_interface {
                     // Nothing on the disc ports.
                 } else if Self::is_fdc_motor_addr(addr) {
@@ -1454,6 +1460,17 @@ impl Motherboard {
     /// for [`Self::take_bus_accesses`]. Watching does not change timing.
     pub fn watch_bus(&mut self, watch: bool) {
         self.bus_log = watch.then(Vec::new);
+    }
+
+    /// Record (`true`) or not (the default) the I/O writes alone, for [`Self::take_io_writes`]
+    /// (a timing overlay): cheaper than [`Self::watch_bus`].
+    pub fn watch_io_writes(&mut self, watch: bool) {
+        self.io_writes = watch.then(Vec::new);
+    }
+
+    /// The I/O writes `(port, value)` since the last call (none when not watching).
+    pub fn take_io_writes(&mut self) -> impl Iterator<Item = (u16, u8)> + '_ {
+        self.io_writes.iter_mut().flat_map(|writes| writes.drain(..))
     }
 
     /// The accesses recorded since the last call (empty when not watching).

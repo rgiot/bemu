@@ -66,6 +66,7 @@ use amsrust::input::HostKeyboard;
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
+use amsrust::overlay::Overlay;
 use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::psg::AudioConfig;
 use cli::FrontendKind;
@@ -155,10 +156,10 @@ fn main() {
     }
 
     match args.screenshot_dir {
-        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut(), args.black_level),
+        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, &mut typist, args.display, filter.as_mut(), args.black_level, args.overlay),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo)
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay)
         },
         None if args.debug_server => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
@@ -258,9 +259,11 @@ fn run_headless(
     typist: &mut Option<Typist>,
     mode: amsrust::display::DisplayMode,
     filter: &mut dyn DisplayFilter,
-    black_level: u8
+    black_level: u8,
+    show_overlay: bool
 ) {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{dir}: {e}"));
+    let mut overlay = show_overlay.then(Overlay::default);
 
     let target_t_states = seconds as usize * T_STATES_PER_SECOND;
     let every_t_states = (every.max(1) as usize * T_STATES_PER_SECOND).max(1);
@@ -282,6 +285,8 @@ fn run_headless(
 
         let mut monitor = viewing_monitor(black_level);
         let mut frame = None;
+        // the writes of the frame captured only
+        motherboard.watch_io_writes(show_overlay);
         // Capture the next whole frame once due, rather than every tick:
         // matches how the CSL runner and play_demo grab a screenshot.
         while frame.is_none() && motherboard.t_state_counter().value() < target_t_states {
@@ -295,11 +300,18 @@ fn run_headless(
                     frame = monitor.take_frame();
                 }
             });
+            if let Some(overlay) = &mut overlay {
+                note_io_writes(overlay, motherboard, &monitor);
+            }
         }
-        let Some(frame) = frame
+        motherboard.watch_io_writes(false);
+        let Some(mut frame) = frame
         else {
             break; // ran out of time mid-frame
         };
+        if let Some(overlay) = &mut overlay {
+            overlay.draw_and_clear(&mut frame);
+        }
 
         let path = format!("{dir}/frame_{shot:04}.png");
         // The raw mode keeps the monitor's own frame, as the test suites do.
@@ -421,7 +433,8 @@ fn start_debug_server(
 fn run_frame(
     motherboard: &mut Motherboard,
     monitor: &mut CrtMonitor,
-    mut server: Option<&mut DebugServer>
+    mut server: Option<&mut DebugServer>,
+    mut overlay: Option<&mut Overlay>
 ) -> Option<image::RgbImage> {
     let mut frame = None;
     while frame.is_none() {
@@ -431,6 +444,9 @@ fn run_frame(
                 frame = monitor.take_frame();
             }
         });
+        if let Some(overlay) = overlay.as_deref_mut() {
+            note_io_writes(overlay, motherboard, monitor);
+        }
         if let Some(server) = server.as_deref_mut() {
             let (x, line) = monitor.beam();
             let (crop_x, crop_y) = monitor.crop_origin();
@@ -451,6 +467,14 @@ fn run_frame(
     frame
 }
 
+/// The I/O writes of the last instruction on the overlay, where the beam is.
+fn note_io_writes(overlay: &mut Overlay, motherboard: &mut Motherboard, monitor: &CrtMonitor) {
+    let (beam, origin) = (monitor.beam(), monitor.crop_origin());
+    for (port, value) in motherboard.take_io_writes() {
+        overlay.note(port, value, beam, origin);
+    }
+}
+
 /// `--debug-server` without a window: run in real time, driven by the
 /// debug API (Ctrl+C to quit).
 fn run_debug_server(motherboard: &mut Motherboard, server: &mut DebugServer, typist: &mut Option<Typist>) {
@@ -467,7 +491,7 @@ fn run_debug_server(motherboard: &mut Motherboard, server: &mut DebugServer, typ
             continue;
         }
         type_due_keys(typist, motherboard);
-        if run_frame(motherboard, &mut monitor, Some(server)).is_some() {
+        if run_frame(motherboard, &mut monitor, Some(server), None).is_some() {
             // The CPC's own pace.
             deadline += frame_duration;
             let now = std::time::Instant::now();
@@ -497,7 +521,8 @@ fn run_window(
     curvature: f32,
     black_level: u8,
     frontend: FrontendKind,
-    mut turbo: bool
+    mut turbo: bool,
+    show_overlay: bool
 ) {
     let (width, height) = mode.output_size();
     let mut window: Box<dyn Frontend> = match frontend {
@@ -537,6 +562,9 @@ fn run_window(
     let mut buffer = vec![0u32; width * height];
     let mut f9_was_down = false;
     let mut f10_was_down = false;
+    let mut f6_was_down = false;
+    let mut overlay = show_overlay.then(Overlay::default);
+    motherboard.watch_io_writes(show_overlay);
     // at full speed, the frames shown (at most 50 a second: presenting each would hold the
     // emulation back to the display's rate)
     let mut last_present = std::time::Instant::now();
@@ -571,6 +599,14 @@ fn run_window(
             eprintln!("speed: {}", if turbo { "full" } else { "real time" });
         }
         f10_was_down = f10_down;
+        // F6 shows or hides the timing overlay
+        let f6_down = input.down.contains(&HostKey::F6);
+        if f6_down && !f6_was_down {
+            overlay = if overlay.is_some() { None } else { Some(Overlay::default()) };
+            motherboard.watch_io_writes(overlay.is_some());
+            eprintln!("timing overlay: {}", if overlay.is_some() { "on" } else { "off" });
+        }
+        f6_was_down = f6_down;
         host_keyboard.apply(motherboard, &input);
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, motherboard);
@@ -602,12 +638,16 @@ fn run_window(
                 motherboard.execute_next_opcode_no_video();
             }
             motherboard.take_audio_samples();
+            motherboard.take_io_writes().for_each(drop);
             continue;
         }
-        let Some(frame) = run_frame(motherboard, &mut monitor, server.as_deref_mut())
+        let Some(mut frame) = run_frame(motherboard, &mut monitor, server.as_deref_mut(), overlay.as_mut())
         else {
             continue; // paused mid-frame
         };
+        if let Some(overlay) = &mut overlay {
+            overlay.draw_and_clear(&mut frame);
+        }
 
         if !direct || recorder.is_some() {
             filter.render(&frame, &mut buffer);
