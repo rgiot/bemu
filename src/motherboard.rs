@@ -34,6 +34,8 @@ pub struct Motherboard {
     /// `None` is a stock machine - the common case, and the default.
     large_ram_expansion: Option<LargeRamExpansion>,
     fdc: Fdc,
+    /// The cassette deck, with a tape in it.
+    tape: Option<Box<crate::tape::TapeDeck>>,
     // The FDC isn't a pin-level `Chip` (see fdc.rs), so unlike the other
     // peripherals its register writes/reads aren't naturally idempotent
     // across repeated calls: a single Z80 `OUT`/`IN` instruction's bus
@@ -66,6 +68,8 @@ pub struct Motherboard {
     /// The CPU's bus accesses, recorded for debuggers (watchpoints) while
     /// `Some` - see [`Motherboard::watch_bus`].
     bus_log: Option<Vec<BusAccess>>,
+    /// The I/O writes `(port, value)` since they were last taken, when watched.
+    io_writes: Option<Vec<(u16, u8)>>,
 
     model: CpcModel,
     /// The MMR banks RAM: a 6128, or a RAM expansion on a 464/664.
@@ -113,6 +117,7 @@ impl Default for Motherboard {
                 }
                 fdc
             },
+            tape: None,
             fdc_write_active: false,
             us: 0,
             trace_pc_from: std::env::var("AMSRUST_TRACE_PC").ok().and_then(|v| v.parse().ok()),
@@ -125,6 +130,7 @@ impl Default for Motherboard {
             psg: Default::default(),
             keyboard: Default::default(),
             bus_log: None,
+            io_writes: None,
             model: CpcModel::default(),
             ram_banking: true,
             disc_interface: true,
@@ -442,6 +448,28 @@ impl Motherboard {
         &mut self.fdc
     }
 
+    /// Put `tape` in the cassette deck (rewound, PLAY down: it plays when the CPC starts the
+    /// motor); `None` ejects it.
+    pub fn insert_tape(&mut self, tape: Option<crate::tape::Tape>) {
+        self.tape = tape.map(|tape| Box::new(crate::tape::TapeDeck::new(tape)));
+        if self.tape.is_none() {
+            self.ppi.set_pin(PpiPin::B7, false);
+        }
+    }
+
+    /// The cassette deck of `other` comes here, as it is (a reset machine keeps its deck).
+    pub fn take_tape_deck_from(&mut self, other: &mut Motherboard) {
+        self.tape = other.tape.take();
+    }
+
+    pub fn tape_deck(&self) -> Option<&crate::tape::TapeDeck> {
+        self.tape.as_deref()
+    }
+
+    pub fn tape_deck_mut(&mut self) -> Option<&mut crate::tape::TapeDeck> {
+        self.tape.as_deref_mut()
+    }
+
     pub fn psg(&self) -> &Psg {
         &self.psg
     }
@@ -555,6 +583,11 @@ impl Motherboard {
         if self.crtc.is_activated() {
             self.crtc.set_phase_ticks(0);
             self.fdc.advance(1); // one character = one microsecond
+            if let Some(tape) = &mut self.tape {
+                // the cassette motor relay is port C's bit 4, the head's level port B's bit 7
+                tape.advance_us(self.ppi.get_pin(PpiPin::C4));
+                self.ppi.set_pin(PpiPin::B7, tape.level());
+            }
             self.us += 1;
             if let Some(from) = self.trace_pc_from {
                 if self.us >= from && self.us < self.trace_pc_to {
@@ -675,6 +708,9 @@ impl Motherboard {
             // actual write only happens once, on the first such tick.
             if !self.fdc_write_active {
                 self.log_bus(BusAccessKind::IoWrite, addr, byte);
+                if let Some(writes) = &mut self.io_writes {
+                    writes.push((addr, byte));
+                }
                 if !self.disc_interface {
                     // Nothing on the disc ports.
                 } else if Self::is_fdc_motor_addr(addr) {
@@ -1385,6 +1421,18 @@ impl Motherboard {
         self.memory.set_extra_pages(pages);
     }
 
+    /// All the RAM, as a snapshot stores it: the main 64K then, when RAM is banked, each extra
+    /// page of the machine (not the banks of a large expansion card).
+    pub fn ram_dump(&self) -> Vec<u8> {
+        let mut ram = self.memory.page_dump(None);
+        if self.ram_banking {
+            for page in 0..self.memory.extra_pages() {
+                ram.extend(self.memory.page_dump(Some(page)));
+            }
+        }
+        ram
+    }
+
     /// How many extra 64kb RAM pages are currently fitted.
     pub fn extra_ram_pages(&self) -> usize {
         self.memory.extra_pages()
@@ -1488,6 +1536,17 @@ impl Motherboard {
     /// for [`Self::take_bus_accesses`]. Watching does not change timing.
     pub fn watch_bus(&mut self, watch: bool) {
         self.bus_log = watch.then(Vec::new);
+    }
+
+    /// Record (`true`) or not (the default) the I/O writes alone, for [`Self::take_io_writes`]
+    /// (a timing overlay): cheaper than [`Self::watch_bus`].
+    pub fn watch_io_writes(&mut self, watch: bool) {
+        self.io_writes = watch.then(Vec::new);
+    }
+
+    /// The I/O writes `(port, value)` since the last call (none when not watching).
+    pub fn take_io_writes(&mut self) -> impl Iterator<Item = (u16, u8)> + '_ {
+        self.io_writes.iter_mut().flat_map(|writes| writes.drain(..))
     }
 
     /// The accesses recorded since the last call (empty when not watching).

@@ -23,9 +23,13 @@ pub enum HostKey {
     Period, Slash, Backquote, Equal,
     NumPad0, NumPad1, NumPad2, NumPad3, NumPad4, NumPad5, NumPad6, NumPad7, NumPad8, NumPad9,
     NumPadDot, NumPadEnter,
-    /// Not CPC keys: the emulator's own (F9 cycles the display, F10 toggles full speed).
+    /// Not CPC keys: the emulator's own (F7 saves a snapshot, F9 cycles the display, F10
+    /// toggles full speed).
+    F7,
     F9,
-    F10
+    F10,
+    /// F6 shows or hides the timing overlay.
+    F6
 }
 
 /// What a frontend reports on each poll.

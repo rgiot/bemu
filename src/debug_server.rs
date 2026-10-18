@@ -160,7 +160,8 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/quit", methods: &["POST"], summary: "leave the emulator", extension: false },
     Route { path: "/api/history", methods: &["GET"], summary: "last executed instructions (?n=), bytes as fetched and as now", extension: false },
     Route { path: "/api/screenshot", methods: &["GET"], summary: "frame as PNG: crop=1 visible 768x272 | crop=0 whole 1024x350; live=1 the frame being drawn; full=0 over the previous one", extension: false },
-    Route { path: "/api/media", methods: &["POST"], summary: "load a .sna/.dsk (by content) or .bin/.amsdos (?name=, ?drive=)", extension: false },
+    Route { path: "/api/snapshot", methods: &["GET"], summary: "the machine's state as a version 3 .sna file (save it, load it back with /api/media)", extension: true },
+    Route { path: "/api/media", methods: &["POST"], summary: "load a .sna/.dsk/.cdt (by content) or .bin/.amsdos (?name=, ?drive=)", extension: false },
     Route { path: "/api/memmap", methods: &["GET"], summary: "what is mapped in each 16K region (ROM, absolute RAM bank), RMR, MMR", extension: false },
     Route { path: "/api/crtc", methods: &["GET"], summary: "CRTC registers, selected register and counters", extension: false },
     Route { path: "/api/ga", methods: &["GET"], summary: "Gate Array: mode, pens, inks, RMR and banking", extension: false },
@@ -784,6 +785,12 @@ impl DebugServer {
             ("GET", "/api/history") => self.history_list(request, motherboard),
             ("GET", "/api/screenshot") => self.screenshot(request, monitor),
             ("POST", "/api/media") => self.media(request, motherboard),
+            ("GET", "/api/snapshot") => crate::snapshot::save_sna_bytes(motherboard).map_err(ApiError::new).map(|body| ApiResponse {
+                status: 200,
+                content_type: "application/octet-stream",
+                body,
+                headers: vec![("Content-Disposition".into(), "attachment; filename=\"bemu.sna\"".into())]
+            }),
             ("GET", "/api/memmap") => Ok(ApiResponse::ok(memmap(motherboard))),
             ("GET", "/api/crtc") => Ok(ApiResponse::ok(self.crtc(motherboard))),
             ("GET", "/api/ga") => Ok(ApiResponse::ok(ga(motherboard))),
@@ -1469,6 +1476,14 @@ impl DebugServer {
             let image = crate::disc_image::load_dsk(bytes).map_err(ApiError::new)?;
             motherboard.fdc_mut().insert_image(drive, Some(image));
             reply["media"] = json!("dsk");
+        }
+        else if bytes.starts_with(b"ZXTape!") {
+            let tape = crate::tape::Tape::from_cdt(bytes).map_err(ApiError::new)?;
+            if !tape.notes.is_empty() {
+                reply["warnings"] = json!(tape.notes);
+            }
+            motherboard.insert_tape(Some(tape));
+            reply["media"] = json!("cdt");
         }
         else if lower_name.ends_with(".bin") || lower_name.ends_with(".amsdos") {
             let binary = parse_binary(name, bytes).map_err(|e| ApiError::field("name", e))?;
@@ -2963,6 +2978,9 @@ mod test {
 
         assert_eq!(upload(&mut server, &mut mb, "name=raw.bin", &[0]).0, 400);
         assert_eq!(upload(&mut server, &mut mb, "name=x.cdt", &[0]).0, 400);
+        let cdt = crate::tape::cdt_of_binary("x", 0x4000, 0x4000, &[0xc9], 2000);
+        assert_eq!(upload(&mut server, &mut mb, "name=x.cdt", &cdt).1["media"], json!("cdt"));
+        assert!(mb.tape_deck().is_some_and(|deck| deck.playing()));
         assert_eq!(upload(&mut server, &mut mb, "", &[]).0, 400);
     }
 
@@ -2981,6 +2999,19 @@ mod test {
         assert_eq!((status, reply["media"].clone(), reply["breakpoints"].clone()), (200, json!("sna"), json!(1)));
         assert_eq!(mb.pc(), 0x1234);
         assert_eq!(call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["z80_bp"], json!(["B01:0000"]));
+    }
+
+    #[test]
+    fn a_saved_snapshot_goes_back_through_media() {
+        let (mut server, mut mb) = (server(), machine());
+        mb.cpu_mut().set_pc(0x4321);
+        let request = ApiRequest { method: "GET".into(), path: "/api/snapshot".into(), query: vec![], body: Vec::new() };
+        let response = server.handle(&request, &mut mb);
+        assert_eq!((response.status, response.content_type), (200, "application/octet-stream"));
+        let mut other = machine();
+        let (status, reply) = upload(&mut server, &mut other, "name=saved.sna", &response.body);
+        assert_eq!((status, reply["media"].clone()), (200, json!("sna")));
+        assert_eq!(other.pc(), 0x4321);
     }
 
     #[test]

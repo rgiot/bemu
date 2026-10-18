@@ -7,7 +7,7 @@ use amsrust::motherboard::{CpcModel, MotherboardBuilder};
 use amsrust::ppi::Brand;
 use serde::Deserialize;
 
-/// `{ model, crtc, gateArray, ramKb, discInterface, language, brand, display, blackLevel }`, each optional:
+/// `{ model, crtc, gateArray, ramKb, discInterface, language, brand, display, curvature, blackLevel }`, each optional:
 /// a 6128 with its own disc interface, CRTC 0, Gate Array 40010, raw display by default.
 #[derive(Deserialize, Default, Clone, Debug)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
@@ -29,6 +29,8 @@ pub struct Config {
     pub brand: Option<String>,
     /// "raw", or a CRT: "ctm", "trinitron", "gt65", "atari".
     pub display: Option<String>,
+    /// How curved a CRT's glass is, times its profile's bulge: 0 (flat) to 4, 1 by default.
+    pub curvature: Option<f32>,
     /// The level a black ink is drawn at, 0-255 (8 by default: a tube's dark grey).
     pub black_level: Option<u8>
 }
@@ -87,6 +89,14 @@ impl Config {
 
     pub fn display(&self) -> Result<DisplayMode, String> {
         self.display.as_deref().unwrap_or("raw").parse()
+    }
+
+    pub fn curvature(&self) -> Result<f32, String> {
+        match self.curvature {
+            None => Ok(1.0),
+            Some(c) if (0.0..=4.0).contains(&c) => Ok(c),
+            Some(c) => Err(format!("curvature must be 0 to 4, not {c}"))
+        }
     }
 
     pub fn black_level(&self) -> u8 {

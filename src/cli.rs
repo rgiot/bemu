@@ -27,6 +27,8 @@ pub struct Args {
     pub french: bool,
     pub dsk_a: Option<String>,
     pub dsk_b: Option<String>,
+    /// `--cdt path`: a tape in the cassette deck, PLAY down.
+    pub cdt: Option<String>,
     pub sna: Option<String>,
     pub screenshot_dir: Option<String>,
     pub seconds: u64,
@@ -35,7 +37,11 @@ pub struct Args {
     pub mute: bool,
     /// `--turbo`: the window starts at full speed (F10 toggles it).
     pub turbo: bool,
+    /// `--overlay`: the timing overlay shown (window) or drawn (screenshots).
+    pub overlay: bool,
     pub record: Option<String>,
+    /// `--save-sna path`: the machine's state saved there when the run ends.
+    pub save_sna: Option<String>,
     pub debug_server: bool,
     pub debug_port: u16,
     /// Start paused, for a debugger to arm its breakpoints first.
@@ -47,6 +53,8 @@ pub struct Args {
     pub display: DisplayMode,
     /// Render the CRT on the GPU (needs the `crt-gpu` feature).
     pub gpu: bool,
+    /// How curved a CRT's glass is, times its profile's bulge (0: flat).
+    pub curvature: f32,
     pub frontend: FrontendKind,
     /// Gate Array fitted, if not the default (40010).
     pub gate_array: Option<amsrust::ga::GateArrayType>,
@@ -64,6 +72,7 @@ pub fn parse_args() -> Args {
         french: false,
         dsk_a: None,
         dsk_b: None,
+        cdt: None,
         sna: None,
         screenshot_dir: None,
         seconds: 30,
@@ -71,7 +80,9 @@ pub fn parse_args() -> Args {
         window: false,
         mute: false,
         turbo: false,
+        overlay: false,
         record: None,
+        save_sna: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
         debug_paused: false,
@@ -79,6 +90,7 @@ pub fn parse_args() -> Args {
         type_at: 3.0,
         display: DisplayMode::default(),
         gpu: false,
+        curvature: 1.0,
         frontend: FrontendKind::Minifb,
         gate_array: None,
         black_level: DEFAULT_BLACK_LEVEL
@@ -109,6 +121,7 @@ pub fn parse_args() -> Args {
             "--french" => args.french = true,
             "--dsk" => args.dsk_a = Some(next("--dsk")),
             "--dsk-b" => args.dsk_b = Some(next("--dsk-b")),
+            "--cdt" => args.cdt = Some(next("--cdt")),
             "--sna" => args.sna = Some(next("--sna")),
             "--screenshot" => args.screenshot_dir = Some(next("--screenshot")),
             "--seconds" => args.seconds = next("--seconds").parse().expect("--seconds must be a number"),
@@ -146,6 +159,15 @@ pub fn parse_args() -> Args {
                 }
             },
             "--crt-gpu" => args.gpu = true,
+            "--save-sna" => args.save_sna = Some(next("--save-sna")),
+            "--overlay" => args.overlay = true,
+            "--curvature" => {
+                args.curvature = next("--curvature")
+                    .parse()
+                    .ok()
+                    .filter(|c: &f32| (0.0..=4.0).contains(c))
+                    .unwrap_or_else(|| panic!("--curvature must be a number from 0 (flat) to 4"))
+            },
             "--display" => {
                 args.display = next("--display").parse().unwrap_or_else(|e: String| panic!("--display: {e}"))
             },
@@ -166,18 +188,20 @@ pub fn parse_args() -> Args {
 fn print_help() {
     eprintln!(concat!(
         "amsrust [--model 464|664|6128] [--french] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
-        "        [--dsk path] [--dsk-b path] [--sna path]\n",
+        "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path]\n",
         "        [--screenshot dir [--seconds N] [--every N]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]]\n",
-        "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu]]\n",
+        "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
         "--model picks the ROMs (default 6128); --french the French ones of the 6128,\n",
         "with its AZERTY keyboard (typed text and keys follow it). The 464 and 664 have 64K and the\n",
         "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
         "The 664 and 6128 have a disc interface; --ddi adds a DDI-1 (AMSDOS) to\n",
-        "a 464, --no-disc removes it.\n",
+        "a 464, --no-disc removes it. --cdt puts a tape (CDT/TZX) in the cassette\n",
+        "deck, PLAY down: it plays when the CPC starts the motor (RUN\" on a 464,\n",
+        "|TAPE first on a 664/6128).\n",
         "With no --screenshot/--window, drops into the interactive monitor once\n",
         "everything is loaded ('h' at its prompt lists its commands). With\n",
         "--screenshot, runs headless for --seconds (default 30), saving a\n",
@@ -186,7 +210,9 @@ fn print_help() {
         "- close the window to quit. Built with --features audio, the window\n",
         "plays the sound too (--mute to silence it). F10 toggles full speed: the\n",
         "emulation runs as fast as it can, silent, the picture shown 50 times a\n",
-        "second (--turbo starts so). --record capture.mp4 records\n",
+        "second (--turbo starts so). F7 saves the machine's state in a snapshot,\n",
+        "bemu_0000.sna (then 0001...) in the current directory. --save-sna saves it\n",
+        "when the run ends (headless, recording, window closed). --record capture.mp4 records\n",
         "a video with sound through ffmpeg: what the window shows until it is\n",
         "closed, or without --window --seconds (default 30) run headless.\n",
         "--type 'run\"demo\\n' types on the CPC keyboard after --type-at seconds\n",
@@ -196,9 +222,15 @@ fn print_help() {
         "recording and the screenshots (raw: the monitor's ideal picture; ctm,\n",
         "trinitron, gt65, atari: CRT approximations). F9 cycles them in the\n",
         "window (not while recording). --crt-gpu renders them on the GPU (a build\n",
-        "with --features crt-gpu). --black-level (default 8) is what a black ink is\n",
+        "with --features crt-gpu). The CRTs are seen through their curved glass:\n",
+        "--curvature scales its bulge (default 1, 0 for a flat picture).\n",
+        "--black-level (default 8) is what a black ink is\n",
         "drawn at: on a real tube it is a dark grey, blanking and sync being\n",
         "blacker (0); without the debug server, whose pictures stay exact.\n",
+        "--overlay draws where the CPU wrote to the CRTC and the Gate Array, on the\n",
+        "screenshots and in the window (F6 shows or hides it there): a short bar where\n",
+        "the beam was, CRTC R0-R9 cyan, R12/R13 orange, other registers white, register\n",
+        "selects grey, inks yellow (pen selects dark yellow), mode/ROMs magenta, RAM green.\n",
         "--frontend winit (a build with --features gpu-window) opens a window the\n",
         "GPU draws, the CRT included, with nothing read back; F11 toggles its\n",
         "fullscreen (a 50 Hz video mode when the monitor has one: frames on the\n",

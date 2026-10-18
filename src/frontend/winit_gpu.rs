@@ -22,7 +22,7 @@
 //! see `amsrust::input` for how the two are combined.
 
 use super::Frontend;
-use amsrust::display::{wait_for, CrtParams, CrtPass, DisplayMode, FrameTexture, RAW_HEIGHT, RAW_WIDTH};
+use amsrust::display::{wait_for, Blit, CrtParams, CrtPass, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH};
 use amsrust::input::{HostInput, HostKey};
 use image::RgbImage;
 use std::collections::HashMap;
@@ -55,18 +55,17 @@ struct Gfx {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     frame: FrameTexture,
-    blit: wgpu::RenderPipeline,
-    blit_layout: wgpu::BindGroupLayout,
-    nearest: wgpu::Sampler,
-    linear: wgpu::Sampler,
+    blit: Blit,
     raw_bind_group: wgpu::BindGroup,
+    /// How curved the CRTs' glass is, see `DisplayMode::warp`.
+    curvature: f32,
     crt: Option<CrtState>,
     /// What the last frame showed, for [`Frontend::redraw`].
     shown: Option<DisplayMode>
 }
 
 impl Gfx {
-    fn new(window: Arc<Window>) -> Result<Self, String> {
+    fn new(window: Arc<Window>, curvature: f32) -> Result<Self, String> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window).map_err(|e| format!("cannot draw in the window: {e}"))?;
@@ -99,84 +98,11 @@ impl Gfx {
         surface.configure(&device, &config);
 
         let frame = FrameTexture::new(&device);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("blit"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("blit.wgsl").into())
-        });
-        let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false
-                    },
-                    count: None
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None
-                }
-            ]
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[&blit_layout],
-            push_constant_ranges: &[]
-        });
-        let blit = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("blit"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[]
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(format.into())]
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None
-        });
-        let sampler = |filter| {
-            device.create_sampler(&wgpu::SamplerDescriptor {
-                mag_filter: filter,
-                min_filter: filter,
-                ..Default::default()
-            })
-        };
-        let (nearest, linear) = (sampler(wgpu::FilterMode::Nearest), sampler(wgpu::FilterMode::Linear));
-        let raw_bind_group = Self::bind_group(&device, &blit_layout, frame.view(), &nearest);
-        Ok(Self { surface, device, queue, config, frame, blit, blit_layout, nearest, linear, raw_bind_group, crt: None, shown: None })
+        let blit = Blit::new(&device, format);
+        let raw_bind_group = blit.bind_group(&device, frame.view(), false, Warp::FLAT);
+        Ok(Self { surface, device, queue, config, frame, blit, raw_bind_group, curvature, crt: None, shown: None })
     }
 
-    fn bind_group(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) }
-            ]
-        })
-    }
 
     fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 && (width, height) != (self.config.width, self.config.height) {
@@ -198,7 +124,7 @@ impl Gfx {
         let pass = CrtPass::new(&self.device, &params, &self.frame);
         let target = CrtPass::create_target(&self.device, &params, wgpu::TextureUsages::TEXTURE_BINDING);
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = Self::bind_group(&self.device, &self.blit_layout, &view, &self.linear);
+        let bind_group = self.blit.bind_group(&self.device, &view, true, mode.warp(self.curvature));
         self.crt = Some(CrtState { mode, pass, target, bind_group, size: params.output_size() });
     }
 
@@ -242,9 +168,7 @@ impl Gfx {
                 occlusion_query_set: None
             });
             pass.set_viewport((window_w - w) / 2.0, (window_h - h) / 2.0, w, h, 0.0, 1.0);
-            pass.set_pipeline(&self.blit);
-            pass.set_bind_group(0, bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            self.blit.draw(&mut pass, bind_group);
         }
         self.queue.submit([encoder.finish()]);
         surface_texture.present();
@@ -278,7 +202,9 @@ fn host_key(event: &KeyEvent) -> Option<HostKey> {
             NamedKey::ArrowDown => H::Down,
             NamedKey::ArrowLeft => H::Left,
             NamedKey::ArrowRight => H::Right,
+            NamedKey::F7 => H::F7,
             NamedKey::F9 => H::F9,
+            NamedKey::F6 => H::F6,
             NamedKey::F10 => H::F10,
             _ => return None
         }),
@@ -324,6 +250,8 @@ fn host_key(event: &KeyEvent) -> Option<HostKey> {
 struct App {
     /// Logical size of the window to open.
     size: (f64, f64),
+    /// See `Gfx::curvature`.
+    curvature: f32,
     window: Option<Arc<Window>>,
     gfx: Option<Gfx>,
     /// Keys held, by physical key, so that a release is matched with its
@@ -395,7 +323,7 @@ impl ApplicationHandler for App {
         match event_loop.create_window(attributes) {
             Ok(window) => {
                 let window = Arc::new(window);
-                match Gfx::new(window.clone()) {
+                match Gfx::new(window.clone(), self.curvature) {
                     Ok(gfx) => self.gfx = Some(gfx),
                     Err(e) => self.error = Some(e)
                 }
@@ -452,7 +380,8 @@ pub struct WinitGpuFrontend {
 
 impl WinitGpuFrontend {
     /// A window for pictures of `picture` pixels (for its shape and size).
-    pub fn open(picture: (usize, usize)) -> Result<Self, String> {
+    /// CRTs are seen through their glass, curved `curvature` times their bulge (0: flat).
+    pub fn open(picture: (usize, usize), curvature: f32) -> Result<Self, String> {
         let event_loop = EventLoop::new().map_err(|e| format!("cannot start the event loop: {e}"))?;
         let width = INITIAL_WIDTH;
         let size = (width, width * picture.1 as f64 / picture.0 as f64);
@@ -460,6 +389,7 @@ impl WinitGpuFrontend {
             event_loop,
             app: App {
                 size,
+                curvature,
                 window: None,
                 gfx: None,
                 held: HashMap::new(),
