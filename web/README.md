@@ -58,6 +58,7 @@ and `fetch` don't work from `file://`.
   | `gateArray` | `'40007'`, `'40008'`, `'40010'` | `'40010'` |
   | `ramKb` | `64`, `128`, … `576` (standard extra banks), or `4160` (a 4 MB expansion) | the model's |
   | `discInterface` | `true` / `false` | the model's |
+  | `language` | `'en'`, or `'fr'`: the French 6128's ROMs and its AZERTY keyboard (typed text follows it) | `'en'` |
   | `brand` | `'amstrad'`, `'schneider'`, `'awa'`, `'orion'`, `'saisho'`, `'solavox'`, `'triumph'`, `'isp'` | `'amstrad'` |
   | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'`, `'atari'` | `'raw'` |
   | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `1` |

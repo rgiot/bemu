@@ -23,7 +23,7 @@ use cpclib_csl::{
 use crate::crtc::CrtcType;
 use crate::disc_image::{load_dsk, DiscImage};
 use crate::fdc::FdcDrive;
-use crate::keyboard::CpcKey;
+use crate::keyboard::{CpcKey, KeyboardLayout};
 use crate::monitor::Monitor;
 use crate::motherboard::{Motherboard, MotherboardBuilder};
 use crate::shakerland::Manifest;
@@ -821,7 +821,7 @@ impl CslRunner {
                 no_delay_next = true;
                 continue;
             }
-            let Some(keys) = keys_of(element) else {
+            let Some(keys) = keys_of(element, self.motherboard.keyboard_layout()) else {
                 self.report.ignored.push(format!("key {element}"));
                 continue;
             };
@@ -1075,7 +1075,7 @@ pub fn keys_of_char(c: char) -> Option<Vec<CpcKey>> {
     })
 }
 
-fn keys_of_special(key: SpecialKey) -> Option<Vec<CpcKey>> {
+fn keys_of_special(key: SpecialKey, layout: KeyboardLayout) -> Option<Vec<CpcKey>> {
     use CpcKey::*;
     Some(match key {
         SpecialKey::Esc => vec![Esc],
@@ -1102,23 +1102,23 @@ fn keys_of_special(key: SpecialKey) -> Option<Vec<CpcKey>> {
         SpecialKey::F7 => vec![Keypad7],
         SpecialKey::F8 => vec![Keypad8],
         SpecialKey::F9 => vec![Keypad9],
-        SpecialKey::LeftBrace => return keys_of_char('{'),
-        SpecialKey::RightBrace => return keys_of_char('}'),
-        SpecialKey::Backslash => return keys_of_char('\\'),
-        SpecialKey::Quote => return keys_of_char('\''),
+        SpecialKey::LeftBrace => return layout.keys_of_char('{'),
+        SpecialKey::RightBrace => return layout.keys_of_char('}'),
+        SpecialKey::Backslash => return layout.keys_of_char('\\'),
+        SpecialKey::Quote => return layout.keys_of_char('\''),
         SpecialKey::NoDelayNextKey => return None
     })
 }
 
 /// The keys of one element of a `key_output` (a group `{..}` is pressed together).
-fn keys_of(element: &KeyElement) -> Option<Vec<CpcKey>> {
+fn keys_of(element: &KeyElement, layout: KeyboardLayout) -> Option<Vec<CpcKey>> {
     match element {
-        KeyElement::Character(c) => keys_of_char(*c),
-        KeyElement::Special(key) => keys_of_special(*key),
+        KeyElement::Character(c) => layout.keys_of_char(*c),
+        KeyElement::Special(key) => keys_of_special(*key, layout),
         KeyElement::Simultaneous(elements) => {
             let mut keys = Vec::new();
             for element in elements {
-                for key in keys_of(element)? {
+                for key in keys_of(element, layout)? {
                     if !keys.contains(&key) {
                         keys.push(key);
                     }
@@ -1148,7 +1148,7 @@ mod test {
             KeyElement::Character('A'),
             KeyElement::Special(SpecialKey::Shift)
         ]);
-        assert_eq!(keys_of(&group), Some(vec![CpcKey::Shift, CpcKey::A]));
+        assert_eq!(keys_of(&group, KeyboardLayout::Uk), Some(vec![CpcKey::Shift, CpcKey::A]));
     }
 
     #[test]

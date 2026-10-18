@@ -77,6 +77,8 @@ pub struct Motherboard {
     /// A disc interface (AMSDOS and the FDC ports): a 664/6128, or a
     /// DDI-1 on a 464.
     disc_interface: bool,
+    /// The ROMs' language, so what the keys type.
+    keyboard_layout: crate::keyboard::KeyboardLayout,
 
     // Counter of t-states (to be removed later)
     t_state_counter: Counter,
@@ -132,6 +134,7 @@ impl Default for Motherboard {
             model: CpcModel::default(),
             ram_banking: true,
             disc_interface: true,
+            keyboard_layout: Default::default(),
 
             t_state_counter: Default::default(),
             nops_counter: Default::default(),
@@ -227,6 +230,7 @@ pub struct MotherboardBuilder {
     /// (bits 1-3) to pick which name ("Amstrad", "Schneider", ...) to print
     /// in the boot banner.
     brand: Option<Brand>,
+    keyboard_layout: Option<crate::keyboard::KeyboardLayout>,
     /// If interruption are allowed
     enable_interruptions: bool, // false by default
     disable_lower_rom: bool, // false by default
@@ -262,6 +266,12 @@ impl MotherboardBuilder {
     /// own if unset.
     pub fn set_disc_interface(&mut self, fitted: bool) -> &mut Self {
         self.disc_interface = Some(fitted);
+        self
+    }
+
+    /// The French ROMs (AZERTY keyboard), on a 6128 only, or the English ones.
+    pub fn set_keyboard_layout(&mut self, layout: crate::keyboard::KeyboardLayout) -> &mut Self {
+        self.keyboard_layout = Some(layout);
         self
     }
 
@@ -325,6 +335,11 @@ impl MotherboardBuilder {
         }
         if let Some(fitted) = self.disc_interface {
             motherboard.set_disc_interface(fitted);
+        }
+        if let Some(layout) = self.keyboard_layout {
+            if let Err(e) = motherboard.set_keyboard_layout(layout) {
+                eprintln!("{e}");
+            }
         }
         if let Some(brand) = self.brand {
             motherboard.ppi.set_brand(brand);
@@ -1341,7 +1356,11 @@ impl Motherboard {
     /// MMR is then back to the base 64K). Restart it afterwards.
     pub fn set_model(&mut self, model: CpcModel) {
         self.model = model;
-        self.memory.set_firmware(model);
+        if model != CpcModel::Cpc6128 {
+            // French ROMs exist for the 6128 only
+            self.keyboard_layout = Default::default();
+        }
+        self.memory.set_firmware(model, self.keyboard_layout);
         self.ram_banking = model.has_ram_banking();
         self.set_disc_interface(model.has_disc_interface());
         self.pal.reset();
@@ -1361,6 +1380,21 @@ impl Motherboard {
     /// Whether the MMR banks RAM (6128, or RAM expansion).
     pub fn has_ram_banking(&self) -> bool {
         self.ram_banking
+    }
+
+    /// Fit the French ROMs (AZERTY) or the English ones: the French ones exist for the 6128 only.
+    pub fn set_keyboard_layout(&mut self, layout: crate::keyboard::KeyboardLayout) -> Result<(), String> {
+        if layout == crate::keyboard::KeyboardLayout::French && self.model != CpcModel::Cpc6128 {
+            return Err(format!("there are French ROMs for the 6128 only, not the {}", self.model.name()));
+        }
+        self.keyboard_layout = layout;
+        self.memory.set_firmware(self.model, layout);
+        Ok(())
+    }
+
+    /// What the keys type, as the ROMs fitted say.
+    pub fn keyboard_layout(&self) -> crate::keyboard::KeyboardLayout {
+        self.keyboard_layout
     }
 
     pub fn model(&self) -> CpcModel {

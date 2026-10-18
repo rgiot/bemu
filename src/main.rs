@@ -56,7 +56,7 @@
 //! registers (see `amsrust::snapshot`); apply it after `--dsk` if the
 //! software expects a particular disc already in the drive.
 
-use amsrust::csl_runner::keys_of_char;
+
 use amsrust::display::{DisplayFilter, DisplayMode};
 use amsrust::input::HostKey;
 use amsrust::debug::{Monitor, MonitorContext};
@@ -120,6 +120,9 @@ fn main() {
     if let Some(fitted) = args.disc_interface {
         builder.set_disc_interface(fitted);
     }
+    if args.french {
+        builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
+    }
     let mut motherboard = builder.build();
     if (args.dsk_a.is_some() || args.dsk_b.is_some()) && !motherboard.has_disc_interface() {
         eprintln!("--dsk: this {} has no disc interface (--ddi adds one)", args.model.name());
@@ -159,7 +162,7 @@ fn main() {
             breakpoints.len()
         );
     }
-    let mut typist = args.text.as_deref().map(|text| Typist::new(text, args.type_at));
+    let mut typist = args.text.as_deref().map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout()));
     if typist.is_some() && monitor_mode {
         eprintln!("--type is ignored in the interactive monitor");
     }
@@ -217,11 +220,11 @@ struct Typist {
 const KEY_T_STATES: usize = T_STATES_PER_SECOND / 25;
 
 impl Typist {
-    fn new(text: &str, at_seconds: f64) -> Self {
+    fn new(text: &str, at_seconds: f64, layout: amsrust::keyboard::KeyboardLayout) -> Self {
         let keys = text
             .chars()
             .filter_map(|c| {
-                let keys = keys_of_char(c);
+                let keys = layout.keys_of_char(c);
                 if keys.is_none() {
                     eprintln!("--type: cannot type {c:?}, skipped");
                 }

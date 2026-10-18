@@ -776,7 +776,7 @@ impl DebugServer {
             // Answered by the HTTP thread (see `serve`): only reached
             // through `handle` directly.
             ("GET", "/api/events") => Err(ApiError::new("events are streamed by the HTTP server")),
-            ("POST", "/api/keytype") => self.keytype(request),
+            ("POST", "/api/keytype") => self.keytype(request, motherboard.keyboard_layout()),
             ("GET", "/api/doc") => doc(request),
             ("POST", "/api/quit") => {
                 self.quit = true;
@@ -1016,7 +1016,8 @@ impl DebugServer {
         let size = basic_program::load(motherboard, source)?;
         self.ram_seq += 1;
         if run {
-            self.typing.extend("RUN\n".chars().filter_map(keys_of_char));
+            let layout = motherboard.keyboard_layout();
+            self.typing.extend("RUN\n".chars().filter_map(|c| layout.keys_of_char(c)));
         }
         Ok(size)
     }
@@ -1506,7 +1507,7 @@ impl DebugServer {
         Ok(ApiResponse::ok(reply))
     }
 
-    fn keytype(&mut self, request: &ApiRequest) -> ApiResult {
+    fn keytype(&mut self, request: &ApiRequest, layout: crate::keyboard::KeyboardLayout) -> ApiResult {
         let body = parse_body(&request.text())?;
         let text = match find_key(&body, "text") {
             Some(Value::String(text)) => text.clone(),
@@ -1515,7 +1516,7 @@ impl DebugServer {
         };
         for c in text.chars() {
             let c = if c == '\r' { '\n' } else { c };
-            let keys = keys_of_char(c).ok_or_else(|| ApiError::field("text", format!("cannot type {c:?}")))?;
+            let keys = layout.keys_of_char(c).ok_or_else(|| ApiError::field("text", format!("cannot type {c:?}")))?;
             self.typing.push_back(keys);
         }
         Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
