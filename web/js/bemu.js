@@ -176,6 +176,17 @@ export class Bemu {
     /** A DSK image in drive 'A' or 'B', from a URL, a File/Blob or bytes. */
     async insertDisc(drive, source) { this.#core.insert_disc(driveNumber(drive), await bytesOf(source)); }
     eject(drive) { this.#core.eject(driveNumber(drive)); }
+    /** A CDT tape in the cassette deck (PLAY down), from a URL, a File/Blob or bytes. */
+    async insertTape(source) { return this.#core.insert_tape(await bytesOf(source)); }
+    ejectTape() { this.#core.eject_tape(); }
+    /** The deck's keys: 'play', 'stop' or 'rewind'. */
+    tapeControl(key) { this.#core.tape_control(key); }
+    /** { position, duration } in seconds and whether PLAY is down, or undefined without a tape. */
+    get tape() {
+        const t = this.#core.tape_position();
+        return t && { position: t[0], duration: t[1], playing: t[2] !== 0 };
+    }
+
     /** An SNA snapshot, from a URL, a File/Blob or bytes. */
     async loadSnapshot(source) { this.#core.load_snapshot(await bytesOf(source)); }
     /** A file a CSL script names (disk_insert, snapshot_load, csl_load). */
@@ -227,6 +238,9 @@ export class Bemu {
 
     /** The DSK image in drive 'A' or 'B' with what the CPC wrote on it (Uint8Array), or undefined. */
     getDisc(drive) { return this.#core.disc_image(driveNumber(drive)); }
+
+    /** The machine's state as an SNA snapshot file (Uint8Array, version 3), for loadSnapshot later. */
+    saveSnapshot() { return this.#core.save_snapshot(); }
 
     start() {
         if (this.#running || this.#destroyed) return;

@@ -1,4 +1,4 @@
-//! Loads a `.SNA` snapshot (the CPCEMU/WinAPE format `cpclib-sna` reads)
+//! Loads and saves `.SNA` snapshots (the CPCEMU/WinAPE format `cpclib-sna` reads)
 //! into a running [`Motherboard`]: CPU registers, the base 64K of RAM, the
 //! CRTC's registers, the gate array's ink/mode/ROM-paging state and the
 //! PSG's registers - replayed through each chip's own real register-write
@@ -9,14 +9,15 @@
 //! effects in the middle of a frame), its selected register and, from version
 //! 3, its counters.
 //!
-//! Not restored: PPI port latches (no public way to force one without
-//! reconstructing its mode first) and the FDD motor/track flags (a disc
-//! given on its own command line is inserted stopped at track 0 already).
+//! The PPI gets its control word, port A's output latch and port C.
+//!
+//! Not restored: the FDD motor/track flags (a disc given on its own command
+//! line is inserted stopped at track 0 already).
 //! The extra 64K pages of a 128K+ snapshot go to the extra RAM (a RAM
 //! expansion on a 464/664), banked as the MMR says. From version 2, the
 //! header's CPC type picks the model (ROMs, RAM banking).
 
-use cpclib::sna::{Snapshot, SnapshotFlag};
+use cpclib::sna::{Snapshot, SnapshotFlag, SnapshotVersion};
 
 use crate::breakpoints::AdvancedBreakpoint;
 use crate::crtc::CrtcCounters;
@@ -39,6 +40,117 @@ pub fn load_sna_bytes(motherboard: &mut Motherboard, bytes: &[u8]) -> Result<Sna
     Ok(breakpoints_of_snapshot(&snapshot))
 }
 
+/// The state of `motherboard` as a version 3 `.SNA` file (memory in compressed MEM chunks), the
+/// inverse of [`load_sna_bytes`]: CPU, RAM (the main 64K and the machine's extra pages, not a
+/// large expansion card's), CRTC registers and counters, Gate Array, PSG, PPI, upper ROM, MMR,
+/// the model and the CRTC type, the disc motor and drive A's track.
+pub fn save_sna_bytes(motherboard: &Motherboard) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    snapshot_of(motherboard)?
+        .write_all(&mut bytes, SnapshotVersion::V3)
+        .map_err(|e| format!("cannot write the snapshot: {e}"))?;
+    Ok(bytes)
+}
+
+/// [`save_sna_bytes`] into the file `path`.
+pub fn save_sna(motherboard: &Motherboard, path: &str) -> Result<(), String> {
+    std::fs::write(path, save_sna_bytes(motherboard)?).map_err(|e| format!("{path}: {e}"))
+}
+
+fn snapshot_of(motherboard: &Motherboard) -> Result<Snapshot, String> {
+    use crate::z80::{HasValue, InterruptMode, Reg16, Reg8};
+    use SnapshotFlag::*;
+
+    let mut snapshot = Snapshot::default();
+    let mut values: Vec<(SnapshotFlag, u16)> = Vec::new();
+    let mut set = |flag: SnapshotFlag, value: u16| values.push((flag, value));
+
+    let cpu = motherboard.cpu();
+    for (flag, register) in [
+        (Z80_AF, Reg16::Af),
+        (Z80_BC, Reg16::Bc),
+        (Z80_DE, Reg16::De),
+        (Z80_HL, Reg16::Hl),
+        (Z80_AFX, Reg16::Af2),
+        (Z80_BCX, Reg16::Bc2),
+        (Z80_DEX, Reg16::De2),
+        (Z80_HLX, Reg16::Hl2),
+        (Z80_IX, Reg16::Ix),
+        (Z80_IY, Reg16::Iy),
+        (Z80_SP, Reg16::Sp),
+        (Z80_PC, Reg16::Pc)
+    ] {
+        set(flag, cpu.reg16(register).value());
+    }
+    set(Z80_I, cpu.reg8(Reg8::I).value().into());
+    set(Z80_R, cpu.reg8(Reg8::R).value().into());
+    set(Z80_IFF0, cpu.iff1().into());
+    set(Z80_IFF1, cpu.iff2().into());
+    set(Z80_IM, match cpu.im() {
+        InterruptMode::Mode0 => 0,
+        InterruptMode::Mode1 => 1,
+        InterruptMode::Mode2 => 2
+    });
+
+    let ga = motherboard.ga();
+    for (pen, ink) in ga.palette().iter().enumerate() {
+        set(GA_PAL(Some(pen)), ink.hardware_number().into());
+    }
+    set(GA_PEN, ga.selected_pen().into());
+    set(GA_ROMCFG, ga.rmr().into());
+    set(GA_RAMCFG, motherboard.mmr().into());
+    set(ROM_UP, motherboard.upper_rom_number().into());
+    set(GA_ISC, ga.r52().into());
+
+    let ppi = motherboard.ppi();
+    set(PPI_A, ppi.port_a_latch().into());
+    set(PPI_B, ppi.get_data_b_from_pins().into());
+    set(PPI_C, ppi.get_data_c_from_pins().into());
+    set(PPI_CTL, ppi.control_word().into());
+
+    let psg = motherboard.psg();
+    set(PSG_SEL, psg.selected_register().unwrap_or(0).into());
+    for register in 0..=15u8 {
+        set(PSG_REG(Some(register as usize)), psg.register(register).into());
+    }
+
+    set(CPC_TYPE, match motherboard.model() {
+        CpcModel::Cpc464 => 0,
+        CpcModel::Cpc664 => 1,
+        CpcModel::Cpc6128 => 2
+    });
+
+    // the CRTC as `load_crtc` reads it back
+    let crtc = motherboard.crtc();
+    for (register, value) in crtc.registers().iter().enumerate() {
+        set(CRTC_REG(Some(register)), (*value).into());
+    }
+    set(CRTC_SEL, crtc.selected_register().into());
+    set(CRTC_TYPE, crtc.crtc_type() as u16);
+    let c = crtc.counters();
+    set(CRTC_HCC, c.hcc.into());
+    set(CRTC_CLC, c.vcc.into());
+    set(CRTC_RLC, c.vlc.into());
+    set(CRTC_VAC, c.vtac.into());
+    set(CRTC_VSWC, c.hsc.into());
+    set(CRTC_HSWC, c.vsc.into());
+    set(CRTC_STATE, u16::from(c.vsync) | u16::from(c.hsync) << 1 | u16::from(c.in_vertical_adjust) << 7);
+
+    set(FDD_MOTOR, motherboard.fdc().motor().into());
+    set(FDD_TRACK, motherboard.fdc().track(0).into());
+
+    for (flag, value) in values {
+        snapshot.set_value(flag, value).map_err(|e| format!("{flag:?}: {e:?}"))?;
+    }
+
+    let ram = motherboard.ram_dump();
+    snapshot.resize(ram.len() / 0x10000);
+    for (address, &value) in ram.iter().enumerate() {
+        snapshot.set_byte(address as u32, value);
+    }
+    Ok(snapshot)
+}
+
 fn load_snapshot(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(), String> {
     let word = |flag: SnapshotFlag| -> u16 {
         snapshot.get_value(&flag).as_u16().unwrap_or_else(|| panic!("{flag:?} is not a plain value"))
@@ -51,6 +163,7 @@ fn load_snapshot(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(
     load_crtc(motherboard, snapshot, &byte);
     load_gate_array(motherboard, &byte);
     load_psg(motherboard, &byte);
+    motherboard.ppi_mut().restore(byte(SnapshotFlag::PPI_CTL), byte(SnapshotFlag::PPI_A), byte(SnapshotFlag::PPI_C));
 
     Ok(())
 }
@@ -173,6 +286,9 @@ fn load_gate_array(motherboard: &mut Motherboard, byte: &impl Fn(SnapshotFlag) -
     // set, bit6 clear) the way real firmware always leaves it, per the
     // format's own documented convention.
     ga.write_register(0x80 | (byte(GA_ROMCFG) & 0x1f));
+    // the pen selected, as it was (the palette's writes above changed it)
+    ga.write_register(byte(GA_PEN) & 0x1f);
+    ga.set_r52(byte(GA_ISC));
 
     // The upper ROM page number is a separate latch (the ROM select port),
     // not one of the GA's own registers - keep whatever enable/disable the
@@ -187,6 +303,7 @@ fn load_psg(motherboard: &mut Motherboard, byte: &impl Fn(SnapshotFlag) -> u8) {
     for register in 0..=15u8 {
         psg.set_register(register, byte(SnapshotFlag::PSG_REG(Some(register as usize))));
     }
+    psg.select_register(byte(SnapshotFlag::PSG_SEL));
 }
 
 /// A code breakpoint stored in a snapshot chunk by an assembler (rasm,
@@ -567,5 +684,55 @@ mod breakpoint_test {
         wabp.add_breakpoint(WabpAnyBreakpoint::new(0x9000));
         wabp.add_breakpoint(WabpAnyBreakpoint::new(0x0038));
         assert_eq!(parse("WABP", &wabp.to_bytes()), (vec![0x9000, 0x0038], 0));
+    }
+
+    /// A booted machine saved and loaded into another has the same state, and both then run
+    /// the same way.
+    #[test]
+    fn a_saved_snapshot_loads_back() {
+        use crate::z80::{HasValue, Reg16};
+        let booted = || {
+            let mut builder = crate::motherboard::MotherboardBuilder::default();
+            builder.enable_interruptions();
+            builder.build()
+        };
+        let mut machine = booted();
+        let t_states = |mb: &Motherboard| mb.t_state_counter().value();
+        while t_states(&machine) < 2_000_000 {
+            machine.execute_next_opcode_no_video();
+        }
+        machine.psg_mut().set_register(8, 13);
+        let bytes = save_sna_bytes(&machine).unwrap();
+        assert_eq!(Snapshot::from_buffer(bytes.clone()).unwrap().version_header(), 3);
+
+        let mut copy = booted();
+        load_sna_bytes(&mut copy, &bytes).unwrap();
+        for register in [Reg16::Af, Reg16::Bc, Reg16::De, Reg16::Hl, Reg16::Ix, Reg16::Iy, Reg16::Sp, Reg16::Pc, Reg16::Af2] {
+            assert_eq!(copy.cpu().reg16(register).value(), machine.cpu().reg16(register).value(), "{register:?}");
+        }
+        assert_eq!(copy.ram_dump(), machine.ram_dump());
+        assert_eq!(copy.mmr(), machine.mmr());
+        assert_eq!(copy.ga().palette(), machine.ga().palette());
+        assert_eq!(copy.ga().rmr(), machine.ga().rmr());
+        assert_eq!(copy.crtc().registers(), machine.crtc().registers());
+        assert_eq!(copy.crtc().counters(), machine.crtc().counters());
+        assert_eq!(copy.psg().register(8), 13);
+        assert_eq!(copy.ppi().control_word(), machine.ppi().control_word());
+        assert_eq!(copy.ppi().get_data_c_from_pins(), machine.ppi().get_data_c_from_pins());
+        // and a saved copy saves the same
+        let again = save_sna_bytes(&copy).unwrap();
+        let differ: Vec<_> = again.iter().zip(&bytes).enumerate().filter(|(_, (a, b))| a != b).map(|(i, (a, b))| (i, *a, *b)).take(10).collect();
+        assert!(differ.is_empty() && again.len() == bytes.len(), "{differ:x?}");
+
+        // the firmware goes on the same way on both
+        let start = t_states(&copy);
+        while t_states(&copy) < start + 1_000_000 {
+            copy.execute_next_opcode_no_video();
+        }
+        let start = t_states(&machine);
+        while t_states(&machine) < start + 1_000_000 {
+            machine.execute_next_opcode_no_video();
+        }
+        assert_eq!(copy.ram_dump(), machine.ram_dump());
     }
 }

@@ -512,13 +512,16 @@ impl Page {
 
 impl Memory {
     /// Fit the ROMs of `model`: its OS (lower ROM) and its BASIC (upper
-    /// ROM 0). AMSDOS comes with the disc interface ([`Self::set_amsdos`]).
-    pub fn set_firmware(&mut self, model: crate::motherboard::CpcModel) {
+    /// ROM 0), French ones for a 6128 with the French layout. AMSDOS comes with the disc interface
+    /// ([`Self::set_amsdos`]).
+    pub fn set_firmware(&mut self, model: crate::motherboard::CpcModel, layout: crate::keyboard::KeyboardLayout) {
+        use crate::keyboard::KeyboardLayout;
         use crate::motherboard::CpcModel;
-        let (os, basic) = match model {
-            CpcModel::Cpc464 => (Rom::os464(), Rom::basic464()),
-            CpcModel::Cpc664 => (Rom::os664(), Rom::basic664()),
-            CpcModel::Cpc6128 => (Rom::os6128(), Rom::basic_6128())
+        let (os, basic) = match (model, layout) {
+            (CpcModel::Cpc464, _) => (Rom::os464(), Rom::basic464()),
+            (CpcModel::Cpc664, _) => (Rom::os664(), Rom::basic664()),
+            (CpcModel::Cpc6128, KeyboardLayout::Uk) => (Rom::os6128(), Rom::basic_6128()),
+            (CpcModel::Cpc6128, KeyboardLayout::French) => (Rom::os6128_azerty(), Rom::basic_6128_azerty())
         };
         self.lower_rom = os;
         self.upper_roms[0] = Some(basic);
@@ -553,6 +556,15 @@ impl Memory {
                 self.additional_memory[page].0[i].0[offset] = *byte;
             }
         }
+    }
+
+    /// The 64K of RAM of `page`: the main memory for `None`, else that extra page.
+    pub fn page_dump(&self, page: Option<usize>) -> Vec<u8> {
+        let page = match page {
+            None => &self.main_memory,
+            Some(page) => &self.additional_memory[page]
+        };
+        page.0.iter().flat_map(|bank| bank.0.iter().copied()).collect()
     }
 
     /// How many extra 64kb pages are currently fitted (see
