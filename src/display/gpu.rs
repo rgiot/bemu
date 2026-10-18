@@ -10,7 +10,7 @@
 //! feed any frontend, the recorder and the screenshots; a frontend that
 //! presents the texture itself would skip that read-back.
 
-use super::crt::{CrtParams, SRC_HEIGHT, SRC_WIDTH};
+use super::crt::{CrtParams, Warp, SRC_HEIGHT, SRC_WIDTH};
 #[cfg(not(target_arch = "wasm32"))]
 use super::DisplayFilter;
 use image::RgbImage;
@@ -57,6 +57,132 @@ impl Uniforms {
             x_ratio: p.x_ratio(),
             pad: 0.0
         }
+    }
+}
+
+/// The [`Warp`] of `blit.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct WarpUniforms {
+    k: [f32; 2],
+    corner: f32,
+    edged: f32
+}
+
+/// The last pass of a frontend drawing on the GPU (`blit.wgsl`): a picture, the monitor's frame
+/// or a [`CrtPass`]'s, drawn over the viewport set, through the glass of a [`Warp`].
+pub struct Blit {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    nearest: wgpu::Sampler,
+    linear: wgpu::Sampler
+}
+
+impl Blit {
+    /// A blit drawing into targets of `format`.
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("blit"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("blit.wgsl").into())
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false
+                    },
+                    count: None
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None
+                    },
+                    count: None
+                }
+            ]
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[]
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("blit"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[]
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(format.into())]
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None
+        });
+        let sampler = |filter| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                mag_filter: filter,
+                min_filter: filter,
+                ..Default::default()
+            })
+        };
+        let (nearest, linear) = (sampler(wgpu::FilterMode::Nearest), sampler(wgpu::FilterMode::Linear));
+        Self { pipeline, layout, nearest, linear }
+    }
+
+    /// What draws `view`: sampled linearly if `smooth` (a CRT's picture), else as is (the raw
+    /// one), through `warp`.
+    pub fn bind_group(&self, device: &wgpu::Device, view: &wgpu::TextureView, smooth: bool, warp: Warp) -> wgpu::BindGroup {
+        let uniforms = WarpUniforms {
+            k: [warp.k.0, warp.k.1],
+            corner: warp.corner,
+            edged: if warp.is_flat() { 0.0 } else { 1.0 }
+        };
+        let buffer = wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor {
+            label: Some("warp"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM
+        });
+        let sampler = if smooth { &self.linear } else { &self.nearest };
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: buffer.as_entire_binding() }
+            ]
+        })
+    }
+
+    /// Draw the picture of `bind_group` over `pass`'s viewport.
+    pub fn draw(&self, pass: &mut wgpu::RenderPass, bind_group: &wgpu::BindGroup) {
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 }
 
@@ -367,5 +493,88 @@ mod test {
             }
             assert!(off < w * h / 1000, "{profile:?}: {off} channel values differ by more than 3 (worst {worst})");
         }
+    }
+
+    /// The blit's glass is the CPU's [`crate::display::Curved`]: the same pixels are lit.
+    #[test]
+    fn blit_warp_matches_cpu() {
+        use crate::display::{Curved, RawFilter, RAW_HEIGHT, RAW_WIDTH};
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let Ok(adapter) = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("skipped: no GPU adapter");
+            return;
+        };
+        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+        let mut src = RgbImage::new(SRC_WIDTH as u32, SRC_HEIGHT as u32);
+        src.pixels_mut().for_each(|pixel| *pixel = Rgb([200, 100, 50]));
+        let warp = Warp::of(CrtProfile::Ctm644, 1.0);
+
+        let mut frame = FrameTexture::new(&device);
+        frame.upload(&queue, &src);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let blit = Blit::new(&device, format);
+        let bind_group = blit.bind_group(&device, frame.view(), false, warp);
+        let (w, h) = (RAW_WIDTH as u32, RAW_HEIGHT as u32);
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[]
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (w * h * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        {
+            let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store }
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None
+            });
+            blit.draw(&mut pass, &bind_group);
+        }
+        encoder.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: None }
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }
+        );
+        queue.submit([encoder.finish()]);
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |result| result.unwrap());
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let gpu: Vec<u32> = slice
+            .get_mapped_range()
+            .chunks_exact(4)
+            .map(|rgba| (rgba[0] as u32) << 16 | (rgba[1] as u32) << 8 | rgba[2] as u32)
+            .collect();
+
+        let mut cpu = vec![0; gpu.len()];
+        Curved::new(Box::new(RawFilter), warp).render(&src, &mut cpu);
+        assert_eq!(gpu[0], 0);
+        assert_eq!(gpu[gpu.len() / 2 + w as usize / 2], 0xc8_64_32);
+        let off = gpu
+            .iter()
+            .zip(&cpu)
+            .filter(|(p, q)| (0..3).any(|c| ((*p >> (c * 8)) & 255).abs_diff((*q >> (c * 8)) & 255) > 24))
+            .count();
+        assert!(off < gpu.len() / 500, "{off} pixels differ");
     }
 }

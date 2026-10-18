@@ -231,15 +231,15 @@ pub(super) const OPERATIONS: &[Operation] = &[
     op(
         "POST",
         "/api/media",
-        "Load a snapshot (its breakpoints set), insert a disc, or load a binary.",
-        "{ok, media: sna|dsk|bin, cmd_seq, breakpoints?, warnings?, load?, len?, entry?}"
+        "Load a snapshot (its breakpoints set), insert a disc or a tape (PLAY down), or load a binary.",
+        "{ok, media: sna|dsk|cdt|bin, cmd_seq, breakpoints?, warnings?, load?, len?, entry?}"
     )
     .params(&[
         q("name", "string", "the file's name: .bin/.amsdos (an AMSDOS header is used when there is one)"),
         q("drive", "integer", "drive for a disc: 0 (A, default) or 1 (B)"),
         q("crtc", "string", "keep or sna (accepted; the CRTC is kept)")
     ])
-    .raw_body("application/octet-stream", "the file: .sna and .dsk are recognised by their content"),
+    .raw_body("application/octet-stream", "the file: .sna, .dsk and .cdt are recognised by their content"),
     op("GET", "/api/memmap", "What each 16K region of the CPU maps: ROM, or which RAM bank; RMR and MMR.", "{regions: [{base, name, rom, rom_bank?, ram_bank?, ext?, write_bank}], rmr, mmr, ram_mode, ram_page, ram_banks}"),
     op("GET", "/api/crtc", "The CRTC registers, the selected one and the counters.", "{type, regs, selected_reg, hcc, vcc, vlc, vsc, vtac, ma}"),
     op("GET", "/api/ga", "The Gate Array: mode, pen, inks, RMR and banking.", "{mode, pen, ink_idx, ink_rgb, ink_firmware, border_idx, border_rgb, rmr, r52, lower_rom, upper_rom, ram_mode, ram_page}"),

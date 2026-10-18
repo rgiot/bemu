@@ -35,6 +35,8 @@ type Callback = Rc<RefCell<Option<Function>>>;
 pub struct Emulator {
     config: Config,
     display: DisplayMode,
+    /// See `Config::curvature`.
+    curvature: f32,
     gfx: Gfx,
     /// The machine, when no script plays it.
     motherboard: Motherboard,
@@ -67,12 +69,14 @@ impl Emulator {
         console_error_panic_hook::set_once();
         let config = Config::from_js(config).map_err(|e| JsError::new(&e))?;
         let display = config.display().map_err(|e| JsError::new(&e))?;
+        let curvature = config.curvature().map_err(|e| JsError::new(&e))?;
         let motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
         let gfx = Gfx::new(canvas, webgpu).await.map_err(|e| JsError::new(&e))?;
         Ok(Emulator {
             monitor: Monitor::default().with_black_level(config.black_level()),
             config,
             display,
+            curvature,
             gfx,
             motherboard,
             frame: None,
@@ -98,9 +102,11 @@ impl Emulator {
     pub fn configure(&mut self, config: JsValue) -> Result<(), JsError> {
         let config = Config::from_js(config).map_err(|e| JsError::new(&e))?;
         let display = config.display().map_err(|e| JsError::new(&e))?;
+        let curvature = config.curvature().map_err(|e| JsError::new(&e))?;
         let motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
         self.config = config;
         self.display = display;
+        self.curvature = curvature;
         self.csl = None;
         self.replace_machine(motherboard);
         Ok(())
@@ -118,6 +124,14 @@ impl Emulator {
     pub fn set_display(&mut self, name: &str) -> Result<(), JsError> {
         self.display = name.parse().map_err(|e: String| JsError::new(&e))?;
         self.config.display = Some(name.to_owned());
+        Ok(())
+    }
+
+    /// How curved a CRT's glass is, times its profile's bulge: 0 (flat) to 4 (WebGPU only).
+    pub fn set_curvature(&mut self, curvature: f32) -> Result<(), JsError> {
+        let config = Config { curvature: Some(curvature), ..self.config.clone() };
+        self.curvature = config.curvature().map_err(|e| JsError::new(&e))?;
+        self.config = config;
         Ok(())
     }
 
@@ -139,6 +153,39 @@ impl Emulator {
         let unit = usize::from(drive.min(1));
         self.machine().fdc_mut().insert_image(fdc_drive(unit), None);
         self.discs[unit] = None;
+    }
+
+    /// A CDT (or TZX) tape in the cassette deck, rewound, PLAY down: it plays when the CPC starts
+    /// the motor. Returns what was skipped of it.
+    pub fn insert_tape(&mut self, bytes: &[u8]) -> Result<Vec<String>, JsError> {
+        let tape = amsrust::tape::Tape::from_cdt(bytes).map_err(|e| JsError::new(&e))?;
+        let notes = tape.notes.clone();
+        self.machine().insert_tape(Some(tape));
+        Ok(notes)
+    }
+
+    pub fn eject_tape(&mut self) {
+        self.machine().insert_tape(None);
+    }
+
+    /// The deck's keys: "play", "stop" or "rewind".
+    pub fn tape_control(&mut self, key: &str) -> Result<(), JsError> {
+        let deck = self.machine().tape_deck_mut().ok_or_else(|| JsError::new("no tape inserted"))?;
+        match key {
+            "play" => deck.set_playing(true),
+            "stop" => deck.set_playing(false),
+            "rewind" => deck.rewind(),
+            other => return Err(JsError::new(&format!("{other}: play, stop or rewind"))),
+        }
+        Ok(())
+    }
+
+    /// Where the tape is, in seconds from its start, and whether PLAY is down; none without a tape.
+    pub fn tape_position(&self) -> Option<Vec<f64>> {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        machine
+            .tape_deck()
+            .map(|deck| vec![deck.position_seconds(), deck.tape().duration_seconds(), f64::from(u8::from(deck.playing()))])
     }
 
     /// Load an SNA snapshot in the machine.
@@ -278,7 +325,7 @@ impl Emulator {
     /// Show the last frame again.
     pub fn redraw(&mut self) -> Result<(), JsError> {
         if let Some(frame) = &self.frame {
-            self.gfx.show(frame, self.display).map_err(|e| JsError::new(&e))?;
+            self.gfx.show(frame, self.display, self.curvature).map_err(|e| JsError::new(&e))?;
         }
         Ok(())
     }
@@ -335,6 +382,8 @@ impl Emulator {
         for (unit, disc) in self.discs.iter().enumerate() {
             motherboard.fdc_mut().insert_image(fdc_drive(unit), disc.clone());
         }
+        // the deck keeps its tape, where it is
+        motherboard.take_tape_deck_from(&mut self.motherboard);
         self.motherboard = motherboard;
         self.monitor = Monitor::default().with_black_level(self.config.black_level());
     }

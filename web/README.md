@@ -60,6 +60,7 @@ and `fetch` don't work from `file://`.
   | `discInterface` | `true` / `false` | the model's |
   | `brand` | `'amstrad'`, `'schneider'`, `'awa'`, `'orion'`, `'saisho'`, `'solavox'`, `'triumph'`, `'isp'` | `'amstrad'` |
   | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'`, `'atari'` | `'raw'` |
+  | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `1` |
   | `blackLevel` | `0` to `255`: the grey a black ink is drawn at | `8` |
 
 - **`options`**:
@@ -78,9 +79,12 @@ and `fetch` don't work from `file://`.
 | `setSpeed(speed)` | `1` (real time), another factor (`2`, `0.5`…), or `'max'` (full speed), see "Speed" |
 | `configure(config)` | a new machine; the discs stay in |
 | `setDisplay(name)` | `'raw'` or a CRT profile |
+| `setCurvature(c)` | how curved a CRT's glass is, as the `curvature` configuration |
 | `insertDisc(drive, source)`, `eject(drive)` | a DSK image in drive `'A'` or `'B'` |
+| `insertTape(source)`, `ejectTape()` | a CDT tape in the cassette deck, PLAY down: it plays when the CPC starts the motor (`RUN"` on a 464, `\|TAPE` first on a 664/6128); returns what was skipped of it |
+| `tapeControl(key)` | the deck's keys: `'play'`, `'stop'`, `'rewind'` |
 | `loadSnapshot(source)` | an SNA snapshot |
-| `addFile(name, source)` | a file a CSL script names (`disk_insert`, `snapshot_load`, `csl_load`) |
+| `addFile(name, source)` | a file a CSL script names (`disk_insert`, `tape_insert`, `snapshot_load`, `csl_load`) |
 | `runCsl(script, { files })` | play a CSL script live, see below |
 | `stopCsl()` | stop the script; its machine goes on |
 | `typeText(text)` | type `text` on the CPC's keyboard (`\n` is RETURN), a paste; not while a script plays |
@@ -99,6 +103,7 @@ and `fetch` don't work from `file://`.
 - `vsyncPaced`: whether frames follow a 50 Hz display, see "Timing".
 - `speed`: `1`, another factor, or `Infinity` (full speed).
 - `muted`.
+- `tape`: `{ position, duration, playing }` (seconds), or `undefined` without a tape.
 
 **Events:**
 - `'screenshot'`: `{ name, png }`, where `png` is a `Uint8Array` holding a PNG file;
@@ -174,7 +179,9 @@ A web page cannot set the display's refresh rate, so the library measures it.
 
 ### Drawing
 - **WebGPU:** used when the browser has it. The picture fills the canvas, letterboxed, with the
-  CRT profiles drawn on the GPU (the shader of the desktop's `--crt-gpu`).
+  CRT profiles drawn on the GPU (the shader of the desktop's `--crt-gpu`), seen through the
+  tube's curved glass: the picture bulges and the corners are rounded, as on the desktop.
+  `curvature: 0` keeps it flat. The raw display is never curved.
 - **Canvas 2D:** used otherwise. It shows the raw picture at 768×544, and the page scales the
   canvas.
 

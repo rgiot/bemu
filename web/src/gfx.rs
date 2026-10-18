@@ -5,7 +5,7 @@
 //! blit scales the picture, letterboxed, to the canvas (as the desktop's `--frontend winit`
 //! window does). Canvas 2D shows the raw picture only.
 
-use amsrust::display::{CrtParams, CrtPass, DisplayMode, FrameTexture, RAW_HEIGHT, RAW_WIDTH};
+use amsrust::display::{Blit, CrtParams, CrtPass, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH};
 use image::RgbImage;
 use wasm_bindgen::{Clamped, JsCast};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
@@ -13,6 +13,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
 /// The picture of a CRT display, in its own texture.
 struct CrtState {
     mode: DisplayMode,
+    warp: Warp,
     pass: CrtPass,
     target: wgpu::Texture,
     bind_group: wgpu::BindGroup,
@@ -25,9 +26,7 @@ pub struct Gpu {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     frame: FrameTexture,
-    blit: wgpu::RenderPipeline,
-    blit_layout: wgpu::BindGroupLayout,
-    linear: wgpu::Sampler,
+    blit: Blit,
     raw_bind_group: wgpu::BindGroup,
     crt: Option<CrtState>
 }
@@ -77,11 +76,12 @@ impl Gfx {
         }
     }
 
-    /// Show `frame` (the monitor's 768x272 picture) as `mode` says.
-    pub fn show(&mut self, frame: &RgbImage, mode: DisplayMode) -> Result<(), String> {
+    /// Show `frame` (the monitor's 768x272 picture) as `mode` says, a CRT through its glass
+    /// curved `curvature` times its bulge (WebGPU only).
+    pub fn show(&mut self, frame: &RgbImage, mode: DisplayMode, curvature: f32) -> Result<(), String> {
         match self {
             Self::Gpu(gpu) => {
-                gpu.use_mode(mode);
+                gpu.use_mode(mode, mode.warp(curvature));
                 gpu.frame.upload(&gpu.queue, frame);
                 gpu.draw(mode)
             },
@@ -158,67 +158,9 @@ impl Gpu {
         surface.configure(&device, &config);
 
         let frame = FrameTexture::new(&device);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("blit"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../src/frontend/blit.wgsl").into())
-        });
-        let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false
-                    },
-                    count: None
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None
-                }
-            ]
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[&blit_layout],
-            push_constant_ranges: &[]
-        });
-        let blit = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("blit"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[]
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(format.into())]
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None
-        });
-        let sampler = |filter| {
-            device.create_sampler(&wgpu::SamplerDescriptor {
-                mag_filter: filter,
-                min_filter: filter,
-                ..Default::default()
-            })
-        };
-        let (nearest, linear) = (sampler(wgpu::FilterMode::Nearest), sampler(wgpu::FilterMode::Linear));
-        let raw_bind_group = bind_group(&device, &blit_layout, frame.view(), &nearest);
-        Ok(Self { surface, device, queue, config, frame, blit, blit_layout, linear, raw_bind_group, crt: None })
+        let blit = Blit::new(&device, format);
+        let raw_bind_group = blit.bind_group(&device, frame.view(), false, Warp::FLAT);
+        Ok(Self { surface, device, queue, config, frame, blit, raw_bind_group, crt: None })
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -230,19 +172,19 @@ impl Gpu {
     }
 
     /// Make `mode`'s pass the current one.
-    fn use_mode(&mut self, mode: DisplayMode) {
+    fn use_mode(&mut self, mode: DisplayMode, warp: Warp) {
         let DisplayMode::Crt(profile) = mode else {
             return;
         };
-        if self.crt.as_ref().is_some_and(|crt| crt.mode == mode) {
+        if self.crt.as_ref().is_some_and(|crt| crt.mode == mode && crt.warp == warp) {
             return;
         }
         let params: CrtParams = profile.params();
         let pass = CrtPass::new(&self.device, &params, &self.frame);
         let target = CrtPass::create_target(&self.device, &params, wgpu::TextureUsages::TEXTURE_BINDING);
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = bind_group(&self.device, &self.blit_layout, &view, &self.linear);
-        self.crt = Some(CrtState { mode, pass, target, bind_group, size: params.output_size() });
+        let bind_group = self.blit.bind_group(&self.device, &view, true, warp);
+        self.crt = Some(CrtState { mode, warp, pass, target, bind_group, size: params.output_size() });
     }
 
     /// Draw `mode`'s picture of the frame already uploaded.
@@ -285,9 +227,7 @@ impl Gpu {
                 occlusion_query_set: None
             });
             pass.set_viewport((canvas_w - w) / 2.0, (canvas_h - h) / 2.0, w, h, 0.0, 1.0);
-            pass.set_pipeline(&self.blit);
-            pass.set_bind_group(0, bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            self.blit.draw(&mut pass, bind_group);
         }
         self.queue.submit([encoder.finish()]);
         surface_texture.present();
@@ -295,18 +235,3 @@ impl Gpu {
     }
 }
 
-fn bind_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    view: &wgpu::TextureView,
-    sampler: &wgpu::Sampler
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) }
-        ]
-    })
-}

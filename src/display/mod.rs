@@ -11,14 +11,18 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod cpu;
 pub mod crt;
+#[cfg(not(target_arch = "wasm32"))]
+mod curved;
 #[cfg(feature = "crt-gpu")]
 mod gpu;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use cpu::CpuCrt;
-pub use crt::{CrtParams, CrtProfile};
+pub use crt::{CrtParams, CrtProfile, Warp};
+#[cfg(not(target_arch = "wasm32"))]
+pub use curved::Curved;
 #[cfg(feature = "crt-gpu")]
-pub use gpu::{CrtPass, FrameTexture};
+pub use gpu::{Blit, CrtPass, FrameTexture};
 #[cfg(all(feature = "crt-gpu", not(target_arch = "wasm32")))]
 pub use gpu::{wait_for, GpuCrt};
 
@@ -70,13 +74,34 @@ impl DisplayMode {
     /// The filter implementing this mode, on the CPU.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn filter(self) -> Box<dyn DisplayFilter> {
-        self.filter_on(false)
+        self.filter_on(false, 0.0)
     }
 
     /// The filter implementing this mode, on the GPU if `gpu` and possible
-    /// (built with `crt-gpu` and an adapter available), else on the CPU.
+    /// (built with `crt-gpu` and an adapter available), else on the CPU. A CRT is seen through
+    /// its glass, curved `curvature` times its profile's bulge (0: flat), see [`Warp`].
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn filter_on(self, gpu: bool) -> Box<dyn DisplayFilter> {
+    pub fn filter_on(self, gpu: bool, curvature: f32) -> Box<dyn DisplayFilter> {
+        let filter = self.flat_filter_on(gpu);
+        let warp = self.warp(curvature);
+        if warp.is_flat() {
+            filter
+        }
+        else {
+            Box::new(Curved::new(filter, warp))
+        }
+    }
+
+    /// The glass of this mode, curved `curvature` times its profile's bulge: flat for raw.
+    pub fn warp(self, curvature: f32) -> Warp {
+        match self {
+            Self::Raw => Warp::FLAT,
+            Self::Crt(profile) => Warp::of(profile, curvature)
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flat_filter_on(self, gpu: bool) -> Box<dyn DisplayFilter> {
         match self {
             Self::Raw => Box::new(RawFilter),
             Self::Crt(profile) => {
