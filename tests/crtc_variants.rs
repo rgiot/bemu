@@ -34,7 +34,7 @@ fn expected_write_mask(crtc: CrtcType, register: u8) -> u8 {
 #[test]
 fn each_chip_stores_the_register_bits_the_compendium_gives_it() {
     for crtc in CrtcType::ALL {
-        let model = crtc.model();
+        let model = crtc.new_chip();
         for register in 0..=17u8 {
             assert_eq!(
                 model.write_mask(register),
@@ -79,7 +79,7 @@ fn registers() -> Registers {
 
 fn read_register(crtc: CrtcType, selected: u8) -> u8 {
     let registers = registers();
-    crtc.model().read_register(&ReadContext {
+    crtc.new_chip().read_register(&ReadContext {
         registers: &registers,
         selected,
         vertical_border: false,
@@ -111,7 +111,7 @@ fn pointer_registers_read_back_six_or_eight_bits() {
         registers[number] = 0xff;
     }
     for (crtc, selected) in [(Crtc0, 12), (Crtc0, 14), (Crtc0, 16), (Crtc1, 14), (Crtc2, 16)] {
-        let value = crtc.model().read_register(&ReadContext {
+        let value = crtc.new_chip().read_register(&ReadContext {
             registers: &registers,
             selected,
             vertical_border: false,
@@ -172,7 +172,7 @@ fn register_4_reads_zero_on_the_6845s() {
 
 fn read_status(crtc: CrtcType, vertical_border: bool, noise: bool) -> u8 {
     let registers = registers();
-    crtc.model().read_status(&ReadContext {
+    crtc.new_chip().read_status(&ReadContext {
         registers: &registers,
         selected: 12,
         vertical_border,
@@ -232,13 +232,13 @@ fn crtc0_status_is_random_but_only_ever_ff_or_7f_and_reproducible() {
 fn hsync_width_follows_r3l_with_chip_specific_zero() {
     // ACCC §14.6: R3l = 0 gives no HSYNC on CRTC 0 and 1, 16 characters on 2, 3, 4
     for crtc in [Crtc0, Crtc1] {
-        assert_eq!(crtc.model().hsync_width(0x00), None, "{crtc:?}");
-        assert_eq!(crtc.model().hsync_width(0xf0), None, "{crtc:?}");
-        assert_eq!(crtc.model().hsync_width(0x05), Some(5));
+        assert_eq!(crtc.new_chip().hsync_width(0x00), None, "{crtc:?}");
+        assert_eq!(crtc.new_chip().hsync_width(0xf0), None, "{crtc:?}");
+        assert_eq!(crtc.new_chip().hsync_width(0x05), Some(5));
     }
     for crtc in [Crtc2, Crtc3, Crtc4] {
-        assert_eq!(crtc.model().hsync_width(0x00), Some(16), "{crtc:?}");
-        assert_eq!(crtc.model().hsync_width(0x0e), Some(14));
+        assert_eq!(crtc.new_chip().hsync_width(0x00), Some(16), "{crtc:?}");
+        assert_eq!(crtc.new_chip().hsync_width(0x0e), Some(14));
     }
 }
 
@@ -246,13 +246,13 @@ fn hsync_width_follows_r3l_with_chip_specific_zero() {
 fn vsync_width_is_r3h_only_on_crtc_0_3_4() {
     // ACCC §14.1: 1 and 2 are fixed at 16; 0 means 16 on the others
     for crtc in [Crtc1, Crtc2] {
-        assert_eq!(crtc.model().vsync_width(0x80), 16, "{crtc:?}");
-        assert_eq!(crtc.model().vsync_width(0x30), 16, "{crtc:?}");
+        assert_eq!(crtc.new_chip().vsync_width(0x80), 16, "{crtc:?}");
+        assert_eq!(crtc.new_chip().vsync_width(0x30), 16, "{crtc:?}");
     }
     for crtc in [Crtc0, Crtc3, Crtc4] {
-        assert_eq!(crtc.model().vsync_width(0x80), 8, "{crtc:?}");
-        assert_eq!(crtc.model().vsync_width(0x3e), 3, "{crtc:?}");
-        assert_eq!(crtc.model().vsync_width(0x0e), 16, "{crtc:?}: 0 means 16");
+        assert_eq!(crtc.new_chip().vsync_width(0x80), 8, "{crtc:?}");
+        assert_eq!(crtc.new_chip().vsync_width(0x3e), 3, "{crtc:?}");
+        assert_eq!(crtc.new_chip().vsync_width(0x0e), 16, "{crtc:?}: 0 means 16");
     }
 }
 
@@ -260,13 +260,13 @@ fn vsync_width_is_r3h_only_on_crtc_0_3_4() {
 fn display_skew_exists_on_crtc_0_3_4_only() {
     // ACCC §19.2: R8 bits 5-4; a skew of 3 blanks the display
     for crtc in [Crtc0, Crtc3, Crtc4] {
-        assert_eq!(crtc.model().display_skew(0x00), DisplaySkew::Delayed(0));
-        assert_eq!(crtc.model().display_skew(0x10), DisplaySkew::Delayed(1));
-        assert_eq!(crtc.model().display_skew(0x20), DisplaySkew::Delayed(2));
-        assert_eq!(crtc.model().display_skew(0x30), DisplaySkew::Blanked);
+        assert_eq!(crtc.new_chip().display_skew(0x00), DisplaySkew::Delayed(0));
+        assert_eq!(crtc.new_chip().display_skew(0x10), DisplaySkew::Delayed(1));
+        assert_eq!(crtc.new_chip().display_skew(0x20), DisplaySkew::Delayed(2));
+        assert_eq!(crtc.new_chip().display_skew(0x30), DisplaySkew::Blanked);
     }
     for crtc in [Crtc1, Crtc2] {
-        assert_eq!(crtc.model().display_skew(0x30), DisplaySkew::Delayed(0), "{crtc:?}");
+        assert_eq!(crtc.new_chip().display_skew(0x30), DisplaySkew::Delayed(0), "{crtc:?}");
     }
 }
 
