@@ -104,15 +104,26 @@ def _one(job):
     photo = f"{WORK}/ref/real/{n}.webp"
     if not os.path.exists(photo):
         return None
+    import glob, re
     ph = load_photo(photo)
     out = {"name": n}
-    for key, path in (("ours", f"{WORK}/res_{m}_{tag}{c}/{m}/{n}.png"), ("ams116", f"{WORK}/ref/ams_lite/{n}.png"),
-                      ("ams115", f"{WORK}/ref/site/{n}.webp")):
-        if os.path.exists(path):
-            try:
-                out[key] = score(register(load_emu(path), ph)[1], ph)
-            except cv2.error:
-                out[key] = None
+    # a code the program raised twice gives <name>_1.png...: when the menu keys slip (a test longer
+    # than its script's wait), the first one can belong to another screen, so the best capture counts
+    ours = [p for p in glob.glob(f"{WORK}/res_{m}_{tag}{c}/{m}/{glob.escape(n)}*.png")
+            if re.fullmatch(re.escape(n) + r"(_\d+)?\.png", os.path.basename(p))]
+    for key, paths in (("ours", sorted(ours)), ("ams116", [f"{WORK}/ref/ams_lite/{n}.png"]),
+                       ("ams115", [f"{WORK}/ref/site/{n}.webp"])):
+        scores = []
+        for path in paths:
+            if os.path.exists(path):
+                try:
+                    scores.append(score(register(load_emu(path), ph)[1], ph))
+                except cv2.error:
+                    pass
+        if scores:
+            out[key] = max(scores)
+        elif any(os.path.exists(p) for p in paths):
+            out[key] = None
     return out
 
 
@@ -133,6 +144,12 @@ def compare_all(tag):
         tests = collections.Counter(n.split("_")[0] for n in worse)
         print(f"CRTC {c}: {len(rows)} screens, ours clearly further from the real CPC on {len(worse)}: "
               + ", ".join(f"{k}({v})" for k, v in tests.most_common()))
+        # screens AMSpiriT captured and we did not: invisible to the scores above
+        missing = collections.Counter(x["name"].split("_")[0] for x in res if f"_CRTC{c}_" in x["name"]
+                                      and "ours" not in x and x.get("ams116") is not None)
+        if missing:
+            print(f"        not captured by us (AMSpiriT 1.16 has them): {sum(missing.values())}: "
+                  + ", ".join(f"{k}({v})" for k, v in missing.most_common()))
 
 
 if __name__ == "__main__":
