@@ -187,9 +187,16 @@ pub trait CrtcModel: Debug + Sync {
     }
 
     /// CRTC 1 (ACCC 19.5.3): ParityFrame simply switches at each frame start, whatever R8.
-    /// Also the interlace sync of CRTC 2, 3 and 4 (an additional line on the even frames).
+    /// Also the interlace sync of CRTC 3 and 4 (an additional line on the even frames).
     fn frame_parity_toggles(&self) -> bool {
         false
+    }
+
+    /// CRTC 0 and 2 (ACCC 19.5.2, 19.5.4): ParityR6 = ParityFrame xor 1 when C4 reaches R6,
+    /// ParityFrame = ParityR6 when a frame starts (so R6 > R4 freezes it), and the interlace
+    /// additional line ends the frames whose ParityR6 is odd (19.6.3).
+    fn parity_from_r6(&self) -> bool {
+        self.has_last_line_state()
     }
 
     /// CRTC 1 (ACCC 19.8.2): R8=3 counts C9 for the interlace video mode. On CRTC 2

@@ -17,7 +17,7 @@ impl CrtcModel for Crtc2 {
         true
     }
 
-    fn frame_parity_toggles(&self) -> bool {
+    fn parity_from_r6(&self) -> bool {
         true
     }
 

@@ -196,6 +196,9 @@ pub struct Crtc {
     /// (CRTC 0 only, Shaker AT E: R2 moved during the pulse to where it ends does not start another
     /// one; CRTCs 1-4 start it, AT E and BCOPY A there).
     hsync_ended_on_char: bool,
+    /// CRTC 2 (ACCC 19.6.3): IVM switched on during an odd frame's line 0 made it the
+    /// interlace line alone, with no R5 line before it.
+    c2_lone_extra_line: bool,
     /// CRTC 3/4: register writes waiting to land (ticks left, register, value).
     delayed_writes: Vec<(u8, u8, u8)>,
     /// CRTC 2 (ACCC 12.4.1): "Last Line" (C4 and C9 go to 0 on the next line, decided on C0==0 or by an
@@ -302,6 +305,7 @@ impl Default for Crtc {
             r1_zero_late: false,
             hsync_late_ticks: 0,
             hsync_ended_on_char: false,
+            c2_lone_extra_line: false,
             delayed_writes: Vec::new(),
             c2_last_line: false,
             c2_last_line_management: true,
@@ -531,6 +535,27 @@ impl Crtc {
                 }
                 self.ivm_lines = is_ivm;
             }
+        }
+        // ACCC §19.5.4/§19.6.3 (CRTC 2): IVM switched on during the first line of an odd frame,
+        // whatever C0, makes that line the additional line; a new line 0 follows it
+        if r == 8 && self.crtc_type() == CrtcType::Crtc2 && previous_r8 & 3 != 3 && self.regs[8] & 3 == 3
+            && self.vcc == 0 && self.vlc == 0 && !self.in_vertical_adjust && self.parity_frame
+        {
+            self.in_vertical_adjust = true;
+            self.interlace_extra_line = true;
+            self.c2_lone_extra_line = true;
+            self.vtac = 0;
+        }
+        // ACCC §19.6.3 (CRTC 2): the interlace mode left during the additional line cancels it:
+        // C4 (past R4) is not sent back to 0, C9 counts on to R9 and C4 on until R4 again
+        if r == 8 && self.crtc_type() == CrtcType::Crtc2 && previous_r8 & 1 != 0 && self.regs[8] & 1 == 0
+            && self.in_vertical_adjust && self.interlace_extra_line
+            && (self.c2_lone_extra_line || self.vtac >= self.regs[5])
+        {
+            self.in_vertical_adjust = false;
+            self.interlace_extra_line = false;
+            self.c2_lone_extra_line = false;
+            self.vtac = 0;
         }
         // ACCC §19.8.4 (CRTC 3/4): IVM switched on takes ParityC9 from the current C9
         if r == 8 && self.model.c9_counts_like_asic() && previous_r8 & 3 != 3 && self.regs[8] & 3 == 3 {
@@ -1034,7 +1059,10 @@ impl Crtc {
                 // one raster line at a time, until it has topped up the
                 // frame by R5 extra lines.
                 let extra = u8::from(self.interlace_extra_line);
-                let ended = if self.model.has_last_line_state() && self.adjust_counts_to_r5 {
+                let ended = if self.c2_lone_extra_line {
+                    // the interlace line comes after the R5 lines: R5 written on it is too late
+                    true
+                } else if self.model.has_last_line_state() && self.adjust_counts_to_r5 {
                     // CRTC 0 (ACCC 11.3): there is no C5, C9 counts on to R5, read
                     // live: an R5 lowered below the count makes the 5 bit counter
                     // overflow and go round up to the new value
@@ -1045,6 +1073,7 @@ impl Crtc {
                     self.vtac >= self.regs[5].saturating_add(extra)
                 };
                 if ended {
+                    self.c2_lone_extra_line = false;
                     self.in_vertical_adjust = false;
                     self.interlace_extra_line = false;
                     self.last_line = false;
@@ -1171,7 +1200,13 @@ impl Crtc {
                     if last_row {
                         // ACCC 19.6.2 (CRTC 1): an additional line follows the R5 lines on
                         // the even frames of the interlace modes
-                        let extra = self.interlaced() && self.model.frame_parity_toggles() && !self.parity_frame;
+                        // (CRTC 2, ACCC 19.6.3: when ParityR6 is odd)
+                        let extra = self.interlaced()
+                            && if self.model.parity_from_r6() {
+                                self.parity_r6
+                            } else {
+                                self.model.frame_parity_toggles() && !self.parity_frame
+                            };
                         if self.regs[5] == 0 && !extra {
                             // This is the end of the screen
                             self.vcc.reset();
@@ -1214,7 +1249,7 @@ impl Crtc {
                     self.vlc = u8::from(self.parity_c9).into();
                 }
             }
-            if self.model.has_last_line_state() {
+            if self.model.parity_from_r6() {
                 if new_frame {
                     self.parity_frame = self.parity_r6;
                     self.parity_c9 = self.parity_frame;
@@ -1637,6 +1672,7 @@ impl Chip for Crtc {
         self.r6_border = false;
         self.r0_zero_wraps = 0;
         self.parity_frame = false;
+        self.c2_lone_extra_line = false;
         self.parity_r6 = false;
         self.parity_c9 = false;
         self.ivm_lines = false;
