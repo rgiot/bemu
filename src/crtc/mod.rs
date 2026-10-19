@@ -737,13 +737,15 @@ impl Crtc {
 
     /// CRTC 2, C0==0 (ACCC 12.4.1): the line is a last line when C4==R4 and C9==R9 (the R9 of the
     /// previous line: an update on this C0 comes too late), unless the previous line already was one
-    /// or an HSYNC starts here; R4/R9 updates may still make it one, except on a frame's first line.
+    /// or an HSYNC is on C0==0, starting there or still running from the previous line (ACCC 15.4
+    /// note 1, 15.6); R4/R9 updates may still make it one, except on a frame's first line.
     fn crtc2_line_start(&mut self) {
         self.c2_last_line = !self.in_vertical_adjust
             && self.vcc == self.regs[4]
             && self.vlc == self.regs[9]
             && !self.c2_previous_last_line
-            && self.regs[2] != 0;
+            && self.regs[2] != 0
+            && !self.hsync();
         self.c2_last_line_management = !(self.vcc.value() == 0 && self.vlc.value() == 0);
     }
 
