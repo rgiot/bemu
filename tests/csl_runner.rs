@@ -36,7 +36,7 @@ fn csl_load_chains_scripts_and_the_last_crtc_select_wins() {
     let report = runner.run_file(dir.join("first.csl")).unwrap();
 
     assert_eq!(runner.motherboard().crtc().crtc_type(), CrtcType::Crtc4);
-    assert_eq!(report.ignored, vec!["tape_play".to_owned()]);
+    assert_eq!(report.ignored, vec!["tape_play: no tape inserted".to_owned()]);
     // the time is the script's: 1000 + 500 microseconds, to an instruction
     assert!((1500..1520).contains(&report.elapsed_us), "{} µs", report.elapsed_us);
 }

@@ -178,6 +178,8 @@ pub struct Crtc {
     /// The VSYNC runs (counted by C3h). The VS pin follows it, except for a ghost VSYNC
     /// (see [`CrtcModel::ghost_vsync_during_hsync`]).
     vsync_running: bool,
+    /// The VSYNCs begun, for the cursor's blinking.
+    fields: u8,
     /// CRTC 0 (ACCC §13.2.2): the line reached C0=2, which validates the VSYNC test of the
     /// next C0=0 (cancelled there): with R0<2 no VSYNC starts
     vsync_authorized: bool,
@@ -295,6 +297,7 @@ impl Default for Crtc {
             vsync_skips_first_line_end: false,
             vsync_ended_on_r7: false,
             vsync_running: false,
+            fields: 0,
             vsync_authorized: true,
             line_ends: 0,
             phase_ticks: 0,
@@ -1324,6 +1327,7 @@ impl Crtc {
             // ACCC 16.4.1: the line counter of a VSYNC begun mid-line starts at the next C0=0
             self.vsync_skips_first_line_end = protected && self.hcc > 0;
             self.vsync_running = true;
+            self.fields = self.fields.wrapping_add(1);
             // the HSYNC window runs up to the character where the HSYNC ends
             let ghost = self.model.ghost_vsync_during_hsync()
                 && self.regs[2] != 0
@@ -1485,6 +1489,29 @@ impl Crtc {
     /// Check if the CRTC as generated a HSYNC
     pub fn hsync(&self) -> bool {
         self.get_pin(CrtcPin::HS)
+    }
+
+    /// The CURSOR output (on the CPC, only on the expansion port: the PlayCity counts it): in
+    /// the displayed area, MA on R14:R15 and RA within R10..R11, as R10's bits 6-5 make it blink
+    /// (00 steady, 01 off, 10 every 16 fields, 11 every 32). The skew of R8 is not applied.
+    pub fn cursor(&self) -> bool {
+        if !self.get_pin(CrtcPin::DE) {
+            return false;
+        }
+        let address = u16::from(self.regs[14] & 0x3f) << 8 | u16::from(self.regs[15]);
+        if self.crtc_vma & 0x3fff != address {
+            return false;
+        }
+        let ra = self.c9_vma();
+        if ra < self.regs[10] & 0x1f || ra > self.regs[11] & 0x1f {
+            return false;
+        }
+        match self.regs[10] >> 5 & 3 {
+            0 => true,
+            1 => false,
+            2 => self.fields & 8 != 0,
+            _ => self.fields & 16 != 0
+        }
     }
 
     ///  	The Video display address. This is derived from the MA register in the CRTC, the horizontal character count HCC and the current row address (RA) register in the CRTC. This is effectively the CPC memory address of the data displayed on the monitor.

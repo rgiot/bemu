@@ -237,10 +237,8 @@ fn start_sound_export(args: &Args, motherboard: &mut Motherboard) {
     }
     if args.record_ym.is_some() {
         motherboard.psg_mut().log_frames(true);
-        if let Some(playcity) = motherboard.sound_cards_mut().and_then(|cards| cards.playcity.as_mut()) {
-            for ay in playcity.ays_mut() {
-                ay.log_frames(true);
-            }
+        for (_, chip) in motherboard.expansion_sound_chips() {
+            chip.log_frames(true);
         }
     }
     if args.record_wav.is_some() {
@@ -316,15 +314,13 @@ fn finish_sound_export(motherboard: &mut Motherboard) {
             Ok(()) => eprintln!("{path}: {} frames of AY registers", frames.len()),
             Err(e) => eprintln!("{path}: {e}")
         }
-        // a PlayCity's two AYs: file.right.ym and file.left.ym
-        if let Some(playcity) = motherboard.sound_cards_mut().and_then(|cards| cards.playcity.as_mut()) {
-            for (ay, side) in playcity.ays_mut().iter_mut().zip(["right", "left"]) {
-                let side_path = std::path::Path::new(path).with_extension(format!("{side}.ym"));
-                let frames = ay.take_logged_frames();
-                match std::fs::write(&side_path, amsrust::sound_export::ym6(&frames, 50, &format!("{song} {side}"))) {
-                    Ok(()) => eprintln!("{}: the PlayCity's {side} AY", side_path.display()),
-                    Err(e) => eprintln!("{}: {e}", side_path.display())
-                }
+        // the cards' AYs (a PlayCity's: file.right.ym and file.left.ym)
+        for (side, chip) in motherboard.expansion_sound_chips() {
+            let side_path = std::path::Path::new(path).with_extension(format!("{side}.ym"));
+            let frames = chip.take_logged_frames();
+            match std::fs::write(&side_path, amsrust::sound_export::ym6(&frames, 50, &format!("{song} {side}"))) {
+                Ok(()) => eprintln!("{}: the {side} AY of a card", side_path.display()),
+                Err(e) => eprintln!("{}: {e}", side_path.display())
             }
         }
     }

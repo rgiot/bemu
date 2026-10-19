@@ -6,6 +6,7 @@ use crate::crtc::*;
 use crate::debug::DisassembledInstruction;
 use crate::expansion::{LargeRamExpansion, LargeRamExpansionPin, RamBankExpansion};
 use crate::fdc::Fdc;
+use crate::expansion_port::{CpcSide, ExpansionDevice, ExpansionPin, ExpansionPort, PrinterDevice, PrinterPort};
 use crate::ga::*;
 use crate::keyboard::KeyboardMatrix;
 use crate::memory::*;
@@ -36,8 +37,10 @@ pub struct Motherboard {
     fdc: Fdc,
     /// The cassette deck, with a tape in it.
     tape: Option<Box<crate::tape::TapeDeck>>,
-    /// The sound expansions plugged (PlayCity, Digiblaster).
-    cards: Option<Box<crate::sound_cards::SoundCards>>,
+    /// The expansion port, when a card is plugged on it (a PlayCity).
+    expansion_port: Option<Box<ExpansionPort>>,
+    /// The printer port, when a device is plugged on it (a Digiblaster).
+    printer_port: Option<Box<PrinterPort>>,
     // The FDC isn't a pin-level `Chip` (see fdc.rs), so unlike the other
     // peripherals its register writes/reads aren't naturally idempotent
     // across repeated calls: a single Z80 `OUT`/`IN` instruction's bus
@@ -120,7 +123,8 @@ impl Default for Motherboard {
                 fdc
             },
             tape: None,
-            cards: None,
+            expansion_port: None,
+            printer_port: None,
             fdc_write_active: false,
             us: 0,
             trace_pc_from: std::env::var("AMSRUST_TRACE_PC").ok().and_then(|v| v.parse().ok()),
@@ -358,8 +362,11 @@ impl MotherboardBuilder {
                 eprintln!("{e}");
             }
         }
-        if self.playcity || self.digiblaster {
-            motherboard.plug_sound_cards(self.playcity, self.digiblaster);
+        if self.playcity {
+            motherboard.plug_expansion(Box::new(crate::sound_cards::PlayCity::default()));
+        }
+        if self.digiblaster {
+            motherboard.plug_printer(Box::new(crate::sound_cards::Digiblaster::default()));
         }
         if let Some(brand) = self.brand {
             motherboard.ppi.set_brand(brand);
@@ -482,22 +489,80 @@ impl Motherboard {
         self.tape = other.tape.take();
     }
 
-    /// Plug a PlayCity (`playcity`) and a Digiblaster on the printer port (`dac`).
-    pub fn plug_sound_cards(&mut self, playcity: bool, dac: bool) {
-        let cards = crate::sound_cards::SoundCards {
-            playcity: playcity.then(Box::default),
-            dac: dac.then_some(0.0)
-        };
-        self.cards = (!cards.is_empty()).then(|| Box::new(cards));
-        self.psg.set_extra_sound([0.0; 2], if self.cards.is_some() { 0.5 } else { 1.0 });
+    /// Plug a card on the expansion port (after the ones already there).
+    pub fn plug_expansion(&mut self, device: Box<dyn ExpansionDevice>) {
+        self.expansion_port.get_or_insert_with(Box::default).plug(device);
+        self.update_sound_mix();
     }
 
-    pub fn sound_cards(&self) -> Option<&crate::sound_cards::SoundCards> {
-        self.cards.as_deref()
+    /// Plug a device on the printer port (in place of the one there).
+    pub fn plug_printer(&mut self, device: Box<dyn PrinterDevice>) {
+        self.printer_port.get_or_insert_with(Box::default).plug(device);
+        self.update_sound_mix();
     }
 
-    pub fn sound_cards_mut(&mut self) -> Option<&mut crate::sound_cards::SoundCards> {
-        self.cards.as_deref_mut()
+    /// The AY's share of the sound: all of it alone, half with cards that make sound.
+    fn update_sound_mix(&mut self) {
+        let cards = self.expansion_port.is_some() || self.printer_port.is_some();
+        self.psg.set_extra_sound([0.0; 2], if cards { 0.5 } else { 1.0 });
+    }
+
+    pub fn expansion_port(&self) -> Option<&ExpansionPort> {
+        self.expansion_port.as_deref()
+    }
+
+    pub fn expansion_port_mut(&mut self) -> Option<&mut ExpansionPort> {
+        self.expansion_port.as_deref_mut()
+    }
+
+    pub fn printer_port(&self) -> Option<&PrinterPort> {
+        self.printer_port.as_deref()
+    }
+
+    /// The sound chips of the cards, named (`right`, `left` for a PlayCity), for the sound
+    /// export.
+    pub fn expansion_sound_chips(&mut self) -> Vec<(&'static str, &mut crate::psg::Psg)> {
+        self.expansion_port
+            .as_deref_mut()
+            .map(|port| port.devices_mut().flat_map(|device| device.sound_chips()).collect())
+            .unwrap_or_default()
+    }
+
+    /// The CPC's side of the expansion port's pins this tick, and the cards' answer.
+    fn tick_expansion_port(&mut self) {
+        let Some(port) = &mut self.expansion_port else { return };
+        let cpu = &self.cpu;
+        port.tick_with(CpcSide {
+            address: cpu.get_address_from_pins(),
+            data: cpu.get_data_from_pins(),
+            mreq: cpu.get_pin(Z80Pin::Neg_MREQ),
+            m1: cpu.get_pin(Z80Pin::Neg_M1),
+            rfsh: cpu.get_pin(Z80Pin::Neg_RFSH),
+            iorq: cpu.get_pin(Z80Pin::Neg_IORQ),
+            rd: cpu.get_pin(Z80Pin::Neg_RD),
+            wr: cpu.get_pin(Z80Pin::Neg_WR),
+            halt: cpu.get_pin(Z80Pin::Neg_HALT),
+            busak: cpu.get_pin(Z80Pin::Neg_BUSACK),
+            romen: self.ga.get_pin(GateArrayPin::ROMEN),
+            ramrd: self.ga.get_pin(GateArrayPin::RAMRD),
+            cursor: self.crtc.cursor(),
+            clk4: cpu.get_pin(Z80Pin::Neg_CLK)
+        });
+        // /NMI: the CPU latches its falling edge
+        self.cpu.set_nmi_line(port.get_pin(ExpansionPin::Neg_NMI));
+    }
+
+    /// The cards' sound for the coming microsecond.
+    fn expansion_sound(&self) -> [f32; 2] {
+        let mut sound = self.printer_port.as_ref().map_or([0.0; 2], |port| port.sound());
+        if let Some(port) = &self.expansion_port {
+            for device in port.devices() {
+                let [left, right] = device.sound();
+                sound[0] += left;
+                sound[1] += right;
+            }
+        }
+        sound
     }
 
     pub fn tape_deck(&self) -> Option<&crate::tape::TapeDeck> {
@@ -592,6 +657,9 @@ impl Motherboard {
         if let Some(expansion) = &mut self.large_ram_expansion {
             expansion.reset();
         }
+        if let Some(port) = &mut self.expansion_port {
+            port.reset();
+        }
         self.cpu.reset();
 
         for _ in 0..2 {
@@ -605,6 +673,9 @@ impl Motherboard {
     pub fn tick(&mut self) -> (RgbLevels, Sync) {
         // if self.crtc.is_activated() {dbg!(&self.cpu().next_state);}
 
+        if self.expansion_port.is_some() {
+            self.tick_expansion_port();
+        }
         self.handle_write_access();
 
         // Keep this order to avoid side effect mixing previous state and current state
@@ -621,27 +692,8 @@ impl Motherboard {
         if self.crtc.is_activated() {
             self.crtc.set_phase_ticks(0);
             self.fdc.advance(1); // one character = one microsecond
-            if let Some(cards) = &mut self.cards {
-                let (sound, lines) = cards.tick_us(self.crtc.get_pin(CrtcPin::HS));
-                self.psg.set_extra_sound(sound, 0.5);
-                if lines.nmi {
-                    self.cpu.trigger_nmi();
-                }
-                if self.cpu.take_interrupt_acknowledge() {
-                    // the CTC answers with its vector when it is the one asking
-                    let vector = cards.interrupt();
-                    self.cpu.set_interrupt_vector(vector);
-                    if vector.is_some() {
-                        if let Some(playcity) = &mut cards.playcity {
-                            playcity.ctc.acknowledge();
-                        }
-                    }
-                }
-                if self.cpu.take_reti() {
-                    if let Some(playcity) = &mut cards.playcity {
-                        playcity.ctc.return_from_interrupt();
-                    }
-                }
+            if self.expansion_port.is_some() || self.printer_port.is_some() {
+                self.psg.set_extra_sound(self.expansion_sound(), 0.5);
             }
             if let Some(tape) = &mut self.tape {
                 // the cassette motor relay is port C's bit 4, the head's level port B's bit 7
@@ -771,8 +823,11 @@ impl Motherboard {
                 if let Some(writes) = &mut self.io_writes {
                     writes.push((addr, byte));
                 }
-                if let Some(cards) = &mut self.cards {
-                    cards.write(addr, byte);
+                if addr & 0x1000 == 0 {
+                    // the printer port's latch
+                    if let Some(printer) = &mut self.printer_port {
+                        printer.latch(byte);
+                    }
                 }
                 if !self.disc_interface {
                     // Nothing on the disc ports.
@@ -834,6 +889,12 @@ impl Motherboard {
             if !self.fdc_read_active {
                 self.cached_input_byte = self.input_byte(addr);
                 self.log_bus(BusAccessKind::IoRead, addr, self.cached_input_byte);
+                if !self.cpu.get_pin(Z80Pin::Neg_M1) {
+                    // an interrupt acknowledge: the IM 2 vector is what a card puts on the bus
+                    if let Some(port) = &self.expansion_port {
+                        self.cpu.set_interrupt_vector(port.driven_data());
+                    }
+                }
             }
             self.cpu.set_data_on_pins(self.cached_input_byte);
             self.cpu.set_pin(Z80Pin::Neg_RD, true);
@@ -1070,9 +1131,9 @@ impl Motherboard {
                 &[Z80Pin::Neg_CLK, Z80Pin::Neg_INT],
             );
         }
-        // /INT is wired-or: a sound card's CTC pulls it too
-        if let Some(cards) = &self.cards {
-            let line = self.ga.get_pin(GateArrayPin::INTERRUPT) && cards.interrupt().is_none();
+        // /INT is wired-or: a card on the expansion port pulls it too
+        if let Some(port) = &self.expansion_port {
+            let line = self.ga.get_pin(GateArrayPin::INTERRUPT) && port.get_pin(ExpansionPin::Neg_INT);
             self.cpu.set_pin(Z80Pin::Neg_INT, line);
         }
         if ga_changed {
@@ -1091,10 +1152,8 @@ impl Motherboard {
             if vsync && !self.ppi.get_pin(PpiPin::B0) && self.psg.logs_frames() {
                 // a frame begins: the sound export's tick
                 self.psg.log_frame();
-                if let Some(playcity) = self.cards.as_mut().and_then(|cards| cards.playcity.as_mut()) {
-                    for ay in playcity.ays_mut() {
-                        ay.log_frame();
-                    }
+                for (_, chip) in self.expansion_sound_chips() {
+                    chip.log_frame();
                 }
             }
             self.ppi.set_pin(PpiPin::B0, vsync);
@@ -1769,7 +1828,7 @@ impl Motherboard {
             self.fdc.read_status()
         } else if self.disc_interface && Self::is_fdc_data_addr(addr) {
             self.fdc.read_data()
-        } else if let Some(value) = self.cards.as_ref().and_then(|cards| cards.read(addr)) {
+        } else if let Some(value) = self.expansion_port.as_ref().and_then(|port| port.driven_data()) {
             value
         } else {
             self.floating_bus

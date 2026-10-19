@@ -1,24 +1,28 @@
 //! Sound expansions demos use: the PlayCity (two more AY chips and a Z80 CTC) and the
 //! printer-port DAC (Digiblaster).
 //!
-//! The PlayCity, as its documentation and the emulators that have it (CPCEC, MAME) wire it:
-//! - the CTC at &F880-&F883, clocked by the CPC's 4 MHz, its interrupt on the CPC's /INT (with
-//!   its IM 2 vector) and channel 1's zero count on /NMI;
-//! - channel 0 makes the AY clock: a count of n gives 4 MHz / n, the YMZ294 halving it
-//!   (2 MHz while channel 0 does not run);
-//! - channel 1 counts the lines: its trigger is the CRTC's cursor signal, approximated here by
-//!   HSYNC (as CPCEC does), which a raster NMI programs it for;
-//! - channel 2's zero count triggers channel 3;
+//! Both work from their port's pins, as the real cards do.
+//!
+//! The PlayCity sits on the expansion port; as its documentation and the emulators that have it
+//! (CPCEC, MAME) wire it:
+//! - the CTC at &F880-&F883, clocked by CLK4, its /INT on the port's /INT (the IM 2 vector on the
+//!   data bus during the interrupt acknowledge, RETI decoded from the bus) and channel 1's ZC/TO
+//!   on /NMI;
+//! - channel 0's ZC/TO, halved by a flip-flop, clocks the two YMZ294: a count of n of CLK4 gives
+//!   4 MHz / n / 2 (2 MHz, CLK4 halved, while channel 0 does not run);
+//! - channel 1's trigger is the CRTC's CURSOR: R14/R15 and R10/R11 place the NMIs on the screen;
+//! - channel 2's ZC/TO triggers channel 3;
 //! - the right AY: select at &F984, data at &F884; the left one: &F988 and &F888;
 //! - &F8FF resets the card (the CTC and both AYs).
 //!
-//! The Digiblaster is an 8-bit DAC on the printer port (A12 low): the byte written is a signed
-//! sample.
+//! The Digiblaster is an 8-bit DAC on the printer port: D0-D6 and /STROBE (bit 7 of the byte
+//! written, inverted by the CPC) make an unsigned sample, so the byte written is a signed one.
 
+use std::any::Any;
+
+use crate::chip::Chip;
+use crate::expansion_port::{ExpansionDevice, ExpansionPin, ExpansionPort, PrinterDevice, PrinterPin, PrinterPort};
 use crate::psg::Psg;
-
-/// The CPC's CPU clock, the CTC's.
-const CTC_CLOCK_HZ: u32 = 4_000_000;
 
 #[derive(Clone, Debug, Default)]
 struct CtcChannel {
@@ -69,11 +73,22 @@ impl CtcChannel {
     }
 }
 
+/// What the CTC follows of the bus.
+#[derive(Clone, Debug, Default)]
+struct BusWatch {
+    in_acknowledge: bool,
+    /// The vector given during this acknowledge.
+    vector: Option<u8>,
+    last_opcode: u8
+}
+
 /// A Z80 CTC (Z84C30): four counter/timer channels.
 #[derive(Clone, Debug, Default)]
 pub struct Ctc {
     channels: [CtcChannel; 4],
-    vector: u8
+    vector: u8,
+    zc_to: [bool; 4],
+    bus: BusWatch
 }
 
 impl Ctc {
@@ -115,54 +130,53 @@ impl Ctc {
         self.channels[channel].counter as u8
     }
 
-    /// The channel's ZC/TO frequency in timer mode, or for a counter of a clock `input_hz`.
-    fn output_hz(&self, channel: usize, input_hz: u32) -> Option<f64> {
-        let ch = &self.channels[channel];
-        if !ch.running || ch.time_constant == 0 {
-            return None;
-        }
-        let divider = if ch.counter_mode() { 1 } else { u32::from(ch.prescale()) };
-        Some(f64::from(input_hz) / f64::from(divider * u32::from(ch.time_constant)))
+    /// Whether channel `channel` counts (a time constant was given, and a triggered timer got
+    /// its trigger).
+    pub fn is_running(&self, channel: usize) -> bool {
+        self.channels[channel].running
     }
 
-    /// `clocks` cycles of the 4 MHz: the timers count. Returns the channels whose ZC/TO pulsed.
-    fn clock(&mut self, clocks: u16) -> [bool; 4] {
-        let mut pulses = [false; 4];
+    /// ZC/TO of channel `channel`: high for half a clock when the channel's count reaches 0
+    /// (channel 3's is internal: the chip has no pin for it).
+    pub fn zc_to(&self, channel: usize) -> bool {
+        self.zc_to[channel]
+    }
+
+    /// An edge of the system clock: the ZC/TO pulses end; on a rising one the timers'
+    /// prescalers count.
+    pub fn clock_edge(&mut self, rising: bool) {
+        self.zc_to = [false; 4];
+        if !rising {
+            return;
+        }
         for (channel, ch) in self.channels.iter_mut().enumerate() {
             if !ch.running || ch.counter_mode() {
                 continue;
             }
-            let mut left = clocks;
-            while left > 0 {
-                let step = left.min(ch.prescaler.max(1));
-                ch.prescaler = ch.prescaler.saturating_sub(step);
-                left -= step;
-                if ch.prescaler == 0 {
-                    ch.prescaler = ch.prescale();
-                    pulses[channel] |= ch.count();
-                }
+            ch.prescaler = ch.prescaler.saturating_sub(1);
+            if ch.prescaler == 0 {
+                ch.prescaler = ch.prescale();
+                self.zc_to[channel] |= ch.count();
             }
         }
-        pulses
     }
 
     /// The level of channel `channel`'s CLK/TRG input: an active edge counts (counter mode)
-    /// or starts a triggered timer. True for the ZC/TO pulse.
-    fn trigger(&mut self, channel: usize, level: bool) -> bool {
+    /// or starts a triggered timer.
+    pub fn trigger(&mut self, channel: usize, level: bool) {
         let ch = &mut self.channels[channel];
         let previous = std::mem::replace(&mut ch.trigger, level);
         let edge = if ch.rising_edge() { level && !previous } else { !level && previous };
         if !edge {
-            return false;
+            return;
         }
         if ch.counter_mode() && ch.running {
-            return ch.count();
+            self.zc_to[channel] |= ch.count();
         }
-        if !ch.counter_mode() && !ch.running && ch.control & 0x08 != 0 && ch.time_constant != 0 {
+        else if !ch.counter_mode() && !ch.running && ch.control & 0x08 != 0 && ch.time_constant != 0 {
             ch.running = true;
             ch.prescaler = ch.prescale();
         }
-        false
     }
 
     /// Whether the CTC pulls /INT: a pending interrupt with none of higher priority in
@@ -179,18 +193,46 @@ impl Ctc {
         None
     }
 
-    /// The CPU acknowledged the interrupt: the channel that asked is in service.
-    pub fn acknowledge(&mut self) {
-        if let Some(ch) = self.channels.iter_mut().find(|ch| ch.interrupt_pending) {
-            ch.interrupt_pending = false;
-            ch.in_service = true;
-        }
+    /// The CPU acknowledges the interrupt: the channel that asks is in service; its vector.
+    pub fn acknowledge(&mut self) -> Option<u8> {
+        let vector = self.interrupt()?;
+        let ch = &mut self.channels[usize::from(vector >> 1 & 3)];
+        ch.interrupt_pending = false;
+        ch.in_service = true;
+        Some(vector)
     }
 
     /// A RETI: the channel in service is done.
     pub fn return_from_interrupt(&mut self) {
         if let Some(ch) = self.channels.iter_mut().find(|ch| ch.in_service) {
             ch.in_service = false;
+        }
+    }
+
+    /// The Z80 bus, as a Z80 peripheral watches it: during an interrupt acknowledge the CTC
+    /// puts its vector on the data bus; the opcodes fetched (at the end of each M1) spell the
+    /// RETI that ends the interrupt in service.
+    pub fn watch_bus(&mut self, port: &mut ExpansionPort) {
+        if port.interrupt_acknowledge() {
+            if !self.bus.in_acknowledge {
+                self.bus.in_acknowledge = true;
+                self.bus.vector = self.acknowledge();
+            }
+            if let Some(vector) = self.bus.vector {
+                port.drive_data(vector);
+            }
+        }
+        if port.m1_ends() {
+            if std::mem::take(&mut self.bus.in_acknowledge) {
+                self.bus.vector = None;
+            }
+            else {
+                let opcode = port.data();
+                if self.bus.last_opcode == 0xed && opcode == 0x4d {
+                    self.return_from_interrupt();
+                }
+                self.bus.last_opcode = opcode;
+            }
         }
     }
 
@@ -204,21 +246,16 @@ pub struct PlayCity {
     pub ctc: Ctc,
     /// Right then left.
     ays: [Psg; 2],
-    /// AY clocks owed, in millionths of a clock.
-    ay_phase: u64,
-    hsync: bool
+    /// The flip-flop halving the AYs' clock.
+    ay_clock: bool,
+    /// The level of the source of [`Self::ay_clock`], for its edges.
+    ay_clock_source: bool
 }
 
 impl Default for PlayCity {
     fn default() -> Self {
-        Self { ctc: Ctc::default(), ays: [Psg::default(), Psg::default()], ay_phase: 0, hsync: false }
+        Self { ctc: Ctc::default(), ays: [Psg::default(), Psg::default()], ay_clock: false, ay_clock_source: false }
     }
-}
-
-/// What the card asks of the CPU.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CardLines {
-    pub nmi: bool
 }
 
 impl PlayCity {
@@ -240,7 +277,7 @@ impl PlayCity {
             0xf988 => {
                 self.ays[1].bus_cycle(crate::psg::BusControl::LatchAddress, value);
             },
-            0xf8ff => self.reset(),
+            0xf8ff => self.reset_card(),
             _ => return false
         }
         true
@@ -253,40 +290,11 @@ impl PlayCity {
         }
     }
 
-    pub fn reset(&mut self) {
+    fn reset_card(&mut self) {
         self.ctc.reset();
         for ay in &mut self.ays {
             ay.reset();
         }
-    }
-
-    /// The AYs' clock: channel 0's output halved, 2 MHz when it does not run.
-    pub fn ay_clock_hz(&self) -> f64 {
-        self.ctc.output_hz(0, CTC_CLOCK_HZ).map_or(2_000_000.0, |hz| hz / 2.0)
-    }
-
-    /// One microsecond, `hsync` the CRTC's: the CTC counts, the AYs run. Returns the lines
-    /// the card drives.
-    pub fn tick_us(&mut self, hsync: bool) -> CardLines {
-        let mut pulses = self.ctc.clock(4);
-        // channel 1 counts the lines
-        if hsync != self.hsync {
-            self.hsync = hsync;
-            pulses[1] |= self.ctc.trigger(1, hsync);
-        }
-        if pulses[2] {
-            pulses[3] |= self.ctc.trigger(3, true);
-            self.ctc.trigger(3, false);
-        }
-        // the AYs' own clock: `Psg::clock` is one cycle of a 1 MHz input
-        self.ay_phase += (self.ay_clock_hz() * 1.0) as u64;
-        while self.ay_phase >= 1_000_000 {
-            self.ay_phase -= 1_000_000;
-            for ay in &mut self.ays {
-                ay.clock();
-            }
-        }
-        CardLines { nmi: pulses[1] }
     }
 
     /// The two AYs' sound, right then left, 0..1 each.
@@ -300,64 +308,133 @@ impl PlayCity {
     }
 }
 
-/// The expansions plugged that make sound.
-#[derive(Default)]
-pub struct SoundCards {
-    pub playcity: Option<Box<PlayCity>>,
-    /// The Digiblaster's last sample, -1..1, or none when not plugged.
-    pub dac: Option<f32>
-}
+impl ExpansionDevice for PlayCity {
+    fn tick(&mut self, port: &mut ExpansionPort) {
+        // the CPU's accesses
+        if let Some((address, value)) = port.io_write_started() {
+            self.write(address, value);
+        }
+        if let Some(value) = port.io_read().and_then(|address| self.read(address)) {
+            port.drive_data(value);
+        }
+        self.ctc.watch_bus(port);
 
-impl SoundCards {
-    pub fn is_empty(&self) -> bool {
-        self.playcity.is_none() && self.dac.is_none()
-    }
+        // the clocks: CLK4 is the CTC's system clock and channel 0's CLK/TRG
+        let clk4 = port.get_pin(ExpansionPin::CLK4);
+        if port.is_upfront(ExpansionPin::CLK4) || port.is_downfront(ExpansionPin::CLK4) {
+            self.ctc.clock_edge(clk4);
+            self.ctc.trigger(0, clk4);
+        }
+        self.ctc.trigger(1, port.get_pin(ExpansionPin::CURSOR));
+        self.ctc.trigger(3, self.ctc.zc_to(2));
 
-    /// A CPU write; true when a card took it.
-    pub fn write(&mut self, port: u16, value: u8) -> bool {
-        let mut taken = false;
-        if let Some(dac) = &mut self.dac {
-            if port & 0x1000 == 0 {
-                *dac = f32::from(value as i8) / 128.0;
-                taken = true;
+        // the AYs' clock: channel 0's ZC/TO (CLK4 while it does not count), halved
+        let source = if self.ctc.is_running(0) { self.ctc.zc_to(0) } else { clk4 };
+        if source && !self.ay_clock_source {
+            self.ay_clock = !self.ay_clock;
+            if self.ay_clock {
+                for ay in &mut self.ays {
+                    ay.clock();
+                }
             }
         }
-        if let Some(playcity) = &mut self.playcity {
-            taken |= playcity.write(port, value);
+        self.ay_clock_source = source;
+
+        if self.ctc.interrupt().is_some() {
+            port.assert(ExpansionPin::Neg_INT);
         }
-        taken
+        if self.ctc.zc_to(1) {
+            port.assert(ExpansionPin::Neg_NMI);
+        }
     }
 
-    pub fn read(&self, port: u16) -> Option<u8> {
-        self.playcity.as_ref().and_then(|playcity| playcity.read(port))
+    fn reset(&mut self) {
+        self.reset_card();
     }
 
-    /// One microsecond: the cards run; their stereo sound (to add to the CPC's) and lines.
-    pub fn tick_us(&mut self, hsync: bool) -> ([f32; 2], CardLines) {
-        let mut sound = [0.0f32; 2];
-        let mut lines = CardLines::default();
-        if let Some(playcity) = &mut self.playcity {
-            lines = playcity.tick_us(hsync);
-            let [right, left] = playcity.levels();
-            sound[0] += left * 0.5;
-            sound[1] += right * 0.5;
-        }
-        if let Some(dac) = self.dac {
-            sound[0] += dac * 0.5;
-            sound[1] += dac * 0.5;
-        }
-        (sound, lines)
+    fn sound(&self) -> [f32; 2] {
+        let [right, left] = self.levels();
+        [left * 0.5, right * 0.5]
     }
 
-    /// The CTC's interrupt: its vector when it pulls /INT.
-    pub fn interrupt(&self) -> Option<u8> {
-        self.playcity.as_ref().and_then(|playcity| playcity.ctc.interrupt())
+    fn sound_chips(&mut self) -> Vec<(&'static str, &mut Psg)> {
+        let [right, left] = &mut self.ays;
+        vec![("right", right), ("left", left)]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// The Digiblaster: an 8-bit DAC on the printer port.
+#[derive(Clone, Debug, Default)]
+pub struct Digiblaster {
+    /// -1..1.
+    sample: f32
+}
+
+impl Digiblaster {
+    pub fn sample(&self) -> f32 {
+        self.sample
+    }
+}
+
+impl PrinterDevice for Digiblaster {
+    fn update(&mut self, port: &PrinterPort) {
+        let unsigned = port.data() | u8::from(port.get_pin(PrinterPin::Neg_STROBE)) << 7;
+        self.sample = (f32::from(unsigned) - 128.0) / 128.0;
+    }
+
+    fn sound(&self) -> [f32; 2] {
+        [self.sample * 0.5; 2]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::expansion_port::CpcSide;
+
+    /// The bus at rest, CLK4 at `clk4`.
+    fn idle(clk4: bool) -> CpcSide {
+        CpcSide {
+            mreq: true,
+            m1: true,
+            rfsh: true,
+            iorq: true,
+            rd: true,
+            wr: true,
+            halt: true,
+            busak: true,
+            romen: true,
+            ramrd: true,
+            clk4,
+            ..Default::default()
+        }
+    }
+
+    fn port_with_playcity() -> ExpansionPort {
+        let mut port = ExpansionPort::default();
+        port.plug(Box::new(PlayCity::default()));
+        port
+    }
+
+    /// An OUT, as the port sees it: a few ticks of /IORQ and /WR low.
+    fn out(port: &mut ExpansionPort, address: u16, value: u8) {
+        for tick in 0..4 {
+            port.tick_with(CpcSide { address, data: value, iorq: false, wr: false, ..idle(tick & 2 != 0) });
+        }
+        port.tick_with(idle(false));
+    }
 
     #[test]
     fn a_ctc_timer_interrupts_with_its_vector() {
@@ -369,64 +446,83 @@ mod test {
         assert_eq!(ctc.interrupt(), None);
         // 16 * 10 clocks
         let mut pulses = 0;
-        for _ in 0..40 {
-            pulses += usize::from(ctc.clock(4)[2]);
+        for _ in 0..160 {
+            ctc.clock_edge(true);
+            pulses += usize::from(ctc.zc_to(2));
+            ctc.clock_edge(false);
         }
         assert_eq!(pulses, 1);
         assert_eq!(ctc.interrupt(), Some(0x44));
-        ctc.acknowledge();
+        assert_eq!(ctc.acknowledge(), Some(0x44));
         assert_eq!(ctc.interrupt(), None, "in service");
         ctc.return_from_interrupt();
         assert_eq!(ctc.interrupt(), None);
     }
 
     #[test]
-    fn channel_0_sets_the_ay_clock() {
-        let mut playcity = PlayCity::default();
-        assert_eq!(playcity.ay_clock_hz(), 2_000_000.0);
-        // counter mode, time constant 1: 4 MHz, halved
-        playcity.write(0xf880, 0x47);
-        playcity.write(0xf880, 1);
-        assert_eq!(playcity.ay_clock_hz(), 2_000_000.0);
-        playcity.write(0xf880, 0x47);
-        playcity.write(0xf880, 2);
-        assert_eq!(playcity.ay_clock_hz(), 1_000_000.0);
+    fn the_ctc_answers_the_acknowledge_and_watches_for_reti() {
+        let mut port = port_with_playcity();
+        out(&mut port, 0xf880, 0x20); // vector &20
+        out(&mut port, 0xf880, 0x85); // channel 0: timer, interrupts, a constant
+        out(&mut port, 0xf880, 1);
+        let mut tick = 0;
+        while port.get_pin(ExpansionPin::Neg_INT) {
+            port.tick_with(idle(tick & 2 != 0));
+            tick += 1;
+            assert!(tick < 1000, "no interrupt");
+        }
+        // the acknowledge: /M1 and /IORQ low, the vector on the bus
+        port.tick_with(CpcSide { m1: false, iorq: false, rd: false, ..idle(false) });
+        assert_eq!(port.driven_data(), Some(0x20));
+        port.tick_with(idle(false));
+        assert!(port.get_pin(ExpansionPin::Neg_INT), "in service: /INT released");
+        assert!(port.device::<PlayCity>().unwrap().ctc.channels[0].in_service);
+        // ED 4D fetched: RETI
+        for opcode in [0xed, 0x4d] {
+            port.tick_with(CpcSide { m1: false, mreq: false, rd: false, ..idle(false) });
+            port.tick_with(CpcSide { data: opcode, ..idle(false) });
+        }
+        assert!(!port.device::<PlayCity>().unwrap().ctc.channels[0].in_service, "RETI ends it");
     }
 
     #[test]
-    fn channel_1_counts_lines_to_an_nmi() {
-        let mut playcity = PlayCity::default();
-        // counter mode, rising edges, a constant: every 4 lines
-        playcity.write(0xf881, 0x57);
-        playcity.write(0xf881, 4);
+    fn channel_1_counts_the_cursor_to_an_nmi() {
+        let mut port = port_with_playcity();
+        // counter mode, rising edges, a constant: every 4 cursors
+        out(&mut port, 0xf881, 0x57);
+        out(&mut port, 0xf881, 4);
         let mut nmis = 0;
-        for us in 0..64 * 16 {
-            nmis += usize::from(playcity.tick_us(us % 64 < 4).nmi);
+        for tick in 0..16 * 64 * 16 {
+            let cursor = tick % (64 * 16) < 16;
+            port.tick_with(CpcSide { cursor, ..idle(tick & 2 != 0) });
+            nmis += usize::from(port.is_downfront(ExpansionPin::Neg_NMI));
         }
         assert_eq!(nmis, 4);
     }
 
     #[test]
     fn the_ays_play_their_registers() {
-        let mut playcity = PlayCity::default();
+        let mut port = port_with_playcity();
         // left AY: channel A's tone off, volume 15
         for (reg, value) in [(7u8, 0x3f), (8, 15)] {
-            playcity.write(0xf988, reg);
-            playcity.write(0xf888, value);
+            out(&mut port, 0xf988, reg);
+            out(&mut port, 0xf888, value);
         }
-        for _ in 0..64 {
-            playcity.tick_us(false);
+        for tick in 0..64 * 16 {
+            port.tick_with(idle(tick & 2 != 0));
         }
-        let [right, left] = playcity.levels();
+        let [right, left] = port.device::<PlayCity>().unwrap().levels();
         assert_eq!(right, 0.0);
         assert!(left > 0.2, "one channel of three at full volume: {left}");
     }
 
     #[test]
-    fn the_dac_takes_the_printer_port() {
-        let mut cards = SoundCards { dac: Some(0.0), ..Default::default() };
-        assert!(cards.write(0xef00, 0x40));
-        assert_eq!(cards.tick_us(false).0, [0.25, 0.25]);
-        assert!(!cards.write(0x7f00, 0x80), "the gate array's port");
+    fn the_digiblaster_takes_the_printer_port() {
+        let mut printer = PrinterPort::default();
+        printer.plug(Box::new(Digiblaster::default()));
+        printer.latch(0x40);
+        assert_eq!(printer.sound(), [0.25, 0.25]);
+        printer.latch(0xc0);
+        assert_eq!(printer.sound(), [-0.25, -0.25]);
     }
 }

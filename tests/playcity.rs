@@ -102,12 +102,17 @@ fn the_digiblaster_plays_what_is_written_to_the_printer_port() {
 }
 
 #[test]
-fn ctc_channel_1_gives_an_nmi_every_n_lines() {
-    // channel 1: counter of the lines (rising edges), every 8 lines; the NMI handler counts
+fn ctc_channel_1_counts_the_crtc_cursor_to_nmis() {
+    // the cursor: on the character at &3000 + 10 rows of 40 (R12/R13 at reset: &3000), its 8
+    // lines (R10 = 0, steady, R11 = 7); channel 1 counts its rising edges, an NMI every 4
     let program = cpclib_macros::assemble!(
         "
         ld sp,0xc000 : di
-        ld bc,0xf881 : ld a,0x57 : out (c),a : ld a,8 : out (c),a
+        ld bc,0xbc0e : out (c),c : ld bc,0xbd31 : out (c),c
+        ld bc,0xbc0f : out (c),c : ld bc,0xbd90 : out (c),c
+        ld bc,0xbc0a : out (c),c : ld bc,0xbd00 : out (c),c
+        ld bc,0xbc0b : out (c),c : ld bc,0xbd07 : out (c),c
+        ld bc,0xf881 : ld a,0x57 : out (c),a : ld a,4 : out (c),a
         loop: jr loop
         "
     );
@@ -116,11 +121,11 @@ fn ctc_channel_1_gives_an_nmi_every_n_lines() {
         0x66,
         cpclib_macros::assemble!(" push hl : ld hl,(0x8000) : inc hl : ld (0x8000),hl : pop hl : retn")
     );
-    // one second: 50 frames of 312 lines
+    // one second: 50 frames, 8 cursor lines each
     listen(&mut motherboard, 1.0);
     let nmis = motherboard.read_word(0x8000);
-    let expected = 50 * 312 / 8;
-    assert!((i32::from(nmis) - expected).abs() <= 3, "{nmis} NMIs, not {expected}");
+    let expected = 50 * 8 / 4;
+    assert!((i32::from(nmis) - expected).abs() <= 2, "{nmis} NMIs, not {expected}");
 }
 
 #[test]
