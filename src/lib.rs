@@ -13,6 +13,7 @@ pub mod psg;
 pub mod shakerland;
 pub mod overlay;
 pub mod snapshot;
+pub mod sound_export;
 pub mod tape;
 pub mod z80;
 
