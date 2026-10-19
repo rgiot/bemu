@@ -1,21 +1,15 @@
-//! What differs between the CRTC chips found in CPCs, as a strategy the
-//! [`super::Crtc`] core consults.
+//! What the five CRTC chips found in CPCs share, and the [`CrtcChip`] trait each of them
+//! implements in its own file (`type0.rs`, `type1.rs`, `type2.rs`, `asic.rs`).
 //!
-//! The five "CRTC types" (numbering from Longshot's *Amstrad CPC CRTC
-//! Compendium*, ACCC) are not five emulators: they share the whole 6845
-//! counter chain and differ in a long list of details - which register
-//! bits exist, which registers can be read back and how, the widths of the
-//! sync pulses, what the display skew field does, and many timing quirks.
-//! Each chip implements [`CrtcModel`]; the core never tests "which type am
-//! I" but asks the model, so a new chip (or a variant of one, like the two
-//! UM6845R revisions) is one new implementation and nothing else.
-//!
-//! The models are stateless zero-sized values, so `Crtc` just holds a
-//! `&'static dyn CrtcModel`: the indirection is a single pointer and the
-//! hooks are only called on register accesses and line/frame events, never
-//! per pin.
+//! The "CRTC types" (numbering from Longshot's *Amstrad CPC CRTC Compendium*, ACCC) share the
+//! 6845 counter chain kept in [`super::core::Core`], but each runs its own vertical logic (last
+//! line states, adjustment, interlace counting), its own BORDER and VSYNC rules and its own
+//! register side effects, with its own extra state. [`super::Crtc`] drives the character clock
+//! and calls the chip at each of those points.
 
 use std::fmt::Debug;
+
+use super::core::Core;
 
 /// Number of registers a CRTC exposes (R0-R17).
 pub const NB_REGISTERS: usize = 18;
@@ -54,17 +48,6 @@ impl CrtcType {
         CrtcType::Crtc3,
         CrtcType::Crtc4
     ];
-
-    /// The behaviour of this chip.
-    pub fn model(self) -> &'static dyn CrtcModel {
-        match self {
-            CrtcType::Crtc0 => &super::type0::Crtc0,
-            CrtcType::Crtc1 => &super::type1::Crtc1,
-            CrtcType::Crtc2 => &super::type2::Crtc2,
-            CrtcType::Crtc3 => &super::asic::Asic::CRTC3,
-            CrtcType::Crtc4 => &super::asic::Asic::CRTC4
-        }
-    }
 }
 
 impl TryFrom<u8> for CrtcType {
@@ -114,22 +97,32 @@ pub enum DisplaySkew {
     Blanked
 }
 
-/// The chip-dependent part of a CRTC.
-pub trait CrtcModel: Debug + Sync {
+
+/// The registers as they were before a write, for the side effects that depend on the change.
+#[derive(Clone, Copy, Debug)]
+pub struct PreviousRegisters {
+    pub r0: u8,
+    pub r3l: u8,
+    pub r5: u8,
+    pub r8: u8
+}
+
+/// One CRTC chip: what it is (register bits, read-back, sync widths, skew) and how it runs the
+/// counters of [`Core`] at each point of the character clock where the chips differ. The
+/// default methods are the plain 6845 behaviour; each chip overrides what it does its own way.
+pub trait CrtcChip: Debug + Send {
     fn crtc_type(&self) -> CrtcType;
 
     fn name(&self) -> &'static str;
 
-    /// Bits of register `reg` (0-15) the chip stores; 0 for anything else
-    /// (ACCC §4.3).
+    /// Bits of register `reg` (0-15) the chip stores; 0 for anything else (ACCC §4.3).
     fn write_mask(&self, reg: u8) -> u8;
 
     /// The value on the data bus when reading the register port (&BF00).
     /// Registers the chip can't return read as 0 (ACCC §21.2, §28.1.9).
     fn read_register(&self, context: &ReadContext) -> u8;
 
-    /// The value on the data bus when reading the status port (&BE00)
-    /// (ACCC §21.3).
+    /// The value on the data bus when reading the status port (&BE00) (ACCC §21.3).
     fn read_status(&self, context: &ReadContext) -> u8;
 
     /// HSYNC width, in characters, from R3. `None`: no HSYNC is generated
@@ -140,26 +133,89 @@ pub trait CrtcModel: Debug + Sync {
     /// program it; 1 and 2 have a fixed 16).
     fn vsync_width(&self, r3: u8) -> u8;
 
-    /// ACCC §14.4.2: writing R3l=0 while an HSYNC is running cancels it on
-    /// CRTC 1; the others treat 0 as a count to reach (after overflowing).
-    fn zero_r3_cancels_running_hsync(&self) -> bool {
+    /// What the skew field of R8 does; none on CRTC 1 and 2 (ACCC §19.2).
+    fn display_skew(&self, r8: u8) -> DisplaySkew;
+
+    /// Back to the power-on state (the core is reset first).
+    fn reset(&mut self, _core: &mut Core) {}
+
+    // ---- register writes ----
+
+    /// An I/O write the chip takes later (the ASICs): true when it is queued.
+    fn queue_write(&mut self, _r: u8, _v: u8) -> bool {
         false
     }
 
-    /// R3.JIT (ACCC 14.4.4): an R3l write equal to the running C3l stops the
-    /// HSYNC at once. Not on the ASICs of CRTC 3 and 4, which synchronise the
-    /// HSYNC with the display.
+    /// The queued writes that land on this tick, if any (called every tick).
+    fn due_writes(&mut self) -> Option<Vec<(u8, u8)>> {
+        None
+    }
+
+    /// Whether a write to register `r` is taken at all now.
+    fn accepts_write(&self, _core: &Core, _r: u8) -> bool {
+        true
+    }
+
+    /// Just before register `r` takes `value` (already masked).
+    fn before_write(&mut self, _core: &mut Core, _r: u8, _value: u8) {}
+
+    /// Register `r` has just been written: the chip's own side effects.
+    fn register_written(&mut self, _core: &mut Core, _r: u8, _previous: PreviousRegisters) {}
+
+    /// R3.JIT (ACCC 14.4.4): an R3l write equal to the running C3l stops the HSYNC at once.
     fn supports_r3_jit(&self) -> bool {
         true
     }
 
-    /// CRTC 0 (ACCC 12.2, 10.3.1): the frame's last line is a latched state,
-    /// evaluated (C4==R4 && C9==R9) only while C0<2. Once set it resets C4
-    /// and C9 on the next line whatever R4/R9 become; when not set, C4
-    /// counts on (up to 127) each time C9==R9, R4 or no R4.
-    fn has_last_line_state(&self) -> bool {
+    /// ACCC 17.5: an R1=0 written while C0=0 is still in time to raise the BORDER on CRTC 0, 1
+    /// and 2 ("too late" on CRTC 3 and 4).
+    fn acknowledges_r1_zero_on_c0_zero(&self) -> bool {
+        true
+    }
+
+    // ---- HSYNC ----
+
+    /// First thing on each character, before the HSYNC is counted.
+    fn new_character(&mut self, _core: &mut Core) {}
+
+    /// ACCC §14.4.2: writing R3l=0 while an HSYNC is running cancels it on CRTC 1; the others
+    /// treat 0 as a count to reach (after overflowing).
+    fn zero_r3_cancels_running_hsync(&self) -> bool {
         false
     }
+
+    /// A character of the running HSYNC has been counted (C3l is up to date).
+    fn hsync_counted(&mut self, _core: &mut Core) {}
+
+    /// The HSYNC has just ended (its last character).
+    fn hsync_ended(&mut self, _core: &mut Core) {}
+
+    /// Each character, once the HSYNC count is done and before C0 moves.
+    fn character_starts(&mut self, _core: &mut Core) {}
+
+    /// Before C0=R2 is looked at, each character.
+    fn before_hsync_check(&mut self, _core: &mut Core) {}
+
+    /// C0=R2 does not start an HSYNC on this character.
+    fn hsync_start_blocked(&self) -> bool {
+        false
+    }
+
+    /// An HSYNC is starting (C0=R2).
+    fn hsync_starting(&mut self, _core: &mut Core) {}
+
+    /// `Some(blank)` while R3l=2 on CRTC 0: the Gate Array's blanking follows this window
+    /// instead of the HSYNC pin.
+    fn hsync_blank_window(&self, _core: &Core) -> Option<bool> {
+        None
+    }
+
+    /// R3l=2 on a CRTC 0: its HSYNC is too short for the monitor (see the Gate Array).
+    fn hsync_is_two_wide(&self, _core: &Core) -> bool {
+        false
+    }
+
+    // ---- lines and frames ----
 
     /// CRTC 3/4: an R0 lowered below C0 ends the line at once (C0 >= R0); the other chips
     /// let C0 count on to 255 and wrap (AMSpiriT Lite and CPCSE, Shaker A3/A5-A7 R0 ruptures).
@@ -167,106 +223,116 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
-    /// CRTC 3/4 (ACCC §11.1, §18.2.4): C4 is not incremented for the vertical adjustment, it
-    /// stays on R4 (CRTC 1 and 2 take R4+1).
-    fn adjust_keeps_c4(&self) -> bool {
+    /// C0 has just gone back to 0 through R0, before anything is counted (CRTC 0's R0=0 freeze).
+    fn line_wraps(&mut self, _core: &mut Core) {}
+
+    /// C0 has gone back to 0 through R0: move C9/C4 (and the adjustment); true when a new frame
+    /// starts.
+    fn count_line(&mut self, core: &mut Core) -> bool;
+
+    /// After `count_line`: the states a chip evaluates at the start of a line (parities, CRTC 2's
+    /// Last Line).
+    fn line_started(&mut self, _core: &mut Core, _new_frame: bool, _c4_before: u8) {}
+
+    /// Each character, after the line end (if any) has been counted.
+    fn character_counted(&mut self, _core: &mut Core) {}
+
+    /// Whether C9 is on the last line of the character row.
+    fn c9_is_last(&self, core: &Core) -> bool {
+        core.vlc == core.regs[9]
+    }
+
+    /// C9 as it goes out on RA0-RA4 to build the video address.
+    fn c9_vma(&self, core: &Core) -> u8 {
+        core.vlc.value()
+    }
+
+    // ---- BORDER ----
+
+    /// ACCC §17.4/§17.5: the BORDER R1 is a state set by C0=R1 (or R1=0) and cleared when a line
+    /// starts (CRTC 0 and 1); on the other chips it is the live C0>=R1.
+    fn latches_r1_border(&self) -> bool {
         false
     }
 
-    /// CRTC 2 (ACCC §16.4.3): a VSYNC condition met while a HSYNC runs (C0 from R2 to R2+R3,
-    /// counted by C3 so it wraps past R0) makes a GHOST VSYNC: counted, but kept off the pin.
-    /// R2=0 is the exception (§15.4.4, §15.6): the condition is then detected early enough.
-    fn ghost_vsync_during_hsync(&self) -> bool {
-        false
+    /// The BORDER by R6, evaluated each character.
+    fn border_r6(&mut self, core: &mut Core) -> bool {
+        core.vcc >= core.regs[6]
     }
 
-    /// The chip has the two interlace modes (R8 bit 0, ACCC 19): an additional line and a
-    /// MID-VSYNC on the even frames. CRTC 0 is handled by its own counters.
-    fn supports_interlace(&self) -> bool {
-        self.has_last_line_state()
-    }
-
-    /// CRTC 1 (ACCC 19.5.3): ParityFrame simply switches at each frame start, whatever R8.
-    /// Also the interlace sync of CRTC 3 and 4 (an additional line on the even frames).
-    fn frame_parity_toggles(&self) -> bool {
-        false
-    }
-
-    /// CRTC 0 and 2 (ACCC 19.5.2, 19.5.4): ParityR6 = ParityFrame xor 1 when C4 reaches R6,
-    /// ParityFrame = ParityR6 when a frame starts (so R6 > R4 freezes it), and the interlace
-    /// additional line ends the frames whose ParityR6 is odd (19.6.3).
-    fn parity_from_r6(&self) -> bool {
-        self.has_last_line_state()
-    }
-
-    /// CRTC 1 (ACCC 19.8.2): R8=3 counts C9 for the interlace video mode. On CRTC 2
-    /// R8=3 only gives the interlace sync here (AMSpiriT Lite and CPCSE time it as R8=1);
-    /// CRTC 3/4 have their own counting, see [`CrtcModel::c9_counts_like_asic`].
-    fn has_interlace_video(&self) -> bool {
-        self.frame_parity_toggles()
-    }
-
-    /// CRTC 3/4: the row ends on C9 >= R9, so C9 cannot overflow (ACCC 10.3.4), and with
-    /// R8=3 C9 counts two by two from ParityC9 (ACCC 19.8.4).
-    fn c9_counts_like_asic(&self) -> bool {
-        false
-    }
-
-    /// CRTC 0 and 2 (ACCC 17.6.2): when C0 reaches R0 with the display still
-    /// on (R1 not reached), they send BORDER ON to the Gate Array 0.5 usec too
-    /// early: one byte (half a character) of border before C0 returns to 0.
+    /// CRTC 0 and 2 (ACCC 17.6.2): when C0 reaches R0 with the display still on (R1 not
+    /// reached), they send BORDER ON to the Gate Array 0.5 usec too early: one byte of border
+    /// before C0 returns to 0.
     fn anticipates_border_byte(&self) -> bool {
         false
     }
 
-    /// ACCC 18.2.2: on CRTC 0 and 2, C4=R6 starts a BORDER that lasts until the
-    /// next frame (C4=C9=C0=0), whatever R6 is made later.
-    fn latches_r6_border(&self) -> bool {
+    /// ACCC 18.3.2: on the first line of a frame with R6=0, CRTC 0 and 2 alternate a byte of video
+    /// and a byte of BORDER.
+    fn has_r6_zero_conflict(&self) -> bool {
         false
     }
 
-    /// CRTC 3/4 (ACCC 18.2.4): C4=R6 is only tested when C0 goes to 0; it then sets the BORDER
-    /// until the next frame, and an R6 written during the line waits for the next line.
-    fn r6_checked_at_line_start(&self) -> bool {
-        false
-    }
+    // ---- VSYNC ----
 
-    /// CRTC 1 (ACCC 18.2.3): like CRTC 0 and 2, C4=R6 latches the BORDER, but R6=0 is a BORDER
-    /// of its own while it stays 0 and there is no first line conflict.
-    fn r6_zero_is_border(&self) -> bool {
-        false
-    }
+    /// Each character, before a VSYNC start is looked at.
+    fn before_vsync_check(&mut self, _core: &mut Core) {}
 
-    /// CRTC 2 (ACCC §13.4, §20.3.3): the frame starts at VMA', which takes R12/R13 at C0=R1
-    /// on the frame's last line (or last adjustment line) instead of VMA. Other chips load
-    /// R12/R13 at the frame's first line.
-    fn frame_address_from_vma_prime(&self) -> bool {
-        false
-    }
-
-    /// CRTC 1 (ACCC 17.4.2): VMA' takes its value at the end of the character where C0=R1 held, an R1
-    /// written during that character (R1.JIT) cancels it.
-    fn r1_jit_cancels_vma_latch(&self) -> bool {
-        false
-    }
-
-    /// CRTC 1 (ACCC 11.6): the "rupture for dummies" bug of R5.
-    fn has_rfd(&self) -> bool {
-        false
-    }
-
-    /// ACCC 17.5: an R1=0 written while C0=0 is still in time to raise the
-    /// BORDER on CRTC 0, 1 and 2 ("too late" on CRTC 3 and 4).
-    fn acknowledges_r1_zero_on_c0_zero(&self) -> bool {
+    /// The VSYNC may start on this character (C4=R7 holds).
+    fn vsync_may_start_here(&self, _core: &Core) -> bool {
         true
     }
 
-    /// What the skew field of R8 does; none on CRTC 1 and 2 (ACCC §19.2).
-    fn display_skew(&self, r8: u8) -> DisplaySkew;
+    /// The C4=R7 condition is blocked (CRTC 0's BLOCKED VSYNC).
+    fn vsync_blocked(&self) -> bool {
+        false
+    }
 
-    /// The UM6845R keeps reloading the display start address on every line
-    /// of the first character row instead of once per frame (ACCC §11.6).
-    fn reloads_start_address_every_line_of_first_row(&self) -> bool {
+    /// The VSYNC is refused this time and the C4=R7 occurrence is spent (CRTC 0, R0<2).
+    fn vsync_refused(&self) -> bool {
+        false
+    }
+
+    /// A VSYNC begun in the middle of a line does not count that line (CRTC 0, ACCC 16.4.1).
+    fn vsync_counts_from_next_line(&self) -> bool {
+        false
+    }
+
+    /// CRTC 2 (ACCC §16.4.3): a VSYNC condition met while an HSYNC runs makes a GHOST VSYNC.
+    fn ghost_vsync_during_hsync(&self) -> bool {
+        false
+    }
+
+    /// Each character, after the VSYNC start has been looked at.
+    fn after_vsync_check(&mut self, _core: &mut Core) {}
+
+    // ---- video pointer ----
+
+    /// C0=R1 (a row's last line: VMA' takes the next row's address).
+    fn r1_reached(&mut self, core: &mut Core) {
+        if self.c9_is_last(core) {
+            core.crtc_vma_prime = core.crtc_vma;
+        }
+    }
+
+    /// At C0=0: VMA takes VMA' (the frame's first line takes R12/R13 first).
+    fn reload_vma(&mut self, core: &mut Core) {
+        if core.vcc == 0 && core.vlc == 0 {
+            core.crtc_vma_prime = core.base_address();
+        }
+        core.crtc_vma = core.crtc_vma_prime;
+    }
+
+    /// Each character, once VMA has been reloaded (CRTC 1's R1=0 latch).
+    fn after_vma_reload(&mut self, _core: &mut Core) {}
+
+    // ---- tools and snapshots ----
+
+    /// The counters have been restored from a snapshot.
+    fn restored(&mut self, _core: &mut Core) {}
+
+    /// The CRTC 0 "last line of the frame" state (diagnostics).
+    fn last_line(&self) -> bool {
         false
     }
 }

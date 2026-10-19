@@ -6,6 +6,17 @@ use std::fmt;
 #[derive(Default, Copy, Clone, PartialEq)]
 pub struct PinsBuffer(u64, u64);
 
+impl PinsBuffer {
+    /// The current state of the pins, one bit per pin.
+    pub(crate) fn current(&self) -> u64 {
+        self.1
+    }
+
+    pub(crate) fn current_mut(&mut self) -> &mut u64 {
+        &mut self.1
+    }
+}
+
 impl fmt::Debug for PinsBuffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PinsBuffer")
