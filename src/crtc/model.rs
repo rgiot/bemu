@@ -192,11 +192,17 @@ pub trait CrtcModel: Debug + Sync {
         false
     }
 
-    /// CRTC 1 (ACCC 19.8.2): R8=3 counts C9 for the interlace video mode. On CRTC 2,
-    /// 3 and 4 R8=3 only gives the interlace sync here (AMSpiriT Lite and CPCSE time
-    /// it as R8=1 on CRTC 2; the CRTC 0 like video mode of CRTC 3/4 is not emulated).
+    /// CRTC 1 (ACCC 19.8.2): R8=3 counts C9 for the interlace video mode. On CRTC 2
+    /// R8=3 only gives the interlace sync here (AMSpiriT Lite and CPCSE time it as R8=1);
+    /// CRTC 3/4 have their own counting, see [`CrtcModel::c9_counts_like_asic`].
     fn has_interlace_video(&self) -> bool {
         self.frame_parity_toggles()
+    }
+
+    /// CRTC 3/4: the row ends on C9 >= R9, so C9 cannot overflow (ACCC 10.3.4), and with
+    /// R8=3 C9 counts two by two from ParityC9 (ACCC 19.8.4).
+    fn c9_counts_like_asic(&self) -> bool {
+        false
     }
 
     /// CRTC 0 and 2 (ACCC 17.6.2): when C0 reaches R0 with the display still
@@ -209,6 +215,12 @@ pub trait CrtcModel: Debug + Sync {
     /// ACCC 18.2.2: on CRTC 0 and 2, C4=R6 starts a BORDER that lasts until the
     /// next frame (C4=C9=C0=0), whatever R6 is made later.
     fn latches_r6_border(&self) -> bool {
+        false
+    }
+
+    /// CRTC 3/4 (ACCC 18.2.4): C4=R6 is only tested when C0 goes to 0; it then sets the BORDER
+    /// until the next frame, and an R6 written during the line waits for the next line.
+    fn r6_checked_at_line_start(&self) -> bool {
         false
     }
 

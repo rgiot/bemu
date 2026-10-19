@@ -46,6 +46,14 @@ impl CrtcModel for Asic {
         false
     }
 
+    fn c9_counts_like_asic(&self) -> bool {
+        true
+    }
+
+    fn r6_checked_at_line_start(&self) -> bool {
+        true
+    }
+
     fn adjust_keeps_c4(&self) -> bool {
         true
     }

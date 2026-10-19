@@ -532,6 +532,10 @@ impl Crtc {
                 self.ivm_lines = is_ivm;
             }
         }
+        // ACCC §19.8.4 (CRTC 3/4): IVM switched on takes ParityC9 from the current C9
+        if r == 8 && self.model.c9_counts_like_asic() && previous_r8 & 3 != 3 && self.regs[8] & 3 == 3 {
+            self.parity_c9 = self.vlc.value() & 1 != 0;
+        }
         // ACCC §11.6 (CRTC 1): R5 raised from 0 on C0=R0 starts a rupture for dummies
         if r == 5 && self.model.has_rfd() && previous_r5 & 0x1f == 0 && self.regs[5] & 0x1f != 0
             && self.hcc == self.regs[0]
@@ -724,7 +728,10 @@ impl Crtc {
 
     /// Whether C9 is on the last line of the character row.
     fn c9_is_last(&self) -> bool {
-        if self.ivm_lines && self.model.frame_parity_toggles() {
+        if self.model.c9_counts_like_asic() {
+            // CRTC 3/4 (ACCC 10.3.4, 19.8.4): the row ends on C9 >= R9, in IVM or not
+            self.vlc.value() >= self.regs[9]
+        } else if self.ivm_lines && self.model.frame_parity_toggles() {
             // CRTC 1 (ACCC 19.8.2): the test excludes bit 0
             self.vlc.value() & 0x1e == self.regs[9] & 0x1e
         } else if self.ivm_lines {
@@ -1094,9 +1101,33 @@ impl Crtc {
             } else {
                 // CRTC 1 interlace video mode (ACCC 19.8.2): C9 is incremented by 1 more when R9 is even,
                 // the row ends when C9 and R9 match without bit 0, and C9 then restarts from ParityC9
-                let ivm_now = self.model.has_interlace_video() && self.regs[8] & 3 == 3;
+                let asic = self.model.c9_counts_like_asic();
+                let ivm_now = (self.model.has_interlace_video() || asic) && self.regs[8] & 3 == 3;
                 self.ivm_lines = ivm_now;
-                let row_end = if ivm_now {
+                let row_end = if asic {
+                    // CRTC 3/4 (ACCC 10.3.4, 19.8.4): an R9 lowered under C9 ends the row too;
+                    // in IVM the next row starts on ParityC9, which follows ParityFrame at the
+                    // frame start and swaps on each C4 when R9 is odd
+                    let r9 = self.regs[9];
+                    let end = self.vlc.value() >= r9;
+                    if end {
+                        if self.vcc == self.regs[4] {
+                            // the frame start (below, after any R5 or interlace line, whose
+                            // C9 is 0) sets ParityC9
+                            self.vlc.reset();
+                        } else {
+                            if r9 & 1 != 0 {
+                                self.parity_c9 = !self.parity_c9;
+                            }
+                            self.vlc = u8::from(ivm_now && self.parity_c9).into();
+                        }
+                    } else if ivm_now {
+                        self.vlc = (((self.vlc.value() + 2) | u8::from(self.parity_c9)) & 0x1f).into();
+                    } else {
+                        self.vlc += 1;
+                    }
+                    end
+                } else if ivm_now {
                     let r9 = self.regs[9];
                     let mut c9 = self.vlc.value();
                     if r9 & 1 == 0 {
@@ -1125,7 +1156,7 @@ impl Crtc {
 
                 // This is the end of a char line
                 if row_end {
-                    if !ivm_now {
+                    if !ivm_now && !asic {
                         self.vlc.reset();
                     }
                     // compared before the increment: C4 is a 7-bit counter, so with R4=127 the
@@ -1174,6 +1205,14 @@ impl Crtc {
             // reaches R6.
             if self.model.frame_parity_toggles() && new_frame {
                 self.parity_frame = !self.parity_frame;
+            }
+            // ACCC §19.5.5 (CRTC 3/4): ParityC9 = ParityFrame when the frame starts, and in IVM
+            // its first line is C9 = ParityC9
+            if self.model.c9_counts_like_asic() && new_frame {
+                self.parity_c9 = self.parity_frame;
+                if self.regs[8] & 3 == 3 {
+                    self.vlc = u8::from(self.parity_c9).into();
+                }
             }
             if self.model.has_last_line_state() {
                 if new_frame {
@@ -1265,6 +1304,19 @@ impl Crtc {
                 self.r6_border = true;
             }
             self.r6_border
+        } else if self.model.r6_checked_at_line_start() {
+            if self.hcc == 0 {
+                let first_line = self.vcc == 0
+                    && !self.in_vertical_adjust
+                    && self.vlc.value() == u8::from(self.ivm_lines && self.parity_c9);
+                if first_line {
+                    self.r6_border = false;
+                }
+                if self.vcc == self.regs[6] {
+                    self.r6_border = true;
+                }
+            }
+            self.r6_border
         } else {
             self.vcc >= self.regs[6]
         };
@@ -1313,10 +1365,16 @@ impl Crtc {
         if self.vcc != self.regs[7] {
             self.vsync_ended_on_r7 = false;
         }
+        // ACCC §16.4.4 (CRTC 3/4): only on a row's first line (C9=0, or ParityC9 in IVM) at
+        // C0=0 (C0=R0/2 for the MID-VSYNC): an R7 set to C4 later in the row does nothing
+        let asic_position = !self.model.c9_counts_like_asic()
+            || (self.vlc.value() == u8::from(self.ivm_lines && self.parity_c9)
+                && self.hcc == if self.interlaced() && !self.parity_frame { self.regs[0] / 2 } else { 0 });
         let vsync_wanted = self.vcc == self.regs[7]
             && !self.vsync()
             && !self.vsync_ended_on_r7
             && !mid_vsync_wait
+            && asic_position
             && !(protected && self.r7_match);
         if vsync_wanted && protected && !self.vsync_authorized {
             // ACCC §13.2.2: refused, and this C4=R7 occurrence is spent
