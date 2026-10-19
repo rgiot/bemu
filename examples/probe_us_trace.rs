@@ -1,6 +1,6 @@
 //! After a CSL script, from the next CRTC VSYNC start, one line per microsecond (C0 change):
 //! the time since the VSYNC, C0/C4/C9, MA, DE, HSYNC, VSYNC and R0/R1/R2/R4/R9/R5/R6/R7 when they change.
-//! `probe_us_trace <script.csl> <microseconds>`
+//! `probe_us_trace <script.csl> <microseconds>` (PROBE_EVERY_US=1: every microsecond, for R0=0 lines)
 use amsrust::chip::Chip;
 use amsrust::crtc::CrtcPin;
 use amsrust::csl_runner::CslRunner;
@@ -24,11 +24,12 @@ fn main() {
     let (mut tick, mut us) = (0u64, 0u64);
     let mut last_c0 = 255u8;
     let mut last_regs = [255u8; 8];
+    let every_us = std::env::var("PROBE_EVERY_US").is_ok();
     while us < count {
         mb.tick();
         tick += 1;
         let c = mb.crtc();
-        if c.hcc != last_c0 {
+        if (every_us && tick % 16 == 0) || (!every_us && c.hcc != last_c0) {
             last_c0 = c.hcc;
             us += 1;
             let regs = [c.regs_r(0), c.regs_r(1), c.regs_r(2), c.regs_r(4), c.regs_r(9), c.regs_r(5), c.regs_r(6), c.regs_r(7)];

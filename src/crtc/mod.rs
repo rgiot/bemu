@@ -567,6 +567,18 @@ impl Crtc {
         {
             self.rfd_active = true;
         }
+        // ACCC §13.2.4 (CRTC 0): R0=0 written on the C0=0 that has just updated the counters makes
+        // it the first C0=0 with R0=0; the next wrap is the second (C4 moves once if C9 reached R9)
+        if r == 0 && self.model.has_last_line_state() && self.regs[0] == 0 && previous_r0 > 1
+            && self.hcc == 0 && self.r0_zero_wraps == 0
+        {
+            let hiccup = !self.in_vertical_adjust && self.c9_is_last();
+            self.r0_zero_c4_pending = hiccup;
+            if hiccup && self.vcc == self.regs[4] {
+                self.r0_enlarge_c9_to_r5 = true;
+            }
+            self.r0_zero_wraps = 1;
+        }
         // ACCC §13.7.2: R0 enlarged out of 1 when C0=1 and C9=R9 overflows C4
         // (even if C4<>R4); the step itself lands at C0=2.
         if r == 0 && self.model.has_last_line_state() && self.hcc == 1 && previous_r0 == 1
@@ -1998,8 +2010,9 @@ mod test {
         assert_eq!(crtc.vcc.value(), (before + 1) & 0x7f);
     }
 
-    /// ACCC §13.2.6: with R0=0 the first C0=0 only compares C9 (C9<>R9: it
-    /// moves once), then C9 and C4 are frozen.
+    /// ACCC §13.2.4: R0=0 written on the C0=0 that has just updated the counters makes it the
+    /// first C0=0 with R0=0 (C9<>R9: nothing more moves), then C9 and C4 are frozen (Shaker A7 and
+    /// BCAPS B1 on the real CPC).
     #[test]
     fn test_crtc0_r0_zero_freezes_the_counters() {
         let mut crtc = crtc0();
@@ -2015,7 +2028,7 @@ mod test {
             crtc.update_memory_address();
         }
         assert_eq!(crtc.vcc.value(), c4);
-        assert_eq!(crtc.vlc.value(), c9 + 1);
+        assert_eq!(crtc.vlc.value(), c9);
     }
 
     /// One line of 64 characters
