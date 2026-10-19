@@ -363,6 +363,8 @@ pub struct Z80 {
     /// An interrupt acknowledge cycle (M1 with IORQ) happened since the last
     /// [`Self::take_interrupt_acknowledge`].
     interrupt_acknowledged: bool,
+    /// A RETI ran since the last [`Self::take_reti`] (Z80 peripherals watch for it).
+    reti_executed: bool,
 
     /// Where the instruction being executed started, and what it is - to know
     /// where its last T-state falls (see `tstates`).
@@ -1553,6 +1555,7 @@ impl Z80 {
                 self.pc = self.wz;
                 self.sp.inc();
                 self.sp.inc();
+                self.reti_executed = true;
              
             }
 
@@ -2269,6 +2272,11 @@ impl Z80 {
     /// bus (&FF).
     pub fn set_interrupt_vector(&mut self, vector: Option<u8>) {
         self.interrupt_vector = vector;
+    }
+
+    /// Whether a RETI ran since the last call.
+    pub fn take_reti(&mut self) -> bool {
+        std::mem::take(&mut self.reti_executed)
     }
 
     /// Whether an interrupt acknowledge cycle happened since the last call.

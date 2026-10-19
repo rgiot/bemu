@@ -25,6 +25,10 @@ pub struct Args {
     pub disc_interface: Option<bool>,
     /// `--french`: the French 6128 ROMs, AZERTY keyboard.
     pub french: bool,
+    /// `--playcity`: a PlayCity (two more AYs and a CTC).
+    pub playcity: bool,
+    /// `--digiblaster`: an 8-bit DAC on the printer port.
+    pub digiblaster: bool,
     pub dsk_a: Option<String>,
     pub dsk_b: Option<String>,
     /// `--cdt path`: a tape in the cassette deck, PLAY down.
@@ -86,6 +90,8 @@ pub fn parse_args() -> Args {
         ram_kb: None,
         disc_interface: None,
         french: false,
+        playcity: false,
+        digiblaster: false,
         dsk_a: None,
         dsk_b: None,
         cdt: None,
@@ -139,6 +145,8 @@ pub fn parse_args() -> Args {
             "--ddi" => args.disc_interface = Some(true),
             "--no-disc" => args.disc_interface = Some(false),
             "--french" => args.french = true,
+            "--playcity" => args.playcity = true,
+            "--digiblaster" => args.digiblaster = true,
             "--dsk" => args.dsk_a = Some(next("--dsk")),
             "--dsk-b" => args.dsk_b = Some(next("--dsk-b")),
             "--cdt" => args.cdt = Some(next("--cdt")),
@@ -221,7 +229,7 @@ pub fn parse_args() -> Args {
 
 fn print_help() {
     eprintln!(concat!(
-        "amsrust [--model 464|664|6128] [--french] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
+        "amsrust [--model 464|664|6128] [--french] [--playcity] [--digiblaster] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
         "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path] [--watch]\n",
         "        [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--record-ym file] [--record-wav file] [--type text [--type-at N]]\n",
@@ -233,7 +241,10 @@ fn print_help() {
         "with its AZERTY keyboard (typed text and keys follow it). The 464 and 664 have 64K and the\n",
         "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
         "The 664 and 6128 have a disc interface; --ddi adds a DDI-1 (AMSDOS) to\n",
-        "a 464, --no-disc removes it. --cdt puts a tape (CDT/TZX) in the cassette\n",
+        "a 464, --no-disc removes it. --playcity plugs a PlayCity (two more AYs, right\n",
+        "and left, and a CTC whose channel 1 counts the lines to an NMI), --digiblaster\n",
+        "a DAC on the printer port (a signed byte written to &EFxx).\n",
+        "--cdt puts a tape (CDT/TZX) in the cassette\n",
         "deck, PLAY down: it plays when the CPC starts the motor (RUN\" on a 464,\n",
         "|TAPE first on a 664/6128).\n",
         "With no --screenshot/--window, drops into the interactive monitor once\n",

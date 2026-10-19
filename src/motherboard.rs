@@ -36,6 +36,8 @@ pub struct Motherboard {
     fdc: Fdc,
     /// The cassette deck, with a tape in it.
     tape: Option<Box<crate::tape::TapeDeck>>,
+    /// The sound expansions plugged (PlayCity, Digiblaster).
+    cards: Option<Box<crate::sound_cards::SoundCards>>,
     // The FDC isn't a pin-level `Chip` (see fdc.rs), so unlike the other
     // peripherals its register writes/reads aren't naturally idempotent
     // across repeated calls: a single Z80 `OUT`/`IN` instruction's bus
@@ -118,6 +120,7 @@ impl Default for Motherboard {
                 fdc
             },
             tape: None,
+            cards: None,
             fdc_write_active: false,
             us: 0,
             trace_pc_from: std::env::var("AMSRUST_TRACE_PC").ok().and_then(|v| v.parse().ok()),
@@ -231,6 +234,8 @@ pub struct MotherboardBuilder {
     /// in the boot banner.
     brand: Option<Brand>,
     keyboard_layout: Option<crate::keyboard::KeyboardLayout>,
+    playcity: bool,
+    digiblaster: bool,
     /// If interruption are allowed
     enable_interruptions: bool, // false by default
     disable_lower_rom: bool, // false by default
@@ -272,6 +277,18 @@ impl MotherboardBuilder {
     /// The French ROMs (AZERTY keyboard), on a 6128 only, or the English ones.
     pub fn set_keyboard_layout(&mut self, layout: crate::keyboard::KeyboardLayout) -> &mut Self {
         self.keyboard_layout = Some(layout);
+        self
+    }
+
+    /// Plug a PlayCity (two more AYs and a CTC).
+    pub fn plug_playcity(&mut self) -> &mut Self {
+        self.playcity = true;
+        self
+    }
+
+    /// Plug a Digiblaster (an 8-bit DAC on the printer port).
+    pub fn plug_digiblaster(&mut self) -> &mut Self {
+        self.digiblaster = true;
         self
     }
 
@@ -340,6 +357,9 @@ impl MotherboardBuilder {
             if let Err(e) = motherboard.set_keyboard_layout(layout) {
                 eprintln!("{e}");
             }
+        }
+        if self.playcity || self.digiblaster {
+            motherboard.plug_sound_cards(self.playcity, self.digiblaster);
         }
         if let Some(brand) = self.brand {
             motherboard.ppi.set_brand(brand);
@@ -460,6 +480,24 @@ impl Motherboard {
     /// The cassette deck of `other` comes here, as it is (a reset machine keeps its deck).
     pub fn take_tape_deck_from(&mut self, other: &mut Motherboard) {
         self.tape = other.tape.take();
+    }
+
+    /// Plug a PlayCity (`playcity`) and a Digiblaster on the printer port (`dac`).
+    pub fn plug_sound_cards(&mut self, playcity: bool, dac: bool) {
+        let cards = crate::sound_cards::SoundCards {
+            playcity: playcity.then(Box::default),
+            dac: dac.then_some(0.0)
+        };
+        self.cards = (!cards.is_empty()).then(|| Box::new(cards));
+        self.psg.set_extra_sound([0.0; 2], if self.cards.is_some() { 0.5 } else { 1.0 });
+    }
+
+    pub fn sound_cards(&self) -> Option<&crate::sound_cards::SoundCards> {
+        self.cards.as_deref()
+    }
+
+    pub fn sound_cards_mut(&mut self) -> Option<&mut crate::sound_cards::SoundCards> {
+        self.cards.as_deref_mut()
     }
 
     pub fn tape_deck(&self) -> Option<&crate::tape::TapeDeck> {
@@ -583,6 +621,28 @@ impl Motherboard {
         if self.crtc.is_activated() {
             self.crtc.set_phase_ticks(0);
             self.fdc.advance(1); // one character = one microsecond
+            if let Some(cards) = &mut self.cards {
+                let (sound, lines) = cards.tick_us(self.crtc.get_pin(CrtcPin::HS));
+                self.psg.set_extra_sound(sound, 0.5);
+                if lines.nmi {
+                    self.cpu.trigger_nmi();
+                }
+                if self.cpu.take_interrupt_acknowledge() {
+                    // the CTC answers with its vector when it is the one asking
+                    let vector = cards.interrupt();
+                    self.cpu.set_interrupt_vector(vector);
+                    if vector.is_some() {
+                        if let Some(playcity) = &mut cards.playcity {
+                            playcity.ctc.acknowledge();
+                        }
+                    }
+                }
+                if self.cpu.take_reti() {
+                    if let Some(playcity) = &mut cards.playcity {
+                        playcity.ctc.return_from_interrupt();
+                    }
+                }
+            }
             if let Some(tape) = &mut self.tape {
                 // the cassette motor relay is port C's bit 4, the head's level port B's bit 7
                 tape.advance_us(self.ppi.get_pin(PpiPin::C4));
@@ -710,6 +770,9 @@ impl Motherboard {
                 self.log_bus(BusAccessKind::IoWrite, addr, byte);
                 if let Some(writes) = &mut self.io_writes {
                     writes.push((addr, byte));
+                }
+                if let Some(cards) = &mut self.cards {
+                    cards.write(addr, byte);
                 }
                 if !self.disc_interface {
                     // Nothing on the disc ports.
@@ -1006,6 +1069,13 @@ impl Motherboard {
                 &mut self.cpu,
                 &[Z80Pin::Neg_CLK, Z80Pin::Neg_INT],
             );
+        }
+        // /INT is wired-or: a sound card's CTC pulls it too
+        if let Some(cards) = &self.cards {
+            let line = self.ga.get_pin(GateArrayPin::INTERRUPT) && cards.interrupt().is_none();
+            self.cpu.set_pin(Z80Pin::Neg_INT, line);
+        }
+        if ga_changed {
             sync_pins(
                 &self.ga,
                 &[GateArrayPin::CCLK],
@@ -1021,6 +1091,11 @@ impl Motherboard {
             if vsync && !self.ppi.get_pin(PpiPin::B0) && self.psg.logs_frames() {
                 // a frame begins: the sound export's tick
                 self.psg.log_frame();
+                if let Some(playcity) = self.cards.as_mut().and_then(|cards| cards.playcity.as_mut()) {
+                    for ay in playcity.ays_mut() {
+                        ay.log_frame();
+                    }
+                }
             }
             self.ppi.set_pin(PpiPin::B0, vsync);
             sync_pins(
@@ -1694,6 +1769,8 @@ impl Motherboard {
             self.fdc.read_status()
         } else if self.disc_interface && Self::is_fdc_data_addr(addr) {
             self.fdc.read_data()
+        } else if let Some(value) = self.cards.as_ref().and_then(|cards| cards.read(addr)) {
+            value
         } else {
             self.floating_bus
         }

@@ -202,9 +202,20 @@ impl AudioOutput {
         }
     }
 
-    /// Integrate one microsecond of `levels`.
-    fn push_microsecond(&mut self, levels: [f32; 3]) {
-        let frame = self.mix(levels);
+    /// Integrate one microsecond of `levels`, the AY's, plus `extra` (left, right), the sound
+    /// cards' already mixed, the AY taking `gain` of the whole.
+    fn push_microsecond(&mut self, levels: [f32; 3], extra: [f32; 2], gain: f32) {
+        let mut frame = self.mix(levels);
+        if gain != 1.0 || extra != [0.0; 2] {
+            let gain = f64::from(gain);
+            if self.config.stereo {
+                frame = [frame[0] * gain + f64::from(extra[0]), frame[1] * gain + f64::from(extra[1])];
+            }
+            else {
+                let extra = f64::from(extra[0] + extra[1]) / 2.0;
+                frame = [frame[0] * gain + extra, frame[1] * gain + extra];
+            }
+        }
         let rate = self.config.sample_rate;
         self.phase += rate;
         if self.phase < PSG_CLOCK_HZ {
@@ -247,7 +258,11 @@ pub struct Psg {
     levels: [f32; 3],
     audio: Option<AudioOutput>,
     /// The registers once per frame, when logged (a YM export).
-    frame_log: Option<FrameLog>
+    frame_log: Option<FrameLog>,
+    /// The sound cards' sound for the coming microsecond (left, right), mixed with the AY's.
+    extra: [f32; 2],
+    /// The AY's share of the mix: 1 alone, less when sound cards add theirs.
+    gain: f32
 }
 
 /// The registers frame by frame, as a YM file keeps them.
@@ -271,7 +286,9 @@ impl Default for Psg {
             prescaler: 0,
             levels: [0.0; 3],
             audio: None,
-            frame_log: None
+            frame_log: None,
+            extra: [0.0; 2],
+            gain: 1.0
         };
         // The datasheet's reset clears every register; the crate's own
         // reset sets R7 to 0x3F instead. Keep the chip in line with
@@ -289,9 +306,18 @@ impl Psg {
     pub fn reset(&mut self) {
         let audio = self.audio.take();
         let frame_log = self.frame_log.take();
+        let gain = self.gain;
         *self = Self::default();
         self.audio = audio;
         self.frame_log = frame_log;
+        self.gain = gain;
+    }
+
+    /// The sound cards' sound for the next microsecond (left, right), and the AY's share of the
+    /// mix.
+    pub fn set_extra_sound(&mut self, extra: [f32; 2], gain: f32) {
+        self.extra = extra;
+        self.gain = gain;
     }
 
     /// Keep (`true`) or not the registers once per frame, for [`Self::take_logged_frames`].
@@ -407,7 +433,7 @@ impl Psg {
             self.step();
         }
         if let Some(audio) = &mut self.audio {
-            audio.push_microsecond(self.levels);
+            audio.push_microsecond(self.levels, self.extra, self.gain);
         }
     }
 
