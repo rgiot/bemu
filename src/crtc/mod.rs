@@ -615,6 +615,7 @@ impl Crtc {
             // ACCC 16.4.1: the line counter of a VSYNC begun mid-line starts at the next C0=0
             core.vsync_skips_first_line_end = chip.vsync_counts_from_next_line() && core.hcc > 0;
             core.vsync_running = true;
+            core.fields = core.fields.wrapping_add(1);
             // the HSYNC window runs up to the character where the HSYNC ends
             let ghost = chip.ghost_vsync_during_hsync() && core.regs[2] != 0 && (core.hsync() || hsync_before);
             core.set_pin(CrtcPin::VS, !ghost);
@@ -754,6 +755,30 @@ impl Crtc {
             hsync: self.hsync(),
             vsync: self.vsync(),
             in_vertical_adjust: self.in_vertical_adjust
+        }
+    }
+
+    /// The CURSOR output (on the CPC, only on the expansion port: the PlayCity counts it): in
+    /// the displayed area, MA on R14:R15 and RA within R10..R11, as R10's bits 6-5 make it blink
+    /// (00 steady, 01 off, 10 every 16 fields, 11 every 32). The skew of R8 is not applied.
+    pub fn cursor(&self) -> bool {
+        if !self.get_pin(CrtcPin::DE) {
+            return false;
+        }
+        let core = &self.core;
+        let address = u16::from(core.regs[14] & 0x3f) << 8 | u16::from(core.regs[15]);
+        if core.crtc_vma & 0x3fff != address {
+            return false;
+        }
+        let ra = self.chip.c9_vma(core);
+        if ra < core.regs[10] & 0x1f || ra > core.regs[11] & 0x1f {
+            return false;
+        }
+        match core.regs[10] >> 5 & 3 {
+            0 => true,
+            1 => false,
+            2 => core.fields & 8 != 0,
+            _ => core.fields & 16 != 0
         }
     }
 

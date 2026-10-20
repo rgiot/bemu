@@ -7,7 +7,7 @@ use amsrust::motherboard::{CpcModel, MotherboardBuilder};
 use amsrust::ppi::Brand;
 use serde::Deserialize;
 
-/// `{ model, crtc, gateArray, ramKb, discInterface, language, brand, display, curvature, blackLevel }`, each optional:
+/// `{ model, crtc, gateArray, ramKb, discInterface, playcity, digiblaster, language, brand, display, curvature, blackLevel }`, each optional:
 /// a 6128 with its own disc interface, CRTC 0, Gate Array 40010, raw display by default.
 #[derive(Deserialize, Default, Clone, Debug)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
@@ -22,6 +22,10 @@ pub struct Config {
     pub ram_kb: Option<usize>,
     /// A disc interface fitted (a DDI-1 on a 464) or removed; the model's own if unset.
     pub disc_interface: Option<bool>,
+    /// A PlayCity plugged (two more AYs and a CTC).
+    pub playcity: Option<bool>,
+    /// A Digiblaster plugged (a DAC on the printer port).
+    pub digiblaster: Option<bool>,
     /// "en" (the default) or "fr": the French 6128's ROMs, AZERTY keyboard.
     pub language: Option<String>,
     /// The name of the boot banner: "amstrad", "schneider", "awa", "orion", "saisho", "solavox",
@@ -75,6 +79,12 @@ impl Config {
         }
         if let Some(brand) = &self.brand {
             builder.set_brand(brand_of(brand)?);
+        }
+        if self.playcity == Some(true) {
+            builder.plug_playcity();
+        }
+        if self.digiblaster == Some(true) {
+            builder.plug_digiblaster();
         }
         match self.language.as_deref() {
             None | Some("en") => {},
