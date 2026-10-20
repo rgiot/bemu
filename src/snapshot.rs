@@ -316,7 +316,7 @@ pub struct SnapshotBreakpoint {
     pub chunk: &'static str
 }
 
-/// The breakpoints a snapshot carries.
+/// The breakpoints a snapshot carries, and its symbols.
 #[derive(Debug, Default)]
 pub struct SnapshotBreakpoints {
     /// Execution breakpoints on an address (banks and ROM numbers ignored).
@@ -325,7 +325,9 @@ pub struct SnapshotBreakpoints {
     /// masks, sizes, values, stop or watch (see [`crate::breakpoints`]).
     pub advanced: Vec<AdvancedBreakpoint>,
     /// What was found but is not supported, described.
-    pub ignored: Vec<String>
+    pub ignored: Vec<String>,
+    /// The labels of the `SYMB` chunk and of the REMU chunk's `label`/`alias` entries.
+    pub symbols: crate::symbols::SymbolTable
 }
 
 impl SnapshotBreakpoints {
@@ -357,7 +359,8 @@ fn breakpoints_of_snapshot(snapshot: &Snapshot) -> SnapshotBreakpoints {
 }
 
 fn breakpoints_of_chunk(code: &str, data: &[u8], breakpoints: &mut SnapshotBreakpoints) {
-    let SnapshotBreakpoints { exec, advanced, ignored } = breakpoints;
+    breakpoints.symbols.add_snapshot_chunk(code, data);
+    let SnapshotBreakpoints { exec, advanced, ignored, .. } = breakpoints;
     match code {
         "REMU" => remu_breakpoints(data, exec, advanced, ignored),
         "BRKC" => ace_breakpoints(data, exec, ignored),
@@ -622,6 +625,25 @@ mod breakpoint_test {
         chunk.add_entry(&RemuEntry::new_rom_breakpoint(0xc006, 7));
         assert_eq!(parse("REMU", chunk.data()), (vec![0x4000, 0xc006], 0));
         assert_eq!(parse("REMU", b"brk #8000 0;brk &10 0;watch 1;"), (vec![0x8000, 0x10], 1));
+    }
+
+    #[test]
+    fn symbols_written_by_cpclib() {
+        let mut remu = RemuChunk::empty();
+        remu.add_entry(&RemuEntry::new_label("start".to_owned(), 0x4000, 0));
+        remu.add_entry(&RemuEntry::new_alias("SCREEN".to_owned(), 0xc000));
+        let mut symb = AceSymbolChunk::empty();
+        symb.add_symbol(AceSymbol::new("loop", 0x4010, AceMemMapType::Undefined, AceSymbolType::Absolute));
+        symb.add_symbol(AceSymbol::new("data", 0x8000, AceMemMapType::Undefined, AceSymbolType::Absolute));
+        let mut breakpoints = SnapshotBreakpoints::default();
+        breakpoints_of_chunk("REMU", remu.data(), &mut breakpoints);
+        breakpoints_of_chunk("SYMB", symb.data(), &mut breakpoints);
+        let symbols = &breakpoints.symbols;
+        assert_eq!(symbols.address_of("start"), Some(0x4000));
+        assert_eq!(symbols.address_of("SCREEN"), Some(0xc000));
+        assert_eq!(symbols.address_of("loop"), Some(0x4010));
+        assert_eq!(symbols.address_of("data"), Some(0x8000));
+        assert!(breakpoints.ignored.is_empty() && breakpoints.is_empty(), "labels are not breakpoints");
     }
 
     #[test]

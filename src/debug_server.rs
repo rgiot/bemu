@@ -153,7 +153,8 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/exec", methods: &["POST"], summary: "set PC", extension: false },
     Route { path: "/api/step", methods: &["POST"], summary: "execute one instruction and pause", extension: false },
     Route { path: "/api/config", methods: &["GET", "POST"], summary: "pause/resume, soft/hard reset", extension: false },
-    Route { path: "/api/z80_bp", methods: &["POST"], summary: "replace the PC breakpoints: CPU addresses or Bnn:hhhh, comma-separated", extension: false },
+    Route { path: "/api/z80_bp", methods: &["POST"], summary: "replace the PC breakpoints: CPU addresses, symbols (label, label+n) or Bnn:hhhh, comma-separated", extension: false },
+    Route { path: "/api/symbols", methods: &["GET"], summary: "the symbols (snapshot SYMB/REMU labels, --sym files), by address", extension: true },
     Route { path: "/api/keytype", methods: &["POST"], summary: "type text on the CPC keyboard (\\r = RETURN)", extension: false },
     Route { path: "/api/events", methods: &["GET"], summary: "Server-Sent Events: frame, z80_bp, pause, reset, watch (?topics=)", extension: false },
     Route { path: "/api/breakpoints", methods: &["GET", "POST", "DELETE"], summary: "advanced breakpoints: list, add (JSON or REMU acebreak text), remove (?index=)", extension: true },
@@ -337,7 +338,9 @@ pub struct DebugServer {
     basic_breakpoints: std::collections::BTreeSet<u16>,
     /// A BASIC step (until the next statement or line) or run-to.
     basic_target: Option<BasicTarget>,
-    pending_basic: Option<PendingBasic>
+    pending_basic: Option<PendingBasic>,
+    /// Names of addresses, for the breakpoints and the history.
+    symbols: crate::symbols::SymbolTable
 }
 
 /// AMSpiriT's default depth of `GET /api/history`.
@@ -452,7 +455,8 @@ impl DebugServer {
             counted_t_states: 0,
             basic_breakpoints: Default::default(),
             basic_target: None,
-            pending_basic: None
+            pending_basic: None,
+            symbols: Default::default()
         }
     }
 
@@ -771,6 +775,7 @@ impl DebugServer {
             ("POST", "/api/config") => self.config(request, motherboard),
             ("POST", "/api/z80_bp") => self.set_breakpoints(request, motherboard),
             ("GET", "/api/breakpoints") => Ok(ApiResponse::ok(self.list_breakpoints())),
+            ("GET", "/api/symbols") => Ok(ApiResponse::ok(self.list_symbols())),
             ("POST", "/api/breakpoints") => self.add_breakpoint(request, motherboard),
             ("DELETE", "/api/breakpoints") => self.remove_breakpoints(request, motherboard),
             // Answered by the HTTP thread (see `serve`): only reached
@@ -1265,8 +1270,14 @@ impl DebugServer {
                 _ => {
                     let address = parse_int(entry)
                         .filter(|v| (0..=0xffff).contains(v))
-                        .ok_or_else(|| ApiError::new(format!("{entry}: expected a CPU address (decimal or 0x hex, 0-65535) or Bnn:hhhh")))?;
-                    motherboard.physical_address(address as u16)
+                        .map(|v| v as u16)
+                        .or_else(|| self.symbols.resolve(entry))
+                        .ok_or_else(|| {
+                            ApiError::new(format!(
+                                "{entry}: expected a CPU address (decimal or 0x hex, 0-65535), a symbol (label, label+n) or Bnn:hhhh"
+                            ))
+                        })?;
+                    motherboard.physical_address(address)
                 }
             };
             resolved.push(json!({ "entry": entry, "location": location_name(location) }));
@@ -1327,6 +1338,16 @@ impl DebugServer {
         motherboard.watch_bus(self.watches_bus());
     }
 
+    /// Names for addresses (a snapshot's labels, symbol files), added to those known.
+    pub fn add_symbols(&mut self, symbols: &crate::symbols::SymbolTable) {
+        self.symbols.extend(symbols);
+    }
+
+    /// `GET /api/symbols` (extension): `[{name, address}]`, by address.
+    fn list_symbols(&self) -> Value {
+        json!(self.symbols.iter().map(|(name, address)| json!({ "name": name, "address": address })).collect::<Vec<_>>())
+    }
+
     /// An execution breakpoint on a CPU address, resolved now.
     pub fn add_exec_breakpoint(&mut self, address: u16, motherboard: &Motherboard) {
         self.exec_breakpoints.insert(motherboard.physical_address(address));
@@ -1346,7 +1367,11 @@ impl DebugServer {
             .iter()
             .skip(self.history.len().saturating_sub(n))
             .map(|&(pc, bytes)| {
-                json!({ "pc": pc, "hex": hex(bytes), "current_hex": hex(instruction_bytes(motherboard, pc)) })
+                let mut entry = json!({ "pc": pc, "hex": hex(bytes), "current_hex": hex(instruction_bytes(motherboard, pc)) });
+                if let Some(label) = self.symbols.describe(pc) {
+                    entry["label"] = json!(label);
+                }
+                entry
             })
             .collect();
         Ok(ApiResponse::ok(json!(entries)))
@@ -1438,7 +1463,7 @@ impl DebugServer {
     /// its name (`.bin`/`.amsdos`): with an AMSDOS header it loads at the
     /// header's address, headerless it needs `name@LOAD[@ENTRY].bin` (hex).
     /// The CPU jumps only to an `@ENTRY` given in the name; the reply gives
-    /// the header's entry otherwise. A snapshot's breakpoints are set.
+    /// the header's entry otherwise. A snapshot's breakpoints and symbols are set.
     /// `crtc` is accepted for compatibility: the CRTC is always kept.
     fn media(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let bytes = &request.body;
@@ -1466,8 +1491,10 @@ impl DebugServer {
             for brk in &breakpoints.advanced {
                 self.add_advanced_breakpoint(brk.clone(), motherboard);
             }
+            self.add_symbols(&breakpoints.symbols);
             reply["media"] = json!("sna");
             reply["breakpoints"] = json!(breakpoints.len());
+            reply["symbols"] = json!(breakpoints.symbols.len());
             if !breakpoints.ignored.is_empty() {
                 reply["warnings"] = json!(breakpoints.ignored);
             }
@@ -2999,6 +3026,42 @@ mod test {
         assert_eq!((status, reply["media"].clone(), reply["breakpoints"].clone()), (200, json!("sna"), json!(1)));
         assert_eq!(mb.pc(), 0x1234);
         assert_eq!(call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["z80_bp"], json!(["B01:0000"]));
+    }
+
+    #[test]
+    fn a_snapshot_names_the_breakpoints_and_the_history() {
+        use cpclib::sna::*;
+        let (mut server, mut mb) = (server(), machine());
+        let mut snapshot = Snapshot::default();
+        let mut remu = RemuChunk::empty();
+        remu.add_entry(&RemuEntry::new_label("main".to_owned(), 0x4000, 0));
+        snapshot.add_chunk(remu);
+        let mut symb = AceSymbolChunk::empty();
+        symb.add_symbol(AceSymbol::new("loop", 0x4002, AceMemMapType::Undefined, AceSymbolType::Absolute));
+        snapshot.add_chunk(symb);
+        let mut bytes = Vec::new();
+        snapshot.write_all(&mut bytes, SnapshotVersion::V3).unwrap();
+        let (status, reply) = upload(&mut server, &mut mb, "name=labels.sna", &bytes);
+        assert_eq!((status, reply["symbols"].clone()), (200, json!(2)));
+        assert_eq!(
+            call(&mut server, &mut mb, "GET", "/api/symbols", "").1,
+            json!([{ "name": "main", "address": 0x4000 }, { "name": "loop", "address": 0x4002 }])
+        );
+
+        // nop : nop : loop: jr loop
+        mb.write_buffer(0x4000, &[0x00, 0x00, 0x18, 0xfe]);
+        mb.cpu_mut().set_pc(0x4000);
+        let (status, reply) = call(&mut server, &mut mb, "POST", "/api/z80_bp", "loop, main+1");
+        assert_eq!(status, 200, "{reply}");
+        assert_eq!(call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["z80_bp"], json!(["B01:0001", "B01:0002"]));
+        assert_eq!(call(&mut server, &mut mb, "POST", "/api/z80_bp", "nowhere").0, 400);
+
+        call(&mut server, &mut mb, "POST", "/api/z80_bp", "");
+        server.after_instruction(&mut mb);
+        run(&mut server, &mut mb, 3);
+        let history = call(&mut server, &mut mb, "GET", "/api/history", "").1;
+        let labels: Vec<Value> = history.as_array().unwrap().iter().map(|entry| entry["label"].clone()).collect();
+        assert_eq!(labels, vec![json!("main"), json!("main+1"), json!("loop")]);
     }
 
     #[test]

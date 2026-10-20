@@ -15,6 +15,7 @@ pub mod overlay;
 pub mod snapshot;
 pub mod expansion_port;
 pub mod sound_cards;
+pub mod symbols;
 pub mod sound_export;
 pub mod tape;
 pub mod z80;
