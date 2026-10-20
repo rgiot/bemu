@@ -161,6 +161,15 @@ fn main() {
             eprintln!("snapshot breakpoint not supported: {what}");
         }
     }
+    for path in &args.symbols {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let (symbols, ignored) = amsrust::symbols::SymbolTable::parse_file(&text);
+        for line in ignored.iter().take(5) {
+            eprintln!("{path}: not a symbol: {line}");
+        }
+        eprintln!("{path}: {} symbol(s)", symbols.len());
+        breakpoints.symbols.extend(&symbols);
+    }
     let monitor_mode =
         args.screenshot_dir.is_none() && !args.window && args.record.is_none() && !args.debug_server;
     if !breakpoints.is_empty() && !monitor_mode && !args.debug_server {
@@ -195,6 +204,7 @@ fn main() {
         None => {
             let mut handle = |_motherboard: &mut amsrust::motherboard::Motherboard| false;
             let mut ctx = MonitorContext::new(Box::new(&mut handle));
+            ctx.add_symbols(&breakpoints.symbols);
             for breakpoint in &breakpoints.exec {
                 eprintln!("breakpoint at {:#06x} (from the snapshot's {} chunk)", breakpoint.address, breakpoint.chunk);
                 ctx.add_breakpoint(amsrust::debug::BreakPoint::Address(breakpoint.address));
@@ -689,6 +699,7 @@ fn start_debug_server(
     match DebugServer::start(args.debug_port) {
         Ok(mut server) => {
             eprintln!("debug server: http://127.0.0.1:{}/api/doc", args.debug_port);
+            server.add_symbols(&breakpoints.symbols);
             for breakpoint in &breakpoints.exec {
                 server.add_exec_breakpoint(breakpoint.address, motherboard);
             }

@@ -165,10 +165,11 @@ pub(super) const OPERATIONS: &[Operation] = &[
     op("POST", "/api/z80_bp", "Replace the execution breakpoints.", "{ok, cmd_seq, resolved: [{entry, location}], warnings?}")
         .raw_body(
             "text/plain",
-            "comma-separated: CPU addresses (resolved against the current mapping to the RAM bank or ROM they reach) or \
-             Bnn:hhhh (hex bank, hex offset); empty clears"
+            "comma-separated: CPU addresses or symbols (label, label+n: the snapshot's and --sym files' labels), resolved \
+             against the current mapping to the RAM bank or ROM they reach, or Bnn:hhhh (hex bank, hex offset); empty clears"
         )
         .example("", "0x4000, B01:0010"),
+    op("GET", "/api/symbols", "The symbols known: the loaded snapshot's (SYMB chunk, REMU labels) and the --sym files'.", "[{name, address}], by address"),
     op("GET", "/api/breakpoints", "The execution and advanced breakpoints.", "{z80_bp: [location], advanced: [{index, kind, access, run, addr, mask, size, value, valmask, name, condition, counters, after, hits}]}"),
     op("POST", "/api/breakpoints", "Add an advanced breakpoint (memory, IO or execution; stop, watch or count).", "{ok, index, cmd_seq}")
         .params(&[
@@ -211,7 +212,7 @@ pub(super) const OPERATIONS: &[Operation] = &[
     .params(&[q("topics", "string", "comma-separated event names to receive (default all)")])
     .returns("text/event-stream"),
     op("POST", "/api/quit", "Leave the emulator.", OK),
-    op("GET", "/api/history", "The last instructions run, oldest first.", "[{pc, hex, current_hex}]: hex as fetched, current_hex as in memory now")
+    op("GET", "/api/history", "The last instructions run, oldest first.", "[{pc, hex, current_hex, label?}]: hex as fetched, current_hex as in memory now, label the symbol it is at (label or label+n)")
         .params(&[q("n", "integer", "the last n only, 1 to 100000")])
         .example("n=8", ""),
     op(
