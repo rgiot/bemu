@@ -131,6 +131,11 @@ fn main() {
         builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
     }
     let mut motherboard = builder.build();
+    for (slot, path) in &args.roms {
+        let data = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));
+        eprintln!("{path}: upper ROM {slot}");
+    }
     if (args.dsk_a.is_some() || args.dsk_b.is_some()) && !motherboard.has_disc_interface() {
         eprintln!("--dsk: this {} has no disc interface (--ddi adds one)", args.model.name());
     }

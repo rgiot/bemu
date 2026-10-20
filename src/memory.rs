@@ -527,6 +527,30 @@ impl Memory {
         self.upper_roms[0] = Some(basic);
     }
 
+    /// Fit `data` as upper ROM `slot` (a 16K ROM; an AMSDOS header before it is skipped, a
+    /// shorter one is padded with &FF), or nothing there with `None`.
+    pub fn set_upper_rom(&mut self, slot: u8, data: Option<&[u8]>) -> Result<(), String> {
+        let rom = match data {
+            None => None,
+            Some(data) => {
+                let data = match data.len() {
+                    0x4080 => &data[0x80..],
+                    len if len > 0x4000 => return Err(format!("a ROM is 16K at most, not {len} bytes")),
+                    _ => data
+                };
+                let mut bank = [0xffu8; 0x4000];
+                bank[..data.len()].copy_from_slice(data);
+                Some(Rom(Bank(bank)))
+            }
+        };
+        let slot = usize::from(slot);
+        if self.upper_roms.len() <= slot {
+            self.upper_roms.resize_with(slot + 1, || None);
+        }
+        self.upper_roms[slot] = rom;
+        Ok(())
+    }
+
     /// Fit AMSDOS as upper ROM 7 (a disc interface), or nothing there.
     pub fn set_amsdos(&mut self, fitted: bool) {
         self.upper_roms[7] = fitted.then(Rom::amsdos);
