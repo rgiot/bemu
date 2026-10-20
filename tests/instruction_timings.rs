@@ -3,7 +3,7 @@
 #![feature(exclusive_range_pattern)]
 #![feature(half_open_range_patterns)]
 
-use amsrust::{motherboard::MotherboardBuilder, z80::{HasValue, Reg16}};
+use amsrust::{motherboard::MotherboardBuilder, z80::{cpc_bus_timing, HasValue, Reg16}};
 
 /// (min, max) expected durations; None when not covered by the checks
 fn expected(prefix: u8, op: u8) -> Option<(u8, u8)> {
@@ -133,4 +133,44 @@ fn every_opcode_lasts_what_the_accc_table_says() {
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// The Gate Array /WAIT model (ACCC 4.4.2: /WAIT inactive one T-state per microsecond, sampled on
+/// T2 of fetches and memory cycles and TW* of I/O cycles) gives every opcode its ACCC duration.
+#[test]
+fn the_wait_model_gives_the_accc_durations() {
+    let mut bad = vec![];
+    for prefix in [0x00u8, 0xcb, 0xed, 0xdd, 0xfd, 0xdc, 0xfc] {
+        for op in 0..=255u8 {
+            if matches!(prefix, 0x00 | 0xdd | 0xfd) && matches!(op, 0xcb | 0xed | 0xdd | 0xfd) {
+                continue;
+            }
+            let exp = match prefix {
+                0xdc | 0xfc => Some(if op >> 6 == 1 { (6, 6) } else { (7, 7) }),
+                p => expected(p, op),
+            };
+            if let Some((lo, hi)) = exp {
+                let short = cpc_bus_timing(prefix, op, false, false).microseconds() as u8;
+                let repeats = prefix == 0xed && (0xb0..=0xbb).contains(&op);
+                let long = cpc_bus_timing(prefix, op, true, repeats).microseconds() as u8;
+                if short < lo || short > hi || long < lo || long > hi {
+                    bad.push(format!("prefix {prefix:02X} op {op:02X}: {short}/{long}, expected {lo}..{hi}"));
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// ACCC 4.4.4, diagram B: IORQ of an OUT (C),r goes active on T2 of its I/O cycle, the 2nd T-state
+/// of its 3rd microsecond; that of an OUTI right on the start of its 5th microsecond.
+#[test]
+fn the_wait_model_places_iorq_as_accc_diagram_b() {
+    let out_c = cpc_bus_timing(0xed, 0x61, false, false);
+    assert_eq!((out_c.iorq_t, out_c.microseconds()), (Some(2 * 4 + 1), 4));
+    let outi = cpc_bus_timing(0xed, 0xa3, false, false);
+    assert_eq!((outi.iorq_t, outi.microseconds()), (Some(4 * 4), 5));
+    // OUT (n),A (diagram A): 11 T-states, IORQ on the first T-state of its 3rd microsecond
+    let out_n = cpc_bus_timing(0x00, 0xd3, false, false);
+    assert_eq!((out_n.t_states, out_n.iorq_t), (11, Some(2 * 4)));
 }
