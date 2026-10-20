@@ -4,7 +4,7 @@ use std::fmt;
 /// Previous and current state to be able to compute the front and decrease
 
 #[derive(Default, Copy, Clone, PartialEq)]
-pub struct PinsBuffer(u64, u64);
+pub struct PinsBuffer(pub(crate) u64, pub(crate) u64);
 
 impl PinsBuffer {
     /// The current state of the pins, one bit per pin.

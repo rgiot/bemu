@@ -48,6 +48,8 @@ pub struct Core {
     pub(super) vsync_ended_on_r7: bool,
     /// The VSYNC runs (counted by C3h). The VS pin follows it, except for a ghost VSYNC (CRTC 2).
     pub(super) vsync_running: bool,
+    /// The VSYNCs begun, for the cursor's blinking.
+    pub(super) fields: u8,
 
     /// Number of line ends (C0 back to 0 through R0) since reset; for tests and tools
     pub line_ends: u64,
@@ -122,6 +124,7 @@ impl Default for Core {
             vsync_skips_first_line_end: false,
             vsync_ended_on_r7: false,
             vsync_running: false,
+            fields: 0,
             line_ends: 0,
             phase_ticks: 0,
             hsync_late_ticks: 0,

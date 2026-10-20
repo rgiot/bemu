@@ -121,6 +121,12 @@ fn main() {
     if let Some(fitted) = args.disc_interface {
         builder.set_disc_interface(fitted);
     }
+    if args.playcity {
+        builder.plug_playcity();
+    }
+    if args.digiblaster {
+        builder.plug_digiblaster();
+    }
     if args.french {
         builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
     }
@@ -231,6 +237,9 @@ fn start_sound_export(args: &Args, motherboard: &mut Motherboard) {
     }
     if args.record_ym.is_some() {
         motherboard.psg_mut().log_frames(true);
+        for (_, chip) in motherboard.expansion_sound_chips() {
+            chip.log_frames(true);
+        }
     }
     if args.record_wav.is_some() {
         if motherboard.psg().audio_config().is_none() {
@@ -304,6 +313,15 @@ fn finish_sound_export(motherboard: &mut Motherboard) {
         match std::fs::write(path, amsrust::sound_export::ym6(&frames, 50, &song)) {
             Ok(()) => eprintln!("{path}: {} frames of AY registers", frames.len()),
             Err(e) => eprintln!("{path}: {e}")
+        }
+        // the cards' AYs (a PlayCity's: file.right.ym and file.left.ym)
+        for (side, chip) in motherboard.expansion_sound_chips() {
+            let side_path = std::path::Path::new(path).with_extension(format!("{side}.ym"));
+            let frames = chip.take_logged_frames();
+            match std::fs::write(&side_path, amsrust::sound_export::ym6(&frames, 50, &format!("{song} {side}"))) {
+                Ok(()) => eprintln!("{}: the {side} AY of a card", side_path.display()),
+                Err(e) => eprintln!("{}: {e}", side_path.display())
+            }
         }
     }
 }

@@ -360,9 +360,6 @@ pub struct Z80 {
     /// The low byte of the IM 2 table entry, put on the bus by the device that interrupts (a
     /// Z80 CTC); none, the data bus floats at &FF as on a bare CPC.
     interrupt_vector: Option<u8>,
-    /// An interrupt acknowledge cycle (M1 with IORQ) happened since the last
-    /// [`Self::take_interrupt_acknowledge`].
-    interrupt_acknowledged: bool,
 
     /// Where the instruction being executed started, and what it is - to know
     /// where its last T-state falls (see `tstates`).
@@ -2271,9 +2268,13 @@ impl Z80 {
         self.interrupt_vector = vector;
     }
 
-    /// Whether an interrupt acknowledge cycle happened since the last call.
-    pub fn take_interrupt_acknowledge(&mut self) -> bool {
-        std::mem::take(&mut self.interrupt_acknowledged)
+    /// The level of the /NMI pin: its falling edge is latched, the NMI taken at the end of the
+    /// instruction.
+    pub fn set_nmi_line(&mut self, level: bool) {
+        if !level && self.get_pin(Z80Pin::Neg_NMI) {
+            self.nmi_pending = true;
+        }
+        self.set_pin(Z80Pin::Neg_NMI, level);
     }
 
     /// Handcraft a call to let the CPU jump in 0x38
@@ -2549,12 +2550,11 @@ impl Chip for Z80 {
                 }
                 
                 let request = self.m1_request_pin();
-                if request == Z80Pin::Neg_IORQ && self.next_state.is_interruption() {
-                    self.interrupt_acknowledged = true;
-                }
                 self.set_pin(request, false);
                 self.set_pin(Z80Pin::Neg_RD, false);
-                self.set_pin(Z80Pin::Neg_M1, false);
+                // the operand bytes are ordinary reads: /M1 stays high (Z80 peripherals, such as
+                // a CTC watching for RETI, tell the opcodes by it)
+                self.set_pin(Z80Pin::Neg_M1, !is_m1);
                 self.set_pin(Z80Pin::Neg_RFSH, true);
                 
                 self.next_state.inc_state();
@@ -3553,7 +3553,7 @@ mod test {
         assert_eq!(addr, pc_base + 1);
         assert_eq!(cpu.pc.get(), pc_base + 2);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), true, "the operand is an ordinary read: no /M1");
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
@@ -3573,7 +3573,7 @@ mod test {
             MCycle::FetchOpcode(TState::T2, 1, OpcodePrefix::None)
         );
         assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
+        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
         assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
