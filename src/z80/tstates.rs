@@ -10,14 +10,16 @@
 
 use super::states::OpcodePrefix;
 
-/// One piece of an instruction: a bus cycle (which the Gate Array aligns on a
-/// microsecond when it starts) or internal T-states.
+/// One piece of an instruction: an opcode fetch or memory cycle of n T-states (the Z80 samples
+/// /WAIT on its T2), an I/O cycle (T1, T2, TW*, T3: IORQ from T2, /WAIT sampled on TW*) or
+/// internal T-states.
 #[derive(Clone, Copy)]
 enum Cycle {
     Bus(u8),
+    Io,
     Internal(u8),
 }
-use Cycle::{Bus as B, Internal as I};
+use Cycle::{Bus as B, Internal as I, Io as IO};
 
 fn unprefixed(op: u8, taken: bool) -> Vec<Cycle> {
     let r = op & 7;
@@ -43,7 +45,7 @@ fn unprefixed(op: u8, taken: bool) -> Vec<Cycle> {
         0xc3 => vec![B(4), B(3), B(3)],
         0xcd => vec![B(4), B(3), B(3), I(1), B(3), B(3)],
         0xc5 | 0xd5 | 0xe5 | 0xf5 => vec![B(4), I(1), B(3), B(3)],
-        0xd3 | 0xdb => vec![B(4), B(3), B(4)],
+        0xd3 | 0xdb => vec![B(4), B(3), IO],
         0xe3 => vec![B(4), B(3), B(3), I(1), B(3), B(3), I(2)],
         0xf9 => vec![B(4), I(2)],
         _ if op >= 0xc0 && r == 2 => vec![B(4), B(3), B(3)],
@@ -67,7 +69,7 @@ fn ed(op: u8, repeat: bool) -> Vec<Cycle> {
     let r = op & 7;
     match op {
         0x40..=0x7f => match r {
-            0 | 1 => vec![B(4), B(4), B(4)],
+            0 | 1 => vec![B(4), B(4), IO],
             2 => vec![B(4), B(4), I(7)],
             3 => vec![B(4), B(4), B(3), B(3), B(3), B(3)],
             5 => vec![B(4), B(4), B(3), B(3)],
@@ -85,8 +87,15 @@ fn ed(op: u8, repeat: bool) -> Vec<Cycle> {
             if repeat { v.push(I(5)); }
             v
         }
-        0xa2 | 0xaa | 0xa3 | 0xab | 0xb2 | 0xba | 0xb3 | 0xbb => {
-            let mut v = vec![B(4), B(4), I(1), B(3), B(4)];
+        // INI/IND: the port is read, then the byte written to (HL)
+        0xa2 | 0xaa | 0xb2 | 0xba => {
+            let mut v = vec![B(4), B(4), I(1), IO, B(3)];
+            if repeat { v.push(I(5)); }
+            v
+        }
+        // OUTI/OUTD: (HL) is read, then written to the port
+        0xa3 | 0xab | 0xb3 | 0xbb => {
+            let mut v = vec![B(4), B(4), I(1), B(3), IO];
             if repeat { v.push(I(5)); }
             v
         }
@@ -133,25 +142,94 @@ fn indexed_cb(op: u8) -> Vec<Cycle> {
     }
 }
 
-/// T-states left idle at the end of the last microsecond of the instruction:
-/// 0 to 3. `taken` is for conditional branches, `repeat` for the block
-/// instructions that go round again.
-pub(crate) fn idle_tail(prefix: OpcodePrefix, op: u8, taken: bool, repeat: bool) -> u8 {
-    let cycles = match prefix {
+fn cycles(prefix: OpcodePrefix, op: u8, taken: bool, repeat: bool) -> Vec<Cycle> {
+    match prefix {
         OpcodePrefix::None => unprefixed(op, taken),
         OpcodePrefix::Cb => cb(op),
         OpcodePrefix::Ed => ed(op, repeat),
         OpcodePrefix::Dd | OpcodePrefix::Fd => indexed(op, taken, repeat),
         OpcodePrefix::DdCb | OpcodePrefix::FdCb => indexed_cb(op),
-    };
+    }
+}
+
+/// T-states left idle at the end of the last microsecond of the instruction:
+/// 0 to 3. `taken` is for conditional branches, `repeat` for the block
+/// instructions that go round again.
+pub(crate) fn idle_tail(prefix: OpcodePrefix, op: u8, taken: bool, repeat: bool) -> u8 {
+    // (INI/IND as OUTI/OUTD here, as this was calibrated with)
+    let op = if matches!(prefix, OpcodePrefix::Ed) && matches!(op, 0xa2 | 0xaa | 0xb2 | 0xba) { op | 1 } else { op };
     let mut offset = 0u32;
-    for c in cycles {
+    for c in cycles(prefix, op, taken, repeat) {
         match c {
             B(n) => offset = ((offset + 3) & !3) + u32::from(n),
+            IO => offset = ((offset + 3) & !3) + 4,
             I(n) => offset += u32::from(n),
         }
     }
     (((offset + 3) & !3) - offset) as u8
+}
+
+/// The T-state of each microsecond in which the Gate Array leaves /WAIT inactive (ACCC 4.4.2:
+/// "3 Tw followed by a no Tw cycle"; the opcode fetch of an aligned instruction samples it on
+/// its T2).
+pub const FREE_T_STATE: u32 = 1;
+
+/// An instruction run through the Gate Array's /WAIT, from an aligned start (T1 of its opcode
+/// fetch on the first T-state of a microsecond).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BusTiming {
+    /// T-states from the start to the end of the instruction's last T-state.
+    pub t_states: u32,
+    /// The T-state (from the start) on which IORQ goes active, for an I/O instruction.
+    pub iorq_t: Option<u32>,
+}
+
+impl BusTiming {
+    /// The microseconds it takes on a CPC (the next instruction is aligned again).
+    pub fn microseconds(&self) -> u32 {
+        (self.t_states + 3) / 4
+    }
+}
+
+/// ACCC 4.4.2: the Z80 samples /WAIT on T2 of an opcode fetch or a memory cycle and on TW* of
+/// an I/O cycle, and adds wait states while it is active; the Gate Array drives it for 3
+/// T-states out of 4.
+fn run_cycles(cycles: &[Cycle]) -> BusTiming {
+    let waits_from = |sample: u32| -> u32 {
+        let mut s = sample;
+        while s % 4 != FREE_T_STATE {
+            s += 1;
+        }
+        s - sample
+    };
+    let mut t = 0u32;
+    let mut iorq_t = None;
+    for c in cycles {
+        match *c {
+            B(n) => t += u32::from(n) + waits_from(t + 1),
+            IO => {
+                iorq_t = Some(t + 1);
+                t += 4 + waits_from(t + 2);
+            }
+            I(n) => t += u32::from(n),
+        }
+    }
+    BusTiming { t_states: t, iorq_t }
+}
+
+/// The CPC timing of an instruction (`prefix` as the first byte: 0, CB, ED, DD, FD; 0xDC/0xFC
+/// for DD CB/FD CB): its T-states once stretched by the Gate Array, and where its I/O falls.
+pub fn cpc_bus_timing(prefix: u8, op: u8, taken: bool, repeat: bool) -> BusTiming {
+    let prefix = match prefix {
+        0xcb => OpcodePrefix::Cb,
+        0xed => OpcodePrefix::Ed,
+        0xdd => OpcodePrefix::Dd,
+        0xfd => OpcodePrefix::Fd,
+        0xdc => OpcodePrefix::DdCb,
+        0xfc => OpcodePrefix::FdCb,
+        _ => OpcodePrefix::None,
+    };
+    run_cycles(&cycles(prefix, op, taken, repeat))
 }
 
 #[cfg(test)]
