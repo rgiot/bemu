@@ -131,6 +131,17 @@ fn main() {
         builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
     }
     let mut motherboard = builder.build();
+    if let Some(sd) = &args.m4 {
+        let board = match &args.m4_rom {
+            Some(path) => {
+                let rom = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+                amsrust::m4::M4Board::new(&rom, sd)
+            },
+            None => amsrust::m4::M4Board::with_bundled_rom(sd)
+        };
+        motherboard.plug_expansion(Box::new(board.unwrap_or_else(|e| panic!("--m4: {e}"))));
+        eprintln!("{sd}: the M4 board's SD card");
+    }
     for (slot, path) in &args.roms {
         let data = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
         motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));

@@ -530,6 +530,9 @@ impl Motherboard {
 
     /// The CPC's side of the expansion port's pins this tick, and the cards' answer.
     fn tick_expansion_port(&mut self) {
+        if self.expansion_port.is_none() {
+            return;
+        }
         // the gate array's /ROMEN and /RAMRD: a memory read, from a ROM or from the RAM
         let memory_read = !self.cpu.get_pin(Z80Pin::Neg_MREQ) && !self.cpu.get_pin(Z80Pin::Neg_RD);
         let address = self.cpu.get_address_from_pins();
