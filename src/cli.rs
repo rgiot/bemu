@@ -55,6 +55,12 @@ pub struct Args {
     pub record_wav: Option<String>,
     /// `--sym FILE` (repeatable): symbol files, for the debuggers.
     pub symbols: Vec<String>,
+    /// `--rom SLOT=FILE` (repeatable): upper ROMs.
+    pub roms: Vec<(u8, String)>,
+    /// `--m4 DIR`: an M4 board, its SD card the folder.
+    pub m4: Option<String>,
+    /// `--m4-rom FILE`: another ROM for the M4 than the bundled one.
+    pub m4_rom: Option<String>,
     /// `--save-sna path`: the machine's state saved there when the run ends.
     pub save_sna: Option<String>,
     pub debug_server: bool,
@@ -111,6 +117,9 @@ pub fn parse_args() -> Args {
         record_ym: None,
         record_wav: None,
         symbols: Vec::new(),
+        roms: Vec::new(),
+        m4: None,
+        m4_rom: None,
         save_sna: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
@@ -204,6 +213,16 @@ pub fn parse_args() -> Args {
             "--record-ym" => args.record_ym = Some(next("--record-ym")),
             "--record-wav" => args.record_wav = Some(next("--record-wav")),
             "--sym" => args.symbols.push(next("--sym")),
+            "--m4" => args.m4 = Some(next("--m4")),
+            "--m4-rom" => args.m4_rom = Some(next("--m4-rom")),
+            "--rom" => {
+                let value = next("--rom");
+                let rom = value
+                    .split_once('=')
+                    .and_then(|(slot, path)| Some((slot.trim().parse::<u8>().ok()?, path.to_owned())))
+                    .unwrap_or_else(|| panic!("--rom {value}: expected SLOT=FILE (slot 0-255)"));
+                args.roms.push(rom);
+            },
             "--watch" => args.watch = true,
             "--save-sna" => args.save_sna = Some(next("--save-sna")),
             "--overlay" => args.overlay = true,
@@ -237,7 +256,8 @@ fn print_help() {
         "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path] [--watch]\n",
         "        [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--record-ym file] [--record-wav file] [--type text [--type-at N]]\n",
-        "        [--debug-server [--debug-port N] [--debug-paused]] [--sym file]\n",
+        "        [--debug-server [--debug-port N] [--debug-paused]] [--sym file] [--rom slot=file]\n",
+        "        [--m4 dir [--m4-rom file]]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
@@ -249,6 +269,9 @@ fn print_help() {
         "more AYs, right and left, and a CTC whose channel 1 counts the CRTC's CURSOR to an\n",
         "NMI), --digiblaster\n",
         "a DAC on the printer port (a signed byte written to &EFxx).\n",
+        "--rom 6=file.rom fits a 16K upper ROM in a slot (0-255; repeatable).\n",
+        "--m4 DIR plugs an M4 board, the folder its SD card (its ROM v2.0.8 in slot 6; --m4-rom\n",
+        "another one): RUN\"file, CAT, |DIR, |CD... on the folder.\n",
         "--cdt puts a tape (CDT/TZX) in the cassette\n",
         "deck, PLAY down: it plays when the CPC starts the motor (RUN\" on a 464,\n",
         "|TAPE first on a 664/6128).\n",
