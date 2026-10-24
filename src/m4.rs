@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use crate::chip::Chip;
 use crate::expansion_port::{ExpansionDevice, ExpansionPin, ExpansionPort};
 
-/// The upper ROM slot of the M4's ROM.
+/// The upper ROM slot of the M4's ROM, unless told another (with UniDOS, above 16: 127).
 pub const M4_ROM_SLOT: u8 = 6;
 
 /// Where the response goes, in the ROM (&E800).
@@ -116,6 +116,8 @@ pub struct M4Board {
     rom: Box<[u8; 0x4000]>,
     /// The upper ROM the CPU selected (&DFxx).
     selected_rom: u8,
+    /// The slot of its ROM.
+    slot: u8,
     /// The command being received.
     command: Vec<u8>,
     /// The SD card.
@@ -147,6 +149,7 @@ impl M4Board {
         Ok(Self {
             rom: image,
             selected_rom: 0,
+            slot: M4_ROM_SLOT,
             command: Vec::new(),
             root,
             cwd: Vec::new(),
@@ -160,6 +163,12 @@ impl M4Board {
     /// The board with the M4 ROM v2.0.8, `sd` its SD card.
     pub fn with_bundled_rom(sd: impl Into<PathBuf>) -> Result<Self, String> {
         Self::new(include_bytes!("../roms/m4rom.rom"), sd)
+    }
+
+    /// Its ROM in slot `slot` instead.
+    pub fn in_slot(mut self, slot: u8) -> Self {
+        self.slot = slot;
+        self
     }
 
     /// The ROM as the board has written it.
@@ -180,6 +189,9 @@ impl M4Board {
         }
         let command = u16::from_le_bytes([packet[1], packet[2]]);
         let params = &packet[3..];
+        if std::env::var_os("BEMU_M4_TRACE").is_some() {
+            eprintln!("M4 {command:04X} {:02X?}", &params[..params.len().min(32)]);
+        }
         let payload = match command {
             C_OPEN => self.open(params),
             C_READ => self.read(params),
@@ -206,7 +218,9 @@ impl M4Board {
                 Vec::new()
             },
             C_READDIR => self.read_dir(params),
-            C_FREE => b"SD card: a host folder\0".to_vec(),
+            // the UniDOS node reads the number after the first two characters (a host folder
+            // has no size of its own: 1 GB free)
+            C_FREE => b"\r\n1048576K free\0".to_vec(),
             C_GETPATH => nul_terminated(&self.path()),
             C_CD => vec![if self.change_dir(&string(params)) { 0 } else { 0xff }],
             C_ERASEFILE => self.status(self.host_path(&string(params)).and_then(|path| {
@@ -376,6 +390,10 @@ impl M4Board {
         }
         if path.parent().is_some_and(|parent| !parent.is_dir()) {
             return vec![fd, FR_NO_PATH];
+        }
+        if path.is_dir() {
+            // FatFs opens files only
+            return vec![fd, FR_NO_FILE];
         }
         let mut options = OpenOptions::new();
         options.read(true).write(writing);
@@ -572,13 +590,13 @@ impl M4Board {
             payload.extend(nul_terminated(&format!("{}K", entry.size.div_ceil(1024))));
             return payload;
         }
+        let short = short_name(&entry.name);
+        let (base, extension) = short.split_once('.').unwrap_or((&short, ""));
         if entry.directory {
-            let mut payload = format!(">{}", short_name(&entry.name)).into_bytes();
+            let mut payload = format!(">{short}").into_bytes();
             payload.resize(20, 0);
             return payload;
         }
-        let short = short_name(&entry.name);
-        let (base, extension) = short.split_once('.').unwrap_or((&short, ""));
         let kb = entry.size.div_ceil(1024).min(999) as u16;
         let mut payload = format!("{base:<8}.{extension:<3} {kb:>3}K").into_bytes();
         if entry.read_only {
@@ -597,9 +615,10 @@ impl ExpansionDevice for M4Board {
                 // the upper ROM select, which the board decodes too
                 self.selected_rom = value;
             }
-            match address >> 8 {
-                0xfe => self.command.push(value),
-                0xfc => {
+            // &FE00 and &FC00 (A7 low: &FE80 and above are other cards', the Albireo's, the Nova's)
+            match address & 0xff80 {
+                0xfe00 => self.command.push(value),
+                0xfc00 => {
                     let packet = std::mem::take(&mut self.command);
                     self.execute(&packet);
                 },
@@ -608,7 +627,7 @@ impl ExpansionDevice for M4Board {
         }
         // its ROM, in place of the CPC's
         let address = port.address();
-        if !port.get_pin(ExpansionPin::Neg_ROMEN) && address >= 0xc000 && self.selected_rom == M4_ROM_SLOT {
+        if !port.get_pin(ExpansionPin::Neg_ROMEN) && address >= 0xc000 && self.selected_rom == self.slot {
             port.assert(ExpansionPin::ROMDIS);
             port.drive_data(self.rom[usize::from(address & 0x3fff)]);
         }

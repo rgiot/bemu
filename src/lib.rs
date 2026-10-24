@@ -17,6 +17,7 @@ pub mod expansion_port;
 pub mod sound_cards;
 pub mod ch376;
 pub mod m4;
+pub mod nova;
 pub mod symbols;
 pub mod sound_export;
 pub mod tape;

@@ -302,6 +302,19 @@ impl ExpansionPort {
         (self.pins.1 & low == 0 && self.get_pin(ExpansionPin::Neg_M1)).then(|| self.address())
     }
 
+    /// The CPU begins a memory write this tick: the address and the byte.
+    pub fn memory_write_started(&self) -> Option<(u16, u8)> {
+        let low = ExpansionPin::Neg_MREQ as u64 | ExpansionPin::Neg_WR as u64;
+        let writing = |pins: u64| pins & low == 0;
+        (writing(self.pins.1) && !writing(self.pins.0)).then(|| (self.address(), self.data()))
+    }
+
+    /// A memory read (an opcode fetch included): its address.
+    pub fn memory_read(&self) -> Option<u16> {
+        let low = ExpansionPin::Neg_MREQ as u64 | ExpansionPin::Neg_RD as u64;
+        (self.pins.1 & low == 0).then(|| self.address())
+    }
+
     /// The CPU begins an IN this tick (a device answering it reads its register once).
     pub fn io_read_started(&self) -> bool {
         let low = ExpansionPin::Neg_IORQ as u64 | ExpansionPin::Neg_RD as u64;

@@ -6,11 +6,15 @@
 //! bytes at a time), as its datasheet describes. Here the file mode goes through the `fatfs`
 //! crate, on the image's FAT volume (the first partition when the image has a partition table),
 //! the raw sectors straight to the image: both are coherent, the file system being mounted
-//! afresh for each operation.
+//! afresh for each operation. A host folder can stand for the key too (its files under 8.3
+//! names, no raw sectors).
+//!
+//! `BEMU_CH376_TRACE=1` prints the commands and their parameters as they come.
 
 use std::any::Any;
 use std::collections::VecDeque;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 
 use crate::expansion_port::{ExpansionDevice, ExpansionPort};
 
@@ -21,6 +25,7 @@ impl<T: Read + Write + Seek + Send> Storage for T {}
 const CMD_GET_IC_VER: u8 = 0x01;
 const CMD_RESET_ALL: u8 = 0x05;
 const CMD_CHECK_EXIST: u8 = 0x06;
+const CMD_READ_VAR8: u8 = 0x0a;
 const CMD_SET_RETRY: u8 = 0x0b;
 const CMD_GET_FILE_SIZE: u8 = 0x0c;
 const CMD_SET_USB_MODE: u8 = 0x15;
@@ -93,9 +98,10 @@ struct OpenEntry {
 
 /// The CH376.
 pub struct Ch376 {
-    storage: Option<Box<dyn Storage>>,
-    /// Where the FAT volume starts in the image.
-    volume_offset: u64,
+    /// The USB key plugged.
+    volume: Option<Box<dyn Volume>>,
+    /// SET_USB_MODE's: the key answers in USB host mode (5-7), not as an SD card (3).
+    mode: u8,
     command: u8,
     /// The parameters written since the command.
     input: Vec<u8>,
@@ -117,11 +123,11 @@ pub struct Ch376 {
 }
 
 impl Ch376 {
-    /// The chip with `storage` as its USB key (none: no key plugged).
-    pub fn new(storage: Option<Box<dyn Storage>>) -> Self {
+    /// The chip with `volume` as its USB key (none: no key plugged).
+    pub fn new(volume: Option<Box<dyn Volume>>) -> Self {
         let mut chip = Self {
-            storage: None,
-            volume_offset: 0,
+            volume: None,
+            mode: 0,
             command: 0,
             input: Vec::new(),
             output: VecDeque::new(),
@@ -135,18 +141,18 @@ impl Ch376 {
             enumeration: None,
             transfer: Transfer::None
         };
-        chip.plug(storage);
+        chip.plug(volume);
         chip
     }
 
     /// Plug a USB key (or unplug it).
-    pub fn plug(&mut self, storage: Option<Box<dyn Storage>>) {
-        self.storage = storage;
-        self.volume_offset = self.storage.as_mut().map_or(0, |storage| volume_offset(storage.as_mut()));
+    pub fn plug(&mut self, volume: Option<Box<dyn Volume>>) {
+        self.volume = volume;
         self.reset();
     }
 
     pub fn reset(&mut self) {
+        self.mode = 0;
         self.command = 0;
         self.input.clear();
         self.output.clear();
@@ -201,16 +207,14 @@ impl Ch376 {
     /// Run the command once its parameters are in.
     fn parameters_complete(&mut self) {
         let input = self.input.clone();
+        if std::env::var_os("BEMU_CH376_TRACE").is_some() {
+            eprintln!("CH376 {:02X} {:02X?} name={:?} int={:?}", self.command, input, self.file_name, self.interrupt);
+        }
         let needs = |n: usize| input.len() == n;
         match self.command {
             CMD_GET_IC_VER if needs(0) => self.give(&[IC_VERSION]),
-            CMD_RESET_ALL if needs(0) => {
-                let storage = self.storage.take();
-                let offset = self.volume_offset;
-                self.reset();
-                self.storage = storage;
-                self.volume_offset = offset;
-            },
+            CMD_RESET_ALL if needs(0) => self.reset(),
+            CMD_READ_VAR8 if needs(1) => self.give(&[0]),
             CMD_CHECK_EXIST if needs(1) => self.give(&[!input[0]]),
             CMD_SET_RETRY if needs(2) => {},
             CMD_GET_FILE_SIZE if needs(1) => {
@@ -218,8 +222,9 @@ impl Ch376 {
                 self.give(&size.to_le_bytes());
             },
             CMD_SET_USB_MODE if needs(1) => {
+                self.mode = input[0];
                 self.give(&[CMD_RET_SUCCESS]);
-                if matches!(input[0], 6 | 7) && self.storage.is_some() {
+                if matches!(input[0], 6 | 7) && self.volume.is_some() {
                     self.raise(USB_INT_CONNECT);
                 }
             },
@@ -254,14 +259,18 @@ impl Ch376 {
             },
             CMD_SET_FILE_NAME if input.last() == Some(&0) || input.len() > 14 => {
                 let end = input.iter().position(|&b| b == 0).unwrap_or(input.len());
-                self.file_name = String::from_utf8_lossy(&input[..end]).into_owned();
+                // 8.3 names may come padded, as a directory entry holds them ("NAME    .EXT")
+                self.file_name = String::from_utf8_lossy(&input[..end]).replace(' ', "");
             },
             CMD_DISK_CONNECT | CMD_DISK_MOUNT if needs(0) => {
-                if self.storage.is_some() && (self.command == CMD_DISK_CONNECT || self.with_fs(|_| Ok(())).is_ok()) {
+                let usb = matches!(self.mode, 5..=7);
+                let command = self.command;
+                let mounted = usb && self.volume.as_mut().is_some_and(|volume| command == CMD_DISK_CONNECT || volume.query().is_ok());
+                if mounted {
                     if self.command == CMD_DISK_MOUNT {
                         // the key's INQUIRY data
                         let mut inquiry = vec![0, 0x80, 2, 2, 31, 0, 0, 0];
-                        inquiry.extend_from_slice(b"bemu    USB image       1.00");
+        inquiry.extend_from_slice(b"bemu    USB key         1.00");
                         self.buffer = inquiry;
                     }
                     self.raise(USB_INT_SUCCESS);
@@ -315,32 +324,22 @@ impl Ch376 {
                     self.raise(USB_INT_SUCCESS);
                 }
             },
-            CMD_DISK_CAPACITY if needs(0) => {
-                let sectors = self.image_sectors();
-                self.buffer = (sectors as u32).to_le_bytes().to_vec();
-                self.raise(USB_INT_SUCCESS);
+            CMD_DISK_CAPACITY if needs(0) => match self.volume.as_mut().map(|volume| volume.capacity()) {
+                Some(sectors) => {
+                    self.buffer = (sectors as u32).to_le_bytes().to_vec();
+                    self.raise(USB_INT_SUCCESS);
+                },
+                None => self.raise(USB_INT_DISK_ERR)
             },
-            CMD_DISK_QUERY if needs(0) => {
-                let query = self.with_fs(|fs| {
-                    let stats = fs.stats()?;
-                    let per_cluster = stats.cluster_size() / 512;
-                    let kind = match fs.fat_type() {
-                        fatfs::FatType::Fat12 => 0x01,
-                        fatfs::FatType::Fat16 => 0x06,
-                        fatfs::FatType::Fat32 => 0x0c
-                    };
-                    let mut query = (stats.total_clusters() * per_cluster).to_le_bytes().to_vec();
-                    query.extend_from_slice(&(stats.free_clusters() * per_cluster).to_le_bytes());
+            CMD_DISK_QUERY if needs(0) => match self.volume.as_mut().map(|volume| volume.query()) {
+                Some(Ok((total, free, kind))) => {
+                    let mut query = total.to_le_bytes().to_vec();
+                    query.extend_from_slice(&free.to_le_bytes());
                     query.push(kind);
-                    Ok(query)
-                });
-                match query {
-                    Ok(query) => {
-                        self.buffer = query;
-                        self.raise(USB_INT_SUCCESS);
-                    },
-                    Err(_) => self.raise(USB_INT_DISK_ERR)
-                }
+                    self.buffer = query;
+                    self.raise(USB_INT_SUCCESS);
+                },
+                _ => self.raise(USB_INT_DISK_ERR)
             },
             CMD_DIR_CREATE if needs(0) => self.dir_create(),
             CMD_DISK_READ | CMD_DISK_WRITE if needs(5) => {
@@ -354,17 +353,8 @@ impl Ch376 {
         }
     }
 
-    /// The FAT volume: `f` with it mounted.
-    fn with_fs<R>(&mut self, f: impl FnOnce(&fatfs::FileSystem<&mut Partition>) -> io::Result<R>) -> io::Result<R> {
-        let storage = self.storage.as_mut().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no USB key"))?;
-        let mut partition = Partition { storage: storage.as_mut(), offset: self.volume_offset };
-        partition.seek(SeekFrom::Start(0))?;
-        let fs = fatfs::FileSystem::new(&mut partition, fatfs::FsOptions::new())?;
-        f(&fs)
-    }
-
-    fn image_sectors(&mut self) -> u64 {
-        self.storage.as_mut().and_then(|storage| storage.seek(SeekFrom::End(0)).ok()).unwrap_or(0) / SECTOR
+    fn volume(&mut self) -> io::Result<&mut Box<dyn Volume>> {
+        self.volume.as_mut().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no USB key"))
     }
 
     /// `name` (CH376: `/` from the root, else from the directory open) as a path.
@@ -385,25 +375,9 @@ impl Ch376 {
     /// What `path` is: a directory, a file and its size, or nothing.
     fn lookup(&mut self, path: &[String]) -> Option<(bool, u64)> {
         if path.is_empty() {
-            return Some((true, 0));
+            return self.volume.is_some().then_some((true, 0));
         }
-        let joined = path.join("/");
-        self.with_fs(|fs| {
-            let root = fs.root_dir();
-            let (parent, name) = match joined.rsplit_once('/') {
-                Some((parent, name)) => (root.open_dir(parent)?, name.to_owned()),
-                None => (root, joined.clone())
-            };
-            for entry in parent.iter() {
-                let entry = entry?;
-                if entry.short_file_name().eq_ignore_ascii_case(&name) || entry.file_name().eq_ignore_ascii_case(&name) {
-                    return Ok(Some((entry.is_dir(), entry.len())));
-                }
-            }
-            Ok(None)
-        })
-        .ok()
-        .flatten()
+        self.volume.as_mut()?.lookup(path)
     }
 
     fn file_open(&mut self) {
@@ -455,16 +429,7 @@ impl Ch376 {
 
     /// The directory entries of `path`, as the CH376 gives them (32 bytes, FAT's).
     fn entries(&mut self, path: &[String]) -> io::Result<Vec<[u8; 32]>> {
-        let joined = path.join("/");
-        self.with_fs(|fs| {
-            let directory = if joined.is_empty() { fs.root_dir() } else { fs.root_dir().open_dir(&joined)? };
-            let mut entries = Vec::new();
-            for entry in directory.iter() {
-                let entry = entry?;
-                entries.push(dir_entry_bytes(&entry));
-            }
-            Ok(entries)
-        })
+        self.volume()?.entries(path)
     }
 
     fn open_size(&mut self) -> Option<u64> {
@@ -480,7 +445,7 @@ impl Ch376 {
             entry_name(entry).eq_ignore_ascii_case(&name) || entry_name(entry).trim_end_matches('.').eq_ignore_ascii_case(&name)
         })
         .or_else(|| {
-            // a long name: fatfs's own lookup
+            // a long name: the volume's own lookup
             self.lookup(&open.path).map(|(directory, size)| {
                 let mut entry = [0u8; 32];
                 entry[..11].copy_from_slice(&short_bytes(&name));
@@ -500,13 +465,9 @@ impl Ch376 {
             let mut new_name = [0u8; 32];
             new_name[..11].copy_from_slice(&self.buffer[..11]);
             let new_name = entry_name(&new_name);
-            let from = open.path.join("/");
-            let parent = open.path[..open.path.len() - 1].join("/");
-            let to = if parent.is_empty() { new_name.clone() } else { format!("{parent}/{new_name}") };
-            let renamed = self.with_fs(|fs| {
-                let root = fs.root_dir();
-                root.rename(&from, &root, &to)
-            });
+            let mut to = open.path.clone();
+            *to.last_mut().unwrap() = new_name.clone();
+            let renamed = self.volume().and_then(|volume| volume.rename(&open.path, &to));
             if renamed.is_err() {
                 return self.raise(USB_INT_DISK_ERR);
             }
@@ -519,11 +480,7 @@ impl Ch376 {
 
     fn file_create(&mut self) {
         let path = self.resolve(&self.file_name.clone());
-        let joined = path.join("/");
-        let created = self.with_fs(|fs| {
-            let mut file = fs.root_dir().create_file(&joined)?;
-            file.truncate()
-        });
+        let created = self.volume().and_then(|volume| volume.create(&path));
         match created {
             Ok(()) => {
                 self.open = Some(OpenEntry { path, directory: false, position: 0 });
@@ -541,8 +498,7 @@ impl Ch376 {
             }
         }
         else {
-            let joined = path.join("/");
-            if self.with_fs(|fs| fs.root_dir().create_dir(&joined).map(drop)).is_err() {
+            if self.volume().and_then(|volume| volume.create_dir(&path)).is_err() {
                 return self.raise(ERR_DISK_FULL);
             }
         }
@@ -557,8 +513,7 @@ impl Ch376 {
             Some(open) => open.path.clone(),
             None => self.resolve(&self.file_name.clone())
         };
-        let joined = path.join("/");
-        match self.with_fs(|fs| fs.root_dir().remove(&joined)) {
+        match self.volume().and_then(|volume| volume.remove(&path)) {
             Ok(()) => {
                 self.open = None;
                 self.raise(USB_INT_SUCCESS);
@@ -581,15 +536,7 @@ impl Ch376 {
             self.transfer = Transfer::None;
             return self.raise(USB_INT_SUCCESS);
         }
-        let joined = open.path.join("/");
-        let position = open.position;
-        let data = self.with_fs(|fs| {
-            let mut file = fs.root_dir().open_file(&joined)?;
-            file.seek(SeekFrom::Start(position))?;
-            let mut data = vec![0u8; count as usize];
-            file.read_exact(&mut data)?;
-            Ok(data)
-        });
+        let data = self.volume().and_then(|volume| volume.read(&open.path, open.position, count as usize));
         match data {
             Ok(data) => {
                 if let Some(open) = &mut self.open {
@@ -621,14 +568,7 @@ impl Ch376 {
         match self.transfer {
             Transfer::ByteWrite { left } => {
                 let Some(open) = self.open.clone() else { return };
-                let joined = open.path.join("/");
-                let position = open.position;
-                let written = self.with_fs(|fs| {
-                    let mut file = fs.root_dir().open_file(&joined)?;
-                    file.seek(SeekFrom::Start(position))?;
-                    file.write_all(&data)?;
-                    file.flush()
-                });
+                let written = self.volume().and_then(|volume| volume.write(&open.path, open.position, &data));
                 if written.is_ok() {
                     if let Some(open) = &mut self.open {
                         open.position += data.len() as u64;
@@ -637,7 +577,7 @@ impl Ch376 {
                 }
             },
             Transfer::Disk { lba, offset, write: true, .. } => {
-                if let Some(storage) = &mut self.storage {
+                if let Some(storage) = self.volume.as_mut().and_then(|volume| volume.sectors()) {
                     if storage.seek(SeekFrom::Start(lba * SECTOR + offset)).is_ok() {
                         let _ = storage.write_all(&data);
                     }
@@ -665,7 +605,7 @@ impl Ch376 {
         }
         if left == 0 {
             self.transfer = Transfer::None;
-            if let Some(storage) = &mut self.storage {
+            if let Some(storage) = self.volume.as_mut().and_then(|volume| volume.sectors()) {
                 let _ = storage.flush();
             }
             return self.raise(USB_INT_SUCCESS);
@@ -675,7 +615,7 @@ impl Ch376 {
             return self.raise(USB_INT_DISK_WRITE);
         }
         let mut data = vec![0u8; CHUNK];
-        let read = self.storage.as_mut().is_some_and(|storage| {
+        let read = self.volume.as_mut().and_then(|volume| volume.sectors()).is_some_and(|storage| {
             storage.seek(SeekFrom::Start(lba * SECTOR + offset)).is_ok() && storage.read_exact(&mut data).is_ok()
         });
         if read {
@@ -687,6 +627,319 @@ impl Ch376 {
             self.raise(USB_INT_DISK_ERR);
         }
     }
+}
+
+/// What the CH376 reads and writes: a FAT volume's files (paths from the root, names matched
+/// ignoring case, by their 8.3 or long name) and, for an image, its raw sectors.
+pub trait Volume: Send {
+    /// A directory, or a file and its size.
+    fn lookup(&mut self, path: &[String]) -> Option<(bool, u64)>;
+    /// The entries of a directory, as FAT stores them (32 bytes).
+    fn entries(&mut self, path: &[String]) -> io::Result<Vec<[u8; 32]>>;
+    fn read(&mut self, path: &[String], position: u64, count: usize) -> io::Result<Vec<u8>>;
+    fn write(&mut self, path: &[String], position: u64, data: &[u8]) -> io::Result<()>;
+    /// A new, empty file (an existing one emptied).
+    fn create(&mut self, path: &[String]) -> io::Result<()>;
+    fn create_dir(&mut self, path: &[String]) -> io::Result<()>;
+    fn remove(&mut self, path: &[String]) -> io::Result<()>;
+    fn rename(&mut self, from: &[String], to: &[String]) -> io::Result<()>;
+    /// Sectors in all, free, and the FAT type (1: FAT12, 6: FAT16, &0C: FAT32).
+    fn query(&mut self) -> io::Result<(u32, u32, u8)>;
+    /// The key's size, in sectors.
+    fn capacity(&mut self) -> u64;
+    /// The raw sectors (none for a folder).
+    fn sectors(&mut self) -> Option<&mut dyn Storage>;
+}
+
+/// A FAT image file: the file system through `fatfs`, mounted afresh for each operation (so
+/// coherent with the raw sectors).
+pub struct FatImage {
+    storage: Box<dyn Storage>,
+    /// Where the FAT volume starts in the image.
+    offset: u64
+}
+
+impl FatImage {
+    pub fn new(mut storage: Box<dyn Storage>) -> Self {
+        let offset = volume_offset(storage.as_mut());
+        Self { storage, offset }
+    }
+
+    fn with_fs<R>(&mut self, f: impl FnOnce(&fatfs::FileSystem<&mut Partition>) -> io::Result<R>) -> io::Result<R> {
+        let mut partition = Partition { storage: self.storage.as_mut(), offset: self.offset };
+        partition.seek(SeekFrom::Start(0))?;
+        let fs = fatfs::FileSystem::new(&mut partition, fatfs::FsOptions::new())?;
+        f(&fs)
+    }
+}
+
+impl Volume for FatImage {
+    fn lookup(&mut self, path: &[String]) -> Option<(bool, u64)> {
+        let joined = path.join("/");
+        self.with_fs(|fs| {
+            let root = fs.root_dir();
+            let (parent, name) = match joined.rsplit_once('/') {
+                Some((parent, name)) => (root.open_dir(parent)?, name.to_owned()),
+                None => (root, joined.clone())
+            };
+            for entry in parent.iter() {
+                let entry = entry?;
+                if entry.short_file_name().eq_ignore_ascii_case(&name) || entry.file_name().eq_ignore_ascii_case(&name) {
+                    return Ok(Some((entry.is_dir(), entry.len())));
+                }
+            }
+            Ok(None)
+        })
+        .ok()
+        .flatten()
+    }
+
+    fn entries(&mut self, path: &[String]) -> io::Result<Vec<[u8; 32]>> {
+        let joined = path.join("/");
+        self.with_fs(|fs| {
+            let directory = if joined.is_empty() { fs.root_dir() } else { fs.root_dir().open_dir(&joined)? };
+            let mut entries = Vec::new();
+            for entry in directory.iter() {
+                entries.push(dir_entry_bytes(&entry?));
+            }
+            Ok(entries)
+        })
+    }
+
+    fn read(&mut self, path: &[String], position: u64, count: usize) -> io::Result<Vec<u8>> {
+        let joined = path.join("/");
+        self.with_fs(|fs| {
+            let mut file = fs.root_dir().open_file(&joined)?;
+            file.seek(SeekFrom::Start(position))?;
+            let mut data = vec![0u8; count];
+            file.read_exact(&mut data)?;
+            Ok(data)
+        })
+    }
+
+    fn write(&mut self, path: &[String], position: u64, data: &[u8]) -> io::Result<()> {
+        let joined = path.join("/");
+        self.with_fs(|fs| {
+            let mut file = fs.root_dir().open_file(&joined)?;
+            file.seek(SeekFrom::Start(position))?;
+            file.write_all(data)?;
+            file.flush()
+        })
+    }
+
+    fn create(&mut self, path: &[String]) -> io::Result<()> {
+        let joined = path.join("/");
+        self.with_fs(|fs| fs.root_dir().create_file(&joined)?.truncate())
+    }
+
+    fn create_dir(&mut self, path: &[String]) -> io::Result<()> {
+        let joined = path.join("/");
+        self.with_fs(|fs| fs.root_dir().create_dir(&joined).map(drop))
+    }
+
+    fn remove(&mut self, path: &[String]) -> io::Result<()> {
+        let joined = path.join("/");
+        self.with_fs(|fs| fs.root_dir().remove(&joined))
+    }
+
+    fn rename(&mut self, from: &[String], to: &[String]) -> io::Result<()> {
+        let (from, to) = (from.join("/"), to.join("/"));
+        self.with_fs(|fs| {
+            let root = fs.root_dir();
+            root.rename(&from, &root, &to)
+        })
+    }
+
+    fn query(&mut self) -> io::Result<(u32, u32, u8)> {
+        self.with_fs(|fs| {
+            let stats = fs.stats()?;
+            let per_cluster = stats.cluster_size() / 512;
+            let kind = match fs.fat_type() {
+                fatfs::FatType::Fat12 => 0x01,
+                fatfs::FatType::Fat16 => 0x06,
+                fatfs::FatType::Fat32 => 0x0c
+            };
+            Ok((stats.total_clusters() * per_cluster, stats.free_clusters() * per_cluster, kind))
+        })
+    }
+
+    fn capacity(&mut self) -> u64 {
+        self.storage.seek(SeekFrom::End(0)).unwrap_or(0) / SECTOR
+    }
+
+    fn sectors(&mut self) -> Option<&mut dyn Storage> {
+        Some(self.storage.as_mut())
+    }
+}
+
+/// A folder of the host as the key's FAT volume: its files and folders under 8.3 names (upper
+/// case, the name and extension cut to 8 and 3 characters), dot files left out. No raw sectors.
+pub struct HostFolder {
+    root: PathBuf
+}
+
+/// What a folder reports as its size (a 2 GB key, half free).
+const FOLDER_SECTORS: u32 = 4 * 1024 * 1024;
+
+impl HostFolder {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    /// The host entries of a folder: (host name, its 8.3 name).
+    fn listing(directory: &Path) -> Vec<(std::ffi::OsString, String)> {
+        let mut names: Vec<_> = std::fs::read_dir(directory)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+                    .map(|entry| {
+                        let name = entry.file_name();
+                        let short = short_name(&name.to_string_lossy());
+                        (name, short)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort_by(|a, b| a.0.cmp(&b.0));
+        names
+    }
+
+    /// The host path of `path`, each part matched to its 8.3 or host name, ignoring case; the
+    /// last part as given when it does not exist (to create it).
+    fn host_path(&self, path: &[String]) -> io::Result<PathBuf> {
+        let mut host = self.root.clone();
+        for (index, part) in path.iter().enumerate() {
+            let found = Self::listing(&host).into_iter().find(|(name, short)| {
+                short.eq_ignore_ascii_case(part) || name.to_string_lossy().eq_ignore_ascii_case(part)
+            });
+            match found {
+                Some((name, _)) => host.push(name),
+                None if index + 1 == path.len() => host.push(part),
+                None => return Err(io::Error::new(io::ErrorKind::NotFound, part.clone()))
+            }
+        }
+        Ok(host)
+    }
+}
+
+impl Volume for HostFolder {
+    fn lookup(&mut self, path: &[String]) -> Option<(bool, u64)> {
+        let metadata = std::fs::metadata(self.host_path(path).ok()?).ok()?;
+        Some((metadata.is_dir(), metadata.len()))
+    }
+
+    fn entries(&mut self, path: &[String]) -> io::Result<Vec<[u8; 32]>> {
+        let directory = self.host_path(path)?;
+        let mut entries = Vec::new();
+        for (name, short) in Self::listing(&directory) {
+            let Ok(metadata) = std::fs::metadata(directory.join(&name)) else { continue };
+            let mut entry = [0u8; 32];
+            entry[..11].copy_from_slice(&short_bytes(&short));
+            entry[11] = match (metadata.is_dir(), metadata.permissions().readonly()) {
+                (true, _) => 0x10,
+                (false, true) => 0x21,
+                (false, false) => 0x20
+            };
+            if let Ok(modified) = metadata.modified() {
+                let (date, time) = fat_date_time(modified);
+                entry[22..24].copy_from_slice(&time.to_le_bytes());
+                entry[24..26].copy_from_slice(&date.to_le_bytes());
+            }
+            entry[28..32].copy_from_slice(&(metadata.len() as u32).to_le_bytes());
+            entries.push(entry);
+        }
+        Ok(entries)
+    }
+
+    fn read(&mut self, path: &[String], position: u64, count: usize) -> io::Result<Vec<u8>> {
+        let mut file = std::fs::File::open(self.host_path(path)?)?;
+        file.seek(SeekFrom::Start(position))?;
+        let mut data = vec![0u8; count];
+        file.read_exact(&mut data)?;
+        Ok(data)
+    }
+
+    fn write(&mut self, path: &[String], position: u64, data: &[u8]) -> io::Result<()> {
+        let mut file = std::fs::OpenOptions::new().write(true).open(self.host_path(path)?)?;
+        file.seek(SeekFrom::Start(position))?;
+        file.write_all(data)
+    }
+
+    fn create(&mut self, path: &[String]) -> io::Result<()> {
+        std::fs::File::create(self.host_path(path)?).map(drop)
+    }
+
+    fn create_dir(&mut self, path: &[String]) -> io::Result<()> {
+        std::fs::create_dir(self.host_path(path)?)
+    }
+
+    fn remove(&mut self, path: &[String]) -> io::Result<()> {
+        let host = self.host_path(path)?;
+        if host.is_dir() { std::fs::remove_dir(host) } else { std::fs::remove_file(host) }
+    }
+
+    fn rename(&mut self, from: &[String], to: &[String]) -> io::Result<()> {
+        std::fs::rename(self.host_path(from)?, self.host_path(to)?)
+    }
+
+    fn query(&mut self) -> io::Result<(u32, u32, u8)> {
+        if self.root.is_dir() {
+            Ok((FOLDER_SECTORS, FOLDER_SECTORS / 2, 0x0c))
+        }
+        else {
+            Err(io::Error::new(io::ErrorKind::NotFound, "no folder"))
+        }
+    }
+
+    fn capacity(&mut self) -> u64 {
+        FOLDER_SECTORS.into()
+    }
+
+    fn sectors(&mut self) -> Option<&mut dyn Storage> {
+        None
+    }
+}
+
+/// A host name as an 8.3 name: upper case, the name and extension cut to 8 and 3 characters,
+/// spaces and dots left out.
+fn short_name(name: &str) -> String {
+    let (base, extension) = match name.rsplit_once('.') {
+        Some((base, extension)) if !base.is_empty() => (base, extension),
+        _ => (name, "")
+    };
+    let clean = |text: &str, length: usize| -> String {
+        text.chars()
+            .filter(|c| c.is_ascii_graphic() && *c != '.')
+            .take(length)
+            .collect::<String>()
+            .to_ascii_uppercase()
+    };
+    let (base, extension) = (clean(base, 8), clean(extension, 3));
+    if extension.is_empty() { base } else { format!("{base}.{extension}") }
+}
+
+/// A modification time as FAT's date and time (UTC).
+fn fat_date_time(time: std::time::SystemTime) -> (u16, u16) {
+    let seconds = time.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let (days, of_day) = (seconds / 86_400, seconds % 86_400);
+    let (year, month, day) = civil_from_days(days as i64);
+    let date = ((year.clamp(1980, 2107) - 1980) as u16) << 9 | (month as u16) << 5 | day as u16;
+    let time = ((of_day / 3600) as u16) << 11 | ((of_day / 60 % 60) as u16) << 5 | (of_day % 60 / 2) as u16;
+    (date, time)
+}
+
+/// The civil date of a count of days since 1970-01-01 (Howard Hinnant's algorithm).
+pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + i64::from(month <= 2), month, day)
 }
 
 /// The FAT volume in an image: the whole of it, or its first FAT partition.
@@ -799,18 +1052,24 @@ pub struct Albireo {
 }
 
 impl Albireo {
-    pub fn new(storage: Option<Box<dyn Storage>>) -> Self {
-        Self { ch376: Ch376::new(storage), read_latch: 0 }
+    pub fn new(volume: Option<Box<dyn Volume>>) -> Self {
+        Self { ch376: Ch376::new(volume), read_latch: 0 }
     }
 
-    /// The board with an image file as its USB key.
-    pub fn with_image(path: &std::path::Path) -> Result<Self, String> {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok(Self::new(Some(Box::new(file))))
+    /// The board with `path` as its USB key: a folder of the host, or a FAT image file.
+    pub fn open(path: &Path) -> Result<Self, String> {
+        let volume: Box<dyn Volume> = if path.is_dir() {
+            Box::new(HostFolder::new(path))
+        }
+        else {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            Box::new(FatImage::new(Box::new(file)))
+        };
+        Ok(Self::new(Some(volume)))
     }
 }
 
@@ -871,7 +1130,7 @@ mod test {
     }
 
     fn chip(files: &[(&str, &[u8])]) -> Ch376 {
-        Ch376::new(Some(Box::new(image(1440 * 1024, files))))
+        Ch376::new(Some(Box::new(FatImage::new(Box::new(image(1440 * 1024, files))))))
     }
 
     /// A command and its parameters; the interrupt it raised, if any (cleared, as GET_STATUS
@@ -1017,7 +1276,7 @@ mod test {
     fn sectors_are_read_and_written_raw() {
         let disk = image(1440 * 1024, &[]);
         let boot = disk.get_ref()[..512].to_vec();
-        let mut chip = Ch376::new(Some(Box::new(disk)));
+        let mut chip = Ch376::new(Some(Box::new(FatImage::new(Box::new(disk)))));
         mount(&mut chip);
         let mut parameters = 0u32.to_le_bytes().to_vec();
         parameters.push(1);
@@ -1057,6 +1316,63 @@ mod test {
     }
 
     #[test]
+    fn a_host_folder_as_the_key() {
+        let root = std::env::temp_dir().join(format!("bemu-ch376-folder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("games")).unwrap();
+        std::fs::write(root.join("A Long Name.text"), b"long").unwrap();
+        std::fs::write(root.join("games/demo.bin"), vec![7u8; 100]).unwrap();
+        let mut chip = Ch376::new(Some(Box::new(HostFolder::new(&root))));
+        mount(&mut chip);
+
+        set_name(&mut chip, "/*");
+        let mut names = Vec::new();
+        let mut interrupt = command(&mut chip, CMD_FILE_OPEN, &[]);
+        while interrupt == Some(USB_INT_DISK_READ) {
+            let entry: [u8; 32] = read_buffer(&mut chip).try_into().unwrap();
+            names.push(entry_name(&entry));
+            interrupt = command(&mut chip, CMD_FILE_ENUM_GO, &[]);
+        }
+        assert_eq!(names, vec!["ALONGNAM.TEX".to_owned(), "GAMES".to_owned()]);
+
+        // 8.3 names reach the host's
+        set_name(&mut chip, "/GAMES/DEMO.BIN");
+        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(command(&mut chip, CMD_BYTE_READ, &3u16.to_le_bytes()), Some(USB_INT_DISK_READ));
+        assert_eq!(read_buffer(&mut chip), vec![7, 7, 7]);
+        command(&mut chip, CMD_FILE_CLOSE, &[0]);
+        set_name(&mut chip, "/ALONGNAM.TEX");
+        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
+        command(&mut chip, CMD_FILE_CLOSE, &[0]);
+
+        // a file written, then on the host
+        set_name(&mut chip, "/SAVE.BAS");
+        command(&mut chip, CMD_FILE_CREATE, &[]);
+        command(&mut chip, CMD_BYTE_WRITE, &2u16.to_le_bytes());
+        chip.write_command(CMD_WR_REQ_DATA);
+        assert_eq!(chip.read_data(), 2);
+        chip.write_data(b'O');
+        chip.write_data(b'K');
+        assert_eq!(command(&mut chip, CMD_BYTE_WR_GO, &[]), Some(USB_INT_SUCCESS));
+        command(&mut chip, CMD_FILE_CLOSE, &[1]);
+        assert_eq!(std::fs::read(root.join("SAVE.BAS")).unwrap(), b"OK");
+
+        // no raw sectors
+        let mut parameters = 0u32.to_le_bytes().to_vec();
+        parameters.push(1);
+        assert_eq!(command(&mut chip, CMD_DISK_READ, &parameters), Some(USB_INT_DISK_ERR));
+    }
+
+    #[test]
+    fn the_sd_mode_has_no_card() {
+        let mut chip = chip(&[]);
+        chip.write_command(CMD_SET_USB_MODE);
+        chip.write_data(3);
+        assert_eq!(chip.read_data(), CMD_RET_SUCCESS);
+        assert_eq!(command(&mut chip, CMD_DISK_MOUNT, &[]), Some(USB_INT_DISK_ERR));
+    }
+
+    #[test]
     fn a_partitioned_key() {
         // an MBR whose first partition (FAT16, type 6) starts at sector 64
         let volume = image(1440 * 1024, &[("INSIDE.TXT", b"hi")]).into_inner();
@@ -1066,7 +1382,7 @@ mod test {
         disk[510] = 0x55;
         disk[511] = 0xaa;
         disk.extend(volume);
-        let mut chip = Ch376::new(Some(Box::new(io::Cursor::new(disk))));
+        let mut chip = Ch376::new(Some(Box::new(FatImage::new(Box::new(io::Cursor::new(disk))))));
         mount(&mut chip);
         set_name(&mut chip, "/INSIDE.TXT");
         assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
