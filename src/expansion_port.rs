@@ -302,6 +302,13 @@ impl ExpansionPort {
         (self.pins.1 & low == 0 && self.get_pin(ExpansionPin::Neg_M1)).then(|| self.address())
     }
 
+    /// The CPU begins an IN this tick (a device answering it reads its register once).
+    pub fn io_read_started(&self) -> bool {
+        let low = ExpansionPin::Neg_IORQ as u64 | ExpansionPin::Neg_RD as u64;
+        let reading = |pins: u64| pins & low == 0 && pins & ExpansionPin::Neg_M1 as u64 != 0;
+        reading(self.pins.1) && !reading(self.pins.0)
+    }
+
     /// An interrupt acknowledge (/M1 and /IORQ low).
     pub fn interrupt_acknowledge(&self) -> bool {
         !self.get_pin(ExpansionPin::Neg_M1) && !self.get_pin(ExpansionPin::Neg_IORQ)

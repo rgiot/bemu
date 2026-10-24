@@ -142,6 +142,14 @@ fn main() {
         motherboard.plug_expansion(Box::new(board.unwrap_or_else(|e| panic!("--m4: {e}"))));
         eprintln!("{sd}: the M4 board's SD card");
     }
+    if let Some(image) = &args.albireo {
+        if args.m4.is_some() {
+            panic!("--albireo and --m4: both decode &FExx, plug one");
+        }
+        let board = amsrust::ch376::Albireo::with_image(std::path::Path::new(image)).unwrap_or_else(|e| panic!("--albireo: {e}"));
+        motherboard.plug_expansion(Box::new(board));
+        eprintln!("{image}: the Albireo's USB key");
+    }
     for (slot, path) in &args.roms {
         let data = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
         motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));
