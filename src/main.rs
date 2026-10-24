@@ -139,8 +139,22 @@ fn main() {
             },
             None => amsrust::m4::M4Board::with_bundled_rom(sd)
         };
+        let board = board.map(|board| board.in_slot(args.m4_slot.unwrap_or(amsrust::m4::M4_ROM_SLOT)));
         motherboard.plug_expansion(Box::new(board.unwrap_or_else(|e| panic!("--m4: {e}"))));
         eprintln!("{sd}: the M4 board's SD card");
+    }
+    if let Some(image) = &args.albireo {
+        if args.m4.is_some() {
+            panic!("--albireo and --m4: both decode &FExx, plug one");
+        }
+        let board = amsrust::ch376::Albireo::open(std::path::Path::new(image)).unwrap_or_else(|e| panic!("--albireo: {e}"));
+        motherboard.plug_expansion(Box::new(board));
+        eprintln!("{image}: the Albireo's USB key");
+    }
+    if let Some(file) = &args.nova {
+        let nova = amsrust::nova::Nova::new(Some(file.into())).unwrap_or_else(|e| panic!("--nova: {e}"));
+        motherboard.plug_expansion(Box::new(nova));
+        eprintln!("{file}: the Nova's NVRAM");
     }
     for (slot, path) in &args.roms {
         let data = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));

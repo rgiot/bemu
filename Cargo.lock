@@ -126,6 +126,7 @@ dependencies = [
  "ctrlc",
  "delegate 0.5.1",
  "derive_more",
+ "fatfs",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "image 0.23.14",
@@ -1725,6 +1726,17 @@ name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
+
+[[package]]
+name = "fatfs"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05669f8e7e2d7badc545c513710f0eba09c2fbef683eb859fd79c46c355048e0"
+dependencies = [
+ "bitflags 1.2.1",
+ "byteorder",
+ "log",
+]
 
 [[package]]
 name = "fax"
