@@ -131,6 +131,36 @@ fn main() {
         builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
     }
     let mut motherboard = builder.build();
+    if let Some(sd) = &args.m4 {
+        let board = match &args.m4_rom {
+            Some(path) => {
+                let rom = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+                amsrust::m4::M4Board::new(&rom, sd)
+            },
+            None => amsrust::m4::M4Board::with_bundled_rom(sd)
+        };
+        let board = board.map(|board| board.in_slot(args.m4_slot.unwrap_or(amsrust::m4::M4_ROM_SLOT)));
+        motherboard.plug_expansion(Box::new(board.unwrap_or_else(|e| panic!("--m4: {e}"))));
+        eprintln!("{sd}: the M4 board's SD card");
+    }
+    if let Some(image) = &args.albireo {
+        if args.m4.is_some() {
+            panic!("--albireo and --m4: both decode &FExx, plug one");
+        }
+        let board = amsrust::ch376::Albireo::open(std::path::Path::new(image)).unwrap_or_else(|e| panic!("--albireo: {e}"));
+        motherboard.plug_expansion(Box::new(board));
+        eprintln!("{image}: the Albireo's USB key");
+    }
+    if let Some(file) = &args.nova {
+        let nova = amsrust::nova::Nova::new(Some(file.into())).unwrap_or_else(|e| panic!("--nova: {e}"));
+        motherboard.plug_expansion(Box::new(nova));
+        eprintln!("{file}: the Nova's NVRAM");
+    }
+    for (slot, path) in &args.roms {
+        let data = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));
+        eprintln!("{path}: upper ROM {slot}");
+    }
     if (args.dsk_a.is_some() || args.dsk_b.is_some()) && !motherboard.has_disc_interface() {
         eprintln!("--dsk: this {} has no disc interface (--ddi adds one)", args.model.name());
     }
@@ -160,6 +190,15 @@ fn main() {
         for what in &breakpoints.ignored {
             eprintln!("snapshot breakpoint not supported: {what}");
         }
+    }
+    for path in &args.symbols {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let (symbols, ignored) = amsrust::symbols::SymbolTable::parse_file(&text);
+        for line in ignored.iter().take(5) {
+            eprintln!("{path}: not a symbol: {line}");
+        }
+        eprintln!("{path}: {} symbol(s)", symbols.len());
+        breakpoints.symbols.extend(&symbols);
     }
     let monitor_mode =
         args.screenshot_dir.is_none() && !args.window && args.record.is_none() && !args.debug_server;
@@ -195,6 +234,7 @@ fn main() {
         None => {
             let mut handle = |_motherboard: &mut amsrust::motherboard::Motherboard| false;
             let mut ctx = MonitorContext::new(Box::new(&mut handle));
+            ctx.add_symbols(&breakpoints.symbols);
             for breakpoint in &breakpoints.exec {
                 eprintln!("breakpoint at {:#06x} (from the snapshot's {} chunk)", breakpoint.address, breakpoint.chunk);
                 ctx.add_breakpoint(amsrust::debug::BreakPoint::Address(breakpoint.address));
@@ -689,6 +729,7 @@ fn start_debug_server(
     match DebugServer::start(args.debug_port) {
         Ok(mut server) => {
             eprintln!("debug server: http://127.0.0.1:{}/api/doc", args.debug_port);
+            server.add_symbols(&breakpoints.symbols);
             for breakpoint in &breakpoints.exec {
                 server.add_exec_breakpoint(breakpoint.address, motherboard);
             }

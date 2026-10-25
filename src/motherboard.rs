@@ -534,10 +534,20 @@ impl Motherboard {
 
     /// The CPC's side of the expansion port's pins this tick, and the cards' answer.
     fn tick_expansion_port(&mut self) {
+        if self.expansion_port.is_none() {
+            return;
+        }
+        // the gate array's /ROMEN and /RAMRD: a memory read, from a ROM or from the RAM
+        let memory_read = !self.cpu.get_pin(Z80Pin::Neg_MREQ) && !self.cpu.get_pin(Z80Pin::Neg_RD);
+        let address = self.cpu.get_address_from_pins();
+        let rom = memory_read && {
+            let config = self.memory_config();
+            config.is_in_enabled_lower_rom(address) || config.is_in_enabled_upper_rom(address)
+        };
         let Some(port) = &mut self.expansion_port else { return };
         let cpu = &self.cpu;
         port.tick_with(CpcSide {
-            address: cpu.get_address_from_pins(),
+            address,
             data: cpu.get_data_from_pins(),
             mreq: cpu.get_pin(Z80Pin::Neg_MREQ),
             m1: cpu.get_pin(Z80Pin::Neg_M1),
@@ -547,8 +557,8 @@ impl Motherboard {
             wr: cpu.get_pin(Z80Pin::Neg_WR),
             halt: cpu.get_pin(Z80Pin::Neg_HALT),
             busak: cpu.get_pin(Z80Pin::Neg_BUSACK),
-            romen: self.ga.get_pin(GateArrayPin::ROMEN),
-            ramrd: self.ga.get_pin(GateArrayPin::RAMRD),
+            romen: !rom,
+            ramrd: !(memory_read && !rom),
             cursor: self.crtc.cursor(),
             clk4: cpu.get_pin(Z80Pin::Neg_CLK)
         });
@@ -876,7 +886,14 @@ impl Motherboard {
             unimplemented!();
         
         } else  if self.cpu_request_byte_read() {
-            let byte = self.read_byte(addr);
+            let mut byte = self.read_byte(addr);
+            if let Some(port) = &self.expansion_port {
+                // ROMDIS and RAMDIS take the CPC's ROM and RAM off the bus: a card's byte instead
+                let rom = !port.get_pin(ExpansionPin::Neg_ROMEN);
+                if (rom && port.get_pin(ExpansionPin::ROMDIS)) || (!rom && port.get_pin(ExpansionPin::RAMDIS)) {
+                    byte = port.driven_data().unwrap_or(self.floating_bus);
+                }
+            }
             if self.cpu.get_pin(Z80Pin::Neg_M1) {
                 self.log_bus(BusAccessKind::MemoryRead, addr, byte);
             }
@@ -1507,6 +1524,12 @@ impl Motherboard {
         self.ram_banking = model.has_ram_banking();
         self.set_disc_interface(model.has_disc_interface());
         self.pal.reset();
+    }
+
+    /// Fit `data` as upper ROM `slot` (`None` empties the slot: selecting it gives BASIC, as
+    /// on a CPC).
+    pub fn set_upper_rom(&mut self, slot: u8, data: Option<&[u8]>) -> Result<(), String> {
+        self.memory.set_upper_rom(slot, data)
     }
 
     /// Fit or remove a disc interface (a DDI-1 on a 464): AMSDOS as upper

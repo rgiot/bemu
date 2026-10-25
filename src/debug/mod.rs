@@ -246,7 +246,7 @@ impl Monitor {
         let mut previous : Option<String> = None;
         loop {
             ctx.execute_displays(motherboard);
-            println!("{}", motherboard.disassemble_next_instruction().to_string());
+            ctx.print_instruction(&motherboard.disassemble_next_instruction());
             let readline = rl.readline(">> ");
             match readline {
                 Ok(line) => {
@@ -265,7 +265,7 @@ impl Monitor {
                         line
                     };
                     
-                    let quit = match interpretor::parse_command(&line) {
+                    let quit = match interpretor::parse_command(&line, &ctx.symbols) {
                         Ok(cmd) => {
                             ctx.execute_command(motherboard, cmd)
                         }
@@ -305,6 +305,9 @@ pub struct MonitorContext<'f> {
     /// A dedicated code to handle BEFORE the execution of an instruction.
     /// The handler takes as input the motherboard and returns true if emulation need to be stopped
     preExec: Option<Box<&'f mut dyn Fn(&mut Motherboard) -> bool>>,
+
+    /// Names of addresses, for the commands and the disassembly.
+    symbols: crate::symbols::SymbolTable,
 }
 
 impl<'f> Default for MonitorContext<'f> {
@@ -312,7 +315,8 @@ impl<'f> Default for MonitorContext<'f> {
         MonitorContext {
             breakpoints: Default::default(),
             displays: Default::default(),
-            preExec: None
+            preExec: None,
+            symbols: Default::default()
         }
     }
 }
@@ -322,8 +326,41 @@ impl<'f> MonitorContext<'f> {
         Self {
             breakpoints: Default::default(),
             displays: Default::default(),
-            preExec: Some(handle)
+            preExec: Some(handle),
+            symbols: Default::default()
         }
+    }
+
+    /// Names for addresses (a snapshot's labels, symbol files), added to those known.
+    pub fn add_symbols(&mut self, symbols: &crate::symbols::SymbolTable) {
+        self.symbols.extend(symbols);
+    }
+
+    /// An instruction as the disassembly shows it: under its label, with the symbol its
+    /// address operand or jump target names.
+    pub fn format_instruction(&self, instruction: &DisassembledInstruction) -> String {
+        let mut text = String::new();
+        if let Some(label) = self.symbols.name_at(instruction.address) {
+            text.push_str(&format!("{label}:\n"));
+        }
+        text.push_str(&instruction.to_string());
+        if let Some(target) = instruction.target().and_then(|target| self.symbols.describe(target)) {
+            text.push_str(&format!(" ; {target}"));
+        }
+        text
+    }
+
+    fn describe_breakpoint(&self, breakpoint: &BreakPoint) -> String {
+        match breakpoint {
+            BreakPoint::Address(address) => match self.symbols.describe(*address) {
+                Some(label) => format!("{} ({label})", breakpoint.to_string()),
+                None => breakpoint.to_string()
+            }
+        }
+    }
+
+    pub fn print_instruction(&self, instruction: &DisassembledInstruction) {
+        println!("{}", self.format_instruction(instruction));
     }
 }
 pub enum MonitorError {
@@ -343,7 +380,7 @@ impl<'f> MonitorContext<'f> {
                 false
             }
             Command::Disassemble(addr) => {
-                Self::execute_disassemble(motherboard,  addr);
+                self.execute_disassemble(motherboard,  addr);
                 false
             },
             Command::Break(b) => {
@@ -385,7 +422,7 @@ impl<'f> MonitorContext<'f> {
             }
 
             if let Some(b) = self.has_some_breakpoint_fired(motherboard) {
-                println!("Breakpoint raised: {}", b.to_string());
+                println!("Breakpoint raised: {}", self.describe_breakpoint(b));
                 break;
             }
         }
@@ -436,7 +473,7 @@ impl<'f> MonitorContext<'f> {
         match info {
             InfoKind::BreakPoint => {
                self.breakpoints.iter()
-                .for_each(|b| println!("{}", b.to_string()));
+                .for_each(|b| println!("{}", self.describe_breakpoint(b)));
             },
             InfoKind::Crtc => {
                 Monitor::monitor_crtc(motherboard.crtc());
@@ -464,14 +501,14 @@ impl<'f> MonitorContext<'f> {
     }
 
     pub fn clear_breakpoint(&mut self, b: BreakPoint) {
-        self.breakpoints.retain(|b| b != b);
+        self.breakpoints.retain(|kept| *kept != b);
     }
 
-    pub fn execute_disassemble(motherboard: & Motherboard, addr: Option<u16>) {
+    pub fn execute_disassemble(&self, motherboard: & Motherboard, addr: Option<u16>) {
         let addr = addr.unwrap_or(motherboard.cpu().pc());
         let code = motherboard.disassemble_instructions_from(addr, 10);
         for inst in code {
-            println!("{}", inst.to_string());
+            self.print_instruction(&inst);
         }
     }
 
@@ -507,6 +544,48 @@ impl DisassembledInstruction {
     pub fn len(&self) -> usize {
         self.memory.len()
     }
+
+    /// The address the instruction names: a relative jump's target, or a 16-bit operand
+    /// (a jump, a call, a load from or to an address, a constant that may be one).
+    pub fn target(&self) -> Option<u16> {
+        let bytes = &self.memory;
+        match (bytes.len(), bytes.first()) {
+            (2, Some(0x10 | 0x18 | 0x20 | 0x28 | 0x30 | 0x38)) => {
+                Some(self.address.wrapping_add(2).wrapping_add(bytes[1] as i8 as u16))
+            },
+            (3, Some(&prefix)) if prefix != 0xdd && prefix != 0xfd && prefix != 0xcb => {
+                Some(u16::from_le_bytes([bytes[1], bytes[2]]))
+            },
+            // DD/FD/ED: the operand after the two opcode bytes
+            (4, Some(0xdd | 0xfd | 0xed)) if bytes[1] != 0xcb && bytes[1] != 0x36 => {
+                Some(u16::from_le_bytes([bytes[2], bytes[3]]))
+            },
+            _ => None
+        }
+    }
 }
 
+#[cfg(test)]
+mod test {
+    use super::*;
 
+    #[test]
+    fn the_disassembly_shows_the_labels() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().disable_lower_rom().build();
+        // start: call sub : jr start ; sub: ret
+        motherboard.write_buffer(0x4000, &[0xcd, 0x05, 0x40, 0x18, 0xfb, 0xc9]);
+        let mut symbols = crate::symbols::SymbolTable::default();
+        symbols.insert("start", 0x4000);
+        symbols.insert("sub", 0x4005);
+        let mut ctx = MonitorContext::default();
+        ctx.add_symbols(&symbols);
+        let lines: Vec<String> = motherboard
+            .disassemble_instructions_from(0x4000, 3)
+            .iter()
+            .map(|instruction| ctx.format_instruction(instruction))
+            .collect();
+        assert!(lines[0].starts_with("start:\n") && lines[0].ends_with("; sub"), "{}", lines[0]);
+        assert!(lines[1].ends_with("; start"), "{}", lines[1]);
+        assert!(lines[2].starts_with("sub:\n"), "{}", lines[2]);
+    }
+}

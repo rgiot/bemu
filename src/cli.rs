@@ -53,6 +53,20 @@ pub struct Args {
     pub record_ym: Option<String>,
     /// `--record-wav file`: the sound as a WAV file.
     pub record_wav: Option<String>,
+    /// `--sym FILE` (repeatable): symbol files, for the debuggers.
+    pub symbols: Vec<String>,
+    /// `--rom SLOT=FILE` (repeatable): upper ROMs.
+    pub roms: Vec<(u8, String)>,
+    /// `--m4 DIR`: an M4 board, its SD card the folder.
+    pub m4: Option<String>,
+    /// `--m4-rom FILE`: another ROM for the M4 than the bundled one.
+    pub m4_rom: Option<String>,
+    /// `--m4-slot N`: the slot of the M4's ROM (6 by default).
+    pub m4_slot: Option<u8>,
+    /// `--albireo PATH`: an Albireo, its USB key a folder or a FAT image.
+    pub albireo: Option<String>,
+    /// `--nova FILE`: a Nova, its NVRAM kept in the file.
+    pub nova: Option<String>,
     /// `--save-sna path`: the machine's state saved there when the run ends.
     pub save_sna: Option<String>,
     pub debug_server: bool,
@@ -108,6 +122,13 @@ pub fn parse_args() -> Args {
         record: None,
         record_ym: None,
         record_wav: None,
+        symbols: Vec::new(),
+        roms: Vec::new(),
+        m4: None,
+        m4_rom: None,
+        albireo: None,
+        m4_slot: None,
+        nova: None,
         save_sna: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
@@ -200,6 +221,22 @@ pub fn parse_args() -> Args {
             "--crt-gpu" => args.gpu = true,
             "--record-ym" => args.record_ym = Some(next("--record-ym")),
             "--record-wav" => args.record_wav = Some(next("--record-wav")),
+            "--sym" => args.symbols.push(next("--sym")),
+            "--m4" => args.m4 = Some(next("--m4")),
+            "--m4-rom" => args.m4_rom = Some(next("--m4-rom")),
+            "--albireo" => args.albireo = Some(next("--albireo")),
+            "--nova" => args.nova = Some(next("--nova")),
+            "--m4-slot" => {
+                args.m4_slot = Some(next("--m4-slot").parse().unwrap_or_else(|_| panic!("--m4-slot: a slot, 0-255")))
+            },
+            "--rom" => {
+                let value = next("--rom");
+                let rom = value
+                    .split_once('=')
+                    .and_then(|(slot, path)| Some((slot.trim().parse::<u8>().ok()?, path.to_owned())))
+                    .unwrap_or_else(|| panic!("--rom {value}: expected SLOT=FILE (slot 0-255)"));
+                args.roms.push(rom);
+            },
             "--watch" => args.watch = true,
             "--save-sna" => args.save_sna = Some(next("--save-sna")),
             "--overlay" => args.overlay = true,
@@ -233,7 +270,8 @@ fn print_help() {
         "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path] [--watch]\n",
         "        [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--record-ym file] [--record-wav file] [--type text [--type-at N]]\n",
-        "        [--debug-server [--debug-port N] [--debug-paused]]\n",
+        "        [--debug-server [--debug-port N] [--debug-paused]] [--sym file] [--rom slot=file]\n",
+        "        [--m4 dir [--m4-rom file] [--m4-slot N]] [--albireo dir|image] [--nova file]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
@@ -245,6 +283,13 @@ fn print_help() {
         "more AYs, right and left, and a CTC whose channel 1 counts the CRTC's CURSOR to an\n",
         "NMI), --digiblaster\n",
         "a DAC on the printer port (a signed byte written to &EFxx).\n",
+        "--rom 6=file.rom fits a 16K upper ROM in a slot (0-255; repeatable).\n",
+        "--m4 DIR plugs an M4 board, the folder its SD card (its ROM v2.0.8 in slot 6; --m4-rom\n",
+        "another one, --m4-slot another slot): RUN\"file, CAT, |DIR, |CD... on the folder.\n",
+        "--albireo DIR|image.img plugs an Albireo (a CH376 at &FE80), its USB key a folder or a\n",
+        "FAT image (whole, or partitioned). --nova nvram.bin plugs a Nova (32K NVRAM, a clock;\n",
+        "the NVRAM kept in the file). Their ROMs (UniDOS and its nodes) go in with --rom, e.g.\n",
+        "--rom 1=nova.rom --rom 7=unidos.rom --rom 15=amsdos.rom --rom 27=albireo.rom.\n",
         "--cdt puts a tape (CDT/TZX) in the cassette\n",
         "deck, PLAY down: it plays when the CPC starts the motor (RUN\" on a 464,\n",
         "|TAPE first on a 664/6128).\n",
@@ -271,7 +316,9 @@ fn print_help() {
         "(with --window or --debug-server), for an edit, assemble, see loop: a disc or tape goes\n",
         "in again, then the snapshot is loaded again; without a snapshot the machine is switched\n",
         "off and on and --type typed again. Breakpoints of a snapshot's REMU/BRKC/BRKS/WABP chunks are set\n",
-        "in the interactive monitor.\n",
+        "in the interactive monitor. Its symbols (SYMB chunk, REMU labels) name the addresses in\n",
+        "the monitor and the debug server, with those of --sym files (repeatable: name equ #4000,\n",
+        "name: equ 0x4000, name = $4000, name #4000, 4000 name).\n",
         "--display picks how the picture is rendered, in the window, the\n",
         "recording and the screenshots (raw: the monitor's ideal picture; ctm,\n",
         "trinitron, gt65, atari: CRT approximations). F9 cycles them in the\n",
