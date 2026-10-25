@@ -263,7 +263,7 @@ impl Ch376 {
                 self.file_name = String::from_utf8_lossy(&input[..end]).replace(' ', "");
             },
             CMD_DISK_CONNECT | CMD_DISK_MOUNT if needs(0) => {
-                let usb = matches!(self.mode, 5..=7);
+                let usb = matches!(self.mode, 3 | 5..=7); // 3: the SD card slot of the board (UniDOS's "SD:" device)
                 let command = self.command;
                 let mounted = usb && self.volume.as_mut().is_some_and(|volume| command == CMD_DISK_CONNECT || volume.query().is_ok());
                 if mounted {
