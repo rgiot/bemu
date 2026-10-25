@@ -186,6 +186,43 @@ fn main() {
         motherboard.plug_expansion(Box::new(nova));
         eprintln!("{file}: the Nova's NVRAM");
     }
+    #[cfg(not(feature = "booster"))]
+    if args.booster.is_some() {
+        without_feature("--booster", "booster");
+    }
+    #[cfg(feature = "booster")]
+    if let Some(board) = args.booster {
+        let model = if board == "miniboster" {
+            amsrust::booster::Model::MiniBooster
+        }
+        else {
+            amsrust::booster::Model::BoosterPlus
+        };
+        let mut booster = amsrust::booster::Booster::new(model);
+        if let Some(uart) = &args.booster_uart {
+            booster = booster.with_link(match uart.split_once(':') {
+                None if uart == "loopback" => Box::<amsrust::booster::Loopback>::default(),
+                Some(("listen", address)) => {
+                    Box::new(amsrust::booster::TcpLink::listen(address).unwrap_or_else(|e| panic!("--booster-uart {uart}: {e}")))
+                },
+                Some(("connect", address)) => {
+                    Box::new(amsrust::booster::TcpLink::connect(address).unwrap_or_else(|e| panic!("--booster-uart {uart}: {e}")))
+                },
+                _ => panic!("--booster-uart: loopback, listen:ADDRESS or connect:ADDRESS, not {uart:?}")
+            });
+        }
+        if let Some(file) = &args.booster_eeprom {
+            booster = booster.with_eeprom_file(file.into()).unwrap_or_else(|e| panic!("--booster-eeprom: {e}"));
+        }
+        if let Some(file) = &args.booster_flash {
+            booster = booster.with_flash_file(file.into()).unwrap_or_else(|e| panic!("--booster-flash: {e}"));
+        }
+        if let Some(file) = &args.booster_adc {
+            booster = booster.with_adc(amsrust::booster::AdcSource::open(std::path::Path::new(file)).unwrap_or_else(|e| panic!("--booster-adc: {e}")));
+        }
+        motherboard.plug_expansion(Box::new(booster));
+        eprintln!("the CPC Booster ({model:?}) is plugged");
+    }
     for (slot, path) in &args.roms {
         let data = amsrust::roms::load_rom(path).unwrap_or_else(|e| panic!("--rom {e}"));
         motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));

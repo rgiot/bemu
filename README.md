@@ -25,6 +25,36 @@ as an expansion on a 464/664. In the library:
 cargo run --release -- --model 464 --ram 128 --ddi --window --dsk game.dsk
 ```
 
+## CPC Booster+ and MiniBooster
+
+`--booster` plugs a CPC Booster+ (Antitec / Dirty Minds) on the expansion port, `--miniboster` its
+variant (`INP(&FF01)` reads 238 instead of 85: how software tells them apart). The ports are
+&FF00-&FF27, the registers those of the board's BIOS (version 1.2), followed one by one:
+
+| ports | |
+|---|---|
+| &FF00, &FF01 | IN: 170, 85 (238); OUT: reset the board |
+| &FF02, &FF03, &FF26, &FF27 | PWM channels (the card's stereo sound; &FF26 buffered pairs, &FF27 both); the first channel is on the left |
+| &FF04-&FF0B | UART: baud rate, data, flags (RXC, TXC, UDRE, DOR), frame format, auto-polling send, wait for a byte, time out, mode |
+| &FF1C, &FF1D | the 255 bytes receive buffer |
+| &FF0C-&FF0E | 512 bytes of EEPROM |
+| &FF0F-&FF11 | ADC: frequency, channel, sample |
+| &FF12 | keyboard decoder: 10 lines of the scan in, the key out |
+| &FF13-&FF1B | the 16K of program memory: read by pages or by address, written by pages (the BIOS update) |
+| &FF1E-&FF20 | the 5 bits TTL port |
+| &FF21-&FF24 | 8x8 multiplier |
+| &FF25 | the text of the version |
+
+- `--booster-uart loopback` wires TX to RX; `listen:127.0.0.1:2323` or `connect:host:port` make a TCP
+  socket the serial line (a null modem: with `socat` or a terminal on the other side). The frames last
+  what the baud rate says, so the flags behave.
+- `--booster-adc file.wav` (PCM, 8 or 16 bits) or raw unsigned bytes: what the ADC samples, looped.
+- `--booster-eeprom file`, `--booster-flash file`: the EEPROM and the program memory are kept in
+  these files (a dump of the real BIOS can be given: it is read through the ports).
+- Not modelled: the time the board makes the CPC wait (the ADC conversion, the time out of &FF09),
+  the RS485 pin, the connectors of the MiniBooster. The documentation does not say which PWM channel is
+  which: the first is on the left.
+
 ## Sound
 
 The PSG (AY-3-8912) is emulated with the [`ym2149`](https://crates.io/crates/ym2149)

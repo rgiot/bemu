@@ -69,6 +69,16 @@ pub struct Args {
     pub albireo: Option<String>,
     /// `--nova FILE`: a Nova, its NVRAM kept in the file.
     pub nova: Option<String>,
+    /// `--booster` (a CPC Booster+) or `--miniboster`.
+    pub booster: Option<&'static str>,
+    /// `--booster-uart loopback|listen:ADDR|connect:ADDR`: what its serial port is wired to.
+    pub booster_uart: Option<String>,
+    /// `--booster-eeprom FILE`: its 512 bytes of EEPROM, kept in the file.
+    pub booster_eeprom: Option<String>,
+    /// `--booster-flash FILE`: its 16K of program memory (a dump of the BIOS), kept in the file.
+    pub booster_flash: Option<String>,
+    /// `--booster-adc FILE`: what its ADC samples (a WAV or raw unsigned bytes), looped.
+    pub booster_adc: Option<String>,
     /// `--save-sna path`: the machine's state saved there when the run ends.
     pub save_sna: Option<String>,
     pub debug_server: bool,
@@ -132,6 +142,11 @@ pub fn parse_args() -> Args {
         m4_slot: None,
         m4_no_wifi: false,
         nova: None,
+        booster: None,
+        booster_uart: None,
+        booster_eeprom: None,
+        booster_flash: None,
+        booster_adc: None,
         save_sna: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
@@ -230,6 +245,12 @@ pub fn parse_args() -> Args {
             "--m4-no-wifi" => args.m4_no_wifi = true,
             "--albireo" => args.albireo = Some(next("--albireo")),
             "--nova" => args.nova = Some(next("--nova")),
+            "--booster" => args.booster = Some("booster"),
+            "--miniboster" => args.booster = Some("miniboster"),
+            "--booster-uart" => args.booster_uart = Some(next("--booster-uart")),
+            "--booster-eeprom" => args.booster_eeprom = Some(next("--booster-eeprom")),
+            "--booster-flash" => args.booster_flash = Some(next("--booster-flash")),
+            "--booster-adc" => args.booster_adc = Some(next("--booster-adc")),
             "--m4-slot" => {
                 args.m4_slot = Some(next("--m4-slot").parse().unwrap_or_else(|_| panic!("--m4-slot: a slot, 0-255")))
             },
@@ -280,6 +301,8 @@ fn print_help() {
         "        [--record file [--seconds N]] [--record-ym file] [--record-wav file] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]] [--sym file] [--rom slot=file]\n",
         "        [--m4 dir [--m4-rom file] [--m4-slot N] [--m4-no-wifi]] [--albireo dir|image] [--nova file] [--list-roms]\n",
+        "        [--booster|--miniboster [--booster-uart loopback|listen:addr|connect:addr] [--booster-eeprom file]\n",
+        "         [--booster-flash file] [--booster-adc file.wav]]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
@@ -308,6 +331,11 @@ fn print_help() {
         "FAT image (whole, or partitioned). --nova nvram.bin plugs a Nova (32K NVRAM, a clock;\n",
         "the NVRAM kept in the file). Their ROMs (UniDOS and its nodes) go in with --rom, e.g.\n",
         "--rom 1=nova.rom --rom 7=unidos.rom --rom 15=amsdos.rom --rom 27=albireo.rom.\n",
+        "--booster plugs a CPC Booster+ (--miniboster its variant: &FF01 reads 238, not 85) at &FF00-&FF27:\n",
+        "a UART (--booster-uart loopback, or listen:127.0.0.1:2323 / connect:host:port: a TCP socket as\n",
+        "a null modem), two PWM channels (the card's stereo sound), a 2 channels ADC (--booster-adc: a\n",
+        "WAV or raw bytes, looped), 512 bytes of EEPROM and 16K of program memory (kept in the files\n",
+        "--booster-eeprom/--booster-flash), a 5 bits TTL port, a multiplier, a keyboard decoder.\n",
         "--cdt puts a tape (CDT/TZX) in the cassette\n",
         "deck, PLAY down: it plays when the CPC starts the motor (RUN\" on a 464,\n",
         "|TAPE first on a 664/6128).\n",
