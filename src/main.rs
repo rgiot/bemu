@@ -100,6 +100,13 @@ fn stop_requested() -> bool {
     STOP.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// A flag of an extension this build leaves out.
+#[allow(dead_code)]
+fn without_feature(flag: &str, feature: &str) {
+    eprintln!("{flag}: this bemu is built without the \"{feature}\" feature");
+    std::process::exit(2);
+}
+
 fn main() {
     let args = parse_args();
     let mut filter = args.display.filter_on(args.gpu, args.curvature);
@@ -122,19 +129,30 @@ fn main() {
         builder.set_disc_interface(fitted);
     }
     if args.playcity {
+        #[cfg(feature = "playcity")]
         builder.plug_playcity();
+        #[cfg(not(feature = "playcity"))]
+        without_feature("--playcity", "playcity");
     }
     if args.digiblaster {
+        #[cfg(feature = "digiblaster")]
         builder.plug_digiblaster();
+        #[cfg(not(feature = "digiblaster"))]
+        without_feature("--digiblaster", "digiblaster");
     }
     if args.french {
         builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
     }
     let mut motherboard = builder.build();
+    #[cfg(not(feature = "m4"))]
+    if args.m4.is_some() {
+        without_feature("--m4", "m4");
+    }
+    #[cfg(feature = "m4")]
     if let Some(sd) = &args.m4 {
         let board = match &args.m4_rom {
             Some(path) => {
-                let rom = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+                let rom = amsrust::roms::load_rom(path).unwrap_or_else(|e| panic!("--m4-rom {e}"));
                 amsrust::m4::M4Board::new(&rom, sd)
             },
             None => amsrust::m4::M4Board::with_bundled_rom(sd)
@@ -143,6 +161,11 @@ fn main() {
         motherboard.plug_expansion(Box::new(board.unwrap_or_else(|e| panic!("--m4: {e}"))));
         eprintln!("{sd}: the M4 board's SD card");
     }
+    #[cfg(not(feature = "albireo"))]
+    if args.albireo.is_some() {
+        without_feature("--albireo", "albireo");
+    }
+    #[cfg(feature = "albireo")]
     if let Some(image) = &args.albireo {
         if args.m4.is_some() {
             panic!("--albireo and --m4: both decode &FExx, plug one");
@@ -151,6 +174,11 @@ fn main() {
         motherboard.plug_expansion(Box::new(board));
         eprintln!("{image}: the Albireo's USB key");
     }
+    #[cfg(not(feature = "nova"))]
+    if args.nova.is_some() {
+        without_feature("--nova", "nova");
+    }
+    #[cfg(feature = "nova")]
     if let Some(file) = &args.nova {
         let nova = amsrust::nova::Nova::new(Some(file.into())).unwrap_or_else(|e| panic!("--nova: {e}"));
         motherboard.plug_expansion(Box::new(nova));
@@ -183,7 +211,7 @@ fn main() {
         eprintln!("the CPC Booster ({model:?}) is plugged");
     }
     for (slot, path) in &args.roms {
-        let data = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let data = amsrust::roms::load_rom(path).unwrap_or_else(|e| panic!("--rom {e}"));
         motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));
         eprintln!("{path}: upper ROM {slot}");
     }

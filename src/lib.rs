@@ -14,11 +14,17 @@ pub mod shakerland;
 pub mod overlay;
 pub mod snapshot;
 pub mod expansion_port;
+#[cfg(any(feature = "playcity", feature = "digiblaster"))]
 pub mod sound_cards;
+#[cfg(feature = "albireo")]
 pub mod ch376;
+#[cfg(feature = "m4")]
 pub mod m4;
+#[cfg(feature = "nova")]
 pub mod nova;
 pub mod booster;
+pub(crate) mod calendar;
+pub mod roms;
 pub mod symbols;
 pub mod sound_export;
 pub mod tape;

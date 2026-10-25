@@ -923,24 +923,12 @@ fn short_name(name: &str) -> String {
 fn fat_date_time(time: std::time::SystemTime) -> (u16, u16) {
     let seconds = time.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let (days, of_day) = (seconds / 86_400, seconds % 86_400);
-    let (year, month, day) = civil_from_days(days as i64);
+    let (year, month, day) = crate::calendar::civil_from_days(days as i64);
     let date = ((year.clamp(1980, 2107) - 1980) as u16) << 9 | (month as u16) << 5 | day as u16;
     let time = ((of_day / 3600) as u16) << 11 | ((of_day / 60 % 60) as u16) << 5 | (of_day % 60 / 2) as u16;
     (date, time)
 }
 
-/// The civil date of a count of days since 1970-01-01 (Howard Hinnant's algorithm).
-pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (yoe + era * 400 + i64::from(month <= 2), month, day)
-}
 
 /// The FAT volume in an image: the whole of it, or its first FAT partition.
 struct Partition<'a> {

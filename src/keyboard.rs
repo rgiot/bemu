@@ -319,8 +319,8 @@ impl KeyboardLayout {
     /// The firmware's tables: normal, then Shift.
     fn tables(self) -> &'static [u8] {
         let rom: &'static [u8] = match self {
-            Self::Uk => include_bytes!("../roms/os6128.rom"),
-            Self::French => include_bytes!("../roms/os6128_azerty.rom")
+            Self::Uk => crate::roms::OS6128,
+            Self::French => crate::roms::OS6128_AZERTY
         };
         &rom[KEY_TABLES..KEY_TABLES + 160]
     }

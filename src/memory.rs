@@ -312,39 +312,39 @@ impl Readable for Rom {
 
 impl Rom {
     fn basic_6128_azerty() -> Self {
-        Self(Bank(*include_bytes!("../roms/basic6128_azerty.rom")))
+        Self(Bank(*crate::roms::BASIC6128_AZERTY))
     }
 
     fn basic_6128() -> Self {
-        Self(Bank(*include_bytes!("../roms/basic6128.rom")))
+        Self(Bank(*crate::roms::BASIC6128))
     }
 
     fn amsdos() -> Self {
-        Self(Bank(*include_bytes!("../roms/amsdos.rom")))
+        Self(Bank(*crate::roms::AMSDOS))
     }
 
     fn os6128_azerty() -> Self {
-        Self(Bank(*include_bytes!("../roms/os6128_azerty.rom")))
+        Self(Bank(*crate::roms::OS6128_AZERTY))
     }
 
     fn os6128() -> Self {
-        Self(Bank(*include_bytes!("../roms/os6128.rom")))
+        Self(Bank(*crate::roms::OS6128))
     }
 
     fn os464() -> Self {
-        Self(Bank(*include_bytes!("../roms/os464.rom")))
+        Self(Bank(*crate::roms::OS464))
     }
 
     fn basic464() -> Self {
-        Self(Bank(*include_bytes!("../roms/basic464.rom")))
+        Self(Bank(*crate::roms::BASIC464))
     }
 
     fn os664() -> Self {
-        Self(Bank(*include_bytes!("../roms/os664.rom")))
+        Self(Bank(*crate::roms::OS664))
     }
 
     fn basic664() -> Self {
-        Self(Bank(*include_bytes!("../roms/basic664.rom")))
+        Self(Bank(*crate::roms::BASIC664))
     }
 }
 

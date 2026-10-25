@@ -162,7 +162,7 @@ impl M4Board {
 
     /// The board with the M4 ROM v2.0.8, `sd` its SD card.
     pub fn with_bundled_rom(sd: impl Into<PathBuf>) -> Result<Self, String> {
-        Self::new(include_bytes!("../roms/m4rom.rom"), sd)
+        Self::new(crate::roms::M4, sd)
     }
 
     /// Its ROM in slot `slot` instead.
@@ -726,16 +726,7 @@ fn wildcard(pattern: &str, name: &str) -> bool {
 fn now() -> String {
     let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let (days, time) = (seconds / 86_400, seconds % 86_400);
-    // the civil date of a day count (Howard Hinnant's algorithm)
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
+    let (year, month, day) = crate::calendar::civil_from_days(days as i64);
     format!("{:02}:{:02}:{:02} {year}-{month:02}-{day:02}", time / 3600, time / 60 % 60, time % 60)
 }
 

@@ -123,7 +123,7 @@ impl Nova {
     fn now(&self) -> [u8; 7] {
         let seconds = host_seconds() + self.clock.offset_seconds;
         let (days, time) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
-        let (year, month, day) = crate::ch376::civil_from_days(days);
+        let (year, month, day) = crate::calendar::civil_from_days(days);
         // 1970-01-01 was a Thursday
         let weekday = (days + 3).rem_euclid(7) + 1;
         [
