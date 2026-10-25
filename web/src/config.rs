@@ -81,10 +81,16 @@ impl Config {
             builder.set_brand(brand_of(brand)?);
         }
         if self.playcity == Some(true) {
+            #[cfg(feature = "playcity")]
             builder.plug_playcity();
+            #[cfg(not(feature = "playcity"))]
+            return Err("playcity: this build has no PlayCity".into());
         }
         if self.digiblaster == Some(true) {
+            #[cfg(feature = "digiblaster")]
             builder.plug_digiblaster();
+            #[cfg(not(feature = "digiblaster"))]
+            return Err("digiblaster: this build has no Digiblaster".into());
         }
         match self.language.as_deref() {
             None | Some("en") => {},

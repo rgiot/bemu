@@ -285,12 +285,14 @@ impl MotherboardBuilder {
     }
 
     /// Plug a PlayCity (two more AYs and a CTC).
+    #[cfg(feature = "playcity")]
     pub fn plug_playcity(&mut self) -> &mut Self {
         self.playcity = true;
         self
     }
 
     /// Plug a Digiblaster (an 8-bit DAC on the printer port).
+    #[cfg(feature = "digiblaster")]
     pub fn plug_digiblaster(&mut self) -> &mut Self {
         self.digiblaster = true;
         self
@@ -362,9 +364,11 @@ impl MotherboardBuilder {
                 eprintln!("{e}");
             }
         }
+        #[cfg(feature = "playcity")]
         if self.playcity {
             motherboard.plug_expansion(Box::new(crate::sound_cards::PlayCity::default()));
         }
+        #[cfg(feature = "digiblaster")]
         if self.digiblaster {
             motherboard.plug_printer(Box::new(crate::sound_cards::Digiblaster::default()));
         }

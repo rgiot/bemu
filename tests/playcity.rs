@@ -1,3 +1,4 @@
+#![cfg(all(feature = "playcity", feature = "digiblaster"))]
 //! The PlayCity and the Digiblaster driven by Z80 code, as a program does, heard through the
 //! emulator's sound output.
 
