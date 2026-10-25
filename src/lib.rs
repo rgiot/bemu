@@ -20,6 +20,8 @@ pub mod sound_cards;
 pub mod ch376;
 #[cfg(feature = "m4")]
 pub mod m4;
+#[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+pub mod m4_net;
 #[cfg(feature = "nova")]
 pub mod nova;
 pub(crate) mod calendar;

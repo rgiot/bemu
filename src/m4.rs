@@ -129,8 +129,21 @@ pub struct M4Board {
     unnamed: BTreeMap<u8, PathBuf>,
     /// The directory being listed, and the pattern it is filtered with.
     listing: Option<std::vec::IntoIter<DirEntry>>,
-    pattern: String
+    pattern: String,
+    /// The WiFi: the host's network.
+    #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+    net: crate::m4_net::Network,
+    /// Ticks since the sockets were last polled.
+    #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+    ticks: u32
 }
+
+/// Where the socket table is in the ROM (&FE00).
+#[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+const SOCK_INFO: usize = 0x3e00;
+/// How often the sockets are polled: every millisecond (16 MHz ticks).
+#[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+const POLL_TICKS: u32 = 16_000;
 
 impl M4Board {
     /// The board with its ROM, `sd` its SD card.
@@ -146,6 +159,12 @@ impl M4Board {
         if !root.is_dir() {
             return Err(format!("{}: not a folder", root.display()));
         }
+        #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+        let net = {
+            let mut net = crate::m4_net::Network::new(true);
+            net.load_settings(&root);
+            net
+        };
         Ok(Self {
             rom: image,
             selected_rom: 0,
@@ -156,8 +175,27 @@ impl M4Board {
             files: BTreeMap::new(),
             unnamed: BTreeMap::new(),
             listing: None,
-            pattern: String::new()
+            pattern: String::new(),
+            #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+            net,
+            #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+            ticks: 0
         })
+    }
+
+    /// The WiFi on (the host's network used, the default) or off; `|WIFI` switches it too.
+    #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+    pub fn with_wifi(mut self, on: bool) -> Self {
+        self.net.enabled = on;
+        self
+    }
+
+    /// The sockets moved on, and their table in the ROM.
+    #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+    fn poll_network(&mut self) {
+        self.net.poll();
+        let table = self.net.sock_info();
+        self.write_rom(SOCK_INFO, &table);
     }
 
     /// The board with the M4 ROM v2.0.8, `sd` its SD card.
@@ -191,6 +229,17 @@ impl M4Board {
         let params = &packet[3..];
         if std::env::var_os("BEMU_M4_TRACE").is_some() {
             eprintln!("M4 {command:04X} {:02X?}", &params[..params.len().min(32)]);
+        }
+        #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+        {
+            let directory = self.host_path(".").unwrap_or_else(|_| self.root.clone());
+            let root = self.root.clone();
+            if let Some(payload) = self.net.command(command, params, &directory, &root) {
+                self.respond(packet[1], packet[2], &payload);
+                let table = self.net.sock_info();
+                self.write_rom(SOCK_INFO, &table);
+                return;
+            }
         }
         let payload = match command {
             C_OPEN => self.open(params),
@@ -278,12 +327,20 @@ impl M4Board {
                 Vec::new()
             },
             C_VERSION => b"bemu's M4 board (a host folder)\0".to_vec(),
-            C_TIME => nul_terminated(&now()),
+            C_TIME => nul_terminated(&now(self.time_zone())),
             // the last payload byte is the status: 5 would be "connected"
             C_NETSTAT => nul_terminated("No network in bemu."),
             _ => nul_terminated(UNSUPPORTED)
         };
         self.respond(packet[1], packet[2], &payload);
+    }
+
+    /// The time zone of the board's settings (`tz`, hours).
+    fn time_zone(&self) -> i64 {
+        #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+        return self.net.time_zone();
+        #[cfg(not(all(feature = "m4-wifi", not(target_arch = "wasm32"))))]
+        0
     }
 
     fn respond(&mut self, low: u8, high: u8, payload: &[u8]) {
@@ -625,6 +682,14 @@ impl ExpansionDevice for M4Board {
                 _ => {}
             }
         }
+        #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+        {
+            self.ticks += 1;
+            if self.ticks >= POLL_TICKS {
+                self.ticks = 0;
+                self.poll_network();
+            }
+        }
         // its ROM, in place of the CPC's
         let address = port.address();
         if !port.get_pin(ExpansionPin::Neg_ROMEN) && address >= 0xc000 && self.selected_rom == self.slot {
@@ -640,6 +705,11 @@ impl ExpansionDevice for M4Board {
             self.close(fd);
         }
         self.listing = None;
+        #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+        {
+            self.net.reset();
+            self.poll_network();
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -723,10 +793,12 @@ fn wildcard(pattern: &str, name: &str) -> bool {
 }
 
 /// The time, as the board prints it (UTC).
-fn now() -> String {
-    let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let (days, time) = (seconds / 86_400, seconds % 86_400);
-    let (year, month, day) = crate::calendar::civil_from_days(days as i64);
+/// The time, as the board prints it (and UniDOS's node reads it): UTC plus `time_zone` hours.
+fn now(time_zone: i64) -> String {
+    let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+        + time_zone * 3600;
+    let (days, time) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
+    let (year, month, day) = crate::calendar::civil_from_days(days);
     format!("{:02}:{:02}:{:02} {year}-{month:02}-{day:02}", time / 3600, time / 60 % 60, time % 60)
 }
 
@@ -836,7 +908,7 @@ mod test {
         // to the NMI ROM: not emulated, nothing written
         board.execute(&[0, 0xfd, 0x43, 0x01, 0x00, 1, 0, 0xff, 0x55]);
         assert_ne!(board.rom()[1], 0x55);
-        assert_eq!(run(&mut board, 0x4320, &nul_terminated("http://x"))[..3], *b"Not");
+        assert_eq!(run(&mut board, 0x4327, &[])[..3], *b"Not", "UPGRADE: not emulated");
     }
 
     #[test]
