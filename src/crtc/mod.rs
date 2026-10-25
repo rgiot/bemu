@@ -299,7 +299,8 @@ impl Crtc {
             use std::sync::OnceLock;
             static TRACE: OnceLock<bool> = OnceLock::new();
             if *TRACE.get_or_init(|| std::env::var("AMSRUST_TRACE_REG").is_ok()) {
-                eprintln!("W R{r}<-{v} C0={} C4={} C9={}", self.hcc, self.vcc.value(), self.vlc.value());
+                eprintln!("W R{r}<-{v} C0={} C4={} C9={} ph={} hs={} hsc={}", self.hcc, self.vcc.value(), self.vlc.value(),
+                    self.core.phase_ticks, self.core.hsync(), self.core.hsc);
             }
         }
         let (hcc, vcc, vlc) = (self.core.hcc, self.core.vcc.value(), self.core.vlc.value());

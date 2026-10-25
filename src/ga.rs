@@ -491,9 +491,29 @@ pub const MODE_WRITE_DELAY_TWO_WIDE_TICKS: usize = 5;
 /// interrupted instruction ends with at most one idle T-state.
 pub const ACK_LATE_TICKS: u32 = 16;
 
-/// The INT line rises 1 usec (16 ticks) after the CRTC's HSYNC ends, ACCC
-/// 27.6.1; the GA already hears of that end `HSYNC_GA_DELAY_TICKS` late.
-pub const INTERRUPT_AFTER_HSYNC_TICKS: u32 = 16 - HSYNC_GA_DELAY_TICKS as u32;
+/// The INT line rises 13 ticks after the CRTC's HSYNC ends (the GA already hears of that end
+/// `HSYNC_GA_DELAY_TICKS` late): just before the next microsecond boundary of the CPU, which
+/// samples it there, a microsecond after the end (ACCC 27.6.1, "an interrupt always starts 1 usec
+/// AFTER THE END OF THE HSYNC"). The CPU only sees INT on its microsecond boundaries, so this
+/// decides which one: 3 ticks later and it waited a microsecond more. Measured on Rhino-Raster
+/// (EI+HALT, pen writes timed to the microsecond) with [`GA_WRITE_LATENCY_TICKS`]: identical to
+/// AMSpiriT Lite's picture.
+pub const INTERRUPT_AFTER_HSYNC_TICKS: u32 = 13 - HSYNC_GA_DELAY_TICKS as u32;
+
+/// Ticks between the CPU's `OUT` to the Gate Array (the first tick of IORQ) and the register
+/// taking it: the 40010 latches its registers on its own sequencer phase, and a palette or mode
+/// write then acts on the pixels this much later. With [`CCLK_PHASE`] and
+/// [`INTERRUPT_AFTER_HSYNC_TICKS`], Rhino-Raster's pen splits are pixel-identical to AMSpiriT Lite's
+/// (they were 41 pixels apart with the writes taken at once and the old phase).
+pub const GA_WRITE_LATENCY_TICKS: u64 = 8;
+
+/// The phase of CCLK (the CRTC's character clock) in the Gate Array's 16-tick cycle, against the
+/// CPU clock: the CRTC counts on the CPU's microsecond boundary, as in the 40010's sequencer (CCLK
+/// switches within a tick of it). An `OUT (C),r` then reaches the CRTC on the 2nd T-state of the
+/// character of its I/O microsecond (ACCC 4.4.4): Shaker BI's R3 writes during an HSYNC end it
+/// where AMSpiriT and the real CPC do. It was 1 (the CRTC counting 4 ticks after the boundary, its
+/// writes landing 12 ticks late in the character).
+pub const CCLK_PHASE: u8 = 9;
 
 impl RMR {
     fn interrupt_counter(&self) -> bool {
@@ -1052,7 +1072,13 @@ pub struct GateArray {
     /// [`PALETTE_LOOKUP_LAG_TICKS`], but for tests that look at the pixel stream itself
     lookup_lag: usize,
     /// The palette as it was at the previous tick, for the chips whose writes are a tick late
-    palette_previous: [Ink; 17],
+    /// The palettes of the last ticks, newest first (see [`GateArrayType::palette_write_delay_ticks`])
+    palette_ring: History<[Ink; 17], 2>,
+    /// Register writes waiting for the Gate Array's latch (tick due, byte), see
+    /// [`GA_WRITE_LATENCY_TICKS`]
+    pending_writes: std::collections::VecDeque<(u64, u8)>,
+    /// The write of the current bus cycle was latched
+    write_seen: bool,
 
     /// The video mode used to generate the pixels
     current_mode: VideoMode,
@@ -1136,7 +1162,9 @@ impl Default for GateArray {
 
             shown_ring: History::new(Shown::Black),
             lookup_lag: PALETTE_LOOKUP_LAG_TICKS,
-            palette_previous: [Ink(0); 17],
+            palette_ring: History::new([Ink(0); 17]),
+            pending_writes: std::collections::VecDeque::new(),
+            write_seen: false,
             current_mode: VideoMode::Mode0,
             pixel_automata: PixelAutomata::default(),
             rgb: RGB_PERCENTAGE_LEVELS_PER_INK[0],
@@ -1188,7 +1216,7 @@ impl GateArray {
 
     pub fn divide_clock(&mut self) {
         self.set_pin(GateArrayPin::NCPU, ((self.clock + 0) % 4) >= 2); // this delay is needed to let time to CRTC to get cpu infos from pins
-        self.set_pin(GateArrayPin::CCLK, !(((self.clock + 1) % 16) >= 8));
+        self.set_pin(GateArrayPin::CCLK, !(((self.clock + CCLK_PHASE) % 16) >= 8));
     }
 
     /// Switches to `new_mode` while the pixel pipeline may be mid-byte: the
@@ -1343,7 +1371,7 @@ impl GateArray {
 
     pub fn set_palette(&mut self, palette: [Ink; 17]) {
         self.palette = palette;
-        self.palette_previous = palette;
+        self.palette_ring = History::new(palette);
     }
 
     pub fn set_video_mode(&mut self, mode: VideoMode) {
@@ -1396,13 +1424,13 @@ impl GateArray {
         let sync_black = self.sync_black_ring.get(self.sync_black_lag);
         // The ink is looked up in the palette as it is now, a few ticks after the pen was known.
         self.shown_ring.push(shown);
-        let palette = if self.ga_type.palette_write_delay_ticks() == 0 { &self.palette } else { &self.palette_previous };
+        self.palette_ring.push(self.palette);
+        let palette = &self.palette_ring.get(self.ga_type.palette_write_delay_ticks());
         self.rgb = match self.shown_ring.get(self.lookup_lag) {
             _ if sync_black => (0., 0., 0.).into(),
             Shown::Black => (0., 0., 0.).into(),
             Shown::Pen(pen) => palette[pen.value() as usize].into()
         };
-        self.palette_previous = self.palette;
     }
 
     /// Generate the synchronization data for the CTM
@@ -1623,6 +1651,13 @@ impl Chip for GateArray {
     /// Change the screen mode when hsync is set
     fn pre_tick(&mut self) {
         self.abs_tick += 1;
+        if self.get_pin(GateArrayPin::Neg_IORQ) || !self.get_pin(GateArrayPin::Neg_RD) {
+            self.write_seen = false;
+        }
+        while self.pending_writes.front().is_some_and(|(due, _)| *due <= self.abs_tick) {
+            let (_, command) = self.pending_writes.pop_front().unwrap();
+            self.write_register(command);
+        }
         self.mode_history.push(self.rmr.video_mode());
         if self.is_upfront(GateArrayPin::VSYNC) {
             //vsync occured
@@ -1731,8 +1766,11 @@ impl Chip for GateArray {
             // by roughly an order of magnitude (stderr I/O in a hot path).
         }
         else {
-            // out expected
-            self.write_register(self.get_data_from_pins());
+            // out expected: latched once per bus cycle, taken GA_WRITE_LATENCY_TICKS later
+            if !self.write_seen {
+                self.write_seen = true;
+                self.pending_writes.push_back((self.abs_tick + GA_WRITE_LATENCY_TICKS, self.get_data_from_pins()));
+            }
         }
     }
 
@@ -1941,6 +1979,13 @@ mod test {
         ga.set_pin(GateArrayPin::Neg_RD, true);
         assert!(ga.must_execute_tick());
         ga.tick();
+        // the register takes the write GA_WRITE_LATENCY_TICKS later
+        ga.set_pin(GateArrayPin::Neg_IORQ, true);
+        assert_eq!(ga.next_video_mode(), VideoMode::Mode0);
+        for _ in 0..GA_WRITE_LATENCY_TICKS {
+            ga.save_pins_state();
+            ga.tick();
+        }
 
         assert_eq!(ga.active_video_mode(), VideoMode::Mode0);
         assert_eq!(ga.next_video_mode(), VideoMode::Mode1);
@@ -1972,6 +2017,10 @@ mod test {
         ga.save_pins_state();
         ga.tick();
         ga.set_pin(GateArrayPin::Neg_IORQ, true);
+        for _ in 0..GA_WRITE_LATENCY_TICKS {
+            ga.save_pins_state();
+            ga.tick();
+        }
 
         assert_eq!(ga.active_video_mode(), VideoMode::Mode1);
         assert_eq!(ga.next_video_mode(), VideoMode::Mode2);
