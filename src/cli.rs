@@ -254,6 +254,10 @@ pub fn parse_args() -> Args {
                 print_help();
                 std::process::exit(0);
             },
+            "--list-roms" => {
+                print!("{}", amsrust::roms::listing());
+                std::process::exit(0);
+            },
             other => {
                 eprintln!("unknown argument {other:?}\n");
                 print_help();
@@ -271,7 +275,7 @@ fn print_help() {
         "        [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute] [--turbo]]\n",
         "        [--record file [--seconds N]] [--record-ym file] [--record-wav file] [--type text [--type-at N]]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]] [--sym file] [--rom slot=file]\n",
-        "        [--m4 dir [--m4-rom file] [--m4-slot N]] [--albireo dir|image] [--nova file]\n",
+        "        [--m4 dir [--m4-rom file] [--m4-slot N]] [--albireo dir|image] [--nova file] [--list-roms]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
@@ -283,7 +287,13 @@ fn print_help() {
         "more AYs, right and left, and a CTC whose channel 1 counts the CRTC's CURSOR to an\n",
         "NMI), --digiblaster\n",
         "a DAC on the printer port (a signed byte written to &EFxx).\n",
-        "--rom 6=file.rom fits a 16K upper ROM in a slot (0-255; repeatable).\n",
+        "--rom 6=file.rom fits a 16K upper ROM in a slot (0-255; repeatable). A ROM is a file or\n",
+        "inner://NAME, one embedded in the executable (--list-roms lists them): UniDOS as its manual\n",
+        "advises is --rom 1=inner://unidos-nova --rom 7=inner://unidos --rom 14=inner://unitools\n",
+        "--rom 15=inner://amsdos --rom 27=inner://unidos-albireo (with --nova and --albireo).\n",
+        "Orgams: --rom 10=inner://orgams --rom 11=inner://orgext --rom 12=inner://monogams\n",
+        "--rom 13=inner://bricbrac --rom 14=inner://orgass (|ORGAMS; --ram 576 gives it its banks\n",
+        "from &FF down, a 256K RAM disc fitting).\n",
         "--m4 DIR plugs an M4 board, the folder its SD card (its ROM v2.0.8 in slot 6; --m4-rom\n",
         "another one, --m4-slot another slot): RUN\"file, CAT, |DIR, |CD... on the folder.\n",
         "--albireo DIR|image.img plugs an Albireo (a CH376 at &FE80), its USB key a folder or a\n",
