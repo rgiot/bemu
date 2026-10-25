@@ -72,7 +72,7 @@ lto = "fat"
 codegen-units = 1
 
 [features]
-default = ["audio", "playcity", "digiblaster", "m4", "albireo", "nova", "unidos", "orgams"]
+default = ["audio", "playcity", "digiblaster", "m4", "albireo", "nova", "booster", "unidos", "orgams"]
 # The extensions, each of which can be left out of a build:
 # the PlayCity (two more AYs and a CTC, on the expansion port)
 playcity = []
@@ -84,6 +84,8 @@ m4 = []
 albireo = ["dep:fatfs"]
 # the Nova (NVRAM and a clock)
 nova = []
+# the CPC Booster+ and the MiniBooster (a UART, PWM sound, an ADC, EEPROM... on the expansion port)
+booster = []
 # the UniDOS ROMs and its nodes, embedded (inner://unidos...)
 unidos = []
 # the Orgams ROMs, embedded (inner://orgams...)

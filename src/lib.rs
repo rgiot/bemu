@@ -22,9 +22,10 @@ pub mod ch376;
 pub mod m4;
 #[cfg(feature = "nova")]
 pub mod nova;
-pub mod booster;
 pub(crate) mod calendar;
 pub mod roms;
+#[cfg(feature = "booster")]
+pub mod booster;
 pub mod symbols;
 pub mod sound_export;
 pub mod tape;

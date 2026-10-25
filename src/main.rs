@@ -184,7 +184,18 @@ fn main() {
         motherboard.plug_expansion(Box::new(nova));
         eprintln!("{file}: the Nova's NVRAM");
     }
-    if let Some(model) = args.booster {
+    #[cfg(not(feature = "booster"))]
+    if args.booster.is_some() {
+        without_feature("--booster", "booster");
+    }
+    #[cfg(feature = "booster")]
+    if let Some(board) = args.booster {
+        let model = if board == "miniboster" {
+            amsrust::booster::Model::MiniBooster
+        }
+        else {
+            amsrust::booster::Model::BoosterPlus
+        };
         let mut booster = amsrust::booster::Booster::new(model);
         if let Some(uart) = &args.booster_uart {
             booster = booster.with_link(match uart.split_once(':') {

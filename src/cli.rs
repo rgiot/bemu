@@ -68,7 +68,7 @@ pub struct Args {
     /// `--nova FILE`: a Nova, its NVRAM kept in the file.
     pub nova: Option<String>,
     /// `--booster` (a CPC Booster+) or `--miniboster`.
-    pub booster: Option<amsrust::booster::Model>,
+    pub booster: Option<&'static str>,
     /// `--booster-uart loopback|listen:ADDR|connect:ADDR`: what its serial port is wired to.
     pub booster_uart: Option<String>,
     /// `--booster-eeprom FILE`: its 512 bytes of EEPROM, kept in the file.
@@ -241,8 +241,8 @@ pub fn parse_args() -> Args {
             "--m4-rom" => args.m4_rom = Some(next("--m4-rom")),
             "--albireo" => args.albireo = Some(next("--albireo")),
             "--nova" => args.nova = Some(next("--nova")),
-            "--booster" => args.booster = Some(amsrust::booster::Model::BoosterPlus),
-            "--miniboster" => args.booster = Some(amsrust::booster::Model::MiniBooster),
+            "--booster" => args.booster = Some("booster"),
+            "--miniboster" => args.booster = Some("miniboster"),
             "--booster-uart" => args.booster_uart = Some(next("--booster-uart")),
             "--booster-eeprom" => args.booster_eeprom = Some(next("--booster-eeprom")),
             "--booster-flash" => args.booster_flash = Some(next("--booster-flash")),
