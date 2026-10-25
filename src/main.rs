@@ -156,6 +156,32 @@ fn main() {
         motherboard.plug_expansion(Box::new(nova));
         eprintln!("{file}: the Nova's NVRAM");
     }
+    if let Some(model) = args.booster {
+        let mut booster = amsrust::booster::Booster::new(model);
+        if let Some(uart) = &args.booster_uart {
+            booster = booster.with_link(match uart.split_once(':') {
+                None if uart == "loopback" => Box::<amsrust::booster::Loopback>::default(),
+                Some(("listen", address)) => {
+                    Box::new(amsrust::booster::TcpLink::listen(address).unwrap_or_else(|e| panic!("--booster-uart {uart}: {e}")))
+                },
+                Some(("connect", address)) => {
+                    Box::new(amsrust::booster::TcpLink::connect(address).unwrap_or_else(|e| panic!("--booster-uart {uart}: {e}")))
+                },
+                _ => panic!("--booster-uart: loopback, listen:ADDRESS or connect:ADDRESS, not {uart:?}")
+            });
+        }
+        if let Some(file) = &args.booster_eeprom {
+            booster = booster.with_eeprom_file(file.into()).unwrap_or_else(|e| panic!("--booster-eeprom: {e}"));
+        }
+        if let Some(file) = &args.booster_flash {
+            booster = booster.with_flash_file(file.into()).unwrap_or_else(|e| panic!("--booster-flash: {e}"));
+        }
+        if let Some(file) = &args.booster_adc {
+            booster = booster.with_adc(amsrust::booster::AdcSource::open(std::path::Path::new(file)).unwrap_or_else(|e| panic!("--booster-adc: {e}")));
+        }
+        motherboard.plug_expansion(Box::new(booster));
+        eprintln!("the CPC Booster ({model:?}) is plugged");
+    }
     for (slot, path) in &args.roms {
         let data = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
         motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));
