@@ -72,7 +72,7 @@ lto = "fat"
 codegen-units = 1
 
 [features]
-default = ["audio", "playcity", "digiblaster", "m4", "albireo", "nova", "booster", "unidos", "orgams"]
+default = ["audio", "playcity", "digiblaster", "m4", "m4-wifi", "albireo", "nova", "booster", "unidos", "orgams"]
 # The extensions, each of which can be left out of a build:
 # the PlayCity (two more AYs and a CTC, on the expansion port)
 playcity = []
@@ -80,6 +80,8 @@ playcity = []
 digiblaster = []
 # the M4 board (its SD card a host folder; its ROM embedded)
 m4 = []
+# the M4's WiFi: sockets, DNS, HTTP on the host's network (not in a web page)
+m4-wifi = ["m4"]
 # the Albireo (a CH376; its USB key a host folder or a FAT image)
 albireo = ["dep:fatfs"]
 # the Nova (NVRAM and a clock)
