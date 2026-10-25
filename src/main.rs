@@ -134,7 +134,7 @@ fn main() {
     if let Some(sd) = &args.m4 {
         let board = match &args.m4_rom {
             Some(path) => {
-                let rom = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+                let rom = amsrust::roms::load_rom(path).unwrap_or_else(|e| panic!("--m4-rom {e}"));
                 amsrust::m4::M4Board::new(&rom, sd)
             },
             None => amsrust::m4::M4Board::with_bundled_rom(sd)
@@ -157,7 +157,7 @@ fn main() {
         eprintln!("{file}: the Nova's NVRAM");
     }
     for (slot, path) in &args.roms {
-        let data = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let data = amsrust::roms::load_rom(path).unwrap_or_else(|e| panic!("--rom {e}"));
         motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));
         eprintln!("{path}: upper ROM {slot}");
     }

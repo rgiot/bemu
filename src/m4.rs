@@ -162,7 +162,7 @@ impl M4Board {
 
     /// The board with the M4 ROM v2.0.8, `sd` its SD card.
     pub fn with_bundled_rom(sd: impl Into<PathBuf>) -> Result<Self, String> {
-        Self::new(include_bytes!("../roms/m4rom.rom"), sd)
+        Self::new(crate::roms::M4, sd)
     }
 
     /// Its ROM in slot `slot` instead.
