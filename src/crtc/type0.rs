@@ -430,10 +430,6 @@ impl CrtcChip for Crtc0 {
 
     // ---- BORDER ----
 
-    fn latches_r1_border(&self) -> bool {
-        true
-    }
-
     fn border_r6(&mut self, core: &mut Core) -> bool {
         core.latched_r6_border()
     }

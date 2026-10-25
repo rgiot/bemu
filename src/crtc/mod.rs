@@ -559,21 +559,18 @@ impl Crtc {
             && core.hcc == core.regs[0]
             && matches!(skew, DisplaySkew::Delayed(d) if d > 0);
         core.border_history.rotate_right(1);
-        let by_r1 = if chip.latches_r1_border() {
-            // ACCC §17.4/§17.5: the BORDER R1 is a state set by the C0=R1 equality (or R1=0),
-            // cleared when a line starts; raising R1 afterwards does not bring the display back
-            // before the next line
-            if core.hcc == 0 {
-                core.r1_zero_late = false;
-                core.r1_latch = false;
-            }
-            if core.hcc == core.regs[1] || (core.regs[1] == 0 && !core.r1_zero_late) {
-                core.r1_latch = true;
-            }
-            core.r1_latch
-        } else {
-            core.hcc >= core.regs[1]
-        };
+        // ACCC §17.3-§17.5: on every CRTC the BORDER R1 is a state set by the C0=R1 equality (or
+        // R1=0), cleared when a line starts; raising R1 afterwards does not bring the display back
+        // before the next line, and an R1 lowered under C0 does not set it (Shaker AO_H on CRTC
+        // 2, 3, 4: R1=0 then R1=40 during a line)
+        if core.hcc == 0 {
+            core.r1_zero_late = false;
+            core.r1_latch = false;
+        }
+        if core.hcc == core.regs[1] || (core.regs[1] == 0 && !core.r1_zero_late) {
+            core.r1_latch = true;
+        }
+        let by_r1 = core.r1_latch;
         core.border_history[0] = by_r1 || replaced_by_r0;
         let horizontal_border = match skew {
             DisplaySkew::Delayed(chars) => core.border_history[usize::from(chars)],

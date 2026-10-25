@@ -213,10 +213,6 @@ impl CrtcChip for Crtc1 {
 
     // ---- BORDER ----
 
-    fn latches_r1_border(&self) -> bool {
-        true
-    }
-
     /// ACCC 18.2.3: C4=R6 latches the BORDER until the next frame; R6=0 is a live BORDER, not a
     /// latched one: C4=R6=0 at the frame start does not latch it, so the display comes back as
     /// soon as R6 leaves 0 (Shaker A3, "border state not irreversible", AMSpiriT Lite and CPCSE).

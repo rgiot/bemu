@@ -249,12 +249,6 @@ pub trait CrtcChip: Debug + Send {
 
     // ---- BORDER ----
 
-    /// ACCC §17.4/§17.5: the BORDER R1 is a state set by C0=R1 (or R1=0) and cleared when a line
-    /// starts (CRTC 0 and 1); on the other chips it is the live C0>=R1.
-    fn latches_r1_border(&self) -> bool {
-        false
-    }
-
     /// The BORDER by R6, evaluated each character.
     fn border_r6(&mut self, core: &mut Core) -> bool {
         core.vcc >= core.regs[6]
