@@ -19,6 +19,12 @@ web-sys = { version = "0.3", features = ["HtmlCanvasElement", "CanvasRenderingCo
 wgpu = { version = "27", default-features = false, features = ["wgsl", "webgpu"] }
 console_error_panic_hook = "0.1"
 
+[features]
+default = ["playcity", "digiblaster"]
+# the sound expansions a page can ask for (config playcity / digiblaster)
+playcity = ["amsrust/playcity"]
+digiblaster = ["amsrust/digiblaster"]
+
 [dev-dependencies]
 serde_json = "1"
 

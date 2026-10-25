@@ -1,3 +1,4 @@
+#![cfg(all(feature = "unidos", feature = "nova", feature = "albireo"))]
 //! UniDOS and its nodes, from the ROMs embedded in the executable, on a Nova and an Albireo
 //! (its key a folder): booted, UniDOS keeps its context in the Nova's NVRAM.
 

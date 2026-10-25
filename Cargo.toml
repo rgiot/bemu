@@ -7,7 +7,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"] }
+fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"], optional = true }
 num = "0.4.0"
 num_enum = "0.5.1"
 itertools = "0.10.0"
@@ -72,7 +72,22 @@ lto = "fat"
 codegen-units = 1
 
 [features]
-default = ["audio"]
+default = ["audio", "playcity", "digiblaster", "m4", "albireo", "nova", "unidos", "orgams"]
+# The extensions, each of which can be left out of a build:
+# the PlayCity (two more AYs and a CTC, on the expansion port)
+playcity = []
+# the Digiblaster (a DAC on the printer port)
+digiblaster = []
+# the M4 board (its SD card a host folder; its ROM embedded)
+m4 = []
+# the Albireo (a CH376; its USB key a host folder or a FAT image)
+albireo = ["dep:fatfs"]
+# the Nova (NVRAM and a clock)
+nova = []
+# the UniDOS ROMs and its nodes, embedded (inner://unidos...)
+unidos = []
+# the Orgams ROMs, embedded (inner://orgams...)
+orgams = []
 # Sound output in the `amsrust --window` binary (on Linux cpal needs the ALSA
 # headers: libasound2-dev / alsa-lib-devel). On by default; a build without
 # an audio system library uses `--no-default-features`.

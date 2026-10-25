@@ -18,12 +18,15 @@
 //! The Digiblaster is an 8-bit DAC on the printer port: D0-D6 and /STROBE (bit 7 of the byte
 //! written, inverted by the CPC) make an unsigned sample, so the byte written is a signed one.
 
+#![allow(unused_imports)]
+
 use std::any::Any;
 
 use crate::chip::Chip;
 use crate::expansion_port::{ExpansionDevice, ExpansionPin, ExpansionPort, PrinterDevice, PrinterPin, PrinterPort};
 use crate::psg::Psg;
 
+#[cfg(feature = "playcity")]
 #[derive(Clone, Debug, Default)]
 struct CtcChannel {
     control: u8,
@@ -42,6 +45,7 @@ struct CtcChannel {
     trigger: bool
 }
 
+#[cfg(feature = "playcity")]
 impl CtcChannel {
     fn interrupt_enabled(&self) -> bool {
         self.control & 0x80 != 0
@@ -73,6 +77,7 @@ impl CtcChannel {
     }
 }
 
+#[cfg(feature = "playcity")]
 /// What the CTC follows of the bus.
 #[derive(Clone, Debug, Default)]
 struct BusWatch {
@@ -82,6 +87,7 @@ struct BusWatch {
     last_opcode: u8
 }
 
+#[cfg(feature = "playcity")]
 /// A Z80 CTC (Z84C30): four counter/timer channels.
 #[derive(Clone, Debug, Default)]
 pub struct Ctc {
@@ -91,6 +97,7 @@ pub struct Ctc {
     bus: BusWatch
 }
 
+#[cfg(feature = "playcity")]
 impl Ctc {
     pub fn write(&mut self, channel: usize, value: u8) {
         let ch = &mut self.channels[channel];
@@ -241,6 +248,7 @@ impl Ctc {
     }
 }
 
+#[cfg(feature = "playcity")]
 /// The PlayCity card.
 pub struct PlayCity {
     pub ctc: Ctc,
@@ -252,12 +260,14 @@ pub struct PlayCity {
     ay_clock_source: bool
 }
 
+#[cfg(feature = "playcity")]
 impl Default for PlayCity {
     fn default() -> Self {
         Self { ctc: Ctc::default(), ays: [Psg::default(), Psg::default()], ay_clock: false, ay_clock_source: false }
     }
 }
 
+#[cfg(feature = "playcity")]
 impl PlayCity {
     /// A write of the CPU at `port`; false when not the card's.
     pub fn write(&mut self, port: u16, value: u8) -> bool {
@@ -308,6 +318,7 @@ impl PlayCity {
     }
 }
 
+#[cfg(feature = "playcity")]
 impl ExpansionDevice for PlayCity {
     fn tick(&mut self, port: &mut ExpansionPort) {
         // the CPU's accesses
@@ -371,6 +382,7 @@ impl ExpansionDevice for PlayCity {
     }
 }
 
+#[cfg(feature = "digiblaster")]
 /// The Digiblaster: an 8-bit DAC on the printer port.
 #[derive(Clone, Debug, Default)]
 pub struct Digiblaster {
@@ -378,12 +390,14 @@ pub struct Digiblaster {
     sample: f32
 }
 
+#[cfg(feature = "digiblaster")]
 impl Digiblaster {
     pub fn sample(&self) -> f32 {
         self.sample
     }
 }
 
+#[cfg(feature = "digiblaster")]
 impl PrinterDevice for Digiblaster {
     fn update(&mut self, port: &PrinterPort) {
         let unsigned = port.data() | u8::from(port.get_pin(PrinterPin::Neg_STROBE)) << 7;
@@ -401,10 +415,12 @@ impl PrinterDevice for Digiblaster {
 
 #[cfg(test)]
 mod test {
+    #![allow(unused_imports)]
     use super::*;
     use crate::expansion_port::CpcSide;
 
     /// The bus at rest, CLK4 at `clk4`.
+    #[cfg(feature = "playcity")]
     fn idle(clk4: bool) -> CpcSide {
         CpcSide {
             mreq: true,
@@ -422,6 +438,7 @@ mod test {
         }
     }
 
+    #[cfg(feature = "playcity")]
     fn port_with_playcity() -> ExpansionPort {
         let mut port = ExpansionPort::default();
         port.plug(Box::new(PlayCity::default()));
@@ -429,6 +446,7 @@ mod test {
     }
 
     /// An OUT, as the port sees it: a few ticks of /IORQ and /WR low.
+    #[cfg(feature = "playcity")]
     fn out(port: &mut ExpansionPort, address: u16, value: u8) {
         for tick in 0..4 {
             port.tick_with(CpcSide { address, data: value, iorq: false, wr: false, ..idle(tick & 2 != 0) });
@@ -436,6 +454,7 @@ mod test {
         port.tick_with(idle(false));
     }
 
+    #[cfg(feature = "playcity")]
     #[test]
     fn a_ctc_timer_interrupts_with_its_vector() {
         let mut ctc = Ctc::default();
@@ -459,6 +478,7 @@ mod test {
         assert_eq!(ctc.interrupt(), None);
     }
 
+    #[cfg(feature = "playcity")]
     #[test]
     fn the_ctc_answers_the_acknowledge_and_watches_for_reti() {
         let mut port = port_with_playcity();
@@ -485,6 +505,7 @@ mod test {
         assert!(!port.device::<PlayCity>().unwrap().ctc.channels[0].in_service, "RETI ends it");
     }
 
+    #[cfg(feature = "playcity")]
     #[test]
     fn channel_1_counts_the_cursor_to_an_nmi() {
         let mut port = port_with_playcity();
@@ -500,6 +521,7 @@ mod test {
         assert_eq!(nmis, 4);
     }
 
+    #[cfg(feature = "playcity")]
     #[test]
     fn the_ays_play_their_registers() {
         let mut port = port_with_playcity();
@@ -516,6 +538,7 @@ mod test {
         assert!(left > 0.2, "one channel of three at full volume: {left}");
     }
 
+    #[cfg(feature = "digiblaster")]
     #[test]
     fn the_digiblaster_takes_the_printer_port() {
         let mut printer = PrinterPort::default();

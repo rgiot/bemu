@@ -1,3 +1,4 @@
+#![cfg(all(feature = "albireo"))]
 //! The Albireo's CH376 driven by Z80 code through &FE80/&FE81.
 
 use amsrust::ch376::Albireo;

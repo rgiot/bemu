@@ -14,55 +14,80 @@ pub static BASIC6128: &RomImage = include_bytes!("../roms/basic6128.rom");
 pub static BASIC6128_AZERTY: &RomImage = include_bytes!("../roms/basic6128_azerty.rom");
 pub static AMSDOS: &RomImage = include_bytes!("../roms/amsdos.rom");
 /// The M4 board's ROM (Duke's M4ROM v2.0.8).
+#[cfg(feature = "m4")]
 pub static M4: &RomImage = include_bytes!("../roms/m4rom.rom");
 /// UniDOS 1.51 (Futurs') and its DOS nodes.
+#[cfg(feature = "unidos")]
 pub static UNIDOS: &RomImage = include_bytes!("../roms/unidos.rom");
+#[cfg(feature = "unidos")]
 pub static UNIDOS_NOVA: &RomImage = include_bytes!("../roms/unidos-nova.rom");
+#[cfg(feature = "unidos")]
 pub static UNIDOS_ALBIREO: &RomImage = include_bytes!("../roms/unidos-albireo.rom");
+#[cfg(feature = "unidos")]
 pub static UNIDOS_M4: &RomImage = include_bytes!("../roms/unidos-m4.rom");
+#[cfg(feature = "unidos")]
 pub static UNITOOLS: &RomImage = include_bytes!("../roms/unitools.rom");
 /// Orgams (BDC/Madram & co), the assembler and its tools, beta J (2025-12-28).
+#[cfg(feature = "orgams")]
 pub static ORGAMS: &RomImage = include_bytes!("../roms/orgams.rom");
+#[cfg(feature = "orgams")]
 pub static ORGEXT: &RomImage = include_bytes!("../roms/orgext.rom");
+#[cfg(feature = "orgams")]
 pub static MONOGAMS: &RomImage = include_bytes!("../roms/monogams.rom");
+#[cfg(feature = "orgams")]
 pub static BRICBRAC: &RomImage = include_bytes!("../roms/bricbrac.rom");
+#[cfg(feature = "orgams")]
 pub static ORGASS: &RomImage = include_bytes!("../roms/orgass.rom");
 
-/// The embedded ROMs, by name, and what each is.
-pub const EMBEDDED: &[(&str, &RomImage, &str)] = &[
-    ("os464", OS464, "CPC 464 firmware (lower ROM)"),
-    ("os664", OS664, "CPC 664 firmware (lower ROM)"),
-    ("os6128", OS6128, "CPC 6128 firmware (lower ROM)"),
-    ("os6128_azerty", OS6128_AZERTY, "CPC 6128 French firmware (lower ROM)"),
-    ("basic464", BASIC464, "BASIC 1.0"),
-    ("basic664", BASIC664, "BASIC 1.1 (664)"),
-    ("basic6128", BASIC6128, "BASIC 1.1"),
-    ("basic6128_azerty", BASIC6128_AZERTY, "BASIC 1.1, French"),
-    ("amsdos", AMSDOS, "AMSDOS"),
-    ("m4", M4, "the M4 board's ROM v2.0.8"),
-    ("unidos", UNIDOS, "UniDOS 1.51"),
-    ("unidos-nova", UNIDOS_NOVA, "UniDOS node for the Nova"),
-    ("unidos-albireo", UNIDOS_ALBIREO, "UniDOS node for the Albireo"),
-    ("unidos-m4", UNIDOS_M4, "UniDOS node for the M4"),
-    ("unitools", UNITOOLS, "UniDOS node UniTools"),
-    ("orgams", ORGAMS, "Orgams, its base (a background ROM: slot 1-15)"),
-    ("orgext", ORGEXT, "Orgams, its extension"),
-    ("monogams", MONOGAMS, "Orgams, its monitor"),
-    ("bricbrac", BRICBRAC, "Orgams, BricBrac (|BURN when in slot 1-15)"),
-    ("orgass", ORGASS, "Orgams, Orgass")
-];
+/// An embedded ROM: its name, its bytes, what it is.
+pub type Embedded = (&'static str, &'static RomImage, &'static str);
+
+/// The embedded ROMs (those of the extensions built in).
+pub fn embedded_roms() -> Vec<Embedded> {
+    #[allow(unused_mut)]
+    let mut roms: Vec<Embedded> = vec![
+        ("os464", OS464, "CPC 464 firmware (lower ROM)"),
+        ("os664", OS664, "CPC 664 firmware (lower ROM)"),
+        ("os6128", OS6128, "CPC 6128 firmware (lower ROM)"),
+        ("os6128_azerty", OS6128_AZERTY, "CPC 6128 French firmware (lower ROM)"),
+        ("basic464", BASIC464, "BASIC 1.0"),
+        ("basic664", BASIC664, "BASIC 1.1 (664)"),
+        ("basic6128", BASIC6128, "BASIC 1.1"),
+        ("basic6128_azerty", BASIC6128_AZERTY, "BASIC 1.1, French"),
+        ("amsdos", AMSDOS, "AMSDOS"),
+    ];
+    #[cfg(feature = "m4")]
+    roms.push(("m4", M4, "the M4 board's ROM v2.0.8"));
+    #[cfg(feature = "unidos")]
+    roms.extend([
+        ("unidos", UNIDOS, "UniDOS 1.51"),
+        ("unidos-nova", UNIDOS_NOVA, "UniDOS node for the Nova"),
+        ("unidos-albireo", UNIDOS_ALBIREO, "UniDOS node for the Albireo"),
+        ("unidos-m4", UNIDOS_M4, "UniDOS node for the M4"),
+        ("unitools", UNITOOLS, "UniDOS node UniTools"),
+    ]);
+    #[cfg(feature = "orgams")]
+    roms.extend([
+        ("orgams", ORGAMS, "Orgams, its base (a background ROM: slot 1-15)"),
+        ("orgext", ORGEXT, "Orgams, its extension"),
+        ("monogams", MONOGAMS, "Orgams, its monitor"),
+        ("bricbrac", BRICBRAC, "Orgams, BricBrac (|BURN when in slot 1-15)"),
+        ("orgass", ORGASS, "Orgams, Orgass"),
+    ]);
+    roms
+}
 
 const SCHEME: &str = "inner://";
 
 /// An embedded ROM by name (`.rom` optional, case ignored).
 pub fn embedded(name: &str) -> Option<&'static RomImage> {
     let name = name.strip_suffix(".rom").or_else(|| name.strip_suffix(".ROM")).unwrap_or(name);
-    EMBEDDED.iter().find(|(known, _, _)| known.eq_ignore_ascii_case(name)).map(|(_, rom, _)| *rom)
+    embedded_roms().into_iter().find(|(known, _, _)| known.eq_ignore_ascii_case(name)).map(|(_, rom, _)| rom)
 }
 
 /// The names, one per line, with what each is.
 pub fn listing() -> String {
-    EMBEDDED.iter().map(|(name, _, what)| format!("{SCHEME}{name:<16} {what}\n")).collect()
+    embedded_roms().iter().map(|(name, _, what)| format!("{SCHEME}{name:<16} {what}\n")).collect()
 }
 
 /// A ROM: `inner://NAME`, an embedded one, or a file.
@@ -80,6 +105,7 @@ mod test {
     use super::*;
 
     #[test]
+    #[cfg(feature = "unidos")]
     fn embedded_roms_by_name_or_files() {
         let unidos = load_rom("inner://unidos").unwrap();
         assert_eq!((unidos.len(), unidos[0]), (0x4000, 1), "a background ROM");
