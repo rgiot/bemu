@@ -158,6 +158,8 @@ fn main() {
             None => amsrust::m4::M4Board::with_bundled_rom(sd)
         };
         let board = board.map(|board| board.in_slot(args.m4_slot.unwrap_or(amsrust::m4::M4_ROM_SLOT)));
+        #[cfg(feature = "m4-wifi")]
+        let board = board.map(|board| board.with_wifi(!args.m4_no_wifi));
         motherboard.plug_expansion(Box::new(board.unwrap_or_else(|e| panic!("--m4: {e}"))));
         eprintln!("{sd}: the M4 board's SD card");
     }
@@ -448,16 +450,12 @@ const KEY_T_STATES: usize = T_STATES_PER_SECOND / 25;
 
 impl Typist {
     fn new(text: &str, at_seconds: f64, layout: amsrust::keyboard::KeyboardLayout) -> Self {
-        let keys = text
-            .chars()
-            .filter_map(|c| {
-                let keys = layout.keys_of_char(c);
-                if keys.is_none() {
-                    eprintln!("--type: cannot type {c:?}, skipped");
-                }
-                keys
+        let keys = amsrust::csl_runner::keys_of_text(text, layout)
+            .unwrap_or_else(|e| {
+                eprintln!("--type: {e}");
+                Vec::new()
             })
-            .collect();
+            .into();
         Self { keys, next_at: (at_seconds * T_STATES_PER_SECOND as f64) as usize, pressed: None }
     }
 

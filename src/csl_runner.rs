@@ -1110,6 +1110,24 @@ fn keys_of_special(key: SpecialKey, layout: KeyboardLayout) -> Option<Vec<CpcKey
     })
 }
 
+/// The keys of a text in CSL's `key_output` syntax (`\\(RET)`, `\\(ESC)`, `\\(CPY)`…, a newline
+/// is RETURN), one entry per key stroke, as a `key_output` types them. `--type` uses it.
+pub fn keys_of_text(text: &str, layout: KeyboardLayout) -> Result<Vec<Vec<CpcKey>>, String> {
+    let output = cpclib_csl::KeyOutput::try_from(text)?;
+    Ok(output
+        .elements()
+        .iter()
+        .filter(|element| !matches!(element, KeyElement::Special(SpecialKey::NoDelayNextKey)))
+        .filter_map(|element| {
+            let keys = keys_of(element, layout);
+            if keys.is_none() {
+                eprintln!("cannot type {element}, skipped");
+            }
+            keys
+        })
+        .collect())
+}
+
 /// The keys of one element of a `key_output` (a group `{..}` is pressed together).
 fn keys_of(element: &KeyElement, layout: KeyboardLayout) -> Option<Vec<CpcKey>> {
     match element {
@@ -1132,6 +1150,13 @@ fn keys_of(element: &KeyElement, layout: KeyboardLayout) -> Option<Vec<CpcKey>> 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn a_text_is_typed_with_the_csl_codes() {
+        use CpcKey::*;
+        let keys = keys_of_text(r"|rz\(RET)\(ESC)", KeyboardLayout::default()).unwrap();
+        assert_eq!(keys, vec![vec![Shift, At], vec![R], vec![Z], vec![Return], vec![Esc]]);
+    }
 
     #[test]
     fn characters_map_to_the_keys_of_a_uk_keyboard() {

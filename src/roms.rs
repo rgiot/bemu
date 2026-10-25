@@ -16,6 +16,10 @@ pub static AMSDOS: &RomImage = include_bytes!("../roms/amsdos.rom");
 /// The M4 board's ROM (Duke's M4ROM v2.0.8).
 #[cfg(feature = "m4")]
 pub static M4: &RomImage = include_bytes!("../roms/m4rom.rom");
+/// RulezCharge 0.9b2 for the M4 (CPCrulez): browses the SD card and downloads software from
+/// cpcrulez.fr, through the M4's WiFi. Started with |RZ.
+#[cfg(feature = "m4-wifi")]
+pub static RULEZCHARGE: &RomImage = include_bytes!("../roms/rulezcharge.rom");
 /// UniDOS 1.51 (Futurs') and its DOS nodes.
 #[cfg(feature = "unidos")]
 pub static UNIDOS: &RomImage = include_bytes!("../roms/unidos.rom");
@@ -58,6 +62,8 @@ pub fn embedded_roms() -> Vec<Embedded> {
     ];
     #[cfg(feature = "m4")]
     roms.push(("m4", M4, "the M4 board's ROM v2.0.8"));
+    #[cfg(feature = "m4-wifi")]
+    roms.push(("rulezcharge", RULEZCHARGE, "RulezCharge 0.9b2, downloads from cpcrulez.fr (|RZ)"));
     #[cfg(feature = "unidos")]
     roms.extend([
         ("unidos", UNIDOS, "UniDOS 1.51"),

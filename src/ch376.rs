@@ -1352,10 +1352,16 @@ mod test {
     }
 
     #[test]
-    fn the_sd_mode_has_no_card() {
+    fn the_sd_mode_mounts_the_volume_too() {
+        // mode 3, the board's SD slot (UniDOS's "SD:"), sees the same volume as the USB key
         let mut chip = chip(&[]);
         chip.write_command(CMD_SET_USB_MODE);
         chip.write_data(3);
+        assert_eq!(chip.read_data(), CMD_RET_SUCCESS);
+        assert_eq!(command(&mut chip, CMD_DISK_MOUNT, &[]), Some(USB_INT_SUCCESS));
+        // a mode without a device (0) still has nothing to mount
+        chip.write_command(CMD_SET_USB_MODE);
+        chip.write_data(0);
         assert_eq!(chip.read_data(), CMD_RET_SUCCESS);
         assert_eq!(command(&mut chip, CMD_DISK_MOUNT, &[]), Some(USB_INT_DISK_ERR));
     }
