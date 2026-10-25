@@ -409,6 +409,15 @@ pub const HSYNC_GA_DELAY_TICKS: usize = 2;
 /// Shaker A3 rule out moving the interrupt or the CRTC writes instead).
 pub const PALETTE_LOOKUP_LAG_TICKS: usize = 21;
 
+/// Ticks into a video byte at which the Gate Array takes DISPEN for the whole byte: a CRTC write
+/// that changes the display enable in the CRTC's sampling window (ACCC 4.4.4: from the start of the
+/// microsecond to 1.5 T-state after) acts on the character it lands in. ACCC 17.5.1: an `OUT R1,0`
+/// whose I/O microsecond is C0=0 (its write reaching the CRTC 4 ticks into the character) borders
+/// the whole line, character 0 included (Shaker AO_H: we showed 4 pixels of it on every line).
+/// The pixels go out [`PALETTE_LOOKUP_LAG_TICKS`] after their pen is known, so the first pens of a
+/// byte are decided again at this point, before they leave.
+pub const DISPEN_LATCH_TICKS: usize = 6;
+
 /// What a tick of the video output shows, before the palette turns it into a colour.
 #[derive(Clone, Copy, Debug)]
 enum Shown {
@@ -1039,6 +1048,13 @@ pub struct GateArray {
     sync_black_ring: History<bool, { ASIC_SYNC_BLACK_LAG_TICKS + 1 }>,
     sync_black_lag: usize,
     rgb_delayed: bool,
+    /// Ticks since the video byte being displayed was loaded (see [`DISPEN_LATCH_TICKS`])
+    byte_tick: usize,
+    /// For the first ticks of the byte: the pen computed (without border), whether it was shown as
+    /// border, and the tick of the byte whose pen the output showed (MODE 2 its own, the other
+    /// modes the previous one)
+    byte_pens: [(Pen, bool); DISPEN_LATCH_TICKS],
+    byte_shown: [Option<usize>; DISPEN_LATCH_TICKS + 1],
     /// GA clock ticks since power-on (timestamps of the RMR mode writes).
     abs_tick: u64,
     /// The CRTC HSYNC as the GA sees it (see [`HSYNC_GA_DELAY_TICKS`]).
@@ -1120,6 +1136,9 @@ impl Default for GateArray {
             blank_ring: History::new(None),
             sync_black_ring: History::new(false),
             sync_black_lag: SYNC_BLACK_LAG_TICKS,
+            byte_tick: 0,
+            byte_pens: [(Pen::Border, true); DISPEN_LATCH_TICKS],
+            byte_shown: [None; DISPEN_LATCH_TICKS + 1],
             rgb_delayed: false,
             abs_tick: 0,
             hsync_pipe: History::new(false),
@@ -1363,6 +1382,7 @@ impl GateArray {
     pub fn set_memory_byte(&mut self, b: u8) {
         // assert!(self.pixel_automata.is_done()); may be false in tests
         self.pixel_automata = PixelAutomata::new(b, self.active_video_mode());
+        self.byte_tick = 0;
     }
 
     pub fn set_ink(&mut self, pen: Pen, ink: Ink) {
@@ -1402,7 +1422,17 @@ impl GateArray {
             // to know exactly where the switch landed). Only the
             // *displayed* output is blanked below - not consumption.
             let mode = self.pixel_automata.mode();
-            let computed = Shown::Pen(self.pixel_automata.generate_pen(!self.get_pin(GateArrayPin::DISPEN)));
+            let border = !self.get_pin(GateArrayPin::DISPEN);
+            let raw = self.pixel_automata.generate_pen(false);
+            let computed = Shown::Pen(if border { Pen::Border } else { raw });
+            let tick = self.byte_tick;
+            if tick < DISPEN_LATCH_TICKS {
+                self.byte_pens[tick] = (raw, border);
+            }
+            if tick <= DISPEN_LATCH_TICKS {
+                self.byte_shown[tick] = if mode == Some(VideoMode::Mode2) { Some(tick) } else { tick.checked_sub(1) };
+            }
+            self.byte_tick += 1;
             // ACCC §9.3 (GA 40007/8/10): the pixels of MODE 2 are displayed one
             // pixel earlier than those of the other modes (the BORDER stops and
             // starts one pixel earlier too); the other modes are what we delay
@@ -1424,6 +1454,9 @@ impl GateArray {
         let sync_black = self.sync_black_ring.get(self.sync_black_lag);
         // The ink is looked up in the palette as it is now, a few ticks after the pen was known.
         self.shown_ring.push(shown);
+        if self.byte_tick == DISPEN_LATCH_TICKS + 1 {
+            self.latch_byte_dispen();
+        }
         self.palette_ring.push(self.palette);
         let palette = &self.palette_ring.get(self.ga_type.palette_write_delay_ticks());
         self.rgb = match self.shown_ring.get(self.lookup_lag) {
@@ -1431,6 +1464,21 @@ impl GateArray {
             Shown::Black => (0., 0., 0.).into(),
             Shown::Pen(pen) => palette[pen.value() as usize].into()
         };
+    }
+
+    /// The byte's first [`DISPEN_LATCH_TICKS`] pens follow DISPEN as it is now (they are still in
+    /// the output pipeline): see the constant.
+    fn latch_byte_dispen(&mut self) {
+        let border = !self.get_pin(GateArrayPin::DISPEN);
+        for tick in 0..=DISPEN_LATCH_TICKS {
+            // (the pen of this very tick already follows DISPEN as it is now)
+            let Some(source) = self.byte_shown[tick].filter(|&source| source < DISPEN_LATCH_TICKS) else { continue };
+            let (raw, was_border) = self.byte_pens[source];
+            let age = DISPEN_LATCH_TICKS - tick;
+            if was_border != border && matches!(self.shown_ring.get(age), Shown::Pen(_)) {
+                self.shown_ring.set(age, Shown::Pen(if border { Pen::Border } else { raw }));
+            }
+        }
     }
 
     /// Generate the synchronization data for the CTM

@@ -34,6 +34,12 @@ impl<T: Copy, const N: usize> History<T, N> {
         self.values[(self.newest + age) & (SLOTS - 1)]
     }
 
+    /// Replaces the value pushed `age` pushes ago, `age < N`.
+    pub fn set(&mut self, age: usize, value: T) {
+        debug_assert!(age < N);
+        self.values[(self.newest + age) & (SLOTS - 1)] = value;
+    }
+
     /// The value of the delay line of `N` ticks: what was pushed `N` pushes ago, then `value` is
     /// pushed.
     pub fn delay(&mut self, value: T) -> T {

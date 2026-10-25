@@ -52,6 +52,17 @@ thread_local! {
     /// The black of the VSYNC (ACCC 16.2.3): from the CRTC's VSYNC start until 26 HSYNCs have ended,
     /// whatever the VSYNC length. (previous VSYNC pin, previous HSYNC, HSYNC ends left)
     static VSYNC_BLACK: std::cell::Cell<(bool, bool, u8)> = std::cell::Cell::new((false, false, 0));
+
+    /// Ticks since the GA took its last video byte, and for the byte's first ticks: whether the
+    /// tick's own pen was border and the tick whose pen the output showed (see
+    /// [`DISPEN_LATCH_TICKS`]: the GA decides the byte's first pens again on its tick 6).
+    static BYTE: std::cell::RefCell<(usize, [bool; DISPEN_LATCH_TICKS + 1], [Option<usize>; DISPEN_LATCH_TICKS + 1])> =
+        std::cell::RefCell::new((usize::MAX, [false; DISPEN_LATCH_TICKS + 1], [None; DISPEN_LATCH_TICKS + 1]));
+}
+
+/// The GA took a new video byte this tick.
+fn byte_loaded() {
+    BYTE.with(|byte| byte.borrow_mut().0 = 0);
 }
 
 fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
@@ -105,9 +116,29 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     else {
         Expected::Mode1
     };
+    let mode2 = ga.current_mode() == VideoMode::Mode2;
     let expected = PIPELINE.with(|queue| {
         let mut queue = queue.borrow_mut();
         queue.push_back(expected_now);
+        BYTE.with(|byte| {
+            let (tick, borders, shown) = &mut *byte.borrow_mut();
+            if *tick <= DISPEN_LATCH_TICKS {
+                borders[*tick] = is_border_now;
+                shown[*tick] = if mode2 { Some(*tick) } else { tick.checked_sub(1) };
+            }
+            if *tick == DISPEN_LATCH_TICKS {
+                // the byte's first pens follow DISPEN as it is now
+                let latched = is_border_now;
+                for t in 0..=DISPEN_LATCH_TICKS {
+                    let Some(source) = shown[t].filter(|&s| s < DISPEN_LATCH_TICKS) else { continue };
+                    let back = queue.len() - 1 - (DISPEN_LATCH_TICKS - t);
+                    if borders[source] != latched && matches!(queue[back], Expected::Border | Expected::Mode1) {
+                        queue[back] = if latched { Expected::Border } else { Expected::Mode1 };
+                    }
+                }
+            }
+            *tick = tick.saturating_add(1);
+        });
         if queue.len() > PALETTE_LOOKUP_LAG_TICKS {
             queue.pop_front()
         }
@@ -178,6 +209,7 @@ fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: V
 
                         if  ga.need_memory_byte(){
                             ga.set_memory_byte(0);
+                            byte_loaded();
                         }
 
                         end_steps(&mut ga, &mut crtc, &mut monitor);
@@ -207,6 +239,7 @@ fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: V
                         // Feed GA with the byte currently selected by CRTC+CCLK phase.
                         let byte = fetch_video_byte(bank, &ga, &crtc);
                         ga.set_memory_byte(byte); // TODO do it with its pins
+                        byte_loaded();
                     }
 
                     end_steps(&mut ga, &mut crtc, &mut monitor);
@@ -303,6 +336,7 @@ fn test_raster() {
 
                         if  ga.need_memory_byte(){
                             ga.set_memory_byte(0);
+                            byte_loaded();
                         }
 
                         end_steps(&mut ga, &mut crtc, &mut monitor);
@@ -332,6 +366,7 @@ fn test_raster() {
                         // Feed GA with the byte currently selected by CRTC+CCLK phase.
                         let byte = fetch_video_byte(bank, &ga, &crtc);
                         ga.set_memory_byte(byte); // TODO do it with its pins
+                        byte_loaded();
                     }
 
                     end_steps(&mut ga, &mut crtc, &mut monitor);
