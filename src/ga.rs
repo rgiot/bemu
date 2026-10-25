@@ -425,6 +425,22 @@ enum Shown {
 /// move (Shaker A's AT/AY tests: 1.690 as is, 1.775 delayed too).
 pub const BLANK_DELAY_TICKS: usize = 2;
 
+/// Ticks between the Gate Array hearing the CRTC's HSYNC (or starting the VSYNC's black) and the
+/// black on its output. The sync black is applied on the way out, it does not travel with the pens
+/// through [`PALETTE_LOOKUP_LAG_TICKS`]: ACCC 14.7.1, on CRTC 0 the black of an HSYNC starts from
+/// the 5th pixel-M2 of the displayed character R2-1, the character C0=R2 "having not yet been
+/// displayed by the Gate Array". Shaker BI on CRTC 0: AMSpiriT and the real CPC both show the
+/// black a character before where it came through the pen pipeline; 7 also keeps the black of an
+/// R3l=2 window (which does go through it, see [`BLANK_DELAY_TICKS`]) where it was on HBL.
+pub const SYNC_BLACK_LAG_TICKS: usize = 7;
+
+/// [`SYNC_BLACK_LAG_TICKS`] on the CRTC 3 and 4 ASICs, whose HSYNC black corresponds to the
+/// character the Gate Array displays (ACCC 14.7.2: from the 17th-19th pixel-M2 of the displayed
+/// character R2-1, a character later than on CRTC 0). AMSpiriT draws it there; so did we when every
+/// sync black went through the pen pipeline. (Deferring the ASIC's HSYNC itself instead moves its
+/// interrupts and its picture by 1 us: Shaker on CRTC 3 gets far worse.)
+pub const ASIC_SYNC_BLACK_LAG_TICKS: usize = PALETTE_LOOKUP_LAG_TICKS;
+
 /// Ticks between the mode being latched and the pixels switching to it. The reconstruction of the
 /// byte being displayed (ACCC 9.3.4.3) assumes the switch lands on its 5th pixel-M2 (a MODE 1 line
 /// resumes on its 4th pixel-M2, then the new mode); applied one tick earlier, a MODE 2 -> 0 switch
@@ -999,6 +1015,9 @@ pub struct GateArray {
     shown_previous: Shown,
     /// The last blanking states, newest first (see [`BLANK_DELAY_TICKS`])
     blank_ring: History<Option<bool>, { BLANK_DELAY_TICKS + 1 }>,
+    /// The sync black (HSYNC-GA, VSYNC) of the last ticks, newest first (see [`SYNC_BLACK_LAG_TICKS`])
+    sync_black_ring: History<bool, { ASIC_SYNC_BLACK_LAG_TICKS + 1 }>,
+    sync_black_lag: usize,
     rgb_delayed: bool,
     /// GA clock ticks since power-on (timestamps of the RMR mode writes).
     abs_tick: u64,
@@ -1073,6 +1092,8 @@ impl Default for GateArray {
             blank_pipe: History::new(None),
             shown_previous: Shown::Black,
             blank_ring: History::new(None),
+            sync_black_ring: History::new(false),
+            sync_black_lag: SYNC_BLACK_LAG_TICKS,
             rgb_delayed: false,
             abs_tick: 0,
             hsync_pipe: History::new(false),
@@ -1363,17 +1384,21 @@ impl GateArray {
             // the black zone of an R3l=2 window comes BLANK_DELAY_TICKS later (see the constant); the
             // HSYNC-GA's own blanking does not
             self.blank_ring.push(self.blank_window);
-            let blank = self.blank_ring.get(BLANK_DELAY_TICKS).unwrap_or(self.hsync_ga);
-            if blank || self.vsync_black {
+            if self.blank_ring.get(BLANK_DELAY_TICKS) == Some(true) {
                 Shown::Black
             } else {
                 pixel
             }
         };
+        // the HSYNC-GA's and the VSYNC's own black, on the output (an R3l=2 window replaces the
+        // HSYNC-GA's)
+        self.sync_black_ring.push((self.blank_window.is_none() && self.hsync_ga) || self.vsync_black);
+        let sync_black = self.sync_black_ring.get(self.sync_black_lag);
         // The ink is looked up in the palette as it is now, a few ticks after the pen was known.
         self.shown_ring.push(shown);
         let palette = if self.ga_type.palette_write_delay_ticks() == 0 { &self.palette } else { &self.palette_previous };
         self.rgb = match self.shown_ring.get(self.lookup_lag) {
+            _ if sync_black => (0., 0., 0.).into(),
             Shown::Black => (0., 0., 0.).into(),
             Shown::Pen(pen) => palette[pen.value() as usize].into()
         };
@@ -1538,6 +1563,11 @@ impl GateArray {
     /// exist yet).
     pub fn set_gate_array_type(&mut self, ga_type: GateArrayType) {
         self.ga_type = ga_type;
+    }
+
+    /// Ticks between the sync and its black on the output (see [`SYNC_BLACK_LAG_TICKS`]).
+    pub fn set_sync_black_lag_ticks(&mut self, ticks: usize) {
+        self.sync_black_lag = ticks.min(ASIC_SYNC_BLACK_LAG_TICKS);
     }
 
     /// CRTCs 3 and 4: the C-VSYNC also needs the CRTC's VSYNC (see `c_vsync_needs_crtc_vsync`).
@@ -2002,6 +2032,7 @@ mod test {
     fn test_mode2_pixels_generation() {
         let mut ga = GateArray::default();
         ga.lookup_lag = 0;
+        ga.sync_black_lag = 0;
         ga.ga_type = GateArrayType::Ga40007_8;
         ga.set_pin(GateArrayPin::DISPEN, true);
         ga.current_mode = VideoMode::Mode2;
@@ -2127,6 +2158,7 @@ mod test {
 
     fn check_expected_inks(ga: &mut GateArray, expected: &[RgbLevels; 8]) {
         ga.lookup_lag = 0;
+        ga.sync_black_lag = 0;
         ga.ga_type = GateArrayType::Ga40007_8;
         assert!(!ga.pixel_automata.is_done());
         // the pixels of the other modes than MODE 2 come out one tick late

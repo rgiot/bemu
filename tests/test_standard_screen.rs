@@ -40,6 +40,11 @@ thread_local! {
     static PIPELINE: std::cell::RefCell<std::collections::VecDeque<Expected>> =
         std::cell::RefCell::new(std::collections::VecDeque::new());
 
+    /// The sync black (HSYNC-GA, VSYNC) of the last [`SYNC_BLACK_LAG_TICKS`] ticks: it is applied on
+    /// the output, without going through the pen pipeline.
+    static SYNC_PIPELINE: std::cell::RefCell<std::collections::VecDeque<bool>> =
+        std::cell::RefCell::new(std::collections::VecDeque::new());
+
     /// Was the previous pixel a border one? The pixels of the modes other than
     /// MODE 2 come out one tick late (MODE 2 is displayed a pixel earlier).
     static PREVIOUS_BORDER: std::cell::Cell<Option<(bool, [Ink; 17])>> = std::cell::Cell::new(None);
@@ -86,18 +91,19 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     // after the CRTC raises/lowers it)
     let hsync = ga.hsync_ga();
 
-    let expected_now = if !vsync && !hsync && !unknown {
-        if is_border {
-            Expected::Border
-        } else {
-            Expected::Mode1
-        }
-    }
-    else if unknown {
+    let sync_black = SYNC_PIPELINE.with(|queue| {
+        let mut queue = queue.borrow_mut();
+        queue.push_back(vsync || hsync);
+        if queue.len() > SYNC_BLACK_LAG_TICKS { queue.pop_front() } else { None }
+    });
+    let expected_now = if unknown {
         Expected::Unknown
     }
+    else if is_border {
+        Expected::Border
+    }
     else {
-        Expected::Black
+        Expected::Mode1
     };
     let expected = PIPELINE.with(|queue| {
         let mut queue = queue.borrow_mut();
@@ -109,6 +115,7 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
             None
         }
     });
+    let expected = if sync_black == Some(true) { Some(Expected::Black) } else { expected };
     match expected {
         None | Some(Expected::Unknown) => {},
         Some(Expected::Black) => assert_eq!(RgbLevels::from((0., 0., 0.)), rgb),

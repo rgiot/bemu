@@ -382,6 +382,10 @@ impl MotherboardBuilder {
         motherboard
             .ga
             .set_c_vsync_needs_crtc_vsync(matches!(crtc_type, CrtcType::Crtc3 | CrtcType::Crtc4));
+        motherboard.ga.set_sync_black_lag_ticks(match crtc_type {
+            CrtcType::Crtc3 | CrtcType::Crtc4 => crate::ga::ASIC_SYNC_BLACK_LAG_TICKS,
+            _ => crate::ga::SYNC_BLACK_LAG_TICKS
+        });
 
         if self.disable_lower_rom {
             motherboard.disable_lower_rom();
