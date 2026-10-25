@@ -180,10 +180,11 @@ impl Gpu {
             return;
         }
         let params: CrtParams = profile.params();
-        let pass = CrtPass::new(&self.device, &params, &self.frame);
+        let pass = CrtPass::new(&self.device, &params, &self.frame, warp);
         let target = CrtPass::create_target(&self.device, &params, wgpu::TextureUsages::TEXTURE_BINDING);
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = self.blit.bind_group(&self.device, &view, true, warp);
+        // the CRT pass already bends the beam under the glass
+        let bind_group = self.blit.bind_group(&self.device, &view, true, Warp::FLAT);
         self.crt = Some(CrtState { mode, warp, pass, target, bind_group, size: params.output_size() });
     }
 

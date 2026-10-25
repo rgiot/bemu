@@ -21,6 +21,11 @@ struct Params {
     halation: f32,
     scale: f32,
     x_ratio: f32,
+    // the glass (`Warp` of crt.rs): bulge, corners' radius, 1 if curved
+    warp_kx: f32,
+    warp_ky: f32,
+    warp_corner: f32,
+    edged: f32,
     pad: f32,
 }
 
@@ -76,7 +81,16 @@ fn slot_distance(x: i32, y: i32) -> f32 {
     return rounded_box_distance(px, py, hx, hy, r);
 }
 
-// Light of the slot at output column `x`, row `y`, in its own gun's channel.
+// The point of the flat picture (in [0, 1]^2) the glass shows at `uv`: the `Warp` of crt.rs.
+fn warped(uv: vec2<f32>) -> vec2<f32> {
+    let q = uv * 2.0 - 1.0;
+    let w = q * (1.0 + vec2<f32>(p.warp_kx, p.warp_ky) * q.yx * q.yx);
+    return (w + 1.0) / 2.0;
+}
+
+// Light of the slot at output column `x`, row `y`, in its own gun's channel. Through curved
+// glass the beam's raster bends, not the mask: the slot reads the beam where its centre's warped
+// place is (no resampling of the mask, so no moire).
 fn light(x: i32, y: i32) -> vec3<f32> {
     if (x < 0 || x >= i32(p.out_w)) {
         return vec3<f32>(0.0);
@@ -84,7 +98,9 @@ fn light(x: i32, y: i32) -> vec3<f32> {
     let sw = i32(p.slot_px);
     let slot = x / sw;
     let c = u32(slot % 3);
-    let u = (f32(slot) + 0.5) * f32(sw) / p.x_ratio;
+    let size = vec2<f32>(f32(p.out_w), f32(p.out_h));
+    let beam = warped(vec2<f32>((f32(slot) + 0.5) * f32(sw), f32(y) + 0.5) / size) * size;
+    let u = beam.x / p.x_ratio;
     let first = i32(floor(u - 0.5)) - 1;
     var w: array<f32, 4>;
     var sum = 0.0;
@@ -92,7 +108,7 @@ fn light(x: i32, y: i32) -> vec3<f32> {
         w[t] = gauss(u - (f32(first + t) + 0.5), p.sigma_h);
         sum += w[t];
     }
-    let f = (f32(y) + 0.5) / f32(p.rows_per_line) - 0.5;
+    let f = beam.y / f32(p.rows_per_line) - 0.5;
     let line = i32(floor(f));
     let a = gauss(f - f32(line), p.sigma_v);
     let b = gauss(f32(line) + 1.0 - f, p.sigma_v);
@@ -115,5 +131,11 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let y = i32(pos.y);
     let sw = i32(p.slot_px);
     let rgb = (1.0 - 2.0 * p.halation) * light(x, y) + p.halation * (light(x - sw, y) + light(x + sw, y));
-    return vec4<f32>(sqrt(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
+    // the glass's rounded edge, smoothed over about a pixel (as the blit of a flat picture)
+    let q = warped((vec2<f32>(f32(x), f32(y)) + 0.5) / vec2<f32>(f32(p.out_w), f32(p.out_h))) * 2.0 - 1.0;
+    let e = abs(q) - (1.0 - p.warp_corner);
+    let distance = length(max(e, vec2<f32>(0.0))) + min(max(e.x, e.y), 0.0) - p.warp_corner;
+    let pixel = 2.0 / f32(max(p.out_w, p.out_h));
+    let alpha = mix(1.0, clamp(0.5 - distance / pixel, 0.0, 1.0), p.edged);
+    return vec4<f32>(sqrt(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0))) * alpha, 1.0);
 }

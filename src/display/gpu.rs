@@ -33,11 +33,16 @@ struct Uniforms {
     halation: f32,
     scale: f32,
     x_ratio: f32,
+    /// The glass (see [`Warp`]): its bulge, its corners' radius, and 1 if curved at all
+    /// (scalars in `crt.wgsl`, where a `vec2` would be aligned on 8 bytes).
+    warp_k: [f32; 2],
+    warp_corner: f32,
+    edged: f32,
     pad: f32
 }
 
 impl Uniforms {
-    fn new(p: &CrtParams) -> Self {
+    fn new(p: &CrtParams, warp: Warp) -> Self {
         let (out_w, out_h) = p.output_size();
         Self {
             out_w: out_w as u32,
@@ -55,6 +60,9 @@ impl Uniforms {
             halation: p.halation,
             scale: p.gain * p.white_norm(),
             x_ratio: p.x_ratio(),
+            warp_k: [warp.k.0, warp.k.1],
+            warp_corner: warp.corner,
+            edged: if warp.is_flat() { 0.0 } else { 1.0 },
             pad: 0.0
         }
     }
@@ -244,8 +252,9 @@ pub struct CrtPass {
 }
 
 impl CrtPass {
-    pub fn new(device: &wgpu::Device, params: &CrtParams, frame: &FrameTexture) -> Self {
-        let uniforms = Uniforms::new(params);
+    /// Seen through the glass `warp`: the beam's raster bends under the fixed mask.
+    pub fn new(device: &wgpu::Device, params: &CrtParams, frame: &FrameTexture, warp: Warp) -> Self {
+        let uniforms = Uniforms::new(params, warp);
         let uniform_buffer = wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor {
             label: Some("crt parameters"),
             contents: bytemuck::bytes_of(&uniforms),
@@ -388,6 +397,11 @@ pub fn wait_for<F: std::future::Future>(future: F) -> F::Output {
 impl GpuCrt {
     /// Fails (with a message) when no usable adapter is available.
     pub fn new(params: CrtParams) -> Result<Self, String> {
+        Self::curved(params, Warp::FLAT)
+    }
+
+    /// Seen through the glass `warp` (see [`CrtPass::new`]).
+    pub fn curved(params: CrtParams, warp: Warp) -> Result<Self, String> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
             .map_err(|e| format!("no GPU adapter: {e}"))?;
@@ -396,7 +410,7 @@ impl GpuCrt {
 
         let (out_w, out_h) = params.output_size();
         let frame = FrameTexture::new(&device);
-        let pass = CrtPass::new(&device, &params, &frame);
+        let pass = CrtPass::new(&device, &params, &frame, warp);
         let target = CrtPass::create_target(&device, &params, wgpu::TextureUsages::COPY_SRC);
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
         let padded_row = (out_w * 4).div_ceil(align) * align;
@@ -468,16 +482,19 @@ mod test {
         for (x, y, pixel) in src.enumerate_pixels_mut() {
             *pixel = Rgb([(x * 7 % 256) as u8, (y * 5 % 256) as u8, ((x / 3 + y) * 11 % 256) as u8]);
         }
-        for profile in [CrtProfile::Ctm644, CrtProfile::Trinitron] {
+        // flat, and through each glass (the beam bent under the mask: `crt.wgsl` and `cpu.rs`)
+        let cases = [CrtProfile::Ctm644, CrtProfile::Trinitron].into_iter()
+            .flat_map(|profile| [(profile, Warp::FLAT), (profile, Warp::of(profile, 1.0))]);
+        for (profile, warp) in cases {
             let params = profile.params();
-            let mut gpu = match GpuCrt::new(params.clone()) {
+            let mut gpu = match GpuCrt::curved(params.clone(), warp) {
                 Ok(gpu) => gpu,
                 Err(e) => {
                     eprintln!("skipped: {e}");
                     return;
                 }
             };
-            let mut cpu = CpuCrt::new(params);
+            let mut cpu = CpuCrt::new(params).curved(warp);
             let (w, h) = cpu.output_size();
             let (mut a, mut b) = (vec![0; w * h], vec![0; w * h]);
             cpu.render(&src, &mut a);
@@ -491,7 +508,7 @@ mod test {
                     off += (d > 3) as usize;
                 }
             }
-            assert!(off < w * h / 1000, "{profile:?}: {off} channel values differ by more than 3 (worst {worst})");
+            assert!(off < w * h / 1000, "{profile:?} {warp:?}: {off} channel values differ by more than 3 (worst {worst})");
         }
     }
 

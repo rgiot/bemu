@@ -82,14 +82,22 @@ impl DisplayMode {
     /// its glass, curved `curvature` times its profile's bulge (0: flat), see [`Warp`].
     #[cfg(not(target_arch = "wasm32"))]
     pub fn filter_on(self, gpu: bool, curvature: f32) -> Box<dyn DisplayFilter> {
-        let filter = self.flat_filter_on(gpu);
         let warp = self.warp(curvature);
-        if warp.is_flat() {
-            filter
+        if let Self::Crt(profile) = self {
+            // the CRT models bend the beam's raster under a fixed mask (no moire)
+            if gpu {
+                #[cfg(feature = "crt-gpu")]
+                match GpuCrt::curved(profile.params(), warp) {
+                    Ok(filter) => return Box::new(filter),
+                    Err(e) => eprintln!("{e}: the CRT is rendered on the CPU"),
+                }
+                #[cfg(not(feature = "crt-gpu"))]
+                eprintln!("built without the crt-gpu feature: the CRT is rendered on the CPU");
+            }
+            return Box::new(CpuCrt::new(profile.params()).curved(warp));
         }
-        else {
-            Box::new(Curved::new(filter, warp))
-        }
+        // raw: the doubled picture, never curved (see `warp`)
+        Box::new(RawFilter)
     }
 
     /// The glass of this mode, curved `curvature` times its profile's bulge: flat for raw.
@@ -97,25 +105,6 @@ impl DisplayMode {
         match self {
             Self::Raw => Warp::FLAT,
             Self::Crt(profile) => Warp::of(profile, curvature)
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn flat_filter_on(self, gpu: bool) -> Box<dyn DisplayFilter> {
-        match self {
-            Self::Raw => Box::new(RawFilter),
-            Self::Crt(profile) => {
-                if gpu {
-                    #[cfg(feature = "crt-gpu")]
-                    match GpuCrt::new(profile.params()) {
-                        Ok(filter) => return Box::new(filter),
-                        Err(e) => eprintln!("{e}: the CRT is rendered on the CPU"),
-                    }
-                    #[cfg(not(feature = "crt-gpu"))]
-                    eprintln!("built without the crt-gpu feature: the CRT is rendered on the CPU");
-                }
-                Box::new(CpuCrt::new(profile.params()))
-            }
         }
     }
 }

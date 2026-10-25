@@ -103,7 +103,7 @@ impl Config {
 
     pub fn curvature(&self) -> Result<f32, String> {
         match self.curvature {
-            None => Ok(1.0),
+            None => Ok(0.0),
             Some(c) if (0.0..=4.0).contains(&c) => Ok(c),
             Some(c) => Err(format!("curvature must be 0 to 4, not {c}"))
         }

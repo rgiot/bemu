@@ -63,7 +63,7 @@ and `fetch` don't work from `file://`.
   | `language` | `'en'`, or `'fr'`: the French 6128's ROMs and its AZERTY keyboard (typed text follows it) | `'en'` |
   | `brand` | `'amstrad'`, `'schneider'`, `'awa'`, `'orion'`, `'saisho'`, `'solavox'`, `'triumph'`, `'isp'` | `'amstrad'` |
   | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'`, `'atari'` | `'raw'` |
-  | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `1` |
+  | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `0` |
   | `blackLevel` | `0` to `255`: the grey a black ink is drawn at | `8` |
 
 - **`options`**:
@@ -184,8 +184,8 @@ A web page cannot set the display's refresh rate, so the library measures it.
 ### Drawing
 - **WebGPU:** used when the browser has it. The picture fills the canvas, letterboxed, with the
   CRT profiles drawn on the GPU (the shader of the desktop's `--crt-gpu`), seen through the
-  tube's curved glass: the picture bulges and the corners are rounded, as on the desktop.
-  `curvature: 0` keeps it flat. The raw display is never curved.
+  tube's glass, flat by default; `curvature: 1` bulges the picture and rounds the corners, as
+  on the desktop. The raw display is never curved.
 - **Canvas 2D:** used otherwise. It shows the raw picture at 768×544, and the page scales the
   canvas.
 

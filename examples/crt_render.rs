@@ -2,10 +2,10 @@
 //! raw mode) through a CRT model, for tuning it without running a machine.
 //!
 //! ```text
-//! cargo run --release --example crt_render -- in.png out.png ctm [triad_px] [bench]
+//! cargo run --release --example crt_render -- in.png out.png ctm [triad_px] [bench] [curve=F|oldcurve=F]
 //! ```
 
-use amsrust::display::{CpuCrt, CrtParams, DisplayFilter, DisplayMode, RawFilter};
+use amsrust::display::{CpuCrt, CrtParams, Curved, DisplayFilter, DisplayMode, RawFilter};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -24,6 +24,14 @@ fn main() {
         (DisplayMode::Crt(_), None) => mode.filter(),
         (DisplayMode::Raw, _) => Box::new(RawFilter)
     };
+    // curve=F: the glass bends the beam under the mask; oldcurve=F: the finished picture warped
+    let curve = |key: &str| rest.iter().find_map(|a| a.strip_prefix(key).and_then(|v| v.parse::<f32>().ok()));
+    if let Some(curvature) = curve("curve=") {
+        filter = mode.filter_on(false, curvature);
+    }
+    else if let Some(curvature) = curve("oldcurve=") {
+        filter = Box::new(Curved::new(filter, mode.warp(curvature)));
+    }
     if rest.iter().any(|a| a == "bench") {
         let (w, h) = filter.output_size();
         let mut buffer = vec![0u32; w * h];
