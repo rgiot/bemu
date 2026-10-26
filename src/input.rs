@@ -118,13 +118,43 @@ impl TypedCombo {
 
 /// The host keyboard's state as seen by the emulator: feed it a
 /// [`HostInput`] once per redraw.
+///
+/// A host key is named by its place (a QWERTY one): on another layout the key at Q's place
+/// types `a` (AZERTY), and pressing it reported both Q, from its place, and A, from the
+/// character typed ("qa"). So the printable keys learn what they type: when one goes down and
+/// the host types a character with it, that character's CPC key is what the key presses while
+/// held (a game's keys included), with and without Shift; when the CPC needs the other Shift
+/// state for it (`&` is Shift+6 on a UK CPC, unshifted on an AZERTY host), the key presses
+/// nothing itself and the typed character does it all. A printable key not learned yet waits a
+/// little for its character before it presses its place's key.
 #[derive(Default)]
 pub struct HostKeyboard {
     typed: TypedChars,
-    combo: TypedCombo
+    combo: TypedCombo,
+    /// The host keys down at the previous poll.
+    held: Vec<HostKey>,
+    /// Printable keys just pressed and not learned yet: the polls left to wait for the
+    /// character the host types with them.
+    waiting: Vec<(HostKey, u8)>,
+    /// What a printable key types here, with (true) or without Shift: its CPC key, or `None`
+    /// when the typed character does it alone.
+    learned: Vec<((HostKey, bool), Option<CpcKey>)>
+}
+
+/// What a host key down presses.
+enum Pressing {
+    /// The key of its place (`HOST_KEY_MAP`).
+    Place,
+    /// The key it was learned to type (none: the typed character's alone).
+    Learned(Option<CpcKey>),
+    /// Nothing yet: its character may still come.
+    Waiting
 }
 
 impl HostKeyboard {
+    /// How many polls a printable key not learned yet waits for its character.
+    pub const WAIT_POLLS: u8 = 2;
+
     /// Set every mapped [`CpcKey`]'s pressed state from `input` - polled at
     /// the CPC's own ~50Hz rather than per-event.
     ///
@@ -135,47 +165,123 @@ impl HostKeyboard {
     /// held (holding only the left Shift got cancelled by the unheld right
     /// one, breaking every Shift-combo character).
     pub fn apply(&mut self, motherboard: &mut Motherboard, input: &HostInput) {
+        let layout = motherboard.keyboard_layout();
+        self.learn(input, layout);
         for &c in &input.typed {
             self.typed.push(c);
         }
-        let layout = motherboard.keyboard_layout();
-        let combo = self.combo.advance_on(&mut self.typed, layout);
-        let matrix = motherboard.keyboard_mut();
-        if layout == KeyboardLayout::Uk {
-            for key in HOST_KEY_MAP {
-                matrix.set_pressed(key.1, any_host_key_pressed(HOST_KEY_MAP, key.1, |k| input.down.contains(&k)));
+        let combo = self.combo.advance_on(&mut self.typed, layout).to_vec();
+        let shift = is_shift_down(&input.down);
+
+        // every key a host key can press starts up, then the ones held go down
+        let mut pressed: Vec<(CpcKey, bool)> = Vec::new();
+        let mut press = |key: CpcKey, down: bool| match pressed.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, held)) => *held |= down,
+            None => pressed.push((key, down))
+        };
+        for (_, key) in HOST_KEY_MAP {
+            press(*key, false);
+            if layout != KeyboardLayout::Uk {
+                press(layout.key_labelled(*key), false);
             }
         }
-        else {
-            // A letter goes where the layout has it (an AZERTY CPC's A is the UK Q). The UK
-            // punctuation keys are left to the typed characters: their places hold letters here.
-            // every key the table names starts up (a typed character's key included: the
-            // layout moves letters onto places no host key maps to any more)
-            let mut pressed: Vec<(CpcKey, bool)> = Vec::new();
-            for (_, key) in HOST_KEY_MAP {
-                if !pressed.iter().any(|(k, _)| k == key) {
-                    pressed.push((*key, false));
+        for (_, key) in &self.learned {
+            if let Some(key) = key {
+                press(*key, false);
+            }
+        }
+        for &host in &input.down {
+            match self.pressing(host, shift) {
+                Pressing::Waiting | Pressing::Learned(None) => {},
+                Pressing::Learned(Some(key)) => press(key, true),
+                Pressing::Place => {
+                    for (_, key) in HOST_KEY_MAP.iter().filter(|(h, _)| *h == host) {
+                        if layout == KeyboardLayout::Uk {
+                            press(*key, true);
+                        }
+                        // A letter goes where the layout has it (an AZERTY CPC's A is the UK Q).
+                        // The UK punctuation keys are left to the typed characters: their places
+                        // hold letters there.
+                        else if !is_uk_punctuation(*key) {
+                            press(layout.key_labelled(*key), true);
+                        }
+                    }
                 }
             }
-            for (host, key) in HOST_KEY_MAP {
-                if is_uk_punctuation(*key) {
-                    continue;
-                }
-                let target = layout.key_labelled(*key);
-                let down = input.down.contains(host);
-                match pressed.iter_mut().find(|(k, _)| *k == target) {
-                    Some((_, held)) => *held |= down,
-                    None => pressed.push((target, down))
-                }
-            }
-            for (key, down) in pressed {
-                matrix.set_pressed(key, down);
-            }
+        }
+        let matrix = motherboard.keyboard_mut();
+        for (key, down) in pressed {
+            matrix.set_pressed(key, down);
         }
         for key in combo {
-            matrix.set_pressed(*key, true);
+            matrix.set_pressed(key, true);
         }
     }
+
+    /// The printable keys just pressed wait for their characters; the characters typed teach
+    /// them, one each, in order.
+    fn learn(&mut self, input: &HostInput, layout: KeyboardLayout) {
+        let shift = is_shift_down(&input.down);
+        let control = input.down.iter().any(|k| matches!(k, HostKey::LeftCtrl | HostKey::RightCtrl));
+        // released keys stop waiting; the others wait a poll less
+        self.waiting.retain(|(key, _)| input.down.contains(key));
+        for &key in &input.down {
+            if is_printable(key) && !self.held.contains(&key) && self.learned_as(key, shift).is_none() {
+                self.waiting.push((key, Self::WAIT_POLLS + 1));
+            }
+        }
+        // Ctrl with a key types a control code, if anything: nothing to learn from
+        if !control && !input.typed.is_empty() && input.typed.len() == self.waiting.len() {
+            for ((key, _), &c) in self.waiting.drain(..).zip(&input.typed) {
+                let pressing = layout.keys_of_char(c).and_then(|keys| {
+                    let needs_shift = keys.contains(&CpcKey::Shift);
+                    let key = keys.iter().copied().filter(|k| !matches!(k, CpcKey::Shift | CpcKey::Control)).last();
+                    if needs_shift == shift { key } else { None }
+                });
+                self.learned.retain(|(learned, _)| *learned != (key, shift));
+                self.learned.push(((key, shift), pressing));
+            }
+        }
+        for (_, polls) in &mut self.waiting {
+            *polls -= 1;
+        }
+        // the time is up: the place's key, as without a character
+        self.waiting.retain(|(_, polls)| *polls > 0);
+        self.held = input.down.clone();
+    }
+
+    fn learned_as(&self, key: HostKey, shift: bool) -> Option<Option<CpcKey>> {
+        self.learned.iter().find(|(learned, _)| *learned == (key, shift)).map(|(_, pressing)| *pressing)
+    }
+
+    fn pressing(&self, key: HostKey, shift: bool) -> Pressing {
+        if self.waiting.iter().any(|(waiting, _)| *waiting == key) {
+            Pressing::Waiting
+        }
+        // the other Shift state's, not learned yet in this one (Shift pressed with the key held)
+        else if let Some(pressing) = self.learned_as(key, shift).or_else(|| self.learned_as(key, !shift)) {
+            Pressing::Learned(pressing)
+        }
+        else {
+            Pressing::Place
+        }
+    }
+}
+
+fn is_shift_down(down: &[HostKey]) -> bool {
+    down.iter().any(|k| matches!(k, HostKey::LeftShift | HostKey::RightShift))
+}
+
+/// The host keys that type a character, so whose CPC key the host's layout decides.
+fn is_printable(key: HostKey) -> bool {
+    use HostKey::*;
+    matches!(
+        key,
+        A | B | C | D | E | F | G | H | I | J | K | L | M | N | O | P | Q | R | S | T | U | V | W | X | Y | Z
+            | Key0 | Key1 | Key2 | Key3 | Key4 | Key5 | Key6 | Key7 | Key8 | Key9
+            | Minus | LeftBracket | RightBracket | Backslash | Semicolon | Apostrophe | Comma | Period | Slash
+            | Backquote | Equal
+    )
 }
 
 /// The keys of the UK punctuation, which hold letters on other layouts.
@@ -348,4 +454,71 @@ mod test {
         }
         assert!(!machine.keyboard_mut().is_pressed(CpcKey::M));
     }
+
+    /// Polls a keyboard as a frontend does: the host keys down and the characters typed.
+    fn poll(keyboard: &mut HostKeyboard, motherboard: &mut Motherboard, down: &[HostKey], typed: &str) -> Vec<CpcKey> {
+        keyboard.apply(motherboard, &HostInput { down: down.to_vec(), typed: typed.chars().collect() });
+        use CpcKey::*;
+        [A, Q, Z, W, Digit1, Digit6, Shift, Control]
+            .into_iter()
+            .filter(|key| motherboard.keyboard().is_pressed(*key))
+            .collect()
+    }
+
+    /// An AZERTY host: the key at Q's place types `a`. The CPC sees A alone, at once and while
+    /// held (a game's key), never Q ("qa" before).
+    #[test]
+    fn a_key_the_layout_moves_presses_what_it_types() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::default();
+        assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "a"), vec![CpcKey::A]);
+        for _ in 0..10 {
+            assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q], ""), vec![CpcKey::A], "held");
+        }
+        // the character typed late (a poll after the key): nothing meanwhile, then A
+        let mut keyboard = HostKeyboard::default();
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        assert!(!poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "").contains(&CpcKey::Q), "waits");
+        assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "a"), vec![CpcKey::A]);
+        // Shift pressed with it held: still A
+        assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q, HostKey::LeftShift], ""), vec![CpcKey::A, CpcKey::Shift]);
+    }
+
+    /// A QWERTY host: Q types `q`, the same as its place.
+    #[test]
+    fn a_qwerty_host_is_unchanged() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::default();
+        assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "q"), vec![CpcKey::Q]);
+        assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q], ""), vec![CpcKey::Q]);
+    }
+
+    /// No character comes (Ctrl+key): after the wait, the place's key.
+    #[test]
+    fn a_key_typing_nothing_presses_its_place_after_a_while() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::default();
+        let down = [HostKey::LeftCtrl, HostKey::Z];
+        let polls: Vec<Vec<CpcKey>> = (0..4).map(|_| poll(&mut keyboard, &mut motherboard, &down, "")).collect();
+        assert_eq!(polls[0], vec![CpcKey::Control], "waiting for a character");
+        assert_eq!(polls[3], vec![CpcKey::Z, CpcKey::Control]);
+    }
+
+    /// AZERTY's digit row types `&` unshifted, Shift+6 on a UK CPC: the key presses nothing
+    /// itself, the typed character does it (no 1 with it).
+    #[test]
+    fn a_key_needing_the_other_shift_is_left_to_the_typed_character() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::default();
+        let first = poll(&mut keyboard, &mut motherboard, &[HostKey::Key1], "&");
+        assert!(!first.contains(&CpcKey::Digit1), "{first:?}");
+        assert!(first.contains(&CpcKey::Digit6) && first.contains(&CpcKey::Shift), "the typed &: {first:?}");
+        // with Shift it types 1: learned apart
+        for _ in 0..8 {
+            poll(&mut keyboard, &mut motherboard, &[], "");
+        }
+        let shifted = poll(&mut keyboard, &mut motherboard, &[HostKey::Key1, HostKey::LeftShift], "1");
+        assert!(shifted.contains(&CpcKey::Digit1), "{shifted:?}");
+    }
+
 }
