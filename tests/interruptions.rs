@@ -1,7 +1,5 @@
-#![feature(exclusive_range_pattern)]
-#![feature(half_open_range_patterns)]
 	
-use amsrust::{debug::Monitor, motherboard::{self, MotherboardBuilder}, z80::{HasValue, InterruptMode, Reg16, Reg8}};
+use amsrust::{debug::Monitor, motherboard::MotherboardBuilder, z80::{HasValue, InterruptMode, Reg16, Reg8}};
 use cpclib_asm::preamble::ListingElement;
 use cpclib_asm::preamble::Mnemonic;
 
@@ -27,8 +25,8 @@ fn test_interruption_mode1_halt_di() {
 	motherboard.write_buffer(0x100, infinite_loop);
 	motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
 
-	/// memory is full of nop
-	let mut interrupt_count = 0;
+	// memory is full of nop
+	let interrupt_count = 0;
 	while motherboard.nops_counter().value() < 19968 {
 
 		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
@@ -213,7 +211,7 @@ fn test_interruption_mode1_one_frame() {
 	motherboard.write_buffer(0x100, infinite_loop);
 	motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
 
-	/// memory is full of nop
+	// memory is full of nop
 	let mut interrupt_count = 0;
 	let mut prev_interr_time = None;
 	let mut gaps = Vec::new();

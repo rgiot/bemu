@@ -97,7 +97,7 @@ mod test {
         let path = dir.join("demo.sna").to_str().unwrap().to_owned();
         std::fs::write(&path, b"one").unwrap();
         let mut watcher = Watcher::new([(path.clone(), Kind::Sna)]);
-        let mut look = |watcher: &mut Watcher| {
+        let look = |watcher: &mut Watcher| {
             watcher.next_poll = Instant::now();
             watcher.changed()
         };
