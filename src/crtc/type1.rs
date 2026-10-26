@@ -202,10 +202,16 @@ impl CrtcChip for Crtc1 {
         }
     }
 
-    /// ACCC 19.8.2: in IVM the test excludes bit 0.
+    /// ACCC 19.8.2: in IVM the test excludes bit 0, and is made on C9 after its first-stage
+    /// increment (C9+1 when R9 is even), as the row end in `count_line`: with R9=6 a row counted
+    /// 1, 3, 5 ends on C9=5. Comparing the bare C9 missed that row's last line, so VMA' was not
+    /// taken and the next row repeated it (Shaker B1 R9E6 *2 screens: CPCSyntaxError and AMSpiriT
+    /// advance the address by a row there).
     fn c9_is_last(&self, core: &Core) -> bool {
         if core.ivm_lines {
-            core.vlc.value() & 0x1e == core.regs[9] & 0x1e
+            let r9 = core.regs[9];
+            let c9 = (core.vlc.value() + u8::from(r9 & 1 == 0)) & 0x1f;
+            c9 & 0x1e == r9 & 0x1e
         } else {
             core.vlc == core.regs[9]
         }
