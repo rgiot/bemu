@@ -1,7 +1,5 @@
 //! The duration (in microseconds) of every opcode matches ACCC chapter 26's
 //! table ("duration of instructions on the CPC").
-#![feature(exclusive_range_pattern)]
-#![feature(half_open_range_patterns)]
 
 use amsrust::{motherboard::MotherboardBuilder, z80::{cpc_bus_timing, HasValue, Reg16}};
 
