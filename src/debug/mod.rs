@@ -1,10 +1,9 @@
 use cpclib_asm::preamble::Token;
 use smallvec::SmallVec;
-use itertools::Itertools;
 
 use crate::chip::{Chip, ReadAddressChip, ReadDataChip};
 use crate::crtc::{Crtc, CrtcPin};
-use crate::{ga::*, motherboard};
+use crate::ga::*;
 use crate::motherboard::Motherboard;
 use crate::z80::Z80Flags;
 use crate::z80::Z80Pin;
@@ -304,7 +303,7 @@ pub struct MonitorContext<'f> {
 
     /// A dedicated code to handle BEFORE the execution of an instruction.
     /// The handler takes as input the motherboard and returns true if emulation need to be stopped
-    preExec: Option<Box<&'f mut dyn Fn(&mut Motherboard) -> bool>>,
+    pre_exec: Option<Box<&'f mut dyn Fn(&mut Motherboard) -> bool>>,
 
     /// Names of addresses, for the commands and the disassembly.
     symbols: crate::symbols::SymbolTable,
@@ -315,7 +314,7 @@ impl<'f> Default for MonitorContext<'f> {
         MonitorContext {
             breakpoints: Default::default(),
             displays: Default::default(),
-            preExec: None,
+            pre_exec: None,
             symbols: Default::default()
         }
     }
@@ -326,7 +325,7 @@ impl<'f> MonitorContext<'f> {
         Self {
             breakpoints: Default::default(),
             displays: Default::default(),
-            preExec: Some(handle),
+            pre_exec: Some(handle),
             symbols: Default::default()
         }
     }
@@ -433,7 +432,7 @@ impl<'f> MonitorContext<'f> {
     /// Return true if emulation has to be stopped
     #[inline]
     pub fn execute_next(&mut self, motherboard: &mut Motherboard) -> bool {
-        if let Some(handle) = self.preExec.as_mut() {
+        if let Some(handle) = self.pre_exec.as_mut() {
             let res = handle(motherboard);
             if res {
                 return true;

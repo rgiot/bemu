@@ -15,7 +15,6 @@ use crate::ppi::*;
 use crate::psg::{AudioConfig, BusControl, Psg, REG_IO_PORT_A};
 use crate::z80::*;
 
-use std::convert::TryFrom;
 use std::fmt;
 
 /// Motherboard of the AMstrad CPC
@@ -243,9 +242,12 @@ pub struct MotherboardBuilder {
     /// in the boot banner.
     brand: Option<Brand>,
     keyboard_layout: Option<crate::keyboard::KeyboardLayout>,
+    #[cfg(feature = "playcity")]
     playcity: bool,
+    #[cfg(feature = "digiblaster")]
     digiblaster: bool,
     /// Willy with an OPL3LPT, at this base.
+    #[cfg(feature = "willy")]
     willy_opl3: Option<u16>,
     /// If interruption are allowed
     enable_interruptions: bool, // false by default
@@ -1000,7 +1002,7 @@ impl Motherboard {
         let mut has_executed_first_state_counter = false;
         let mut has_finished_z80_execution = false;
 
-        /// execute the whole stuff as soon as it is necessary
+        // execute the whole stuff as soon as it is necessary
         loop {
             on_tick(self.tick());
 
@@ -1222,10 +1224,10 @@ impl Motherboard {
                 expansion.save_pins_state();
             }
 
-            let Neg_IOWR = self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
-            let Neg_IORD = self.cpu.get_pin(Z80Pin::Neg_RD) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
+            let neg_iowr = self.cpu.get_pin(Z80Pin::Neg_WR) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
+            let neg_iord = self.cpu.get_pin(Z80Pin::Neg_RD) || self.cpu.get_pin(Z80Pin::Neg_IORQ);
 
-            if !Neg_IORD {
+            if !neg_iord {
                 assert!(!self.cpu.get_pin(Z80Pin::Neg_IORQ));
             }
 
@@ -1285,7 +1287,7 @@ impl Motherboard {
                 PalPin::D6_and_D7,
                 self.cpu.get_pin(Z80Pin::D6) && self.cpu.get_pin(Z80Pin::D7),
             );
-            self.pal.set_pin(PalPin::IOWR, !Neg_IOWR);
+            self.pal.set_pin(PalPin::IOWR, !neg_iowr);
 
             // CPU to the expansion port's large RAM card, if any is plugged
             // in - it needs the full data byte (not `Pal`'s
@@ -1327,7 +1329,7 @@ impl Motherboard {
                         LargeRamExpansionPin::D7,
                     ],
                 );
-                expansion.set_pin(LargeRamExpansionPin::IOWR, !Neg_IOWR);
+                expansion.set_pin(LargeRamExpansionPin::IOWR, !neg_iowr);
             }
 
             // CPU to CRTC
@@ -1336,7 +1338,7 @@ impl Motherboard {
             // be seen as an access to whatever port the PC happens to spell.
             self.crtc.set_pin(
                 CrtcPin::EN,
-                (Neg_IORD & Neg_IOWR) | !self.cpu.get_pin(Z80Pin::Neg_M1),
+                (neg_iord & neg_iowr) | !self.cpu.get_pin(Z80Pin::Neg_M1),
             );
 
             sync_pins(
@@ -1370,7 +1372,7 @@ impl Motherboard {
             );
 
             // CPU to ppi
-            if !Neg_IOWR {
+            if !neg_iowr {
                 sync_pins(&self.cpu, Z80::pins_data(), &mut self.ppi, Ppi::pins_data());
             }
             sync_pins(
@@ -1390,8 +1392,8 @@ impl Motherboard {
                 PpiPin::Neg_CS,
                 self.cpu.get_pin(Z80Pin::A11) || self.cpu.get_pin(Z80Pin::Neg_IORQ),
             );
-            self.ppi.set_pin(PpiPin::Neg_RD, Neg_IORD);
-            self.ppi.set_pin(PpiPin::Neg_WR, Neg_IOWR);
+            self.ppi.set_pin(PpiPin::Neg_RD, neg_iord);
+            self.ppi.set_pin(PpiPin::Neg_WR, neg_iowr);
         }
     }
 }
@@ -1426,7 +1428,7 @@ impl Motherboard {
 
         let mut current_prefix = OpcodePrefix::None;
         let mut instruction_bytes : SmallVec <[u8;4]> = Default::default();
-        let mut ir = 0;
+        let mut ir;
         loop {
             ir = read();
             instruction_bytes.push(ir);
@@ -2083,7 +2085,7 @@ mod test {
 
         let mut count_cpu = 0;
         let mut count_crtc = 0;
-        for i in 0..32 {
+        for _i in 0..32 {
             println!(
                 "{},{},{}",
                 true,
@@ -2182,7 +2184,7 @@ mod test {
         motherboard.cpu_mut().iff2 = true;
 
         motherboard.write_byte(0x1000, 0x76);
-        let res = motherboard.execute_next_opcode();
+        let _res = motherboard.execute_next_opcode();
         dbg!(&motherboard.cpu.next_state);
         assert_eq!(
             motherboard.pc(),

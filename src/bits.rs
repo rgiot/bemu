@@ -1,4 +1,4 @@
-pub use std::ops::{AddAssign, BitAnd, BitAndAssign, Deref, DerefMut, Shl, Shr, Sub, SubAssign};
+pub use std::ops::{AddAssign, BitAnd, Deref, DerefMut, Shl, Shr, Sub, SubAssign};
 
 use num::{
     traits::{WrappingAdd, WrappingSub},
@@ -181,11 +181,6 @@ T: PartialOrd + Clone {
 pub type Bit8Max5 = BitMax<u8, 5>;
 pub type Bit8Max6 = BitMax<u8, 6>;
 pub type Bit8Max7 = BitMax<u8, 7>;
-
-pub enum Bit8MaxVarying {
-    Bit8Max6(Bit8Max6),
-    Bit8Max7(Bit8Max7)
-}
 
 #[cfg(test)]
 mod test_super {

@@ -1,17 +1,14 @@
 /// Check that the CRTC detection methods DO NOT detect an emulator but the right CRTC emulated
 ///
 ///
-use amsrust::crtc::{Crtc, CrtcType};
-use amsrust::debug::Monitor;
+use amsrust::crtc::CrtcType;
 use amsrust::motherboard::MotherboardBuilder;
-use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
+use amsrust::z80::{HasValue, Reg16, Reg8};
 
-use cpclib_asm::preamble::*;
 use cpclib_macros;
 
 enum CrtcTest {
     MadramAmslive,
-    Offset,
 }
 
 impl CrtcTest {
@@ -19,7 +16,6 @@ impl CrtcTest {
     fn address(&self) -> u16 {
         match self {
             CrtcTest::MadramAmslive => 0x9001,
-            _ => unimplemented!(),
         }
     }
 
@@ -30,7 +26,6 @@ impl CrtcTest {
                 cpclib_macros::assemble!(fname:"tests/madram_crtc_test.asm"),
                 self.address(),
             ),
-            _ => unimplemented!(),
         }
     }
 }

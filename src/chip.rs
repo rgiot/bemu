@@ -1,4 +1,3 @@
-use num::cast::ToPrimitive;
 use std::fmt;
 
 /// Previous and current state to be able to compute the front and decrease
@@ -95,7 +94,7 @@ pub trait Chip {
     /// panic if the pin does not exists
     fn get_pin(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
-        use std::ops::Not;
+        
         // See `set_pin`'s comment just above - same reasoning.
         debug_assert_eq!(pin.count_ones(), 1);
 
@@ -106,7 +105,7 @@ pub trait Chip {
     /// Check if the pin is in a up front state
     fn is_upfront(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
-        use std::ops::Not;
+        
         // See `set_pin`'s comment - same reasoning. `GateArray::
         // must_execute_tick()` calls this every GA tick (every
         // `Motherboard::tick()`), so this was on the hottest path too.
@@ -123,7 +122,7 @@ pub trait Chip {
     /// Check if the pin is in a down front state
     fn is_downfront(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
-        use std::ops::Not;
+        
         debug_assert_eq!(pin.count_ones(), 1);
 
         let &PinsBuffer(ref previous, ref current) = self.pins_buffer();

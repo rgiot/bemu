@@ -16,7 +16,7 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::chip::Chip;
 use crate::expansion_port::{ExpansionDevice, ExpansionPin, ExpansionPort};

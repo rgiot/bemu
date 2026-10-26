@@ -450,13 +450,8 @@ impl Crtc {
         self.regs.get(usize::from(r)).copied().unwrap_or(0xff)
     }
 
-    /// C0 has gone past R0: the line is over (on CRTC 3/4 also when R0 was lowered below C0).
-    fn line_total_reached(&self) -> bool {
-        self.hcc == self.regs[0].wrapping_add(1)
-            || (self.chip.line_ends_past_r0() && self.regs[0] != 0xff && self.hcc > self.regs[0])
-    }
-
     /// VSync in lines
+    #[cfg(test)]
     fn vsync_height(&self) -> u8 {
         self.chip.vsync_width(self.regs[3])
     }
@@ -1009,7 +1004,7 @@ mod test {
             crtc.update_memory_address();
         }
 
-        for i in 0..2 {
+        for _i in 0..2 {
             let mut hsync_duration = 0;
             while crtc.hsync() {
                 hsync_duration += 1;
@@ -1062,7 +1057,7 @@ mod test {
             crtc.update_memory_address();
         }
 
-        for i in 0..2 {
+        for _i in 0..2 {
             let mut vsync_duration = 0;
             while crtc.vsync() {
                 vsync_duration += 1;

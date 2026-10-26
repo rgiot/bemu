@@ -1,6 +1,5 @@
-use std::pin::Pin;
 
-use amsrust::{chip::{Chip, ReadAddressChip, ReadDataChip}, crtc::CrtcPin, debug::Monitor, ga::GateArrayPin, motherboard::*, z80::{Z80, Z80Pin}};
+use amsrust::{chip::{Chip, ReadAddressChip, ReadDataChip}, crtc::CrtcPin, debug::Monitor, ga::GateArrayPin, motherboard::*, z80::Z80Pin};
 use cpclib_macros::*;
 use itertools::Itertools;
 
@@ -285,13 +284,15 @@ fn main() {
 	"));
 
 
-	// TODO make a menu
-	//thirty_two_nops(&mut motherboard);a
-	//test_out(&mut motherboard);
-	//test_outd(&mut motherboard);
-	//test_ldd(&mut motherboard);
-	//test_ex_mem_sp(&mut motherboard);
-
-	test_srl_mem_hl(&mut motherboard);
+	// `signal_generation [which]`: the signals of one sequence (test_srl_mem_hl by default)
+	match std::env::args().nth(1).as_deref().unwrap_or("srl_mem_hl") {
+		"nops" => thirty_two_nops(&mut motherboard),
+		"out" => test_out(&mut motherboard),
+		"outd" => test_outd(&mut motherboard),
+		"ldd" => test_ldd(&mut motherboard),
+		"ex_mem_sp" => test_ex_mem_sp(&mut motherboard),
+		"srl_mem_hl" => test_srl_mem_hl(&mut motherboard),
+		other => eprintln!("{other}: nops, out, outd, ldd, ex_mem_sp or srl_mem_hl")
+	}
 
 }	
