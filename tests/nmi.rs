@@ -1,7 +1,6 @@
 //! Non-maskable interrupts (an expansion's /NMI, e.g. the PlayCity's CTC) and the IM 2 vector
 //! an interrupting device puts on the bus.
 
-use amsrust::chip::Chip;
 use amsrust::expansion_port::{ExpansionDevice, ExpansionPin, ExpansionPort};
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use amsrust::z80::{HasValue, Reg16};

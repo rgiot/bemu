@@ -1,11 +1,7 @@
-///! This file contains some tests that aim at chacking the impact of the execution of an instraction on the machine
-
-use amsrust::crtc::{Crtc, CrtcType};
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
-use amsrust::z80::{HasValue, Reg16, Reg8, Z80, Z80Flags};
+use amsrust::z80::{HasValue, Reg16, Reg8, Z80Flags};
 use amsrust::ga::{VideoMode, Ink};
 use amsrust::debug::Monitor;
-use cpclib_asm::preamble::{DataAccess, Expr, Mnemonic, Token};
 
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
 /// Attention, do not put the code in area where ROMs are activated ...
@@ -478,7 +474,7 @@ fn execute_in1() {
 	"));
 
 	// wait (too much) to be sure screen mode changed
-	let mut motherboard = execute_program(0x4000,0x4000, code);
+	let _motherboard = execute_program(0x4000,0x4000, code);
 
 
 	// TODO add the tests to check the machinery really work
@@ -850,7 +846,7 @@ fn execute_ldd() {
 	"));
 
 	// wait (too much) to be sure screen mode changed
-	let mut motherboard = execute_program(0x4000,0x4000, code);
+	let motherboard = execute_program(0x4000,0x4000, code);
 
 	assert_eq!(
 		motherboard.bc(),
@@ -900,7 +896,7 @@ fn execute_ldir() {
 	"));
 
 	// wait (too much) to be sure screen mode changed
-	let mut motherboard = execute_program(0x4000,0x4000, code);
+	let motherboard = execute_program(0x4000,0x4000, code);
 
 	assert_eq!(
 		motherboard.bc(),
@@ -954,7 +950,7 @@ fn execute_lddr() {
 	"));
 
 	// wait (too much) to be sure screen mode changed
-	let mut motherboard = execute_program(0x4000,0x4000, code);
+	let motherboard = execute_program(0x4000,0x4000, code);
 
 	assert_eq!(
 		motherboard.bc(),
@@ -994,7 +990,7 @@ fn execute_out1() {
 	"));
 
 	// wait (too much) to be sure screen mode changed
-	let mut motherboard = execute_program(0x4000,0x4000, code);
+	let motherboard = execute_program(0x4000,0x4000, code);
 
 	assert_eq!(
 		VideoMode::Mode0,
@@ -1014,7 +1010,7 @@ fn execute_out1() {
 	"));
 
 	// wait (too much) to be sure screen mode changed
-	let mut motherboard = execute_program(0x4000,0x4000, code);
+	let motherboard = execute_program(0x4000,0x4000, code);
 
 	assert_eq!(
 		VideoMode::Mode0,
@@ -1035,7 +1031,7 @@ fn execute_out1() {
 	"));
 
 	// wait (too much) to be sure screen mode changed
-	let mut motherboard = execute_program(0x4000,0x4000, code);
+	let motherboard = execute_program(0x4000,0x4000, code);
 
 	assert_eq!(
 		VideoMode::Mode0,
@@ -1065,7 +1061,7 @@ fn execute_out2() {
 		jr $
 		");
 
-	let mut motherboard = execute_program(0x4000, 0x4000, code);
+	let motherboard = execute_program(0x4000, 0x4000, code);
 	assert_eq!(
 		Ink::from(26),
 		motherboard.ga().palette()[0]
@@ -1087,7 +1083,7 @@ fn execute_out3() {
 		jr $
 		");
 
-	let mut motherboard = execute_program(0x4000, 0x4000, code);
+	let motherboard = execute_program(0x4000, 0x4000, code);
 	assert_eq!(
 		6,
 		motherboard.crtc().ar()
@@ -1112,7 +1108,7 @@ fn execute_out4() {
 		jr $
 		");
 
-	let mut motherboard = execute_program(0x4000, 0x4000, code);
+	let motherboard = execute_program(0x4000, 0x4000, code);
 	assert_eq!(
 		10,
 		motherboard.crtc().r6()
@@ -1139,7 +1135,7 @@ table
 		db 0x4b
 	");
 
-	let mut motherboard = execute_program(0x4000, 0x4000, code);
+	let motherboard = execute_program(0x4000, 0x4000, code);
 	assert_eq!(
 		Ink::from(26),
 		motherboard.ga().palette()[0]

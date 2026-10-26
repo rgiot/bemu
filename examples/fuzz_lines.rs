@@ -1,7 +1,6 @@
 //! Per CRTC line summary of a snapshot's run, to diff against CPCSyntaxError
 //! (validation/fuzz). `fuzz_lines <file.sna> [microseconds] [crtc]` prints, from
 //! the first VSYNC start, one line per CRTC line: `C4 C9 V len`.
-use amsrust::chip::Chip;
 use amsrust::csl_runner::CslRunner;
 
 fn main() {

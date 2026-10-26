@@ -7,7 +7,6 @@
 //! same CPC key, the layout-aware typed-character handling - lives here and
 //! is testable without any window.
 
-use crate::csl_runner::keys_of_char;
 use crate::keyboard::{CpcKey, KeyboardLayout};
 use crate::motherboard::Motherboard;
 use std::collections::VecDeque;
@@ -243,6 +242,7 @@ pub const HOST_KEY_MAP: &[(HostKey, CpcKey)] = {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::csl_runner::keys_of_char;
 
     /// Holding only ONE of two host keys mapped to the same `CpcKey` must
     /// still register as pressed, not get cancelled by the other, unheld,

@@ -39,7 +39,7 @@
 mod api_doc;
 
 use std::collections::{HashSet, VecDeque};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -48,7 +48,6 @@ use serde_json::{json, Value};
 
 use crate::basic_program::{self, BasicState};
 use crate::breakpoints::{AdvancedBreakpoint, BreakpointAccess, BreakpointKind, Condition, ConditionContext, CounterAction, RunMode};
-use crate::csl_runner::keys_of_char;
 use crate::keyboard::CpcKey;
 use crate::memory::PhysicalAddress;
 use crate::monitor::Monitor;
@@ -156,7 +155,7 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/z80_bp", methods: &["POST"], summary: "replace the PC breakpoints: CPU addresses, symbols (label, label+n) or Bnn:hhhh, comma-separated", extension: false },
     Route { path: "/api/symbols", methods: &["GET"], summary: "the symbols (snapshot SYMB/REMU labels, --sym files), by address", extension: true },
     Route { path: "/api/keytype", methods: &["POST"], summary: "type text on the CPC keyboard (\\r = RETURN)", extension: false },
-    Route { path: "/api/events", methods: &["GET"], summary: "Server-Sent Events: frame, z80_bp, pause, reset, watch (?topics=)", extension: false },
+    Route { path: "/api/events", methods: &["GET"], summary: "Server-Sent Events: frame, z80_bp, basic_bp, basic_error, pause, reset, watch (?topics=)", extension: false },
     Route { path: "/api/breakpoints", methods: &["GET", "POST", "DELETE"], summary: "advanced breakpoints: list, add (JSON or REMU acebreak text), remove (?index=)", extension: true },
     Route { path: "/api/quit", methods: &["POST"], summary: "leave the emulator", extension: false },
     Route { path: "/api/history", methods: &["GET"], summary: "last executed instructions (?n=), bytes as fetched and as now", extension: false },
@@ -561,7 +560,10 @@ impl DebugServer {
         }
         if self.pending_basic.as_ref().is_some_and(|p| motherboard.t_state_counter().value() >= p.at_t_states) {
             let pending = self.pending_basic.take().unwrap();
-            self.load_basic(&pending.source, pending.run, motherboard);
+            // asked before the machine was ready: its error has no request left to answer
+            if let Err(error) = self.load_basic(&pending.source, pending.run, motherboard) {
+                self.events.publish("basic_error", &json!({ "error": error }));
+            }
         }
         if let (Some(before), Some(after)) = (self.previous_beam.take(), self.beam) {
             if self.raster_breakpoints.iter().any(|brk| brk.passed(before, after)) {
@@ -2905,7 +2907,7 @@ mod test {
         monitor.keep_full_frames();
         // Three frames, the firmware's border drawn, then half of one.
         let mut frames = 0;
-        let mut step = |server: &mut DebugServer, mb: &mut Motherboard, monitor: &mut Monitor| {
+        let step = |server: &mut DebugServer, mb: &mut Motherboard, monitor: &mut Monitor| {
             let mut done = None;
             mb.execute_next_opcode_with_video(|(rgb, sync)| {
                 monitor.receive(rgb, sync);

@@ -11,8 +11,7 @@ pub enum BreakPoint {
 impl ToString for BreakPoint {
 	fn to_string(&self) -> String {
 		match self {
-			Self::Address(addr) => format!("z80.pc={:4X}", addr),
-			_ => unimplemented!()
+			Self::Address(addr) => format!("z80.pc={:4X}", addr)
 		}
 	}
 }
@@ -23,8 +22,7 @@ impl BreakPoint {
 		match self {
 			BreakPoint::Address(addr) => {
 				*addr == motherboard.pc()
-			},
-			_ => unimplemented!("{:?}", self)
+			}
 		}
 	}
 }

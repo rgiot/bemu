@@ -1,4 +1,3 @@
-use num_enum::UnsafeFromPrimitive;
 
 use crate::chip::*;
 
@@ -307,9 +306,6 @@ impl Ppi {
         self.get_8bit_value_from_pins(&PPI_PIN_DATA_A_BUS)
     }
 
-    fn set_data_b_on_pins(&mut self, value: u8) {
-        self.set_value_in_pins(value, &PPI_PIN_DATA_B_BUS)
-    }
     pub fn get_data_b_from_pins(& self) -> u8 {
         self.get_8bit_value_from_pins(&PPI_PIN_DATA_B_BUS)
     }
@@ -376,7 +372,7 @@ impl Chip for Ppi {
     }
 
     fn execute_tick(&mut self) {
-      ///  dbg!(self.is_port_a_addressed() , self.is_port_b_addressed() , self.is_port_c_addressed());
+      //  dbg!(self.is_port_a_addressed() , self.is_port_b_addressed() , self.is_port_c_addressed());
         if self.is_port_a_addressed() {
             // Same reasoning as Port C below: a plain write/read of Port
             // A's *own* address always hits its output latch/pins

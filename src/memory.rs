@@ -703,7 +703,7 @@ mod test {
     #[test]
     fn memory_access() {
         let mut mem = Memory::default();
-        let conf = MemoryConfig::default();
+        let _conf = MemoryConfig::default();
 
         mem.main_memory.0[0].fill(0);
         mem.main_memory.0[1].fill(1);

@@ -4,7 +4,7 @@ use lazy_static::lazy_static;
 //use cpclib_asm::preamble::*;
 use super::{Reg16, Reg8, Z80Pin};
 use cpclib_asm::preamble::{
-    DataAccess, DataAccessElem, Expr, ExprEvaluationExt, ListingElement, Mnemonic,
+    DataAccess, DataAccessElem, Expr, ListingElement, Mnemonic,
     Token,
 };
 
@@ -349,7 +349,6 @@ impl OpcodeDecoder for Token {
                 DataSource::Register8(_) => 1,
                 DataSource::IndexRegister8(_) => 1,
                 DataSource::Immediate => 1,           // XXX not sure of that
-                DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
                 DataSource::Pins => 1,                // the byte is already on the pins
                 DataSource::Zero => 1,
 
@@ -375,7 +374,6 @@ impl OpcodeDecoder for Token {
                 DataSource::Register8(_) => 1,
                 DataSource::IndexRegister8(_) => 1,
                 DataSource::Immediate => 1, // XXX not sure of that
-                DataSource::MemoryRegister16(_) => 1, // XXX not sure of that see if we keep
                 DataSource::Pins => 1,      // the byte is already on the pins
                 DataSource::Zero => 1,
 
@@ -673,9 +671,6 @@ impl OpcodeDecoder for Token {
         IndexRegister16(Reg16),
         /// The value is in a 8 bits indexed register
         IndexRegister8(Reg8),
-
-        /// The value must be read from memory and tḧe address is in the register
-        MemoryRegister16(cpclib_asm::preamble::Register16),
     }
     
     pub(crate) type DataDestination = DataSource;
@@ -811,19 +806,19 @@ impl OpcodeDecoder for Token {
         
         pub(crate) fn inc_state(&mut self) {
             *self = match self {
-                MCycle::FetchOpcode(TState::T4, nb, prefix) => panic!("Ambigous"),
+                MCycle::FetchOpcode(TState::T4, _nb, _prefix) => panic!("Ambigous"),
                 MCycle::FetchOpcode(t, nb, prefix) => MCycle::FetchOpcode(t.inc_state(), *nb, *prefix),
 
-                MCycle::Read(TState::T4, nb) => panic!("Ambigous"),
+                MCycle::Read(TState::T4, _nb) => panic!("Ambigous"),
                 MCycle::Read(t, nb) => MCycle::Read(t.inc_state(), *nb),
                 
-                MCycle::Write(TState::T4, nb) => panic!("Ambigous"),
+                MCycle::Write(TState::T4, _nb) => panic!("Ambigous"),
                 MCycle::Write(t, nb) => MCycle::Write(t.inc_state(), *nb),
 
-                MCycle::Output(TState::T4, nb) => panic!("Ambigous"),
+                MCycle::Output(TState::T4, _nb) => panic!("Ambigous"),
                 MCycle::Output(t, nb) => MCycle::Output(t.inc_state(), *nb),
 
-                MCycle::Input(TState::T4, nb) => panic!("Ambigous"),
+                MCycle::Input(TState::T4, _nb) => panic!("Ambigous"),
                 MCycle::Input(t, nb) => MCycle::Input(t.inc_state(), *nb),
 
                 MCycle::IoWait(TState::T4, true) => MCycle::Output(TState::T1, 0),
@@ -839,7 +834,6 @@ impl OpcodeDecoder for Token {
 
                 MCycle::InterruptM1(TState::T4) => MCycle::Write(TState::T1, 0),
                 MCycle::InterruptM1(t) => MCycle::InterruptM1(t.inc_state()),
-                _ => unimplemented!(),
             }
         }
         
@@ -869,9 +863,9 @@ impl OpcodeDecoder for Token {
     
     #[cfg(test)]
     mod test {
-        use std::ops::Add;
+        
 
-        use cpclib_asm::preamble::{FlagTest, IndexRegister16, Register16};
+        use cpclib_asm::preamble::FlagTest;
         
         use super::*;
         

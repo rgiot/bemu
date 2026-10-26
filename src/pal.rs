@@ -2,8 +2,6 @@ use crate::chip::*;
 use crate::memory::*;
 use delegate::delegate;
 
-use num_enum::IntoPrimitive;
-use num_enum::TryFromPrimitive;
 
 /// The real CPC pal does not have access to D3-D5.
 /// Extra memory selection is done elsewhere and I while not code the extra logic elswhere. Thus, there are more pins there
@@ -228,7 +226,7 @@ mod test {
     use super::*;
     #[test]
     fn test_activation() {
-        let mut pal = Pal::default();
+        let _pal = Pal::default();
     }
 
     #[test]
