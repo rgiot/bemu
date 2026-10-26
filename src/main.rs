@@ -347,7 +347,10 @@ fn main() {
     finish_sound_export(&mut motherboard);
     if let Some(path) = &args.save_sna {
         match amsrust::snapshot::save_sna(&motherboard, path) {
-            Ok(()) => eprintln!("snapshot saved: {path}"),
+            Ok(()) => {
+            let full = std::fs::canonicalize(&path).map_or(path.clone(), |p| p.display().to_string());
+            eprintln!("snapshot saved: {full}")
+        },
             Err(e) => eprintln!("cannot save the snapshot: {e}")
         }
     }
@@ -988,6 +991,9 @@ fn run_window(
     let mut f9_was_down = false;
     let mut f10_was_down = false;
     let mut f7_was_down = false;
+    let mut f8_was_down = false;
+    // F8's pause, without a debug server (with one, F8 pauses through it)
+    let mut paused = false;
     let mut f6_was_down = false;
     let mut overlay = show_overlay.then(Overlay::default);
     motherboard.watch_io_writes(show_overlay);
@@ -1034,6 +1040,23 @@ fn run_window(
             save_snapshot(motherboard);
         }
         f7_was_down = f7_down;
+        // F8 pauses and resumes (F7 then saves the paused state)
+        let f8_down = input.down.contains(&HostKey::F8);
+        if f8_down && !f8_was_down {
+            let now = match server.as_deref_mut() {
+                Some(server) => {
+                    let now = !server.paused();
+                    server.set_paused(now);
+                    now
+                },
+                None => {
+                    paused = !paused;
+                    paused
+                }
+            };
+            eprintln!("{}", if now { "paused (F8 resumes, F7 saves a snapshot)" } else { "running" });
+        }
+        f8_was_down = f8_down;
         // F6 shows or hides the timing overlay
         let f6_down = input.down.contains(&HostKey::F6);
         if f6_down && !f6_was_down {
@@ -1062,6 +1085,16 @@ fn run_window(
                 std::thread::sleep(std::time::Duration::from_millis(15));
                 continue;
             }
+        }
+        if paused {
+            if direct {
+                window.redraw().unwrap_or_else(|e| panic!("{e}"));
+            }
+            else {
+                window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+            continue;
         }
         // At full speed the frames not shown run without any picture (a quarter faster): one
         // frame's time, then the next loop. A recording and the debug server see every frame.
