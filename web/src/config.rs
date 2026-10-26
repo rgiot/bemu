@@ -7,7 +7,7 @@ use amsrust::motherboard::{CpcModel, MotherboardBuilder};
 use amsrust::ppi::Brand;
 use serde::Deserialize;
 
-/// `{ model, crtc, gateArray, ramKb, discInterface, playcity, digiblaster, language, brand, display, curvature, blackLevel }`, each optional:
+/// `{ model, crtc, gateArray, ramKb, discInterface, playcity, digiblaster, willyOpl3, language, brand, display, curvature, blackLevel }`, each optional:
 /// a 6128 with its own disc interface, CRTC 0, Gate Array 40010, raw display by default.
 #[derive(Deserialize, Default, Clone, Debug)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
@@ -26,6 +26,8 @@ pub struct Config {
     pub playcity: Option<bool>,
     /// A Digiblaster plugged (a DAC on the printer port).
     pub digiblaster: Option<bool>,
+    /// Willy with an OPL3LPT plugged: true (at &FEBC) or its base ("&FEAC"...).
+    pub willy_opl3: Option<WillyOpl3>,
     /// "en" (the default) or "fr": the French 6128's ROMs, AZERTY keyboard.
     pub language: Option<String>,
     /// The name of the boot banner: "amstrad", "schneider", "awa", "orion", "saisho", "solavox",
@@ -37,6 +39,14 @@ pub struct Config {
     pub curvature: Option<f32>,
     /// The level a black ink is drawn at, 0-255 (8 by default: a tube's dark grey).
     pub black_level: Option<u8>
+}
+
+/// `willyOpl3`: `true` (at &FEBC) or the base its jumper sets (`"&FEAC"`...).
+#[derive(Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum WillyOpl3 {
+    Plugged(bool),
+    At(String)
 }
 
 impl Config {
@@ -91,6 +101,19 @@ impl Config {
             builder.plug_digiblaster();
             #[cfg(not(feature = "digiblaster"))]
             return Err("digiblaster: this build has no Digiblaster".into());
+        }
+        match &self.willy_opl3 {
+            None | Some(WillyOpl3::Plugged(false)) => {},
+            #[cfg(feature = "willy")]
+            Some(WillyOpl3::Plugged(true)) => {
+                builder.plug_willy_opl3(amsrust::willy::OPL3_BASE);
+            },
+            #[cfg(feature = "willy")]
+            Some(WillyOpl3::At(base)) => {
+                builder.plug_willy_opl3(amsrust::willy::parse_base(base).map_err(|e| format!("willyOpl3: {e}"))?);
+            },
+            #[cfg(not(feature = "willy"))]
+            Some(_) => return Err("willyOpl3: this build has no Willy".into())
         }
         match self.language.as_deref() {
             None | Some("en") => {},
@@ -166,5 +189,18 @@ mod test {
         assert_eq!(french.keyboard_layout(), amsrust::keyboard::KeyboardLayout::French);
         assert!(config(r#"{"language": "fr", "model": "464"}"#).unwrap().machine().is_err());
         assert!(config(r#"{"language": "de"}"#).unwrap().machine().is_err());
+    }
+
+    #[cfg(feature = "willy")]
+    #[test]
+    fn willy_with_an_opl3_is_plugged_at_its_base() {
+        let plugged = |json: &str| {
+            let mb = config(json).unwrap().machine().unwrap().build();
+            mb.expansion_port().and_then(|port| port.device::<amsrust::willy::Opl3Lpt>()).map(|card| card.base())
+        };
+        assert_eq!(plugged(r#"{"willyOpl3": true}"#), Some(0xfebc));
+        assert_eq!(plugged(r#"{"willyOpl3": "&FEAC"}"#), Some(0xfeac));
+        assert_eq!(plugged(r#"{"willyOpl3": false}"#), None);
+        assert!(config(r#"{"willyOpl3": "&FE00"}"#).unwrap().machine().is_err());
     }
 }
