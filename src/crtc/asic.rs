@@ -18,21 +18,21 @@ const WRITE_MASK: [u8; 16] = [
     0xff, 0xff, 0xff, 0xff, 0x7f, 0x1f, 0x7f, 0x7f, 0xf3, 0x1f, 0x7f, 0x1f, 0x3f, 0xff, 0x3f, 0xff
 ];
 
-/// A register write lands this many ticks (1 usec) after the I/O cycle.
-const WRITE_DELAY_TICKS: u8 = 16;
+/// Ticks of a character (1 us).
+const CHARACTER_TICKS: u8 = 16;
 
 #[derive(Debug)]
 pub struct Asic {
     crtc_type: CrtcType,
-    /// Register writes waiting to land (ticks left, register, value).
-    delayed_writes: Vec<(u8, u8, u8)>,
+    /// Register writes waiting for the next character edge (ticks left, register, value).
+    pending: Vec<(u8, u8, u8)>,
 }
 
 impl Asic {
     pub fn new(crtc_type: CrtcType) -> Self {
         Asic {
             crtc_type,
-            delayed_writes: Vec::new(),
+            pending: Vec::new(),
         }
     }
 }
@@ -98,33 +98,38 @@ impl CrtcChip for Asic {
 
     // ---- register writes ----
 
-    /// ACCC 13.5: "the I/O takes place with 1 us delay, which implies placing the OUT 1 usec
-    /// before those that would be done on a CRTC 1". R3 excepted: the ASIC's HSYNC already comes
-    /// a character late; delaying R3 too puts Shaker AY F and BI B-D on CRTC 4 away from the
-    /// real CPC.
+    /// ACCC 4.4.4, 13.5: the ASIC samples the CPU bus once per microsecond, on the character clock
+    /// edge, before it counts the character. An `OUTI`, whose IORQ is active from the start of its
+    /// 5th microsecond, is taken on that edge as on the other CRTCs, while an `OUT (C),r`, active
+    /// from the 2nd T-state of its 3rd microsecond, misses it and is taken on the next one: "1 us
+    /// delay" (Shaker A4 on a real 6128+: "OUTI ON C0vs=#3b:00").
+    fn samples_write_at(&self, phase: u8) -> bool {
+        phase == 0
+    }
+
+    /// A register taken on the edge reaches the comparators on the next one, R3 excepted: the
+    /// HSYNC width is compared with it at once, so an R3 equal to the C3 the HSYNC is about to reach
+    /// ends it on this edge (Shaker BI F-H on the real CPC+ and cost-down 6128: whether by
+    /// `OUT (C),r` or `OUTI`), while an R3=0 taken on the HSYNC's first edge comes too late to stop
+    /// it (BI A/E: 16 characters). Taken at once, R0, R1 and the others act a character early
+    /// (Shaker A3, AO H and BP move away from the real CPC).
     fn queue_write(&mut self, r: u8, v: u8) -> bool {
         if r == 3 {
             return false;
         }
-        self.delayed_writes.push((WRITE_DELAY_TICKS, r, v));
+        self.pending.push((CHARACTER_TICKS, r, v));
         true
     }
 
     fn due_writes(&mut self) -> Option<Vec<(u8, u8)>> {
-        if self.delayed_writes.is_empty() {
+        if self.pending.is_empty() {
             return None;
         }
-        let mut due = Vec::new();
-        let mut i = 0;
-        while i < self.delayed_writes.len() {
-            self.delayed_writes[i].0 -= 1;
-            if self.delayed_writes[i].0 == 0 {
-                let (_, r, v) = self.delayed_writes.remove(i);
-                due.push((r, v));
-            } else {
-                i += 1;
-            }
+        for w in self.pending.iter_mut() {
+            w.0 -= 1;
         }
+        let due = self.pending.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2)).collect();
+        self.pending.retain(|w| w.0 != 0);
         Some(due)
     }
 

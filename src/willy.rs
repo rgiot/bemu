@@ -190,7 +190,9 @@ pub struct S2p {
     position: usize,
     fraction: u32,
     ticks: u32,
-    messages: u64
+    messages: u64,
+    /// The byte the card puts on the bus for the IN being answered (taken when it began).
+    answering: Option<u8>
 }
 
 impl S2p {
@@ -210,7 +212,8 @@ impl S2p {
             position: block,
             fraction: 0,
             ticks: 0,
-            messages: 0
+            messages: 0,
+            answering: None
         })
     }
 
@@ -280,11 +283,15 @@ impl ExpansionDevice for S2p {
                 self.write(address, value);
             }
         }
-        if let Some(address) = port.io_read() {
-            if address & 0xfffc == self.base {
-                let value = self.read(address, port.io_read_started());
-                port.drive_data(value);
+        // the byte is read once, when the IN begins, and held on the bus for the whole cycle
+        match port.io_read() {
+            Some(address) if address & 0xfffc == self.base => {
+                if port.io_read_started() || self.answering.is_none() {
+                    self.answering = Some(self.read(address, true));
+                }
+                port.drive_data(self.answering.unwrap());
             }
+            _ => self.answering = None
         }
         self.ticks += 1;
         if self.ticks == TICKS_PER_US {

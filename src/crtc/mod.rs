@@ -362,14 +362,18 @@ impl Crtc {
             core.hsc = 0;
             core.on(CrtcPin::HS);
             core.hdc = 0;
-            core.hsync_late_ticks = core.phase_ticks;
+            // a write on the clock edge is taken before the character is counted: at the end of
+            // the previous one
+            core.hsync_late_ticks = if core.phase_ticks == 0 { 16 } else { core.phase_ticks };
         }
     }
 
-    /// The motherboard tells where in the character clock this tick falls (every tick: the ASICs'
-    /// delayed register writes land then).
+    /// The motherboard tells where in the character clock this tick falls (every tick).
     pub fn set_phase_ticks(&mut self, phase: u8) {
         self.core.phase_ticks = phase;
+        if self.get_pin(CrtcPin::CS) || self.get_pin(CrtcPin::EN) || self.get_pin(CrtcPin::RW) {
+            self.core.write_taken = false;
+        }
         if let Some(due) = self.chip.due_writes() {
             for (r, v) in due {
                 self.do_write_register(r, v);
@@ -793,10 +797,18 @@ impl Chip for Crtc {
 
     fn must_execute_tick(&self) -> bool {
         !self.get_pin(CrtcPin::CS) & !self.get_pin(CrtcPin::EN)
+            && (self.get_pin(CrtcPin::RW) || self.chip.samples_write_at(self.core.phase_ticks))
     }
 
     /// Execute the requested command from the CPU
     fn execute_tick(&mut self) {
+        // a write is latched once per bus cycle, however long the CPU holds it
+        if !self.get_pin(CrtcPin::RW) {
+            if self.core.write_taken {
+                return;
+            }
+            self.core.write_taken = true;
+        }
         match (self.get_pin(CrtcPin::RW), self.get_pin(CrtcPin::RS)) {
             (false, false) => self.select_crtc_register(),
             (false, true) => self.write_crtc_register(),

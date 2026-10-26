@@ -180,8 +180,11 @@ pub const FREE_T_STATE: u32 = 1;
 pub struct BusTiming {
     /// T-states from the start to the end of the instruction's last T-state.
     pub t_states: u32,
-    /// The T-state (from the start) on which IORQ goes active, for an I/O instruction.
+    /// The T-state (from the start) on which IORQ goes active (T2 of the I/O cycle), for an I/O
+    /// instruction.
     pub iorq_t: Option<u32>,
+    /// The T3 of that I/O cycle, the last T-state IORQ is active on.
+    pub iorq_end_t: Option<u32>,
 }
 
 impl BusTiming {
@@ -204,17 +207,19 @@ fn run_cycles(cycles: &[Cycle]) -> BusTiming {
     };
     let mut t = 0u32;
     let mut iorq_t = None;
+    let mut iorq_end_t = None;
     for c in cycles {
         match *c {
             B(n) => t += u32::from(n) + waits_from(t + 1),
             IO => {
                 iorq_t = Some(t + 1);
                 t += 4 + waits_from(t + 2);
+                iorq_end_t = Some(t - 1);
             }
             I(n) => t += u32::from(n),
         }
     }
-    BusTiming { t_states: t, iorq_t }
+    BusTiming { t_states: t, iorq_t, iorq_end_t }
 }
 
 /// The CPC timing of an instruction (`prefix` as the first byte: 0, CB, ED, DD, FD; 0xDC/0xFC

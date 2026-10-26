@@ -17,6 +17,13 @@ use crate::z80::*;
 
 use std::fmt;
 
+/// Ticks from the start of an input cycle (the T1 of this model's Input M-cycle, which opens the
+/// microsecond of the real cycle's T3) to the Z80 latching the data bus, on the falling edge of
+/// that T3 (Zilog Z80 CPU User Manual, Input or Output Cycles: `IN A,(C)`'s T3 is the 3rd T-state
+/// of its 4th microsecond once stretched by /WAIT, ACCC 7.2). A signal read through a port, the
+/// VSYNC on PPI port B first, is seen as it is 10 ticks into that microsecond.
+const INPUT_LATCH_TICKS: u32 = 10;
+
 /// Motherboard of the AMstrad CPC
 /// Some component are emulated at the lowest level as possible (Z80/CRTC) while
 /// some others are partially emulated (GA/PAL) or totally ignored (RAM)
@@ -69,6 +76,8 @@ pub struct Motherboard {
     /// cycle's repeated ticks instead of re-deriving it (which would
     /// re-invoke `Fdc::read_data` and advance its internal state each time).
     cached_input_byte: u8,
+    /// Ticks since the current input cycle began (see `INPUT_LATCH_TICKS`).
+    input_ticks: u32,
 
     psg: Psg,
     keyboard: KeyboardMatrix,
@@ -138,6 +147,7 @@ impl Default for Motherboard {
             fdc_read_active: false,
             floating_bus: 0xff,
             cached_input_byte: 0xff,
+            input_ticks: 0,
             psg: Default::default(),
             keyboard: Default::default(),
             bus_log: None,
@@ -750,6 +760,11 @@ impl Motherboard {
                     self.last_traced_pc = pc;
                 }
             }
+            // a register access present on the character clock edge is taken before the character
+            // is processed (an OUTI's I/O, from the start of its microsecond, counts for it)
+            if self.crtc.must_execute_tick() {
+                self.crtc.execute_tick();
+            }
             self.crtc.tick(); // Virtually uses 16 cycles
         }
         else {
@@ -927,13 +942,14 @@ impl Motherboard {
             self.cpu.set_pin(Z80Pin::Neg_RD, true); // TODO do the real stuff - but here I am sure to not play with the data bus ...
             self.fdc_read_active = false;
         }else if self.cpu_request_byte_input() {
-            // As in handle_write_access: this condition stays true for
-            // several consecutive ticks per single `IN` instruction, so
-            // `input_byte` (which can advance the FDC's internal state) is
-            // only actually called once, on the first such tick - the
-            // latched byte is then held steady on the bus for the rest of
-            // the cycle, same as real hardware would.
-            if !self.fdc_read_active {
+            // The request is held for the whole input cycle; `input_byte` (which can advance the
+            // FDC's internal state) is called once, on the tick the Z80 latches the data bus: at
+            // the end of the cycle's T3 (`INPUT_LATCH_TICKS`), the first tick for an interrupt
+            // acknowledge. The byte is then held on the bus.
+            self.input_ticks = if self.fdc_read_active { self.input_ticks + 1 } else { 0 };
+            let acknowledge = !self.cpu.get_pin(Z80Pin::Neg_M1);
+            let latch = self.input_ticks == if acknowledge { 0 } else { INPUT_LATCH_TICKS };
+            if latch {
                 self.cached_input_byte = self.input_byte(addr);
                 self.log_bus(BusAccessKind::IoRead, addr, self.cached_input_byte);
                 if !self.cpu.get_pin(Z80Pin::Neg_M1) {
@@ -944,7 +960,9 @@ impl Motherboard {
                 }
             }
             self.cpu.set_data_on_pins(self.cached_input_byte);
-            self.cpu.set_pin(Z80Pin::Neg_RD, true);
+            if latch {
+                self.cpu.set_pin(Z80Pin::Neg_RD, true);
+            }
             self.fdc_read_active = true;
         } else {
             self.fdc_read_active = false;

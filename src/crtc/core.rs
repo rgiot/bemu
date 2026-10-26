@@ -48,6 +48,8 @@ pub struct Core {
     pub(super) vsync_ended_on_r7: bool,
     /// The VSYNC runs (counted by C3h). The VS pin follows it, except for a ghost VSYNC (CRTC 2).
     pub(super) vsync_running: bool,
+    /// The write of the current bus cycle was latched (see `Crtc::execute_tick`)
+    pub(super) write_taken: bool,
     /// The VSYNCs begun, for the cursor's blinking.
     pub(super) fields: u8,
 
@@ -124,6 +126,7 @@ impl Default for Core {
             vsync_skips_first_line_end: false,
             vsync_ended_on_r7: false,
             vsync_running: false,
+            write_taken: false,
             fields: 0,
             line_ends: 0,
             phase_ticks: 0,

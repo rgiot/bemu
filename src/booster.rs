@@ -795,7 +795,7 @@ impl ExpansionDevice for Booster {
             }
         }
         if let Some(register) = port.io_read().and_then(register) {
-            // once per IN: the motherboard reads the bus on the cycle's first tick
+            // once per IN, when it begins, and held on the bus until the Z80 latches it
             if port.io_read_started() {
                 self.read_latch = self.read_register(register);
             }
