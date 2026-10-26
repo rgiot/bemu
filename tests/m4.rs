@@ -44,7 +44,8 @@ fn the_cpu_reads_the_m4_rom_and_its_responses() {
     assert_eq!((motherboard.read_byte(0x8101), motherboard.read_byte(0x8102)), (0x26, 0x43));
     let length = usize::from(motherboard.read_byte(0x8100)) - 2;
     let text: Vec<u8> = (0..length).map(|i| motherboard.read_byte(0x8103 + i as u16)).collect();
-    assert!(text.starts_with(b"bemu's M4"), "{}", String::from_utf8_lossy(&text));
+    // short, as the board's firmware version: RulezCharge copies it into a field of its help
+    assert_eq!(text, b"v2.0.8 (bemu)\0", "{}", String::from_utf8_lossy(&text));
     // ROM 0 (BASIC) is the CPC's again
     assert_eq!(motherboard.read_byte(0x8200), 0x80, "BASIC's first byte");
 }
