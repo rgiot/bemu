@@ -223,6 +223,35 @@ fn main() {
         motherboard.plug_expansion(Box::new(booster));
         eprintln!("the CPC Booster ({model:?}) is plugged");
     }
+    #[cfg(not(feature = "dandanator"))]
+    if args.dandanator.is_some() {
+        without_feature("--dandanator", "dandanator");
+    }
+    #[cfg(feature = "dandanator")]
+    if let Some(romset) = &args.dandanator {
+        let card = amsrust::dandanator::Dandanator::open(romset, args.dandanator_writable).unwrap_or_else(|e| panic!("--dandanator {e}"));
+        motherboard.plug_expansion(Box::new(card));
+        eprintln!("the Dandanator: {romset}{}", if args.dandanator_writable { " (writable)" } else { "" });
+    }
+    #[cfg(not(feature = "willy"))]
+    if args.willy_opl3.is_some() || args.willy_s2p.is_some() {
+        without_feature("--willy-opl3/--willy-s2p", "willy");
+    }
+    #[cfg(feature = "willy")]
+    {
+        use amsrust::willy::{parse_base, Opl3Lpt, S2p, S2P_BASE};
+        if let Some(base) = &args.willy_opl3 {
+            let base = parse_base(base).unwrap_or_else(|e| panic!("--willy-opl3-at {e}"));
+            motherboard.plug_expansion(Box::new(Opl3Lpt::new(base)));
+            eprintln!("Willy with an OPL3LPT at &{base:04X}");
+        }
+        if let Some(soundfont) = &args.willy_s2p {
+            let base = args.willy_s2p_at.as_deref().map_or(Ok(S2P_BASE), parse_base).unwrap_or_else(|e| panic!("--willy-s2p-at {e}"));
+            let card = S2p::open(base, std::path::Path::new(soundfont)).unwrap_or_else(|e| panic!("--willy-s2p {e}"));
+            motherboard.plug_expansion(Box::new(card));
+            eprintln!("Willy with an S2P at &{base:04X} ({soundfont})");
+        }
+    }
     for (slot, path) in &args.roms {
         let data = amsrust::roms::load_rom(path).unwrap_or_else(|e| panic!("--rom {e}"));
         motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));

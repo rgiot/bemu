@@ -245,6 +245,8 @@ pub struct MotherboardBuilder {
     keyboard_layout: Option<crate::keyboard::KeyboardLayout>,
     playcity: bool,
     digiblaster: bool,
+    /// Willy with an OPL3LPT, at this base.
+    willy_opl3: Option<u16>,
     /// If interruption are allowed
     enable_interruptions: bool, // false by default
     disable_lower_rom: bool, // false by default
@@ -293,6 +295,13 @@ impl MotherboardBuilder {
     #[cfg(feature = "playcity")]
     pub fn plug_playcity(&mut self) -> &mut Self {
         self.playcity = true;
+        self
+    }
+
+    /// Plug Willy with an OPL3LPT (an OPL3) at `base` (&FEBC usually).
+    #[cfg(feature = "willy")]
+    pub fn plug_willy_opl3(&mut self, base: u16) -> &mut Self {
+        self.willy_opl3 = Some(base);
         self
     }
 
@@ -372,6 +381,10 @@ impl MotherboardBuilder {
         #[cfg(feature = "playcity")]
         if self.playcity {
             motherboard.plug_expansion(Box::new(crate::sound_cards::PlayCity::default()));
+        }
+        #[cfg(feature = "willy")]
+        if let Some(base) = self.willy_opl3 {
+            motherboard.plug_expansion(Box::new(crate::willy::Opl3Lpt::new(base)));
         }
         #[cfg(feature = "digiblaster")]
         if self.digiblaster {

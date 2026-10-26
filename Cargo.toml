@@ -3,11 +3,17 @@ name = "amsrust"
 version = "0.1.1"
 authors = ["Romain Giot <giot.romain@gmail.com>"]
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"], optional = true }
+# Willy's sound cards: the OPL3 (OPL3LPT) and the General MIDI synth (S2P, from a SoundFont)
+nuked-opl3 = { version = "0.1", optional = true }
+rustysynth = { version = "1.3", optional = true }
+# the M4's HTTP (|HTTPGET, |HTTPMEM): plain HTTP as the board, and HTTPS when a site redirects to it
+ureq = { version = "2.12", default-features = false, features = ["tls", "native-certs", "proxy-from-env"], optional = true }
 num = "0.4.0"
 num_enum = "0.5.1"
 itertools = "0.10.0"
@@ -72,7 +78,7 @@ lto = "fat"
 codegen-units = 1
 
 [features]
-default = ["audio", "playcity", "digiblaster", "m4", "m4-wifi", "albireo", "nova", "booster", "unidos", "orgams"]
+default = ["audio", "playcity", "digiblaster", "m4", "m4-wifi", "albireo", "nova", "booster", "willy", "dandanator", "unidos", "orgams"]
 # The extensions, each of which can be left out of a build:
 # the PlayCity (two more AYs and a CTC, on the expansion port)
 playcity = []
@@ -81,7 +87,11 @@ digiblaster = []
 # the M4 board (its SD card a host folder; its ROM embedded)
 m4 = []
 # the M4's WiFi: sockets, DNS, HTTP on the host's network (not in a web page)
-m4-wifi = ["m4"]
+m4-wifi = ["m4", "dep:ureq"]
+# the CPC Dandanator Mini (a 512K flash cartridge, commanded through trapped opcodes)
+dandanator = []
+# Willy (PulkoMandy's adapter for Serdaco's OPL3LPT and S2P)
+willy = ["dep:nuked-opl3", "dep:rustysynth"]
 # the Albireo (a CH376; its USB key a host folder or a FAT image)
 albireo = ["dep:fatfs"]
 # the Nova (NVRAM and a clock)

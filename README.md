@@ -185,3 +185,11 @@ curl -s -X POST http://127.0.0.1:6128/api/step                 # one instruction
 curl -s -X POST http://127.0.0.1:6128/api/config -d '{"paused":false}'
 ```
 
+## Licence
+
+bemu is licensed under either of the [MIT licence](LICENSE-MIT) or the
+[Apache License, Version 2.0](LICENSE-APACHE), at your option. The ROMs it embeds and the
+LGPL-licensed OPL3 core (the `willy` feature) are not: see [NOTICE.md](NOTICE.md).
+
+Unless you explicitly state otherwise, any contribution you submit for inclusion in bemu is
+dual-licensed as above, without any additional terms or conditions.
