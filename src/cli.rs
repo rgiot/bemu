@@ -79,6 +79,12 @@ pub struct Args {
     pub booster_flash: Option<String>,
     /// `--booster-adc FILE`: what its ADC samples (a WAV or raw unsigned bytes), looped.
     pub booster_adc: Option<String>,
+    /// `--willy-opl3 [--willy-opl3-at ADDR]`: Willy with an OPL3LPT (at &FEBC by default).
+    pub willy_opl3: Option<String>,
+    /// `--willy-s2p FILE.sf2 [--willy-s2p-at ADDR]`: Willy with an S2P, its instruments the
+    /// SoundFont's (at &FEAC by default).
+    pub willy_s2p: Option<String>,
+    pub willy_s2p_at: Option<String>,
     /// `--save-sna path`: the machine's state saved there when the run ends.
     pub save_sna: Option<String>,
     pub debug_server: bool,
@@ -147,6 +153,9 @@ pub fn parse_args() -> Args {
         booster_eeprom: None,
         booster_flash: None,
         booster_adc: None,
+        willy_opl3: None,
+        willy_s2p: None,
+        willy_s2p_at: None,
         save_sna: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
@@ -251,6 +260,10 @@ pub fn parse_args() -> Args {
             "--booster-eeprom" => args.booster_eeprom = Some(next("--booster-eeprom")),
             "--booster-flash" => args.booster_flash = Some(next("--booster-flash")),
             "--booster-adc" => args.booster_adc = Some(next("--booster-adc")),
+            "--willy-opl3" => args.willy_opl3 = Some(args.willy_opl3.take().unwrap_or_else(|| "&FEBC".to_owned())),
+            "--willy-opl3-at" => args.willy_opl3 = Some(next("--willy-opl3-at")),
+            "--willy-s2p" => args.willy_s2p = Some(next("--willy-s2p")),
+            "--willy-s2p-at" => args.willy_s2p_at = Some(next("--willy-s2p-at")),
             "--m4-slot" => {
                 args.m4_slot = Some(next("--m4-slot").parse().unwrap_or_else(|_| panic!("--m4-slot: a slot, 0-255")))
             },
@@ -303,6 +316,7 @@ fn print_help() {
         "        [--m4 dir [--m4-rom file] [--m4-slot N] [--m4-no-wifi]] [--albireo dir|image] [--nova file] [--list-roms]\n",
         "        [--booster|--miniboster [--booster-uart loopback|listen:addr|connect:addr] [--booster-eeprom file]\n",
         "         [--booster-flash file] [--booster-adc file.wav]]\n",
+        "        [--willy-opl3 [--willy-opl3-at addr]] [--willy-s2p file.sf2 [--willy-s2p-at addr]]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
@@ -336,6 +350,10 @@ fn print_help() {
         "a null modem), two PWM channels (the card's stereo sound), a 2 channels ADC (--booster-adc: a\n",
         "WAV or raw bytes, looped), 512 bytes of EEPROM and 16K of program memory (kept in the files\n",
         "--booster-eeprom/--booster-flash), a 5 bits TTL port, a multiplier, a keyboard decoder.\n",
+        "--willy-opl3 plugs Willy with an OPL3LPT (an OPL3: &FEBC/&FEBE select a register of bank 0/1,\n",
+        "&FEBD/&FEBF write it); --willy-s2p FILE.sf2 Willy with an S2P (a General MIDI synth: &FEAC the\n",
+        "MIDI data, &FEAD the control/status), its instruments the SoundFont's. Willy's jumper sets\n",
+        "another base with --willy-opl3-at/--willy-s2p-at: &FEBC, &FEAC, &FEA4, &FE9C, &FE94, &FE8C, &FE84.\n",
         "--cdt puts a tape (CDT/TZX) in the cassette\n",
         "deck, PLAY down: it plays when the CPC starts the motor (RUN\" on a 464,\n",
         "|TAPE first on a 664/6128).\n",

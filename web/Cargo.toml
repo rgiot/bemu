@@ -20,10 +20,11 @@ wgpu = { version = "27", default-features = false, features = ["wgsl", "webgpu"]
 console_error_panic_hook = "0.1"
 
 [features]
-default = ["playcity", "digiblaster"]
-# the sound expansions a page can ask for (config playcity / digiblaster)
+default = ["playcity", "digiblaster", "willy"]
+# the sound expansions a page can ask for (config playcity / digiblaster / willyOpl3)
 playcity = ["amsrust/playcity"]
 digiblaster = ["amsrust/digiblaster"]
+willy = ["amsrust/willy"]
 
 [dev-dependencies]
 serde_json = "1"
