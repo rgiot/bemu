@@ -28,6 +28,8 @@ pub(crate) mod calendar;
 pub mod roms;
 #[cfg(feature = "willy")]
 pub mod willy;
+#[cfg(feature = "dandanator")]
+pub mod dandanator;
 #[cfg(feature = "booster")]
 pub mod booster;
 pub mod symbols;

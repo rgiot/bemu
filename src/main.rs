@@ -223,6 +223,16 @@ fn main() {
         motherboard.plug_expansion(Box::new(booster));
         eprintln!("the CPC Booster ({model:?}) is plugged");
     }
+    #[cfg(not(feature = "dandanator"))]
+    if args.dandanator.is_some() {
+        without_feature("--dandanator", "dandanator");
+    }
+    #[cfg(feature = "dandanator")]
+    if let Some(romset) = &args.dandanator {
+        let card = amsrust::dandanator::Dandanator::open(romset, args.dandanator_writable).unwrap_or_else(|e| panic!("--dandanator {e}"));
+        motherboard.plug_expansion(Box::new(card));
+        eprintln!("the Dandanator: {romset}{}", if args.dandanator_writable { " (writable)" } else { "" });
+    }
     #[cfg(not(feature = "willy"))]
     if args.willy_opl3.is_some() || args.willy_s2p.is_some() {
         without_feature("--willy-opl3/--willy-s2p", "willy");
