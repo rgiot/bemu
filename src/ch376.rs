@@ -366,7 +366,8 @@ impl Ch376 {
                 ".." => {
                     path.pop();
                 },
-                part => path.push(part.to_owned())
+                // an 8.3 name with no extension ends with its dot (UniDOS opens folders so)
+                part => path.push(part.strip_suffix('.').unwrap_or(part).to_owned())
             }
         }
         path
@@ -1330,6 +1331,16 @@ mod test {
         assert_eq!(read_buffer(&mut chip), vec![7, 7, 7]);
         command(&mut chip, CMD_FILE_CLOSE, &[0]);
         set_name(&mut chip, "/ALONGNAM.TEX");
+        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
+        command(&mut chip, CMD_FILE_CLOSE, &[0]);
+
+        // UniDOS's way: the root, then the folder by its 8.3 name ("GAMES.": no extension),
+        // then the file in it
+        set_name(&mut chip, "/");
+        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(ERR_OPEN_DIR));
+        set_name(&mut chip, "GAMES.");
+        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(ERR_OPEN_DIR), "the folder entered");
+        set_name(&mut chip, "DEMO.BIN");
         assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
         command(&mut chip, CMD_FILE_CLOSE, &[0]);
 
