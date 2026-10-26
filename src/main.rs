@@ -305,7 +305,13 @@ fn main() {
         );
     }
     start_sound_export(&args, &mut motherboard);
-    let mut typist = args.text.as_deref().map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout()));
+    let mut typist = match &args.basic {
+        Some(file) => {
+            let source = std::fs::read_to_string(file).unwrap_or_else(|e| panic!("--basic {file}: {e}"));
+            Some(Typist::with_basic(args.text.as_deref().unwrap_or(""), source, args.type_at, motherboard.keyboard_layout()))
+        },
+        None => args.text.as_deref().map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout()))
+    };
     if typist.is_some() && monitor_mode {
         eprintln!("--type is ignored in the interactive monitor");
     }
@@ -471,6 +477,8 @@ const T_STATES_PER_SECOND: usize = 4_000_000;
 /// `--type`: the text typed on the CPC keyboard, one character after the
 /// other, each held for 2 frames then released for 2 frames.
 struct Typist {
+    /// `--basic`'s listing, put in memory (then RUN typed) when the typing starts.
+    basic: Option<String>,
     keys: VecDeque<Vec<CpcKey>>,
     /// T-state at which the next press or release is due.
     next_at: usize,
@@ -488,13 +496,42 @@ impl Typist {
                 Vec::new()
             })
             .into();
-        Self { keys, next_at: (at_seconds * T_STATES_PER_SECOND as f64) as usize, pressed: None }
+        Self { basic: None, keys, next_at: (at_seconds * T_STATES_PER_SECOND as f64) as usize, pressed: None }
+    }
+
+    /// `--basic`: the listing goes in memory at `at_seconds`, then RUN and `text` are typed.
+    fn with_basic(text: &str, basic: String, at_seconds: f64, layout: amsrust::keyboard::KeyboardLayout) -> Self {
+        let mut typist = Self::new(&format!("RUN\n{text}"), at_seconds, layout);
+        typist.basic = Some(basic);
+        typist
     }
 
     /// Press or release the keys that are due. Cheap: call it as often as
     /// wanted (every instruction or every frame).
     fn update(&mut self, motherboard: &mut Motherboard) {
         let now = motherboard.t_state_counter().value();
+        if now >= self.next_at {
+            if let Some(source) = self.basic.take() {
+                // as LOAD would (BASIC is up by now: --type-at); what the tokenizer can't read
+                // is typed instead (slower: the firmware tokenizes it)
+                if let Err(error) = amsrust::basic_program::load(motherboard, &source) {
+                    eprintln!("--basic: {error}\n--basic: typing the listing instead");
+                    let layout = motherboard.keyboard_layout();
+                    let typed = source.lines().map(|line| format!("{line}\n")).collect::<String>();
+                    match amsrust::csl_runner::keys_of_text(&typed, layout) {
+                        Ok(keys) => {
+                            for key in keys.into_iter().rev() {
+                                self.keys.push_front(key);
+                            }
+                        },
+                        Err(error) => {
+                            eprintln!("--basic: {error}");
+                            self.keys.clear();
+                        }
+                    }
+                }
+            }
+        }
         if now < self.next_at {
             // Held keys stay pressed even if something else (the window's
             // host keyboard) released them meanwhile.

@@ -96,6 +96,8 @@ pub struct Args {
     /// Start paused, for a debugger to arm its breakpoints first.
     pub debug_paused: bool,
     pub text: Option<String>,
+    /// `--basic FILE.bas`: a listing (text, as typed) put in memory at --type-at, then RUN.
+    pub basic: Option<String>,
     pub type_at: f64,
     /// How the monitor's frames are filtered for the window, the recording
     /// and the screenshots.
@@ -167,6 +169,7 @@ pub fn parse_args() -> Args {
         debug_port: amsrust::debug_server::DEFAULT_PORT,
         debug_paused: false,
         text: None,
+        basic: None,
         type_at: 3.0,
         display: DisplayMode::default(),
         gpu: false,
@@ -233,6 +236,7 @@ pub fn parse_args() -> Args {
                 args.debug_port = next("--debug-port").parse().expect("--debug-port must be a port number")
             },
             "--type" => args.text = Some(next("--type").replace("\\n", "\n")),
+            "--basic" => args.basic = Some(next("--basic")),
             "--type-at" => args.type_at = next("--type-at").parse().expect("--type-at must be a number"),
             "--black-level" => {
                 args.black_level = next("--black-level").parse().expect("--black-level must be 0-255")
@@ -319,7 +323,7 @@ fn print_help() {
         "amsrust [--model 464|664|6128] [--french] [--playcity] [--digiblaster] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
         "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path] [--watch]\n",
         "        [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute] [--turbo]]\n",
-        "        [--record file [--seconds N]] [--record-ym file] [--record-wav file] [--type text [--type-at N]]\n",
+        "        [--record file [--seconds N]] [--record-ym file] [--record-wav file] [--type text] [--basic file.bas] [--type-at N]\n",
         "        [--debug-server [--debug-port N] [--debug-paused]] [--sym file] [--rom slot=file]\n",
         "        [--m4 dir [--m4-rom file] [--m4-slot N] [--m4-no-wifi]] [--albireo dir|image] [--nova file] [--list-roms]\n",
         "        [--booster|--miniboster [--booster-uart loopback|listen:addr|connect:addr] [--booster-eeprom file]\n",
@@ -390,6 +394,7 @@ fn print_help() {
         "window closed; the sound of full speed is not kept).\n",
         "--type 'run\"demo\\n' types on the CPC keyboard after --type-at seconds\n",
         "(default 3), the keys written as in CSL's key_output: \\(RET), \\(ESC), \\(CPY), \\(DEL)…\n",
+        "--basic prog.bas puts a BASIC listing (text) in memory at --type-at, then types RUN (and --type).\n",
         "--watch takes the --sna/--dsk/--dsk-b/--cdt files again when they change\n",
         "(with --window or --debug-server), for an edit, assemble, see loop: a disc or tape goes\n",
         "in again, then the snapshot is loaded again; without a snapshot the machine is switched\n",
