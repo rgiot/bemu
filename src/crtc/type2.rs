@@ -21,6 +21,9 @@ pub struct Crtc2 {
     /// ACCC 19.6.3: IVM switched on during an odd frame's line 0 made it the interlace line
     /// alone, with no R5 line before it.
     lone_extra_line: bool,
+    /// ACCC 19.8.3: C9.IVM, the line counter that builds the video address in IVM (C9 itself
+    /// counts as usual): back to 0 when C9 is at R9 or at R9/2, so twice per character row.
+    c9_ivm: u8,
 }
 
 impl Default for Crtc2 {
@@ -30,6 +33,7 @@ impl Default for Crtc2 {
             last_line_management: true,
             previous_last_line: false,
             lone_extra_line: false,
+            c9_ivm: 0,
         }
     }
 }
@@ -174,6 +178,9 @@ impl CrtcChip for Crtc2 {
             return core.count_adjust_line();
         }
         core.ivm_lines = false;
+        // ACCC 19.8.3: C9.IVM steps beside C9 at every line end, IVM or not
+        let (c9, r9) = (core.vlc.value(), core.regs[9] & 0x1f);
+        self.c9_ivm = if c9 == r9 || c9 == r9 >> 1 { 0 } else { (self.c9_ivm + 1) & 0x1f };
         // compared before the increment: C9 is a 5-bit counter, so with R9=31 the incremented
         // value (0) never equals R9+1 (32)
         let end = core.vlc == core.regs[9];
@@ -189,6 +196,9 @@ impl CrtcChip for Crtc2 {
     }
 
     fn line_started(&mut self, core: &mut Core, new_frame: bool, c4_before: u8) {
+        if new_frame {
+            self.c9_ivm = 0;
+        }
         self.line_start(core);
         core.parity_from_r6(new_frame, c4_before);
     }
@@ -216,12 +226,28 @@ impl CrtcChip for Crtc2 {
     // ---- video pointer ----
 
     /// ACCC §13.4, §20.3.3: the frame starts at VMA', which takes R12/R13 at C0=R1 on the frame's
-    /// last line (or last adjustment line).
+    /// last line (or last adjustment line). ACCC 19.8.3: in IVM (R8=3) VMA' takes VMA when C9.IVM
+    /// reaches R9 (without its parity), "VMA' can be updated without C4 incrementing"; otherwise
+    /// only on C9=R9 (Shaker B1 R9E6 H2: R9=6 written on C9=7 with IVM, the next line reads the
+    /// next row, as on CPCSyntaxError and AMSpiriT).
     fn r1_reached(&mut self, core: &mut Core) {
         if self.is_frame_last_line(core) {
             core.crtc_vma_prime = core.base_address();
+        } else if core.regs[8] & 3 == 3 {
+            if self.c9_ivm == (core.regs[9] & 0x1f) >> 1 {
+                core.crtc_vma_prime = core.crtc_vma;
+            }
         } else if self.c9_is_last(core) {
             core.crtc_vma_prime = core.crtc_vma;
+        }
+    }
+
+    /// ACCC 19.8.3: in IVM the address takes C9.VMA = C9.IVM*2 with the frame's parity.
+    fn c9_vma(&self, core: &Core) -> u8 {
+        if core.regs[8] & 3 == 3 {
+            ((self.c9_ivm << 1) | u8::from(core.parity_frame)) & 0x1f
+        } else {
+            core.vlc.value()
         }
     }
 
