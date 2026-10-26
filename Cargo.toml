@@ -8,6 +8,8 @@ edition = "2021"
 
 [dependencies]
 fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"], optional = true }
+# the M4's HTTP (|HTTPGET, |HTTPMEM): plain HTTP as the board, and HTTPS when a site redirects to it
+ureq = { version = "2.12", default-features = false, features = ["tls", "native-certs", "proxy-from-env"], optional = true }
 num = "0.4.0"
 num_enum = "0.5.1"
 itertools = "0.10.0"
@@ -81,7 +83,7 @@ digiblaster = []
 # the M4 board (its SD card a host folder; its ROM embedded)
 m4 = []
 # the M4's WiFi: sockets, DNS, HTTP on the host's network (not in a web page)
-m4-wifi = ["m4"]
+m4-wifi = ["m4", "dep:ureq"]
 # the Albireo (a CH376; its USB key a host folder or a FAT image)
 albireo = ["dep:fatfs"]
 # the Nova (NVRAM and a clock)

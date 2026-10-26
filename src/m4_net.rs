@@ -77,7 +77,10 @@ pub struct Network {
     /// What HTTPGETMEM fetched, for COPYBUF.
     downloaded: Vec<u8>,
     /// `|NETSET`'s settings (m4/config.txt), `start=1` ones kept for the next call.
-    settings: Vec<(String, String)>
+    settings: Vec<(String, String)>,
+    /// Host names answered with another address (`BEMU_M4_HOSTS=name=ip[:port],...`, or
+    /// [`Network::map_host`]): a test's local server in place of a site.
+    hosts: Vec<(String, String)>
 }
 
 impl Network {
@@ -89,14 +92,38 @@ impl Network {
             dns_ip: Ipv4Addr::UNSPECIFIED,
             resolving: None,
             downloaded: Vec::new(),
-            settings: Vec::new()
+            settings: Vec::new(),
+            hosts: std::env::var("BEMU_M4_HOSTS").map(|hosts| parse_hosts(&hosts)).unwrap_or_default()
         }
+    }
+
+    /// Answer `name` (DNS, HTTP) with `target`: an IP, with a port for HTTP (`127.0.0.1:8080`).
+    pub fn map_host(&mut self, name: &str, target: &str) {
+        self.hosts.push((name.to_ascii_lowercase(), target.to_owned()));
     }
 
     /// The board's settings from `m4/config.txt` on the SD card.
     pub fn load_settings(&mut self, sd: &Path) {
         if let Ok(text) = std::fs::read_to_string(sd.join("m4").join("config.txt")) {
             self.settings = parse_settings(&text.replace('\n', ","));
+        }
+    }
+
+    fn mapped(&self, name: &str) -> Option<&str> {
+        self.hosts.iter().rev().find(|(known, _)| known.eq_ignore_ascii_case(name)).map(|(_, target)| target.as_str())
+    }
+
+    /// The URL with its host mapped (plain HTTP then, a local server has no TLS).
+    fn rewrite(&self, url: &str) -> String {
+        let url = url.trim();
+        let rest = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")).unwrap_or(url);
+        let end = rest.find(['/', ':']).unwrap_or(rest.len());
+        match self.mapped(&rest[..end]) {
+            Some(target) => {
+                let path = rest[end..].trim_start_matches(|c: char| c == ':' || c.is_ascii_digit());
+                format!("http://{target}{path}")
+            },
+            None => url.to_owned()
         }
     }
 
@@ -223,6 +250,10 @@ impl Network {
                     return Some(vec![0xff]);
                 }
                 let name = string(params);
+                let name = match self.mapped(&name) {
+                    Some(target) => target.split(':').next().unwrap_or(target).to_owned(),
+                    None => name
+                };
                 let (sender, receiver) = channel();
                 std::thread::spawn(move || {
                     let ip = (name.as_str(), 0).to_socket_addrs().ok().and_then(|mut addresses| {
@@ -273,7 +304,7 @@ impl Network {
             },
             C_HTTPGET => {
                 let message = if self.enabled {
-                    match http_get(&string(params)) {
+                    match http_get(&self.rewrite(&string(params))) {
                         Ok((name, body)) => {
                             let path = directory.join(&name);
                             match std::fs::write(&path, &body) {
@@ -298,7 +329,7 @@ impl Network {
                     None => (url, 0)
                 };
                 self.downloaded = if self.enabled {
-                    http_get(&url).map(|(_, body)| body.into_iter().skip(offset).take(size).collect()).unwrap_or_default()
+                    http_get(&self.rewrite(&url)).map(|(_, body)| body.into_iter().skip(offset).take(size).collect()).unwrap_or_default()
                 }
                 else {
                     Vec::new()
@@ -521,54 +552,83 @@ fn parse_number(text: &str) -> Option<usize> {
     }
 }
 
-/// An HTTP GET (`host[:port]/path`, `http://` optional; no TLS, as the board): the file's name
-/// and its body. Redirections are followed (3 at most).
+/// An HTTP GET (`host[:port]/path`, `http://` optional): the file's name and its body. Plain
+/// HTTP as the board; a redirection to HTTPS is followed too (the board's ESP can't), 4 at most.
 pub fn http_get(url: &str) -> Result<(String, Vec<u8>), String> {
-    let mut url = url.trim().to_owned();
-    for _ in 0..4 {
-        if url.starts_with("https://") {
-            return Err("https is not supported by the M4".to_owned());
-        }
-        let rest = url.strip_prefix("http://").unwrap_or(&url);
-        let (host_port, path) = match rest.find('/') {
-            Some(slash) => (&rest[..slash], &rest[slash..]),
-            None => (rest, "/")
-        };
-        let (host, port) = match host_port.rsplit_once(':') {
-            Some((host, port)) => (host, port.parse().map_err(|_| format!("{url}: bad port"))?),
-            None => (host_port, 80u16)
-        };
-        let address = (host, port)
-            .to_socket_addrs()
-            .map_err(|e| format!("{host}: {e}"))?
-            .next()
-            .ok_or_else(|| format!("{host}: not found"))?;
-        let mut stream = TcpStream::connect_timeout(&address, TIMEOUT).map_err(|e| format!("{host}: {e}"))?;
-        let _ = stream.set_read_timeout(Some(TIMEOUT));
-        let request = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: M4 (bemu)\r\nConnection: close\r\n\r\n");
-        stream.write_all(request.as_bytes()).map_err(|e| format!("{host}: {e}"))?;
-        let mut response = Vec::new();
-        stream.read_to_end(&mut response).map_err(|e| format!("{host}: {e}"))?;
-        let end = response.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| format!("{url}: not HTTP"))?;
-        let head = String::from_utf8_lossy(&response[..end]).into_owned();
-        let status: u16 = head.split_whitespace().nth(1).and_then(|code| code.parse().ok()).unwrap_or(0);
-        if (300..400).contains(&status) {
-            let location = head
-                .lines()
-                .find_map(|line| line.split_once(':').filter(|(name, _)| name.eq_ignore_ascii_case("location")))
-                .map(|(_, value)| value.trim().to_owned())
-                .ok_or_else(|| format!("{url}: redirected nowhere"))?;
-            url = if location.starts_with('/') { format!("{host_port}{location}") } else { location };
+    let url = url.trim();
+    // the board's URLs have no scheme: plain HTTP (a site redirecting to HTTPS is followed)
+    let mut url = if url.contains("://") { url.to_owned() } else { format!("http://{url}") };
+    for _ in 0..5 {
+        let response = agent_for(&url).get(&url).call().map_err(|e| match e {
+            ureq::Error::Status(code, _) => format!("{url}: HTTP {code}"),
+            ureq::Error::Transport(transport) => format!("{url}: {transport}")
+        })?;
+        if (300..400).contains(&response.status()) {
+            let location = response.header("location").ok_or_else(|| format!("{url}: redirected nowhere"))?;
+            url = if location.starts_with('/') {
+                // the same scheme and host
+                let origin_end = url.find("://").map_or(0, |at| at + 3);
+                let host_end = url[origin_end..].find('/').map_or(url.len(), |at| origin_end + at);
+                format!("{}{location}", &url[..host_end])
+            }
+            else {
+                location.to_owned()
+            };
             continue;
         }
-        if status != 200 {
-            return Err(format!("{url}: HTTP {status}"));
-        }
-        let name = path.rsplit('/').next().filter(|name| !name.is_empty()).unwrap_or("index.html");
-        let name = name.split('?').next().unwrap_or(name).to_owned();
-        return Ok((name, response[end + 4..].to_vec()));
+        // the name the server gives (cpcrulez.fr's `?d=` downloads), else the path's last part
+        let path = response.get_url().split('?').next().unwrap_or_default().to_owned();
+        let attachment = response.header("content-disposition").and_then(attachment_name);
+        let name = attachment.unwrap_or_else(|| {
+            let last = path.rsplit('/').next().unwrap_or_default();
+            if last.is_empty() || last.contains(':') { "index.html".to_owned() } else { last.to_owned() }
+        });
+        let mut body = Vec::new();
+        response.into_reader().take(16 << 20).read_to_end(&mut body).map_err(|e| format!("{url}: {e}"))?;
+        return Ok((name, body));
     }
     Err(format!("{url}: too many redirections"))
+}
+
+/// `attachment; filename="NAME"`'s NAME, without any folder (it lands in the current one).
+fn attachment_name(header: &str) -> Option<String> {
+    let (_, value) = header.split_once("filename=")?;
+    let value = value.split(';').next()?.trim().trim_matches('"');
+    let name = value.rsplit(['/', '\\']).next()?.trim();
+    (!name.is_empty() && name != "." && name != "..").then(|| name.to_owned())
+}
+
+/// A direct connection, or the host's HTTPS proxy (`HTTPS_PROXY`, unless `NO_PROXY` names the
+/// host) for an `https://` URL.
+fn agent_for(url: &str) -> ureq::Agent {
+    let builder = ureq::AgentBuilder::new().timeout(TIMEOUT).user_agent("M4 (bemu)").redirects(0).try_proxy_from_env(false);
+    let host = url.split("://").nth(1).unwrap_or(url).split(['/', ':', '?']).next().unwrap_or_default();
+    let proxy = url
+        .starts_with("https://")
+        .then(|| std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy")).ok())
+        .flatten()
+        .filter(|_| !no_proxy(host))
+        .and_then(|proxy| ureq::Proxy::new(proxy).ok());
+    match proxy {
+        Some(proxy) => builder.proxy(proxy),
+        None => builder
+    }
+    .build()
+}
+
+fn no_proxy(host: &str) -> bool {
+    let list = std::env::var("NO_PROXY").or_else(|_| std::env::var("no_proxy")).unwrap_or_default();
+    list.split(',').map(|entry| entry.trim().trim_start_matches('*').trim_start_matches('.')).any(|entry| {
+        !entry.is_empty() && (host == entry || host.ends_with(&format!(".{entry}")))
+    })
+}
+
+/// `name=target,...`
+fn parse_hosts(text: &str) -> Vec<(String, String)> {
+    text.split(',')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(name, target)| (name.trim().to_ascii_lowercase(), target.trim().to_owned()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -700,6 +760,18 @@ mod test {
         assert_eq!(net.command(C_HTTPGETMEM, &params, &directory, &directory).unwrap(), vec![4, 0]);
         assert_eq!(net.command(C_COPYBUF, &[0, 0, 4, 0], &directory, &directory).unwrap(), b"3456");
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_mapped_host_and_the_name_a_server_gives() {
+        let mut net = network();
+        net.map_host("cpcrulez.fr", "127.0.0.1:8080");
+        assert_eq!(net.rewrite("cpcrulez.fr/m4/?d=00192778"), "http://127.0.0.1:8080/m4/?d=00192778");
+        assert_eq!(net.rewrite("http://cpcrulez.fr:80/x"), "http://127.0.0.1:8080/x");
+        assert_eq!(net.rewrite("example.org/x"), "example.org/x", "other hosts as they are");
+        assert_eq!(attachment_name("attachment; filename=\"Batman_2.dsk\"").as_deref(), Some("Batman_2.dsk"));
+        assert_eq!(attachment_name("attachment; filename=\"../../etc/passwd\"").as_deref(), Some("passwd"));
+        assert_eq!(attachment_name("inline"), None);
     }
 
     #[test]

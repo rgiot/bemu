@@ -190,6 +190,13 @@ impl M4Board {
         self
     }
 
+    /// `name` answered with `target` (DNS and HTTP): a local server in place of a site.
+    #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
+    pub fn with_host(mut self, name: &str, target: &str) -> Self {
+        self.net.map_host(name, target);
+        self
+    }
+
     /// The sockets moved on, and their table in the ROM.
     #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
     fn poll_network(&mut self) {
@@ -326,7 +333,9 @@ impl M4Board {
                 self.write_rom(destination, &data);
                 Vec::new()
             },
-            C_VERSION => b"bemu's M4 board (a host folder)\0".to_vec(),
+            // short, as the firmware's: RulezCharge copies it into a fixed field of its help box
+            // (a longer one ran over its code)
+            C_VERSION => b"v2.0.8 (bemu)\0".to_vec(),
             C_TIME => nul_terminated(&now(self.time_zone())),
             // the last payload byte is the status: 5 would be "connected"
             C_NETSTAT => nul_terminated("No network in bemu."),
@@ -640,11 +649,14 @@ impl M4Board {
             return Vec::new();
         };
         if let Some(&width) = params.first() {
+            // unterminated: RulezCharge reads a directory as `>name` and a file as the name,
+            // a NUL, then the size in 5 characters, from the length byte
+            let name = truncate(&entry.name, usize::from(width));
             if entry.directory {
-                return nul_terminated(&format!(">{}", truncate(&entry.name, usize::from(width))));
+                return format!(">{name}").into_bytes();
             }
-            let mut payload = nul_terminated(&truncate(&entry.name, usize::from(width)));
-            payload.extend(nul_terminated(&format!("{}K", entry.size.div_ceil(1024))));
+            let mut payload = nul_terminated(&name);
+            payload.extend(format!("{:>4}K", entry.size.div_ceil(1024).min(9999)).bytes());
             return payload;
         }
         let short = short_name(&entry.name);
@@ -879,9 +891,12 @@ mod test {
         assert_eq!(&second[..17], b"DEMO    .BIN   2K");
         assert_eq!((second[17], second[18]), (0, 2));
         assert!(run(&mut board, C_READDIR, &[]).is_empty(), "the end");
-        // the long form
+        // the long form (RulezCharge's): `>name`, or the name, a NUL and the size in 5
+        // characters, unterminated
+        run(&mut board, C_DIRSETARGS, &[0]);
+        assert_eq!(run(&mut board, C_READDIR, &[30]), b">games");
         run(&mut board, C_DIRSETARGS, &nul_terminated("*.bin"));
-        assert_eq!(run(&mut board, C_READDIR, &[30]), b"demo.bin\x002K\0");
+        assert_eq!(run(&mut board, C_READDIR, &[30]), b"demo.bin\x00   2K");
 
         assert_eq!(run(&mut board, C_CD, &nul_terminated("GAMES")), vec![0]);
         assert_eq!(run(&mut board, C_GETPATH, &[]), nul_terminated("/games"));
