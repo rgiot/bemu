@@ -1,5 +1,4 @@
-use amsrust::{debug::Monitor, motherboard::{self, MotherboardBuilder}, z80::{HasValue, Reg16}};
-use amsrust::crtc;
+use amsrust::{debug::Monitor, motherboard::MotherboardBuilder, z80::{HasValue, Reg16}};
 
 #[test]
 fn test_crtc_registers_modification(){

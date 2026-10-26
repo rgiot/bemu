@@ -1,6 +1,6 @@
-use amsrust::{crtc::{Crtc, CrtcType}, debug::Monitor, motherboard::{self, MotherboardBuilder}, z80::Z80Flags};
+use amsrust::{debug::Monitor, motherboard::MotherboardBuilder, z80::Z80Flags};
 use amsrust::motherboard::Motherboard;
-use amsrust::z80::{HasValue, Reg16, Reg8, Z80};
+use amsrust::z80::{HasValue, Reg16, Reg8};
 use amsrust::ga::{VideoMode, Sync, RgbLevels};
 use cpclib_asm::preamble::ListingElement;
 use itertools::Itertools;

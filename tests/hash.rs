@@ -116,6 +116,7 @@ _fnv1_32_loop
 );
 
 
+#[allow(dead_code)] // assembled (so it keeps assembling), not run yet
 const PEARSON_8: &[u8] = assemble!("
 ;; Pearson hash 8-bit
 ;;

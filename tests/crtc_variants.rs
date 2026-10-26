@@ -6,7 +6,7 @@
 //! repository ships, which is how the difference shows on a real machine:
 //! RHINO (Longshot) and the MadRam/Amslive test (`tests/madram_crtc_test.asm`).
 
-use amsrust::chip::{Chip, ReadDataChip};
+use amsrust::chip::ReadDataChip;
 use amsrust::crtc::{Crtc, CrtcType, DisplaySkew, ReadContext, Registers, NB_REGISTERS};
 use amsrust::disc_image::load_dsk;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};

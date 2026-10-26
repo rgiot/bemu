@@ -34,7 +34,7 @@
 //! [`Memory`]: crate::memory::Memory
 
 use crate::chip::*;
-use crate::memory::{BankNumber, Expansion as MemoryExpansion, Page};
+use crate::memory::{Expansion as MemoryExpansion, Page};
 
 /// The decode-side interface a RAM-bank-extending expansion card exposes:
 /// what its *address* decode currently contributes, independent of how it

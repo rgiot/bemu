@@ -1,4 +1,4 @@
-use amsrust::{chip::{Activable, Chip, ReadDataChip}, crtc::CrtcPin, debug::Monitor, ga::GateArrayPin, motherboard::{self, MotherboardBuilder}, ppi::{Ppi, PpiPin}};
+use amsrust::{chip::{Activable, Chip, ReadDataChip}, crtc::CrtcPin, debug::Monitor, ga::GateArrayPin, motherboard::MotherboardBuilder, ppi::{Ppi, PpiPin}};
 
 /// CRTC module is supposed to generate properly the vsync
 /// This file aims at testing all the wirings related to CRTC signal
@@ -11,7 +11,6 @@ fn test_crtc_vsync_distribution() {
 												.disable_lower_rom()
 												.disable_upper_rom()	
 												.build();
-	;
 
 
 	while !motherboard.crtc().vsync() {
@@ -74,9 +73,6 @@ fn test_ppi_vsync_test() {
 												.disable_lower_rom()
 												.disable_upper_rom()	
 												.build();
-	;
-
-;
 
 
 	while !motherboard.crtc().vsync() {

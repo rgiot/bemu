@@ -299,7 +299,7 @@ pub fn cdt_of_binary(name: &str, load: u16, entry: u16, data: &[u8], baud: u32) 
     let mut cdt = b"ZXTape!\x1a\x01\x14".to_vec();
     // blank tape first, for the motor's spin-up
     cdt.extend_from_slice(&[0x20, 0xb8, 0x0b]);
-    let mut record = |cdt: &mut Vec<u8>, sync: u8, payload: &[u8]| {
+    let record = |cdt: &mut Vec<u8>, sync: u8, payload: &[u8]| {
         let mut bytes = vec![sync];
         for segment in payload.chunks(256) {
             let mut segment = segment.to_vec();

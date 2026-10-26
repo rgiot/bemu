@@ -34,7 +34,7 @@
 //! right after the closing quote: `--run HBL --args " 'CRTC=0"`.
 
 use amsrust::csl_runner::CslRunner;
-use amsrust::disc_image::{load_dsk, AmsdosEntry, DiscImage};
+use amsrust::disc_image::{load_dsk, AmsdosEntry};
 use std::path::PathBuf;
 
 fn main() {

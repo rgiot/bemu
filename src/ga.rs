@@ -7,7 +7,6 @@ use crate::memory::Flag;
 use array_init::*;
 use delegate::delegate;
 use lazy_static::*;
-use tuple_map::*;
 
 // https://www.cpc-power.com/cpcarchives/index.php?page=articles&num=47
 // https://www.grimware.org/doku.php/documentations/devices/gatearray
@@ -2142,7 +2141,7 @@ mod test {
         let byte = 0b01010101;
 
         ga.set_memory_byte(byte);
-        let pens = dbg!(BYTE_TO_MODE2_PENS[byte as usize]);
+        let _pens = dbg!(BYTE_TO_MODE2_PENS[byte as usize]);
 
         assert_eq!(ga.pixel_automata.step().cloned(), Some(PixelOrder::Pixel1));
         assert_eq!(ga.pixel_automata.mode(), Some(VideoMode::Mode2));

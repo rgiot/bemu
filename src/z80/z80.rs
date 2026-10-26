@@ -19,7 +19,7 @@ use std::ops::BitAnd;
 use cpclib_asm::preamble::Token;
 use super::alu;
 use cpclib_asm::preamble::{
-    DataAccess, DataAccessElem, Expr, ExprElement, ExprEvaluationExt, FlagTest, ListingElement,
+    DataAccess, DataAccessElem, Expr, ExprEvaluationExt, FlagTest, ListingElement,
     Mnemonic,
 };
 
@@ -35,25 +35,6 @@ fn eval_expr_to_i32(expr: &Expr) -> i32 {
 
 fn eval_data_access_to_i32(access: &DataAccess) -> i32 {
     eval_expr_to_i32(access.get_expression().unwrap())
-}
-
-macro_rules! inner_8bits_sub {
-    ($a:ident,$b:ident,$f:ident) => {{
-        let (res, ovf) = $a.overflowing_sub($b);
-        
-        Z80Flags::auto_update(
-            &[Z80Flags::S, Z80Flags::Z, Z80Flags::X, Z80Flags::Y],
-            $f,
-            res,
-        );
-
-        Z80Flags::H.set($b & 0x0f > $a & 0x0f, $f);
-        Z80Flags::C.set(ovf, $f);
-        Z80Flags::N.set_on($f);
-        Z80Flags::P.set((($b ^ $a) & ($a ^ res) & 0x80) != 0, $f);
-
-        res
-    }};
 }
 
 // http://www.z80.info/zinout.htm#Z80CPU
@@ -154,24 +135,6 @@ Z80Pin::A2,
 Z80Pin::A1,
 Z80Pin::A0,
 ];
-
-const PIN_SYSTEM_CONTROL: [Z80Pin; 5] = [
-Z80Pin::Neg_M1,
-Z80Pin::Neg_MREQ,
-Z80Pin::Neg_IORQ,
-Z80Pin::Neg_RD,
-Z80Pin::Neg_WR,
-];
-
-const PIN_CPU_CONTROL: [Z80Pin; 5] = [
-Z80Pin::Neg_HALT,
-Z80Pin::Neg_WAIT,
-Z80Pin::Neg_INT,
-Z80Pin::Neg_NMI,
-Z80Pin::Neg_RESET,
-];
-
-const PIN_CPU_BUS_CONTROL: [Z80Pin; 2] = [Z80Pin::Neg_BUSRQ, Z80Pin::Neg_BUSACK];
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -394,28 +357,6 @@ pub struct Z80 {
 
 /// Flags related code
 impl Z80 {
-    /// Update qll the flags after an add/substract operation
-    #[inline]
-    fn update_all_flags(
-        &mut self,
-        res: u8,
-        half_carry: bool,
-        pv: bool,
-        overflow: bool,
-        substraction: bool,
-    ) {
-        let f = &mut self.af.low_mut().val;
-        
-        Z80Flags::S.set((res & 1 << 7) != 0, f);
-        Z80Flags::Z.set(res == 0, f);
-        Z80Flags::Y.set((res & 1 << 5) != 0, f);
-        Z80Flags::H.set(half_carry, f);
-        Z80Flags::Y.set((res & 1 << 3) != 0, f);
-        Z80Flags::P.set(pv, f);
-        Z80Flags::N.set(substraction, f);
-        Z80Flags::C.set(overflow, f);
-    }
-    
     /// Check if the flag test is successfull
     #[inline]
     pub fn test_flag(&self, flag_test: FlagTest) -> bool {
@@ -1650,7 +1591,7 @@ impl Z80 {
                 
             }
             Mnemonic::Rld => {
-                let mut  val = self.get_data_from_pins();
+                let val = self.get_data_from_pins();
                 let a = self.a();
 
                 let a_low = a & 0x0f;
@@ -1712,10 +1653,10 @@ impl Z80 {
             }
             
             Mnemonic::Rrd => {
-                let mut  val = self.get_data_from_pins();
+                let val = self.get_data_from_pins();
                 let a = self.a();
 
-                let a_low = a & 0x0f;
+                let _a_low = a & 0x0f;
                 let pin_low = val & 0x0f;
                 let pin_high = (val & 0xf0) >> 4;
 
@@ -2192,6 +2133,7 @@ impl Z80 {
 /// Everything that is related to interruptions
 impl Z80 {
 
+    #[cfg(test)]
     pub(crate) fn force_interruption_received(&mut self, val: bool) {
         self.interruption_received = val;
     }
@@ -2744,8 +2686,8 @@ impl Chip for Z80 {
             MCycle::Input(TState::T2, _) => {
                 self.next_state.inc_state();
             }
-            /// simulate wait
-            MCycle::Read(TState::T3, nb) | MCycle::Input(TState::T3, nb) => {
+            // simulate wait
+            MCycle::Read(TState::T3, _nb) | MCycle::Input(TState::T3, _nb) => {
                 self.next_state.inc_state();
             }
             MCycle::Read(TState::T4, nb) | MCycle::Input(TState::T4, nb) => {
@@ -2757,7 +2699,7 @@ impl Chip for Z80 {
                 }
                 self.post_read_action();
                 
-                let opcode_info = self.opcode_information.as_ref().unwrap().clone();
+                let opcode_info = self.opcode_information.unwrap();
                 if nb + 1 == opcode_info.nb_bytes_to_read {
                     if 0 != opcode_info.nb_bytes_to_write {
                         if self.must_execute_instruction_in_middle() {
@@ -2807,7 +2749,7 @@ impl Chip for Z80 {
             }
             
             MCycle::Write(TState::T1, nb) | MCycle::Output(TState::T1, nb) => {
-                let opcode_information = self.opcode_information().unwrap();
+                let _opcode_information = self.opcode_information().unwrap();
                 
 
                 let opcode_information = self.opcode_information().unwrap();
@@ -2862,7 +2804,7 @@ impl Chip for Z80 {
                 
                 self.next_state.inc_state();
             }
-            MCycle::Write(TState::T2, nb) | MCycle::Output(TState::T2, nb) => {
+            MCycle::Write(TState::T2, _nb) | MCycle::Output(TState::T2, _nb) => {
                 // (an output's IORQ and /WR follow `io_window`)
                 if !self.next_state.is_output() {
                     self.off(Z80Pin::Neg_WR); // or is it the writer that does that ?
@@ -2872,7 +2814,7 @@ impl Chip for Z80 {
             }
             
             // simulates a wait state
-            MCycle::Write(TState::T3, nb) | MCycle::Output(TState::T3, nb) => {
+            MCycle::Write(TState::T3, _nb) | MCycle::Output(TState::T3, _nb) => {
                 self.next_state.inc_state();
             }
             
@@ -2950,9 +2892,6 @@ impl Chip for Z80 {
             MCycle::Fake(_, _) => {
                 self.next_state.inc_state();
             }
-            
-            
-            _ => unimplemented!(),
         }
     }
     
@@ -3045,6 +2984,7 @@ impl Activable for Z80 {
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)] // the tests are named after the states they go through (FetchOpcode...)
 mod test {
     use super::*;
     
@@ -3458,7 +3398,7 @@ mod test {
         cpu.tick(); // execute
         assert_eq!(cpu.next_state, MCycle::Read(TState::T1, 0));
         
-        ///TODO add assertions there
+        // TODO add assertions there
         cpu.tick();
         cpu.set_data_on_pins(data);
         cpu.tick();
@@ -3466,6 +3406,7 @@ mod test {
         cpu.tick();
     }
     
+    #[allow(dead_code)] // for an instruction reading two bytes; none tested yet
     fn test_byte_FetchOpcodeRead2(cpu: &mut Z80, byte: u8, data: u8, data2: u8) {
         let pc_base = cpu.reg16(Reg16::Pc).get();
         force_front(cpu);
@@ -3531,13 +3472,13 @@ mod test {
         cpu.tick(); // execute
         assert_eq!(cpu.next_state, MCycle::Read(TState::T1, 0));
         
-        ///TODO add assertions there
+        // TODO add assertions there
         cpu.tick();
         cpu.set_data_on_pins(data);
         cpu.tick();
         cpu.tick();
         
-        ///TODO add assertions there
+        // TODO add assertions there
         cpu.tick();
         cpu.set_data_on_pins(data2);
         cpu.tick();
