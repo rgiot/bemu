@@ -468,6 +468,13 @@ impl DebugServer {
         self.paused = true;
     }
 
+    /// Pause or resume from the emulator's side (the window's F8): the clients get the `pause`
+    /// event, as for a breakpoint.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+        self.report_pause();
+    }
+
     /// Whether `POST /api/quit` asked the emulator to leave.
     pub fn quit_requested(&self) -> bool {
         self.quit

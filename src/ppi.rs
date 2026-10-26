@@ -243,12 +243,16 @@ impl Ppi {
     }
 
     /// (Re-)assert the port B bits that are hardwired to external signals
-    /// rather than driven by the CPU: B1-B3 (manufacturer jumpers) and B4
-    /// (screen refresh rate strap). Must be called after anything that
-    /// clears port B's pins, since those pins are never CPU outputs here.
+    /// rather than driven by the CPU: B1-B3 (manufacturer jumpers), B4
+    /// (screen refresh rate strap) and B6, the printer's BUSY, which reads 1
+    /// with no printer to pull it down (a Digiblaster only uses the data
+    /// lines): Shaker A4 prints port B as #5E/#5F on a real 6128 and on a
+    /// CRTC 4 machine, where we read #1E/#1F. Must be called after anything
+    /// that clears port B's pins, since those pins are never CPU outputs here.
     fn drive_hardwired_port_b_bits(&mut self) {
         self.set_value_in_pins(self.brand as u8, &PPI_BRAND_PIN);
         self.set_pin(PpiPin::B4, self.refresh as u8 != 0);
+        self.set_pin(PpiPin::B6, true);
     }
 
     /// Drive port A's pins from an external source (the PSG, whose data bus
