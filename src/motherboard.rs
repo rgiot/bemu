@@ -37,6 +37,10 @@ pub struct Motherboard {
     fdc: Fdc,
     /// The cassette deck, with a tape in it.
     tape: Option<Box<crate::tape::TapeDeck>>,
+    /// What port B's bit 7 (the cassette input) reads with no tape playing: 0 on the CPCs with a
+    /// cassette port, 1 on the CPC+ (CRTC 3), which has none (Shaker A4 prints port B as #DE/#DF on
+    /// a real 6128+).
+    cassette_idle: bool,
     /// The expansion port, when a card is plugged on it (a PlayCity).
     expansion_port: Option<Box<ExpansionPort>>,
     /// The printer port, when a device is plugged on it (a Digiblaster).
@@ -123,6 +127,7 @@ impl Default for Motherboard {
                 fdc
             },
             tape: None,
+            cassette_idle: false,
             expansion_port: None,
             printer_port: None,
             fdc_write_active: false,
@@ -383,6 +388,8 @@ impl MotherboardBuilder {
         motherboard
             .ppi
             .set_clears_ports_on_mode_set(crtc_type != CrtcType::Crtc3);
+        motherboard.cassette_idle = crtc_type == CrtcType::Crtc3;
+        motherboard.ppi.set_pin(PpiPin::B7, motherboard.cassette_idle);
         motherboard
             .ga
             .set_c_vsync_needs_crtc_vsync(matches!(crtc_type, CrtcType::Crtc3 | CrtcType::Crtc4));
@@ -488,7 +495,7 @@ impl Motherboard {
     pub fn insert_tape(&mut self, tape: Option<crate::tape::Tape>) {
         self.tape = tape.map(|tape| Box::new(crate::tape::TapeDeck::new(tape)));
         if self.tape.is_none() {
-            self.ppi.set_pin(PpiPin::B7, false);
+            self.ppi.set_pin(PpiPin::B7, self.cassette_idle);
         }
     }
 
