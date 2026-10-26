@@ -1071,7 +1071,7 @@ impl ExpansionDevice for Albireo {
             }
         }
         if let Some(address) = port.io_read() {
-            // once per IN: the motherboard reads the bus on the cycle's first tick
+            // once per IN, when it begins, and held on the bus until the Z80 latches it
             let first = port.io_read_started();
             match address {
                 0xfe80 => {

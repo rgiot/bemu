@@ -500,21 +500,28 @@ pub const MODE_WRITE_DELAY_TWO_WIDE_TICKS: usize = 5;
 /// interrupted instruction ends with at most one idle T-state.
 pub const ACK_LATE_TICKS: u32 = 16;
 
-/// The INT line rises 13 ticks after the CRTC's HSYNC ends (the GA already hears of that end
+/// Ticks from the start of the acknowledge cycle (its /M1) to the /IORQ the Gate Array decodes it
+/// by: the Z80 asserts it a T-state later, after its automatic wait states (Zilog Z80 CPU User
+/// Manual, Interrupt Request/Acknowledge Cycle). With the CPU's microseconds on the character
+/// clock edge (see [`RESET_CLOCK`]), Shaker BR A's #C4/#CC table is the real CPC's again.
+pub const ACK_IORQ_TICKS: u32 = 4;
+
+/// The INT line rises 9 ticks after the CRTC's HSYNC ends (the GA already hears of that end
 /// `HSYNC_GA_DELAY_TICKS` late): just before the next microsecond boundary of the CPU, which
 /// samples it there, a microsecond after the end (ACCC 27.6.1, "an interrupt always starts 1 usec
-/// AFTER THE END OF THE HSYNC"). The CPU only sees INT on its microsecond boundaries, so this
-/// decides which one: 3 ticks later and it waited a microsecond more. Measured on Rhino-Raster
-/// (EI+HALT, pen writes timed to the microsecond) with [`GA_WRITE_LATENCY_TICKS`]: identical to
-/// AMSpiriT Lite's picture.
-pub const INTERRUPT_AFTER_HSYNC_TICKS: u32 = 13 - HSYNC_GA_DELAY_TICKS as u32;
+/// AFTER THE END OF THE HSYNC"). The CPU only sees INT on its microsecond boundaries (on the
+/// character clock edge, see [`RESET_CLOCK`]), so this decides which one: 2 ticks later
+/// and it waited a microsecond more. Measured on Rhino-Raster (EI+HALT, pen writes timed to the
+/// microsecond) with [`GA_WRITE_LATCH_CLOCK`].
+pub const INTERRUPT_AFTER_HSYNC_TICKS: u32 = 9 - HSYNC_GA_DELAY_TICKS as u32;
 
-/// Ticks between the CPU's `OUT` to the Gate Array (the first tick of IORQ) and the register
-/// taking it: the 40010 latches its registers on its own sequencer phase, and a palette or mode
-/// write then acts on the pixels this much later. With [`CCLK_PHASE`] and
-/// [`INTERRUPT_AFTER_HSYNC_TICKS`], Rhino-Raster's pen splits are pixel-identical to AMSpiriT Lite's
-/// (they were 41 pixels apart with the writes taken at once and the old phase).
-pub const GA_WRITE_LATENCY_TICKS: u64 = 8;
+/// The tick of the Gate Array's 16-tick cycle (`clock`) on which it latches a register write:
+/// the 40010 takes it on its own sequencer phase (its write strobe comes from S0 and S7, once per
+/// microsecond) while IORQ is active, whatever T-state the I/O cycle started on. An `OUT (n),A` or
+/// an `OUTI` (I/O from the start of their microsecond) and an `OUT (C),r` (from its 2nd T-state)
+/// are then taken at the same point. Rhino-Raster's pen splits (written with both) are
+/// pixel-identical to AMSpiriT Lite's on this tick, and drift away on both sides.
+pub const GA_WRITE_LATCH_CLOCK: u8 = 10;
 
 /// The phase of CCLK (the CRTC's character clock) in the Gate Array's 16-tick cycle, against the
 /// CPU clock: the CRTC counts on the CPU's microsecond boundary, as in the 40010's sequencer (CCLK
@@ -523,6 +530,12 @@ pub const GA_WRITE_LATENCY_TICKS: u64 = 8;
 /// where AMSpiriT and the real CPC do. It was 1 (the CRTC counting 4 ticks after the boundary, its
 /// writes landing 12 ticks late in the character).
 pub const CCLK_PHASE: u8 = 9;
+
+/// Where the Gate Array's 16-tick sequencer (`clock`) stands when the Z80 leaves reset: the CPU's
+/// microseconds (its /WAIT cycle) then start on the CRTC character clock edge. ACCC 13.6: an
+/// `OUTI` reaches the CRTC at the start of the character of its I/O microsecond, an `OUT (C),r` on
+/// its 2nd T-state (4 ticks in), and Shaker's VSYNC-synchronised writes land there (BI on CRTC 0).
+pub const RESET_CLOCK: u8 = 12;
 
 impl RMR {
     fn interrupt_counter(&self) -> bool {
@@ -1090,9 +1103,6 @@ pub struct GateArray {
     /// The palette as it was at the previous tick, for the chips whose writes are a tick late
     /// The palettes of the last ticks, newest first (see [`GateArrayType::palette_write_delay_ticks`])
     palette_ring: History<[Ink; 17], 2>,
-    /// Register writes waiting for the Gate Array's latch (tick due, byte), see
-    /// [`GA_WRITE_LATENCY_TICKS`]
-    pending_writes: std::collections::VecDeque<(u64, u8)>,
     /// The write of the current bus cycle was latched
     write_seen: bool,
 
@@ -1113,7 +1123,7 @@ pub struct GateArray {
 impl Default for GateArray {
     fn default() -> Self {
         let mut ga = GateArray {
-            clock: 0,
+            clock: RESET_CLOCK,
             pins: (0, 0).into(),
             ga_type: GateArrayType::default(),
 
@@ -1182,7 +1192,6 @@ impl Default for GateArray {
             shown_ring: History::new(Shown::Black),
             lookup_lag: PALETTE_LOOKUP_LAG_TICKS,
             palette_ring: History::new([Ink(0); 17]),
-            pending_writes: std::collections::VecDeque::new(),
             write_seen: false,
             current_mode: VideoMode::Mode0,
             pixel_automata: PixelAutomata::default(),
@@ -1702,10 +1711,6 @@ impl Chip for GateArray {
         if self.get_pin(GateArrayPin::Neg_IORQ) || !self.get_pin(GateArrayPin::Neg_RD) {
             self.write_seen = false;
         }
-        while self.pending_writes.front().is_some_and(|(due, _)| *due <= self.abs_tick) {
-            let (_, command) = self.pending_writes.pop_front().unwrap();
-            self.write_register(command);
-        }
         self.mode_history.push(self.rmr.video_mode());
         if self.is_upfront(GateArrayPin::VSYNC) {
             //vsync occured
@@ -1773,9 +1778,9 @@ impl Chip for GateArray {
                 // microsecond later (SHAKER BR/A on a real CPC, and the
                 // same rule in CPCSyntaxError's timing).
                 if self.last_idle_t <= 1 {
-                    self.ack_countdown = Some(ACK_LATE_TICKS);
+                    self.ack_countdown = Some(ACK_IORQ_TICKS + ACK_LATE_TICKS);
                 } else {
-                    self.handle_cpu_acknowledge_of_interruption();
+                    self.ack_countdown = Some(ACK_IORQ_TICKS);
                 }
             }
         } else {
@@ -1814,10 +1819,10 @@ impl Chip for GateArray {
             // by roughly an order of magnitude (stderr I/O in a hot path).
         }
         else {
-            // out expected: latched once per bus cycle, taken GA_WRITE_LATENCY_TICKS later
-            if !self.write_seen {
+            // out expected: latched on the GA's own tick, once per bus cycle
+            if !self.write_seen && self.clock == GA_WRITE_LATCH_CLOCK {
                 self.write_seen = true;
-                self.pending_writes.push_back((self.abs_tick + GA_WRITE_LATENCY_TICKS, self.get_data_from_pins()));
+                self.write_register(self.get_data_from_pins());
             }
         }
     }
@@ -1830,7 +1835,7 @@ impl Chip for GateArray {
     }
 
     fn reset(&mut self) {
-        self.clock = 0;
+        self.clock = RESET_CLOCK;
         self.on(GateArrayPin::INTERRUPT);
     }
 }
@@ -2026,14 +2031,14 @@ mod test {
         ga.set_pin(GateArrayPin::Neg_M1, true);
         ga.set_pin(GateArrayPin::Neg_RD, true);
         assert!(ga.must_execute_tick());
-        ga.tick();
-        // the register takes the write GA_WRITE_LATENCY_TICKS later
-        ga.set_pin(GateArrayPin::Neg_IORQ, true);
         assert_eq!(ga.next_video_mode(), VideoMode::Mode0);
-        for _ in 0..GA_WRITE_LATENCY_TICKS {
+        // the register takes the write on the GA's latch tick (GA_WRITE_LATCH_CLOCK)
+        for _ in 0..16 {
             ga.save_pins_state();
             ga.tick();
+            ga.manage_clocks();
         }
+        ga.set_pin(GateArrayPin::Neg_IORQ, true);
 
         assert_eq!(ga.active_video_mode(), VideoMode::Mode0);
         assert_eq!(ga.next_video_mode(), VideoMode::Mode1);
@@ -2062,13 +2067,12 @@ mod test {
         ga.set_pin(GateArrayPin::Neg_IORQ, false);
         ga.set_pin(GateArrayPin::Neg_M1, true);
         ga.set_pin(GateArrayPin::Neg_RD, true);
-        ga.save_pins_state();
-        ga.tick();
-        ga.set_pin(GateArrayPin::Neg_IORQ, true);
-        for _ in 0..GA_WRITE_LATENCY_TICKS {
+        for _ in 0..16 {
             ga.save_pins_state();
             ga.tick();
+            ga.manage_clocks();
         }
+        ga.set_pin(GateArrayPin::Neg_IORQ, true);
 
         assert_eq!(ga.active_video_mode(), VideoMode::Mode1);
         assert_eq!(ga.next_video_mode(), VideoMode::Mode2);

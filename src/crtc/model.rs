@@ -141,12 +141,19 @@ pub trait CrtcChip: Debug + Send {
 
     // ---- register writes ----
 
-    /// An I/O write the chip takes later (the ASICs): true when it is queued.
+    /// Whether the chip takes a write (a register select or a data write) on this tick, `phase`
+    /// ticks into the character. A 6845 takes it as soon as its enable is active; a write outside
+    /// the chip's window waits for the next one while the CPU still holds it.
+    fn samples_write_at(&self, _phase: u8) -> bool {
+        true
+    }
+
+    /// A write the chip applies later (the ASICs): true when it is queued.
     fn queue_write(&mut self, _r: u8, _v: u8) -> bool {
         false
     }
 
-    /// The queued writes that land on this tick, if any (called every tick).
+    /// The queued writes that apply on this tick, if any (called every tick).
     fn due_writes(&mut self) -> Option<Vec<(u8, u8)>> {
         None
     }

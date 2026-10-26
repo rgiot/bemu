@@ -168,8 +168,11 @@ fn the_wait_model_gives_the_accc_durations() {
 fn the_wait_model_places_iorq_as_accc_diagram_b() {
     let out_c = cpc_bus_timing(0xed, 0x61, false, false);
     assert_eq!((out_c.iorq_t, out_c.microseconds()), (Some(2 * 4 + 1), 4));
+    // T2, TW* and three Tw (the free T-state of the 4th microsecond), then T3
+    assert_eq!(out_c.iorq_end_t, Some(3 * 4 + 2));
     let outi = cpc_bus_timing(0xed, 0xa3, false, false);
     assert_eq!((outi.iorq_t, outi.microseconds()), (Some(4 * 4), 5));
+    assert_eq!(outi.iorq_end_t, Some(4 * 4 + 2));
     // OUT (n),A (diagram A): 11 T-states, IORQ on the first T-state of its 3rd microsecond
     let out_n = cpc_bus_timing(0x00, 0xd3, false, false);
     assert_eq!((out_n.t_states, out_n.iorq_t), (11, Some(2 * 4)));

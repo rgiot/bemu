@@ -292,6 +292,14 @@ impl Default for InterruptMode {
     }
 }
 
+/// See [`Z80::io_window`].
+#[derive(Default, Debug, Clone, Copy)]
+struct IoWindow {
+    start: u8,
+    end: u8,
+    t: u8,
+}
+
 #[derive(Default, Debug)]
 /// https://gist.github.com/drhelius/8497817
 pub struct Z80 {
@@ -369,6 +377,10 @@ pub struct Z80 {
     /// T-states left idle at the end of the last microsecond of the last
     /// executed instruction (0 to 3).
     last_idle_t: u8,
+    /// The output being written: IORQ and /WR active from T-state `start` to `end` (T2 to T3 of
+    /// the real I/O cycle once stretched by the Gate Array's /WAIT, see `tstates`), counted from
+    /// the T1 of the Output M-cycle; `t` is the T-state of the next tick.
+    io_window: Option<IoWindow>,
 
     /// Low byte of a not-yet-completed SSM (ScreenShot Management) pair:
     /// set when an "ED <neutral>" instruction is executed and we're
@@ -669,6 +681,28 @@ impl Z80 {
                 MCycle::IoWait(TState::T1, false)
             } else {
                 MCycle::Input(TState::T1, 0)
+            }
+        }
+
+        /// Where IORQ and /WR of the output being started are active, in T-states from the T1 of
+        /// this model's Output M-cycle (which sits in the microsecond of the real I/O cycle's T2).
+        fn output_window(&self) -> IoWindow {
+            let prefix = match self.instr_prefix {
+                OpcodePrefix::None => 0x00,
+                OpcodePrefix::Cb => 0xcb,
+                OpcodePrefix::Ed => 0xed,
+                OpcodePrefix::Dd => 0xdd,
+                OpcodePrefix::Fd => 0xfd,
+                OpcodePrefix::DdCb => 0xdc,
+                OpcodePrefix::FdCb => 0xfc,
+            };
+            let timing = super::tstates::cpc_bus_timing(prefix, self.instr_op, false, false);
+            match (timing.iorq_t, timing.iorq_end_t) {
+                (Some(start), Some(end)) => {
+                    let base = start / 4 * 4;
+                    IoWindow { start: (start - base) as u8, end: (end - base) as u8, t: 0 }
+                }
+                _ => IoWindow { start: 0, end: 2, t: 0 },
             }
         }
 
@@ -2516,6 +2550,20 @@ impl Chip for Z80 {
     }
     
     fn execute_tick(&mut self) {
+        // ACCC 4.4.4: IORQ and /WR of an output follow the real I/O cycle (T2 to T3), which may
+        // run on into the next M-cycle of this model (OUT (C),r: into its 4th microsecond)
+        if let Some(window) = self.io_window {
+            if window.t > window.end {
+                self.set_pin(Z80Pin::Neg_IORQ, true);
+                self.set_pin(Z80Pin::Neg_WR, true);
+                self.io_window = None;
+            } else {
+                let active = window.t >= window.start;
+                self.set_pin(Z80Pin::Neg_IORQ, !active);
+                self.set_pin(Z80Pin::Neg_WR, !active);
+                self.io_window = Some(IoWindow { t: window.t + 1, ..window });
+            }
+        }
       //  dbg!(&self.next_state)
         if  !self.get_pin(Z80Pin::Neg_INT) && !self.next_state.is_interruption() {
             self.interruption_received |= true;
@@ -2683,7 +2731,7 @@ impl Chip for Z80 {
                 self.off(Z80Pin::Neg_RD);
                 self.next_state.inc_state();
             }
-            MCycle::Read(TState::T2, nb) | MCycle::Input(TState::T2, nb) => {
+            MCycle::Read(TState::T2, nb) => {
                 let byte = self.get_data_from_pins();
               //  dbg!("DATA={:x}", byte);
                 self.store_currently_read_byte(byte, nb);
@@ -2692,11 +2740,21 @@ impl Chip for Z80 {
                 self.on(Z80Pin::Neg_RD);
                 self.next_state.inc_state();
             }
+            // an input holds IORQ and /RD until the data bus is latched, on T3 (see `MCycle::Input`'s T4)
+            MCycle::Input(TState::T2, _) => {
+                self.next_state.inc_state();
+            }
             /// simulate wait
             MCycle::Read(TState::T3, nb) | MCycle::Input(TState::T3, nb) => {
                 self.next_state.inc_state();
             }
             MCycle::Read(TState::T4, nb) | MCycle::Input(TState::T4, nb) => {
+                if self.next_state.is_input() {
+                    let byte = self.get_data_from_pins();
+                    self.store_currently_read_byte(byte, nb);
+                    self.on(self.next_state.read_pin_type().unwrap());
+                    self.on(Z80Pin::Neg_RD);
+                }
                 self.post_read_action();
                 
                 let opcode_info = self.opcode_information.as_ref().unwrap().clone();
@@ -2794,17 +2852,21 @@ impl Chip for Z80 {
                 self.set_data_on_pins(byte);
 
                 if self.next_state.is_output() {
-                    self.off(self.next_state.write_pin_type().unwrap());
-                    self.off(Z80Pin::Neg_WR);
+                    let window = self.output_window();
+                    if window.start == 0 {
+                        self.off(self.next_state.write_pin_type().unwrap());
+                        self.off(Z80Pin::Neg_WR);
+                    }
+                    self.io_window = Some(IoWindow { t: 1, ..window });
                 }
                 
                 self.next_state.inc_state();
             }
             MCycle::Write(TState::T2, nb) | MCycle::Output(TState::T2, nb) => {
-                if self.next_state.is_output() {
-                    self.off(self.next_state.write_pin_type().unwrap());
+                // (an output's IORQ and /WR follow `io_window`)
+                if !self.next_state.is_output() {
+                    self.off(Z80Pin::Neg_WR); // or is it the writer that does that ?
                 }
-                self.off(Z80Pin::Neg_WR); // or is it the writer that does that ?
                 
                 self.next_state.inc_state();
             }
@@ -2815,8 +2877,10 @@ impl Chip for Z80 {
             }
             
             MCycle::Write(TState::T4, nb) | MCycle::Output(TState::T4, nb) => {
-                self.on(self.next_state.write_pin_type().unwrap());
-                self.on(Z80Pin::Neg_WR);
+                if !self.next_state.is_output() {
+                    self.on(self.next_state.write_pin_type().unwrap());
+                    self.on(Z80Pin::Neg_WR);
+                }
                 
                 if nb == self.opcode_information.as_ref().unwrap().nb_bytes_to_write - 1 {
                     // TODO take into account those that do a write after the read (if that exists)
@@ -2903,6 +2967,7 @@ impl Chip for Z80 {
         self.set_pin(Z80Pin::Neg_RFSH, true);
         
         self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
+        self.io_window = None;
         
         self.sp.set(0xffff);
         self.pc.set(0x0000);
