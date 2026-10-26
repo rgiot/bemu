@@ -85,6 +85,10 @@ pub struct Args {
     /// SoundFont's (at &FEAC by default).
     pub willy_s2p: Option<String>,
     pub willy_s2p_at: Option<String>,
+    /// `--dandanator ROMSET [--dandanator-writable]`: a CPC Dandanator Mini, its flash the
+    /// romset (what the CPC programs kept in the file only when writable).
+    pub dandanator: Option<String>,
+    pub dandanator_writable: bool,
     /// `--save-sna path`: the machine's state saved there when the run ends.
     pub save_sna: Option<String>,
     pub debug_server: bool,
@@ -156,6 +160,8 @@ pub fn parse_args() -> Args {
         willy_opl3: None,
         willy_s2p: None,
         willy_s2p_at: None,
+        dandanator: None,
+        dandanator_writable: false,
         save_sna: None,
         debug_server: false,
         debug_port: amsrust::debug_server::DEFAULT_PORT,
@@ -264,6 +270,8 @@ pub fn parse_args() -> Args {
             "--willy-opl3-at" => args.willy_opl3 = Some(next("--willy-opl3-at")),
             "--willy-s2p" => args.willy_s2p = Some(next("--willy-s2p")),
             "--willy-s2p-at" => args.willy_s2p_at = Some(next("--willy-s2p-at")),
+            "--dandanator" => args.dandanator = Some(next("--dandanator")),
+            "--dandanator-writable" => args.dandanator_writable = true,
             "--m4-slot" => {
                 args.m4_slot = Some(next("--m4-slot").parse().unwrap_or_else(|_| panic!("--m4-slot: a slot, 0-255")))
             },
@@ -317,6 +325,7 @@ fn print_help() {
         "        [--booster|--miniboster [--booster-uart loopback|listen:addr|connect:addr] [--booster-eeprom file]\n",
         "         [--booster-flash file] [--booster-adc file.wav]]\n",
         "        [--willy-opl3 [--willy-opl3-at addr]] [--willy-s2p file.sf2 [--willy-s2p-at addr]]\n",
+        "        [--dandanator romset.rom [--dandanator-writable]]\n",
         "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
         "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
         "\n",
@@ -354,6 +363,9 @@ fn print_help() {
         "&FEBD/&FEBF write it); --willy-s2p FILE.sf2 Willy with an S2P (a General MIDI synth: &FEAC the\n",
         "MIDI data, &FEAD the control/status), its instruments the SoundFont's. Willy's jumper sets\n",
         "another base with --willy-opl3-at/--willy-s2p-at: &FEBC, &FEAC, &FEA4, &FE9C, &FE94, &FE8C, &FE84.\n",
+        "--dandanator romset.rom plugs a CPC Dandanator Mini (512K of flash: its romset boots in place\n",
+        "of the firmware); what the CPC programs into the flash goes back to the file with\n",
+        "--dandanator-writable only. Its USB serial port is not emulated.\n",
         "--cdt puts a tape (CDT/TZX) in the cassette\n",
         "deck, PLAY down: it plays when the CPC starts the motor (RUN\" on a 464,\n",
         "|TAPE first on a 664/6128).\n",
