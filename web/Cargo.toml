@@ -2,6 +2,7 @@
 name = "bemu-web"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 description = "The bemu Amstrad CPC emulator, to embed in a web page (see README.md)"
 
 [lib]
