@@ -437,7 +437,7 @@ impl Monitor {
         let error = if self.ran_free { x_before as i64 } else { x_before as i64 - RASTER_LINE_LENGTH as i64 };
         let error = error - adj;
         self.ran_free = false;
-        if !was_locked || error < -MONITOR_PLL_CAPTURE_EARLY || error > MONITOR_PLL_CAPTURE_LATE {
+        if !was_locked || !(-MONITOR_PLL_CAPTURE_EARLY..=MONITOR_PLL_CAPTURE_LATE).contains(&error) {
             return;
         }
         if error.abs() > 2 {
@@ -657,8 +657,8 @@ mod test {
         let mut mon = Monitor::default();
         for l in 0..40 {
             for t in 0..RASTER_LINE_LENGTH {
-                let main = t >= 736 && t < 800;
-                let other = l >= 10 && t >= 176 && t < 240;
+                let main = (736..800).contains(&t);
+                let other = l >= 10 && (176..240).contains(&t);
                 let hsync = main || other;
                 mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
             }
@@ -668,7 +668,7 @@ mod test {
         }
         for _ in 0..3 {
             for t in 0..RASTER_LINE_LENGTH {
-                let hsync = t >= 736 && t < 800;
+                let hsync = (736..800).contains(&t);
                 mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
             }
         }
@@ -682,8 +682,8 @@ mod test {
         let mut mon = Monitor::default();
         for l in 0..120 {
             for t in 0..RASTER_LINE_LENGTH {
-                let main = t >= 736 && t < 800;
-                let other = l >= 30 && t >= 400 && t < 464;
+                let main = (736..800).contains(&t);
+                let other = l >= 30 && (400..464).contains(&t);
                 let hsync = main || other;
                 mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
             }

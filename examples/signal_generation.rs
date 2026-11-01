@@ -38,21 +38,12 @@ impl From<String> for PinData {
 	}
 }
 
-impl ToString for PinData {
-	fn to_string(&self) -> String {
+impl std::fmt::Display for PinData {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-			Self::Bool(b) => {
-				if *b {
-					"1".to_owned()
-				}
-				else {
-					"0".to_owned()
-				}
-			},
-			Self::Value(v) => {
-				v.to_string()
-			},
-			Self::String(s)=> s.clone()
+			Self::Bool(b) => f.write_str(if *b { "1" } else { "0" }),
+			Self::Value(v) => write!(f, "{v}"),
+			Self::String(s) => f.write_str(s)
 		}
 	}
 }
@@ -149,7 +140,7 @@ fn follow_nticks(motherboard: &mut Motherboard, mut count: usize ) {
 	let mut collector = TickCollector::default();
 	loop {
 		motherboard.tick();
-		collector.collect(&motherboard);
+		collector.collect(motherboard);
 		count -= 1;
 		if count == 0 {
 			break;
@@ -183,7 +174,7 @@ fn execute_code(motherboard: &mut Motherboard, init: &[u8], code: &[u8]) {
 
 	while  motherboard.pc() != 0x4000 + code.len() as u16 || !motherboard.is_aligned_with_new_instruction() {
 //	Monitor::monitor(motherboard);
-		collector.collect(&motherboard);
+		collector.collect(motherboard);
 		motherboard.tick();
 	}
 

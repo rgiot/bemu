@@ -20,7 +20,7 @@ fn main() {
         *hist.entry(mb.pc()).or_default() += 1;
     }
     let mut v: Vec<_> = hist.into_iter().collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
     for (pc, c) in v.iter().take(40) { println!("{pc:04X} {c}"); }
     if let Some(from) = from {
         for row in 0..(len / 16) {

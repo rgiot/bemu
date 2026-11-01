@@ -78,9 +78,9 @@ pub enum CrtcPin {
     RA4 = 1 << 35,
 }
 
-impl Into<u64> for CrtcPin {
-    fn into(self) -> u64 {
-        self as u64
+impl From<CrtcPin> for u64 {
+    fn from(val: CrtcPin) -> Self {
+        val as u64
     }
 }
 
@@ -779,7 +779,7 @@ impl Crtc {
         }
     }
 
-    ///  	The Video display address. This is derived from the MA register in the CRTC, the horizontal character count HCC and the current row address (RA) register in the CRTC. This is effectively the CPC memory address of the data displayed on the monitor.
+    /// The Video display address. This is derived from the MA register in the CRTC, the horizontal character count HCC and the current row address (RA) register in the CRTC. This is effectively the CPC memory address of the data displayed on the monitor.
     pub fn vma(&self) -> u16 {
         self.get_address_from_pins()
     }
@@ -830,7 +830,7 @@ impl Chip for Crtc {
 
 impl DataChip for Crtc {
     fn pins_data() -> &'static [Self::PinType; 8] {
-        return &CRTC_PIN_DATA_BUS;
+        &CRTC_PIN_DATA_BUS
     }
 }
 impl ReadDataChip for Crtc {}
@@ -838,7 +838,7 @@ impl WriteDataChip for Crtc {}
 
 impl AddressChip for Crtc {
     fn pins_address() -> &'static [Self::PinType; 16] {
-        return &CRTC_PIN_ADDRESS_BUS;
+        &CRTC_PIN_ADDRESS_BUS
     }
 }
 impl ReadAddressChip for Crtc {

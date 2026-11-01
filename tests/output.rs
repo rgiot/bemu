@@ -33,7 +33,7 @@ fn test_crtc_registers_modification(){
 		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 
 		// detect if it is the end
-		let current_pattern = [motherboard.read_byte(pc + 0), motherboard.read_byte(pc + 1)];
+		let current_pattern = [motherboard.read_byte(pc), motherboard.read_byte(pc + 1)];
 
 		if current_pattern == *end_pattern {
 			break;

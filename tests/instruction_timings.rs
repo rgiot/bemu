@@ -77,9 +77,9 @@ fn expected(prefix: u8, op: u8) -> Option<(u8, u8)> {
             0xe3 => same(7),
             0xe9 => same(2),
             0x40..=0x7f if op != 0x76 => {
-                if r == 6 || y == 6 { same(5) } else if (r >= 4 && r <= 5) || (y >= 4 && y <= 5) { same(2) } else { same(2) }
+                if r == 6 || y == 6 { same(5) } else { same(2) }
             }
-            0x80..=0xbf => if r == 6 { same(5) } else if r == 4 || r == 5 { same(2) } else { same(1 + 1) },
+            0x80..=0xbf => if r == 6 { same(5) } else { same(2) },
             _ => None,
         },
         _ => None,

@@ -59,7 +59,7 @@ fn zexdoc() {
 
          match cpu.reg16(Reg16::Pc).value() {
             0x0005 => { 
-                cpm_bdos(&motherboard); 
+                cpm_bdos(motherboard); 
                 false
             },
             0x0000 => { 
@@ -123,7 +123,7 @@ fn zexdoc() {
                     && last_traced_inst.as_deref() == Some(inst.as_str());
 
                 if !suppress_repeated {
-                let b0 = next.memory.get(0).copied();
+                let b0 = next.memory.first().copied();
                 let b1 = next.memory.get(1).copied();
                 let b2 = next.memory.get(2).copied();
                 let bytes = format!(
@@ -174,7 +174,7 @@ fn zexdoc() {
                 break;
             }
 
-            if debug_every > 0 && operations % debug_every == 0 {
+            if debug_every > 0 && operations.is_multiple_of(debug_every) {
                 let pc = motherboard.cpu().reg16(Reg16::Pc).value();
                 let af = motherboard.cpu().reg16(Reg16::Af).value();
                 let bc = motherboard.cpu().reg16(Reg16::Bc).value();
@@ -202,7 +202,7 @@ fn zexdoc() {
                     bc,
                     de,
                     hl,
-                    motherboard.disassemble_next_instruction().to_string()
+                    motherboard.disassemble_next_instruction()
                 );
                 last_debug_ops = operations;
                 last_debug_iut = iut_executions;
@@ -231,7 +231,7 @@ fn cpm_bdos(motherboard: & Motherboard) {
     match  c_value {
         2 => {
             // output character in register E
-            print!("{}", cpu.reg8(Reg8::E).value() as u8 as char);
+            print!("{}", cpu.reg8(Reg8::E).value() as char);
             io::stdout().flush().unwrap();
         },
         9 => {

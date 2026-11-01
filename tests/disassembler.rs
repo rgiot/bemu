@@ -1,6 +1,6 @@
-///! The debugger's disassembler (`Motherboard::disassemble_instruction_at`):
-///! instruction boundaries and tokens for each prefix page, decoded from
-///! the opcode bits (`amsrust::z80::decoder`).
+//! The debugger's disassembler (`Motherboard::disassemble_instruction_at`):
+//! instruction boundaries and tokens for each prefix page, decoded from
+//! the opcode bits (`amsrust::z80::decoder`).
 
 use amsrust::motherboard::MotherboardBuilder;
 use cpclib_asm::preamble::{
@@ -49,8 +49,8 @@ fn disassembles_every_prefix_page_with_its_operands() {
     let mut address = 0x4000u16;
     for (instruction, (bytes, token)) in disassembled.iter().zip(program) {
         assert_eq!(instruction.address, address);
-        assert_eq!(&instruction.memory[..], *bytes, "{}", instruction.to_string());
-        assert_eq!(&instruction.token, token, "{}", instruction.to_string());
+        assert_eq!(&instruction.memory[..], *bytes, "{}", instruction);
+        assert_eq!(&instruction.token, token, "{}", instruction);
         address += bytes.len() as u16;
     }
 }

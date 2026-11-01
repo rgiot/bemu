@@ -106,12 +106,11 @@ pub fn load_rom(spec: &str) -> Result<Vec<u8>, String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "unidos"))]
 mod test {
     use super::*;
 
     #[test]
-    #[cfg(feature = "unidos")]
     fn embedded_roms_by_name_or_files() {
         let unidos = load_rom("inner://unidos").unwrap();
         assert_eq!((unidos.len(), unidos[0]), (0x4000, 1), "a background ROM");

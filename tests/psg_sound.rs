@@ -1,7 +1,7 @@
-///! PSG sound through the whole machine: a Z80 program programs the PSG
-///! via the PPI exactly like the firmware (data on port A, BDIR/BC1 on port
-///! C bits 7/6), and the sound must come out at the pitch the datasheet
-///! gives for the CPC's 1MHz PSG clock (the gate array's CCLK).
+//! PSG sound through the whole machine: a Z80 program programs the PSG
+//! via the PPI exactly like the firmware (data on port A, BDIR/BC1 on port
+//! C bits 7/6), and the sound must come out at the pitch the datasheet
+//! gives for the CPC's 1MHz PSG clock (the gate array's CCLK).
 
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use amsrust::psg::AudioConfig;

@@ -1,6 +1,6 @@
-///! FDC (NEC uPD765A/B) protocol tests, cross-checked against the datasheet
-///! (doc/fdc.upd765ab.pdf): command/result byte layout, status register
-///! bits, and the RQM/DIO handshake for a Read Data command end to end.
+//! FDC (NEC uPD765A/B) protocol tests, cross-checked against the datasheet
+//! (doc/fdc.upd765ab.pdf): command/result byte layout, status register
+//! bits, and the RQM/DIO handshake for a Read Data command end to end.
 
 use amsrust::fdc::{Fdc, FdcDrive};
 use amsrust::motherboard::MotherboardBuilder;

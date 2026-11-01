@@ -62,7 +62,9 @@ fn main() {
         }
         let _ = recv(&mut fdc, 1);
     }
-    let cases: &[(&str, u8, &[(u8, u8, u8, u8)])] = &[
+    // a case: its name, its track, the sectors read there (C, H, R, N)
+    type Case = (&'static str, u8, &'static [(u8, u8, u8, u8)]);
+    let cases: &[Case] = &[
         ("data CRC error (T20 C3)", 20, &[(20, 0, 0xc3, 2)]),
         ("ID CRC error (T20 C6)", 20, &[(20, 0, 0xc6, 2)]),
         ("deleted data (T21 C5)", 21, &[(21, 0, 0xc5, 2)]),

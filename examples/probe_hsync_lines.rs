@@ -41,7 +41,7 @@ fn main() {
         prev_hs = hs;
         let m = format!("{:?}", mb.ga().active_video_mode());
         if m != prev_mode { mode_changes.push(format!("{}.{}:{}", t_in_line / 16, t_in_line % 16, m)); prev_mode = m; }
-        if dump && t_in_line % 2 == 0 && t_in_line < 64 * 16 {
+        if dump && t_in_line.is_multiple_of(2) && t_in_line < 64 * 16 {
             let r = mb.ga().rgb();
             rgbs.push(format!("{}:{:.0}/{:.0}/{:.0}", t_in_line / 2, r.r(), r.g(), r.b()));
         }

@@ -48,9 +48,9 @@ pub enum Reg8 {
     R
 }
 
-impl Into<Reg8> for &cpclib_asm::preamble::Register8 {
-    fn into(self) -> Reg8 {
-        match self {
+impl From<&cpclib_asm::preamble::Register8> for Reg8 {
+    fn from(val: &cpclib_asm::preamble::Register8) -> Self {
+        match val {
             cpclib_asm::preamble::Register8::A => Reg8::A,
             cpclib_asm::preamble::Register8::B => Reg8::B,
             cpclib_asm::preamble::Register8::C => Reg8::C,
@@ -61,15 +61,15 @@ impl Into<Reg8> for &cpclib_asm::preamble::Register8 {
         }
     }
 }
-impl Into<Reg8> for cpclib_asm::preamble::Register8 {
-    fn into(self) -> Reg8 {
-        (&self).into()
+impl From<cpclib_asm::preamble::Register8> for Reg8 {
+    fn from(val: cpclib_asm::preamble::Register8) -> Self {
+        (&val).into()
     }
 }
 
-impl Into<Reg8> for &cpclib_asm::preamble::IndexRegister8 {
-    fn into(self) -> Reg8 {
-        match self {
+impl From<&cpclib_asm::preamble::IndexRegister8> for Reg8 {
+    fn from(val: &cpclib_asm::preamble::IndexRegister8) -> Self {
+        match val {
             cpclib_asm::preamble::IndexRegister8::Ixh => Reg8::Ixh,
             cpclib_asm::preamble::IndexRegister8::Ixl => Reg8::Ixl,
             cpclib_asm::preamble::IndexRegister8::Iyh => Reg8::Iyh,
@@ -77,9 +77,9 @@ impl Into<Reg8> for &cpclib_asm::preamble::IndexRegister8 {
         }
     }
 }
-impl Into<Reg8> for cpclib_asm::preamble::IndexRegister8 {
-    fn into(self) -> Reg8 {
-        (&self).into()
+impl From<cpclib_asm::preamble::IndexRegister8> for Reg8 {
+    fn from(val: cpclib_asm::preamble::IndexRegister8) -> Self {
+        (&val).into()
     }
 }
 
@@ -90,21 +90,7 @@ impl Reg8 {
 
     pub fn is_high(&self) -> bool {
         use Reg8::*;
-        match self {
-            A => true,
-            A2 => true,
-            H => true,
-            H2 => true,
-            D => true,
-            D2 => true,
-            B => true,
-            B2 => true,
-            W => true,
-            Ixh => true,
-            Iyh => true,
-
-            _ => false,
-        }
+        matches!(self, A | A2 | H | H2 | D | D2 | B | B2 | W | Ixh | Iyh)
     }
 
     pub fn full(&self) -> Reg16 {
@@ -179,9 +165,9 @@ impl Reg16 {
     }
 }
 
-impl Into<Reg16> for &cpclib_asm::preamble::Register16 {
-    fn into(self) -> Reg16 {
-        match self {
+impl From<&cpclib_asm::preamble::Register16> for Reg16 {
+    fn from(val: &cpclib_asm::preamble::Register16) -> Self {
+        match val {
             cpclib_asm::preamble::Register16::Af => Reg16::Af,
             cpclib_asm::preamble::Register16::Hl => Reg16::Hl,
             cpclib_asm::preamble::Register16::Bc => Reg16::Bc,
@@ -191,9 +177,9 @@ impl Into<Reg16> for &cpclib_asm::preamble::Register16 {
     }
 }
 
-impl Into<Reg16> for cpclib_asm::preamble::Register16 {
-    fn into(self) -> Reg16 {
-        match self {
+impl From<cpclib_asm::preamble::Register16> for Reg16 {
+    fn from(val: cpclib_asm::preamble::Register16) -> Self {
+        match val {
             cpclib_asm::preamble::Register16::Af => Reg16::Af,
             cpclib_asm::preamble::Register16::Hl => Reg16::Hl,
             cpclib_asm::preamble::Register16::Bc => Reg16::Bc,
@@ -203,18 +189,18 @@ impl Into<Reg16> for cpclib_asm::preamble::Register16 {
     }
 }
 
-impl Into<Reg16> for &cpclib_asm::preamble::IndexRegister16 {
-    fn into(self) -> Reg16 {
-        match self {
+impl From<&cpclib_asm::preamble::IndexRegister16> for Reg16 {
+    fn from(val: &cpclib_asm::preamble::IndexRegister16) -> Self {
+        match val {
             cpclib_asm::preamble::IndexRegister16::Ix => Reg16::Ix,
             cpclib_asm::preamble::IndexRegister16::Iy => Reg16::Iy,
         }
     }
 }
 
-impl Into<Reg16> for cpclib_asm::preamble::IndexRegister16 {
-    fn into(self) -> Reg16 {
-        match self {
+impl From<cpclib_asm::preamble::IndexRegister16> for Reg16 {
+    fn from(val: cpclib_asm::preamble::IndexRegister16) -> Self {
+        match val {
             cpclib_asm::preamble::IndexRegister16::Ix => Reg16::Ix,
             cpclib_asm::preamble::IndexRegister16::Iy => Reg16::Iy,
         }

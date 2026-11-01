@@ -38,26 +38,26 @@ thread_local! {
     /// The expectations of the last [`PALETTE_LOOKUP_LAG_TICKS`] ticks: the colour of a pixel comes
     /// out that many ticks after the pen was known.
     static PIPELINE: std::cell::RefCell<std::collections::VecDeque<Expected>> =
-        std::cell::RefCell::new(std::collections::VecDeque::new());
+        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
 
     /// The sync black (HSYNC-GA, VSYNC) of the last [`SYNC_BLACK_LAG_TICKS`] ticks: it is applied on
     /// the output, without going through the pen pipeline.
     static SYNC_PIPELINE: std::cell::RefCell<std::collections::VecDeque<bool>> =
-        std::cell::RefCell::new(std::collections::VecDeque::new());
+        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
 
     /// Was the previous pixel a border one? The pixels of the modes other than
     /// MODE 2 come out one tick late (MODE 2 is displayed a pixel earlier).
-    static PREVIOUS_BORDER: std::cell::Cell<Option<(bool, [Ink; 17])>> = std::cell::Cell::new(None);
+    static PREVIOUS_BORDER: std::cell::Cell<Option<(bool, [Ink; 17])>> = const { std::cell::Cell::new(None) };
 
     /// The black of the VSYNC (ACCC 16.2.3): from the CRTC's VSYNC start until 26 HSYNCs have ended,
     /// whatever the VSYNC length. (previous VSYNC pin, previous HSYNC, HSYNC ends left)
-    static VSYNC_BLACK: std::cell::Cell<(bool, bool, u8)> = std::cell::Cell::new((false, false, 0));
+    static VSYNC_BLACK: std::cell::Cell<(bool, bool, u8)> = const { std::cell::Cell::new((false, false, 0)) };
 
     /// Ticks since the GA took its last video byte, and for the byte's first ticks: whether the
     /// tick's own pen was border and the tick whose pen the output showed (see
     /// [`DISPEN_LATCH_TICKS`]: the GA decides the byte's first pens again on its tick 6).
     static BYTE: std::cell::RefCell<(usize, [bool; DISPEN_LATCH_TICKS + 1], [Option<usize>; DISPEN_LATCH_TICKS + 1])> =
-        std::cell::RefCell::new((usize::MAX, [false; DISPEN_LATCH_TICKS + 1], [None; DISPEN_LATCH_TICKS + 1]));
+        const { std::cell::RefCell::new((usize::MAX, [false; DISPEN_LATCH_TICKS + 1], [None; DISPEN_LATCH_TICKS + 1])) };
 }
 
 /// The GA took a new video byte this tick.
@@ -129,6 +129,7 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
             if *tick == DISPEN_LATCH_TICKS {
                 // the byte's first pens follow DISPEN as it is now
                 let latched = is_border_now;
+                #[allow(clippy::needless_range_loop)] // t is a tick too, not only an index
                 for t in 0..=DISPEN_LATCH_TICKS {
                     let Some(source) = shown[t].filter(|&s| s < DISPEN_LATCH_TICKS) else { continue };
                     let back = queue.len() - 1 - (DISPEN_LATCH_TICKS - t);
@@ -223,7 +224,7 @@ fn generate_screen(bank: &[u8; 0x4000], fname: &str, palette: [Ink; 17], mode: V
 
     // and make the real tests
 
-    assert_eq!(ga.get_pin(GateArrayPin::CCLK), false);
+    assert!(!ga.get_pin(GateArrayPin::CCLK));
     let crtc_address = crtc.get_address_from_pins();
     println!("0x{:x}", crtc_address);
 
@@ -275,7 +276,7 @@ fn test_crtc_catart() {
         10.into(),
     ];
     let mode = VideoMode::Mode1;
-    generate_screen(&bank, fname, palette, mode);
+    generate_screen(bank, fname, palette, mode);
 }
 
 #[test]
@@ -350,7 +351,7 @@ fn test_raster() {
 
     // and make the real tests
 
-    assert_eq!(ga.get_pin(GateArrayPin::CCLK), false);
+    assert!(!ga.get_pin(GateArrayPin::CCLK));
     let crtc_address = crtc.get_address_from_pins();
     println!("0x{:x}", crtc_address);
 

@@ -69,7 +69,7 @@ fn main() {
         let pc = mb.pc();
         let a14 = mb.cpu().get_pin(Z80Pin::A14);
         let a15 = mb.cpu().get_pin(Z80Pin::A15);
-        let iowr_active = mb.cpu().get_pin(Z80Pin::Neg_WR) == false || mb.cpu().get_pin(Z80Pin::Neg_IORQ) == false;
+        let iowr_active = !mb.cpu().get_pin(Z80Pin::Neg_WR) || !mb.cpu().get_pin(Z80Pin::Neg_IORQ);
         let data = mb.cpu().get_data_from_pins();
 
         if (a14, a15) != last_a || iowr_active != last_iowr_active {
@@ -109,7 +109,7 @@ fn main() {
         mb.tick();
         ticks += 1;
 
-        if ticks % 50_000_000 == 0 {
+        if ticks.is_multiple_of(50_000_000) {
             eprintln!("[progress] tick {ticks}, PC={:04X}", mb.pc());
         }
 

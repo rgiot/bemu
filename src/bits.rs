@@ -1,3 +1,5 @@
+//! Helpers for bit manipulation
+
 pub use std::ops::{AddAssign, BitAnd, Deref, DerefMut, Shl, Shr, Sub, SubAssign};
 
 use num::{
@@ -5,7 +7,6 @@ use num::{
     FromPrimitive, Integer, One, Zero,
 };
 
-///! Helpers for bit manipulation
 
 /**
  * Number stored with a maximum number of bits
@@ -123,6 +124,8 @@ where
     }
 }
 
+// the & masks the result to the C bits
+#[allow(clippy::suspicious_op_assign_impl)]
 impl<T, const C: usize> AddAssign<T> for BitMax<T, C>
 where
     T: Clone
@@ -140,6 +143,8 @@ where
     }
 }
 
+// the & masks the result to the C bits
+#[allow(clippy::suspicious_op_assign_impl)]
 impl<T, const C: usize> SubAssign<T> for BitMax<T, C>
 where
     T: Clone

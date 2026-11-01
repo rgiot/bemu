@@ -237,7 +237,7 @@ impl HostKeyboard {
             for ((key, _), &c) in self.waiting.drain(..).zip(&input.typed) {
                 let pressing = layout.keys_of_char(c).and_then(|keys| {
                     let needs_shift = keys.contains(&CpcKey::Shift);
-                    let key = keys.iter().copied().filter(|k| !matches!(k, CpcKey::Shift | CpcKey::Control)).last();
+                    let key = keys.iter().copied().rfind(|k| !matches!(k, CpcKey::Shift | CpcKey::Control));
                     if needs_shift == shift { key } else { None }
                 });
                 self.learned.retain(|(learned, _)| *learned != (key, shift));

@@ -50,15 +50,15 @@ pub enum PpiPin {
     A7 = 1 << 47,
 }
 
-impl Into<u64> for PpiPin {
-    fn into(self) -> u64 {
-        self as u64
+impl From<PpiPin> for u64 {
+    fn from(val: PpiPin) -> Self {
+        val as u64
     }
 }
 
-impl Into<u64> for &PpiPin {
-    fn into(self) -> u64 {
-        *self as u64
+impl From<&PpiPin> for u64 {
+    fn from(val: &PpiPin) -> Self {
+        *val as u64
     }
 }
 
@@ -109,32 +109,27 @@ const PPI_PIN_DATA_C_BUS: [PpiPin; 8] = [
 ];
 
 #[derive(PartialEq, Clone, Copy)]
+#[derive(Default)]
 pub enum PpiMode {
+    #[default]
     Mode0,
     Mode1,
     Mode2,
 }
 
-impl Default for PpiMode {
-    fn default() -> Self {
-        PpiMode::Mode0
-    }
-}
 
 #[derive(PartialEq)]
+#[derive(Default)]
 pub enum PpiDirection {
     Input,
+    #[default]
     Output,
 }
 
-impl Default for PpiDirection {
-    fn default() -> Self {
-        PpiDirection::Output
-    }
-}
 /// The brand displayed by firmware
 #[repr(u8)]
 #[derive(Copy, Clone)]
+#[derive(Default)]
 pub enum Brand {
     Lsp = 0,
     Triumph = 1,
@@ -143,26 +138,19 @@ pub enum Brand {
     Awa = 4,
     Schneider = 5,
     Orion = 6,
+    #[default]
     Amstrad = 7,
 }
 
-impl Default for Brand {
-    fn default() -> Self {
-        Brand::Amstrad
-    }
-}
 #[derive(Copy, Clone)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum ScreenRefresh {
+    #[default]
     FiftyHz = 1,
     SixtyHz = 0,
 }
 
-impl Default for ScreenRefresh {
-    fn default() -> Self {
-        ScreenRefresh::FiftyHz
-    }
-}
 
 pub struct Ppi {
     pins: PinsBuffer,

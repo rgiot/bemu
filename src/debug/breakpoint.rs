@@ -8,10 +8,10 @@ pub enum BreakPoint {
 }
 
 
-impl ToString for BreakPoint {
-	fn to_string(&self) -> String {
+impl std::fmt::Display for BreakPoint {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-			Self::Address(addr) => format!("z80.pc={:4X}", addr)
+			Self::Address(addr) => write!(f, "z80.pc={:4X}", addr)
 		}
 	}
 }
