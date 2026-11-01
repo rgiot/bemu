@@ -125,7 +125,7 @@ fn main() {
     if let Some(kb) = args.ram_kb {
         builder.set_extra_ram_pages(kb / 64 - 1);
     }
-    if let Some(fitted) = args.disc_interface {
+    if let Some(fitted) = args.disc_interface() {
         builder.set_disc_interface(fitted);
     }
     if args.playcity {
@@ -187,11 +187,11 @@ fn main() {
         eprintln!("{file}: the Nova's NVRAM");
     }
     #[cfg(not(feature = "booster"))]
-    if args.booster.is_some() {
+    if args.booster().is_some() {
         without_feature("--booster", "booster");
     }
     #[cfg(feature = "booster")]
-    if let Some(board) = args.booster {
+    if let Some(board) = args.booster() {
         let model = if board == "miniboster" {
             amsrust::booster::Model::MiniBooster
         }
@@ -234,14 +234,14 @@ fn main() {
         eprintln!("the Dandanator: {romset}{}", if args.dandanator_writable { " (writable)" } else { "" });
     }
     #[cfg(not(feature = "willy"))]
-    if args.willy_opl3.is_some() || args.willy_s2p.is_some() {
+    if args.willy_opl3().is_some() || args.willy_s2p.is_some() {
         without_feature("--willy-opl3/--willy-s2p", "willy");
     }
     #[cfg(feature = "willy")]
     {
         use amsrust::willy::{parse_base, Opl3Lpt, S2p, S2P_BASE};
-        if let Some(base) = &args.willy_opl3 {
-            let base = parse_base(base).unwrap_or_else(|e| panic!("--willy-opl3-at {e}"));
+        if let Some(base) = args.willy_opl3() {
+            let base = parse_base(&base).unwrap_or_else(|e| panic!("--willy-opl3-at {e}"));
             motherboard.plug_expansion(Box::new(Opl3Lpt::new(base)));
             eprintln!("Willy with an OPL3LPT at &{base:04X}");
         }
@@ -297,20 +297,26 @@ fn main() {
         breakpoints.symbols.extend(&symbols);
     }
     let monitor_mode =
-        args.screenshot_dir.is_none() && !args.window && args.record.is_none() && !args.debug_server;
-    if !breakpoints.is_empty() && !monitor_mode && !args.debug_server {
+        args.screenshot_dir.is_none() && !args.window && args.record.is_none() && !args.debug_server();
+    if !breakpoints.is_empty() && !monitor_mode && !args.debug_server() {
         eprintln!(
             "{} snapshot breakpoint(s), used by the interactive monitor and the debug server only",
             breakpoints.len()
         );
     }
     start_sound_export(&args, &mut motherboard);
-    let mut typist = args.text.as_deref().map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout()));
+    let mut typist = match &args.basic {
+        Some(file) => {
+            let source = std::fs::read_to_string(file).unwrap_or_else(|e| panic!("--basic {file}: {e}"));
+            Some(Typist::with_basic(args.text.as_deref().unwrap_or(""), source, args.type_at, motherboard.keyboard_layout()))
+        },
+        None => args.text.as_deref().map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout()))
+    };
     if typist.is_some() && monitor_mode {
         eprintln!("--type is ignored in the interactive monitor");
     }
     let mut reloader = args.watch.then(|| Reloader::new(&args));
-    if reloader.is_some() && !(args.window || args.debug_server) {
+    if reloader.is_some() && !(args.window || args.debug_server()) {
         eprintln!("--watch needs --window or --debug-server");
     }
 
@@ -320,7 +326,7 @@ fn main() {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
             run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay)
         },
-        None if args.debug_server => {
+        None if args.debug_server() => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
             run_debug_server(&mut motherboard, &mut server, &mut typist, &mut reloader)
         },
@@ -471,7 +477,9 @@ const T_STATES_PER_SECOND: usize = 4_000_000;
 /// `--type`: the text typed on the CPC keyboard, one character after the
 /// other, each held for 2 frames then released for 2 frames.
 struct Typist {
-    keys: VecDeque<Vec<CpcKey>>,
+    /// `--basic`'s listing, put in memory (then RUN typed) when the typing starts.
+    basic: Option<String>,
+    keys: VecDeque<Step>,
     /// T-state at which the next press or release is due.
     next_at: usize,
     pressed: Option<Vec<CpcKey>>
@@ -480,21 +488,77 @@ struct Typist {
 /// 40ms: 2 frames, long enough for the firmware's keyboard scan.
 const KEY_T_STATES: usize = T_STATES_PER_SECOND / 25;
 
+/// What `--type` does next: press keys together, or wait (`\(WAIT n)`, n seconds).
+enum Step {
+    Keys(Vec<CpcKey>),
+    Pause(usize)
+}
+
+/// `text`'s keys, with its `\(WAIT n)` pauses (n seconds: a program's prompt to wait for).
+fn steps_of_text(text: &str, layout: amsrust::keyboard::KeyboardLayout) -> Result<Vec<Step>, String> {
+    const WAIT: &str = "\\(WAIT ";
+    let mut steps = Vec::new();
+    let mut rest = text;
+    loop {
+        let (keys, after) = match rest.find(WAIT) {
+            Some(start) => (&rest[..start], Some(&rest[start + WAIT.len()..])),
+            None => (rest, None)
+        };
+        steps.extend(amsrust::csl_runner::keys_of_text(keys, layout)?.into_iter().map(Step::Keys));
+        let Some(after) = after else {
+            return Ok(steps);
+        };
+        let end = after.find(')').ok_or_else(|| format!("{WAIT}... without its )"))?;
+        let seconds: f64 = after[..end].trim().parse().map_err(|_| format!("{WAIT}{}): not a number of seconds", &after[..end]))?;
+        steps.push(Step::Pause((seconds * T_STATES_PER_SECOND as f64) as usize));
+        rest = &after[end + 1..];
+    }
+}
+
 impl Typist {
     fn new(text: &str, at_seconds: f64, layout: amsrust::keyboard::KeyboardLayout) -> Self {
-        let keys = amsrust::csl_runner::keys_of_text(text, layout)
+        let keys = steps_of_text(text, layout)
             .unwrap_or_else(|e| {
                 eprintln!("--type: {e}");
                 Vec::new()
             })
             .into();
-        Self { keys, next_at: (at_seconds * T_STATES_PER_SECOND as f64) as usize, pressed: None }
+        Self { basic: None, keys, next_at: (at_seconds * T_STATES_PER_SECOND as f64) as usize, pressed: None }
+    }
+
+    /// `--basic`: the listing goes in memory at `at_seconds`, then RUN and `text` are typed.
+    fn with_basic(text: &str, basic: String, at_seconds: f64, layout: amsrust::keyboard::KeyboardLayout) -> Self {
+        let mut typist = Self::new(&format!("RUN\n{text}"), at_seconds, layout);
+        typist.basic = Some(basic);
+        typist
     }
 
     /// Press or release the keys that are due. Cheap: call it as often as
     /// wanted (every instruction or every frame).
     fn update(&mut self, motherboard: &mut Motherboard) {
         let now = motherboard.t_state_counter().value();
+        if now >= self.next_at {
+            if let Some(source) = self.basic.take() {
+                // as LOAD would (BASIC is up by now: --type-at); what the tokenizer can't read
+                // is typed instead (slower: the firmware tokenizes it)
+                if let Err(error) = amsrust::basic_program::load(motherboard, &source) {
+                    eprintln!("--basic: {error}\n--basic: typing the listing instead");
+                    let layout = motherboard.keyboard_layout();
+                    let typed = source.lines().map(|line| format!("{line}\n")).collect::<String>();
+                    match amsrust::csl_runner::keys_of_text(&typed, layout) {
+                        Ok(keys) => {
+                            for key in keys.into_iter().rev() {
+                                self.keys.push_front(Step::Keys(key));
+                            }
+                        },
+                        Err(error) => {
+                            eprintln!("--basic: {error}");
+                            self.keys.clear();
+                        }
+                    }
+                }
+            }
+        }
         if now < self.next_at {
             // Held keys stay pressed even if something else (the window's
             // host keyboard) released them meanwhile.
@@ -506,7 +570,11 @@ impl Typist {
         let (keys, pressed) = match self.pressed.take() {
             Some(keys) => (keys, false),
             None => match self.keys.pop_front() {
-                Some(keys) => (keys, true),
+                Some(Step::Keys(keys)) => (keys, true),
+                Some(Step::Pause(t_states)) => {
+                    self.next_at = now + t_states;
+                    return;
+                },
                 None => return
             }
         };
@@ -809,7 +877,7 @@ fn start_debug_server(
     breakpoints: &amsrust::snapshot::SnapshotBreakpoints,
     motherboard: &mut Motherboard
 ) -> Option<DebugServer> {
-    if !args.debug_server {
+    if !args.debug_server() {
         return None;
     }
     if args.sna.is_none() {
@@ -821,9 +889,9 @@ fn start_debug_server(
             motherboard.execute_next_opcode_no_video();
         }
     }
-    match DebugServer::start(args.debug_port) {
+    match DebugServer::start(args.debug_port()) {
         Ok(mut server) => {
-            eprintln!("debug server: http://127.0.0.1:{}/api/doc", args.debug_port);
+            eprintln!("debug server: http://127.0.0.1:{}/api/doc", args.debug_port());
             server.add_symbols(&breakpoints.symbols);
             for breakpoint in &breakpoints.exec {
                 server.add_exec_breakpoint(breakpoint.address, motherboard);
@@ -1216,5 +1284,27 @@ fn play_frame_audio(audio: Option<&AudioOut>, samples: &[f32], window: &dyn Fron
         while audio.buffered() > host_audio::TARGET_LATENCY && window.is_open() {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use amsrust::keyboard::KeyboardLayout;
+
+    use super::{steps_of_text, Step, T_STATES_PER_SECOND};
+
+    #[test]
+    fn typed_text_waits_where_asked() {
+        let steps = steps_of_text("ab\\(WAIT 1.5)c\\(RET)", KeyboardLayout::Uk).unwrap();
+        let shape: Vec<Option<usize>> = steps
+            .iter()
+            .map(|step| match step {
+                Step::Keys(_) => None,
+                Step::Pause(t_states) => Some(*t_states)
+            })
+            .collect();
+        assert_eq!(shape, [None, None, Some(T_STATES_PER_SECOND * 3 / 2), None, None]);
+        assert!(steps_of_text("\\(WAIT x)a", KeyboardLayout::Uk).is_err());
+        assert!(steps_of_text("\\(WAIT 2", KeyboardLayout::Uk).is_err());
     }
 }
