@@ -32,7 +32,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::{Key, KeyLocation, NamedKey, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, KeyLocation, NamedKey, PhysicalKey};
 use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::monitor::VideoModeHandle;
 use winit::window::{Fullscreen, Window, WindowId};
@@ -178,6 +178,46 @@ impl Gfx {
     }
 }
 
+/// The physical key, by its place on a US keyboard (`HostInput::placed`), whatever the layout.
+fn placed_key(key: PhysicalKey) -> Option<HostKey> {
+    use HostKey as H;
+    let PhysicalKey::Code(code) = key else {
+        return None;
+    };
+    Some(match code {
+        KeyCode::KeyA => H::A, KeyCode::KeyB => H::B, KeyCode::KeyC => H::C, KeyCode::KeyD => H::D,
+        KeyCode::KeyE => H::E, KeyCode::KeyF => H::F, KeyCode::KeyG => H::G, KeyCode::KeyH => H::H,
+        KeyCode::KeyI => H::I, KeyCode::KeyJ => H::J, KeyCode::KeyK => H::K, KeyCode::KeyL => H::L,
+        KeyCode::KeyM => H::M, KeyCode::KeyN => H::N, KeyCode::KeyO => H::O, KeyCode::KeyP => H::P,
+        KeyCode::KeyQ => H::Q, KeyCode::KeyR => H::R, KeyCode::KeyS => H::S, KeyCode::KeyT => H::T,
+        KeyCode::KeyU => H::U, KeyCode::KeyV => H::V, KeyCode::KeyW => H::W, KeyCode::KeyX => H::X,
+        KeyCode::KeyY => H::Y, KeyCode::KeyZ => H::Z,
+        KeyCode::Digit0 => H::Key0, KeyCode::Digit1 => H::Key1, KeyCode::Digit2 => H::Key2,
+        KeyCode::Digit3 => H::Key3, KeyCode::Digit4 => H::Key4, KeyCode::Digit5 => H::Key5,
+        KeyCode::Digit6 => H::Key6, KeyCode::Digit7 => H::Key7, KeyCode::Digit8 => H::Key8,
+        KeyCode::Digit9 => H::Key9,
+        KeyCode::Backquote => H::Backquote, KeyCode::Minus => H::Minus, KeyCode::Equal => H::Equal,
+        KeyCode::BracketLeft => H::LeftBracket, KeyCode::BracketRight => H::RightBracket,
+        KeyCode::Backslash => H::Backslash, KeyCode::Semicolon => H::Semicolon, KeyCode::Quote => H::Apostrophe,
+        KeyCode::Comma => H::Comma, KeyCode::Period => H::Period, KeyCode::Slash => H::Slash,
+        KeyCode::IntlBackslash => H::IntlBackslash,
+        KeyCode::Space => H::Space, KeyCode::Enter => H::Enter, KeyCode::Tab => H::Tab,
+        KeyCode::CapsLock => H::CapsLock, KeyCode::Escape => H::Escape,
+        KeyCode::Backspace => H::Backspace, KeyCode::Delete => H::Delete,
+        KeyCode::ShiftLeft => H::LeftShift, KeyCode::ShiftRight => H::RightShift,
+        KeyCode::ControlLeft => H::LeftCtrl, KeyCode::ControlRight => H::RightCtrl,
+        KeyCode::AltLeft => H::LeftAlt, KeyCode::AltRight => H::RightAlt,
+        KeyCode::ArrowUp => H::Up, KeyCode::ArrowDown => H::Down,
+        KeyCode::ArrowLeft => H::Left, KeyCode::ArrowRight => H::Right,
+        KeyCode::Numpad0 => H::NumPad0, KeyCode::Numpad1 => H::NumPad1, KeyCode::Numpad2 => H::NumPad2,
+        KeyCode::Numpad3 => H::NumPad3, KeyCode::Numpad4 => H::NumPad4, KeyCode::Numpad5 => H::NumPad5,
+        KeyCode::Numpad6 => H::NumPad6, KeyCode::Numpad7 => H::NumPad7, KeyCode::Numpad8 => H::NumPad8,
+        KeyCode::Numpad9 => H::NumPad9, KeyCode::NumpadDecimal => H::NumPadDot,
+        KeyCode::NumpadEnter => H::NumPadEnter,
+        _ => return None
+    })
+}
+
 /// The logical key as the CPC keyboard table (`amsrust::input`) knows it.
 fn host_key(event: &KeyEvent) -> Option<HostKey> {
     use HostKey as H;
@@ -209,6 +249,7 @@ fn host_key(event: &KeyEvent) -> Option<HostKey> {
             NamedKey::F6 => H::F6,
             NamedKey::F5 => H::F5,
             NamedKey::F10 => H::F10,
+            NamedKey::F12 => H::F12,
             _ => return None
         }),
         Key::Character(text) => {
@@ -260,6 +301,8 @@ struct App {
     /// Keys held, by physical key, so that a release is matched with its
     /// press whatever the modifiers made of the logical key meanwhile.
     held: HashMap<PhysicalKey, HostKey>,
+    /// The physical keys held, by their place (the positional mapping's).
+    placed: HashMap<PhysicalKey, HostKey>,
     typed: Vec<char>,
     closed: bool,
     error: Option<String>,
@@ -357,6 +400,9 @@ impl ApplicationHandler for App {
                         if let Some(key) = host_key(&event) {
                             self.held.insert(event.physical_key, key);
                         }
+                        if let Some(key) = placed_key(event.physical_key) {
+                            self.placed.insert(event.physical_key, key);
+                        }
                         // what the layout makes of the key and the modifiers
                         if let Some(text) = &event.text {
                             self.typed.extend(text.chars().filter(|c| !c.is_control()));
@@ -364,10 +410,14 @@ impl ApplicationHandler for App {
                     },
                     ElementState::Released => {
                         self.held.remove(&event.physical_key);
+                        self.placed.remove(&event.physical_key);
                     }
                 }
             },
-            WindowEvent::Focused(false) => self.held.clear(),
+            WindowEvent::Focused(false) => {
+                self.held.clear();
+                self.placed.clear();
+            },
             _ => {}
         }
     }
@@ -396,6 +446,7 @@ impl WinitGpuFrontend {
                 window: None,
                 gfx: None,
                 held: HashMap::new(),
+                placed: HashMap::new(),
                 typed: Vec::new(),
                 closed: false,
                 error: None,
@@ -460,11 +511,16 @@ impl Frontend for WinitGpuFrontend {
         self.deadline = Instant::now();
     }
 
+    fn knows_key_places(&self) -> bool {
+        true
+    }
+
     fn poll_input(&mut self) -> HostInput {
         self.pump();
         HostInput {
             down: self.app.held.values().copied().collect(),
-            typed: std::mem::take(&mut self.app.typed)
+            typed: std::mem::take(&mut self.app.typed),
+            placed: self.app.placed.values().copied().collect()
         }
     }
 

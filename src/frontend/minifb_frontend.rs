@@ -50,7 +50,9 @@ impl Frontend for MinifbFrontend {
     fn poll_input(&mut self) -> HostInput {
         HostInput {
             down: self.window.get_keys().into_iter().filter_map(host_key).collect(),
-            typed: std::mem::take(&mut *self.typed.0.borrow_mut())
+            typed: std::mem::take(&mut *self.typed.0.borrow_mut()),
+            // minifb names the keys after the host's layout, and has no scancodes
+            placed: Vec::new()
         }
     }
 
@@ -82,5 +84,5 @@ same_names!(
     Period, Slash, Backquote, Equal,
     NumPad0, NumPad1, NumPad2, NumPad3, NumPad4, NumPad5, NumPad6, NumPad7, NumPad8, NumPad9,
     NumPadDot, NumPadEnter, F7, F8, F9, F10,
-    F6, F5
+    F6, F5, F12
 );

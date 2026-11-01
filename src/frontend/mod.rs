@@ -28,6 +28,12 @@ pub trait Frontend {
     /// The host keyboard state since the previous poll.
     fn poll_input(&mut self) -> HostInput;
 
+    /// Whether [`HostInput::placed`] gives the physical keys (else the positional mapping
+    /// takes the keys the host's layout names: positions only on a QWERTY host).
+    fn knows_key_places(&self) -> bool {
+        false
+    }
+
     /// Show `pixels`: 0RGB, `width * height` of them. The size may change
     /// from one call to the other (the window then scales the picture).
     fn present(&mut self, pixels: &[u32], size: (usize, usize)) -> Result<(), String>;

@@ -2,6 +2,7 @@
 
 use amsrust::crtc::CrtcType;
 use amsrust::display::DisplayMode;
+use amsrust::input::KeyboardMapping;
 use amsrust::motherboard::CpcModel;
 use clap::{Parser, ValueEnum};
 
@@ -145,6 +146,13 @@ pub struct Args {
     /// The window starts at full speed (F10 toggles it).
     #[arg(long, help_heading = RUN)]
     pub turbo: bool,
+
+    /// How the host's keys press the CPC's, as VICE's mappings (F12 switches them in the
+    /// window): symbolic, a key types the character it types on the host (whatever the host's
+    /// and the CPC's languages), for typing; positional, a key presses the CPC key at its place
+    /// (the CPC's own rows: = is ^, [ is @, ' is ;), for games.
+    #[arg(long, value_name = KeyboardMapping::NAMES, default_value = "symbolic", help_heading = RUN)]
+    pub keyboard: KeyboardMapping,
 
     /// The window's backend: winit is a window the GPU draws, the CRT included, with nothing read
     /// back (a build with --features gpu-window); F11 toggles its fullscreen.
@@ -326,7 +334,8 @@ In the window: F10 toggles full speed (the emulation as fast as it can, silent, 
 50 times a second), F8 pauses and resumes (through the debug server when it runs, its clients
 told), F7 saves the machine's state in bemu_0000.sna (then 0001...) in the current directory,
 F9 cycles the displays (not while recording), F6 shows or hides the overlay, F5 turns the disc
-of drive A over (Shift+F5: drive B; 3\" drives), F4 closes it.";
+of drive A over (Shift+F5: drive B; 3\" drives), F12 switches the keyboard
+mapping, F4 closes it.";
 
 /// `--every`: seconds apart, or frames apart.
 #[derive(Clone, Copy, Debug, PartialEq)]

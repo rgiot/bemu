@@ -38,7 +38,10 @@ pub struct Config {
     /// How curved a CRT's glass is, times its profile's bulge: 0 (flat) to 4, 1 by default.
     pub curvature: Option<f32>,
     /// The level a black ink is drawn at, 0-255 (8 by default: a tube's dark grey).
-    pub black_level: Option<u8>
+    pub black_level: Option<u8>,
+    /// "symbolic" (the default: a key types its character) or "positional" (a key presses the
+    /// CPC key at its place, for games).
+    pub keyboard: Option<String>
 }
 
 /// `willyOpl3`: `true` (at &FEBC) or the base its jumper sets (`"&FEAC"`...).
@@ -136,6 +139,10 @@ impl Config {
             Some(c) if (0.0..=4.0).contains(&c) => Ok(c),
             Some(c) => Err(format!("curvature must be 0 to 4, not {c}"))
         }
+    }
+
+    pub fn keyboard(&self) -> Result<amsrust::input::KeyboardMapping, String> {
+        self.keyboard.as_deref().unwrap_or("symbolic").parse()
     }
 
     pub fn black_level(&self) -> u8 {

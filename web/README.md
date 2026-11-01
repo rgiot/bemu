@@ -65,6 +65,7 @@ and `fetch` don't work from `file://`.
   | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'`, `'atari'` | `'raw'` |
   | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `0` |
   | `blackLevel` | `0` to `255`: the grey a black ink is drawn at | `8` |
+  | `keyboard` | `'symbolic'`: a key types the character it types on your keyboard (whatever its language and the CPC's), for typing; `'positional'`: a key presses the CPC key at its place (`KeyboardEvent.code`), for games | `'symbolic'` |
 
 - **`options`**:
   - `webgpu` (default `true`): `false` keeps to Canvas 2D.
@@ -83,6 +84,7 @@ and `fetch` don't work from `file://`.
 | `configure(config)` | a new machine; the discs stay in |
 | `setDisplay(name)` | `'raw'` or a CRT profile |
 | `setCurvature(c)` | how curved a CRT's glass is, as the `curvature` configuration |
+| `setKeyboard(mapping)` | `'symbolic'` or `'positional'`, as the `keyboard` configuration |
 | `insertDisc(drive, source)`, `eject(drive)` | a DSK image in drive `'A'` or `'B'` |
 | `insertTape(source)`, `ejectTape()` | a CDT tape in the cassette deck, PLAY down: it plays when the CPC starts the motor (`RUN"` on a 464, `\|TAPE` first on a 664/6128); returns what was skipped of it |
 | `tapeControl(key)` | the deck's keys: `'play'`, `'stop'`, `'rewind'` |
