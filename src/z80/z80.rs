@@ -2758,7 +2758,7 @@ impl Chip for Z80 {
                     let address = if opcode_information.write_on_stack()  {
                         let base = self.get_write_address_from_opcode_information();
                         match nb {
-                            0 => base + 1,
+                            0 => base.wrapping_add(1),
                             1 => base,
                             _ => unreachable!(),
                         }
