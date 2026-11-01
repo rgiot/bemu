@@ -394,6 +394,7 @@ fn print_help() {
         "window closed; the sound of full speed is not kept).\n",
         "--type 'run\"demo\\n' types on the CPC keyboard after --type-at seconds\n",
         "(default 3), the keys written as in CSL's key_output: \\(RET), \\(ESC), \\(CPY), \\(DEL)…\n",
+        "and \\(WAIT n) waits n seconds (a program's prompt) before the keys after it.\n",
         "--basic prog.bas puts a BASIC listing (text) in memory at --type-at, then types RUN (and --type).\n",
         "--watch takes the --sna/--dsk/--dsk-b/--cdt files again when they change\n",
         "(with --window or --debug-server), for an edit, assemble, see loop: a disc or tape goes\n",

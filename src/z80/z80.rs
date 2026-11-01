@@ -2178,13 +2178,9 @@ impl Z80 {
             // In IM 0 the interrupting device puts an instruction on the
             // bus; nothing does on a CPC (the gate array only pulls the
             // interrupt line down), so the pull-ups give &FF, RST &38: the
-            // same thing as IM 1.
-            debug_assert!(
-                matches!(self.im, InterruptMode::Mode0 | InterruptMode::Mode1),
-                "Interruption {:?} unimplemented",
-                self.im
-            );
-            
+            // same thing as IM 1. IM 2's vector is read after the acknowledge
+            // (simulate_call_0x38_after_fetch).
+
            self.next_state = MCycle::new_interruption();
      //      dbg!(&self.next_state);
         } else {
