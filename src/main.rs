@@ -268,6 +268,10 @@ fn main() {
     if let Some(path) = &args.dsk_b {
         insert_disc(path, FdcDrive::B, &mut motherboard);
     }
+    if args.save_discs {
+        motherboard.set_disc_file(FdcDrive::A, args.dsk_a.clone());
+        motherboard.set_disc_file(FdcDrive::B, args.dsk_b.clone());
+    }
     if let Some(path) = &args.cdt {
         let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
         let tape = amsrust::tape::Tape::from_cdt(&bytes).unwrap_or_else(|e| panic!("{path}: {e}"));
@@ -352,6 +356,7 @@ fn main() {
         }
     }
     finish_sound_export(&mut motherboard);
+    motherboard.save_modified_discs();
     if let Some(path) = &args.save_sna {
         match amsrust::snapshot::save_sna(&motherboard, path) {
             Ok(()) => {
@@ -623,6 +628,10 @@ impl Reloader {
     /// - without a snapshot, a new disc or tape switches the machine off and on, and `--type` is
     ///   typed again.
     fn poll(&mut self, motherboard: &mut Motherboard, typist: &mut Option<Typist>) {
+        // the discs the emulator itself saved did not change from outside
+        for path in motherboard.take_saved_disc_files() {
+            self.watcher.retake(&path);
+        }
         let changed = self.watcher.changed();
         if changed.is_empty() {
             return;

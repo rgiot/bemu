@@ -316,6 +316,8 @@ struct Drive {
     kind: DriveKind,
     /// A 3" drive reads side B of the disc (the disc was flipped): its second side in the image.
     flipped: bool,
+    /// The FDC wrote to the disc since it was inserted (or saved).
+    modified: bool,
     disc: Option<DiscImage>,
     /// Cylinder the head is over (PCN).
     track: u8,
@@ -568,6 +570,7 @@ impl Fdc {
         let unit = drive.index();
         self.drives[unit].disc = image;
         self.drives[unit].flipped = false;
+        self.drives[unit].modified = false;
         self.drives[unit].track = 0;
         self.drives[unit].cursor = 0;
         self.drives[unit].reads.clear();
@@ -615,6 +618,16 @@ impl Fdc {
             DriveKind::ThreeInch => u8::from(drive.flipped),
             DriveKind::ThreeAndHalfInch => head
         }
+    }
+
+    /// The FDC wrote to the disc of a drive since it went in or since [`Fdc::mark_saved`].
+    pub fn is_modified(&self, drive: FdcDrive) -> bool {
+        self.drives[drive.index()].modified
+    }
+
+    /// The disc of a drive was saved: not modified any more.
+    pub fn mark_saved(&mut self, drive: FdcDrive) {
+        self.drives[drive.index()].modified = false;
     }
 
     pub fn has_disk(&self, drive: FdcDrive) -> bool {
@@ -922,10 +935,17 @@ impl Fdc {
     fn layout(&self, unit: usize, head: u8) -> Option<Layout> {
         let side = self.surface(unit, head);
         let drive = &self.drives[unit];
-        drive
-            .disc
-            .as_ref()
-            .and_then(|disc| disc.track(side, drive.track))
+        let disc = drive.disc.as_ref()?;
+        // a bitstream says where its sectors are; for a DSK they are laid out as Format Track would
+        if let Some(timing) = disc.track_timing(side, drive.track) {
+            return Some(Layout {
+                id_start: timing.id_start.clone(),
+                id_end: timing.id_end.clone(),
+                data_start: timing.data_start.clone(),
+                period: timing.period.max(1)
+            });
+        }
+        disc.track(side, drive.track)
             .filter(|track| !track.sectors.is_empty())
             .map(Layout::of)
     }
@@ -1383,6 +1403,11 @@ impl Fdc {
         if deleted {
             sector.st2 |= flag::ST2_CONTROL_MARK;
         }
+        // a bitstream medium gets the field encoded again where it lies
+        if let Some(disc) = drive.disc.as_mut() {
+            disc.sector_written(side, track, index);
+            drive.modified = true;
+        }
     }
 
     /// Scan commands: compare the bytes the CPU sent with the sector. A byte
@@ -1516,6 +1541,12 @@ impl Fdc {
             .is_ok()
         });
         drive.cursor = 0;
+        if formatted {
+            if let Some(disc) = drive.disc.as_mut() {
+                disc.track_formatted(side, track_number);
+            }
+            drive.modified = true;
+        }
 
         if formatted {
             self.xfer.c = track_number;

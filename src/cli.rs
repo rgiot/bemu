@@ -84,6 +84,12 @@ pub struct Args {
     #[arg(long, value_name = "PATH", help_heading = MEDIA)]
     pub dsk_b: Option<String>,
 
+    /// Writes a disc back to its file (--dsk, --dsk-b) when the CPC wrote to it: when the drive
+    /// motor stops, when another disc replaces it, and at the end. An HFE stays an HFE (the bits
+    /// as written), a DSK becomes an extended DSK, a disc in a zip archive replaces its entry.
+    #[arg(long, help_heading = MEDIA)]
+    pub save_discs: bool,
+
     /// Drive A: 3 (a 3" drive, one head: the side read is the side put up, F5 turns the disc
     /// over) or 3.5 (a double-sided 3.5" drive: the FDC selects the side, 80 tracks).
     #[arg(long, value_name = "3|3.5", default_value = "3", help_heading = MEDIA)]

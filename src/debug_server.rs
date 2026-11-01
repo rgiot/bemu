@@ -1519,7 +1519,7 @@ impl DebugServer {
             // a DSK, an HFE, or a zip archive holding one (`name` may be `games.zip#side b.dsk`)
             let (file, entry) = crate::disc_image::split_disc_spec(name);
             let image = crate::disc_image::load_disc_bytes(bytes, file, entry).map_err(ApiError::new)?;
-            motherboard.fdc_mut().insert_image(drive, Some(image));
+            motherboard.insert_disc(drive, Some(image));
             reply["media"] = json!("dsk");
         }
         else if bytes.starts_with(b"ZXTape!") {

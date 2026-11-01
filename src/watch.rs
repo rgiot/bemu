@@ -54,6 +54,15 @@ impl Watcher {
         Self { files, next_poll: Instant::now() + POLL }
     }
 
+    /// `path` changed because the emulator wrote it: take it as it is now.
+    pub fn retake(&mut self, path: &str) {
+        for file in self.files.iter_mut().filter(|file| file.path == path) {
+            let now = stamp(&file.path);
+            file.taken = now;
+            file.seen = now;
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }

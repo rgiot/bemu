@@ -715,3 +715,18 @@ fn execution_phase_status_matches_the_direction() {
     send(&mut fdc, &rw(WRITE_DATA, 0, 0, 1, 1, 1));
     assert_eq!(fdc.read_status(), RQM | (1 << 5) | CB, "execution, CPU to FDC");
 }
+
+#[test]
+fn a_written_disc_is_marked_modified_until_saved() {
+    let mut fdc = ready_fdc();
+    assert!(!fdc.is_modified(FdcDrive::A));
+    let (data, _) = read(&mut fdc, &rw(READ_DATA, 0, 0, 1, 1, 1), 256);
+    assert_eq!(data.len(), 256);
+    assert!(!fdc.is_modified(FdcDrive::A), "reading does not modify");
+    send(&mut fdc, &rw(WRITE_DATA, 0, 0, 1, 1, 1));
+    send(&mut fdc, &[0x77; 256]);
+    receive(&mut fdc, 7);
+    assert!(fdc.is_modified(FdcDrive::A));
+    fdc.mark_saved(FdcDrive::A);
+    assert!(!fdc.is_modified(FdcDrive::A));
+}

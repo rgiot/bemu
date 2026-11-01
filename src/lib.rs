@@ -5,6 +5,7 @@ pub mod csl_runner;
 pub mod disc_image;
 pub mod expansion;
 pub mod fdc;
+pub mod hfe;
 pub mod ga;
 pub mod keyboard;
 pub mod pal;

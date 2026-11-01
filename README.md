@@ -27,10 +27,19 @@ cargo run --release -- --model 464 --ram 128 --ddi --window --dsk game.dsk
 
 ### Discs and drives
 
-`--dsk` (drive A) and `--dsk-b` take a DSK or extended DSK, an HFE image (converted by the HxC
-floppy library, desktop only), or a zip archive: `--dsk games.zip` takes its first DSK/HFE file,
-`--dsk 'games.zip#Disk 1 side B.dsk'` that file of the archive. The same names work in a CSL
-`disk_insert`, with `--watch` (the archive is watched) and in the debug server's `/api/media`.
+`--dsk` (drive A) and `--dsk-b` take a DSK or extended DSK, an HFE image, or a zip archive:
+`--dsk games.zip` takes its first DSK/HFE file, `--dsk 'games.zip#Disk 1 side B.dsk'` that file of
+the archive. The same names work in a CSL `disk_insert`, with `--watch` (the archive is watched)
+and in the debug server's `/api/media`.
+
+An HFE image (version 1 or 3) stays what it is, the MFM bits of each track (`src/hfe.rs`): the FDC
+reads the sectors decoded from them, where they lie on the track (CRC errors, deleted or missing
+marks, weak bits of HFE v3 as they are), writes encode the sector's data field again in place and
+Format Track writes the whole track.
+
+`--save-discs` writes the discs back to their files when the CPC wrote to them: when the drive
+motor stops, when another disc replaces it and at the end. An HFE is saved as HFE, a DSK as an
+extended DSK, a disc taken from a zip archive replaces its entry (the other files are kept).
 
 Drives are 3" ones by default, as on a 664/6128 and the DDI-1's FD-1: one head, so the FDC's side
 select is ignored and the side read is the side put up; F5 in the window turns the disc of drive A

@@ -5,7 +5,7 @@ use crate::counter::*;
 use crate::crtc::*;
 use crate::debug::DisassembledInstruction;
 use crate::expansion::{LargeRamExpansion, LargeRamExpansionPin, RamBankExpansion};
-use crate::fdc::Fdc;
+use crate::fdc::{Fdc, FdcDrive};
 use crate::expansion_port::{CpcSide, ExpansionDevice, ExpansionPin, ExpansionPort, PrinterDevice, PrinterPort};
 use crate::ga::*;
 use crate::keyboard::KeyboardMatrix;
@@ -85,6 +85,10 @@ pub struct Motherboard {
     /// The CPU's bus accesses, recorded for debuggers (watchpoints) while
     /// `Some` - see [`Motherboard::watch_bus`].
     bus_log: Option<Vec<BusAccess>>,
+    /// The files the discs of drives A and B are saved to when the FDC wrote to them (see
+    /// [`Motherboard::set_disc_file`]), and those saved since [`Motherboard::take_saved_disc_files`].
+    disc_files: [Option<String>; 2],
+    saved_disc_files: Vec<String>,
     /// The I/O writes `(port, value)` since they were last taken, when watched.
     io_writes: Option<Vec<(u16, u8)>>,
 
@@ -151,6 +155,8 @@ impl Default for Motherboard {
             psg: Default::default(),
             keyboard: Default::default(),
             bus_log: None,
+            disc_files: [None, None],
+            saved_disc_files: Vec::new(),
             io_writes: None,
             model: CpcModel::default(),
             ram_banking: true,
@@ -513,6 +519,50 @@ impl Motherboard {
 
     pub fn fdc_mut(&mut self) -> &mut Fdc {
         &mut self.fdc
+    }
+
+    /// Save the disc of `drive` to `file` (a DSK, an HFE, or `archive.zip[#entry]`) whenever the
+    /// FDC wrote to it: when the motor stops, when another disc replaces it
+    /// ([`Motherboard::insert_disc`]), and on [`Motherboard::save_modified_discs`]. None: never.
+    pub fn set_disc_file(&mut self, drive: FdcDrive, file: Option<String>) {
+        self.disc_files[drive as usize] = file;
+    }
+
+    /// Save the discs the FDC wrote to, to their files (see [`Motherboard::set_disc_file`]).
+    pub fn save_modified_discs(&mut self) {
+        for drive in [FdcDrive::A, FdcDrive::B] {
+            self.save_disc(drive);
+        }
+    }
+
+    fn save_disc(&mut self, drive: FdcDrive) {
+        let Some(file) = self.disc_files[drive as usize].clone() else { return };
+        if !self.fdc.is_modified(drive) {
+            return;
+        }
+        let Some(image) = self.fdc.image(drive) else { return };
+        #[cfg(not(target_arch = "wasm32"))]
+        match crate::disc_image::save_disc_file(&file, image) {
+            Ok(()) => {
+                self.fdc.mark_saved(drive);
+                eprintln!("{file}: saved");
+                self.saved_disc_files.push(file);
+            },
+            Err(e) => eprintln!("cannot save the disc: {e}")
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = (file, image);
+    }
+
+    /// The files saved since the last call (a watcher should not take them for outside changes).
+    pub fn take_saved_disc_files(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.saved_disc_files)
+    }
+
+    /// Put `image` in `drive` (None ejects), the disc there saved first if it was written to.
+    pub fn insert_disc(&mut self, drive: FdcDrive, image: Option<crate::disc_image::DiscImage>) {
+        self.save_disc(drive);
+        self.fdc.insert_image(drive, image);
     }
 
     /// Put `tape` in the cassette deck (rewound, PLAY down: it plays when the CPC starts the
@@ -887,7 +937,13 @@ impl Motherboard {
                 if !self.disc_interface {
                     // Nothing on the disc ports.
                 } else if Self::is_fdc_motor_addr(addr) {
+                    let was_on = self.fdc.motor();
                     self.fdc.set_motor(byte & 1 != 0);
+                    // a written disc is saved when the motor stops (AMSDOS stops it about 2 s
+                    // after its last access)
+                    if was_on && !self.fdc.motor() {
+                        self.save_modified_discs();
+                    }
                 } else if Self::is_fdc_data_addr(addr) {
                     self.fdc.write_data(byte);
                 }
