@@ -1,0 +1,123 @@
+; Batman Forever on 3" discs (drive A a 3" drive): disk 1 side A, then side B when asked
+csl_version 1.0
+crtc_select 0
+key_delay 70000 70000 400000
+reset
+wait 3000000
+disk_insert 'batman_forever.zip#Batman Forever (Disk 1 side A).dsk'
+key_output 'RUN"DISC"\(RET)'
+wait 8000000
+key_output ' '
+wait 120000000
+; INSERT DISK 1 SIDE B IN DRIVE A AND PRESS ANY KEY
+disk_insert 'batman_forever.zip#Batman Forever (Disk 1 side B).dsk'
+wait 1000000
+key_output ' '
+wait 10000000
+screenshot_name 'batman3_01'
+screenshot
+wait 10000000
+screenshot_name 'batman3_02'
+screenshot
+wait 10000000
+screenshot_name 'batman3_03'
+screenshot
+wait 10000000
+screenshot_name 'batman3_04'
+screenshot
+wait 10000000
+screenshot_name 'batman3_05'
+screenshot
+wait 10000000
+screenshot_name 'batman3_06'
+screenshot
+wait 10000000
+screenshot_name 'batman3_07'
+screenshot
+wait 10000000
+screenshot_name 'batman3_08'
+screenshot
+wait 10000000
+screenshot_name 'batman3_09'
+screenshot
+wait 10000000
+screenshot_name 'batman3_10'
+screenshot
+wait 10000000
+screenshot_name 'batman3_11'
+screenshot
+wait 10000000
+screenshot_name 'batman3_12'
+screenshot
+wait 10000000
+screenshot_name 'batman3_13'
+screenshot
+wait 10000000
+screenshot_name 'batman3_14'
+screenshot
+wait 10000000
+screenshot_name 'batman3_15'
+screenshot
+wait 10000000
+screenshot_name 'batman3_16'
+screenshot
+wait 10000000
+screenshot_name 'batman3_17'
+screenshot
+wait 10000000
+screenshot_name 'batman3_18'
+screenshot
+wait 10000000
+screenshot_name 'batman3_19'
+screenshot
+wait 10000000
+screenshot_name 'batman3_20'
+screenshot
+wait 10000000
+screenshot_name 'batman3_21'
+screenshot
+wait 10000000
+screenshot_name 'batman3_22'
+screenshot
+wait 10000000
+screenshot_name 'batman3_23'
+screenshot
+wait 10000000
+screenshot_name 'batman3_24'
+screenshot
+wait 10000000
+screenshot_name 'batman3_25'
+screenshot
+wait 10000000
+screenshot_name 'batman3_26'
+screenshot
+wait 10000000
+screenshot_name 'batman3_27'
+screenshot
+wait 10000000
+screenshot_name 'batman3_28'
+screenshot
+wait 10000000
+screenshot_name 'batman3_29'
+screenshot
+wait 10000000
+screenshot_name 'batman3_30'
+screenshot
+wait 10000000
+screenshot_name 'batman3_31'
+screenshot
+wait 10000000
+screenshot_name 'batman3_32'
+screenshot
+wait 10000000
+screenshot_name 'batman3_33'
+screenshot
+wait 10000000
+screenshot_name 'batman3_34'
+screenshot
+wait 10000000
+screenshot_name 'batman3_35'
+screenshot
+wait 10000000
+screenshot_name 'batman3_36'
+screenshot

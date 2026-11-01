@@ -253,7 +253,19 @@ pub(super) const OPERATIONS: &[Operation] = &[
     op("GET", "/api/crtc", "The CRTC registers, the selected one and the counters.", "{type, regs, selected_reg, hcc, vcc, vlc, vsc, vtac, ma}"),
     op("GET", "/api/ga", "The Gate Array: mode, pen, inks, RMR and banking.", "{mode, pen, ink_idx, ink_rgb, ink_firmware, border_idx, border_rgb, rmr, r52, lower_rom, upper_rom, ram_mode, ram_page}"),
     op("GET", "/api/psg", "The PSG registers, decoded.", "{regs, selected_reg, period_a, period_b, period_c, noise, mixer, vol_a, vol_b, vol_c, env_period, env_shape}"),
-    op("GET", "/api/fdc", "The FDC: status registers, phase, motor and heads.", "{msr, sr0, sr1, sr2, phase, command, motor, drives: [{connected, disk, track}]}"),
+    op("GET", "/api/fdc", "The FDC: status registers, phase, motor and heads.", "{msr, sr0, sr1, sr2, phase, command, motor, drives: [{connected, kind: 3|3.5, disk, side: A|B, track}]}"),
+    op(
+        "POST",
+        "/api/drive",
+        "Set up a drive: a 3\" drive (one head: the side read is the side put up) or a double-sided 3.5\" one \
+         (the FDC selects the side), and turn the disc of a 3\" drive over (its ready line changes, as on a real disc swap).",
+        "the FDC state, as GET /api/fdc"
+    )
+    .params(&[
+        q("drive", "integer", "0 (A, default) or 1 (B)"),
+        q("kind", "string", "3 or 3.5"),
+        q("flip", "integer", "1 turns the disc over")
+    ]),
     op(
         "GET",
         "/api/beam",

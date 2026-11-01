@@ -6,7 +6,7 @@
 //! (`doc/fdc.upd765ab.pdf`).
 
 use amsrust::disc_image::{flag, DiscImage, Sector, Track};
-use amsrust::fdc::{Fdc, FdcDrive};
+use amsrust::fdc::{DriveKind, Fdc, FdcDrive};
 
 const RQM: u8 = 1 << 7;
 const DIO: u8 = 1 << 6;
@@ -376,9 +376,19 @@ fn two_sided() -> DiscImage {
     image
 }
 
+/// A double-sided 3.5" drive A with `image` in it, spinning.
+fn fdc_35_with(image: DiscImage) -> Fdc {
+    let mut fdc = Fdc::default();
+    fdc.set_drive_kind(FdcDrive::A, DriveKind::ThreeAndHalfInch);
+    fdc.insert_image(FdcDrive::A, Some(image));
+    fdc.set_motor(true);
+    drain_interrupts(&mut fdc);
+    fdc
+}
+
 #[test]
 fn multi_track_carries_on_with_the_other_side() {
-    let mut fdc = fdc_with(two_sided());
+    let mut fdc = fdc_35_with(two_sided());
     let (data, result) = read(&mut fdc, &rw(READ_DATA | MT, 0, 0, 1, 1, 2), 4 * 256);
     assert_eq!(&data[..256], vec![0x01; 256].as_slice());
     assert_eq!(&data[256..512], vec![0x02; 256].as_slice());
@@ -590,8 +600,52 @@ fn sense_drive_status_reflects_disc_motor_and_head_position() {
     send(&mut fdc, &[0x0f, 0x00, 0x02]);
     assert_eq!(status(&mut fdc) & 0x10, 0x00, "no longer on track 0");
 
-    let mut double = fdc_with(two_sided());
-    assert_eq!(status(&mut double) & 0x08, 0x08, "TS on a two sided disc");
+    // TS is the drive's: a 3" drive has one head whatever the disc
+    let mut three = fdc_with(two_sided());
+    assert_eq!(status(&mut three) & 0x08, 0x00, "no TS on a 3\" drive");
+    let mut double = fdc_35_with(two_sided());
+    assert_eq!(status(&mut double) & 0x08, 0x08, "TS on a 3.5\" drive");
+}
+
+// ------------------------------------------------------- 3" and 3.5" drives
+
+#[test]
+fn a_3_inch_drive_reads_the_side_put_up_whatever_the_head_selected() {
+    let mut fdc = fdc_with(two_sided());
+    // head 1 selected: a 3" drive has only one head, it reads side A of the disc
+    let (data, _) = read(&mut fdc, &rw(READ_DATA, 0, 0, 1, 1, 1).iter().enumerate().map(|(i, &b)| if i == 1 { b | 4 } else { b }).collect::<Vec<_>>(), 256);
+    assert_eq!(data, vec![0x01; 256], "side A");
+    // the disc turned over: side B is under the head, with head 0 selected
+    assert_eq!(fdc.flip_disc(FdcDrive::A), Some(1));
+    drain_interrupts(&mut fdc);
+    let (data, _) = read(&mut fdc, &rw(READ_DATA, 0, 1, 1, 1, 1), 256);
+    assert_eq!(data, vec![0x11; 256], "side B");
+    // a multi-track read does not switch heads on a 3" drive
+    let (data, result) = read(&mut fdc, &rw(READ_DATA | MT, 0, 1, 1, 1, 2), 2 * 256);
+    assert_eq!(&data[256..], vec![0x12; 256].as_slice());
+    assert_eq!(result[0] & 0xc0, 0x40, "End of Cylinder after the side put up");
+    assert_eq!((result[3], result[4], result[5]), (0, 1, 2));
+    assert_eq!(fdc.read_status(), RQM, "done: no other side to go on with");
+}
+
+#[test]
+fn a_3_5_inch_drive_reads_the_side_its_head_selects_and_cannot_be_flipped() {
+    let mut fdc = fdc_35_with(two_sided());
+    let (data, _) = read(&mut fdc, &rw(READ_DATA, 0, 1, 1, 1, 1).iter().enumerate().map(|(i, &b)| if i == 1 { b | 4 } else { b }).collect::<Vec<_>>(), 256);
+    assert_eq!(data, vec![0x11; 256], "head 1 reads side B");
+    assert_eq!(fdc.flip_disc(FdcDrive::A), None);
+}
+
+#[test]
+fn the_heads_stop_at_the_last_track_of_their_drive() {
+    let mut fdc = fdc_with(disc());
+    send(&mut fdc, &[0x0f, 0x00, 79]);
+    drain_interrupts(&mut fdc);
+    assert_eq!(fdc.track(0), 42, "a 3\" drive stops at track 42");
+    let mut fdc = fdc_35_with(disc());
+    send(&mut fdc, &[0x0f, 0x00, 79]);
+    drain_interrupts(&mut fdc);
+    assert_eq!(fdc.track(0), 79, "a 3.5\" drive goes on to 79");
 }
 
 #[test]

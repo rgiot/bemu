@@ -362,6 +362,90 @@ pub fn load_dsk(buffer: &[u8]) -> Result<DiscImage, String> {
     DiscImage::from_bytes(buffer)
 }
 
+/// The extensions of the disc images an archive is searched for.
+const DISC_EXTENSIONS: [&str; 2] = ["dsk", "hfe"];
+
+fn has_extension(name: &str, extensions: &[&str]) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| extensions.iter().any(|wanted| ext.eq_ignore_ascii_case(wanted)))
+}
+
+/// A disc image from the bytes of a file named `name`: a DSK or extended DSK, an HFE image
+/// (converted to DSK, desktop only), or a zip archive holding one of them. In an archive, `entry`
+/// names the image (its path in the archive, the case ignored); without it the first DSK or HFE
+/// file is taken.
+pub fn load_disc_bytes(bytes: &[u8], name: &str, entry: Option<&str>) -> Result<DiscImage, String> {
+    if bytes.starts_with(b"PK\x03\x04") {
+        let (entry_name, data) = zip_entry(bytes, entry).map_err(|e| format!("{name}: {e}"))?;
+        return load_disc_bytes(&data, &entry_name, None).map_err(|e| format!("{name}#{entry_name}: {e}"));
+    }
+    if let Some(entry) = entry {
+        return Err(format!("{name} is not a zip archive, it has no {entry}"));
+    }
+    if bytes.starts_with(b"HXCPICFE") || bytes.starts_with(b"HXCHFEV3") || has_extension(name, &["hfe"]) {
+        return hfe_to_dsk(bytes).and_then(|dsk| load_dsk(&dsk));
+    }
+    load_dsk(bytes)
+}
+
+/// The name and content of the archive entry `wanted`, or of its first disc image.
+fn zip_entry(bytes: &[u8], wanted: Option<&str>) -> Result<(String, Vec<u8>), String> {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let files = || names.iter().filter(|n| !n.ends_with('/'));
+    let chosen = match wanted {
+        Some(wanted) => files()
+            .find(|n| n.as_str() == wanted)
+            .or_else(|| files().find(|n| n.eq_ignore_ascii_case(wanted)))
+            .ok_or_else(|| format!("no {wanted} in the archive (it holds: {})", files().cloned().collect::<Vec<_>>().join(", ")))?,
+        None => files()
+            .find(|n| has_extension(n, &DISC_EXTENSIONS))
+            .ok_or_else(|| format!("no disc image (.dsk, .hfe) in the archive (it holds: {})", files().cloned().collect::<Vec<_>>().join(", ")))?
+    }
+    .clone();
+    let mut file = archive.by_name(&chosen).map_err(|e| e.to_string())?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data).map_err(|e| e.to_string())?;
+    Ok((chosen, data))
+}
+
+/// An HFE image converted to an extended DSK by the HxC floppy library.
+#[cfg(not(target_arch = "wasm32"))]
+fn hfe_to_dsk(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    // the library loads through a file of that name in the temporary directory
+    let name = format!("amsrust_{}_{}.hfe", std::process::id(), COUNT.fetch_add(1, Ordering::Relaxed));
+    let img = hxcfe::Hxcfe::get().load_from_buffer(bytes, &name).map_err(|e| format!("HFE: {e}"))?;
+    img.save_to_buffer(hxcfe::ImageFormat::AmstradcpcDsk).map_err(|e| format!("HFE to DSK: {e}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn hfe_to_dsk(_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    Err("HFE images need the desktop version (the HxC floppy library)".to_owned())
+}
+
+/// Split a disc argument into the file and, for a zip archive, the entry after a `#`
+/// (`games.zip#side b.dsk`). A `#` in a name that is not an archive's stays in the path.
+pub fn split_disc_spec(spec: &str) -> (&str, Option<&str>) {
+    match spec.rsplit_once('#') {
+        Some((path, entry)) if has_extension(path, &["zip"]) && !entry.is_empty() => (path, Some(entry)),
+        _ => (spec, None)
+    }
+}
+
+/// A disc image file: a DSK, an HFE, `archive.zip` (its first disc image) or `archive.zip#entry`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_disc_file(spec: &str) -> Result<DiscImage, String> {
+    let (path, entry) = split_disc_spec(spec);
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
+    load_disc_bytes(&bytes, name, entry).map_err(|e| if e.starts_with(name) { e } else { format!("{name}: {e}") })
+}
+
 fn starts_with_ignore_case(buffer: &[u8], prefix: &[u8]) -> bool {
     buffer
         .get(..prefix.len())
@@ -447,6 +531,66 @@ fn write_track(track: &Track, out: &mut Vec<u8>) {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, data) in files {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    fn same_sectors(a: &DiscImage, b: &DiscImage) {
+        assert_eq!((a.nb_tracks(), a.nb_heads()), (b.nb_tracks(), b.nb_heads()));
+        for track in 0..a.nb_tracks() {
+            let (ta, tb) = (a.track(0, track).unwrap(), b.track(0, track).unwrap());
+            let ids = |t: &Track| t.sectors.iter().map(|s| (s.c, s.h, s.r, s.n, s.data.clone())).collect::<Vec<_>>();
+            assert_eq!(ids(ta), ids(tb), "track {track}");
+        }
+    }
+
+    #[test]
+    fn a_zip_gives_its_first_disc_image_or_the_one_named() {
+        let rhino = std::fs::read("validation/RHINO.DSK").unwrap();
+        let other = std::fs::read("validation/demos/skoh/skoh.dsk").unwrap();
+        let zip = zip_of(&[("readme.txt", b"hello"), ("dir/Rhino.dsk", &rhino), ("S&KOH.DSK", &other)]);
+
+        let first = load_disc_bytes(&zip, "pack.zip", None).unwrap();
+        same_sectors(&first, &load_dsk(&rhino).unwrap());
+        let named = load_disc_bytes(&zip, "pack.zip", Some("s&koh.dsk")).unwrap();
+        same_sectors(&named, &load_dsk(&other).unwrap());
+
+        let missing = load_disc_bytes(&zip, "pack.zip", Some("nope.dsk")).unwrap_err();
+        assert!(missing.contains("nope.dsk") && missing.contains("readme.txt"), "{missing}");
+        assert!(load_disc_bytes(&zip_of(&[("a.txt", b"x")]), "p.zip", None).is_err());
+        assert!(load_disc_bytes(&rhino, "RHINO.DSK", Some("x.dsk")).is_err(), "only an archive has entries");
+    }
+
+    #[test]
+    fn a_hash_names_an_entry_of_a_zip_only() {
+        assert_eq!(split_disc_spec("games.zip#side b.dsk"), ("games.zip", Some("side b.dsk")));
+        assert_eq!(split_disc_spec("GAMES.ZIP#a.dsk"), ("GAMES.ZIP", Some("a.dsk")));
+        assert_eq!(split_disc_spec("games.zip"), ("games.zip", None));
+        assert_eq!(split_disc_spec("disc #2.dsk"), ("disc #2.dsk", None));
+        assert_eq!(split_disc_spec("games.zip#"), ("games.zip#", None));
+    }
+
+    #[test]
+    fn an_hfe_image_gives_the_sectors_of_the_disc_it_was_made_from() {
+        let rhino = std::fs::read("validation/RHINO.DSK").unwrap();
+        let hxc = hxcfe::Hxcfe::get();
+        let img = hxc.load_from_buffer(&rhino, "amsrust_test_rhino.dsk").unwrap();
+        let hfe = img.save_to_buffer(hxcfe::ImageFormat::HxcHfe).unwrap();
+        assert!(hfe.starts_with(b"HXCPICFE"));
+
+        let back = load_disc_bytes(&hfe, "rhino.hfe", None).unwrap();
+        same_sectors(&back, &load_dsk(&rhino).unwrap());
+        // and from a zip
+        let zipped = load_disc_bytes(&zip_of(&[("rhino.hfe", &hfe)]), "rhino.zip", None).unwrap();
+        same_sectors(&zipped, &load_dsk(&rhino).unwrap());
+    }
 
     #[test]
     fn amsdos_catalog_reads_rhino_dsk() {

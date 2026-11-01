@@ -33,6 +33,8 @@ tuple-map = "0.4.0"
 smallvec = "1.6.1"
 ym2149 = "0.9.1"
 bytemuck = { version = "1", optional = true, features = ["derive"] }
+# disc images inside zip archives (--dsk file.zip, file.zip#name.dsk)
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # The desktop: terminal monitor, debug server, windows, sound, and cpclib with its defaults.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -40,6 +42,8 @@ cpclib = {path = "../rust.cpcdemotools/cpclib"}
 cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm"}
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens"}
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
+# HFE disc images, converted to DSK by the HxC floppy library (a C library: desktop only)
+hxcfe = "0.3.3"
 rustyline = "8.2.0" # Make not mandaotry
 minifb = "0.28.0"
 cpal = { version = "0.18.2", optional = true }

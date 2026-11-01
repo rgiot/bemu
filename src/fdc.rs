@@ -122,8 +122,52 @@ fn occurrence(from: u64, offset: u64, period: u64) -> u64 {
 
 /// Number of unit-select values the chip can address (US1-US0).
 const NB_UNITS: usize = 4;
-/// A drive head cannot go past the last track its mechanism allows.
-const MAX_TRACK: u8 = 76;
+
+/// The kind of drive a unit is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DriveKind {
+    /// A CPC 3" drive (the 664/6128's, the DDI-1's FD-1): one head, about 42 tracks. The FDC's
+    /// side select does not reach a head: which side of the disc is read is the side the user
+    /// put up (see [`Fdc::flip_disc`]).
+    #[default]
+    ThreeInch,
+    /// A double-sided 3.5" drive: two heads, the FDC's side select chooses one, 80 tracks and more.
+    ThreeAndHalfInch
+}
+
+impl DriveKind {
+    /// The last cylinder the head can reach.
+    pub fn max_track(self) -> u8 {
+        match self {
+            DriveKind::ThreeInch => 42,
+            DriveKind::ThreeAndHalfInch => 82
+        }
+    }
+
+    /// The drive has two heads: the FDC selects the side (and ST3 reports TS).
+    pub fn is_double_sided(self) -> bool {
+        self == DriveKind::ThreeAndHalfInch
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            DriveKind::ThreeInch => "3\"",
+            DriveKind::ThreeAndHalfInch => "3.5\""
+        }
+    }
+}
+
+impl std::str::FromStr for DriveKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s.trim_end_matches(['"', 'i', 'n']) {
+            "3" => Ok(DriveKind::ThreeInch),
+            "3.5" => Ok(DriveKind::ThreeAndHalfInch),
+            _ => Err(format!("{s}: a drive is 3 (3 inch) or 3.5 (3.5 inch)"))
+        }
+    }
+}
 
 /// Which drive unit a CSL `disk_insert`/an FDC command targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -269,6 +313,9 @@ pub struct CommandRecord {
 
 #[derive(Default)]
 struct Drive {
+    kind: DriveKind,
+    /// A 3" drive reads side B of the disc (the disc was flipped): its second side in the image.
+    flipped: bool,
     disc: Option<DiscImage>,
     /// Cylinder the head is over (PCN).
     track: u8,
@@ -520,10 +567,54 @@ impl Fdc {
     pub fn insert_image(&mut self, drive: FdcDrive, image: Option<DiscImage>) {
         let unit = drive.index();
         self.drives[unit].disc = image;
+        self.drives[unit].flipped = false;
         self.drives[unit].track = 0;
         self.drives[unit].cursor = 0;
         self.drives[unit].reads.clear();
         self.pending_interrupt[unit] = Some(st0::IC_READY_CHANGED | unit as u8);
+    }
+
+    /// Make a drive a 3" or a 3.5" one.
+    pub fn set_drive_kind(&mut self, drive: FdcDrive, kind: DriveKind) {
+        let unit = &mut self.drives[drive.index()];
+        unit.kind = kind;
+        unit.track = unit.track.min(kind.max_track());
+    }
+
+    pub fn drive_kind(&self, drive: FdcDrive) -> DriveKind {
+        self.drives[drive.index()].kind
+    }
+
+    /// Take the disc out of a 3" drive and put it back the other side up: the head now reads the
+    /// image's other side (an image with a single side has nothing on the other: unformatted).
+    /// Like any disc change, the drive's ready line toggles. Returns the side now read (0 = A),
+    /// None when the drive is empty or a 3.5" one (its FDC selects the side).
+    pub fn flip_disc(&mut self, drive: FdcDrive) -> Option<u8> {
+        let unit = drive.index();
+        let d = &mut self.drives[unit];
+        if d.disc.is_none() || d.kind != DriveKind::ThreeInch {
+            return None;
+        }
+        d.flipped = !d.flipped;
+        d.cursor = 0;
+        d.reads.clear();
+        self.pending_interrupt[unit] = Some(st0::IC_READY_CHANGED | unit as u8);
+        Some(u8::from(self.drives[unit].flipped))
+    }
+
+    /// The side of the disc under the head of a 3" drive (0 = A, 1 = B).
+    pub fn disc_side(&self, drive: FdcDrive) -> u8 {
+        u8::from(self.drives[drive.index()].flipped)
+    }
+
+    /// The side of the image the FDC's head `head` reads on `unit`: on a 3" drive the side put
+    /// up, whatever the FDC asks; on a 3.5" drive the head selected.
+    fn surface(&self, unit: usize, head: u8) -> u8 {
+        let drive = &self.drives[unit];
+        match drive.kind {
+            DriveKind::ThreeInch => u8::from(drive.flipped),
+            DriveKind::ThreeAndHalfInch => head
+        }
     }
 
     pub fn has_disk(&self, drive: FdcDrive) -> bool {
@@ -761,7 +852,7 @@ impl Fdc {
         let unit = self.unit();
         if self.timing {
             let from = self.drives[unit].track;
-            let to = target_track.min(MAX_TRACK);
+            let to = target_track.min(self.drives[unit].kind.max_track());
             let steps = u64::from(from.abs_diff(to));
             let st0 = if self.drives[unit].disc.is_some() {
                 st0::SE | unit as u8
@@ -777,7 +868,7 @@ impl Fdc {
             return;
         }
         let drive = &mut self.drives[unit];
-        drive.track = target_track.min(MAX_TRACK);
+        drive.track = target_track.min(drive.kind.max_track());
         drive.cursor = 0;
 
         // A seek on a drive with no disc cannot complete normally.
@@ -813,7 +904,8 @@ impl Fdc {
         if drive.track == 0 {
             st3 |= st3::T0;
         }
-        if drive.disc.as_ref().is_some_and(DiscImage::is_double_sided) {
+        // the drive's two-side signal
+        if drive.kind.is_double_sided() {
             st3 |= st3::TS;
         }
         if self.ready(unit) {
@@ -828,11 +920,12 @@ impl Fdc {
 
     /// Where the sectors of the track under `unit`'s head are on it (None when unformatted).
     fn layout(&self, unit: usize, head: u8) -> Option<Layout> {
+        let side = self.surface(unit, head);
         let drive = &self.drives[unit];
         drive
             .disc
             .as_ref()
-            .and_then(|disc| disc.track(head, drive.track))
+            .and_then(|disc| disc.track(side, drive.track))
             .filter(|track| !track.sectors.is_empty())
             .map(Layout::of)
     }
@@ -859,11 +952,12 @@ impl Fdc {
 
     /// The sectors of the track under `unit`'s head.
     fn sectors(&self, unit: usize, head: u8) -> &[Sector] {
+        let side = self.surface(unit, head);
         let drive = &self.drives[unit];
         drive
             .disc
             .as_ref()
-            .and_then(|disc| disc.track(head, drive.track))
+            .and_then(|disc| disc.track(side, drive.track))
             .map_or(&[], |track| track.sectors.as_slice())
     }
 
@@ -1072,7 +1166,7 @@ impl Fdc {
     fn load_sector(&mut self, index: usize, mark_mismatch: bool) {
         let (unit, head) = (self.xfer.unit, self.xfer.head);
         let track = self.drives[unit].track;
-        let key = (head, track, index);
+        let key = (self.surface(unit, head), track, index);
         let copy = self.drives[unit].reads.get(&key).copied().unwrap_or(0);
         let filler = self.track_filler(unit, head);
         let (recorded_st1, recorded_st2, data, id) = {
@@ -1150,11 +1244,12 @@ impl Fdc {
     }
 
     fn track_filler(&self, unit: usize, head: u8) -> u8 {
+        let side = self.surface(unit, head);
         let drive = &self.drives[unit];
         drive
             .disc
             .as_ref()
-            .and_then(|disc| disc.track(head, drive.track))
+            .and_then(|disc| disc.track(side, drive.track))
             .map_or(0xe5, |track| track.filler)
     }
 
@@ -1174,10 +1269,12 @@ impl Fdc {
         if self.xfer.r >= self.xfer.eot {
             // last sector of the cylinder: a multi-track command carries on
             // with the other side
-            let two_sided = self.drives[self.xfer.unit]
-                .disc
-                .as_ref()
-                .is_some_and(DiscImage::is_double_sided);
+            // only a drive with two heads can switch to the other side
+            let two_sided = self.drives[self.xfer.unit].kind.is_double_sided()
+                && self.drives[self.xfer.unit]
+                    .disc
+                    .as_ref()
+                    .is_some_and(DiscImage::is_double_sided);
             if self.xfer.mt && self.xfer.head == 0 && two_sided {
                 self.xfer.head = 1;
                 self.xfer.h = self.xfer.h.wrapping_add(1);
@@ -1263,12 +1360,13 @@ impl Fdc {
     /// sector (and its data mark).
     fn store_written_sector(&mut self, unit: usize, head: u8, index: usize) {
         let deleted = self.current_cmd.wants_deleted_mark();
+        let side = self.surface(unit, head);
         let drive = &mut self.drives[unit];
         let track = drive.track;
         let Some(sector) = drive
             .disc
             .as_mut()
-            .and_then(|disc| disc.track_mut(head, track))
+            .and_then(|disc| disc.track_mut(side, track))
             .and_then(|track| track.sectors.get_mut(index))
         else {
             return;
@@ -1404,12 +1502,13 @@ impl Fdc {
             .collect();
 
         let gap3 = self.command[FMT_GPL];
+        let side = self.surface(unit, head);
         let drive = &mut self.drives[unit];
         let track_number = drive.track;
         let formatted = drive.disc.as_mut().is_some_and(|disc| {
-            disc.set_track(head, track_number, Track {
+            disc.set_track(side, track_number, Track {
                 track: track_number,
-                head,
+                head: side,
                 gap3,
                 filler,
                 sectors

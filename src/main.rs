@@ -60,7 +60,7 @@
 use amsrust::display::{DisplayFilter, DisplayMode};
 use amsrust::input::HostKey;
 use amsrust::debug::{Monitor, MonitorContext};
-use amsrust::disc_image::load_dsk;
+use amsrust::disc_image::load_disc_file;
 use amsrust::fdc::FdcDrive;
 use amsrust::input::HostKeyboard;
 use amsrust::keyboard::CpcKey;
@@ -87,8 +87,7 @@ fn viewing_monitor(black_level: u8) -> CrtMonitor {
 }
 
 fn insert_disc(path: &str, drive: FdcDrive, motherboard: &mut amsrust::motherboard::Motherboard) {
-    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    let image = load_dsk(&bytes).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let image = load_disc_file(path).unwrap_or_else(|e| panic!("{e}"));
     motherboard.fdc_mut().insert_image(drive, Some(image));
 }
 
@@ -261,6 +260,8 @@ fn main() {
         eprintln!("--dsk: this {} has no disc interface (--ddi adds one)", args.model.name());
     }
 
+    motherboard.fdc_mut().set_drive_kind(FdcDrive::A, args.drive_a);
+    motherboard.fdc_mut().set_drive_kind(FdcDrive::B, args.drive_b);
     if let Some(path) = &args.dsk_a {
         insert_disc(path, FdcDrive::A, &mut motherboard);
     }
@@ -629,7 +630,7 @@ impl Reloader {
         let mut restart = false;
         for (path, kind) in &changed {
             match kind {
-                watch::Kind::Dsk(drive) => match std::fs::read(path).map_err(|e| e.to_string()).and_then(|bytes| load_dsk(&bytes)) {
+                watch::Kind::Dsk(drive) => match load_disc_file(path) {
                     Ok(image) => {
                         motherboard.fdc_mut().insert_image(*drive, Some(image));
                         eprintln!("{path}: changed, inserted again");
@@ -1063,6 +1064,7 @@ fn run_window(
     // F8's pause, without a debug server (with one, F8 pauses through it)
     let mut paused = false;
     let mut f6_was_down = false;
+    let mut f5_was_down = false;
     let mut overlay = show_overlay.then(Overlay::default);
     motherboard.watch_io_writes(show_overlay);
     // at full speed, the frames shown (at most 50 a second: presenting each would hold the
@@ -1133,6 +1135,20 @@ fn run_window(
             eprintln!("timing overlay: {}", if overlay.is_some() { "on" } else { "off" });
         }
         f6_was_down = f6_down;
+        // F5 turns the disc of drive A over, Shift+F5 the one of drive B (3" drives)
+        let f5_down = input.down.contains(&HostKey::F5);
+        if f5_down && !f5_was_down {
+            let shift = input.down.contains(&HostKey::LeftShift) || input.down.contains(&HostKey::RightShift);
+            let (drive, letter) = if shift { (FdcDrive::B, 'B') } else { (FdcDrive::A, 'A') };
+            match motherboard.fdc_mut().flip_disc(drive) {
+                Some(side) => eprintln!("drive {letter}: disc turned over, side {} up", if side == 0 { 'A' } else { 'B' }),
+                None if motherboard.fdc().has_disk(drive) => {
+                    eprintln!("drive {letter}: a 3.5\" drive reads both sides, nothing to turn over")
+                },
+                None => eprintln!("drive {letter}: no disc")
+            }
+        }
+        f5_was_down = f5_down;
         host_keyboard.apply(motherboard, &input);
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, motherboard);

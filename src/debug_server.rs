@@ -167,6 +167,7 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/ga", methods: &["GET"], summary: "Gate Array: mode, pens, inks, RMR and banking", extension: false },
     Route { path: "/api/psg", methods: &["GET"], summary: "PSG registers, decoded", extension: false },
     Route { path: "/api/fdc", methods: &["GET"], summary: "FDC status registers, phase, motor and heads", extension: false },
+    Route { path: "/api/drive", methods: &["POST"], summary: "a drive (?drive=0|1): its kind (kind=3|3.5), turn its disc over (flip=1, 3\" drive)", extension: true },
     Route { path: "/api/beam", methods: &["GET"], summary: "beam position (?crop=1: relative to the screenshot), also in NOPs: nop, line, frame_nop", extension: false },
     Route { path: "/api/raster_bp", methods: &["GET", "POST"], summary: "beam breakpoint: ?x=&y= (or line=, nop=, frame_nop=), enable=0 clears, add=1 keeps the others", extension: false },
     Route { path: "/api/counters", methods: &["GET", "POST", "DELETE"], summary: "named NOP counters: list, {name, action: create|reset|start|stop}, delete (?name=)", extension: true },
@@ -810,6 +811,7 @@ impl DebugServer {
             ("GET", "/api/ga") => Ok(ApiResponse::ok(ga(motherboard))),
             ("GET", "/api/psg") => Ok(ApiResponse::ok(psg(motherboard))),
             ("GET", "/api/fdc") => Ok(ApiResponse::ok(fdc(motherboard))),
+            ("POST", "/api/drive") => drive_command(request, motherboard),
             ("GET", "/api/beam") => self.beam_position(request),
             ("GET", "/api/raster_bp") => Ok(ApiResponse::ok(self.list_raster_breakpoints())),
             ("POST", "/api/raster_bp") => self.set_raster_breakpoint(request),
@@ -1508,8 +1510,15 @@ impl DebugServer {
                 reply["warnings"] = json!(breakpoints.ignored);
             }
         }
-        else if bytes.starts_with(b"MV - CPC") || bytes.starts_with(b"EXTENDED CPC DSK") {
-            let image = crate::disc_image::load_dsk(bytes).map_err(ApiError::new)?;
+        else if bytes.starts_with(b"MV - CPC")
+            || bytes.starts_with(b"EXTENDED CPC DSK")
+            || bytes.starts_with(b"HXCPICFE")
+            || bytes.starts_with(b"HXCHFEV3")
+            || (bytes.starts_with(b"PK\x03\x04") && crate::disc_image::split_disc_spec(name).0.to_ascii_lowercase().ends_with(".zip"))
+        {
+            // a DSK, an HFE, or a zip archive holding one (`name` may be `games.zip#side b.dsk`)
+            let (file, entry) = crate::disc_image::split_disc_spec(name);
+            let image = crate::disc_image::load_disc_bytes(bytes, file, entry).map_err(ApiError::new)?;
             motherboard.fdc_mut().insert_image(drive, Some(image));
             reply["media"] = json!("dsk");
         }
@@ -1708,10 +1717,31 @@ fn fdc(motherboard: &Motherboard) -> Value {
         "command": fdc.command_name(),
         "drives": ([FdcDrive::A, FdcDrive::B]).iter().enumerate().map(|(unit, &drive)| json!({
             "connected": true,
+            "kind": if fdc.drive_kind(drive).is_double_sided() { "3.5" } else { "3" },
             "disk": fdc.has_disk(drive),
+            "side": if fdc.disc_side(drive) == 0 { "A" } else { "B" },
             "track": fdc.track(unit)
         })).collect::<Vec<_>>()
     })
+}
+
+/// `POST /api/drive?drive=0|1[&kind=3|3.5][&flip=1]`: make a drive a 3" or a 3.5" one, turn the
+/// disc of a 3" drive over. Replies with the FDC state.
+fn drive_command(request: &ApiRequest, motherboard: &mut Motherboard) -> Result<ApiResponse, ApiError> {
+    use crate::fdc::{DriveKind, FdcDrive};
+    let drive = match request.param("drive") {
+        None | Some("0") => FdcDrive::A,
+        Some("1") => FdcDrive::B,
+        Some(_) => return Err(ApiError::field("drive", "parameter \"drive\" must be 0 or 1"))
+    };
+    if let Some(kind) = request.param("kind") {
+        let kind: DriveKind = kind.parse().map_err(|e: String| ApiError::field("kind", e))?;
+        motherboard.fdc_mut().set_drive_kind(drive, kind);
+    }
+    if request.param("flip").is_some_and(|v| v == "1") && motherboard.fdc_mut().flip_disc(drive).is_none() {
+        return Err(ApiError::field("flip", "only the disc of a 3\" drive with a disc in it can be turned over"));
+    }
+    Ok(ApiResponse::ok(fdc(motherboard)))
 }
 
 /// `GET /api/memmap`: each 16K region of the CPU's view, with the ROM

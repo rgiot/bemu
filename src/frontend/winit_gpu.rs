@@ -207,6 +207,7 @@ fn host_key(event: &KeyEvent) -> Option<HostKey> {
             NamedKey::F8 => H::F8,
             NamedKey::F9 => H::F9,
             NamedKey::F6 => H::F6,
+            NamedKey::F5 => H::F5,
             NamedKey::F10 => H::F10,
             _ => return None
         }),

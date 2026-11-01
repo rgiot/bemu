@@ -30,6 +30,8 @@ struct Watched {
 }
 
 fn stamp(path: &str) -> Stamp {
+    // a disc in an archive (`games.zip#side b.dsk`): the archive changes
+    let path = amsrust::disc_image::split_disc_spec(path).0;
     let metadata = std::fs::metadata(path).ok()?;
     Some((metadata.modified().ok()?, metadata.len()))
 }

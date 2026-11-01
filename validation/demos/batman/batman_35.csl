@@ -1,0 +1,101 @@
+; Batman Forever, the one disk version: needs a double-sided 3.5" drive A
+; (run_csl ... --drive-a 3.5; on a 3" drive it says WRONG DISK FOR YOUR CONFIGURATION)
+csl_version 1.0
+crtc_select 0
+key_delay 70000 70000 400000
+reset
+wait 3000000
+disk_insert 'batman_forever.zip#Batman Forever (One disk version).dsk'
+key_output 'RUN"DISC"\(RET)'
+wait 8000000
+key_output ' '
+wait 10000000
+screenshot_name 'batman35_01'
+screenshot
+wait 10000000
+screenshot_name 'batman35_02'
+screenshot
+wait 10000000
+screenshot_name 'batman35_03'
+screenshot
+wait 10000000
+screenshot_name 'batman35_04'
+screenshot
+wait 10000000
+screenshot_name 'batman35_05'
+screenshot
+wait 10000000
+screenshot_name 'batman35_06'
+screenshot
+wait 10000000
+screenshot_name 'batman35_07'
+screenshot
+wait 10000000
+screenshot_name 'batman35_08'
+screenshot
+wait 10000000
+screenshot_name 'batman35_09'
+screenshot
+wait 10000000
+screenshot_name 'batman35_10'
+screenshot
+wait 10000000
+screenshot_name 'batman35_11'
+screenshot
+wait 10000000
+screenshot_name 'batman35_12'
+screenshot
+wait 10000000
+screenshot_name 'batman35_13'
+screenshot
+wait 10000000
+screenshot_name 'batman35_14'
+screenshot
+wait 10000000
+screenshot_name 'batman35_15'
+screenshot
+wait 10000000
+screenshot_name 'batman35_16'
+screenshot
+wait 10000000
+screenshot_name 'batman35_17'
+screenshot
+wait 10000000
+screenshot_name 'batman35_18'
+screenshot
+wait 10000000
+screenshot_name 'batman35_19'
+screenshot
+wait 10000000
+screenshot_name 'batman35_20'
+screenshot
+wait 10000000
+screenshot_name 'batman35_21'
+screenshot
+wait 10000000
+screenshot_name 'batman35_22'
+screenshot
+wait 10000000
+screenshot_name 'batman35_23'
+screenshot
+wait 10000000
+screenshot_name 'batman35_24'
+screenshot
+wait 10000000
+screenshot_name 'batman35_25'
+screenshot
+wait 10000000
+screenshot_name 'batman35_26'
+screenshot
+wait 10000000
+screenshot_name 'batman35_27'
+screenshot
+wait 10000000
+screenshot_name 'batman35_28'
+screenshot
+wait 10000000
+screenshot_name 'batman35_29'
+screenshot
+wait 10000000
+screenshot_name 'batman35_30'
+screenshot

@@ -21,7 +21,7 @@ use cpclib_csl::{
 };
 
 use crate::crtc::CrtcType;
-use crate::disc_image::{load_dsk, DiscImage};
+use crate::disc_image::{load_disc_bytes, split_disc_spec, DiscImage};
 use crate::fdc::FdcDrive;
 use crate::keyboard::{CpcKey, KeyboardLayout};
 use crate::monitor::Monitor;
@@ -278,6 +278,8 @@ pub struct CslRunner {
     /// Chosen by `memory_exp`, applied at the next `reset`.
     memory_exp: cpclib_csl::MemoryExpansion,
     disc: [Option<DiscImage>; 2],
+    /// The kind of each drive (3" by default), kept across resets.
+    drive_kinds: [crate::fdc::DriveKind; 2],
     files: Box<dyn CslFiles>,
     screenshots: Box<dyn ScreenshotSink>,
     /// The instructions left to play, and the one playing.
@@ -337,6 +339,7 @@ impl CslRunner {
             memory_exp: cpclib_csl::MemoryExpansion::Kb128,
             crtc,
             disc: [None, None],
+            drive_kinds: Default::default(),
             files,
             screenshots,
             script: VecDeque::new(),
@@ -373,8 +376,15 @@ impl CslRunner {
         self.memory_exp = cpclib_csl::MemoryExpansion::Kb128;
         self.motherboard = Self::machine(self.base, self.crtc, self.gate_array, self.memory_exp);
         for (unit, disc) in self.disc.iter().enumerate() {
+            self.motherboard.fdc_mut().set_drive_kind(drive(unit), self.drive_kinds[unit]);
             self.motherboard.fdc_mut().insert_image(drive(unit), disc.clone());
         }
+    }
+
+    /// Make drive `unit` (0 = A, 1 = B) a 3" or a 3.5" one, now and after each `reset`.
+    pub fn set_drive_kind(&mut self, unit: usize, kind: crate::fdc::DriveKind) {
+        self.drive_kinds[unit] = kind;
+        self.motherboard.fdc_mut().set_drive_kind(drive(unit), kind);
     }
 
     /// Print progress on stderr while running.
@@ -719,6 +729,7 @@ impl CslRunner {
         self.motherboard.psg_mut().take_audio_output_from(previous.psg_mut());
         self.motherboard.take_tape_deck_from(&mut previous);
         for (unit, disc) in self.disc.iter().enumerate() {
+            self.motherboard.fdc_mut().set_drive_kind(drive(unit), self.drive_kinds[unit]);
             self.motherboard.fdc_mut().insert_image(drive(unit), disc.clone());
         }
         self.key_events.clear();
@@ -738,8 +749,10 @@ impl CslRunner {
     }
 
     fn insert_disc(&mut self, drive_letter: Drive, filename: &str) -> Result<(), String> {
-        let bytes = self.files.disc(&self.base_dir, filename, &mut self.report.ignored)?;
-        let image = load_dsk(&bytes).map_err(|e| format!("{filename}: {e}"))?;
+        // `games.zip#side b.dsk`: the archive is the file to find
+        let (path, entry) = split_disc_spec(filename);
+        let bytes = self.files.disc(&self.base_dir, path, &mut self.report.ignored)?;
+        let image = load_disc_bytes(&bytes, path, entry).map_err(|e| format!("{filename}: {e}"))?;
         let unit = match drive_letter {
             Drive::A => 0,
             Drive::B => 1

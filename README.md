@@ -25,6 +25,25 @@ as an expansion on a 464/664. In the library:
 cargo run --release -- --model 464 --ram 128 --ddi --window --dsk game.dsk
 ```
 
+### Discs and drives
+
+`--dsk` (drive A) and `--dsk-b` take a DSK or extended DSK, an HFE image (converted by the HxC
+floppy library, desktop only), or a zip archive: `--dsk games.zip` takes its first DSK/HFE file,
+`--dsk 'games.zip#Disk 1 side B.dsk'` that file of the archive. The same names work in a CSL
+`disk_insert`, with `--watch` (the archive is watched) and in the debug server's `/api/media`.
+
+Drives are 3" ones by default, as on a 664/6128 and the DDI-1's FD-1: one head, so the FDC's side
+select is ignored and the side read is the side put up; F5 in the window turns the disc of drive A
+over (Shift+F5: drive B), which reads the other side of a double-sided image. `--drive-a 3.5`
+(`--drive-b 3.5`) makes it a double-sided 3.5" drive: the FDC selects the side, multi-track
+commands go on with side 1, Sense Drive Status reports two sides, and the head reaches track 82
+(42 on a 3" drive). The debug server's `POST /api/drive?drive=0&kind=3.5` and `&flip=1` do the
+same. `validation/demos/batman` has both: the 3" set and the one disc version for a 3.5" drive.
+
+```sh
+cargo run --release -- --window --drive-a 3.5 --dsk 'batman_forever.zip#Batman Forever (One disk version).dsk'
+```
+
 ## CPC Booster+ and MiniBooster
 
 `--booster` plugs a CPC Booster+ (Antitec / Dirty Minds) on the expansion port, `--miniboster` its

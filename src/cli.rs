@@ -74,13 +74,24 @@ pub struct Args {
     #[arg(long, help_heading = MACHINE)]
     list_roms: bool,
 
-    /// A disc in drive A.
+    /// A disc in drive A: a DSK or HFE image, a zip archive (its first DSK/HFE) or
+    /// `archive.zip#name.dsk` (that file of the archive). It goes in side A up; F5 flips it in a
+    /// 3" drive.
     #[arg(long = "dsk", value_name = "PATH", help_heading = MEDIA)]
     pub dsk_a: Option<String>,
 
-    /// A disc in drive B.
+    /// A disc in drive B (as --dsk; Shift+F5 flips it).
     #[arg(long, value_name = "PATH", help_heading = MEDIA)]
     pub dsk_b: Option<String>,
+
+    /// Drive A: 3 (a 3" drive, one head: the side read is the side put up, F5 turns the disc
+    /// over) or 3.5 (a double-sided 3.5" drive: the FDC selects the side, 80 tracks).
+    #[arg(long, value_name = "3|3.5", default_value = "3", help_heading = MEDIA)]
+    pub drive_a: amsrust::fdc::DriveKind,
+
+    /// Drive B: 3 or 3.5 (see --drive-a).
+    #[arg(long, value_name = "3|3.5", default_value = "3", help_heading = MEDIA)]
+    pub drive_b: amsrust::fdc::DriveKind,
 
     /// A tape (CDT/TZX) in the cassette deck, PLAY down: it plays when the CPC starts the motor
     /// (RUN" on a 464, |TAPE first on a 664/6128).
@@ -314,7 +325,8 @@ once everything is loaded ('h' at its prompt lists its commands).
 In the window: F10 toggles full speed (the emulation as fast as it can, silent, the picture shown
 50 times a second), F8 pauses and resumes (through the debug server when it runs, its clients
 told), F7 saves the machine's state in bemu_0000.sna (then 0001...) in the current directory,
-F9 cycles the displays (not while recording), F6 shows or hides the overlay, F4 closes it.";
+F9 cycles the displays (not while recording), F6 shows or hides the overlay, F5 turns the disc
+of drive A over (Shift+F5: drive B; 3\" drives), F4 closes it.";
 
 /// `--every`: seconds apart, or frames apart.
 #[derive(Clone, Copy, Debug, PartialEq)]

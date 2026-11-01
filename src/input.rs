@@ -29,7 +29,9 @@ pub enum HostKey {
     F9,
     F10,
     /// F6 shows or hides the timing overlay.
-    F6
+    F6,
+    /// F5 turns the disc of drive A over (Shift+F5: drive B), in a 3" drive.
+    F5
 }
 
 /// What a frontend reports on each poll.
