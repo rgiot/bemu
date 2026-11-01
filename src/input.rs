@@ -22,6 +22,8 @@ pub enum HostKey {
     Period, Slash, Backquote, Equal,
     NumPad0, NumPad1, NumPad2, NumPad3, NumPad4, NumPad5, NumPad6, NumPad7, NumPad8, NumPad9,
     NumPadDot, NumPadEnter,
+    /// The ISO keyboards' key left of Z (`<>` or `\|`).
+    IntlBackslash,
     /// Not CPC keys: the emulator's own (F7 saves a snapshot, F8 pauses and resumes, F9 cycles
     /// the display, F10 toggles full speed).
     F7,
@@ -31,7 +33,50 @@ pub enum HostKey {
     /// F6 shows or hides the timing overlay.
     F6,
     /// F5 turns the disc of drive A over (Shift+F5: drive B), in a 3" drive.
-    F5
+    F5,
+    /// F12 switches between the symbolic and the positional keyboard mappings.
+    F12
+}
+
+/// How the host's keys press the CPC's, as VICE's keyboard mappings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyboardMapping {
+    /// A key types the character the host types with it, the CPC's Shift as that character
+    /// needs it: for typing.
+    #[default]
+    Symbolic,
+    /// A key presses the CPC key at its place, whatever either's labels: for games.
+    Positional
+}
+
+impl KeyboardMapping {
+    pub const NAMES: &'static str = "symbolic|positional";
+
+    pub fn other(self) -> Self {
+        match self {
+            Self::Symbolic => Self::Positional,
+            Self::Positional => Self::Symbolic
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Symbolic => "symbolic",
+            Self::Positional => "positional"
+        }
+    }
+}
+
+impl std::str::FromStr for KeyboardMapping {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        match text {
+            "symbolic" => Ok(Self::Symbolic),
+            "positional" => Ok(Self::Positional),
+            other => Err(format!("unknown keyboard mapping {other:?} (expected {})", Self::NAMES))
+        }
+    }
 }
 
 /// What a frontend reports on each poll.
@@ -41,7 +86,11 @@ pub struct HostInput {
     pub down: Vec<HostKey>,
     /// Characters typed since the previous poll, resolved by the OS under
     /// the active layout and modifiers (so independent of `down`).
-    pub typed: Vec<char>
+    pub typed: Vec<char>,
+    /// The keys held named by their place on a US keyboard (the physical keys), for the
+    /// positional mapping: on an AZERTY host the key labelled A is [`HostKey::Q`] here. Empty
+    /// when the frontend can't tell (minifb): `down` stands in.
+    pub placed: Vec<HostKey>
 }
 
 /// Queue of characters typed on the host keyboard.
@@ -131,6 +180,9 @@ impl TypedCombo {
 /// little for its character before it presses its place's key.
 #[derive(Default)]
 pub struct HostKeyboard {
+    mapping: KeyboardMapping,
+    /// The mapping changed: every key is released first (the other mapping's included).
+    switched: bool,
     typed: TypedChars,
     combo: TypedCombo,
     /// The host keys down at the previous poll.
@@ -157,6 +209,19 @@ impl HostKeyboard {
     /// How many polls a printable key not learned yet waits for its character.
     pub const WAIT_POLLS: u8 = 2;
 
+    pub fn new(mapping: KeyboardMapping) -> Self {
+        Self { mapping, ..Default::default() }
+    }
+
+    pub fn mapping(&self) -> KeyboardMapping {
+        self.mapping
+    }
+
+    /// From the next [`Self::apply`] on; what was learned or typed is forgotten.
+    pub fn set_mapping(&mut self, mapping: KeyboardMapping) {
+        *self = Self { switched: true, ..Self::new(mapping) };
+    }
+
     /// Set every mapped [`CpcKey`]'s pressed state from `input` - polled at
     /// the CPC's own ~50Hz rather than per-event.
     ///
@@ -167,6 +232,16 @@ impl HostKeyboard {
     /// held (holding only the left Shift got cancelled by the unheld right
     /// one, breaking every Shift-combo character).
     pub fn apply(&mut self, motherboard: &mut Motherboard, input: &HostInput) {
+        if std::mem::take(&mut self.switched) {
+            motherboard.keyboard_mut().release_all();
+        }
+        match self.mapping {
+            KeyboardMapping::Symbolic => self.apply_symbolic(motherboard, input),
+            KeyboardMapping::Positional => apply_positional(motherboard, input)
+        }
+    }
+
+    fn apply_symbolic(&mut self, motherboard: &mut Motherboard, input: &HostInput) {
         let layout = motherboard.keyboard_layout();
         self.learn(input, layout);
         for &c in &input.typed {
@@ -211,9 +286,19 @@ impl HostKeyboard {
                 }
             }
         }
+        // a key held pressing the CPC key it learned (a game's): the host's Shift is its
+        let playing = input.down.iter().any(|&host| matches!(self.pressing(host, shift), Pressing::Learned(Some(_))));
         let matrix = motherboard.keyboard_mut();
         for (key, down) in pressed {
             matrix.set_pressed(key, down);
+        }
+        if !combo.is_empty() && !playing {
+            // the character's modifiers, not the host's: Shift+2 types @ on a US host, the CPC's
+            // @ is unshifted (with Shift it is |), even once the 2 is up; AltGr (Alt, or Ctrl+Alt)
+            // is no CTRL or COPY for the CPC
+            matrix.set_pressed(CpcKey::Shift, false);
+            matrix.set_pressed(CpcKey::Control, false);
+            matrix.set_pressed(CpcKey::Copy, false);
         }
         for key in combo {
             matrix.set_pressed(key, true);
@@ -266,6 +351,21 @@ impl HostKeyboard {
         }
         else {
             Pressing::Place
+        }
+    }
+}
+
+/// Every key of [`POSITIONAL_MAP`] as its place holds it: the CPC's matrix is the same on every
+/// layout (an AZERTY CPC's A is the UK Q), so the CPC's own layout doesn't matter either.
+fn apply_positional(motherboard: &mut Motherboard, input: &HostInput) {
+    let held = if input.placed.is_empty() { &input.down } else { &input.placed };
+    let matrix = motherboard.keyboard_mut();
+    for (_, key) in POSITIONAL_MAP {
+        matrix.set_pressed(*key, false);
+    }
+    for (host, key) in POSITIONAL_MAP {
+        if held.contains(host) {
+            matrix.set_pressed(*key, true);
         }
     }
 }
@@ -338,6 +438,49 @@ pub const HOST_KEY_MAP: &[(HostKey, CpcKey)] = {
         (Hk::Slash, Slash),
         (Hk::Backquote, Caret),
         (Hk::Equal, At),
+        (Hk::NumPad0, Keypad0), (Hk::NumPad1, Keypad1),
+        (Hk::NumPad2, Keypad2), (Hk::NumPad3, Keypad3),
+        (Hk::NumPad4, Keypad4), (Hk::NumPad5, Keypad5),
+        (Hk::NumPad6, Keypad6), (Hk::NumPad7, Keypad7),
+        (Hk::NumPad8, Keypad8), (Hk::NumPad9, Keypad9),
+        (Hk::NumPadDot, KeypadDot),
+        (Hk::NumPadEnter, KeypadEnter),
+    ]
+};
+
+/// Host key (by its place on a US keyboard) -> the CPC key at that place. The letters, digits
+/// and the keys around them are where a 6128's are; the CPC's punctuation follows its own
+/// rows (`- ^`, `@ [`, `: ; ]`, `, . / \`), so a host key presses the CPC key it sits on, not
+/// the one with its label.
+pub const POSITIONAL_MAP: &[(HostKey, CpcKey)] = {
+    use CpcKey::*;
+    use HostKey as Hk;
+    &[
+        (Hk::A, A), (Hk::B, B), (Hk::C, C), (Hk::D, D), (Hk::E, E),
+        (Hk::F, F), (Hk::G, G), (Hk::H, CpcKey::H), (Hk::I, I), (Hk::J, J),
+        (Hk::K, K), (Hk::L, L), (Hk::M, M), (Hk::N, N), (Hk::O, O),
+        (Hk::P, P), (Hk::Q, Q), (Hk::R, R), (Hk::S, S), (Hk::T, T),
+        (Hk::U, U), (Hk::V, V), (Hk::W, W), (Hk::X, X), (Hk::Y, Y),
+        (Hk::Z, Z),
+        (Hk::Key0, Digit0), (Hk::Key1, Digit1), (Hk::Key2, Digit2),
+        (Hk::Key3, Digit3), (Hk::Key4, Digit4), (Hk::Key5, Digit5),
+        (Hk::Key6, Digit6), (Hk::Key7, Digit7), (Hk::Key8, Digit8),
+        (Hk::Key9, Digit9),
+        // the digits' row: ESC left of 1, - and ^ right of 0, CLR and DEL
+        (Hk::Backquote, Esc), (Hk::Escape, Esc),
+        (Hk::Minus, Minus), (Hk::Equal, Caret),
+        (Hk::Delete, Clr), (Hk::Backspace, Del),
+        // right of P: @ [; right of L: : ; ]; right of / (the ISO key left of Z): \
+        (Hk::LeftBracket, At), (Hk::RightBracket, OpenBracket),
+        (Hk::Semicolon, Colon), (Hk::Apostrophe, Semicolon), (Hk::Backslash, CloseBracket),
+        (Hk::Comma, Comma), (Hk::Period, Dot), (Hk::Slash, Slash), (Hk::IntlBackslash, Backslash),
+        (Hk::Tab, Tab), (Hk::CapsLock, CapsLock), (Hk::Enter, Return),
+        (Hk::LeftShift, Shift), (Hk::RightShift, Shift),
+        (Hk::LeftCtrl, Control), (Hk::RightCtrl, Control),
+        (Hk::LeftAlt, Copy), (Hk::RightAlt, Copy),
+        (Hk::Space, Space),
+        (Hk::Up, CursorUp), (Hk::Down, CursorDown),
+        (Hk::Left, CursorLeft), (Hk::Right, CursorRight),
         (Hk::NumPad0, Keypad0), (Hk::NumPad1, Keypad1),
         (Hk::NumPad2, Keypad2), (Hk::NumPad3, Keypad3),
         (Hk::NumPad4, Keypad4), (Hk::NumPad5, Keypad5),
@@ -459,7 +602,7 @@ mod test {
 
     /// Polls a keyboard as a frontend does: the host keys down and the characters typed.
     fn poll(keyboard: &mut HostKeyboard, motherboard: &mut Motherboard, down: &[HostKey], typed: &str) -> Vec<CpcKey> {
-        keyboard.apply(motherboard, &HostInput { down: down.to_vec(), typed: typed.chars().collect() });
+        keyboard.apply(motherboard, &HostInput { down: down.to_vec(), typed: typed.chars().collect(), ..Default::default() });
         use CpcKey::*;
         [A, Q, Z, W, Digit1, Digit6, Shift, Control]
             .into_iter()
@@ -523,4 +666,92 @@ mod test {
         assert!(shifted.contains(&CpcKey::Digit1), "{shifted:?}");
     }
 
+    /// Positional: an AZERTY host's key at Q's place (the frontend's logical A, typing `a`)
+    /// presses the CPC's Q: the key at that place, which a French CPC labels A.
+    #[test]
+    fn positional_keys_press_the_cpc_key_at_their_place() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Positional);
+        let input = |down: &[HostKey], placed: &[HostKey], typed: &str| HostInput {
+            down: down.to_vec(),
+            placed: placed.to_vec(),
+            typed: typed.chars().collect()
+        };
+        keyboard.apply(&mut motherboard, &input(&[HostKey::A], &[HostKey::Q], "a"));
+        assert!(motherboard.keyboard().is_pressed(CpcKey::Q));
+        assert!(!motherboard.keyboard().is_pressed(CpcKey::A), "neither its label nor its character");
+        // the punctuation by place: = is ^'s, [ @'s, ' ;'s, the ISO key \'s
+        for (host, cpc) in [(HostKey::Equal, CpcKey::Caret), (HostKey::LeftBracket, CpcKey::At), (HostKey::Apostrophe, CpcKey::Semicolon), (HostKey::IntlBackslash, CpcKey::Backslash), (HostKey::Backquote, CpcKey::Esc)] {
+            keyboard.apply(&mut motherboard, &input(&[], &[host, HostKey::LeftShift], ""));
+            assert!(motherboard.keyboard().is_pressed(cpc) && motherboard.keyboard().is_pressed(CpcKey::Shift), "{host:?}");
+            keyboard.apply(&mut motherboard, &input(&[], &[], ""));
+            assert!(!motherboard.keyboard().is_pressed(cpc), "{host:?} released");
+        }
+        // a frontend that can't tell the places (minifb): the keys it reports
+        keyboard.apply(&mut motherboard, &input(&[HostKey::Z], &[], "z"));
+        assert!(motherboard.keyboard().is_pressed(CpcKey::Z));
+    }
+
+    /// Symbolic: a character the CPC types without Shift, typed with the host's Shift (`@` is
+    /// Shift+2 on a US host) comes without the CPC's Shift (with it, the @ key types |).
+    #[test]
+    fn symbolic_characters_take_their_own_shift() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        let down = [HostKey::LeftShift, HostKey::Key2];
+        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), typed: vec!['@'], ..Default::default() });
+        assert!(motherboard.keyboard().is_pressed(CpcKey::At));
+        assert!(!motherboard.keyboard().is_pressed(CpcKey::Shift), "the host's Shift is not @'s");
+        assert!(!motherboard.keyboard().is_pressed(CpcKey::Digit2));
+        // a German host (QWERTZ): its Y key (at the US Z's place) types `y`, and ß has no CPC
+        // key: Y types y, ß nothing, and Shift held with a letter stays (a game's keys)
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        keyboard.apply(&mut motherboard, &HostInput { down: vec![HostKey::Y], typed: vec!['y'], ..Default::default() });
+        assert!(motherboard.keyboard().is_pressed(CpcKey::Y) && !motherboard.keyboard().is_pressed(CpcKey::Z));
+        keyboard.apply(&mut motherboard, &HostInput { down: vec![HostKey::Y, HostKey::LeftShift], ..Default::default() });
+        assert!(motherboard.keyboard().is_pressed(CpcKey::Y) && motherboard.keyboard().is_pressed(CpcKey::Shift));
+        keyboard.apply(&mut motherboard, &HostInput { typed: vec!['ß'], ..Default::default() });
+        // a French CPC: the character is found where its layout has it (A at the UK Q)
+        let mut french = crate::motherboard::MotherboardBuilder::default().build();
+        french.set_keyboard_layout(KeyboardLayout::French).unwrap();
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        keyboard.apply(&mut french, &HostInput { down: vec![HostKey::A], typed: vec!['a'], ..Default::default() });
+        assert!(french.keyboard().is_pressed(CpcKey::Q), "the French CPC's A is the UK Q's key");
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        let down = [HostKey::LeftShift, HostKey::Key2];
+        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), typed: vec!['@'], ..Default::default() });
+        // the key up before its character's turn (a quick tap, Shift still held): still no Shift
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        keyboard.apply(&mut motherboard, &HostInput { down: vec![HostKey::LeftShift], typed: vec!['@'], ..Default::default() });
+        assert!(motherboard.keyboard().is_pressed(CpcKey::At) && !motherboard.keyboard().is_pressed(CpcKey::Shift));
+        // AltGr reported as Right Alt (COPY) or Ctrl+Alt: the character alone
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        let altgr = vec![HostKey::LeftCtrl, HostKey::RightAlt];
+        keyboard.apply(&mut motherboard, &HostInput { down: altgr, typed: vec!['@'], ..Default::default() });
+        for key in [CpcKey::Copy, CpcKey::Control, CpcKey::Shift] {
+            assert!(!motherboard.keyboard().is_pressed(key), "{key:?}");
+        }
+        assert!(motherboard.keyboard().is_pressed(CpcKey::At));
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        let down = [HostKey::LeftShift, HostKey::Key2];
+        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), typed: vec!['@'], ..Default::default() });
+        // switching mappings forgets the character
+        keyboard.set_mapping(KeyboardMapping::Positional);
+        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), ..Default::default() });
+        assert!(motherboard.keyboard().is_pressed(CpcKey::Shift) && motherboard.keyboard().is_pressed(CpcKey::Digit2));
+        assert!(!motherboard.keyboard().is_pressed(CpcKey::At));
+    }
+
+    /// A key the symbolic mapping holds outside the positional map's own (a French CPC's A,
+    /// learned) is released when the mapping changes, so nothing stays down.
+    #[test]
+    fn switching_mappings_releases_every_key() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Positional);
+        motherboard.keyboard_mut().set_pressed(CpcKey::Joy0Up, true);
+        keyboard.set_mapping(KeyboardMapping::Symbolic);
+        keyboard.apply(&mut motherboard, &HostInput::default());
+        assert!(!motherboard.keyboard().is_pressed(CpcKey::Joy0Up));
+    }
 }

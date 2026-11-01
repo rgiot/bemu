@@ -55,6 +55,8 @@ pub struct Emulator {
     /// Keys held, by physical key (`KeyboardEvent.code`), so that a release matches its press
     /// whatever the modifiers made of the key meanwhile.
     held: HashMap<String, HostKey>,
+    /// The same keys by their place (the positional keyboard's).
+    placed: HashMap<String, HostKey>,
     typed: Vec<char>,
     /// Frames completed, see [`Self::frame_count`].
     frames: u64
@@ -70,6 +72,7 @@ impl Emulator {
         let config = Config::from_js(config).map_err(|e| JsError::new(&e))?;
         let display = config.display().map_err(|e| JsError::new(&e))?;
         let curvature = config.curvature().map_err(|e| JsError::new(&e))?;
+        let keyboard = config.keyboard().map_err(|e| JsError::new(&e))?;
         let motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
         let gfx = Gfx::new(canvas, webgpu).await.map_err(|e| JsError::new(&e))?;
         Ok(Emulator {
@@ -86,8 +89,9 @@ impl Emulator {
             on_screenshot: Rc::default(),
             on_csl_done: Rc::default(),
             audio_rate: None,
-            keyboard: HostKeyboard::default(),
+            keyboard: HostKeyboard::new(keyboard),
             held: HashMap::new(),
+            placed: HashMap::new(),
             typed: Vec::new(),
             frames: 0
         })
@@ -103,7 +107,9 @@ impl Emulator {
         let config = Config::from_js(config).map_err(|e| JsError::new(&e))?;
         let display = config.display().map_err(|e| JsError::new(&e))?;
         let curvature = config.curvature().map_err(|e| JsError::new(&e))?;
+        let keyboard = config.keyboard().map_err(|e| JsError::new(&e))?;
         let motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
+        self.keyboard.set_mapping(keyboard);
         self.config = config;
         self.display = display;
         self.curvature = curvature;
@@ -243,6 +249,9 @@ impl Emulator {
         if let Some(host_key) = keys::host_key(code, key) {
             self.held.insert(code.to_owned(), host_key);
         }
+        if let Some(placed) = keys::placed_key(code) {
+            self.placed.insert(code.to_owned(), placed);
+        }
         if let Some(c) = keys::typed_char(key, ctrl_or_meta) {
             self.typed.push(c);
         }
@@ -250,11 +259,22 @@ impl Emulator {
 
     pub fn key_up(&mut self, code: &str) {
         self.held.remove(code);
+        self.placed.remove(code);
     }
 
     /// Every key up (the page lost the focus).
     pub fn release_keys(&mut self) {
         self.held.clear();
+        self.placed.clear();
+    }
+
+    /// "symbolic" (a key types its character) or "positional" (a key presses the CPC key at
+    /// its place, for games).
+    pub fn set_keyboard(&mut self, mapping: &str) -> Result<(), JsError> {
+        let config = Config { keyboard: Some(mapping.to_owned()), ..self.config.clone() };
+        self.keyboard.set_mapping(config.keyboard().map_err(|e| JsError::new(&e))?);
+        self.config = config;
+        Ok(())
     }
 
     /// Run the machine to its next frame, and show it.
@@ -460,7 +480,8 @@ impl Emulator {
     fn apply_keyboard(&mut self) {
         let input = HostInput {
             down: self.held.values().copied().collect(),
-            typed: std::mem::take(&mut self.typed)
+            typed: std::mem::take(&mut self.typed),
+            placed: self.placed.values().copied().collect()
         };
         self.keyboard.apply(&mut self.motherboard, &input);
     }

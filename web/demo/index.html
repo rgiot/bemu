@@ -32,6 +32,7 @@
   <label>Brand <select name="brand"><option>amstrad</option><option>schneider</option><option>awa</option><option>orion</option></select></label>
   <label>Display <select name="display"><option>raw</option><option>ctm</option><option>trinitron</option><option>gt65</option><option>atari</option></select></label>
   <label>Curvature <input name="curvature" type="range" min="0" max="2" step="0.25" value="1"></label>
+  <label>Keyboard <select name="keyboard"><option>symbolic</option><option>positional</option></select></label>
   <button type="submit">Apply (resets)</button>
 </form>
 
@@ -68,7 +69,8 @@ const status = (text) => document.querySelector('#status').textContent = text;
 
 // the configuration: the form, set from the URL (?model=464&crtc=1&ga=40010&display=ctm...)
 for (const [key, name] of [['model', 'model'], ['crtc', 'crtc'], ['ga', 'gateArray'], ['ram', 'ramKb'],
-                           ['ddi', 'discInterface'], ['lang', 'language'], ['brand', 'brand'], ['display', 'display'], ['curvature', 'curvature']]) {
+                           ['ddi', 'discInterface'], ['lang', 'language'], ['brand', 'brand'], ['display', 'display'], ['curvature', 'curvature'],
+                           ['keyboard', 'keyboard']]) {
   if (params.has(key)) form.elements[name].value = params.get(key);
 }
 function config() {
@@ -98,6 +100,7 @@ emu.on('csl-done', (report) => status(report.error ? `CSL error: ${report.error}
 form.addEventListener('submit', (event) => { event.preventDefault(); emu.configure(config()); });
 form.elements.display.addEventListener('change', () => emu.setDisplay(form.elements.display.value));
 form.elements.curvature.addEventListener('input', () => emu.setCurvature(Number(form.elements.curvature.value)));
+form.elements.keyboard.addEventListener('change', () => emu.setKeyboard(form.elements.keyboard.value));
 document.querySelector('#start').onclick = () => emu.start();
 document.querySelector('#pause').onclick = () => emu.pause();
 document.querySelector('#reset').onclick = () => emu.reset();
