@@ -181,6 +181,8 @@ impl TypedCombo {
 #[derive(Default)]
 pub struct HostKeyboard {
     mapping: KeyboardMapping,
+    /// The mapping changed: every key is released first (the other mapping's included).
+    switched: bool,
     typed: TypedChars,
     combo: TypedCombo,
     /// The host keys down at the previous poll.
@@ -217,7 +219,7 @@ impl HostKeyboard {
 
     /// From the next [`Self::apply`] on; what was learned or typed is forgotten.
     pub fn set_mapping(&mut self, mapping: KeyboardMapping) {
-        *self = Self::new(mapping);
+        *self = Self { switched: true, ..Self::new(mapping) };
     }
 
     /// Set every mapped [`CpcKey`]'s pressed state from `input` - polled at
@@ -230,6 +232,9 @@ impl HostKeyboard {
     /// held (holding only the left Shift got cancelled by the unheld right
     /// one, breaking every Shift-combo character).
     pub fn apply(&mut self, motherboard: &mut Motherboard, input: &HostInput) {
+        if std::mem::take(&mut self.switched) {
+            motherboard.keyboard_mut().release_all();
+        }
         match self.mapping {
             KeyboardMapping::Symbolic => self.apply_symbolic(motherboard, input),
             KeyboardMapping::Positional => apply_positional(motherboard, input)
@@ -281,17 +286,19 @@ impl HostKeyboard {
                 }
             }
         }
-        // a key held whose character needs the CPC's other Shift state: the character alone
-        let character_only = input.down.iter().any(|&host| matches!(self.pressing(host, shift), Pressing::Learned(None)));
+        // a key held pressing the CPC key it learned (a game's): the host's Shift is its
+        let playing = input.down.iter().any(|&host| matches!(self.pressing(host, shift), Pressing::Learned(Some(_))));
         let matrix = motherboard.keyboard_mut();
         for (key, down) in pressed {
             matrix.set_pressed(key, down);
         }
-        if !combo.is_empty() && character_only {
-            // the character's Shift and Control, not the host's: Shift+2 types @ on a US host,
-            // the CPC's @ is unshifted (with Shift it is |)
+        if !combo.is_empty() && !playing {
+            // the character's modifiers, not the host's: Shift+2 types @ on a US host, the CPC's
+            // @ is unshifted (with Shift it is |), even once the 2 is up; AltGr (Alt, or Ctrl+Alt)
+            // is no CTRL or COPY for the CPC
             matrix.set_pressed(CpcKey::Shift, false);
             matrix.set_pressed(CpcKey::Control, false);
+            matrix.set_pressed(CpcKey::Copy, false);
         }
         for key in combo {
             matrix.set_pressed(key, true);
@@ -714,10 +721,37 @@ mod test {
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
         let down = [HostKey::LeftShift, HostKey::Key2];
         keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), typed: vec!['@'], ..Default::default() });
+        // the key up before its character's turn (a quick tap, Shift still held): still no Shift
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        keyboard.apply(&mut motherboard, &HostInput { down: vec![HostKey::LeftShift], typed: vec!['@'], ..Default::default() });
+        assert!(motherboard.keyboard().is_pressed(CpcKey::At) && !motherboard.keyboard().is_pressed(CpcKey::Shift));
+        // AltGr reported as Right Alt (COPY) or Ctrl+Alt: the character alone
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        let altgr = vec![HostKey::LeftCtrl, HostKey::RightAlt];
+        keyboard.apply(&mut motherboard, &HostInput { down: altgr, typed: vec!['@'], ..Default::default() });
+        for key in [CpcKey::Copy, CpcKey::Control, CpcKey::Shift] {
+            assert!(!motherboard.keyboard().is_pressed(key), "{key:?}");
+        }
+        assert!(motherboard.keyboard().is_pressed(CpcKey::At));
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        let down = [HostKey::LeftShift, HostKey::Key2];
+        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), typed: vec!['@'], ..Default::default() });
         // switching mappings forgets the character
         keyboard.set_mapping(KeyboardMapping::Positional);
         keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), ..Default::default() });
         assert!(motherboard.keyboard().is_pressed(CpcKey::Shift) && motherboard.keyboard().is_pressed(CpcKey::Digit2));
         assert!(!motherboard.keyboard().is_pressed(CpcKey::At));
+    }
+
+    /// A key the symbolic mapping holds outside the positional map's own (a French CPC's A,
+    /// learned) is released when the mapping changes, so nothing stays down.
+    #[test]
+    fn switching_mappings_releases_every_key() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Positional);
+        motherboard.keyboard_mut().set_pressed(CpcKey::Joy0Up, true);
+        keyboard.set_mapping(KeyboardMapping::Symbolic);
+        keyboard.apply(&mut motherboard, &HostInput::default());
+        assert!(!motherboard.keyboard().is_pressed(CpcKey::Joy0Up));
     }
 }
