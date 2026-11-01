@@ -45,6 +45,8 @@ const DEFAULT_PAGE_LENGTH: i32 = 11 * FEED_UNITS_PER_INCH;
 /// Cycles the printer is BUSY for, in microseconds. Short ones: the head's speed is not
 /// emulated.
 const BUSY_BYTE_US: u32 = 40;
+/// The files are written this long after the last byte (2 seconds).
+const EXPORT_IDLE_US: u32 = 2_000_000;
 
 const ESC: u8 = 27;
 
@@ -207,6 +209,12 @@ pub struct Dmp2000 {
     /// /STROBE was low at the last latch.
     strobe_active: bool,
     busy_us: u32,
+    /// Where the files go by themselves, once the printer has been idle (a run ended by Ctrl+C
+    /// or a killed window still leaves them).
+    export_prefix: Option<String>,
+    /// Bytes came since the last export.
+    unexported: bool,
+    idle_us: u32,
     parse: Parse,
 
     elite: bool,
@@ -265,6 +273,9 @@ impl Dmp2000 {
             raw: Vec::new(),
             strobe_active: false,
             busy_us: 0,
+            export_prefix: None,
+            unexported: false,
+            idle_us: 0,
             parse: Parse::Idle,
             elite: false,
             condensed: false,
@@ -334,6 +345,12 @@ impl Dmp2000 {
         self.channel = 0;
     }
 
+    /// Writes the files (see [`Self::write_files`]) by itself, [`EXPORT_IDLE_US`] after the last
+    /// byte.
+    pub fn export_to(&mut self, prefix: &str) {
+        self.export_prefix = Some(prefix.to_owned());
+    }
+
     /// Every byte the CPC sent.
     pub fn raw(&self) -> &[u8] {
         &self.raw
@@ -389,6 +406,8 @@ impl Dmp2000 {
     pub fn receive(&mut self, byte: u8) {
         self.raw.push(byte);
         self.busy_us = BUSY_BYTE_US;
+        self.unexported = true;
+        self.idle_us = 0;
         let byte = match self.eighth_bit {
             EighthBit::Accept => byte,
             EighthBit::Set => byte | 0x80,
@@ -470,7 +489,30 @@ impl Dmp2000 {
     /// Time passes: one microsecond.
     pub fn advance_us(&mut self) {
         self.busy_us = self.busy_us.saturating_sub(1);
+        if self.unexported {
+            self.idle_us += 1;
+            if self.idle_us >= EXPORT_IDLE_US {
+                self.unexported = false;
+                self.export_now();
+            }
+        }
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn export_now(&self) {
+        let Some(prefix) = &self.export_prefix else { return };
+        match self.write_files(prefix) {
+            Ok(files) => {
+                for file in files {
+                    eprintln!("printed: {}", file.display());
+                }
+            },
+            Err(e) => eprintln!("{prefix}: {e}")
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn export_now(&self) {}
 
     fn idle_byte(&mut self, byte: u8) {
         match byte {
@@ -1056,6 +1098,27 @@ mod test {
             printer.advance_us();
         }
         assert!(!printer.is_busy());
+    }
+
+    #[test]
+    fn the_files_come_by_themselves_when_the_printer_has_been_idle() {
+        let prefix = std::env::temp_dir().join(format!("dmp2000_idle_{}", std::process::id()));
+        let prefix = prefix.to_str().unwrap().to_owned();
+        let mut printer = printer();
+        printer.export_to(&prefix);
+        send(&mut printer, b"Hi\r\n");
+        for _ in 0..EXPORT_IDLE_US - 1 {
+            printer.advance_us();
+        }
+        assert!(!std::path::Path::new(&format!("{prefix}.txt")).exists());
+        printer.advance_us();
+        assert_eq!(std::fs::read_to_string(format!("{prefix}.txt")).unwrap(), "Hi\n");
+        assert_eq!(std::fs::read(format!("{prefix}.prn")).unwrap(), b"Hi\r\n");
+        assert!(std::path::Path::new(&format!("{prefix}_001.png")).exists());
+        for extension in ["txt", "prn"] {
+            std::fs::remove_file(format!("{prefix}.{extension}")).ok();
+        }
+        std::fs::remove_file(format!("{prefix}_001.png")).ok();
     }
 
     #[test]

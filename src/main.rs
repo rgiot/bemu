@@ -139,8 +139,9 @@ fn main() {
         #[cfg(not(feature = "digiblaster"))]
         without_feature("--digiblaster", "digiblaster");
     }
-    if args.dmp2000.is_some() {
-        builder.plug_dmp2000();
+    if let Some(prefix) = &args.dmp2000 {
+        // the builder is Copy: the prefix lives as long as the program
+        builder.plug_dmp2000().export_dmp2000_to(Box::leak(prefix.clone().into_boxed_str()));
     }
     if args.french {
         builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
@@ -311,6 +312,12 @@ fn main() {
             "{} snapshot breakpoint(s), used by the interactive monitor and the debug server only",
             breakpoints.len()
         );
+    }
+    // What a run writes at its end (a recording, the sound, the printer's sheets) survives
+    // Ctrl+C: the loops stop at the next frame. Not in the interactive monitor, where Ctrl+C
+    // keeps its usual meaning.
+    if !monitor_mode && (args.dmp2000.is_some() || args.record_wav.is_some() || args.record_ym.is_some()) {
+        ctrlc::set_handler(|| STOP.store(true, std::sync::atomic::Ordering::Relaxed)).ok();
     }
     start_sound_export(&args, &mut motherboard);
     let mut typist = match &args.basic {
@@ -760,7 +767,7 @@ fn run_headless(
         cli::Every::Seconds(seconds) => ((seconds * T_STATES_PER_SECOND as f64) as usize).max(1),
         cli::Every::Frames(frames) => {
             // One monitor follows the beam all along: every frame is whole and in order.
-            while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) {
+            while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) && !stop_requested() {
                 motherboard.execute_next_opcode_no_video();
                 type_due_keys(typist, motherboard);
                 poll_sound_export(motherboard);
@@ -768,7 +775,7 @@ fn run_headless(
             let mut monitor = viewing_monitor(black_level);
             motherboard.watch_io_writes(show_overlay);
             let mut seen = 0u64;
-            while motherboard.t_state_counter().value() < target_t_states {
+            while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
                 type_due_keys(typist, motherboard);
                 poll_sound_export(motherboard);
                 let mut frame = None;
@@ -798,8 +805,8 @@ fn run_headless(
         }
     };
 
-    while motherboard.t_state_counter().value() < target_t_states {
-        while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) {
+    while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
+        while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) && !stop_requested() {
             // between screenshots, run without collecting video (cheaper)
             motherboard.execute_next_opcode_no_video();
             type_due_keys(typist, motherboard);
@@ -815,7 +822,7 @@ fn run_headless(
         motherboard.watch_io_writes(show_overlay);
         // Capture the next whole frame once due, rather than every tick:
         // matches how the CSL runner and play_demo grab a screenshot.
-        while frame.is_none() && motherboard.t_state_counter().value() < target_t_states {
+        while frame.is_none() && motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
             type_due_keys(typist, motherboard);
             poll_sound_export(motherboard);
             motherboard.execute_next_opcode_with_video(|(rgb, sync)| {

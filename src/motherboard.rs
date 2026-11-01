@@ -264,6 +264,8 @@ pub struct MotherboardBuilder {
     digiblaster: bool,
     /// A DMP2000 printer on the printer port.
     dmp2000: bool,
+    /// The files it writes by itself, once idle.
+    dmp2000_export: Option<&'static str>,
     /// Willy with an OPL3LPT, at this base.
     #[cfg(feature = "willy")]
     willy_opl3: Option<u16>,
@@ -328,6 +330,12 @@ impl MotherboardBuilder {
     /// Plug an Amstrad DMP2000 printer on the printer port.
     pub fn plug_dmp2000(&mut self) -> &mut Self {
         self.dmp2000 = true;
+        self
+    }
+
+    /// The DMP2000 writes its files (`prefix.txt`...) by itself, a while after its last byte.
+    pub fn export_dmp2000_to(&mut self, prefix: &'static str) -> &mut Self {
+        self.dmp2000_export = Some(prefix);
         self
     }
 
@@ -417,7 +425,11 @@ impl MotherboardBuilder {
             motherboard.plug_printer(Box::new(crate::sound_cards::Digiblaster::default()));
         }
         if self.dmp2000 {
-            motherboard.plug_printer(Box::new(crate::dmp2000::Dmp2000::with_os_rom(crate::roms::OS6128)));
+            let mut printer = crate::dmp2000::Dmp2000::with_os_rom(crate::roms::OS6128);
+            if let Some(prefix) = self.dmp2000_export {
+                printer.export_to(prefix);
+            }
+            motherboard.plug_printer(Box::new(printer));
         }
         if let Some(brand) = self.brand {
             motherboard.ppi.set_brand(brand);
