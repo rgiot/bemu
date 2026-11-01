@@ -92,15 +92,15 @@ pub enum Z80Pin {
     Neg_RD = 1 << 39,
 }
 
-impl Into<u64> for &Z80Pin {
-    fn into(self) -> u64 {
-        *self as u64
+impl From<&Z80Pin> for u64 {
+    fn from(val: &Z80Pin) -> Self {
+        *val as u64
     }
 }
 
-impl Into<u64> for Z80Pin {
-    fn into(self) -> u64 {
-        self as u64
+impl From<Z80Pin> for u64 {
+    fn from(val: Z80Pin) -> Self {
+        val as u64
     }
 }
 
@@ -171,9 +171,9 @@ impl Z80Flags {
         let mask = *self as u8;
         
         if value {
-            *byte = *byte | mask;
+            *byte |= mask;
         } else {
-            *byte = *byte & !mask;
+            *byte &= !mask;
         }
     }
     
@@ -210,7 +210,7 @@ impl Z80Flags {
             Self::X => self.set(res & 1 << 3 != 0, byte),
             Self::Y => self.set(res & 1 << 5 != 0, byte),
             Self::Z => self.set(res == 0, byte),
-            Self::P => self.set(res.count_ones() % 2 == 0, byte),
+            Self::P => self.set(res.count_ones().is_multiple_of(2), byte),
             
             _ => unreachable!(),
         }
@@ -225,7 +225,7 @@ impl Z80Flags {
             Self::X => self.set(res & 1 << (8+3) != 0, byte), // XXX probably wrong
             Self::Y => self.set(res & 1 << (8+5) != 0, byte), // XXX probably wrong
             Self::Z => self.set(res == 0, byte),
-            Self::P => self.set(res.count_ones() % 2 == 0, byte),
+            Self::P => self.set(res.count_ones().is_multiple_of(2), byte),
             
             _ => unreachable!(),
         }
@@ -244,15 +244,12 @@ impl Z80Flags {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Default)]
 pub enum InterruptMode {
     Mode0,
+    #[default]
     Mode1,
     Mode2,
-}
-impl Default for InterruptMode {
-    fn default() -> Self {
-        Self::Mode1
-    }
 }
 
 /// See [`Z80::io_window`].
@@ -467,7 +464,7 @@ impl Z80 {
         
         /// Provide the information for the current instruction to execute
         fn opcode_information(&self) -> Option<&OpcodeInformation> {
-            self.opcode_information.clone()
+            self.opcode_information
         }
         /// Get the adress where to write based on what as been collected at fetch step
         fn get_write_address_from_opcode_information(&self) -> u16 {
@@ -505,14 +502,14 @@ impl Z80 {
                     let delta = self.reg8(Reg8::Z).get();
                     let base = self.reg16(*reg).get();
                     
-                    let addr = if delta & 1 << 7 != 0 {
+                    
+                    if delta & 1 << 7 != 0 {
                         let delta = (!delta).wrapping_add(1); // get positive delta
                         base.wrapping_sub(delta as _)
                     }
                     else  {
                         base.wrapping_add(delta as _)
-                    };
-                    addr
+                    }
                 }
                 // We want to make an operation on the stack
                 AddressSource::Stack(delta) => {
@@ -613,11 +610,11 @@ impl Z80 {
         /// ACCC 4.4.3: the read of IN r,(C) and INI/IND lands on the 4th
         /// microsecond (IN A,(n): the 3rd), so those wait one microsecond first.
         fn input_start_state(&self) -> MCycle {
-            let late = match self.opcode_information().map(|i| &i.token) {
-                Some(Token::OpCode(Mnemonic::In, _, Some(DataAccess::PortC), _)) => true,
-                Some(Token::OpCode(Mnemonic::Ini | Mnemonic::Ind | Mnemonic::Inir | Mnemonic::Indr, _, _, _)) => true,
-                _ => false,
-            };
+            let late = matches!(
+                self.opcode_information().map(|i| &i.token),
+                Some(Token::OpCode(Mnemonic::In, _, Some(DataAccess::PortC), _))
+                    | Some(Token::OpCode(Mnemonic::Ini | Mnemonic::Ind | Mnemonic::Inir | Mnemonic::Indr, _, _, _))
+            );
             if late {
                 MCycle::IoWait(TState::T1, false)
             } else {
@@ -734,14 +731,14 @@ impl Z80 {
                     self.pending_ssm_low = None;
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Dd);
                     debug_assert!(current_prefix == OpcodePrefix::None, "impossible");
-                    return false;
+                    false
                 }
                 0xfd if current_prefix == OpcodePrefix::None => {
                     self.pending_ssm_low = None;
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Fd);
                     debug_assert!(current_prefix == OpcodePrefix::None, "impossible");
 
-                    return false;
+                    false
                 }
                 0xcb if matches!(current_prefix, OpcodePrefix::None | OpcodePrefix::Dd | OpcodePrefix::Fd) => {
                     self.pending_ssm_low = None;
@@ -757,11 +754,11 @@ impl Z80 {
                         },
                         _ => unreachable!()
                     };
-                    return false;
+                    false
                 }
                 0xed if current_prefix == OpcodePrefix::None => {
                     self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::Ed);
-                    return false;
+                    false
                 }
                 
                 _ => {
@@ -819,23 +816,23 @@ impl Z80 {
                             } else {
                                 self.next_state = MCycle::Read(TState::T1, 0);
                             }
-                            return false;
+                            false
                         } else if opcode_information.expect_write() {
                             if opcode_information.write_to_pins {
                                 self.next_state = MCycle::Output(TState::T1, 0);
                             } else {
                                 self.next_state = MCycle::Write(TState::T1, 0);
                             }
-                            return false;
+                            false
                         } else {
                             // Start a new opcode
                             self.next_state = MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None);
-                            return true;
+                            true
                         }
-                    } {
+                    } else {
                         // continue to read the bytes for the current opcode
                         self.next_state = MCycle::FetchOpcode(TState::T1, 1, current_prefix);
-                        return false;
+                        false
                     } 
                 }
             }
@@ -914,7 +911,7 @@ impl Z80 {
                 
                 Mnemonic::And => {
                     let mut  val = self.get_available_8bits_value(arg2.or(arg1).unwrap());
-                    val = val & self.reg8(Reg8::A).value();
+                    val &= self.reg8(Reg8::A).value();
                     self.reg8_mut(Reg8::A).set(val);
                     
                     self.auto_update_flags(val);
@@ -942,7 +939,7 @@ impl Z80 {
                     // real hardware takes them from the high byte of the
                     // internal address register (WZ).
                     let xy_source: u8 = if matches!(arg2, Some(DataAccess::Register8(_))) {
-                        (val & 0xff) as u8
+                        val
                     }
                     else {
                         self.reg16(Reg16::Wz).high().get()
@@ -1433,7 +1430,7 @@ impl Z80 {
             
             Mnemonic::Or => {
                 let mut  val = self.get_available_8bits_value(arg2.or(arg1).unwrap());
-                val = val | self.reg8(Reg8::A).value();                
+                val |= self.reg8(Reg8::A).value();                
                 self.reg8_mut(Reg8::A).set(val);
                 
                 self.auto_update_flags(val);
@@ -1801,7 +1798,7 @@ impl Z80 {
             
             Mnemonic::Xor => {
                 let mut  val = self.get_available_8bits_value(arg2.or(arg1).unwrap());
-                val = val ^ self.reg8(Reg8::A).value();
+                val ^= self.reg8(Reg8::A).value();
                 self.reg8_mut(Reg8::A).set(val);
                 
                 self.auto_update_flags(val);
@@ -1841,27 +1838,27 @@ impl Z80 {
         match data {
             DataAccess::Register8(reg) => {
                 let reg: Reg8 = reg.into();
-                return self.reg8(reg).get();
+                self.reg8(reg).get()
             }
             DataAccess::SpecialRegisterI => {
-                return self.reg8(Reg8::I).get();
+                self.reg8(Reg8::I).get()
             }
             DataAccess::SpecialRegisterR => {
-                return self.reg8(Reg8::R).get();
+                self.reg8(Reg8::R).get()
             }
             DataAccess::IndexRegister8(reg) => {
                 let reg: Reg8 = reg.into();
-                return self.reg8(reg).get();
+                self.reg8(reg).get()
             }
             DataAccess::MemoryRegister16(_) | DataAccess::IndexRegister16WithIndex(_, _, _)=> {
                 // Here we do not care at all of which register is used for memory reading
                 // Because the CPU has already read the information
-                return self.reg8(Reg8::Z).get();
+                self.reg8(Reg8::Z).get()
             }
             DataAccess::Expression(expr) => {
-                return eval_expr_to_i32(expr) as u8; // cannot fail as the value has been disassembled
+                eval_expr_to_i32(expr) as u8// cannot fail as the value has been disassembled
             }
-            DataAccess::Memory(_) => return self.reg8(Reg8::Z).get(),
+            DataAccess::Memory(_) => self.reg8(Reg8::Z).get(),
             _ => {
                 panic!("{:?} unhandled", data);
             }
@@ -1897,11 +1894,11 @@ impl Z80 {
         match data {
             DataAccess::Register16(reg) => {
                 let reg: Reg16 = reg.into();
-                return self.reg16(reg).get();
+                self.reg16(reg).get()
             }
             DataAccess::IndexRegister16(reg) => {
                 let reg: Reg16 = reg.into();
-                return self.reg16(reg).get();
+                self.reg16(reg).get()
             }
             DataAccess::MemoryRegister16(_reg) => {
                 panic!("Cannot be used / it is done directly during cpu execution");
@@ -1910,9 +1907,9 @@ impl Z80 {
                 //  return self.reg16(Reg16::Wz).get();
             }
             DataAccess::Expression(expr) => {
-                return eval_expr_to_i32(expr) as u16; // cannot fail as the value has been disassembled
+                eval_expr_to_i32(expr) as u16// cannot fail as the value has been disassembled
             }
-            DataAccess::Memory(_) => return self.reg16(Reg16::Wz).get(),
+            DataAccess::Memory(_) => self.reg16(Reg16::Wz).get(),
             _ => {
                 panic!("Cannot be used / it is done directly during cpu execution");
             }
@@ -2087,7 +2084,7 @@ impl Z80 {
         if k > 0xff {
             flags |= alu::H | alu::C;
         }
-        if ((k as u8 & 7) ^ b).count_ones() % 2 == 0 {
+        if ((k as u8 & 7) ^ b).count_ones().is_multiple_of(2) {
             flags |= alu::PV;
         }
         self.set_flags(flags);
@@ -2210,7 +2207,7 @@ impl Z80 {
         } else {
             None
         };
-        let taken = sequential_len.map_or(false, |len| pc != start.wrapping_add(len));
+        let taken = sequential_len.is_some_and(|len| pc != start.wrapping_add(len));
         let repeat = prefix == OpcodePrefix::Ed
             && matches!(op, 0xb0..=0xb3 | 0xb8..=0xbb)
             && pc == start;
@@ -2455,13 +2452,13 @@ impl Z80 {
 
 impl AddressChip for Z80 {
     fn pins_address() -> &'static [Self::PinType; 16] {
-        return &PIN_ADDRESS_BUS;
+        &PIN_ADDRESS_BUS
     }
 }
 
 impl DataChip for Z80 {
     fn pins_data() -> &'static [Self::PinType; 8] {
-        return &Z80_PIN_DATA_BUS;
+        &Z80_PIN_DATA_BUS
     }
 }
 
@@ -2758,7 +2755,7 @@ impl Chip for Z80 {
                     let address = if opcode_information.write_on_stack()  {
                         let base = self.get_write_address_from_opcode_information();
                         match nb {
-                            0 => base + 1,
+                            0 => base.wrapping_add(1),
                             1 => base,
                             _ => unreachable!(),
                         }
@@ -3280,12 +3277,12 @@ mod test {
         let addr = cpu.get_address_from_pins();
         assert_eq!(addr, pc_base);
         assert_eq!(cpu.pc.get(), pc_base + 1);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         assert_eq!(
             cpu.next_state,
@@ -3300,12 +3297,12 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None)
         );
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -3349,12 +3346,12 @@ mod test {
         let addr = cpu.get_address_from_pins();
         assert_eq!(addr, pc_base);
         assert_eq!(cpu.pc.get(), pc_base + 1);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         assert_eq!(
             cpu.next_state,
@@ -3369,12 +3366,12 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None)
         );
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -3423,12 +3420,12 @@ mod test {
         let addr = cpu.get_address_from_pins();
         assert_eq!(addr, pc_base);
         assert_eq!(cpu.pc.get(), pc_base + 1);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         assert_eq!(
             cpu.next_state,
@@ -3443,12 +3440,12 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None)
         );
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -3502,12 +3499,12 @@ mod test {
         let addr = cpu.get_address_from_pins();
         assert_eq!(addr, pc_base);
         assert_eq!(cpu.pc.get(), pc_base + 1);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         assert_eq!(
             cpu.next_state,
@@ -3522,12 +3519,12 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None)
         );
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -3554,12 +3551,12 @@ mod test {
         let addr = cpu.get_address_from_pins();
         assert_eq!(addr, pc_base + 1);
         assert_eq!(cpu.pc.get(), pc_base + 2);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), true, "the operand is an ordinary read: no /M1");
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_M1), "the operand is an ordinary read: no /M1");
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         assert_eq!(
             cpu.next_state,
@@ -3574,12 +3571,12 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 1, OpcodePrefix::None)
         );
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -3628,12 +3625,12 @@ mod test {
         let addr = cpu.get_address_from_pins();
         assert_eq!(addr, pc_base);
         assert_eq!(cpu.pc.get(), pc_base + 1);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         assert_eq!(
             cpu.next_state,
@@ -3648,12 +3645,12 @@ mod test {
             cpu.next_state,
             MCycle::FetchOpcode(TState::T2, 0, OpcodePrefix::None)
         );
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);
@@ -3677,12 +3674,12 @@ mod test {
         let addr = cpu.get_address_from_pins();
         assert_eq!(addr, pc_base + 1);
         assert_eq!(cpu.pc.get(), pc_base + 2);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T2, 0, prefix));
         
@@ -3691,12 +3688,12 @@ mod test {
         cpu.tick();
         assert_eq!(cpu.pc.get(), pc_base + 2);
         assert_eq!(cpu.next_state, MCycle::FetchOpcode(TState::T2, 0, prefix));
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_MREQ), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_M1), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RD), false);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_IORQ), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_WR), true);
-        assert_eq!(cpu.get_pin(Z80Pin::Neg_RFSH), true);
+        assert!(!cpu.get_pin(Z80Pin::Neg_MREQ));
+        assert!(!cpu.get_pin(Z80Pin::Neg_M1));
+        assert!(!cpu.get_pin(Z80Pin::Neg_RD));
+        assert!(cpu.get_pin(Z80Pin::Neg_IORQ));
+        assert!(cpu.get_pin(Z80Pin::Neg_WR));
+        assert!(cpu.get_pin(Z80Pin::Neg_RFSH));
         
         // Byte is available
         cpu.set_pin(Z80Pin::Neg_WAIT, true);

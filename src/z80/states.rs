@@ -1,5 +1,5 @@
 
-///! This module contains all that can help to manage the variuous states of the CPU
+//! This module contains all that can help to manage the variuous states of the CPU
 use lazy_static::lazy_static;
 //use cpclib_asm::preamble::*;
 use super::{Reg16, Reg8, Z80Pin};
@@ -55,9 +55,7 @@ impl OpcodeDecoder for Token {
             } else {
                 AddressSource::None
             }
-        } else if self.is_retlike_opcode() {
-            AddressSource::Stack(StackDelta::Zero)
-        } else if matches!(
+        } else if self.is_retlike_opcode() || matches!(
             self.mnemonic(), 
             Some(Mnemonic::ExMemSp | Mnemonic::Pop)) 
             {
@@ -405,7 +403,9 @@ impl OpcodeDecoder for Token {
     /// Possible states for a cycle
     /// Warning: Wait state does not count
     #[derive(Debug, PartialEq)]
+    #[derive(Default)]
     pub enum TState {
+        #[default]
         T1,
         T2,
         T3,
@@ -416,7 +416,9 @@ impl OpcodeDecoder for Token {
     /// prefixed operations
     #[derive(Debug, PartialEq, Copy, Clone)]
     /// TODO modify for multiprefix opcodes
+    #[derive(Default)]
     pub enum OpcodePrefix {
+        #[default]
         None ,
         Dd,
         Fd,
@@ -484,11 +486,7 @@ impl OpcodeDecoder for Token {
         MinusTwo,
     }
     
-    impl Default for TState {
-        fn default() -> Self {
-            TState::T1
-        }
-    }
+    
     
 
     impl TState {
@@ -501,11 +499,7 @@ impl OpcodeDecoder for Token {
             }
         }
     }
-    impl Default for OpcodePrefix {
-        fn default() -> Self {
-            OpcodePrefix::None
-        }
-    }
+    
     
     impl OpcodeInformation {
         pub fn write_on_stack(&self) -> bool {
@@ -579,10 +573,7 @@ impl OpcodeDecoder for Token {
 
         /// Return true for 4 bytes opcode where penultimate byte is the index
         pub fn is_for_indexed_opcode(&self) -> bool {
-            match self {
-                OpcodePrefix::DdCb | OpcodePrefix::FdCb => true,
-                _ => false
-            }
+            matches!(self, OpcodePrefix::DdCb | OpcodePrefix::FdCb)
         }
         /// Get the opcode information from the LUT
         pub fn opcode_information(&self, opcode: u8) -> &'static OpcodeInformation {
@@ -628,12 +619,12 @@ impl OpcodeDecoder for Token {
             let nb_bytes_to_read = token.nb_bytes_to_read();
             
             let flag_test = match token.mnemonic_arg1() {
-                Some(DataAccess::FlagTest(f)) => Some(f.clone()),
+                Some(DataAccess::FlagTest(f)) => Some(*f),
                 _ => None,
             };
 
             OpcodeInformation {
-                prefix: self.clone(),
+                prefix: *self,
                 // Warning: for DD CB / FD CB this counts the displacement
                 // and the opcode, which follow the prefixes.
                 nb_additional_opcode_bytes: super::decoder::nb_operand_bytes(*self, opcode),
@@ -724,8 +715,8 @@ impl OpcodeDecoder for Token {
             MCycle::FetchOpcode(TState::default(), 0, OpcodePrefix::None)
         }
     }
-    impl ToString for MCycle {
-        fn to_string(&self) -> String {
+    impl std::fmt::Display for MCycle {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let inner = match self {
                 Self::FetchOpcode(t, b , pr) => {
                     format!("F({:#?},{},{:#?})", t, b, pr)
@@ -755,8 +746,8 @@ impl OpcodeDecoder for Token {
                     format!("IW({:#?},{})", t, left)
                 }
             };
-            format!("\"{}\"", inner)
-        }
+            write!(f, "\"{}\"", inner)
+    }
     }
     
     impl MCycle {
@@ -784,24 +775,15 @@ impl OpcodeDecoder for Token {
         }
         
         pub fn is_input(&self) -> bool {
-            match self {
-                Self::Input(_, _) => true,
-                _ => false,
-            }
+            matches!(self, Self::Input(_, _))
         }
         
         pub fn is_output(&self) -> bool {
-            match self {
-                Self::Output(_, _) => true,
-                _ => false,
-            }
+            matches!(self, Self::Output(_, _))
         }
 
         pub fn is_interruption(&self) -> bool {
-            match self {
-                Self::InterruptM1(_) => true,
-                _ => false
-            }
+            matches!(self, Self::InterruptM1(_))
         }
         
         pub(crate) fn inc_state(&mut self) {
@@ -889,11 +871,11 @@ impl OpcodeDecoder for Token {
             // call pq
             let call = dbg!(&OPCODE_PREFIX[0xcd]);
             assert_eq!(call.nb_additional_opcode_bytes, 2);
-            assert_eq!(call.read_from_pins, false);
+            assert!(!call.read_from_pins);
             assert_eq!(call.read_address, AddressSource::None);
             assert_eq!(call.nb_bytes_to_read, 0);
             assert_eq!(call.flag_test, None);
-            assert_eq!(call.expect_read(), false);
+            assert!(!call.expect_read());
             assert_eq!(
                 call.write_address,
                 AddressSource::Stack(StackDelta::MinusTwo)
@@ -1098,7 +1080,7 @@ impl OpcodeDecoder for Token {
                 0 // ed is the already additional
             );
             assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).nb_bytes_to_write, 1);
-            assert_eq!(dbg!(&OPCODE_PREFIX_ED[0x79]).write_to_pins, true);
+            assert!(dbg!(&OPCODE_PREFIX_ED[0x79]).write_to_pins);
             assert_eq!(
                 dbg!(&OPCODE_PREFIX_ED[0x79]).write_address,
                 AddressSource::Register16(Reg16::Bc)
@@ -1126,8 +1108,8 @@ impl OpcodeDecoder for Token {
             assert_eq!(desc.nb_additional_opcode_bytes, 0);
             assert_eq!(desc.read_address, AddressSource::Register16(Reg16::Hl));
             assert_eq!(desc.write_address, AddressSource::Register16(Reg16::Bc));
-            assert_eq!(desc.write_to_pins, true);
-            assert_eq!(desc.read_from_pins, false);
+            assert!(desc.write_to_pins);
+            assert!(!desc.read_from_pins);
             assert_eq!(
                 desc.write_data,
                 DataSource::Pins // we assume data are already on the pins because they have been read one cycle before
@@ -1149,7 +1131,7 @@ impl OpcodeDecoder for Token {
         #[test]
         fn lookup_check_rlc_indexed() {
             // Here we have a difficulty because 06 is obtained AFTER having read the two bytes... so extra should be viewed as 0
-            let rlc = dbg!(&OPCODE_PREFIX_DDCB[06]);
+            let rlc = dbg!(&OPCODE_PREFIX_DDCB[6]);
             assert_eq!(
                 2,
                 rlc.nb_additional_opcode_bytes

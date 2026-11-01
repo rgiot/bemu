@@ -1,8 +1,8 @@
-///! Keyboard matrix / PSG wiring tests: drives the real port A (&F4xx) and
-///! port C (&F6xx) PPI addresses with real Z80 `OUT`/`IN` instructions,
-///! reproducing the exact bus sequence CPC firmware uses to read a
-///! keyboard row through PSG register 14 (see src/psg.rs and
-///! src/keyboard.rs).
+//! Keyboard matrix / PSG wiring tests: drives the real port A (&F4xx) and
+//! port C (&F6xx) PPI addresses with real Z80 `OUT`/`IN` instructions,
+//! reproducing the exact bus sequence CPC firmware uses to read a
+//! keyboard row through PSG register 14 (see src/psg.rs and
+//! src/keyboard.rs).
 
 use amsrust::keyboard::CpcKey;
 use amsrust::motherboard::MotherboardBuilder;

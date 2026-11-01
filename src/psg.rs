@@ -229,6 +229,7 @@ impl AudioOutput {
         // completes the sample, the rest starts the next one.
         let overflow = self.phase - PSG_CLOCK_HZ;
         let inside = (rate - overflow) as f64;
+        #[allow(clippy::needless_range_loop)] // the channel indexes four arrays
         for channel in 0..self.config.nb_channels() {
             let sum = self.sums[channel] + frame[channel] * inside;
             let mut sample = sum / PSG_CLOCK_HZ as f64;

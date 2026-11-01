@@ -34,6 +34,6 @@ fn main() {
     eprintln!("PC={pc:04X}");
     eprintln!("disassembly from {:04X}:", pc.saturating_sub(16));
     for insn in mb.disassemble_instructions_from(pc.saturating_sub(16), 20) {
-        eprintln!("{}", insn.to_string());
+        eprintln!("{}", insn);
     }
 }

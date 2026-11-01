@@ -23,7 +23,7 @@ const fn szxy(result: u8) -> u8 {
 
 #[inline]
 const fn parity(value: u8) -> u8 {
-    if value.count_ones() % 2 == 0 { PV } else { 0 }
+    if value.count_ones().is_multiple_of(2) { PV } else { 0 }
 }
 
 /// Flags of the logical operation `result` (AND sets H, OR/XOR clear it).

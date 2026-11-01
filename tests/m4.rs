@@ -1,4 +1,4 @@
-#![cfg(all(feature = "m4"))]
+#![cfg(feature = "m4")]
 //! The M4 board on the expansion port, driven by Z80 code: its ROM in slot 6 through ROMDIS,
 //! a command through &FE00/&FC00, the response read from its ROM.
 

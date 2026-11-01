@@ -190,7 +190,7 @@ pub struct BusTiming {
 impl BusTiming {
     /// The microseconds it takes on a CPC (the next instruction is aligned again).
     pub fn microseconds(&self) -> u32 {
-        (self.t_states + 3) / 4
+        self.t_states.div_ceil(4)
     }
 }
 

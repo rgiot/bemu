@@ -76,6 +76,16 @@ cpclib-xfer = {path = "../rust.cpcdemotools/cpclib-xfer/"}
 cpclib-xfertool = {path = "../rust.cpcdemotools/cpclib-xfertool/"}
 cpclib-z80emu = {path = "../rust.cpcdemotools/cpclib-z80emu/"}
 
+[profile.test]
+# The tests run the emulator for whole frames, seconds of a CPC: unoptimised they took half an
+# hour. Line tables only keep the backtraces' lines, without the size of full debug info.
+opt-level = 1
+debug = "line-tables-only"
+
+# The dependencies without debug info: with it, each test and example binary is far bigger.
+[profile.test.package."*"]
+debug = false
+
 [profile.release]
 # The whole program optimised together: about 50% faster emulation than the default
 # (crates optimised apart), for a longer build.

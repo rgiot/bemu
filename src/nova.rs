@@ -185,7 +185,7 @@ fn host_seconds() -> i64 {
 }
 
 fn bcd(value: u8) -> u8 {
-    (value / 10) << 4 | value % 10
+    ((value / 10) << 4) | (value % 10)
 }
 
 fn from_bcd(value: u8) -> i64 {

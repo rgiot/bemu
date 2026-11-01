@@ -7,6 +7,9 @@ use super::CrtcPin;
 use crate::bits::*;
 use crate::chip::PinsBuffer;
 
+/// A register write in the CRTC's log: (C0, C4, C9, register, value).
+pub type RegisterWrite = (u8, u8, u8, u8, u8);
+
 #[derive(Debug)]
 pub struct Core {
     pub(super) pins: PinsBuffer,
@@ -101,8 +104,8 @@ pub struct Core {
     /// (C0=0); the very first line of a frame is special-cased per chip.
     pub(super) crtc_vma_prime: u16,
 
-    /// Diagnostics: every register write as (C0, C4, C9, register, value).
-    pub(super) write_log: Option<Vec<(u8, u8, u8, u8, u8)>>,
+    /// Diagnostics: every register write.
+    pub(super) write_log: Option<Vec<RegisterWrite>>,
     /// State of the noise source behind the floating values some chips
     /// return (xorshift32: reproducible, unlike an OS random number).
     pub(super) noise: u32,

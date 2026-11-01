@@ -1,5 +1,14 @@
 use amsrust::{chip::{Activable, Chip, ReadDataChip}, crtc::CrtcPin, debug::Monitor, ga::GateArrayPin, motherboard::MotherboardBuilder, ppi::{Ppi, PpiPin}};
 
+/// A CPC whose RAM holds only NOPs, the ROMs off: the RAM powers up as #00/#FF blocks, whose
+/// RST &38s would loop at &0038 (&FF) and finish over a PC the test sets.
+fn nop_machine() -> amsrust::motherboard::Motherboard {
+	let mut motherboard = MotherboardBuilder::default().disable_lower_rom().disable_upper_rom().build();
+	motherboard.write_buffer(0x0000, &[0; 0x8000]);
+	motherboard.write_buffer(0x8000, &[0; 0x8000]);
+	motherboard
+}
+
 /// CRTC module is supposed to generate properly the vsync
 /// This file aims at testing all the wirings related to CRTC signal
 
@@ -7,10 +16,7 @@ use amsrust::{chip::{Activable, Chip, ReadDataChip}, crtc::CrtcPin, debug::Monit
 #[test]
 fn test_crtc_vsync_distribution() {
 	// build a CPC that only execute NOP
-	let mut motherboard = MotherboardBuilder::default()
-												.disable_lower_rom()
-												.disable_upper_rom()	
-												.build();
+	let mut motherboard = nop_machine();
 
 
 	while !motherboard.crtc().vsync() {
@@ -34,10 +40,7 @@ fn test_crtc_vsync_distribution() {
 /// the CRTC's VSYNC and ends at the end of the 6th, while the CRTC's VSYNC (16 lines) goes on.
 #[test]
 fn test_ga_vsync_generation() {
-	let mut motherboard = MotherboardBuilder::default()
-		.disable_lower_rom()
-		.disable_upper_rom()
-		.build();
+	let mut motherboard = nop_machine();
 
 	while !motherboard.crtc().vsync() {
 		motherboard.tick();
@@ -69,10 +72,7 @@ fn test_ga_vsync_generation() {
 #[test]
 fn test_ppi_vsync_test() {
 	// build a CPC that only execute NOP
-	let mut motherboard = MotherboardBuilder::default()
-												.disable_lower_rom()
-												.disable_upper_rom()	
-												.build();
+	let mut motherboard = nop_machine();
 
 
 	while !motherboard.crtc().vsync() {
@@ -109,10 +109,7 @@ fn check_vsync_from_ppi(ppi: &mut Ppi) -> bool {
 
 #[test]
 fn test_ppi_vsync_timing() {
-	let mut motherboard = MotherboardBuilder::default()
-												.disable_lower_rom()
-												.disable_upper_rom()	
-												.build();	
+	let mut motherboard = nop_machine();	
 
 	while !check_vsync_from_ppi(motherboard.ppi_mut()) {
 		motherboard.tick();
@@ -141,10 +138,7 @@ fn test_ppi_vsync_timing() {
 
 #[test]
 fn test_z80_vsync_activated() {
-	let mut motherboard = MotherboardBuilder::default()
-	.disable_lower_rom()
-	.disable_upper_rom()	
-	.build();	
+	let mut motherboard = nop_machine();	
 
 	// Wait new vsync
 	while !check_vsync_from_ppi(motherboard.ppi_mut()) {
@@ -167,11 +161,12 @@ fn test_z80_vsync_activated() {
 	done:
 		rra
 	"));
+	// on an instruction's boundary, or the one in flight finishes over the PC set
+	motherboard.tick_until_next_instruction();
 	motherboard.set_pc(0x4000);
 	motherboard.set_sp(0x4000);
 	motherboard.write_buffer(0x4000, prog);
 
-	motherboard.tick_until_next_instruction();
 	while motherboard.pc() != 0x4000 + (2+2) {
 		Monitor::monitor(&motherboard);
 		motherboard.execute_next_opcode();
@@ -187,9 +182,8 @@ fn test_z80_vsync_activated() {
 
 
 	motherboard.execute_next_opcode();
-	assert_eq!(
-		motherboard.cpu().flag(amsrust::z80::Z80Flags::C),
-		true
+	assert!(
+		motherboard.cpu().flag(amsrust::z80::Z80Flags::C)
 	);
 
 
@@ -199,6 +193,7 @@ fn test_z80_vsync_activated() {
 	}
 
 	// redo the vsync test
+	motherboard.tick_until_next_instruction();
 	motherboard.set_pc(0x4000);
 	while motherboard.pc() != 0x4000 + (2+2) {
 		Monitor::monitor(&motherboard);
@@ -217,10 +212,7 @@ fn test_z80_vsync_activated() {
 
 #[test]
 fn test_z80_vsync_full_frame() {
-	let mut motherboard = MotherboardBuilder::default()
-	.disable_lower_rom()
-	.disable_upper_rom()	
-	.build();	
+	let mut motherboard = nop_machine();	
 
 	// Wait new vsync
 	while !check_vsync_from_ppi(motherboard.ppi_mut()) {
@@ -275,9 +267,10 @@ fn test_z80_vsync_full_frame() {
 		0x4000 + (2+2+1+2) 
 	);
 
-	// assume one frame as elapsed
-	assert_eq!(
-		nb_ticks,
-		19968*16
+	// one frame has elapsed, as the Z80 sees it: its loop (IN, RRA, JR NC: 8 us) reads the
+	// VSYNC up to a pass late, then ends its RRA and JR
+	assert!(
+		(19968*16..=(19968 + 8 + 4)*16).contains(&nb_ticks),
+		"{nb_ticks} ticks, a frame is {}", 19968*16
 	);
 }

@@ -72,13 +72,13 @@ fn main() {
             eprintln!();
             eprintln!("\ndisassembly leading up to it ({:04X}-{:04X}):", last_pc.saturating_sub(32), last_pc);
             for insn in mb.disassemble_instructions_from(last_pc.saturating_sub(32), 20) {
-                eprintln!("{}", insn.to_string());
+                eprintln!("{}", insn);
             }
             break;
         }
         last_pc = pc;
 
-        if steps % 10_000_000 == 0 {
+        if steps.is_multiple_of(10_000_000) {
             eprintln!("[step {steps}] PC={pc:04X}");
         }
         if steps >= MAX_STEPS {

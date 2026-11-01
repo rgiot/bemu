@@ -58,7 +58,7 @@ fn main() {
             print_state(mb);
             eprintln!("\ndisassembly leading up to it ({:04X}-{:04X}):", last_pc.saturating_sub(32), last_pc);
             for insn in mb.disassemble_instructions_from(last_pc.saturating_sub(32), 20) {
-                eprintln!("{}", insn.to_string());
+                eprintln!("{}", insn);
             }
             break;
         }
@@ -76,10 +76,10 @@ fn main() {
 
         last_pc = pc;
 
-        if steps % PRINT_EVERY == 0 {
+        if steps.is_multiple_of(PRINT_EVERY) {
             eprintln!("[step {steps}] PC={pc:04X}");
         }
-        if steps % SHOT_EVERY == 0 {
+        if steps.is_multiple_of(SHOT_EVERY) {
             let name = format!("step_{steps:010}");
             if let Err(e) = runner.run_text(&format!("screenshot_name '{name}'\nscreenshot\n"), ".") {
                 eprintln!("(screenshot at step {steps} failed: {e})");

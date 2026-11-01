@@ -53,7 +53,7 @@ impl Monitor {
         Monitor::monitor_crtc_pins(motherboard.crtc());
 
         print!("next:\t");
-        Monitor::monitor_next_instruction(&motherboard)
+        Monitor::monitor_next_instruction(motherboard)
     }
 
     pub fn monitor_crtc(crtc: &Crtc) {
@@ -227,7 +227,7 @@ impl Monitor {
     }
 
     pub fn monitor_next_instruction(motherboard: &Motherboard) {
-        println!("{}", motherboard.disassemble_next_instruction().to_string());
+        println!("{}", motherboard.disassemble_next_instruction());
     }
 
 
@@ -295,6 +295,10 @@ impl Monitor {
     }
 }
 
+/// A handler run before each instruction: true stops the emulation.
+type PreExec<'f> = Box<&'f mut dyn Fn(&mut Motherboard) -> bool>;
+
+#[derive(Default)]
 pub struct MonitorContext<'f> {
     /// The list of breakpoints to test at each instruction
     breakpoints: Vec<BreakPoint>,
@@ -303,22 +307,12 @@ pub struct MonitorContext<'f> {
 
     /// A dedicated code to handle BEFORE the execution of an instruction.
     /// The handler takes as input the motherboard and returns true if emulation need to be stopped
-    pre_exec: Option<Box<&'f mut dyn Fn(&mut Motherboard) -> bool>>,
+    pre_exec: Option<PreExec<'f>>,
 
     /// Names of addresses, for the commands and the disassembly.
     symbols: crate::symbols::SymbolTable,
 }
 
-impl<'f> Default for MonitorContext<'f> {
-    fn default() -> Self {
-        MonitorContext {
-            breakpoints: Default::default(),
-            displays: Default::default(),
-            pre_exec: None,
-            symbols: Default::default()
-        }
-    }
-}
 
 impl<'f> MonitorContext<'f> {
     pub fn new(handle: Box<&'f mut dyn Fn(&mut Motherboard) -> bool>) -> Self {
@@ -352,7 +346,7 @@ impl<'f> MonitorContext<'f> {
     fn describe_breakpoint(&self, breakpoint: &BreakPoint) -> String {
         match breakpoint {
             BreakPoint::Address(address) => match self.symbols.describe(*address) {
-                Some(label) => format!("{} ({label})", breakpoint.to_string()),
+                Some(label) => format!("{} ({label})", breakpoint),
                 None => breakpoint.to_string()
             }
         }
@@ -463,9 +457,7 @@ impl<'f> MonitorContext<'f> {
     /// Check if one breakpoint is fired
     pub fn has_some_breakpoint_fired(&self, motherboard: &mut Motherboard) -> Option<&BreakPoint> {
         self.breakpoints
-            .iter()
-            .filter(|b| b.is_fired(motherboard))
-            .next()
+            .iter().find(|b| b.is_fired(motherboard))
     }
 
     pub fn execute_info(&self, motherboard: &Motherboard, info: & InfoKind) {
@@ -532,9 +524,9 @@ pub struct DisassembledInstruction {
     pub memory: SmallVec<[u8; 4]>,
 }
 
-impl ToString for DisassembledInstruction {
-    fn to_string(&self) -> String {
-        format!("0x{:04x} {:<16} {:02x?}", self.address, self.token.to_string(), self.memory)
+impl std::fmt::Display for DisassembledInstruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "0x{:04x} {:<16} {:02x?}", self.address, self.token.to_string(), self.memory)
     }
 }
 
@@ -542,6 +534,10 @@ impl DisassembledInstruction {
     /// Number of bytes of the current instruction
     pub fn len(&self) -> usize {
         self.memory.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.memory.is_empty()
     }
 
     /// The address the instruction names: a relative jump's target, or a 16-bit operand
