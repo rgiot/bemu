@@ -1,0 +1,233 @@
+<html><head><title>I/O Ghosting</title></head><body>
+<h1>I/O on the CPC: electronic considerations</h1>
+
+<i>This document was written by <a href="mailto:Pierre.Guerrier@masi.ibp.fr">Pierre Guerrier</a>. Thankyou Pierre.
+<br>
+<br>
+Please send any comments or corrections to him. Document HTMLised by <a href="../../contact.htm">K.E.W.Thacker</a></i>
+<br>
+<br>
+<hr>
+<a href="14.gif">Block Diagram of PIO/PSG interface</a><br><br>
+
+The Z80 CPU uses a shared address bus for its memory and its peripherals. To distinguish between the two, it has MEMRQ and IORQ pins. When IORQ is low, the logic gates on the CPC board will deactivate memory. When MEMRQ is low, they will desactivate the p
+eripheral chips (these gates each take the proper RQ line and one address line and feed the /CS pin of peripherals).
+<br>
+<br>
+The individual selection of the peripheral chips is then made by separately setting their /CS with the upper lines of the address bus: theory says you should use strict unary logic (only one of the lines is 0 - only one of the chips has the "token" to emi
+t on the data bus). But no logic cop on the board will check what you do. So it is possible that you activate several chips at once by having more than one /CS low.
+<br>
+<br>
+When only one of those chips on the bus in output mode (including the CPU, the direction of which is controlled by the I/O instruction: IN or OUT) that's OK, you can use that to load data into several chips at once: this is ghosting.
+<br>
+<br>
+See this document by <a href="mailto:mrison@acorn.co.uk">Mark 
+Rison</a> about <a 
+href="../Hardware/ioportd.htm">ghosted port 
+addresses</a>. <br>
+<br>
+When two or more chips are in output mode, there will be a collision on the data lines: pray that all chips have intensity limiters...
+<br>
+<br>
+If no chip is in output mode, the data lines will be left "on the air" catching random interferences: the chips that are taking them as input will at best read 0, at worst read a garbage undetermined value.
+<br>
+<br>
+A summary of the wiring is given below (it is inverted logic):
+<br>
+<table border>
+<tr>
+<td><b>Address Bus</b></td>
+<td><b>CRTC</b></td>
+<td><b>PIO</b></td>
+<td><b>FDC</b></td>
+<td><b>Others</b></td>
+</tr>
+<tr>
+<td>A15</td>
+<td></td>
+<td></td>
+<td></td>
+<td>VGA - /CS</td>
+</tr>
+<tr>
+<td>A14</td>
+<td>/CS pin</td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>A13</td>
+<td></td>
+<td></td>
+<td></td>
+<td>ROM register</td>
+</tr>
+<tr>
+<td>A12</td>
+<td></td>
+<td></td>
+<td></td>
+<td>PRN register</td>
+</tr>
+<td>A11</td>
+<td></td>
+<td>/CS pin</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>A10</td>
+<td></td>
+<td></td>
+<td></td>
+<td>Echo A5-7 to Expansions</td>
+</tr>
+<td>A9</td>
+<td>Read - /Write</td>
+<td>Port binary #:</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>A8</td>
+<td>SR pin</td>
+<td>A,B,C, control...</td>
+<td>Motor Bit = !(A8 or A7)</td>
+<td></td>
+</tr>
+<tr>
+<td>A7</td>
+<td></td>
+<td></td>
+<td>/CS =A8 &!A7</td>
+<td></td>
+</tr>
+<tr>
+<td>A6</td>
+<td></td>
+<td></td>
+<td></td>
+<td>Reserved ?</td>
+</tr>
+<tr>
+<td>A5</td>
+<td></td>
+<td></td>
+<td></td>
+<td>Serial Port</td>
+</tr>
+<tr>
+<td>A4</td>
+<td></td>
+<td></td>
+<td></td>
+<td>unused</td>
+</tr>
+<td>A3</td>
+<td></td>
+<td></td>
+<td></td>
+<td>unused</td>
+</tr>
+<tr>
+<td>A2</td>
+<td></td>
+<td></td>
+<td></td>
+<td>unused</td>
+</tr>
+<tr>
+<td>A1</td>
+<td></td>
+<td></td>
+<td></td>
+<td>unused</td>
+</tr>
+<tr>
+<td>A0</td>
+<td></td>
+<td></td>
+<td>Register select</td>
+<td></td>
+</tr>
+</table>
+<h2>CRTC note</h2>
+
+There is a problem with the CRTC. Amstrad designed the CPC board with the constraint that this video chip is dedicated to the MC680x line of microprocessors. Such chips have one line to enable them, and one to select direction. So the direction could not 
+be set directly by the Z80 (which has two separate lines /R and /W - i808x convention). This is why they separated the port addresses for reads and writes, and used A9 for direction: it is the only chip in the CPC with different R/W addresses, because it 
+is an island of Motorola in a sea of INTeL.
+<br>
+<br>
+First consequence: it is possible to use a read address with an OUT intruction and get a bus clash.
+<br>
+<br>
+Second consequence: some manufacturers (UMC - type 1) wanted to make a hybrid chip, with 6845 functionnality but easily matchable with the INTeL world. They replaced the /CS and R/W pins with /R and /W. Unfortunately, despite the good intention, this ruin
+ed the Amstrad trick and registers could not be read back anymore with those CRTCs (type 1).
+<br>
+<br>
+(Think it over and you will see that to avoid bus clashes and keep at least writing possible without adding logic on the board, Amstrad's solution was to re-route the formerly /CS line to /W, and set the new /R to +5V. This way, the CRTC sees all accesses
+ like writes, so if you do a IN, it will load a register with garbage, or 0 at best, and you will read that same garbage)
+<pre>
+680x truth table (/CS, R/W)
+00 write
+01 read
+10 high impedance
+11 high impedance
+
+808x truth table (/R, /W)
+00 read (and rewrite the same thing)
+01 read
+10 write: has to match 00 of previous table
+11 high impedance: has to match 10 and 11 of previous table
+</pre>
+
+<h2>PIO note</h2> 
+
+The PIO ports A,B,C correspond to 24 pins that are not on the shared data bus. Using the control port, you can change the direction of these pins, but this has nothing to do with the main data bus. The direction of the main data bus pins of the PIO is aut
+omatically controlled by the instructions issued by the CPU.
+<br>
+<br>
+The direction of the other 3 buses depends on the mode you set in the control register. Only in BASIC I/O mode you can be sure of what's happening: registers sample/emit continuously on their bus. With the strobed mode, the PIO will use some bits of port 
+C as strobes (like for the printer port) to emit/sample at discrete intervals on the buses.
+<br>
+<br>
+In bidirectionnal mode, other bits of C are used to have the directions of ports A and B changed by the outside world without asking your opinion !! As C is already hardwired to a lot of things in the CPC, if you try to use these modes you will end up wit
+h garbage in the A/B registers and/or buses.
+<br>
+<br>
+PIO port A is hardwired to the PSG, and the directions of pins should always be consistent between those two chips.
+<br>
+<br>
+PIO port B is hardwired to a set of jumper, and to pins of the printer, cassette, video and expansion connectors. So it should always be left in input mode (to PIO).
+PIO port C is hard wired to the PSG control lines, the keyboard, and the tape connector. Putting it in input mode (to PIO) is meaningless.
+<br>
+<br>
+<h2>PSG note</h2>
+
+The PSG has three control lines and two separate bidirectionnal data buses, of which none is connected to the main (CPU) data bus. One is hard wired to register A of the PIO (so it is often called the "A port" of the PSG, but this is electronically wrong)
+, and its direction is set by control lines hard wired to register C. It is used to read/write PSG registers. (actually only two control lines are wired: BC1 and BDIR, BC2 is unneeded and set to +5V constantly)
+<br>
+<br>
+Because PIO buses are buffered by the register that stands behind, things you program to the PSG will last indefinitely after an OUT instruction unless you take precautions.
+<br>
+<br>
+The other data bus of the PSG is connected to the keyboard matrix, its direction is set with PSG register 7 and its value corresponds to the register 14 of the PSG. Putting it in output mode (from PSG) would mean feeding bits into the keyboard matrix, whi
+ch is useless unless you want to back the matrix in that way.
+<br>
+<br>
+(Never tried, but theory says it's possible: you would have to put PIO register C in input, losing control of the other PSG bus, and you could only know if a key has been pressed in a row by testing it individually, using unary logic in PSG register 14)
+<br>
+<br>
+<h2>Devices that may output data on the bus</h2>
+<ul>
+<li>CRTC (not all of them) when A9 is 1,
+<li>PIO when CPU performs IN,
+<li>FDC in some phases if IN performed,
+<li>CPU itself with OUT instructions.
+</ul>
+
+All other devices (Gate Array, 8 bit registers for printer port and ROM selection, Drive Motor bit register) can only read the bus. The PIO and FDC are INTeL products (or clones by NEC, Toshiba, Zilog...) and have the same I/O convention as the Z80 (itsel
+f an INTeL 8080 "enhanced" clone). So the direction of these chips is set by the I/O instruction used and they cannot clash with the CPU.
+</body>
+</html>

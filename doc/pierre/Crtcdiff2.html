@@ -1,0 +1,73 @@
+<html><head><title>Known CRTC types and Differences</title></head><body>
+<h1>Known CRTC types and differences</h1>
+<menu>
+<li>HD6845 (Hitachi Limited - Japan) - Type 0
+<li>UM6845 (United MicroCircuits Corporation - Taiwan) - Type 1a (idem type 0)
+								and Type 1b (see notes)
+<li>MC6845 (Motorola Semiconductors - USA) - Type 2
+<li>ASIC GA in CPC+ (Amstrad - UK) - type 3 - said to emulate CRTC type 2,
+				(but certainly not perfectly)
+<li>HD6845 S (Hitachi Limited - Japan) - Type 4
+</menu>
+
+<h2>Register readback bug</h2>
+Type 1b cannot readback any of its registers on the CPC. So it cannot use a lightpen.
+
+<h2>Vsync programmation bug</h2>
+
+CRTCs type 1b and 2 cannot program the duration of the Vsync: it is always 16 scans. This is used in CRTC detection codes. I don't know about CRTC 3, but as the firmware expects Vsync to be programmable (and sets it to 8 scans for types 0,1a,4), it would be more logical if Amstrad made the Vsync programmable in its own chip.
+
+<h2>Hsync bug</h2>
+The CRTC 2 has a bug that imposes the arithmetic condition R0>R2+R3(lower half). It stops generating Vsyncs if R2=50, with the standard Hsync width. This is used in CRTC detection codes.
+<br>
+<br>
+If zero is programmed into register 3 for the Horizontal Sync, then no
+Horizontal syncs are generated.
+
+<h2>Hdisp bug</h2>
+It seems that some CRTCs have a fabrication fault that shows up when R1 is programmed with a value greater than 48 (top 2 bits armed). To me, this is obviously a mask defect and has probably been quickly corrected in the next mask revision. So only some CRTCs in the concerned type (which one ? perhaps Motorola's, which has had a major mask revision) may have this bug.
+
+<h2>Status register, readable registers</h2>
+Type 4 and others have some extra features that allow more registers than only cursor/lightpen addresses to be read back. This is used in CRTC detection codes. Also they store readable information in the 3 upper bits of its pointer (status) register:
+<li>b7: CRTC self check ??
+<li>b6: Lightpen sensing flip flop (tells if the lightpen address has beeen updated since last polling ?)
+<li>b5: Vsync pin state (redundant with the PIO on the CPC)
+
+<h2>R8 features, the major differences</h2>
+
+Type 0,1a (and 4 ?) have an extra feature in R8, which seems to be the basis for the "register 8 border technique". These CRTCs use bits 4 and 5 of R8 for character delay: that is, to account for the fact, that in a typical low-cost system, the memory fetches (RAM and then font ROM) would be slow and would make the raster out of sync with "Display Enable" (DE, the frame, or border) which is wired directly to the color generator.
+<br>
+<br>
+So they implemented a programmable DE delay (the "Skew") which is to be set a the duration of the raster fetch (counted in CRTC clock cycles, or mode 1 characters). The same thing is done for the "Cursor" line, because it is also shorter than the raster data-path.
+<br>
+<br>
+To implement this, you can by-pass or enable couple of registers on the concerned lines. Because these registers probably get reset when they're bypassed, if you reenable them while DE is true, it will take them as many characters as the DE delay, before they echo "true": you get a bit of border color in the middle of the screen !
+<br>
+<br>
+Of course, when the delay is elapsed, the raster comes back, but you could repeatedly turn the delay on and off.
+<br>
+<br>
+The other big difference with register 8 is interlace: although it is controlled identically by the two lower bits on all CRTCs, the arithmetic conditions on other registers for Interlace modes seem to vary greatly. This may be the ultimate reason why we do not have any true-interlace demo on the CPC: the code and the screen layout must be changed for every type, making it hard to debug, and the feature appeared unreliable.
+
+<h2>Summary</h2>
+
+To summarize, here is a comparison sheet taken from the UM6845x specs:
+
+CRTCs
+UM6845R
+MC6845
+MC6845R
+HD6845R
+UM6845
+HD6845S
+MC6845 revised mask
+Type number
+1b and 2
+used in CPC ?
+1a and 0
+presumably 4
+R3 Sync
+Width
+H only
+H only
+H+VH+VR12-13 baseW onlyR/WR/WR/WStatusUM onlyHD only ?HD only ?-R0 Htotal-Even parityEven parity-R8 - bits 0-1Interlaceidem.......   bits 2-3Unused.........   bits 4-5--DE SkewDE Skew   bits 6-7--Cursor SkewCursor SkewFor Interlacemodes only:R6 VdispDirect valueValue/2Direct ValueDirect ValueR9 Scans-Even parity--R10-11 Curs-Same parities--

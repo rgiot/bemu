@@ -1,0 +1,5 @@
+16MHz : oscillateur a 16MHz
+CPUn : signal servant a différencier les acces mémoire CPU / GA, sert aussi de clock pour l'AY
+CCLK : clock du CRTC, sert aussi de LSB pour l'adresse mémoire fetché par le GA. Le CRTC fonctionne sur front descendant. Sur le 40010, l'etat haut est plus court d'un cycle de 16MHz (en rouge)
+4MHz : clock du Z80
+WAITn : = READY du GA

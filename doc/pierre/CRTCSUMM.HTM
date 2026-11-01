@@ -1,0 +1,1163 @@
+<html><head><title>CRTC summary</title></head><body>
+
+<h1>The MC 6845 (CRTC 2)</h1>
+
+<i>This document was written by <a href="mailto:Pierre.Guerrier@masi.ibp.fr">Pierre Guerrier</a>. Thankyou Pierre.
+<br>
+<br>
+Please send any comments or corrections to him. Document HTMLised by <a href="../../contact.htm">K.E.W.Thacker</a></i>
+<br>
+<br>
+<hr>
+
+
+<h2>Physical Layout</h2>
+<pre>
+            _________    _________
+          _|         \__/         |_
+     Gnd |_|1                   40|_| VS --&gt;
+     ___  _|                      |_
+ --&gt; RST |_|2                   39|_| HS --&gt;
+          _|                      |_
+--&gt; LPen |_|3                   38|_| RA0 --&gt;
+          _|                      |_
+ &lt;-- MA0 |_|4                   37|_| RA1 --&gt;
+          _|                      |_
+ &lt;-- MA1 |_|5                   36|_| RA2 --&gt;
+          _|                      |_
+ &lt;-- MA2 |_|6                   35|_| RA3 --&gt;
+          _|                      |_
+ &lt;-- MA3 |_|7                   34|_| RA4 --&gt;
+          _|                      |_
+ &lt;-- MA4 |_|8                   33|_| DO &lt;--&gt;
+          _|                      |_
+ &lt;-- MA5 |_|9                   32|_| D1 &lt;--&gt;
+          _|          MC          |_
+ &lt;-- MA6 |_|10       6845       31|_| D2 &lt;--&gt;
+          _|                      |_
+ &lt;-- MA7 |_|11                  30|_| D3 &lt;--&gt;
+          _|                      |_
+ &lt;-- MA8 |_|12                  29|_| D4 &lt;--&gt;
+          _|                      |_
+ &lt;-- MA9 |_|13                  28|_| D5 &lt;--&gt;
+          _|                      |_
+&lt;-- MA10 |_|14                  27|_| D6 &lt;--&gt;
+          _|                      |_
+&lt;-- MA11 |_|15                  26|_| D7 &lt;--&gt;
+          _|                      |_  __
+&lt;-- MA12 |_|16                  25|_| CS &lt;--
+          _|                      |_
+&lt;-- MA13 |_|17                  24|_| RS &lt;--
+          _|                      |_
+  &lt;-- DE |_|18                  23|_| E &lt;--
+          _|                      |_    _
+&lt;-- CURS |_|19                  22|_| R/W &lt;--
+          _|                      |_
+ --&gt; +5V |_|20                  21|_| CLK &lt;--
+           |______________________|
+</pre>
+Amstrad has used several sources of Cathode Ray Tube Controller in the CPC:
+<ul>
+<li>HD6845 (Hitachi Limited - Japan) - Type 0
+<li>UM6845 (United MicroCircuits Corporation - Taiwan) - Type 1
+				(but some have partly Type 0 behaviour)
+<li>MC6845 (Motorola Semiconductors - USA) - Type 2
+<li>ASIC GA in CPC+ (Amstrad - UK) - said to emulate CRTC type 2,
+				(but certainly not perfectly)
+</ul>
+They are all meant to match the same specs, however there are some slight differences between them. I will discuss more on type 2, because it is the one I have the more info about.
+<br>
+<br>
+The 6845 is a CRTC designed to use ASCII encoded text screens (and not simply rasters). So it provides extra logic and address lines to look up bit patterns "on the fly" in a "font" ROM. It also provides logic for an external cursor generator (neither wir
+ed on the CPC). Eventually, it can also capture its current address when triggered from a light pen. Paradoxically this doesn't work with CRTCs which have the INTeL 80xx pin convention, and not the 68xx convention, thus forbiding you to read back register
+s.
+<br>
+<br>
+<a href="ioghost.htm">(See this about I/O wirings in the CPC)</a>
+<br>
+<br>
+The CRTC generates the Sync signals, and a "display enable" signal to tell it is supplying valid screen address (not in border - also called DISPTMG). It takes a Chip Select signal to activate communications with its register file, a RS signal to select b
+etween pointer and pointed register (these signals are actually in the I/O port addresses you provide: bits 14, 9 and 8 for direction) and eventually an "Enable" signal used to isolate the address bus (provided by the Gate Array to interleave memory acces
+ses between CPU and CRTC, see this document).
+<br>
+<br>
+The CRTC of course needs a clock: an 1-Mhz character clock delivered by the Gate Array (for an expected 8 Mhz pixel clock, but actually it's 16 Mhz)
+<br>
+<br>
+Amstrad has made a strange mixture when wiring the CRTC on the CPC board, probably because they really feared the Russians would use the CPC technology against the British Crown if they could understand it: I will try to explain it here, stripping all the
+ unused or unusable features.
+<br>
+<br>
+(They have mixed the address lines meant to be used to look up ASCII codes in the text screen RAM, with those meant to look up bit patterns in the font ROM, this is the cause for all the nasty interleaving of physical vs. memory scanlines in the CPC video
+ architecture)
+<br>
+<br>
+<h2>Warning against potential VDU damages:</h2>
+
+It is important to note that you can put yourself in a critical condition when using the CRTC:
+<br>
+<br>
+The CRTC is responsible for the generation of H and V sync signals. If you arrange it so that it does not generate them, noone else will do it for you.
+<br>
+<br>
+These signals are used to reset high potential capacitances in the VDU (for flybacks). If you don't supply them, the capacitance will be overloaded: the electron beam will disappear on a side of the tube.
+<br>
+<br>
+(actually, you could also overload the capacitance by setting a VDU size much bigger than reality, for instance R0=255)
+<br>
+<br>
+But that's not the great deal: the capacitances will quickly be reset the hard way (sparkle inside). A second of this condition means tens of sparks for the V circuitry, and hundreds for the H one, as the scanning circuits will keep on sending constant in
+tensities in the capacitances.
+<br>
+<br>
+Amstrad VDUs are inexpensive, their components are not "mil spec". So you can guess what happens next... If you see your monitor become absolutely black, or the image jitters irregularly, or rolls very fast, it means that the VDU has no syncs. If it lasts
+, stop the program. If you feel the program running isn't going OK and you can't stop it, pull the plug quickly !
+<br>
+<br>
+There is no danger in overloading the deflection circuits from time to time, and anyway it is unavoidable: when you program a new screen size and position, you will skip one sync pulse if you load the registers at the "right" moment, and every CPC user ha
+s done that thousands of time without special care.
+<br>
+<br>
+Another problem with Syncs is when they are regularly too close to each other: the electron beam will not have time to scan the entire VDU. It will spend more time than usually on the scanned areas (top left), burning the photophors: you will "print" the 
+picture on your screen, forever if you insist ! But you will not destroy it I think.
+<br>
+<br>
+<h2>The Main Loop of the CRTC: Hardware Algorithms</h2>
+
+The Main Loop in the CRTC is its Vertical Control. It centralizes many internal comparison signals of the CRTC and redispatches orders to "Display Enable", to the Address Generators, and to reset some counters. I give a schematic diagram of the Vertical C
+ontrol.
+<br>
+<br>
+The details of the Vertical Control were not given in original datasheets and I had to rack my brain to reverse-engineer it in a way that best matches what I know of CRTC behaviour under "stress" conditions like in a demo. I cannot guarantee that it is ex
+actly done that way in any kind of CRTC, and there are certainly some that differ, as CRTCs differ from each other.
+<br>
+<br>
+<a href="3.gif">See the Vertical Control Schematics here</a><br>
+<a href="2.gif">See the CRTC block diagram here</a><br>
+<a href="7.gif">See the Chronograms here</a><br>
+<a href="#reminder">See the Reminder here</a><br>
+<a href="6.gif">See this to understand how I position the screen on the VDU.</a></br>
+<br>
+<br>
+The CRTC basically keeps counting characters (by dividing the pixel clock by 8) and puts the Sync and DE signals around those characters to frame them on the monitor: Always remember the VDU is CRTC driven, and not the contrary (this is a problem when you
+ are writing an emulator, because you will want your main loop to be VRAM indexed, that is your virtual CRTC is driven by your virtual VDU).
+<br>
+<br>
+There are a number of comparators on the chip, that operate concurrently, and deliver pulses when the condition they monitor is true. These pulses feed other counters, and so forth... It is important to note that things do not operate in sequence as they 
+would in software or in an emulator. However they are synchronized with shared clocks.
+<br>
+<br>
+Eventually, it is possible to see some implementation dependant glitches in harware like in software. Imagine we have 2 inputs A,B and 1 output C. We want to compute in hardware, the following algorithm:
+<br>
+<br>
+<a href="4.gif">curcuit 1</a>
+<br>
+<br>
+We want to send a pulse on C when A and B have strobed in sequence. This can be done by circuit 1 or circuit 2. They should perform identically when the following assumption is respected: A and B never strobe simultaneously, that is within a delay shorter
+ than the clock period of the registers.
+<br>
+<br>
+But it we have A and B at the same time (meaning a naughty user is using the chip beyond specs), the flip flop in circuit 1 will not be toggled, and nothing will be seen on the output (normally the flip flop needs one tick to propagate the reset order, so
+ the AND test will be true for one tick).
+<br>
+<br>
+<a href="5.gif">curcuit 2</a>
+<br>
+<br>
+In circuit 2 however, designers have shielded their chip against twisted cases, with a special handler (the OR gate will yield true if A&B). This kind of difference is easy to see because one circuit is obviously the other one with an added feature. But w
+hen absolutely different approaches are taken...
+<br>
+<br>
+Amstrad has used several kinds of CRTC, provided by different manufacturers, so all CPC do not behave identically because of that kind of things. All those chips have the same specifications, but designers have done different things in those areas where t
+he specs are fuzzy (the areas where demo coders play...).
+<br>
+<br>
+The block diagram given here is a simplified version of the one from Motorola. This diagram is sufficient to understand the normal operation of the CRTC, and some demo techniques (more details are given when discussing the corresponding registers). But it
+ is not the down-to-transistor description needed to predict behaviour in some special cases. This is useless anyway, because this is different in every CRTC type.
+<br>
+<br>
+Notes:
+<ul>
+<li>You can load the registers anytime, but usually the effect will not be immediate, because the registers act when they match counters, which are not always counting, or may be reset, etc... When the action delay is a critical feature of the register, I
+ will explain it in detail, otherwise the chronogram should be enough.
+
+<li>As counters start from zero unless otherwise mentionned, registers must sometime hold desired values decremented by one: this is the case for registers 0, 4 and 9.
+
+<li>I will use the word "screen" in the next pages, meaning the part of the image that corresponds to VRAM data, not border, as opposed to the "retrace" area, and to the "VDU", which includes both. "Screen" will also mean the time on chronograms when vali
+d addresses are generated and "DE" is high.
+</ul>
+
+<a name="reminder">
+<h3>Reminder</h3>
+</a>
+<pre>
+CRTC Data
+
+Expected Pixel Clock: 8 Mhz
+
+CPC Pixel Clock: 16 Mhz (doubled by Gate Array)
+
+Character Clock: 1 Mhz
+
+1 scan line = 64 character clock ticks
+
+1 Character:
+  = 1 address generated by CRTC 
+  = 2 consecutive addresses derived by Gate Array
+  = 2 bytes of video memory
+</pre>
+
+<h3>Default values for CRTC registers in the CPC architecture</h3>
+
+It is interesting to note that the CRTC 2 has hardcoded start-up settings (not the programmed ones below), but they are not given by Motorola !
+
+<br>
+<br>
+<table border>
+<tr>
+<td>Register</td>
+<td></td>
+<td>Europe</td>
+<td>USA</td>
+</tr>
+<tr>
+<td>Number</td>
+<td>Name</td>
+<td>(PAL/SECAM)</td>
+<td>(NTSC)</td>
+</tr>
+<tr>
+<td>0</td>
+<td>Htot</td>
+<td>63 (64-1)</td>
+<td>63</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Hdisp</td>
+<td>40</td>
+<td>40</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Hspos</td>
+<td>46</td>
+<td>46</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Hswidth</td>
+<td>&8E (mixed units)</td>
+<td>&8E (8*16+14)</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Vtot</td>
+<td>38 (39-1)</td>
+<td>31</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Vadj</td>
+<td>0 (scans)</td>
+<td>6</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Vdisp</td>
+<td>25</td>
+<td>25</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Vspos</td>
+<td>30</td>
+<td>27</td>
+</tr>
+<tr>
+<td>8</td>
+<td>I&S</td>
+<td>0 (no unit)</td>
+<td>0</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Max RA</td>
+<td>7 (scans)</td>
+<td>7</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Start hi</td>
+<td>variable</td>
+<td>variable</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Start lo</td>
+<td>variable</td>
+<td>variable</td>
+</tr>
+</table>
+<br>
+<br>
+
+Unit is mode 1 character unless otherwise specified. The difference between USA and Europe arises from the different physical sizes of VDUs, and mains supply frequencies:
+
+<h3>Television Data</h3>
+<pre>
+PAL/SECAM screen : 625/2=312 chroma lines = 0+39*8 scans
+NTSC screen : 525/2=262 chroma lines = 6+32*8 scans
+
+Scan raster frequency = 1 scan in 64 us in both cases, not a coincidence, numbers of lines were chosen for that by the TV industry in the 50's, with the pre-existing constraint of the Mains frequencies:
+	312*50 Hz # 15700 scans/s # 262*60 Hz
+</pre>
+Notes
+<ul>
+<li>You never get 312 chroma lines on your TV, because this number includes the flyback time. Typically, you have only 288 lines, that is a loss of 3 character lines.
+
+<li>This does not necessarily correspond to the length of the Vsync pulse (1 or 2 character lines depending on the CRTC)
+
+<li>The flyback should fall within the CRTC's "retrace" period, which is 14 character lines in Europe.
+
+<li>Horizontally, there are typically only 50 us of display time in a scan, for the same reasons as above.
+
+<li>See also the chronograms.
+</ul>
+
+
+<h3>Some Library cells used in Gate Array programming</h3>
+
+The translation from French to English may be false for some idiomatic expressions. I used a Xilinx FPGA library for WorkView as a guide.
+<pre>
+Multiplexer (MUX)
+A gate with three inputs (two choices and a selector) and one output, which is just one of the two choices depending on the selector.
+
+Register (electronical meaning):
+A gate with one entry, one clock, one output. You have Out(t)=In(t-1).
+
+Register with clock enable (CE):
+Same thing with an AND CE on the clock: it memorizes its input when CE is high. (and keeps supplying it indefinitely)
+
+Generally speaking, a clock enable input on any kind of gate means that this gate can be "frozen" indefinitely when CE is low.
+
+k-bit Register (standard programmer register):
+k gates of the previous kind in parallel.
+
+Arm detector
+A gate with one input and one output (actually one clock too), which sends a pulse each time there is a raising edge on the input.
+
+Flip flop:
+A gate that flips its output every time its input goes high.
+
+Divide by 2k gate:
+k flip-flops chained, will decimate a clock signal.
+
+S/R flip flop
+A variant with 2 inputs: Set (toggle output high) and Reset (guess by yourself !)
+
+k bit Comparator:
+k XOR gates taking their arguments from two sets of k bits, each negated and dumped to the same resistor line, which is negated again: if their is current on the output, the two registers have identical contents.
+
+Half adder:
+A gate with 2 symmetrical inputs A,B and 2 outputs of different weight (Sum and Carry). Sum=A XOR B and Carry= A AND B.
+
+k-bit Counter:
+A k bit register with Half Adders cascaded on its bits: A=Bit i, B=Carry(i-1), and at t+1, Bit i = Sum, B(i+1)=Carry.
+The content is incremented by one every input strobe (the input is fed as the second argument to the first adder), and wraps around (the Carry of the last adder can be used as an overflow strobe).
+
+k-bit Counter with Parameter Enable (PE)
+A variant where the start value is not zero but a k-bit value loaded when PE is high.
+</pre>
+<hr>
+<h2>Register 0: Horizontal Total</h2>
+
+This 8 bit register defines the Hsync period, in unit of character clock. The physical period of the VDU is 64 characters with the 1 Mhz clock used in the CPC. When the horizontal character counter (HC) matches the register, it is cleared and a new scanli
+ne is theoretically in progress, "Display Enable" is armed (provided that the Vertical Control agrees: there is an AND gate for that).
+<br>
+<br>
+The Vertical Control is informed of this condition (H internal signal, reused to count ScanLines for RA generation - see registers 4 and 9).
+<br>
+<br>
+This register may act immediately if you arrange to load it with a value that will be soon taken by HC, or very late if you load a value just previously taken (HC will have to wrap around).
+
+<h2>Register 1: Horizontal Displayed</h2>
+
+This 8 bit register is compared against HC to determine if the desired number of characters have been fetched. When they match, "Display Enable" is disarmed (we're entering the border) and the Vertical Control is informed (Hend internal signal).
+<br>
+<br>
+Like R0, this register takes effect with variable delay (from zero to infinity if it is loaded with a value greater than R0).
+<br>
+<br>
+It seems that on some CRTCs this register will not work properly if loaded with a value greater than 48, or 0x110000 (limiting overscans). I cannot figure out clearly what kind of design could result in that behaviour. May be a fault in the design of a ga
+te tree in the comparator, concerning bits 4 and 5.
+
+<h2>Register 2: Hsync Position</h2>
+
+This 8 bit register is compared against HC to determine when to toggle the Hsync. It should normally be set at value comprised between R1 and R0. The action delay is variable, due to the same reasons as R0 and R1.
+<br>
+<br>
+Note that the Vertical Control is not informed of this condition.
+<br>
+<br>
+If it is smaller than R1, the screen will be "cut". If it is greater than R0, the CRTC will be unable to generate Hsyncs (dangerous condition).
+<br>
+<br>
+Within R1 and R0, the value can be used for moving the screen on the VDU, by character steps. Note that because we are moving the Hsync location relatively to the screen, and not the contrary, the screen will appear to move in a non-intuitive fashion: Lef
+t to Right when R2 is decreased.
+<br>
+<br>
+R0,1,2 are implied in the HSplitting technique.
+
+<h2>Register 3: Horizontal Sync Width</h2>
+
+There is a big problem with that register: Motorola did not use the same specs as other manufacturers. Normally, R3 is an 8 bit register controlling the width of both Syncs (H and V). For Motorola, it is a 4 bit register controlling only Hsync.
+<br>
+<br>
+The lower 4 bits of the register are always compared against a character counter that is started when the Hsync signal goes high. When they match, it's the end of the Hsync strobe.
+<br>
+<br>
+Only for non-Motorola CRTCs, the upper 4 bits are used to set the width of the Vsync pulse, in scanline units. I have never seen any data sheet from these makes, so I don't know what signal will be used to count scans here.
+<br>
+<br>
+Note that:
+<ul>
+<li>The Vsync has a fixed length for CRTC 2, which is 16 scan lines (and not 8 as programmed by the firmware, implicitly using CRTC 0).
+
+<li>The goal of this register is to be compatible with all VDUs, including those with a slow trigger. The default value of &8E= 142 gives a 14 character wide Hsync pulse and a 8 scan wide Vsync pulse (for CRTC 0).
+
+<li>Some monitors are not fully TTL compliant and seem to trigger on the falling edge of the Hsync strobe. For these monitors, you can use register 3 for horizontal scroll. But if it doesn't work, don't blame the CRTC, it's a VDU problem.
+
+<li>There are a number of scan counts held in the CRTC. Designers are given a choice of signals to count scans: H,Hend, and the low edge of the Hsync. Actually, they always use two of them, probably because they wouldn't bother routing a unique line all a
+cross the die and just took what was closest. In the case of type 2 CRTCs from Motorola, one of the two is the low edge of Hsync.
+
+<li>The problem is that if R3[16]+R2 > R0 +1, it comes after the H pulse of the next scan ! The different scan counts held in the Vertical Control become inconsistent with each other, and CRTC 2 runs amok... I don't see any possibility of a new demo techn
+ique in that.
+
+<li>But this has an impact on Overscan and Hsplitting techniques: with R0=63 and R3=14 [16], the maximal value allowed for R2 is 49 on a CRTC 2. The fact
+that CRTC type 2 has a maximal value of 49, means that you can use this
+to distinguish it from other CRTC types.
+
+<li>One very silly thing you can do with Syncs: put 0 into register 3 and there will be no more Syncs. Typical damaging situation.
+
+<li>Another interesting function of Hsync: it is used as a clock in the Gate Array interrupt generator and in the screen mode buffer. So if you put a small non-zero value (1) in R3, and use timing effects on R2 to have a short Hsync pulse in the middle of
+ the screen and a long one at the usual position, you will obtain three things:
+<ul>
+	<li>the VDU should not trigger flyback on the short pulse,
+	<li>the Gate Array could change screen mode in the middle of a scan,
+	<li>the Gate Array would generate INTs every 52/2=26 scans !
+</ul>
+</ul>
+<h2>Register 4: Vertical Total</h2>
+
+This 7 bit register plays a role very similar to that of R0, but for the vertical loop. It is matched with the Vertical Counter VC, which counts character rows: a new character row is started each time the SC counter matches register 9.
+<br>
+<br>
+When enough character rows have been counted by VC, the Vertical Control is informed and should reset VC, agree to future raising of "DE", and reset SC (as the new screen shall start with the first row in the bitmaps).
+<br>
+<br>
+(Actually, the Vertical Control will first freeze for the number of scanlines specified in R5 before proceeding into the new raster - it is not clear whether it will count scans using the H, Hend, or the "low edge of Hsync" signal)
+<br>
+<br>
+The action delay of R4 is subject to the same variations as R0, except that you have more time tolerance to make your effects, as VC is incremented only every MaxRaster (R9) scanlines.
+<br>
+<br>
+The value programmed in R4 is also subject to physical constraints due to the VDU (there are 39 character lines in PAL/SECAM screens, including flyback, with 8 scan characters - see also Register 5 for more info)
+<br>
+<br>
+<h2>Register 5: Vertical Total Adjust</h2>
+
+This 5 bit register is compared against a scan line counter started at some point in the Vertical Control loop (just before a new screen, or at the end of the previous VC loop, it's the same).
+<br>
+<br>
+This means that modifications on this register will usually show up only at the next screen. Accurate timing could generate adjust heights higher than 31: e.g. set R5 to 31, wait until the scan counter is 30, set R5 to 29, the counter will wrap and there 
+will be 32+29 = 61 scans of adjustment.
+<br>
+<br>
+It is used to delay the actual generation of the addresses (the Vertical Control freezes when counting, until it's released by this comparator) to make the duration of the frame really 1/50 or 1/60 sec:
+<br>
+<br>
+Character line accuracy is not enough for that, and if you do not synchronize the frames with 50/60 Hz, you get some beating with the power supply in the VDU. But we don't care for beating, so we can use it for super-smooth vertical scroll !
+<br>
+<br>
+(Beating means the oscillations of the power supply will "move" across the frame instead of staying in the flyback area, and the high voltage generators may have trouble drawing their power from it. The deflection may not be perfect: fuzzy or distorted im
+age, with "waves" of different brightness. Nothing dangerous I think however)
+<br>
+<br>
+Note: something has to be tested with this register !
+<br>
+<br>
+If you use the Vsplit techniques, the Vertical controller should be restarted several times in a frame, every time freezing for a number of scanlines if this register is not set to 0, causing "gaps" in the display between the blocks. The effect should not
+ably be seen on NTSC machines, because the default value is 6 for them. I would appreciate getting feedback on that.
+<br>
+<br>
+<h2>Register 6: Vertical Displayed</h2>
+
+This 7 bit register is the vertical counterpart of R1. It is matched against VC to determine when all desired character rows have been displayed: when this is true, the Vertical Control is informed and forbids future "Display Enabling" (we're entering the
+ Border).
+<br>
+<br>
+The same action delay fluctuations seen for R1 apply, but with the higher timing tolerance seen for R4.
+<br>
+<br>
+The value held in this register should be smaller than R4 (otherwise part of the screen will be wasted).
+
+<h2>Register 7: Vsync Position</h2>
+
+This 7 bit register is the vertical counterpart of R2. It is matched with VC to position the Vsync signal relatively to the address generation. This is why it behaves in non-intuitive fashion: the screen moves Down in the VDU when it is decreased. (see th
+e chronograms)
+<br>
+<br>
+We have arithmetic limitations on R7 during normal operation:
+<ul>
+<li>R7 > R6 (or the screen will be "cut")
+<li>R7 < R4 (or there will be no automatic Vsync generation - warning !)
+</ul>
+The action delay fluctuation from zero to infinity is the same that as seen with R2.
+<br>
+<br>
+Registers 4,6,7 are implied in the Vsplitting technique.
+
+<h2>Register 8: Interlace and Skew</h2>
+
+This register is a fossil of an interlace functionality not used in the CPC. I mention it only because it can be used for some demo techniques, but only on some CRTC types. I haven't represented any of these features on the block diagram to avoid clutteri
+ng it.
+<br>
+<br>
+There are only two bits in R8:
+<ul>
+<li>bit 0: interlace enable.
+<li>bit 1: interlace type (when enabled)
+</ul>
+The two kind of interlace are:
+<ul>
+<li>0 . Sync alone
+<li>1 . Sync + Video
+</ul>
+
+When Sync interlace is enabled, the CRTC will add a delay of one half scan line to the Vsync every other frame, and will send the same data (that is, it will compute the same addresses if given the same start address) for every frame pair (cheap resolutio
+n doubling - the scans of the odd frames falling between the scans of the even frames - but you divide the refresh rate by 2):
+<br>
+<br>
+By combining this with double buffering, you could actually display 400 vertical points on a good CRT (like a TV ?) but I doubt the Amstrad VDU would follow because of its low quality photophors (has this been tested ? I'd like to see a CPC beating a VGA 
+board in resolution !).
+<br>
+<br>
+Another idea is to have completely unrelated images in the two buffers: you will get a "superposition" on the VDU. By playing with R2 and R7, you could make the superimposed images move independantly (by keeping two sets of position loaded alternatively a
+t each frame).
+<br>
+<br>
+Furthermore, if Video interlace is enabled, the CRTC will not display the same data at each frame, but instead it will display odd scanlines on odd frames, and even scanlines on even frames: the image will be compressed vertically by a factor of two, alth
+ough it still has the same number of lines. If the odd and even lines (in memory) contained two different images interleaved, you could make another "superposition" effect.
+<br>
+<br>
+To display only 1:2 raster line at each frame, the CRTC would apply some quirks to the usual Vertical Control, that would generate refresh memory addresses for two consecutive character rows in only one value of HC.
+<br>
+<br>
+Designers expected the user to program only half the value he desired in R6, to compensate this. If this rule was not respected, along with parity conditions on R9 and R0, the behaviour of the Vertical Control was unspecified.
+<br>
+<br>
+(Yes, R0 must be odd, it may seem strange but this is because in interlace mode, the top scan of even frames and the bottom scan of odd frames are to be cut in the middle, showing only their right or left half respectively)
+<br>
+<br>
+What's the point in all this ?
+<br>
+<br>
+Sync+Video mode may seem pretty useless, and it is on most CRTCs. But :
+<br>
+<br>
+If R8 is suddenly loaded with value 3 when all these interlace requirements are not fulfilled, the design of some CRTC (type 0) will make the Vertical Control refuse to proceed (may be it delays its reaction until some sync is reached, to let the user pro
+gram other registers ?), and meanwhile "Display Enable" will tell the Gate Array that we're in the border. When R8=0 again, things come back in place.
+<br>
+<br>
+Other CRTCs do not disable the display at once when interlace is enabled, so this technique will not work. Also note that when I say "at once", it can only mean "within one tick of the CRTC clock", or one NOP cycle: not pixel-accurate.
+<br>
+<br>
+The BSC Megademo uses R8 to scroll a message over an overscan screen - using NOP cycle timing to choose exactly where to make the border appear ? (I cannot tell more, that's all I know.)
+
+<h2>Register 9: Maximum Raster Address</h2>
+
+This 5 bit register is meant to be used with a font ROM. It tells the number of pixel rows in the character patterns we're looking up (minus one as we start from 0). Look the Section "Address Generator" for details.
+<br>
+<br>
+Because only the 3 low order lines of RA are wired on the CPC, only the low order 3 bits of this register are used in the address generation. If you set it to a value greater than 7, the CRTC will believe that characters are bigger than 8 scanlines, but i
+t will only repeat cyclically the first scanlines of the character lines.
+<br>
+<br>
+This register is matched against a ScanLine counter (SC - counting pulses on the H internal signal discussed with R0), and increments the BitMap Row Counter (RC - discussed with R4) when the condition is true.
+<br>
+<br>
+SC also resets itself at this moment (there is an OR gate to allow resetting by the Vertical Control at the beginning of a new frame). The output pins RA0-4 actually come from this SC counter.
+<br>
+<br>
+When programming R5, you can expect the same kind of variation in action delay we saw with R0 and R4 (the timing tolerance is the scanline, which is intermediate between that of R0 and that of R4).
+<br>
+<br>
+Throughout this document, I often assume that R9=7 (eight scans in a character line) but you could change it. Just be aware that when R9 is different, R4,6 or 7 will also have to be changed, to keep a Vsync every 312 scans or close to 312. Otherwise, Vsyn
+c intervals will be too short or too long, and your VDU will be underscanned and/or rolling.
+
+<h2>Registers 12 and 13: Base Address registers</h2>
+
+These two registers define the address at which the 14 bit MA counter should start every time the Vertical Control is started. The description of the MA counter is in the next section.
+<br>
+<br>
+This is Big Endian convention: register 12 is a 6 bit register containing the high order bits of the base address, while register 13 holds the low order byte.
+<br>
+<br>
+As these registers are used to load a counter with Parameter Enable, and further operations use that counter, modifications take effect only the next time the counter is reloaded. That is normally only at Vsync time (when the Vertical Control restarts).
+<br>
+<br>
+However some demo techniques arrange for this Control to be triggered several times in a frame. See the discussion about Splitting Techniques, and for a description of the Vertical Control, see registers 0 through 7 and the chronograms and schematics.
+<br>
+<br>
+<h2>The Address Generator</h2>
+
+Aaarghhh ! This is one of the crunchy parts of the CRTC. As I have mentionned earlier, there are two address generators in the CRTC:
+<ul>
+<li>The Row Address counter (RA): counts the rows in the bitmap font ROM
+
+<li>The (Refresh) Memory Address counter (MA): counts the characters in a text RAM.
+</ul>
+To understand what happens in the CPC, where the two generators have been mixed up, we must first look at the way things were to work, in the mind of the chip designers who made the CRTC:
+<ul>
+<li>You have columns of *text* in ASCII characters in your screen refresh RAM.
+
+<li>You have a font ROM organized like this:
+<ul><pre>    
+      for h=0 to MaxRaster (register 9, yes that's him ! the height of the font)
+            for i=0 to 255 (ASCII code)
+              row h of the BitMap pattern for character i.
+</pre></ul>
+<li>You want to display the bitmaps, of course ! So here is what you do for every character line:
+
+<ul>
+  <li>at the beginning of the character line, initialize RA to 0,
+  <li>at each scanline, increment RA until MaxRaster reached (character line done)
+  <li>for each character in the column, re-read the ASCII code (MaxRaster times)
+</ul>
+</ul>
+
+This code is fetched on the bus by an external PAL, which concatenates it with RA (provided by CRTC to the outside world) to get the entry address in the font ROM. The byte from the ROM is the final bitmap data to display.
+<br>
+<br>
+Now, imagine you want to make a purely bitmap video with that chip. You cannot use only MA, as it goes through the same values for MaxRaster scanlines (an address rewinding which is implemented by a "Back up" register). So let's put a bit of RA somewhere 
+in it. You think it's easy but now you're in for a journey into hell:
+<br>
+<br>
+The "somewhere" chosen by Amstrad is *not* the low order bits ! (that would have given a non-interleaved memory map). It's not even the high order bits !
+<pre>
+Z80/RAM address bus		6845 address buses
+A15 			MA 13
+A14			MA 12
+A13			RA 2
+A12			RA 1
+A11			RA 0
+A10			MA 9
+A9			MA 8
+.......
+A1			MA 0
+A0			<a href="#gate_array_trick">Gate Array trick, discussed here.</a>
+</pre>
+The result of this RA/MA mix is that at the end of a scan line, the address is incremented by 211=2048 bytes (RA is incremented, not MA) and at the end of a character line, it is incremented by only one versus the start address of the previous line (MA in
+crements, RA resets after having caused the memory location to wrap inside the memory block). This is the weird memory map you know !
+<br>
+<br>
+Furthermore, not all of RA is used (see consequences in the discussion of register 9 function). Not all of MA is used either: MA10 and 11 have no influence on the address generation, but are still used internally by the CRTC. Because of that, the address 
+appears to wrap when 210=1024 characters have been displayed. It can cause repeated characters when overscanned screens are used. You can overcome that:
+<br>
+<br>
+The fact that these two bits of MA are missing, gives the (false) impression that the carry is not propagated above A10: the screen repeats horizontally or vertically if R1 or R6 are such that R1*R6>1024 characters (assuming R9 = 8).
+<br>
+<br>
+But if you previously set bits 2 and 3 of the Base Address upper register (register 12) correctly, and if you have enough characters in your display, you will see the carry "reappear" after a while in A14.
+<br>
+<br>
+It is usually said that these two bits control the size of screen memory: this is true in the case of the CPC, because if you set them both to 1, they will propagate the carry immediately, fetching the new bytes in the next memory block instead of wrappin
+g:
+<pre>
+Bit 2,3 pattern:	Carry effect:	Screen size
+	00			10		16k
+	10			01		16k
+	01			11		16k
+	11			001		32k (carry is propagated)
+</pre>
+The two remaining bits of register 12, bits 4 and 5, are the start value for A14 and A15, so they select the first memory block where the screen shall begin.
+<br>
+<br>
+Another consequence of this, is that when you try to hardscroll too much an overscanned (32k) screen using modifications of start values of bits MA0 through 9, you will make the final value of MA so big that when it is reached, two carries have actually g
+one through bits 10,11 of MA, and the second one will not be propagated (because those bits have been reset by the first one). So you will get a repetition of characters in your screen.
+<br>
+<br>
+The standard display area is only 1000 characters so the wrapping is fine for hardscrolls: by modifying the start value for MA0-9 in registers 12 and 13, you can make the character screen roll as a cylinder within the frame of the border.
+<br>
+<br>
+Other things you can do with these registers, are double buffering (you have different screen blocks for different frames) and Splitting Techniques . It can be interesting to study yet another feature of the CRTC before going further:
+<br>
+<br>
+<h2>The Refresh feature</h2>
+
+The CRTC can be used as a <a href="ramref.htm">Refresh</a> chip (here I'm not talking of screen refresh, but rather Dynamic Memory Chip refresh).
+<br>
+<br>
+This feature of the CRTC is not really used in the CPC, where the Z80 is the primary refresh generator. For a cultural presentation of the reasons and mechanisms of refresh, see this.
+<br>
+<br>
+To help implement refresh logic for the screen refresh RAM itself, the designers of the 6845 had the idea to re-use the MA generator, and let it count even during retrace, because as we said, refresh is a time critical operation and we must not waste oppo
+rtunities to do it.
+<br>
+<br>
+But they also wanted to have a "continuous" screen memory, not with areas of garbage data corresponding to the addresses generated during horizontal retrace.
+<br>
+<br>
+This is one of the reasons why they implemented the 14 bit "Back Up" register you can see on the schematics of the Vertical Control: at the end of the screen part of the last pixel row of a character line (you're still here ?), the current MA is pushed in
+to the BU register, and at the beginning of a scanline, it is popped back into MA before computing increments. Loading a screen base address can be done by popping R12/13 instead of BU when VC=0.
+<br>
+<br>
+This is illustrated in this address table (assuming a base address of 0). You can see that this way, the CRTC will generate DRAM refresh accesses during retraces, but the screen user should not notice these extra computings.
+<br>
+<br>
+It can refresh RAM chips in parallel: they all share the low order bits of MA as their address bus, and the higher order bits are usually munged into a binary-to-unary converter to select only one chip for normal access. Intermediate order bits should be 
+taken from RA during retrace, otherwise you could refresh R9 times the same R0 rows).
+
+<table border>
+<tr>
+<td>Char. lines</td>
+<td>pop MA,
+HC=0</td>
+<td>MA++</td>
+<td>Screen Area.</td>
+<td>HC matches
+R1</td>
+<td>push MA</td>
+<td>MA++</td>
+<td>HC matches
+R0</td>
+</tr>
+<tr>
+<td>0</td>
+<td>0</td>
+<td>1</td>
+<td>---&gt;</td>
+<td>R1-1</
+td>
+<td>R1</td>
+<td>---&gt;</td>
+<td>R0</td></tr>
+<tr>
+
+<td>1</td>
+<td>R1</td>
+
+<td>R1+1</td>
+<td>---&gt;</td>
+<td>2.R1-1</td>
+<td>2.R1</td>
+<td>---&gt;</td>
+<td>
+R1+R0</td>
+</tr>
+<tr><td>2</td>
+<td>2.R1</td>
+<td>2.R1+1</td>
+<td>---&gt;</td>
+
+<td>3.R1-1</td>
+<td>3.R1</td>
+<td>---&gt;</td>
+<td>2.R1+R0</td></tr>
+<tr>
+
+<td>
+...</td>
+
+<td>....</td>
+<td>....</td>
+<td>....</td>
+<td>....</td>
+<td>....</
+td>
+<td>....</td>
+
+<td>....</td>
+</tr>
+<tr>
+<td>R6-1</td>
+<td>(R6-1).R1</td>
+
+<td>(R6-1).R1+1</td>
+<td>---&gt;</td>
+<td>R6.R1-1</td>
+<td>R6.R1</td>
+<td>---&gt;
+</td>
+<td>(R6-1).R1+R0</td>
+</tr>
+<tr>
+<td>R6</td>
+<td>R6.R1</td>
+<td>R6.R1+
+1</td>
+<td>---&gt;</td>
+<td>(R6+1).R1-1</td>
+<td>(R6+1).R1</td>
+<td>---&gt;</td>
+<
+td>R6.R1+R0</td>
+</tr>
+<tr>
+<td>....</td>
+<td>...</td>
+<td>....</td>
+<td>...
+.</td>
+<td>....</td>
+<td>....</td>
+<td>....</td>
+
+<td>....</td>
+</tr><tr><td
+>R4</td>
+<td>R4.R1</td>
+<td>R4.R1+1</td>
+<td>---&gt;</td>
+<td>(R4+1).R1-1</td>
+
+<td>(R4+1).R1</td>
+<td>---&gt;</td>
+<td>R4.R1+R0</td>
+</tr>
+<tr>
+<td>Adjust</td
+>
+<td>(R4+1).R1</td>
+<td>(R4+1).R1+1</td>
+<td>---&gt;</td>
+<td>(R4+2).R1-1</td>
+
+<td>(R4+2).R1</td>
+<td>---&gt;</td>
+<td>(R4+1).R1+R0</td>
+</tr>
+</table>
+
+
+
+<h1>Splitting Techniques</h1>
+
+These techniques are the most complicated I know. They have a common goal: force a restart of the MA generator from R12/13, thus "splitting" the frame in several memory banks, which can be separately hardscrolled for instance.
+<br>
+<br>
+Normally, the MA is restarted with the Vertical Control, once per frame. Here, we will try to have several virtual frames in one physical (VDU) frame. This will require playing with the action delays of the registers, and we will get new chronograms that 
+differ notably from the regular ones.
+<br>
+<br>
+Splitting implies suppressing all automatic sync generation (syncs would put each of our virtual frames on a separate physical frame). We will generate syncs ourselves to keep the image steady. It is important to note that when you are debugging a splitti
+ng demo, one of the things that can go wrong is your sync generation. Read this warning about missing syncs.
+<br>
+<br>
+<h2>Vertical Splitting:</h2>
+
+This technique has been introduced some time ago by several people, including Logon Demo Team and NWC. It has also been used in games (Mission Genocide by Paul Shirley, Enlightenment - Druid 2 by Firebird, Super Cauldron, Prehistorik II by Titus).
+<br>
+<br>
+A typical Vsplit code with chronology is given here. I have not unrolled the entry of the main loop in the chronology, to make things clearer: the scan # from the beginning of Vsync are given assuming the loop is well established.
+<br>
+<br>
+The following table refers to the splitting example code in the <a href="../Hardware_Programming/Chips/crtc.htm">CRTC</a> documents.
+<br>
+<br>
+<table border>
+<tr>
+<td>VDU scan line</td>
+<td>VC</td>
+<td>R4/R7</td>
+<td>Notes</td>
+</tr>
+<tr>
+<td>0</td>
+<td>0</td>
+<td>19/00</td>
+<td>Vsync started, block 1 started</td>
+</tr>
+<td>1</td>
+<td>0</td>
+<td>19/00</td>
+<td>we can jump to main_loop</td>
+</tr>
+<tr>
+<td>2 GA counter starts</td>
+<td>0</td>
+<td>19/00</td>
+<td></td>
+</tr>
+<tr>
+<td></td>
+<td></td>
+<td></td>
+<td>waiting for end of Vsync..........</td>
+</tr>
+<tr>
+<td>8 or 16</td>
+<td>1 or 2</td>
+<td>18/255</td>
+<td>split set up (R4,7), halt</td>
+</tr>
+<tr>
+<td>....</td>
+<td>....</td>
+<td>....</td>
+<td>....</td>
+</tr>
+<tr>
+<td>2+52=54 (int)</td>
+<td>6</td>
+<td>18/255</td>
+<td>set up R12/13 for block 2 now</td>
+</tr>
+<tr>
+<td>...</td>
+<td>...</td>
+<td></td>
+<td>halt...</td>
+</tr>
+<tr>
+<td>54+52=106 (int)</td>
+<td>13</td>
+<td></td>
+<td>halt again...</td>
+</tr>
+<tr>
+<td>...</td>
+<td>....</td>
+<td></td>
+<td>....</td>
+</tr>
+<tr>
+<td>144</td>
+<td>18</td>
+<td>18</td>
+<td>Match ! block over</td>
+</tr>
+<tr>
+<td>152</td>
+<td>0</td>
+<td>18</td>
+<td>2nd block starts, R12/13 apply</td>
+</tr>
+<tr>
+<td>...</td>
+<td>...</td>
+<td></td>
+<td>(but we do nothing: CPU halt)</td>
+</tr>
+<tr>
+<td>158 (int)</td>
+<td>0</td>
+<td>18</td>
+<td>Wait a little more till VC=1</td>
+</tr>
+<tr>
+<td>160</td>
+<td>1</td>
+<td>19</td>
+<td>now set up 2nd height</td>
+</tr>
+<tr>
+<td>...</td>
+<td>...</td>
+<td>19</td>
+<td>halt...</td>
+</tr>
+<tr>
+<td>210 (int)</td>
+<td>7</td>
+<td>19</td>
+<td>just halt...</td>
+</tr>
+<tr>
+<td>...</td>
+<td>...</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>262 (int)</td>
+<td>13</td>
+<td>...</td>
+<td>and halt again...</td>
+</tr>
+<tr>
+<td>...</td>
+<td>...</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>306</td>
+<td>19</td>
+<td>19/255</td>
+<td>Match ! block over</td>
+</tr>
+<tr>
+<td>312</td>
+<td>0</td>
+<td>19/255</td>
+<td>Block 1 starts with wrong address</td>
+</tr>
+<tr>
+<td>314 (int)</td>
+<td>0</td>
+<td>19/0</td>
+<td>R7=0 triggers our Vsync</td>
+</tr>
+<tr>
+<td>cycle completed</td>
+<td>314 &lt;--&gt; 0</td>
+<td>0</td>
+<td>and we have time to correct the start address...</td>
+</tr>
+<tr>
+<td>1</td>
+<td>0</td>
+<td></td>
+<td>before jumping back !</td>
+</tr>
+</table>
+<br>
+<br>
+The idea is to get rid of automatic Vsync immediately after we made our manual one (or we catched the last automatic one before the split is set up). For that, put &FF (or a value greater than R4) in R7.
+<br>
+<br>
+Another thing, is that we use R4 directly to "cut" our blocks, and not R6, which will be left at a value greater than that of R4. Consequence: remember that R4 must hold desired values decremented by 1. So R4= 18 and 19 for blocks of height 19 and 20 in t
+he example.
+<br>
+<br>
+Note that you can only program R4 for a given block once this block has started, and not sooner, otherwise it will at best apply to the previous block, at worst cause a VC wrap-around and mess up everything (depending on the size of your blocks and the cu
+rrent value of VC).
+<br>
+<br>
+To provoke manual Vsyncs, we set R7 to 0 for a short while, when we know that VC will take the value 0. The result is that we will create a Vsync, and also synchronize future interrupts in the Gate Array: now interrupts will fall every 6.5 increments of V
+C, or 52 scans, and we use that for timing once the main loop has picked up cruise speed (there may be a glitch the first frame).
+<br>
+<br>
+Notice a first timing trick at the frontier between the 2 blocks: it seems that on some CRTCs it is not a good idea to program R4 when VC is zero. Although I cannot be affirmative on this, I think it is because there is a small period of time when the reg
+ister file of the CRTC gets written, where the register written will seem to be zero. This would cause another match with VC, and the sequence of VC values would be 18,0,0,1 thus repeating the top character line of block 2 !
+<br>
+<br>
+Notice the other timing trick at the end of the loop: when the interrupt falls, VC is already zero, but we have a couple of scans before it becomes one, to set up R7 and R12/13. As soon as R7 is 0, Vsync starts and we can jump back to main_loop to wait fo
+r its end. So the very first scans of block 1 will use the start address of block 2, left in R12/13. But they're not in a visible part of the screen.
+<br>
+<br>
+How do we know that VC is zero at some moment ?It will be zero, because will have matched R4 the line before, that is 152 scan lines after the 2nd block was started, or 3 interrupt blocks minus a little while.
+<br>
+<br>
+How did we know when that block started ? by the same means !
+How did we know for the very first block ? We didn't, hence the glitch at startup !
+<br>
+<br>
+The last important thing to note: there is no vertical retrace period in our example. This is because if we want to have a stable image, we must make a Vsync every 39 lines, as usually, and for that we must have block sizes that add up to 39 (if we use th
+e VC=0=R7 condition to provoke Vsync. Non zero values could be used, just for sport, but I don't see the point)
+<br>
+<br>
+However, the VDU still has a flyback. In our example, the top 4 lines of block 1 will actually be chewed up by this flyback. It's up to you to arrange the data in memory to compensate this.
+<br>
+<br>
+<h2>Vertical Splitting at Every Line</h2>
+
+This is a special case of the previous method, where blocks have height 1, and MaxRaster is set to 0 (only one scanline per block). This way, you can use a different address for every scan in the screen (but you have to compute increments yourself, unless
+ you want to display always the same line and use GA effects to change colors).
+<br>
+<br>
+<h2>Horizontal Splitting</h2>
+
+This technique is pretty new, although KEW Thacker had predicted since some time that it could be used, and I don't know at the time of this writing if actual implementations really use the theoretical presentation I will make here, or if some extra diffi
+culties had to be solved (that would really make a lot of difficulties).
+<br>
+<br>
+The idea is still to restart the Vertical Control to reload MA with R12/13. However things get harder: This reload does not usually happen at the beginning of a scan: if we just reused the Vsplit trick on the H registers (which in itself is very hard beca
+use of timing tolerance, which is now NOP cycle instead of character line) what we would get is twice the same data repeated horizontally - can be funny, but not a split.
+<br>
+<br>
+(why ? read the section about the refresh feature of the CRTC: you will see that at the beginning of a scan, it pops into MA the value saved in a BU register the last time HC and R1 matched, which would be at the last normal end of a scan before we set up
+ this)
+<br>
+<br>
+We must make the CRTC believe there are several complete vertical frames in every scan line to obtain the desired effect. For that, we must make those virtual frames as small as possible, by setting R4=0 (only one character line) and R9=0 (only one raster
+ per character line) and R5=0 (no adjust scans between frames).
+<br>
+<br>
+Now, a complete screen will be constituted of only one CRTC scanline, and we can try to put several of these in one VDU scanline, with the same recipe as for Vsplit: R2=FF most of the time, R1 unused, R0 actually controls the width of blocks, after they h
+ave started, and R12/13 must be loaded before the block starts.
+<br>
+<br>
+Block width should add up to 64, and at that moment we also set R2 to 0 to cause a Hsync. There is one extra problem with this Hsync: the width of the sync must not be greater than that of the first block if we want to be compatible with CRTC 2 (see the d
+iscussion about R3). So we can either impose that our first block will have more than 14 character columns, or make the Hsync shorter and pray that the VDU will have a fast trigger.
+<br>
+<br>
+As for the Vsplit, there is no longer any retrace time for the CRTC but the VDU still has a flyback: e.g. the first columns of our first block will be wasted on the side of the tube. You must arrange the image in memory to compensate this.
+<br>
+<br>
+Finally, we must also compute the number of elapsed scanlines, and set R7 to 0 for one scan when this number reaches 312 (to make out own Vsync)
+<br>
+<br>
+Now let's look back at what we said and count NOP cycles, that'll give you nightmares, gniark gniark !!
+<ul>
+<li>We have at least two blocks, each implies:
+<ul>
+	<li>setting the start address (2 CRTC register accesses)
+	<li>this address must be different each time, we must compute it ourselves,
+	<li>we can spare the width setting if we split the screen in two even parts,
+	<li>at the end of block 2 and the beginning of block 1, we must change R2
+		(one more access per block)
+</ul>
+<li>Each CRTC access consists in two OUTs (select the register, then write it)
+<li>Each OUT takes 4 NOP cycles.
+</ul>
+That is 2*3*2*4 = 48 NOPs in a 64 NOP scan. 16 NOPs left for the start address arithmetics. (we have to fit 2 computations in there, and basically that's adding constants on 16 bits : One will add the offset between the two images in memory, the other the
+ increment between consecutive lines - put 6 NOPs at least)
+<br>
+<br>
+Now imagine you also have to increment a scanline count, and a jump with test, to loop back or go make a Vsync...I didn't examine either the number of swaps between registers and memory there would be, and that may add extra cycles...
+<br>
+<br>
+Clearly, you'd better unroll the loop fully, and precompute everything as constants inserted in the code. For an entire VDU frame, that is a few dozen KB. You could have your code in the upper 64 K if you have 128 K or more.
+<br>
+<br>
+Another thing that becomes vital here, is ghosting the I/O ports: it is the only way to program the Gate Array at each scan in the limited time we have. First note that selecting a colour implies OUTing a value greater than 64 : that'll do as well as 255 
+in CRTC R2. Secondly, note that selecting a pen implies OUTing a value in 0-15 (we have suppressed the border !). If we are in mode 0, we could select pens 2-12-13 at the same time that we select CRTC registers 2,12 and 13.
+<br>
+<br>
+If we are decided to have a crazy arrangement of lines in memory, we could also code some colours in the addresses programmed in R12/13. Using all this would allow changing up to 4 colours at each line, and 2 colours between each block !
+<br>
+<br>
+Eventually, you could also test a variation of the method, where you do not play with R2 to provoke flyback (you leave it at zero), but instead you play with the sync width (R3, lower 4 bits): this way, you could generates syncs that are too short to actu
+ally trigger the flyback, but that will allow the Gate Array to change the screen mode inside the scan. The problem is that all VDUs don't have the same sensitivity the effect could fail sometimes...
+<br>
+<br>
+Now again, all these ideas have not been tested (not by me anyway), and if you have had some success in setting up Hsplits, I'd appreciate your pointing out differences between what I said and what you actually had to do, so that I can correct possible (a
+nd even likely) mistakes...
+<br>
+<br>
+<a name="gate_array_trick">
+<h2>The Trick with the Gate Array</h2>
+</a>
+As you have seen previously, the CRTC is meant to drive a text screen, but there is even worse: it is intended to look-up black and white bitmaps ! Yuck !
+<br>
+<br>
+It allows only 1 byte per character, that is 1 bit per pixel of a 8 bit wide font. This is unbearable for a game machine, so you can turn the problem by grouping bits inside bytes. The Gate array already does that (not in the easiest way), but then you ne
+ed to use large character screen in the CRTC to get a decent number of pixels on a row. The limit is 64 characters unless you play with clocks: clearly not enough !
+<br>
+<br>
+So Amstrad found a work around: shift all the addresses generated by the CRTC by one bit, and fetch two consecutive bytes at every access by dumping the CPU clock into bit 0. The problem is that you have to get an even 2Mbyte/s throughput to feed the deco
+ders and digital-to-analog converters. But you cannot efficiently interleave memory accesses with the CPU if you do them every 2 ticks, you have to fetch bytes at two consecutive ticks... No problem ! just store the secondly fetched byte for 1 tick in a r
+egister (it's a custom chip, you put registers anywhere you want, what a dream !)
+<br>
+<br>
+<a href="8.gif">You finally get this chronogram</a>. The "Enable" signal is high when the CRTC is asked to connect to the address bus, and at that time the CPU is deconnected (CRTC "Enable" and Z80 "Wait" come from the same pin on the Gate Array) The GA a
+lso disables all additionnal RAM banks, and all ROMs when "Enable is high", so the CRTC can only use the lower 64k.
+<br>
+<br>
+The fact that the CPU can access memory only during a two-ticks window that repeat with a period of 4 ticks, is the reason why all CPU instruction timings are rounded to the next multiple of 4 on the CPC, creating the unique concept of "NOP Cycle". It als
+o slows down the CPU, but in a non-linear fashion (NOPs are not slowed !). The equivalent resulting frequency is about 3.3 Mhz.
+</body>
+</html>

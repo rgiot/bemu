@@ -1,0 +1,49 @@
+Known CRTC types and differences:
+
+HD6845 (Hitachi Limited - Japan) - Type 0
+UM6845 (United MicroCircuits Corporation - Taiwan) - Type 1a (idem type 0)
+								and Type 1b (see notes)
+MC6845 (Motorola Semiconductors - USA) - Type 2
+ASIC GA in CPC+ (Amstrad - UK) - type 3 - said to emulate CRTC type 2,
+				(but certainly not perfectly)
+HD6845 S (Hitachi Limited - Japan) - Type 4
+
+
+Register readback bug:
+Type 1b cannot readback any of its registers on the CPC. So it cannot use a lightpen.
+
+Vsync programmation bug:
+CRTCs type 1b and 2 cannot program the duration of the Vsync: it is always 16 scans. This is used in CRTC detection codes. I don't know about CRTC 3, but as the firmware expects Vsync to be programmable (and sets it to 8 scans for types 0,1a,4), it would be more logical if Amstrad made the Vsync programmable in its own chip.
+
+Hsync bug:
+The CRTC 2 has a bug that imposes the arithmetic condition R0>R2+R3(lower half). It stops generating Vsyncs if R2=50, with the standard Hsync width. This is used in CRTC detection codes.
+
+Hdisp bug:
+It seems that some CRTCs have a fabrication fault that shows up when R1 is programmed with a value greater than 48 (top 2 bits armed). To me, this is obviously a mask defect and has probably been quickly corrected in the next mask revision. So only some CRTCs in the concerned type (which one ? perhaps Motorola's, which has had a major mask revision) may have this bug.
+
+Status register, readable registers:
+Type 4 and others have some extra features that allow more registers than only cursor/lightpen addresses to be read back. This is used in CRTC detection codes. Also they store readable information in the 3 upper bits of its pointer (status) register:
+b7: CRTC self check ??
+b6: Lightpen sensing flip flop (tells if the lightpen address has beeen updated since last polling ?)
+b5: Vsync pin state (redundant with the PIO on the CPC)
+
+R8 features, the major differences:
+
+Type 0,1a (and 4 ?) have an extra feature in R8, which seems to be the basis for the "register 8 border technique". These CRTCs use bits 4 and 5 of R8 for character delay: that is, to account for the fact, that in a typical low-cost system, the memory fetches (RAM and then font ROM) would be slow and would make the raster out of sync with "Display Enable" (DE, the frame, or border) which is wired directly to the color generator.
+
+So they implemented a programmable DE delay (the "Skew") which is to be set a the duration of the raster fetch (counted in CRTC clock cycles, or mode 1 characters). The same thing is done for the "Cursor" line, because it is also shorter than the raster data-path.
+
+To implement this, you can by-pass or enable couple of registers on the concerned lines. Because these registers probably get reset when they're bypassed, if you reenable them while DE is true, it will take them as many characters as the DE delay, before they echo "true": you get a bit of border color in the middle of the screen !
+
+Of course, when the delay is elapsed, the raster comes back, but you could repeatedly turn the delay on and off.
+
+
+The other big difference with register 8 is interlace: although it is controlled identically by the two lower bits on all CRTCs, the arithmetic conditions on other registers for Interlace modes seem to vary greatly. This may be the ultimate reason why we do not have any true-interlace demo on the CPC: the code and the screen layout must be changed for every type, making it hard to debug, and the feature appeared unreliable.
+
+
+
+
+
+To summarize, here is a comparison sheet taken from the UM6845x specs:
+
+CRTCsUM6845RMC6845MC6845RHD6845RUM6845HD6845SMC6845revised maskType number1b and 2used in CPC ?1a and 0presumably 4R3 SyncWidthH onlyH onlyH+VH+VR12-13 baseW onlyR/WR/WR/WStatusUM onlyHD only ?HD only ?-R0 Htotal-Even parityEven parity-R8 - bits 0-1Interlaceidem.......   bits 2-3Unused.........   bits 4-5--DE SkewDE Skew   bits 6-7--Cursor SkewCursor SkewFor Interlacemodes only:R6 VdispDirect valueValue/2Direct ValueDirect ValueR9 Scans-Even parity--R10-11 Curs-Same parities--

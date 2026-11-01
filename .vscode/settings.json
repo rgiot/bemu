@@ -1,0 +1,8 @@
+{
+	"files.associations": {
+		"*.mkd": "markdown",
+		"*.latex": "latex",
+		"*.jinja2": "latex",
+		"CPCEC.C": "cpp"
+	}
+}

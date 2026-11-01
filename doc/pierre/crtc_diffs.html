@@ -1,0 +1,135 @@
+<html><head><title>CRTC differences explained</title></head><body>
+<h1>CRTC differences</h1>
+
+<h2>Why are there CRTC differences?</h2>
+
+Amstrad used many off-the-shelf chips to make the CPC. The only
+chip that was designed specifically for the CPC was the gate array.
+And since this was only produced by Amstrad there are no significant
+differences (not any differences that I have found).
+
+However, the CRTC used in the CPC is available from many chip manufacturers.
+And, since their designs differ slightly, there are differences between
+the chips. These differences are only apparent when you try to do very
+special programming and use the chips in a "non-standard" way. Many demos
+use specific features of the chips to produce weird and interesting 
+graphical effects, and if you have ever tried to run the demo on another
+CPC you may have found that they dont always work exactly the same. This
+is exactly for this reason.
+
+I know of 3 manufacturers whose CRTCs were used in the CPC. I believe there
+is also 4 different CRTC "types". I will attempt to explain the differences
+between them using the manufacturers specification sheets as the basis.
+The 3 manufacturers are Motorola, UMC and Hitachi.
+
+The 3 basic chips are (different versions of these chips exist in different
+packaging and maybe with some differences), UM6845 (UMC), HD6845 (Hitachi)
+and MC6845 (Motorola).
+
+
+UMC6845R only:
+
+Status Register:
+
+This is a 2 bit register which holds the status of the CRTC.
+
+Bit 7	not used
+Bit 6	LPEN REGISTER FULL
+	1: A light pen strobe has occured (light pen has put to screen
+	   and button has been pressed),
+	0: R16 or R17 has been read by the CPU
+Bit 5	VERTICAL BLANKING
+	1: CRTC is scanning in the vertical blanking time,
+	0: CRTC is not scanning in the vertical blanking time.
+Bit 4	not used
+Bit 3	not used
+Bit 2	not used
+Bit 1	not used
+
+
+HD6845S:
+
+Register 8: Interlace and Skew
+
+Bit 7	Cursor Display timing Skew Bit 1
+Bit 6	Cursor Display timing Skew Bit 0
+Bit 5	Display timing Skew Bit 1 (DTSKB1)
+Bit 4	Display timing SKew Bit 0 (DTSKB0)
+Bit 3	not used
+Bit 2	not used
+Bit 1	Video Mode
+Bit 0	Interlace Sync Mode
+
+Display timing skew:
+
+The data can be skewed by 0 characters, 1 character or 2 characters.
+When both bits are 1 the display is stopped and border is displayed.
+This is used in the BSC Megademo in the Crazy Cars II part.
+
+MC6845/UM6845:
+
+Register 8: Interlace
+
+Bit 7	not used
+Bit 6	not used
+Bit 5	not used
+Bit 4	not used
+Bit 3	not used
+Bit 2	not used
+Bit 1	Video Mode
+Bit 0	Interlace Sync Mode
+
+
+HD6845:
+
+Register 3: Sync Width
+
+Bit 7	Vertical Sync Width bit 3
+Bit 6	Vertical Sync Width bit 2
+Bit 5	Vertical Sync Width bit 1
+Bit 4	Vertical Sync Width bit 0
+Bit 3	Horizontal Sync Width bit 3
+Bit 2	Horizontal Sync Width bit 2
+Bit 1	Horizontal Sync Width bit 1
+Bit 0	Horizontal Sync Width bit 0
+
+MC6845/UM6845:
+
+
+
+
+Note for UM6845: When the Horizontal Sync width is set to 0, then no
+Horizontal Syncs will be generated. (This feature can be used to
+distinguish between the UM6845 and MC6845).
+
+
+CRTC 0: HD6845S, UM6845
+CRTC 1: 
+CRTC 2:
+CRTC 3:
+CRTC 4:
+
+
+
+
+Differences:
+
+1) UM6845R has a status register.
+
+2) HD6845S allows the Vertical Sync Width to be programmed.
+   MC6845/MC6845R/UM6845R have a fixed Vertical Sync Width of 16 scanlines.
+   
+3) Programming Horizontal Sync Width with 0:
+   HD6845S: The data sheets says that the Horizontal Sync Width cannot
+   be programmed with 0. The effect of doing this is not documented.
+   MC6845: If the Horizontal Sync Width register is programmed with 0,
+   no horizontal syncs are generated.
+   UM6845R: Specification sheet doesnt comment on this.
+
+4) HD6845S has Displaying Timing and Cursor Skew in register 8.
+   UM6845/MC6845: No Display Timing or Cursor Skew.
+
+5) HD6845S/MC6845: Start Address Registers (R12 and R13) can be read.
+   UM6845R: Start Address Registers cannot be read.
+
+6)    

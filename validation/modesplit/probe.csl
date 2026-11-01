@@ -1,0 +1,8 @@
+csl_version 1.0
+crtc_select 0
+reset
+wait 2000000
+snapshot_load 'modesplit_1_0.sna'
+wait 2000000
+screenshot
+wait 200000
