@@ -397,9 +397,12 @@ impl Psg {
         match control {
             BusControl::Inactive => None,
             BusControl::LatchAddress => {
-                // Out-of-range addresses are simply ignored by the real
-                // chip (mask to the 16 implemented registers).
-                self.selected_register = Some(data_bus & 0x0f);
+                // The chip answers an address only when DA7-DA4 are 0: with
+                // any of them set it is deselected, and the data cycles that
+                // follow reach no register (music players rely on it, e.g.
+                // to park a write nowhere) - they must not hit register
+                // `address & 0x0f`.
+                self.selected_register = (data_bus & 0xf0 == 0).then_some(data_bus & 0x0f);
                 None
             },
             BusControl::Write => {
@@ -538,10 +541,26 @@ mod test {
     }
 
     #[test]
-    fn latch_address_is_masked_to_16_registers() {
+    fn latch_address_with_upper_bits_set_deselects_the_chip() {
         let mut psg = Psg::default();
-        psg.bus_cycle(BusControl::LatchAddress, 0xFF);
+        psg.bus_cycle(BusControl::LatchAddress, 0x0f);
         assert_eq!(psg.selected_register(), Some(0x0f));
+        psg.bus_cycle(BusControl::LatchAddress, 0x10);
+        assert_eq!(psg.selected_register(), None);
+    }
+
+    #[test]
+    fn writes_after_a_deselecting_latch_reach_no_register() {
+        let mut psg = Psg::default();
+        psg.bus_cycle(BusControl::LatchAddress, 0x10);
+        psg.bus_cycle(BusControl::Inactive, 0x10);
+        psg.bus_cycle(BusControl::Write, 0xEF);
+        assert_eq!(psg.register(0), 0);
+        psg.bus_cycle(BusControl::Inactive, 0);
+        psg.bus_cycle(BusControl::LatchAddress, 0x00);
+        psg.bus_cycle(BusControl::Inactive, 0);
+        psg.bus_cycle(BusControl::Write, 0x12);
+        assert_eq!(psg.register(0), 0x12);
     }
 
     #[test]
