@@ -127,7 +127,9 @@ impl TypedChars {
 #[derive(Default)]
 pub struct TypedCombo {
     keys: Vec<CpcKey>,
-    frames_left: u8
+    frames_left: u8,
+    /// A character started at the last advance.
+    started: bool
 }
 
 impl TypedCombo {
@@ -155,6 +157,7 @@ impl TypedCombo {
                 if let Some(keys) = layout.keys_of_char(c) {
                     self.keys = keys;
                     self.frames_left = Self::HOLD_FRAMES + Self::RELEASE_FRAMES;
+                    self.started = true;
                     break;
                 }
             }
@@ -164,6 +167,16 @@ impl TypedCombo {
         }
         // held, then released for RELEASE_FRAMES before the next character
         if self.frames_left >= Self::RELEASE_FRAMES { &self.keys } else { &[] }
+    }
+
+    /// Whether a character started at the last advance (once: the next call says false).
+    pub fn take_started(&mut self) -> bool {
+        std::mem::take(&mut self.started)
+    }
+
+    /// Hold the character a frame more (its keys come a frame later).
+    pub fn hold_one_more(&mut self) {
+        self.frames_left += 1;
     }
 }
 
@@ -247,7 +260,8 @@ impl HostKeyboard {
         for &c in &input.typed {
             self.typed.push(c);
         }
-        let combo = self.combo.advance_on(&mut self.typed, layout).to_vec();
+        let mut combo = self.combo.advance_on(&mut self.typed, layout).to_vec();
+        let started = self.combo.take_started();
         let shift = is_shift_down(&input.down);
 
         // every key a host key can press starts up, then the ones held go down
@@ -288,11 +302,21 @@ impl HostKeyboard {
         }
         // a key held pressing the CPC key it learned (a game's): the host's Shift is its
         let playing = input.down.iter().any(|&host| matches!(self.pressing(host, shift), Pressing::Learned(Some(_))));
+        const MODIFIERS: [CpcKey; 3] = [CpcKey::Shift, CpcKey::Control, CpcKey::Copy];
+        // The firmware takes a key going down in the scan that releases Shift as shifted (the
+        // host's Shift+& types 1 on an AZERTY, Shift+1 on the CPC is !): a modifier the host
+        // holds and the character doesn't want goes up a frame before the character's keys.
+        let conflict = MODIFIERS.iter().any(|m| !combo.contains(m) && pressed.contains(&(*m, true)));
+        let lead = started && !playing && conflict;
+        if lead {
+            self.combo.hold_one_more();
+            combo.retain(|key| MODIFIERS.contains(key));
+        }
         let matrix = motherboard.keyboard_mut();
         for (key, down) in pressed {
             matrix.set_pressed(key, down);
         }
-        if !combo.is_empty() && !playing {
+        if (!combo.is_empty() || lead) && !playing {
             // the character's modifiers, not the host's: Shift+2 types @ on a US host, the CPC's
             // @ is unshifted (with Shift it is |), even once the 2 is up; AltGr (Alt, or Ctrl+Alt)
             // is no CTRL or COPY for the CPC
@@ -793,8 +817,11 @@ mod test {
         for _ in 0..8 {
             poll(&mut keyboard, &mut motherboard, &[], "");
         }
+        // its Shift up first (the firmware would take the 1 shifted), then the 1
         let shifted = poll(&mut keyboard, &mut motherboard, &[HostKey::Key1, HostKey::LeftShift], "1");
-        assert!(shifted.contains(&CpcKey::Digit1), "{shifted:?}");
+        assert!(shifted.is_empty(), "{shifted:?}");
+        let shifted = poll(&mut keyboard, &mut motherboard, &[HostKey::Key1, HostKey::LeftShift], "");
+        assert_eq!(shifted, vec![CpcKey::Digit1]);
     }
 
     /// Positional: an AZERTY host's key at Q's place (the frontend's logical A, typing `a`)
@@ -831,6 +858,10 @@ mod test {
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
         let down = [HostKey::LeftShift, HostKey::Key2];
         keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), typed: vec!['@'], ..Default::default() });
+        // the host's Shift up a frame first: the firmware takes a key going down as Shift goes
+        // up shifted
+        assert!(!motherboard.keyboard().is_pressed(CpcKey::Shift) && !motherboard.keyboard().is_pressed(CpcKey::At));
+        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), ..Default::default() });
         assert!(motherboard.keyboard().is_pressed(CpcKey::At));
         assert!(!motherboard.keyboard().is_pressed(CpcKey::Shift), "the host's Shift is not @'s");
         assert!(!motherboard.keyboard().is_pressed(CpcKey::Digit2));
@@ -855,11 +886,13 @@ mod test {
         // the key up before its character's turn (a quick tap, Shift still held): still no Shift
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
         keyboard.apply(&mut motherboard, &HostInput { down: vec![HostKey::LeftShift], typed: vec!['@'], ..Default::default() });
+        keyboard.apply(&mut motherboard, &HostInput { down: vec![HostKey::LeftShift], ..Default::default() });
         assert!(motherboard.keyboard().is_pressed(CpcKey::At) && !motherboard.keyboard().is_pressed(CpcKey::Shift));
         // AltGr reported as Right Alt (COPY) or Ctrl+Alt: the character alone
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
         let altgr = vec![HostKey::LeftCtrl, HostKey::RightAlt];
-        keyboard.apply(&mut motherboard, &HostInput { down: altgr, typed: vec!['@'], ..Default::default() });
+        keyboard.apply(&mut motherboard, &HostInput { down: altgr.clone(), typed: vec!['@'], ..Default::default() });
+        keyboard.apply(&mut motherboard, &HostInput { down: altgr, ..Default::default() });
         for key in [CpcKey::Copy, CpcKey::Control, CpcKey::Shift] {
             assert!(!motherboard.keyboard().is_pressed(key), "{key:?}");
         }
