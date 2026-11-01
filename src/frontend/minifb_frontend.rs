@@ -1,7 +1,7 @@
 //! [`Frontend`](super::Frontend) on minifb.
 
 use super::Frontend;
-use amsrust::input::{HostInput, HostKey};
+use amsrust::input::{HostInput, HostKey, HostLayout, HostPlaces};
 use minifb::{InputCallback, Key, Window, WindowOptions};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -24,16 +24,21 @@ impl InputCallback for CharQueue {
 
 pub struct MinifbFrontend {
     window: Window,
-    typed: CharQueue
+    typed: CharQueue,
+    /// Where the keys are, on Linux: minifb names them after the host's layout there (X11's
+    /// and Wayland's symbols); Windows' scancodes and macOS's key codes are places already.
+    /// `None`: the layout not given.
+    places: Option<HostPlaces>
 }
 
 impl MinifbFrontend {
-    pub fn open(title: &str, width: usize, height: usize) -> Result<Self, String> {
+    /// `host_layout`: the host keyboard's, for the positional keyboard on Linux.
+    pub fn open(title: &str, width: usize, height: usize, host_layout: Option<HostLayout>) -> Result<Self, String> {
         let mut window = Window::new(title, width, height, WindowOptions { resize: true, ..WindowOptions::default() })
             .map_err(|e| format!("failed to open a window: {e}"))?;
         let typed = CharQueue::default();
         window.set_input_callback(Box::new(typed.clone()));
-        Ok(Self { window, typed })
+        Ok(Self { window, typed, places: host_layout.map(HostPlaces::new) })
     }
 }
 
@@ -47,13 +52,18 @@ impl Frontend for MinifbFrontend {
         self.window.set_target_fps(fps);
     }
 
+    fn knows_key_places(&self) -> bool {
+        !NAMES_BY_LAYOUT || self.places.is_some()
+    }
+
     fn poll_input(&mut self) -> HostInput {
-        HostInput {
-            down: self.window.get_keys().into_iter().filter_map(host_key).collect(),
-            typed: std::mem::take(&mut *self.typed.0.borrow_mut()),
-            // minifb names the keys after the host's layout, and has no scancodes
-            placed: Vec::new()
-        }
+        let down: Vec<HostKey> = self.window.get_keys().into_iter().filter_map(host_key).collect();
+        let typed = std::mem::take(&mut *self.typed.0.borrow_mut());
+        let placed = match &mut self.places {
+            Some(places) if NAMES_BY_LAYOUT => places.places(&down, &typed),
+            _ => down.clone()
+        };
+        HostInput { down, typed, placed }
     }
 
     fn present(&mut self, pixels: &[u32], (width, height): (usize, usize)) -> Result<(), String> {
@@ -62,6 +72,10 @@ impl Frontend for MinifbFrontend {
             .map_err(|e| format!("failed to redraw the window: {e}"))
     }
 }
+
+/// Whether minifb names the keys after the host's layout (Linux: the keys' symbols), rather
+/// than by their places (Windows' scancodes, macOS's key codes).
+const NAMES_BY_LAYOUT: bool = !cfg!(any(target_os = "windows", target_os = "macos"));
 
 /// Lists keys named the same in minifb's `Key` and `HostKey`.
 macro_rules! same_names {

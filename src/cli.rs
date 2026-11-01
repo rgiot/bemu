@@ -2,7 +2,7 @@
 
 use amsrust::crtc::CrtcType;
 use amsrust::display::DisplayMode;
-use amsrust::input::KeyboardMapping;
+use amsrust::input::{HostLayout, KeyboardMapping};
 use amsrust::motherboard::CpcModel;
 use clap::{Parser, ValueEnum};
 
@@ -164,6 +164,13 @@ pub struct Args {
     /// (the CPC's own rows: = is ^, [ is @, ' is ;), for games.
     #[arg(long, value_name = KeyboardMapping::NAMES, default_value = "symbolic", help_heading = RUN)]
     pub keyboard: KeyboardMapping,
+
+    /// The host keyboard's layout, for the positional keyboard in the minifb window on Linux,
+    /// which names the keys after it: their places are found back from it (an AZERTY's A is the
+    /// CPC's Q, its é the CPC's 2). Elsewhere (Windows, macOS, --frontend winit) the window
+    /// knows the places.
+    #[arg(long, value_name = HostLayout::NAMES, help_heading = RUN)]
+    pub host_keyboard_layout: Option<HostLayout>,
 
     /// The window's backend: winit is a window the GPU draws, the CRT included, with nothing read
     /// back (a build with --features gpu-window); F11 toggles its fullscreen.

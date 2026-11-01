@@ -62,7 +62,7 @@ use amsrust::input::HostKey;
 use amsrust::debug::{Monitor, MonitorContext};
 use amsrust::disc_image::load_disc_file;
 use amsrust::fdc::FdcDrive;
-use amsrust::input::{HostKeyboard, KeyboardMapping};
+use amsrust::input::{HostKeyboard, HostLayout, KeyboardMapping};
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
@@ -332,7 +332,7 @@ fn main() {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, args.from, &mut typist, args.display, filter.as_mut(), args.black_level, args.overlay),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay, args.keyboard)
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay, args.keyboard, args.host_keyboard_layout)
         },
         None if args.debug_server() => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
@@ -1058,12 +1058,13 @@ fn run_window(
     frontend: FrontendKind,
     mut turbo: bool,
     show_overlay: bool,
-    keyboard: KeyboardMapping
+    keyboard: KeyboardMapping,
+    host_layout: Option<HostLayout>
 ) {
     let (width, height) = mode.output_size();
     let mut window: Box<dyn Frontend> = match frontend {
         FrontendKind::Minifb => {
-            Box::new(MinifbFrontend::open("amsrust", width, height).unwrap_or_else(|e| panic!("{e}")))
+            Box::new(MinifbFrontend::open("amsrust", width, height, host_layout).unwrap_or_else(|e| panic!("{e}")))
         },
         #[cfg(feature = "gpu-window")]
         FrontendKind::Winit => {
@@ -1098,7 +1099,7 @@ fn run_window(
     let explain_places = |mapping: KeyboardMapping, window: &dyn Frontend| {
         if mapping == KeyboardMapping::Positional && !window.knows_key_places() {
             eprintln!(
-                "keyboard: this window names the keys after the host's layout: positional on a QWERTY host only (--frontend winit knows the places)"
+                "keyboard: this window names the keys after the host's layout: positional on a QWERTY host only, else give --host-keyboard-layout (azerty, qwertz)"
             );
         }
     };
