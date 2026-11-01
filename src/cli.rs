@@ -71,6 +71,11 @@ pub struct Args {
     #[arg(long = "rom", value_name = "SLOT=FILE", value_parser = parse_rom, help_heading = MACHINE)]
     pub roms: Vec<(u8, String)>,
 
+    /// Orgams (|ORGAMS): its five ROMs (slots 10 to 14, unless --rom put one there) and 576K of
+    /// RAM, for its banks and its 256K RAM disc.
+    #[arg(long, help_heading = MACHINE)]
+    pub orgams: bool,
+
     /// Lists the ROMs embedded in the executable.
     #[arg(long, help_heading = MACHINE)]
     list_roms: bool,
@@ -389,16 +394,36 @@ impl Args {
         self.debug_server || self.debug_paused || self.debug_port.is_some()
     }
 
+    /// What --orgams plugs: its ROMs where it expects them, the RAM it uses.
+    fn fit_orgams(&mut self) {
+        const ORGAMS_ROMS: [(u8, &str); 5] = [
+            (10, "inner://orgams"),
+            (11, "inner://orgext"),
+            (12, "inner://monogams"),
+            (13, "inner://bricbrac"),
+            (14, "inner://orgass")
+        ];
+        for (slot, rom) in ORGAMS_ROMS {
+            if !self.roms.iter().any(|(fitted, _)| *fitted == slot) {
+                self.roms.push((slot, rom.to_owned()));
+            }
+        }
+        self.ram_kb.get_or_insert(576);
+    }
+
     pub fn debug_port(&self) -> u16 {
         self.debug_port.unwrap_or(amsrust::debug_server::DEFAULT_PORT)
     }
 }
 
 pub fn parse_args() -> Args {
-    let args = Args::parse();
+    let mut args = Args::parse();
     if args.list_roms {
         print!("{}", amsrust::roms::listing());
         std::process::exit(0);
+    }
+    if args.orgams {
+        args.fit_orgams();
     }
     args
 }
