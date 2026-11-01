@@ -62,7 +62,7 @@ use amsrust::input::HostKey;
 use amsrust::debug::{Monitor, MonitorContext};
 use amsrust::disc_image::load_disc_file;
 use amsrust::fdc::FdcDrive;
-use amsrust::input::{HostKeyboard, KeyboardMapping};
+use amsrust::input::{HostKeyboard, HostLayout, KeyboardMapping};
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
@@ -138,6 +138,10 @@ fn main() {
         builder.plug_digiblaster();
         #[cfg(not(feature = "digiblaster"))]
         without_feature("--digiblaster", "digiblaster");
+    }
+    if let Some(prefix) = &args.dmp2000 {
+        // the builder is Copy: the prefix lives as long as the program
+        builder.plug_dmp2000().export_dmp2000_to(Box::leak(prefix.clone().into_boxed_str()));
     }
     if args.french {
         builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
@@ -309,6 +313,12 @@ fn main() {
             breakpoints.len()
         );
     }
+    // What a run writes at its end (a recording, the sound, the printer's sheets) survives
+    // Ctrl+C: the loops stop at the next frame. Not in the interactive monitor, where Ctrl+C
+    // keeps its usual meaning.
+    if !monitor_mode && (args.dmp2000.is_some() || args.record_wav.is_some() || args.record_ym.is_some()) {
+        ctrlc::set_handler(|| STOP.store(true, std::sync::atomic::Ordering::Relaxed)).ok();
+    }
     start_sound_export(&args, &mut motherboard);
     let mut typist = match &args.basic {
         Some(file) => {
@@ -329,7 +339,7 @@ fn main() {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, args.from, &mut typist, args.display, filter.as_mut(), args.black_level, args.overlay),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay, args.keyboard)
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay, args.keyboard, args.host_keyboard_layout)
         },
         None if args.debug_server() => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
@@ -357,6 +367,9 @@ fn main() {
     }
     finish_sound_export(&mut motherboard);
     motherboard.save_modified_discs();
+    if let Some(prefix) = &args.dmp2000 {
+        finish_printer_export(&motherboard, prefix);
+    }
     if let Some(path) = &args.save_sna {
         match amsrust::snapshot::save_sna(&motherboard, path) {
             Ok(()) => {
@@ -444,6 +457,27 @@ fn poll_sound_export(motherboard: &mut Motherboard) {
     {
         let samples = motherboard.take_audio_samples();
         export_samples(motherboard, &samples);
+    }
+}
+
+/// What the DMP2000 printed: its text, its bytes, its sheets.
+fn finish_printer_export(motherboard: &Motherboard, prefix: &str) {
+    let printer = motherboard
+        .printer_port()
+        .and_then(|port| port.device())
+        .and_then(|device| device.as_any().downcast_ref::<amsrust::dmp2000::Dmp2000>());
+    let Some(printer) = printer else { return };
+    if printer.raw().is_empty() {
+        eprintln!("the DMP2000 received nothing");
+        return;
+    }
+    match printer.write_files(prefix) {
+        Ok(files) => {
+            for file in files {
+                eprintln!("printed: {}", file.display());
+            }
+        },
+        Err(e) => eprintln!("{prefix}: {e}")
     }
 }
 
@@ -733,7 +767,7 @@ fn run_headless(
         cli::Every::Seconds(seconds) => ((seconds * T_STATES_PER_SECOND as f64) as usize).max(1),
         cli::Every::Frames(frames) => {
             // One monitor follows the beam all along: every frame is whole and in order.
-            while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) {
+            while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) && !stop_requested() {
                 motherboard.execute_next_opcode_no_video();
                 type_due_keys(typist, motherboard);
                 poll_sound_export(motherboard);
@@ -741,7 +775,7 @@ fn run_headless(
             let mut monitor = viewing_monitor(black_level);
             motherboard.watch_io_writes(show_overlay);
             let mut seen = 0u64;
-            while motherboard.t_state_counter().value() < target_t_states {
+            while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
                 type_due_keys(typist, motherboard);
                 poll_sound_export(motherboard);
                 let mut frame = None;
@@ -771,8 +805,8 @@ fn run_headless(
         }
     };
 
-    while motherboard.t_state_counter().value() < target_t_states {
-        while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) {
+    while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
+        while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) && !stop_requested() {
             // between screenshots, run without collecting video (cheaper)
             motherboard.execute_next_opcode_no_video();
             type_due_keys(typist, motherboard);
@@ -788,7 +822,7 @@ fn run_headless(
         motherboard.watch_io_writes(show_overlay);
         // Capture the next whole frame once due, rather than every tick:
         // matches how the CSL runner and play_demo grab a screenshot.
-        while frame.is_none() && motherboard.t_state_counter().value() < target_t_states {
+        while frame.is_none() && motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
             type_due_keys(typist, motherboard);
             poll_sound_export(motherboard);
             motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
@@ -1031,12 +1065,13 @@ fn run_window(
     frontend: FrontendKind,
     mut turbo: bool,
     show_overlay: bool,
-    keyboard: KeyboardMapping
+    keyboard: KeyboardMapping,
+    host_layout: Option<HostLayout>
 ) {
     let (width, height) = mode.output_size();
     let mut window: Box<dyn Frontend> = match frontend {
         FrontendKind::Minifb => {
-            Box::new(MinifbFrontend::open("amsrust", width, height).unwrap_or_else(|e| panic!("{e}")))
+            Box::new(MinifbFrontend::open("amsrust", width, height, host_layout).unwrap_or_else(|e| panic!("{e}")))
         },
         #[cfg(feature = "gpu-window")]
         FrontendKind::Winit => {
@@ -1071,7 +1106,7 @@ fn run_window(
     let explain_places = |mapping: KeyboardMapping, window: &dyn Frontend| {
         if mapping == KeyboardMapping::Positional && !window.knows_key_places() {
             eprintln!(
-                "keyboard: this window names the keys after the host's layout: positional on a QWERTY host only (--frontend winit knows the places)"
+                "keyboard: this window names the keys after the host's layout: positional on a QWERTY host only, else give --host-keyboard-layout (azerty, qwertz)"
             );
         }
     };

@@ -262,6 +262,10 @@ pub struct MotherboardBuilder {
     playcity: bool,
     #[cfg(feature = "digiblaster")]
     digiblaster: bool,
+    /// A DMP2000 printer on the printer port.
+    dmp2000: bool,
+    /// The files it writes by itself, once idle.
+    dmp2000_export: Option<&'static str>,
     /// Willy with an OPL3LPT, at this base.
     #[cfg(feature = "willy")]
     willy_opl3: Option<u16>,
@@ -320,6 +324,18 @@ impl MotherboardBuilder {
     #[cfg(feature = "willy")]
     pub fn plug_willy_opl3(&mut self, base: u16) -> &mut Self {
         self.willy_opl3 = Some(base);
+        self
+    }
+
+    /// Plug an Amstrad DMP2000 printer on the printer port.
+    pub fn plug_dmp2000(&mut self) -> &mut Self {
+        self.dmp2000 = true;
+        self
+    }
+
+    /// The DMP2000 writes its files (`prefix.txt`...) by itself, a while after its last byte.
+    pub fn export_dmp2000_to(&mut self, prefix: &'static str) -> &mut Self {
+        self.dmp2000_export = Some(prefix);
         self
     }
 
@@ -407,6 +423,13 @@ impl MotherboardBuilder {
         #[cfg(feature = "digiblaster")]
         if self.digiblaster {
             motherboard.plug_printer(Box::new(crate::sound_cards::Digiblaster::default()));
+        }
+        if self.dmp2000 {
+            let mut printer = crate::dmp2000::Dmp2000::with_os_rom(crate::roms::OS6128);
+            if let Some(prefix) = self.dmp2000_export {
+                printer.export_to(prefix);
+            }
+            motherboard.plug_printer(Box::new(printer));
         }
         if let Some(brand) = self.brand {
             motherboard.ppi.set_brand(brand);
@@ -591,9 +614,14 @@ impl Motherboard {
         self.update_sound_mix();
     }
 
+    /// A card on the expansion port, or a device making sound on the printer port.
+    fn sound_cards_fitted(&self) -> bool {
+        self.expansion_port.is_some() || self.printer_port.as_ref().is_some_and(|port| port.has_sound())
+    }
+
     /// The AY's share of the sound: all of it alone, half with cards that make sound.
     fn update_sound_mix(&mut self) {
-        let cards = self.expansion_port.is_some() || self.printer_port.is_some();
+        let cards = self.sound_cards_fitted();
         self.psg.set_extra_sound([0.0; 2], if cards { 0.5 } else { 1.0 });
     }
 
@@ -792,8 +820,14 @@ impl Motherboard {
         if self.crtc.is_activated() {
             self.crtc.set_phase_ticks(0);
             self.fdc.advance(1); // one character = one microsecond
-            if self.expansion_port.is_some() || self.printer_port.is_some() {
+            if self.sound_cards_fitted() {
                 self.psg.set_extra_sound(self.expansion_sound(), 0.5);
+            }
+            if let Some(printer) = &mut self.printer_port {
+                printer.advance_us();
+                if let Some(busy) = printer.busy() {
+                    self.ppi.set_pin(PpiPin::B6, busy);
+                }
             }
             if let Some(tape) = &mut self.tape {
                 // the cassette motor relay is port C's bit 4, the head's level port B's bit 7

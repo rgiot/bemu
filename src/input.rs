@@ -355,6 +355,137 @@ impl HostKeyboard {
     }
 }
 
+/// The host keyboard's layout, for a window that names the keys after it rather than by their
+/// place (minifb on Linux: the keys' symbols, X11's and Wayland's): what it takes to find the
+/// places back, for the positional keyboard.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HostLayout {
+    /// US or UK: a key's symbol is its place.
+    #[default]
+    Qwerty,
+    /// French.
+    Azerty,
+    /// German.
+    Qwertz
+}
+
+impl HostLayout {
+    pub const NAMES: &'static str = "qwerty|azerty|qwertz";
+
+    /// The place of the key the window names `key`.
+    fn place_of(self, key: HostKey) -> HostKey {
+        use HostKey::*;
+        match (self, key) {
+            (Self::Azerty, A) => Q,
+            (Self::Azerty, Q) => A,
+            (Self::Azerty, Z) => W,
+            (Self::Azerty, W) => Z,
+            (Self::Azerty, M) => Semicolon,
+            (Self::Azerty, Comma) => M,
+            (Self::Azerty, Semicolon) => Comma,
+            (Self::Azerty, Apostrophe) => Key4,
+            (Self::Azerty, Minus) => Key6,
+            (Self::Qwertz, Y) => Z,
+            (Self::Qwertz, Z) => Y,
+            (Self::Qwertz, Minus) => Slash,
+            (_, key) => key
+        }
+    }
+
+    /// The place of a key the window doesn't name (its symbol is no [`HostKey`]: AZERTY's é,
+    /// QWERTZ's ö), from the character it types, without or with Shift.
+    fn place_of_char(self, c: char) -> Option<HostKey> {
+        use HostKey::*;
+        Some(match (self, c) {
+            (Self::Azerty, '&' | '1') => Key1,
+            (Self::Azerty, 'é' | '2') => Key2,
+            (Self::Azerty, '"' | '3') => Key3,
+            (Self::Azerty, '(' | '5') => Key5,
+            (Self::Azerty, 'è' | '7') => Key7,
+            (Self::Azerty, '_' | '8') => Key8,
+            (Self::Azerty, 'ç' | '9') => Key9,
+            (Self::Azerty, 'à' | '0') => Key0,
+            (Self::Azerty, ')' | '°') => Minus,
+            (Self::Azerty, '$' | '£') => RightBracket,
+            (Self::Azerty, 'ù' | '%') => Apostrophe,
+            (Self::Azerty, '*' | 'µ') => Backslash,
+            (Self::Azerty, '<' | '>') => IntlBackslash,
+            (Self::Azerty, ':' | '/') => Period,
+            (Self::Azerty, '!' | '§') => Slash,
+            (Self::Azerty, '²') => Backquote,
+            (Self::Qwertz, 'ß' | '?') => Minus,
+            (Self::Qwertz, 'ü' | 'Ü') => LeftBracket,
+            (Self::Qwertz, '+' | '*') => RightBracket,
+            (Self::Qwertz, 'ö' | 'Ö') => Semicolon,
+            (Self::Qwertz, 'ä' | 'Ä') => Apostrophe,
+            (Self::Qwertz, '#' | '\'') => Backslash,
+            (Self::Qwertz, '<' | '>') => IntlBackslash,
+            (Self::Qwertz, '°') => Backquote,
+            _ => return None
+        })
+    }
+}
+
+impl std::str::FromStr for HostLayout {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        match text.to_ascii_lowercase().as_str() {
+            "qwerty" | "us" | "uk" | "gb" => Ok(Self::Qwerty),
+            "azerty" | "fr" => Ok(Self::Azerty),
+            "qwertz" | "de" => Ok(Self::Qwertz),
+            other => Err(format!("unknown host keyboard layout {other:?} (expected {})", Self::NAMES))
+        }
+    }
+}
+
+/// The places of the keys held ([`HostInput::placed`]) for a window that names the keys after
+/// the host's layout. A key the window doesn't name is known by the character it types only,
+/// which comes as it goes down (and again with the key's auto-repeat), never as it goes up: it
+/// is held for [`Self::CHARACTER_POLLS`] polls after each.
+#[derive(Debug, Default)]
+pub struct HostPlaces {
+    layout: HostLayout,
+    by_character: Vec<(HostKey, u8)>
+}
+
+impl HostPlaces {
+    /// Two frames down and one up: what the firmware needs to see a key once.
+    pub const CHARACTER_POLLS: u8 = 3;
+
+    pub fn new(layout: HostLayout) -> Self {
+        Self { layout, by_character: Vec::new() }
+    }
+
+    /// This poll's places, from the keys the window names and the characters typed.
+    pub fn places(&mut self, down: &[HostKey], typed: &[char]) -> Vec<HostKey> {
+        for (_, polls) in &mut self.by_character {
+            *polls -= 1;
+        }
+        self.by_character.retain(|(_, polls)| *polls > 0);
+        // the keypad's characters (/ * + and its digits) are no other key's
+        let keypad = down.iter().any(|key| {
+            use HostKey::*;
+            matches!(key, NumPad0 | NumPad1 | NumPad2 | NumPad3 | NumPad4 | NumPad5 | NumPad6 | NumPad7 | NumPad8 | NumPad9 | NumPadDot | NumPadEnter)
+        });
+        if !keypad {
+            for &c in typed {
+                if let Some(place) = self.layout.place_of_char(c) {
+                    self.by_character.retain(|(key, _)| *key != place);
+                    self.by_character.push((place, Self::CHARACTER_POLLS));
+                }
+            }
+        }
+        let mut places: Vec<HostKey> = down.iter().map(|&key| self.layout.place_of(key)).collect();
+        for (key, _) in &self.by_character {
+            if !places.contains(key) {
+                places.push(*key);
+            }
+        }
+        places
+    }
+}
+
 /// Every key of [`POSITIONAL_MAP`] as its place holds it: the CPC's matrix is the same on every
 /// layout (an AZERTY CPC's A is the UK Q), so the CPC's own layout doesn't matter either.
 fn apply_positional(motherboard: &mut Motherboard, input: &HostInput) {
@@ -753,5 +884,46 @@ mod test {
         keyboard.set_mapping(KeyboardMapping::Symbolic);
         keyboard.apply(&mut motherboard, &HostInput::default());
         assert!(!motherboard.keyboard().is_pressed(CpcKey::Joy0Up));
+    }
+
+    /// A French host on a window naming the keys after the layout (minifb on Linux): the key
+    /// labelled A is Q's place, M the US ;'s, and the digits' row, which it doesn't name, is
+    /// found from the characters (é is 2's place), held a few polls.
+    #[test]
+    fn a_host_layout_gives_the_places_back() {
+        let mut places = HostPlaces::new(HostLayout::Azerty);
+        assert_eq!(places.places(&[HostKey::A, HostKey::M, HostKey::Comma], &['a']), [HostKey::Q, HostKey::Semicolon, HostKey::M]);
+        assert_eq!(places.places(&[], &['é']), [HostKey::Key2]);
+        for _ in 1..HostPlaces::CHARACTER_POLLS {
+            assert_eq!(places.places(&[], &[]), [HostKey::Key2], "held");
+        }
+        assert_eq!(places.places(&[], &[]), [], "then up");
+        // Shift: the same places
+        assert_eq!(places.places(&[HostKey::LeftShift], &['2']), [HostKey::LeftShift, HostKey::Key2]);
+        // the keypad's characters are not the main keys'
+        let mut places = HostPlaces::new(HostLayout::Azerty);
+        assert_eq!(places.places(&[HostKey::NumPad5], &['5']), [HostKey::NumPad5]);
+        // German: Z and Y swapped, ö at the US ;
+        let mut places = HostPlaces::new(HostLayout::Qwertz);
+        assert_eq!(places.places(&[HostKey::Z, HostKey::Key1], &['ö']), [HostKey::Y, HostKey::Key1, HostKey::Semicolon]);
+        // QWERTY: unchanged
+        let mut places = HostPlaces::new(HostLayout::Qwerty);
+        assert_eq!(places.places(&[HostKey::A, HostKey::Minus], &['a', '-']), [HostKey::A, HostKey::Minus]);
+        assert_eq!("fr".parse::<HostLayout>(), Ok(HostLayout::Azerty));
+    }
+
+    /// The whole chain on a French host: the AZERTY key at Q's place (named A) presses the
+    /// CPC's Q, its é key the CPC's 2.
+    #[test]
+    fn a_french_host_plays_by_place() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Positional);
+        let mut places = HostPlaces::new(HostLayout::Azerty);
+        let (down, typed) = (vec![HostKey::A], vec!['a', 'é']);
+        let placed = places.places(&down, &typed);
+        keyboard.apply(&mut motherboard, &HostInput { down, typed, placed });
+        for (key, pressed) in [(CpcKey::Q, true), (CpcKey::Digit2, true), (CpcKey::A, false)] {
+            assert_eq!(motherboard.keyboard().is_pressed(key), pressed, "{key:?}");
+        }
     }
 }

@@ -1126,6 +1126,34 @@ fn keys_of_special(key: SpecialKey, layout: KeyboardLayout) -> Option<Vec<CpcKey
 /// The keys of a text in CSL's `key_output` syntax (`\\(RET)`, `\\(ESC)`, `\\(CPY)`…, a newline
 /// is RETURN), one entry per key stroke, as a `key_output` types them. `--type` uses it.
 pub fn keys_of_text(text: &str, layout: KeyboardLayout) -> Result<Vec<Vec<CpcKey>>, String> {
+    // `{\(CTR)h}`: the keys of a group are pressed together, as in a CSL script (the escapes
+    // `\({)` and `\(})` are the characters themselves)
+    let bracket = |text: &str, wanted: char| {
+        text.char_indices().find(|&(at, c)| c == wanted && !text[..at].ends_with("\\(")).map(|(at, _)| at)
+    };
+    let mut strokes = Vec::new();
+    let mut rest = text;
+    while let Some(open) = bracket(rest, '{') {
+        let after = &rest[open + 1..];
+        let close = bracket(after, '}').ok_or_else(|| format!("no }} closing the {{ of \"{}\"", &rest[open..]))?;
+        strokes.extend(keys_of_plain_text(&rest[..open], layout)?);
+        let mut group: Vec<CpcKey> = Vec::new();
+        for key in keys_of_plain_text(&after[..close], layout)?.into_iter().flatten() {
+            if !group.contains(&key) {
+                group.push(key);
+            }
+        }
+        strokes.push(group);
+        rest = &after[close + 1..];
+    }
+    strokes.extend(keys_of_plain_text(rest, layout)?);
+    Ok(strokes)
+}
+
+fn keys_of_plain_text(text: &str, layout: KeyboardLayout) -> Result<Vec<Vec<CpcKey>>, String> {
+    if text.is_empty() {
+        return Ok(Vec::new());
+    }
     let output = cpclib_csl::KeyOutput::try_from(text)?;
     Ok(output
         .elements()
@@ -1169,6 +1197,13 @@ mod test {
         use CpcKey::*;
         let keys = keys_of_text(r"|rz\(RET)\(ESC)", KeyboardLayout::default()).unwrap();
         assert_eq!(keys, vec![vec![Shift, At], vec![R], vec![Z], vec![Return], vec![Esc]]);
+    }
+
+    #[test]
+    fn a_group_in_braces_is_one_stroke() {
+        use CpcKey::*;
+        let keys = keys_of_text(r"a{\(CTR)h}\(RET)", KeyboardLayout::default()).unwrap();
+        assert_eq!(keys, vec![vec![A], vec![Control, H], vec![Return]]);
     }
 
     #[test]

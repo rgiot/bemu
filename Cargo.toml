@@ -54,6 +54,10 @@ wgpu = { version = "27", optional = true, default-features = false, features = [
 # `--frontend winit`: a window drawn by the GPU, see src/frontend/winit_gpu.rs
 winit = { version = "0.30", optional = true }
 
+# wgpu needs a native backend per OS; "vulkan" alone leaves macOS with none.
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "metal"] }
+
 # A web page (see web/): no terminal, sockets, threads or native windows; the CRT on WebGPU.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cpclib = {path = "../rust.cpcdemotools/cpclib", default-features = false}

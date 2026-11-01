@@ -366,6 +366,20 @@ pub trait PrinterDevice: Any {
         [0.0; 2]
     }
 
+    /// The BUSY line, when the device drives it (a printer): the PPI's port B bit 6 follows.
+    /// With `None` the line is left high, as with no printer.
+    fn busy(&self) -> Option<bool> {
+        None
+    }
+
+    /// A microsecond has passed.
+    fn advance_us(&mut self) {}
+
+    /// Whether the device makes sound (the AY then gives it half of the mix).
+    fn has_sound(&self) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -409,5 +423,22 @@ impl PrinterPort {
 
     pub fn sound(&self) -> [f32; 2] {
         self.device.as_ref().map_or([0.0; 2], |device| device.sound())
+    }
+
+    /// The device's BUSY line, if it drives it.
+    pub fn busy(&self) -> Option<bool> {
+        self.device.as_ref().and_then(|device| device.busy())
+    }
+
+    /// Whether the device makes sound.
+    pub fn has_sound(&self) -> bool {
+        self.device.as_ref().is_some_and(|device| device.has_sound())
+    }
+
+    /// A microsecond passes for the device.
+    pub fn advance_us(&mut self) {
+        if let Some(device) = &mut self.device {
+            device.advance_us();
+        }
     }
 }
