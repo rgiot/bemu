@@ -246,6 +246,14 @@ pub struct Args {
     #[arg(long, help_heading = EXPANSIONS)]
     pub digiblaster: bool,
 
+    /// An Amstrad DMP2000 printer on the printer port (PRINT #8, LIST #8, CTRL-SHIFT-ESC...).
+    ///
+    /// When the run ends, what it printed is written as PREFIX.txt (the text), PREFIX.prn (the
+    /// bytes it received) and PREFIX_001.png... (the sheets of fan-fold paper, with their
+    /// tractor holes, as its 9 needles struck them).
+    #[arg(long, value_name = "PREFIX", help_heading = EXPANSIONS)]
+    pub dmp2000: Option<String>,
+
     /// An M4 board, the folder its SD card: RUN"file, CAT, |DIR, |CD... on the folder.
     ///
     /// Its WiFi is the host's network (sockets, |HTTPGET, |HTTPMEM, |NETSTAT, |TIME with

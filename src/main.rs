@@ -139,6 +139,9 @@ fn main() {
         #[cfg(not(feature = "digiblaster"))]
         without_feature("--digiblaster", "digiblaster");
     }
+    if args.dmp2000.is_some() {
+        builder.plug_dmp2000();
+    }
     if args.french {
         builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);
     }
@@ -357,6 +360,9 @@ fn main() {
     }
     finish_sound_export(&mut motherboard);
     motherboard.save_modified_discs();
+    if let Some(prefix) = &args.dmp2000 {
+        finish_printer_export(&motherboard, prefix);
+    }
     if let Some(path) = &args.save_sna {
         match amsrust::snapshot::save_sna(&motherboard, path) {
             Ok(()) => {
@@ -444,6 +450,27 @@ fn poll_sound_export(motherboard: &mut Motherboard) {
     {
         let samples = motherboard.take_audio_samples();
         export_samples(motherboard, &samples);
+    }
+}
+
+/// What the DMP2000 printed: its text, its bytes, its sheets.
+fn finish_printer_export(motherboard: &Motherboard, prefix: &str) {
+    let printer = motherboard
+        .printer_port()
+        .and_then(|port| port.device())
+        .and_then(|device| device.as_any().downcast_ref::<amsrust::dmp2000::Dmp2000>());
+    let Some(printer) = printer else { return };
+    if printer.raw().is_empty() {
+        eprintln!("the DMP2000 received nothing");
+        return;
+    }
+    match printer.write_files(prefix) {
+        Ok(files) => {
+            for file in files {
+                eprintln!("printed: {}", file.display());
+            }
+        },
+        Err(e) => eprintln!("{prefix}: {e}")
     }
 }
 
