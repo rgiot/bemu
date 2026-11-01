@@ -3,9 +3,10 @@
 use amsrust::crtc::CrtcType;
 use amsrust::display::DisplayMode;
 use amsrust::motherboard::CpcModel;
+use clap::{Parser, ValueEnum};
 
 /// The window backend, `--frontend`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum FrontendKind {
     Minifb,
     /// winit + wgpu: the CRT is drawn by the GPU, with no read-back
@@ -16,103 +17,304 @@ pub enum FrontendKind {
 /// ACE-DL's own: ink black is a dark grey, not the 0 of the blanking.
 pub const DEFAULT_BLACK_LEVEL: u8 = 8;
 
+const MACHINE: &str = "Machine";
+const MEDIA: &str = "Discs, tapes, snapshots";
+const RUN: &str = "Running";
+const RECORD: &str = "Recording";
+const TYPING: &str = "Typing";
+const DEBUG: &str = "Debugging";
+const DISPLAY: &str = "Display";
+const EXPANSIONS: &str = "Expansions";
+
+/// An Amstrad CPC emulator.
+#[derive(Parser)]
+#[command(name = "amsrust", version, after_long_help = AFTER_HELP)]
 pub struct Args {
-    pub crtc: CrtcType,
+    /// The model, its ROMs: the 464 and 664 have 64K, the 6128 128K; the 664 and 6128 a disc
+    /// interface.
+    #[arg(long, default_value = "6128", help_heading = MACHINE)]
     pub model: CpcModel,
-    /// Total RAM in KB (64 = no extra page), if not the model's.
-    pub ram_kb: Option<usize>,
-    /// Disc interface (a DDI-1 on a 464), if not the model's.
-    pub disc_interface: Option<bool>,
-    /// `--french`: the French 6128 ROMs, AZERTY keyboard.
+
+    /// The French ROMs of the 6128, with its AZERTY keyboard (typed text and keys follow it).
+    #[arg(long, help_heading = MACHINE)]
     pub french: bool,
-    /// `--playcity`: a PlayCity (two more AYs and a CTC).
-    pub playcity: bool,
-    /// `--digiblaster`: an 8-bit DAC on the printer port.
-    pub digiblaster: bool,
-    pub dsk_a: Option<String>,
-    pub dsk_b: Option<String>,
-    /// `--cdt path`: a tape in the cassette deck, PLAY down.
-    pub cdt: Option<String>,
-    pub sna: Option<String>,
-    pub screenshot_dir: Option<String>,
-    pub seconds: u64,
-    /// How often a screenshot is taken.
-    pub every: Every,
-    /// `--from S`: the first screenshot at S seconds.
-    pub from: f64,
-    pub window: bool,
-    pub mute: bool,
-    /// `--turbo`: the window starts at full speed (F10 toggles it).
-    pub turbo: bool,
-    /// `--watch`: the files are taken again when they change.
-    pub watch: bool,
-    /// `--overlay`: the timing overlay shown (window) or drawn (screenshots).
-    pub overlay: bool,
-    pub record: Option<String>,
-    /// `--record-ym file`: the AY's registers frame by frame, as a YM6 file.
-    pub record_ym: Option<String>,
-    /// `--record-wav file`: the sound as a WAV file.
-    pub record_wav: Option<String>,
-    /// `--sym FILE` (repeatable): symbol files, for the debuggers.
-    pub symbols: Vec<String>,
-    /// `--rom SLOT=FILE` (repeatable): upper ROMs.
-    pub roms: Vec<(u8, String)>,
-    /// `--m4 DIR`: an M4 board, its SD card the folder.
-    pub m4: Option<String>,
-    /// `--m4-rom FILE`: another ROM for the M4 than the bundled one.
-    pub m4_rom: Option<String>,
-    /// `--m4-no-wifi`: the M4's WiFi off (it uses the host's network otherwise).
-    pub m4_no_wifi: bool,
-    /// `--m4-slot N`: the slot of the M4's ROM (6 by default).
-    pub m4_slot: Option<u8>,
-    /// `--albireo PATH`: an Albireo, its USB key a folder or a FAT image.
-    pub albireo: Option<String>,
-    /// `--nova FILE`: a Nova, its NVRAM kept in the file.
-    pub nova: Option<String>,
-    /// `--booster` (a CPC Booster+) or `--miniboster`.
-    pub booster: Option<&'static str>,
-    /// `--booster-uart loopback|listen:ADDR|connect:ADDR`: what its serial port is wired to.
-    pub booster_uart: Option<String>,
-    /// `--booster-eeprom FILE`: its 512 bytes of EEPROM, kept in the file.
-    pub booster_eeprom: Option<String>,
-    /// `--booster-flash FILE`: its 16K of program memory (a dump of the BIOS), kept in the file.
-    pub booster_flash: Option<String>,
-    /// `--booster-adc FILE`: what its ADC samples (a WAV or raw unsigned bytes), looped.
-    pub booster_adc: Option<String>,
-    /// `--willy-opl3 [--willy-opl3-at ADDR]`: Willy with an OPL3LPT (at &FEBC by default).
-    pub willy_opl3: Option<String>,
-    /// `--willy-s2p FILE.sf2 [--willy-s2p-at ADDR]`: Willy with an S2P, its instruments the
-    /// SoundFont's (at &FEAC by default).
-    pub willy_s2p: Option<String>,
-    pub willy_s2p_at: Option<String>,
-    /// `--dandanator ROMSET [--dandanator-writable]`: a CPC Dandanator Mini, its flash the
-    /// romset (what the CPC programs kept in the file only when writable).
-    pub dandanator: Option<String>,
-    pub dandanator_writable: bool,
-    /// `--save-sna path`: the machine's state saved there when the run ends.
-    pub save_sna: Option<String>,
-    pub debug_server: bool,
-    pub debug_port: u16,
-    /// Start paused, for a debugger to arm its breakpoints first.
-    pub debug_paused: bool,
-    pub text: Option<String>,
-    /// `--basic FILE.bas`: a listing (text, as typed) put in memory at --type-at, then RUN.
-    pub basic: Option<String>,
-    pub type_at: f64,
-    /// How the monitor's frames are filtered for the window, the recording
-    /// and the screenshots.
-    pub display: DisplayMode,
-    /// Render the CRT on the GPU (needs the `crt-gpu` feature).
-    pub gpu: bool,
-    /// How curved a CRT's glass is, times its profile's bulge (0: flat).
-    pub curvature: f32,
-    pub frontend: FrontendKind,
-    /// Gate Array fitted, if not the default (40010).
+
+    /// Total RAM in KB, the extension banked as a 6128's: 64, 128... 576.
+    #[arg(long = "ram", value_name = "KB", value_parser = parse_ram, help_heading = MACHINE)]
+    pub ram_kb: Option<usize>,
+
+    /// Adds a DDI-1 (AMSDOS) to a 464.
+    #[arg(long, conflicts_with = "no_disc", help_heading = MACHINE)]
+    ddi: bool,
+
+    /// Removes the disc interface.
+    #[arg(long, help_heading = MACHINE)]
+    no_disc: bool,
+
+    /// The CRTC type.
+    #[arg(long, value_name = "0-4", default_value = "0", value_parser = parse_crtc, help_heading = MACHINE)]
+    pub crtc: CrtcType,
+
+    /// The Gate Array (the 40007/8 are one pixel ahead: palette writes).
+    #[arg(long = "ga", value_name = "40007|40008|40010", value_parser = parse_gate_array, help_heading = MACHINE)]
     pub gate_array: Option<amsrust::ga::GateArrayType>,
-    /// Level a black ink is drawn at, above the blanking and the sync
-    /// pulses (0, blacker than black); not with the debug server.
-    pub black_level: u8
+
+    /// A 16K upper ROM in a slot (0-255; repeatable). FILE is a file or inner://NAME, one
+    /// embedded in the executable (--list-roms).
+    ///
+    /// UniDOS as its manual advises: --rom 1=inner://unidos-nova --rom 7=inner://unidos
+    /// --rom 14=inner://unitools --rom 15=inner://amsdos --rom 27=inner://unidos-albireo (with
+    /// --nova and --albireo). Orgams: --rom 10=inner://orgams --rom 11=inner://orgext
+    /// --rom 12=inner://monogams --rom 13=inner://bricbrac --rom 14=inner://orgass (|ORGAMS;
+    /// --ram 576 gives it its banks from &FF down, a 256K RAM disc fitting).
+    #[arg(long = "rom", value_name = "SLOT=FILE", value_parser = parse_rom, help_heading = MACHINE)]
+    pub roms: Vec<(u8, String)>,
+
+    /// Lists the ROMs embedded in the executable.
+    #[arg(long, help_heading = MACHINE)]
+    list_roms: bool,
+
+    /// A disc in drive A.
+    #[arg(long = "dsk", value_name = "PATH", help_heading = MEDIA)]
+    pub dsk_a: Option<String>,
+
+    /// A disc in drive B.
+    #[arg(long, value_name = "PATH", help_heading = MEDIA)]
+    pub dsk_b: Option<String>,
+
+    /// A tape (CDT/TZX) in the cassette deck, PLAY down: it plays when the CPC starts the motor
+    /// (RUN" on a 464, |TAPE first on a 664/6128).
+    #[arg(long, value_name = "PATH", help_heading = MEDIA)]
+    pub cdt: Option<String>,
+
+    /// A snapshot to start from. Breakpoints of its REMU/BRKC/BRKS/WABP chunks are set in the
+    /// interactive monitor; its symbols (SYMB chunk, REMU labels) name the addresses in the
+    /// monitor and the debug server.
+    #[arg(long, value_name = "PATH", help_heading = MEDIA)]
+    pub sna: Option<String>,
+
+    /// The machine's state saved there when the run ends (headless, recording, window closed).
+    #[arg(long, value_name = "PATH", help_heading = MEDIA)]
+    pub save_sna: Option<String>,
+
+    /// Takes the --sna/--dsk/--dsk-b/--cdt files again when they change (with --window or
+    /// --debug-server).
+    ///
+    /// For an edit, assemble, see loop: a disc or tape goes in again, then the snapshot is
+    /// loaded again; without a snapshot the machine is switched off and on and --type typed
+    /// again.
+    #[arg(long, help_heading = MEDIA)]
+    pub watch: bool,
+
+    /// Runs headless for --seconds, saving screenshots in DIR.
+    #[arg(long = "screenshot", value_name = "DIR", help_heading = RUN)]
+    pub screenshot_dir: Option<String>,
+
+    /// How long a headless run (--screenshot, --record) lasts.
+    #[arg(long, default_value_t = 30, help_heading = RUN)]
+    pub seconds: u64,
+
+    /// How often a screenshot is taken: seconds, or frames as Nf (1f: each frame, for following
+    /// an effect frame by frame).
+    #[arg(long, value_name = "N|Nf", default_value = "2", value_parser = parse_every, help_heading = RUN)]
+    pub every: Every,
+
+    /// The first screenshot at these seconds.
+    #[arg(long, value_name = "S", default_value_t = 0.0, value_parser = parse_seconds, help_heading = RUN)]
+    pub from: f64,
+
+    /// A live, playable window redrawn at the CPC's ~50 Hz, keyboard included; close it to quit.
+    #[arg(long, help_heading = RUN)]
+    pub window: bool,
+
+    /// The window silent (a build with --features audio plays the sound).
+    #[arg(long, help_heading = RUN)]
+    pub mute: bool,
+
+    /// The window starts at full speed (F10 toggles it).
+    #[arg(long, help_heading = RUN)]
+    pub turbo: bool,
+
+    /// The window's backend: winit is a window the GPU draws, the CRT included, with nothing read
+    /// back (a build with --features gpu-window); F11 toggles its fullscreen.
+    #[arg(long, value_enum, default_value_t = FrontendKind::Minifb, help_heading = RUN)]
+    pub frontend: FrontendKind,
+
+    /// A video with sound through ffmpeg: what the window shows until it is closed, or without
+    /// --window, --seconds run headless.
+    #[arg(long, value_name = "FILE", help_heading = RECORD)]
+    pub record: Option<String>,
+
+    /// The AY's registers once a frame (on the VSYNC), as a YM6 file, until the run ends.
+    #[arg(long, value_name = "FILE", help_heading = RECORD)]
+    pub record_ym: Option<String>,
+
+    /// The sound as a WAV file, until the run ends (the sound of full speed is not kept).
+    #[arg(long, value_name = "FILE", help_heading = RECORD)]
+    pub record_wav: Option<String>,
+
+    /// Typed on the CPC keyboard at --type-at, the keys written as in CSL's key_output: \n,
+    /// \(RET), \(ESC), \(CPY), \(DEL)... and \(WAIT n), n seconds (a program's prompt) before
+    /// the keys after it.
+    #[arg(long = "type", value_name = "TEXT", value_parser = parse_typed, help_heading = TYPING)]
+    pub text: Option<String>,
+
+    /// A BASIC listing (text) put in memory at --type-at, then RUN typed (and --type).
+    #[arg(long, value_name = "FILE.bas", help_heading = TYPING)]
+    pub basic: Option<String>,
+
+    /// When --type and --basic start, in seconds.
+    #[arg(long, value_name = "S", default_value_t = 3.0, help_heading = TYPING)]
+    pub type_at: f64,
+
+    /// Serves the AMSpiriT-Lite compatible debug API on 127.0.0.1 (GET /api/doc lists the
+    /// endpoints), with --window or headless.
+    #[arg(long, help_heading = DEBUG)]
+    debug_server: bool,
+
+    /// The debug server's port (--debug-server implied).
+    #[arg(long, value_name = "PORT", help_heading = DEBUG)]
+    debug_port: Option<u16>,
+
+    /// The debug server starts paused, for a debugger to set its breakpoints before anything
+    /// runs (--debug-server implied).
+    #[arg(long, help_heading = DEBUG)]
+    pub debug_paused: bool,
+
+    /// A symbol file for the monitor and the debug server (repeatable): name equ #4000,
+    /// name: equ 0x4000, name = $4000, name #4000, 4000 name.
+    #[arg(long = "sym", value_name = "FILE", help_heading = DEBUG)]
+    pub symbols: Vec<String>,
+
+    /// How the picture is rendered, in the window, the recording and the screenshots (raw: the
+    /// monitor's ideal picture; the others CRT approximations). F9 cycles them in the window.
+    #[arg(long, value_name = DisplayMode::NAMES, default_value = "raw", help_heading = DISPLAY)]
+    pub display: DisplayMode,
+
+    /// Renders the CRTs on the GPU (a build with --features crt-gpu).
+    #[arg(long = "crt-gpu", help_heading = DISPLAY)]
+    pub gpu: bool,
+
+    /// How curved a CRT's glass is, times its tube's own bulge: 0 (flat) to 4.
+    #[arg(long, default_value_t = 0.0, value_parser = parse_curvature, help_heading = DISPLAY)]
+    pub curvature: f32,
+
+    /// What a black ink is drawn at: on a real tube a dark grey, blanking and sync being blacker
+    /// (0). Not with the debug server, whose pictures stay exact.
+    #[arg(long, value_name = "0-255", default_value_t = DEFAULT_BLACK_LEVEL, help_heading = DISPLAY)]
+    pub black_level: u8,
+
+    /// Draws where the CPU wrote to the CRTC and the Gate Array, on the screenshots and in the
+    /// window (F6 shows or hides it there).
+    ///
+    /// A short bar where the beam was: CRTC R0-R9 cyan, R12/R13 orange, other registers white,
+    /// register selects grey, inks yellow (pen selects dark yellow), mode/ROMs magenta, RAM green.
+    #[arg(long, help_heading = DISPLAY)]
+    pub overlay: bool,
+
+    /// A PlayCity on the expansion port: two more AYs, right and left, and a CTC whose channel 1
+    /// counts the CRTC's CURSOR to an NMI.
+    #[arg(long, help_heading = EXPANSIONS)]
+    pub playcity: bool,
+
+    /// A DAC on the printer port (a signed byte written to &EFxx).
+    #[arg(long, help_heading = EXPANSIONS)]
+    pub digiblaster: bool,
+
+    /// An M4 board, the folder its SD card: RUN"file, CAT, |DIR, |CD... on the folder.
+    ///
+    /// Its WiFi is the host's network (sockets, |HTTPGET, |HTTPMEM, |NETSTAT, |TIME with
+    /// m4/config.txt's tz; nothing is joined, |NETSET only writes m4/config.txt). RulezCharge
+    /// downloads from cpcrulez.fr: --m4 DIR --rom 5=inner://rulezcharge, then |RZ
+    /// (examples/rulezcharge.sh).
+    #[arg(long, value_name = "DIR", help_heading = EXPANSIONS)]
+    pub m4: Option<String>,
+
+    /// Another ROM for the M4 than its bundled v2.0.8.
+    #[arg(long, value_name = "FILE", help_heading = EXPANSIONS)]
+    pub m4_rom: Option<String>,
+
+    /// The slot of the M4's ROM (6 by default).
+    #[arg(long, value_name = "SLOT", help_heading = EXPANSIONS)]
+    pub m4_slot: Option<u8>,
+
+    /// The M4's WiFi off (|WIFI,0 too).
+    #[arg(long, help_heading = EXPANSIONS)]
+    pub m4_no_wifi: bool,
+
+    /// An Albireo (a CH376 at &FE80), its USB key a folder or a FAT image (whole, or
+    /// partitioned).
+    #[arg(long, value_name = "DIR|IMAGE", help_heading = EXPANSIONS)]
+    pub albireo: Option<String>,
+
+    /// A Nova (32K NVRAM, a clock), the NVRAM kept in the file.
+    #[arg(long, value_name = "FILE", help_heading = EXPANSIONS)]
+    pub nova: Option<String>,
+
+    /// A CPC Booster+ at &FF00-&FF27: a UART, two PWM channels (stereo sound), a 2 channels ADC,
+    /// 512 bytes of EEPROM, 16K of program memory, a 5 bits TTL port, a multiplier, a keyboard
+    /// decoder.
+    #[arg(long, conflicts_with = "miniboster", help_heading = EXPANSIONS)]
+    booster: bool,
+
+    /// The MiniBooster, the Booster+'s variant (&FF01 reads 238, not 85).
+    #[arg(long, help_heading = EXPANSIONS)]
+    miniboster: bool,
+
+    /// What the Booster's UART is wired to: loopback, or a TCP socket as a null modem
+    /// (listen:127.0.0.1:2323, connect:host:port).
+    #[arg(long, value_name = "loopback|listen:ADDR|connect:ADDR", help_heading = EXPANSIONS)]
+    pub booster_uart: Option<String>,
+
+    /// The Booster's 512 bytes of EEPROM, kept in the file.
+    #[arg(long, value_name = "FILE", help_heading = EXPANSIONS)]
+    pub booster_eeprom: Option<String>,
+
+    /// The Booster's 16K of program memory (a dump of the BIOS), kept in the file.
+    #[arg(long, value_name = "FILE", help_heading = EXPANSIONS)]
+    pub booster_flash: Option<String>,
+
+    /// What the Booster's ADC samples (a WAV or raw unsigned bytes), looped.
+    #[arg(long, value_name = "FILE", help_heading = EXPANSIONS)]
+    pub booster_adc: Option<String>,
+
+    /// Willy with an OPL3LPT (an OPL3: &FEBC/&FEBE select a register of bank 0/1, &FEBD/&FEBF
+    /// write it).
+    #[arg(long, help_heading = EXPANSIONS)]
+    willy_opl3: bool,
+
+    /// The OPL3LPT at another base, Willy's jumper: &FEBC, &FEAC, &FEA4, &FE9C, &FE94, &FE8C,
+    /// &FE84 (--willy-opl3 implied).
+    #[arg(long, value_name = "ADDR", help_heading = EXPANSIONS)]
+    willy_opl3_at: Option<String>,
+
+    /// Willy with an S2P (a General MIDI synth: &FEAC the MIDI data, &FEAD the control/status),
+    /// its instruments the SoundFont's.
+    #[arg(long, value_name = "FILE.sf2", help_heading = EXPANSIONS)]
+    pub willy_s2p: Option<String>,
+
+    /// The S2P at another base, as --willy-opl3-at.
+    #[arg(long, value_name = "ADDR", requires = "willy_s2p", help_heading = EXPANSIONS)]
+    pub willy_s2p_at: Option<String>,
+
+    /// A CPC Dandanator Mini (512K of flash: its romset boots in place of the firmware). Its USB
+    /// serial port is not emulated.
+    #[arg(long, value_name = "ROMSET", help_heading = EXPANSIONS)]
+    pub dandanator: Option<String>,
+
+    /// What the CPC programs into the Dandanator's flash goes back to the file.
+    #[arg(long, requires = "dandanator", help_heading = EXPANSIONS)]
+    pub dandanator_writable: bool
 }
+
+const AFTER_HELP: &str = "\
+With no --screenshot, --window, --record or --debug-server, drops into the interactive monitor
+once everything is loaded ('h' at its prompt lists its commands).
+
+In the window: F10 toggles full speed (the emulation as fast as it can, silent, the picture shown
+50 times a second), F8 pauses and resumes (through the debug server when it runs, its clients
+told), F7 saves the machine's state in bemu_0000.sna (then 0001...) in the current directory,
+F9 cycles the displays (not while recording), F6 shows or hides the overlay, F4 closes it.";
 
 /// `--every`: seconds apart, or frames apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -121,309 +323,131 @@ pub enum Every {
     Frames(u64)
 }
 
-pub fn parse_args() -> Args {
-    let mut args = Args {
-        crtc: CrtcType::default(),
-        model: CpcModel::default(),
-        ram_kb: None,
-        disc_interface: None,
-        french: false,
-        playcity: false,
-        digiblaster: false,
-        dsk_a: None,
-        dsk_b: None,
-        cdt: None,
-        sna: None,
-        screenshot_dir: None,
-        seconds: 30,
-        every: Every::Seconds(2.0),
-        from: 0.0,
-        window: false,
-        mute: false,
-        turbo: false,
-        watch: false,
-        overlay: false,
-        record: None,
-        record_ym: None,
-        record_wav: None,
-        symbols: Vec::new(),
-        roms: Vec::new(),
-        m4: None,
-        m4_rom: None,
-        albireo: None,
-        m4_slot: None,
-        m4_no_wifi: false,
-        nova: None,
-        booster: None,
-        booster_uart: None,
-        booster_eeprom: None,
-        booster_flash: None,
-        booster_adc: None,
-        willy_opl3: None,
-        willy_s2p: None,
-        willy_s2p_at: None,
-        dandanator: None,
-        dandanator_writable: false,
-        save_sna: None,
-        debug_server: false,
-        debug_port: amsrust::debug_server::DEFAULT_PORT,
-        debug_paused: false,
-        text: None,
-        basic: None,
-        type_at: 3.0,
-        display: DisplayMode::default(),
-        gpu: false,
-        curvature: 0.0,
-        frontend: FrontendKind::Minifb,
-        gate_array: None,
-        black_level: DEFAULT_BLACK_LEVEL
-    };
+impl Args {
+    /// The disc interface (a DDI-1 on a 464), if not the model's.
+    pub fn disc_interface(&self) -> Option<bool> {
+        (self.ddi || self.no_disc).then_some(self.ddi)
+    }
 
-    let mut it = std::env::args().skip(1);
-    while let Some(arg) = it.next() {
-        let mut next = |name: &str| it.next().unwrap_or_else(|| panic!("{name} needs a value"));
-        match arg.as_str() {
-            "--crtc" => {
-                let value = next("--crtc");
-                args.crtc = value
-                    .parse::<u8>()
-                    .ok()
-                    .and_then(|n| CrtcType::try_from(n).ok())
-                    .unwrap_or_else(|| panic!("--crtc must be 0-4, got {value:?}"));
-            },
-            "--model" => {
-                args.model = next("--model").parse().unwrap_or_else(|e: String| panic!("--model: {e}"))
-            },
-            "--ram" => {
-                let kb: usize = next("--ram").parse().expect("--ram must be a size in KB");
-                assert!(kb >= 64 && kb % 64 == 0 && kb <= 576, "--ram must be 64, 128, ... 576 (KB)");
-                args.ram_kb = Some(kb);
-            },
-            "--ddi" => args.disc_interface = Some(true),
-            "--no-disc" => args.disc_interface = Some(false),
-            "--french" => args.french = true,
-            "--playcity" => args.playcity = true,
-            "--digiblaster" => args.digiblaster = true,
-            "--dsk" => args.dsk_a = Some(next("--dsk")),
-            "--dsk-b" => args.dsk_b = Some(next("--dsk-b")),
-            "--cdt" => args.cdt = Some(next("--cdt")),
-            "--sna" => args.sna = Some(next("--sna")),
-            "--screenshot" => args.screenshot_dir = Some(next("--screenshot")),
-            "--seconds" => args.seconds = next("--seconds").parse().expect("--seconds must be a number"),
-            "--every" => {
-                let value = next("--every");
-                args.every = match value.strip_suffix('f') {
-                    Some(frames) => Every::Frames(
-                        frames.parse().ok().filter(|n| *n > 0).expect("--every Nf: N must be a whole number of frames, from 1")
-                    ),
-                    None => Every::Seconds(
-                        value.parse().ok().filter(|s: &f64| *s > 0.0).expect("--every must be seconds, or frames as Nf")
-                    )
-                }
-            },
-            "--from" => args.from = next("--from").parse().ok().filter(|s: &f64| *s >= 0.0).expect("--from must be seconds"),
-            "--window" => args.window = true,
-            "--mute" => args.mute = true,
-            "--turbo" => args.turbo = true,
-            "--record" => args.record = Some(next("--record")),
-            "--debug-server" => args.debug_server = true,
-            "--debug-paused" => {
-                args.debug_server = true;
-                args.debug_paused = true;
-            },
-            "--debug-port" => {
-                args.debug_server = true;
-                args.debug_port = next("--debug-port").parse().expect("--debug-port must be a port number")
-            },
-            "--type" => args.text = Some(next("--type").replace("\\n", "\n")),
-            "--basic" => args.basic = Some(next("--basic")),
-            "--type-at" => args.type_at = next("--type-at").parse().expect("--type-at must be a number"),
-            "--black-level" => {
-                args.black_level = next("--black-level").parse().expect("--black-level must be 0-255")
-            },
-            "--ga" => {
-                args.gate_array = Some(match next("--ga").as_str() {
-                    "40010" => amsrust::ga::GateArrayType::Ga40010,
-                    "40007" | "40008" => amsrust::ga::GateArrayType::Ga40007_8,
-                    other => panic!("--ga must be 40007, 40008 or 40010, got {other:?}")
-                })
-            },
-            "--frontend" => {
-                args.frontend = match next("--frontend").as_str() {
-                    "minifb" => FrontendKind::Minifb,
-                    "winit" => FrontendKind::Winit,
-                    other => panic!("--frontend must be minifb or winit, got {other:?}")
-                }
-            },
-            "--crt-gpu" => args.gpu = true,
-            "--record-ym" => args.record_ym = Some(next("--record-ym")),
-            "--record-wav" => args.record_wav = Some(next("--record-wav")),
-            "--sym" => args.symbols.push(next("--sym")),
-            "--m4" => args.m4 = Some(next("--m4")),
-            "--m4-rom" => args.m4_rom = Some(next("--m4-rom")),
-            "--m4-no-wifi" => args.m4_no_wifi = true,
-            "--albireo" => args.albireo = Some(next("--albireo")),
-            "--nova" => args.nova = Some(next("--nova")),
-            "--booster" => args.booster = Some("booster"),
-            "--miniboster" => args.booster = Some("miniboster"),
-            "--booster-uart" => args.booster_uart = Some(next("--booster-uart")),
-            "--booster-eeprom" => args.booster_eeprom = Some(next("--booster-eeprom")),
-            "--booster-flash" => args.booster_flash = Some(next("--booster-flash")),
-            "--booster-adc" => args.booster_adc = Some(next("--booster-adc")),
-            "--willy-opl3" => args.willy_opl3 = Some(args.willy_opl3.take().unwrap_or_else(|| "&FEBC".to_owned())),
-            "--willy-opl3-at" => args.willy_opl3 = Some(next("--willy-opl3-at")),
-            "--willy-s2p" => args.willy_s2p = Some(next("--willy-s2p")),
-            "--willy-s2p-at" => args.willy_s2p_at = Some(next("--willy-s2p-at")),
-            "--dandanator" => args.dandanator = Some(next("--dandanator")),
-            "--dandanator-writable" => args.dandanator_writable = true,
-            "--m4-slot" => {
-                args.m4_slot = Some(next("--m4-slot").parse().unwrap_or_else(|_| panic!("--m4-slot: a slot, 0-255")))
-            },
-            "--rom" => {
-                let value = next("--rom");
-                let rom = value
-                    .split_once('=')
-                    .and_then(|(slot, path)| Some((slot.trim().parse::<u8>().ok()?, path.to_owned())))
-                    .unwrap_or_else(|| panic!("--rom {value}: expected SLOT=FILE (slot 0-255)"));
-                args.roms.push(rom);
-            },
-            "--watch" => args.watch = true,
-            "--save-sna" => args.save_sna = Some(next("--save-sna")),
-            "--overlay" => args.overlay = true,
-            "--curvature" => {
-                args.curvature = next("--curvature")
-                    .parse()
-                    .ok()
-                    .filter(|c: &f32| (0.0..=4.0).contains(c))
-                    .unwrap_or_else(|| panic!("--curvature must be a number from 0 (flat) to 4"))
-            },
-            "--display" => {
-                args.display = next("--display").parse().unwrap_or_else(|e: String| panic!("--display: {e}"))
-            },
-            "-h" | "--help" => {
-                print_help();
-                std::process::exit(0);
-            },
-            "--list-roms" => {
-                print!("{}", amsrust::roms::listing());
-                std::process::exit(0);
-            },
-            other => {
-                eprintln!("unknown argument {other:?}\n");
-                print_help();
-                std::process::exit(2);
-            }
+    /// `--booster` or `--miniboster`.
+    pub fn booster(&self) -> Option<&'static str> {
+        if self.booster {
+            Some("booster")
         }
+        else if self.miniboster {
+            Some("miniboster")
+        }
+        else {
+            None
+        }
+    }
+
+    /// The OPL3LPT's base, if Willy has one.
+    pub fn willy_opl3(&self) -> Option<String> {
+        match &self.willy_opl3_at {
+            Some(base) => Some(base.clone()),
+            None => self.willy_opl3.then(|| "&FEBC".to_owned())
+        }
+    }
+
+    pub fn debug_server(&self) -> bool {
+        self.debug_server || self.debug_paused || self.debug_port.is_some()
+    }
+
+    pub fn debug_port(&self) -> u16 {
+        self.debug_port.unwrap_or(amsrust::debug_server::DEFAULT_PORT)
+    }
+}
+
+pub fn parse_args() -> Args {
+    let args = Args::parse();
+    if args.list_roms {
+        print!("{}", amsrust::roms::listing());
+        std::process::exit(0);
     }
     args
 }
 
-fn print_help() {
-    eprintln!(concat!(
-        "amsrust [--model 464|664|6128] [--french] [--playcity] [--digiblaster] [--ram KB] [--ddi|--no-disc] [--crtc 0-4]\n",
-        "        [--dsk path] [--dsk-b path] [--cdt path] [--sna path] [--save-sna path] [--watch]\n",
-        "        [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute] [--turbo]]\n",
-        "        [--record file [--seconds N]] [--record-ym file] [--record-wav file] [--type text] [--basic file.bas] [--type-at N]\n",
-        "        [--debug-server [--debug-port N] [--debug-paused]] [--sym file] [--rom slot=file]\n",
-        "        [--m4 dir [--m4-rom file] [--m4-slot N] [--m4-no-wifi]] [--albireo dir|image] [--nova file] [--list-roms]\n",
-        "        [--booster|--miniboster [--booster-uart loopback|listen:addr|connect:addr] [--booster-eeprom file]\n",
-        "         [--booster-flash file] [--booster-adc file.wav]]\n",
-        "        [--willy-opl3 [--willy-opl3-at addr]] [--willy-s2p file.sf2 [--willy-s2p-at addr]]\n",
-        "        [--dandanator romset.rom [--dandanator-writable]]\n",
-        "        [--display raw|ctm|trinitron|gt65|atari [--crt-gpu] [--curvature F]]\n",
-        "        [--black-level 0-255] [--frontend minifb|winit] [--ga 40007|40008|40010]\n",
-        "\n",
-        "--model picks the ROMs (default 6128); --french the French ones of the 6128,\n",
-        "with its AZERTY keyboard (typed text and keys follow it). The 464 and 664 have 64K and the\n",
-        "6128 128K: --ram 128 (up to 576) adds the extension banked as a 6128's.\n",
-        "The 664 and 6128 have a disc interface; --ddi adds a DDI-1 (AMSDOS) to\n",
-        "a 464, --no-disc removes it. --playcity plugs a PlayCity on the expansion port (two\n",
-        "more AYs, right and left, and a CTC whose channel 1 counts the CRTC's CURSOR to an\n",
-        "NMI), --digiblaster\n",
-        "a DAC on the printer port (a signed byte written to &EFxx).\n",
-        "--rom 6=file.rom fits a 16K upper ROM in a slot (0-255; repeatable). A ROM is a file or\n",
-        "inner://NAME, one embedded in the executable (--list-roms lists them): UniDOS as its manual\n",
-        "advises is --rom 1=inner://unidos-nova --rom 7=inner://unidos --rom 14=inner://unitools\n",
-        "--rom 15=inner://amsdos --rom 27=inner://unidos-albireo (with --nova and --albireo).\n",
-        "Orgams: --rom 10=inner://orgams --rom 11=inner://orgext --rom 12=inner://monogams\n",
-        "--rom 13=inner://bricbrac --rom 14=inner://orgass (|ORGAMS; --ram 576 gives it its banks\n",
-        "from &FF down, a 256K RAM disc fitting).\n",
-        "--m4 DIR plugs an M4 board, the folder its SD card (its ROM v2.0.8 in slot 6; --m4-rom\n",
-        "another one, --m4-slot another slot): RUN\"file, CAT, |DIR, |CD... on the folder. Its WiFi\n",
-        "is the host's network (sockets, |HTTPGET, |HTTPMEM, |NETSTAT, |TIME with m4/config.txt's\n",
-        "tz; nothing is joined, |NETSET only writes m4/config.txt); --m4-no-wifi, or |WIFI,0, turns it\n",
-        "off. RulezCharge downloads from cpcrulez.fr: --m4 DIR --rom 5=inner://rulezcharge, then\n",
-        "|RZ (examples/rulezcharge.sh).\n",
-        "--albireo DIR|image.img plugs an Albireo (a CH376 at &FE80), its USB key a folder or a\n",
-        "FAT image (whole, or partitioned). --nova nvram.bin plugs a Nova (32K NVRAM, a clock;\n",
-        "the NVRAM kept in the file). Their ROMs (UniDOS and its nodes) go in with --rom, e.g.\n",
-        "--rom 1=nova.rom --rom 7=unidos.rom --rom 15=amsdos.rom --rom 27=albireo.rom.\n",
-        "--booster plugs a CPC Booster+ (--miniboster its variant: &FF01 reads 238, not 85) at &FF00-&FF27:\n",
-        "a UART (--booster-uart loopback, or listen:127.0.0.1:2323 / connect:host:port: a TCP socket as\n",
-        "a null modem), two PWM channels (the card's stereo sound), a 2 channels ADC (--booster-adc: a\n",
-        "WAV or raw bytes, looped), 512 bytes of EEPROM and 16K of program memory (kept in the files\n",
-        "--booster-eeprom/--booster-flash), a 5 bits TTL port, a multiplier, a keyboard decoder.\n",
-        "--willy-opl3 plugs Willy with an OPL3LPT (an OPL3: &FEBC/&FEBE select a register of bank 0/1,\n",
-        "&FEBD/&FEBF write it); --willy-s2p FILE.sf2 Willy with an S2P (a General MIDI synth: &FEAC the\n",
-        "MIDI data, &FEAD the control/status), its instruments the SoundFont's. Willy's jumper sets\n",
-        "another base with --willy-opl3-at/--willy-s2p-at: &FEBC, &FEAC, &FEA4, &FE9C, &FE94, &FE8C, &FE84.\n",
-        "--dandanator romset.rom plugs a CPC Dandanator Mini (512K of flash: its romset boots in place\n",
-        "of the firmware); what the CPC programs into the flash goes back to the file with\n",
-        "--dandanator-writable only. Its USB serial port is not emulated.\n",
-        "--cdt puts a tape (CDT/TZX) in the cassette\n",
-        "deck, PLAY down: it plays when the CPC starts the motor (RUN\" on a 464,\n",
-        "|TAPE first on a 664/6128).\n",
-        "With no --screenshot/--window, drops into the interactive monitor once\n",
-        "everything is loaded ('h' at its prompt lists its commands). With\n",
-        "--screenshot, runs headless for --seconds (default 30), saving a\n",
-        "screenshot every --every seconds (default 2), or every N frames with --every Nf\n",
-        "(1f: each frame, for following an effect frame by frame), from --from seconds\n",
-        "(default 0). With --window, opens a\n",
-        "live, playable window redrawn at the CPC's own ~50Hz, keyboard included\n",
-        "- close the window to quit. Built with --features audio, the window\n",
-        "plays the sound too (--mute to silence it). F10 toggles full speed: the\n",
-        "emulation runs as fast as it can, silent, the picture shown 50 times a\n",
-        "second (--turbo starts so). F8 pauses and resumes (through the debug server\n",
-        "when it runs, its clients told). F7 saves the machine's state in a snapshot,\n",
-        "bemu_0000.sna (then 0001...) in the current directory, paused or not. --save-sna saves it\n",
-        "when the run ends (headless, recording, window closed). --record capture.mp4 records\n",
-        "a video with sound through ffmpeg: what the window shows until it is\n",
-        "closed, or without --window --seconds (default 30) run headless.\n",
-        "--record-ym file.ym saves the AY's registers once a frame (on the VSYNC) as a YM6\n",
-        "file, --record-wav file.wav the sound, until the run ends (headless, recording,\n",
-        "window closed; the sound of full speed is not kept).\n",
-        "--type 'run\"demo\\n' types on the CPC keyboard after --type-at seconds\n",
-        "(default 3), the keys written as in CSL's key_output: \\(RET), \\(ESC), \\(CPY), \\(DEL)…\n",
-        "and \\(WAIT n) waits n seconds (a program's prompt) before the keys after it.\n",
-        "--basic prog.bas puts a BASIC listing (text) in memory at --type-at, then types RUN (and --type).\n",
-        "--watch takes the --sna/--dsk/--dsk-b/--cdt files again when they change\n",
-        "(with --window or --debug-server), for an edit, assemble, see loop: a disc or tape goes\n",
-        "in again, then the snapshot is loaded again; without a snapshot the machine is switched\n",
-        "off and on and --type typed again. Breakpoints of a snapshot's REMU/BRKC/BRKS/WABP chunks are set\n",
-        "in the interactive monitor. Its symbols (SYMB chunk, REMU labels) name the addresses in\n",
-        "the monitor and the debug server, with those of --sym files (repeatable: name equ #4000,\n",
-        "name: equ 0x4000, name = $4000, name #4000, 4000 name).\n",
-        "--display picks how the picture is rendered, in the window, the\n",
-        "recording and the screenshots (raw: the monitor's ideal picture; ctm,\n",
-        "trinitron, gt65, atari: CRT approximations). F9 cycles them in the\n",
-        "window (not while recording). --crt-gpu renders them on the GPU (a build\n",
-        "with --features crt-gpu). The CRTs can be seen through their curved glass:\n",
-        "--curvature scales its bulge (default 0: flat; 1 is the tube's own bulge).\n",
-        "--black-level (default 8) is what a black ink is\n",
-        "drawn at: on a real tube it is a dark grey, blanking and sync being\n",
-        "blacker (0); without the debug server, whose pictures stay exact.\n",
-        "--overlay draws where the CPU wrote to the CRTC and the Gate Array, on the\n",
-        "screenshots and in the window (F6 shows or hides it there): a short bar where\n",
-        "the beam was, CRTC R0-R9 cyan, R12/R13 orange, other registers white, register\n",
-        "selects grey, inks yellow (pen selects dark yellow), mode/ROMs magenta, RAM green.\n",
-        "--frontend winit (a build with --features gpu-window) opens a window the\n",
-        "GPU draws, the CRT included, with nothing read back; F11 toggles its\n",
-        "fullscreen (a 50 Hz video mode when the monitor has one: frames on the\n",
-        "vertical sync). F4 closes the window. --ga picks the Gate\n",
-        "Array (default 40010): the 40007/8 are one pixel ahead (palette writes).\n",
-        "--debug-server serves the AMSpiriT-Lite compatible debug API on\n",
-        "127.0.0.1:6128 (GET /api/doc lists the endpoints), with --window or\n",
-        "headless. --debug-paused starts it paused, for a debugger to set its\n",
-        "breakpoints before anything runs."
-    ));
+fn parse_ram(value: &str) -> Result<usize, String> {
+    let kb: usize = value.parse().map_err(|_| "a size in KB".to_owned())?;
+    if kb >= 64 && kb.is_multiple_of(64) && kb <= 576 {
+        Ok(kb)
+    }
+    else {
+        Err("64, 128, ... 576 (KB)".to_owned())
+    }
+}
+
+fn parse_crtc(value: &str) -> Result<CrtcType, String> {
+    value.parse::<u8>().map_err(|_| "0-4".to_owned()).and_then(CrtcType::try_from)
+}
+
+fn parse_gate_array(value: &str) -> Result<amsrust::ga::GateArrayType, String> {
+    match value {
+        "40010" => Ok(amsrust::ga::GateArrayType::Ga40010),
+        "40007" | "40008" => Ok(amsrust::ga::GateArrayType::Ga40007_8),
+        _ => Err("40007, 40008 or 40010".to_owned())
+    }
+}
+
+fn parse_rom(value: &str) -> Result<(u8, String), String> {
+    value
+        .split_once('=')
+        .and_then(|(slot, path)| Some((slot.trim().parse::<u8>().ok()?, path.to_owned())))
+        .ok_or_else(|| "SLOT=FILE (slot 0-255)".to_owned())
+}
+
+fn parse_every(value: &str) -> Result<Every, String> {
+    match value.strip_suffix('f') {
+        Some(frames) => frames
+            .parse()
+            .ok()
+            .filter(|n| *n > 0)
+            .map(Every::Frames)
+            .ok_or_else(|| "Nf: N a whole number of frames, from 1".to_owned()),
+        None => parse_seconds(value).ok().filter(|s| *s > 0.0).map(Every::Seconds).ok_or_else(|| "seconds, or frames as Nf".to_owned())
+    }
+}
+
+fn parse_seconds(value: &str) -> Result<f64, String> {
+    value.parse().ok().filter(|s: &f64| *s >= 0.0).ok_or_else(|| "seconds".to_owned())
+}
+
+fn parse_curvature(value: &str) -> Result<f32, String> {
+    value
+        .parse()
+        .ok()
+        .filter(|c: &f32| (0.0..=4.0).contains(c))
+        .ok_or_else(|| "a number from 0 (flat) to 4".to_owned())
+}
+
+/// `--type`'s text, `\n` a newline.
+fn parse_typed(value: &str) -> Result<String, String> {
+    Ok(value.replace("\\n", "\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    use super::{Args, Every};
+
+    #[test]
+    fn the_command_line_is_consistent() {
+        Args::command().debug_assert();
+    }
+
+    #[test]
+    fn options_parse_as_before() {
+        let args = Args::try_parse_from(["amsrust", "--every", "3f", "--rom", "7=inner://unidos", "--no-disc", "--debug-port", "7000", "--type", "run\"a\\n", "--willy-opl3"]).unwrap();
+        assert_eq!(args.every, Every::Frames(3));
+        assert_eq!(args.roms, [(7, "inner://unidos".to_owned())]);
+        assert_eq!(args.disc_interface(), Some(false));
+        assert!(args.debug_server());
+        assert_eq!(args.debug_port(), 7000);
+        assert_eq!(args.text.as_deref(), Some("run\"a\n"));
+        assert_eq!(args.willy_opl3().as_deref(), Some("&FEBC"));
+        assert!(Args::try_parse_from(["amsrust", "--ddi", "--no-disc"]).is_err());
+        assert!(Args::try_parse_from(["amsrust", "--ram", "100"]).is_err());
+    }
 }

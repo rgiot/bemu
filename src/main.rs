@@ -125,7 +125,7 @@ fn main() {
     if let Some(kb) = args.ram_kb {
         builder.set_extra_ram_pages(kb / 64 - 1);
     }
-    if let Some(fitted) = args.disc_interface {
+    if let Some(fitted) = args.disc_interface() {
         builder.set_disc_interface(fitted);
     }
     if args.playcity {
@@ -187,11 +187,11 @@ fn main() {
         eprintln!("{file}: the Nova's NVRAM");
     }
     #[cfg(not(feature = "booster"))]
-    if args.booster.is_some() {
+    if args.booster().is_some() {
         without_feature("--booster", "booster");
     }
     #[cfg(feature = "booster")]
-    if let Some(board) = args.booster {
+    if let Some(board) = args.booster() {
         let model = if board == "miniboster" {
             amsrust::booster::Model::MiniBooster
         }
@@ -234,14 +234,14 @@ fn main() {
         eprintln!("the Dandanator: {romset}{}", if args.dandanator_writable { " (writable)" } else { "" });
     }
     #[cfg(not(feature = "willy"))]
-    if args.willy_opl3.is_some() || args.willy_s2p.is_some() {
+    if args.willy_opl3().is_some() || args.willy_s2p.is_some() {
         without_feature("--willy-opl3/--willy-s2p", "willy");
     }
     #[cfg(feature = "willy")]
     {
         use amsrust::willy::{parse_base, Opl3Lpt, S2p, S2P_BASE};
-        if let Some(base) = &args.willy_opl3 {
-            let base = parse_base(base).unwrap_or_else(|e| panic!("--willy-opl3-at {e}"));
+        if let Some(base) = args.willy_opl3() {
+            let base = parse_base(&base).unwrap_or_else(|e| panic!("--willy-opl3-at {e}"));
             motherboard.plug_expansion(Box::new(Opl3Lpt::new(base)));
             eprintln!("Willy with an OPL3LPT at &{base:04X}");
         }
@@ -297,8 +297,8 @@ fn main() {
         breakpoints.symbols.extend(&symbols);
     }
     let monitor_mode =
-        args.screenshot_dir.is_none() && !args.window && args.record.is_none() && !args.debug_server;
-    if !breakpoints.is_empty() && !monitor_mode && !args.debug_server {
+        args.screenshot_dir.is_none() && !args.window && args.record.is_none() && !args.debug_server();
+    if !breakpoints.is_empty() && !monitor_mode && !args.debug_server() {
         eprintln!(
             "{} snapshot breakpoint(s), used by the interactive monitor and the debug server only",
             breakpoints.len()
@@ -316,7 +316,7 @@ fn main() {
         eprintln!("--type is ignored in the interactive monitor");
     }
     let mut reloader = args.watch.then(|| Reloader::new(&args));
-    if reloader.is_some() && !(args.window || args.debug_server) {
+    if reloader.is_some() && !(args.window || args.debug_server()) {
         eprintln!("--watch needs --window or --debug-server");
     }
 
@@ -326,7 +326,7 @@ fn main() {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
             run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay)
         },
-        None if args.debug_server => {
+        None if args.debug_server() => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
             run_debug_server(&mut motherboard, &mut server, &mut typist, &mut reloader)
         },
@@ -877,7 +877,7 @@ fn start_debug_server(
     breakpoints: &amsrust::snapshot::SnapshotBreakpoints,
     motherboard: &mut Motherboard
 ) -> Option<DebugServer> {
-    if !args.debug_server {
+    if !args.debug_server() {
         return None;
     }
     if args.sna.is_none() {
@@ -889,9 +889,9 @@ fn start_debug_server(
             motherboard.execute_next_opcode_no_video();
         }
     }
-    match DebugServer::start(args.debug_port) {
+    match DebugServer::start(args.debug_port()) {
         Ok(mut server) => {
-            eprintln!("debug server: http://127.0.0.1:{}/api/doc", args.debug_port);
+            eprintln!("debug server: http://127.0.0.1:{}/api/doc", args.debug_port());
             server.add_symbols(&breakpoints.symbols);
             for breakpoint in &breakpoints.exec {
                 server.add_exec_breakpoint(breakpoint.address, motherboard);

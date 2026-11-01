@@ -39,6 +39,7 @@ bytemuck = { version = "1", optional = true, features = ["derive"] }
 cpclib = {path = "../rust.cpcdemotools/cpclib"}
 cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm"}
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens"}
+clap = { version = "4.5", features = ["derive", "wrap_help"] }
 rustyline = "8.2.0" # Make not mandaotry
 minifb = "0.28.0"
 cpal = { version = "0.18.2", optional = true }
