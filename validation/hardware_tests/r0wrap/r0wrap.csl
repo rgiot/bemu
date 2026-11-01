@@ -1,0 +1,11 @@
+; R0WRAP on a CRTC 0: run the test, screenshot its result
+csl_version 1.0
+crtc_select 0
+key_delay 70000 70000 400000
+reset
+wait 3000000
+disk_insert 'r0wrap.dsk'
+key_output 'RUN"R0WRAP"\(RET)'
+wait 6000000
+screenshot_name 'r0wrap'
+screenshot
