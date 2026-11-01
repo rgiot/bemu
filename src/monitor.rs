@@ -50,7 +50,10 @@ const MONITOR_MIN_HSYNC_TICKS: usize = 12;
 /// (Shaker DT: pulses 156 lines apart are not followed, 312 are).
 const MONITOR_VSYNC_WINDOW_START_LINES: usize = 200;
 /// Shortest sync pulse the frame oscillator reacts to: it integrates the signal, and a CTM needs more
-/// than 11-12 usec (ACCC 16.2.4; Shaker DT J: an 8 usec C-VSYNC makes the picture roll).
+/// than 11-12 usec (ACCC 16.2.4; Shaker DT J: an 8 usec C-VSYNC makes the picture roll). The
+/// integrator discharges while the sync is inactive, as fast as it charges: the line sync pulses cut
+/// into a C-VSYNC do not reset it. With R0=15 they come every 16 usec (S&KOH's rasters: 12 usec of
+/// sync, 4 without, all through the C-VSYNC), and AMSpiriT Lite locks the picture on it.
 const MONITOR_MIN_VSYNC_TICKS: usize = 12 * 16;
 
 /// Pulses (in ticks) too short or too long to be taken for a line sync.
@@ -99,7 +102,9 @@ pub struct Monitor {
     hsync_run: usize,
     /// The HSYNC pulse running began where the line oscillator listens: it blanks the beam
     hsync_listened: bool,
-    vsync_run: usize,
+    /// The frame oscillator's sync separator: an integrator charged while the sync is active and
+    /// discharged as fast while it is not (see `MONITOR_MIN_VSYNC_TICKS`).
+    vsync_level: usize,
     /// The VSYNC pulse has already restarted the frame.
     vsync_seen: bool,
     /// The line oscillator follows the HSYNC pulses; counts the lines it ran
@@ -156,7 +161,7 @@ impl Monitor {
             line: 0,
             hsync_run: 0,
             hsync_listened: true,
-            vsync_run: 0,
+            vsync_level: 0,
             vsync_seen: false,
             locked: false,
             free_lines: 0,
@@ -296,17 +301,19 @@ impl Monitor {
             self.hsync_run = 0;
         }
         if sync {
-            self.vsync_run += 1;
+            self.vsync_level += 1;
         }
         else {
-            self.vsync_run = 0;
-            self.vsync_seen = false;
+            self.vsync_level = self.vsync_level.saturating_sub(1);
+            if self.vsync_level == 0 {
+                self.vsync_seen = false;
+            }
         }
         let hsync = sync;
 
         // vertical synchronisation: the beam flies back to the top
         let mut frame_start = false;
-        if self.vsync_run > MONITOR_MIN_VSYNC_TICKS && !self.vsync_seen {
+        if self.vsync_level > MONITOR_MIN_VSYNC_TICKS && !self.vsync_seen {
             self.vsync_seen = true;
             // like the line oscillator, the frame oscillator only listens to a VSYNC that comes late
             // enough in its period: AMSpiriT shows the first of the two VSYNCs of Shaker DT (156
