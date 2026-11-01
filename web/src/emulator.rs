@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use amsrust::csl_runner::{CslReport, CslRunner, MemFiles, Progress, ScreenshotSink};
-use amsrust::disc_image::{load_dsk, DiscImage};
+use amsrust::disc_image::{load_disc_bytes, DiscImage};
 use amsrust::display::DisplayMode;
 use amsrust::fdc::FdcDrive;
 use amsrust::input::{HostInput, HostKey, HostKeyboard};
@@ -140,9 +140,9 @@ impl Emulator {
         self.gfx.resize(width, height);
     }
 
-    /// Insert a DSK image in drive 0 (A) or 1 (B).
+    /// Insert a disc in drive 0 (A) or 1 (B): a DSK, or a zip archive (its first DSK).
     pub fn insert_disc(&mut self, drive: u8, bytes: &[u8]) -> Result<(), JsError> {
-        let image = load_dsk(bytes).map_err(|e| JsError::new(&e))?;
+        let image = load_disc_bytes(bytes, "disc", None).map_err(|e| JsError::new(&e))?;
         let unit = usize::from(drive.min(1));
         self.machine().fdc_mut().insert_image(fdc_drive(unit), Some(image.clone()));
         self.discs[unit] = Some(image);
