@@ -62,7 +62,7 @@ use amsrust::input::HostKey;
 use amsrust::debug::{Monitor, MonitorContext};
 use amsrust::disc_image::load_disc_file;
 use amsrust::fdc::FdcDrive;
-use amsrust::input::HostKeyboard;
+use amsrust::input::{HostKeyboard, KeyboardMapping};
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
@@ -325,7 +325,7 @@ fn main() {
         Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, args.from, &mut typist, args.display, filter.as_mut(), args.black_level, args.overlay),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay)
+            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay, args.keyboard)
         },
         None if args.debug_server() => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
@@ -1021,7 +1021,8 @@ fn run_window(
     black_level: u8,
     frontend: FrontendKind,
     mut turbo: bool,
-    show_overlay: bool
+    show_overlay: bool,
+    keyboard: KeyboardMapping
 ) {
     let (width, height) = mode.output_size();
     let mut window: Box<dyn Frontend> = match frontend {
@@ -1057,7 +1058,15 @@ fn run_window(
         start_recorder(path, Some(config), (width, height))
     });
 
-    let mut host_keyboard = HostKeyboard::default();
+    let mut host_keyboard = HostKeyboard::new(keyboard);
+    let explain_places = |mapping: KeyboardMapping, window: &dyn Frontend| {
+        if mapping == KeyboardMapping::Positional && !window.knows_key_places() {
+            eprintln!(
+                "keyboard: this window names the keys after the host's layout: positional on a QWERTY host only (--frontend winit knows the places)"
+            );
+        }
+    };
+    explain_places(keyboard, window.as_ref());
     let mut buffer = vec![0u32; width * height];
     let mut f9_was_down = false;
     let mut f10_was_down = false;
@@ -1067,6 +1076,7 @@ fn run_window(
     let mut paused = false;
     let mut f6_was_down = false;
     let mut f5_was_down = false;
+    let mut f12_was_down = false;
     let mut overlay = show_overlay.then(Overlay::default);
     motherboard.watch_io_writes(show_overlay);
     // at full speed, the frames shown (at most 50 a second: presenting each would hold the
@@ -1151,6 +1161,15 @@ fn run_window(
             }
         }
         f5_was_down = f5_down;
+        // F12 switches between the symbolic and the positional keyboards
+        let f12_down = input.down.contains(&HostKey::F12);
+        if f12_down && !f12_was_down {
+            let mapping = host_keyboard.mapping().other();
+            host_keyboard.set_mapping(mapping);
+            eprintln!("keyboard: {}", mapping.name());
+            explain_places(mapping, window.as_ref());
+        }
+        f12_was_down = f12_down;
         host_keyboard.apply(motherboard, &input);
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, motherboard);

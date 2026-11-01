@@ -50,7 +50,7 @@ function driveNumber(drive) {
 export class Bemu {
     /**
      * An emulator in `target`: a canvas, or an element a canvas is added to (filling it).
-     * `config`: { model, crtc, gateArray, ramKb, discInterface, brand, display, blackLevel }.
+     * `config`: { model, crtc, gateArray, ramKb, discInterface, brand, display, blackLevel, keyboard }.
      * `options`: { webgpu (true), wasmUrl, fullscreenKey ('F11', or null), autoStart (false) }.
      */
     static async create(target, config = {}, options = {}) {
@@ -172,6 +172,9 @@ export class Bemu {
         this.#core.set_curvature(curvature);
         if (!this.#running) this.#safely(() => this.#core.redraw());
     }
+
+    /** 'symbolic' (a key types its character) or 'positional' (the CPC key at its place, for games). */
+    setKeyboard(mapping) { this.#core.set_keyboard(mapping); }
 
     /** A DSK image in drive 'A' or 'B', from a URL, a File/Blob or bytes. */
     async insertDisc(drive, source) { this.#core.insert_disc(driveNumber(drive), await bytesOf(source)); }
