@@ -145,10 +145,10 @@ pub struct DiscImage {
     nb_heads: u8,
     /// `tracks[track * nb_heads + head]`; `None` = unformatted
     tracks: Vec<Option<Track>>,
-    /// The cells of each track, for a disc loaded from a bitstream (HFE): the medium itself. The
-    /// tracks above are what is decoded from it, `timings` where their sectors lie on it, and
-    /// `marks` the first cell of each sector's data address mark (to write it again).
-    bitstream: Option<crate::hfe::Hfe>,
+    /// The cells of each track, for a disc loaded from a bitstream (HFE): the medium itself, read
+    /// and written by the HxC library. The tracks above are the sectors it finds on them,
+    /// `timings` where they lie, `marks` the first cell of each sector's data address mark.
+    bitstream: Option<crate::hfe::Bitstream>,
     timings: Vec<Option<TrackTiming>>,
     marks: Vec<Vec<Option<usize>>>
 }
@@ -168,32 +168,31 @@ impl DiscImage {
         }
     }
 
-    /// A disc whose medium is the bitstream of an HFE image: the FDC reads the sectors decoded
-    /// from its cells, where they lie on them.
-    pub fn from_hfe(hfe: crate::hfe::Hfe) -> Self {
-        let nb_tracks = hfe.tracks.len().min(255) as u8;
-        let mut image = Self::new(nb_tracks, hfe.sides);
+    /// A disc whose medium is the bitstream of an HFE image: the FDC reads the sectors the
+    /// library found on it (`found[track][side]`), where they lie.
+    pub fn from_bitstream(bitstream: crate::hfe::Bitstream, found: &[[Vec<crate::hfe::FoundSector>; 2]]) -> Self {
+        let nb_tracks = bitstream.tracks.len().min(255) as u8;
+        let mut image = Self::new(nb_tracks, bitstream.sides);
         for track in 0..nb_tracks {
             for head in 0..image.nb_heads {
-                image.decode_slot(&hfe, head, track);
+                image.set_found(&bitstream, head, track, &found[usize::from(track)][usize::from(head)]);
             }
         }
-        image.bitstream = Some(hfe);
+        image.bitstream = Some(bitstream);
         image
     }
 
-    /// Decode the sectors of a track of `hfe` into the image (track, timing, data mark cells).
-    fn decode_slot(&mut self, hfe: &crate::hfe::Hfe, head: u8, track: u8) {
+    /// The sectors found on a track of `bitstream` become the image's (track, timing, marks).
+    fn set_found(&mut self, bitstream: &crate::hfe::Bitstream, head: u8, track: u8, found: &[crate::hfe::FoundSector]) {
         let Some(slot) = self.slot(head, track) else { return };
-        let cells = &hfe.tracks[usize::from(track)][usize::from(head)];
-        let found = crate::hfe::decode_track(cells);
+        let cells = &bitstream.tracks[usize::from(track)][usize::from(head)];
         if found.is_empty() {
             self.tracks[slot] = None;
             self.timings[slot] = None;
             self.marks[slot] = Vec::new();
             return;
         }
-        let us = |cell: usize| (cell as f64 * hfe.cell_us()).round() as u64;
+        let us = |cell: usize| (cell as f64 * bitstream.cell_us()).round() as u64;
         let mut timing = TrackTiming {
             id_start: Vec::new(),
             id_end: Vec::new(),
@@ -202,7 +201,7 @@ impl DiscImage {
         };
         let mut sectors = Vec::new();
         let mut marks = Vec::new();
-        for f in &found {
+        for f in found {
             let mut sector = Sector::new(f.id[0], f.id[1], f.id[2], f.id[3], 0);
             sector.data = f.copies.concat();
             if !f.id_crc_ok {
@@ -226,7 +225,7 @@ impl DiscImage {
             timing.id_start.push(us(f.id_at));
             timing.id_end.push(us(f.id_at + 6 * 16));
             timing.data_start.push(us(f.data_at.unwrap_or(f.id_at + 60 * 16)));
-            marks.push(f.data_at.map(|d| d + cells.len - 16));
+            marks.push(f.data_at.map(|d| (d + cells.len - 16) % cells.len.max(1)));
             sectors.push(sector);
         }
         self.tracks[slot] = Some(Track { track, head, gap3: 0x4e, filler: 0xe5, sectors });
@@ -244,36 +243,42 @@ impl DiscImage {
         self.slot(head, track).and_then(|slot| self.timings[slot].as_ref())
     }
 
-    /// The FDC wrote sector `index` of a track: on a bitstream, encode its data field again
-    /// (data address mark, data, CRC) where it lies.
+    /// The FDC wrote sector `index` of a track: on a bitstream, the library writes it when the
+    /// disc is saved (a deleted data mark is encoded at once).
     pub fn sector_written(&mut self, head: u8, track: u8, index: usize) {
         let Some(slot) = self.slot(head, track) else { return };
-        let (Some(hfe), Some(t)) = (self.bitstream.as_mut(), self.tracks[slot].as_ref()) else { return };
+        let (Some(bitstream), Some(t)) = (self.bitstream.as_mut(), self.tracks[slot].as_ref()) else { return };
         let (Some(sector), Some(Some(mark_at))) = (t.sectors.get(index), self.marks[slot].get(index)) else { return };
-        let cells = &mut hfe.tracks[usize::from(track)][usize::from(head)];
-        cells.write_data_field(*mark_at % cells.len.max(1), sector.is_deleted(), &sector.read_copy(0, t.filler));
+        let data = sector.read_copy(0, t.filler);
+        bitstream.sector_written(usize::from(track), usize::from(head), sector.r, *mark_at, sector.is_deleted(), &data);
     }
 
-    /// The FDC formatted a track: on a bitstream, write it again (gaps, IDs, data fields of the
-    /// filler) and decode it.
+    /// The FDC formatted a track: on a bitstream, write its cells again (gaps, IDs, data fields of
+    /// the filler) and take the sectors the library finds on them.
     pub fn track_formatted(&mut self, head: u8, track: u8) {
         let Some(slot) = self.slot(head, track) else { return };
         let Some(t) = self.tracks[slot].clone() else { return };
-        let Some(mut hfe) = self.bitstream.take() else {
+        let Some(mut bitstream) = self.bitstream.take() else {
             self.timings[slot] = None;
             return;
         };
         let ids: Vec<[u8; 4]> = t.sectors.iter().map(|s| [s.c, s.h, s.r, s.n]).collect();
         let n = t.sectors.first().map_or(2, |s| s.n);
-        let len = hfe.tracks[usize::from(track)][usize::from(head)].len;
-        hfe.tracks[usize::from(track)][usize::from(head)] = crate::hfe::BitTrack::formatted(len, &ids, n, t.gap3, t.filler);
-        self.decode_slot(&hfe, head, track);
-        self.bitstream = Some(hfe);
+        let (tr, side) = (usize::from(track), usize::from(head));
+        let len = bitstream.tracks[tr][side].len;
+        bitstream.tracks[tr][side] = crate::hfe::BitTrack::formatted(len, &ids, n, t.gap3, t.filler);
+        bitstream.rebuild(tr, side);
+        match bitstream.sectors(tr, side) {
+            Ok(found) => self.set_found(&bitstream, head, track, &found),
+            Err(e) => eprintln!("formatting track {track}: {e}")
+        }
+        self.bitstream = Some(bitstream);
     }
 
-    /// The disc as an HFE image, when it was loaded from one (with what the FDC wrote).
-    pub fn to_hfe_bytes(&self) -> Option<Vec<u8>> {
-        self.bitstream.as_ref().map(crate::hfe::Hfe::to_bytes)
+    /// The disc as an HFE image (version 3, written by the HxC library), when it was loaded from
+    /// one, with what the FDC wrote.
+    pub fn save_hfe(&mut self) -> Option<Result<Vec<u8>, String>> {
+        self.bitstream.as_mut().map(crate::hfe::Bitstream::save)
     }
 
     pub fn nb_tracks(&self) -> u8 {
@@ -516,8 +521,9 @@ pub fn load_disc_bytes(bytes: &[u8], name: &str, entry: Option<&str>) -> Result<
     if let Some(entry) = entry {
         return Err(format!("{name} is not a zip archive, it has no {entry}"));
     }
-    if crate::hfe::Hfe::is_hfe(bytes) || has_extension(name, &["hfe"]) {
-        return crate::hfe::Hfe::from_bytes(bytes).map(DiscImage::from_hfe);
+    if crate::hfe::Bitstream::is_hfe(bytes) || has_extension(name, &["hfe"]) {
+        let (bitstream, found) = crate::hfe::Bitstream::load(bytes)?;
+        return Ok(DiscImage::from_bitstream(bitstream, &found));
     }
     load_dsk(bytes)
 }
@@ -554,13 +560,17 @@ pub fn split_disc_spec(spec: &str) -> (&str, Option<&str>) {
 }
 
 /// Write `image` back to the file it was read from (`spec` as for [`load_disc_file`]): an HFE
-/// image as HFE (its bitstream, with what the FDC wrote), anything else as an extended DSK. In a
+/// image as HFE version 3 (by the HxC library, with what the FDC wrote), anything else as an
+/// extended DSK. In a
 /// zip archive the entry is replaced (the first disc image when none is named), the other files
 /// kept; the archive is written to a temporary file first, then renamed.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn save_disc_file(spec: &str, image: &DiscImage) -> Result<(), String> {
     let (path, entry) = split_disc_spec(spec);
-    let content = image.to_hfe_bytes().unwrap_or_else(|| image.to_bytes());
+    let content = match image.clone().save_hfe() {
+        Some(hfe) => hfe?,
+        None => image.to_bytes()
+    };
     if !has_extension(path, &["zip"]) {
         return std::fs::write(path, content).map_err(|e| format!("{path}: {e}"));
     }
@@ -765,7 +775,7 @@ mod test {
         write_first_sector(&mut image, 0x43);
         save_disc_file(&hfe, &image).unwrap();
         let bytes = std::fs::read(&hfe).unwrap();
-        assert!(crate::hfe::Hfe::is_hfe(&bytes), "still an HFE");
+        assert!(bytes.starts_with(b"HXCHFEV3"), "an HFE version 3");
         let back = load_disc_file(&hfe).unwrap();
         let sector = &back.track(0, 0).unwrap().sectors.last().unwrap();
         assert_eq!(sector.read_copy(0, 0), vec![0x43; 512]);

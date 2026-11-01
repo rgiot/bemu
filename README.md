@@ -32,13 +32,14 @@ cargo run --release -- --model 464 --ram 128 --ddi --window --dsk game.dsk
 the archive. The same names work in a CSL `disk_insert`, with `--watch` (the archive is watched)
 and in the debug server's `/api/media`.
 
-An HFE image (version 1 or 3) stays what it is, the MFM bits of each track (`src/hfe.rs`): the FDC
-reads the sectors decoded from them, where they lie on the track (CRC errors, deleted or missing
-marks, weak bits of HFE v3 as they are), writes encode the sector's data field again in place and
-Format Track writes the whole track.
+An HFE image (version 1 or 3) stays what it is, the MFM bits of each track. It is read, decoded and
+written through the HxC floppy library (the `hxcfe` crate, `src/hfe.rs`): the FDC reads the sectors
+the library finds on each track, where they lie on it (CRC errors, deleted or missing marks, weak
+bits of HFE v3 as they are), sector writes go through the library and Format Track writes the whole
+track. The `hxcfe` crate is taken from `../hxc_rust/hxcfe` (a checkout next to this one).
 
 `--save-discs` writes the discs back to their files when the CPC wrote to them: when the drive
-motor stops, when another disc replaces it and at the end. An HFE is saved as HFE, a DSK as an
+motor stops, when another disc replaces it and at the end. An HFE is saved as HFE v3, a DSK as an
 extended DSK, a disc taken from a zip archive replaces its entry (the other files are kept).
 
 Drives are 3" ones by default, as on a 664/6128 and the DDI-1's FD-1: one head, so the FDC's side

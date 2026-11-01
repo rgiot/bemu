@@ -42,6 +42,8 @@ cpclib = {path = "../rust.cpcdemotools/cpclib"}
 cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm"}
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens"}
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
+# HFE disc images, read and written by the HxC floppy library (a C library: desktop only)
+hxcfe = { path = "../hxc_rust/hxcfe" }
 rustyline = "8.2.0" # Make not mandaotry
 minifb = "0.28.0"
 cpal = { version = "0.18.2", optional = true }
@@ -51,10 +53,6 @@ tiny_http = "0.12"
 wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "vulkan"] }
 # `--frontend winit`: a window drawn by the GPU, see src/frontend/winit_gpu.rs
 winit = { version = "0.30", optional = true }
-
-# The tests check the HFE decoder against images made by the HxC floppy library (a C library).
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-hxcfe = "0.3.3"
 
 # A web page (see web/): no terminal, sockets, threads or native windows; the CRT on WebGPU.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -77,6 +75,8 @@ cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens/"}
 cpclib-xfer = {path = "../rust.cpcdemotools/cpclib-xfer/"}
 cpclib-xfertool = {path = "../rust.cpcdemotools/cpclib-xfertool/"}
 cpclib-z80emu = {path = "../rust.cpcdemotools/cpclib-z80emu/"}
+hxcfe = {path = "../hxc_rust/hxcfe"}
+hxcfe-sys = {path = "../hxc_rust/hxcfe-sys"}
 
 [profile.test]
 # The tests run the emulator for whole frames, seconds of a CPC: unoptimised they took half an
