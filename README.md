@@ -36,7 +36,7 @@ An HFE image (version 1 or 3) stays what it is, the MFM bits of each track. It i
 written through the HxC floppy library (the `hxcfe` crate, `src/hfe.rs`): the FDC reads the sectors
 the library finds on each track, where they lie on it (CRC errors, deleted or missing marks, weak
 bits of HFE v3 as they are), sector writes go through the library and Format Track writes the whole
-track. The `hxcfe` crate is taken from `../hxc_rust/hxcfe` (a checkout next to this one).
+track.
 
 `--save-discs` writes the discs back to their files when the CPC wrote to them: when the drive
 motor stops, when another disc replaces it and at the end. An HFE is saved as HFE v3, a DSK as an

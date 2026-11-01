@@ -43,7 +43,7 @@ cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm"}
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens"}
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
 # HFE disc images, read and written by the HxC floppy library (a C library: desktop only)
-hxcfe = { path = "../hxc_rust/hxcfe" }
+hxcfe = "0.3.4"
 rustyline = "8.2.0" # Make not mandaotry
 minifb = "0.28.0"
 cpal = { version = "0.18.2", optional = true }
@@ -75,8 +75,6 @@ cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens/"}
 cpclib-xfer = {path = "../rust.cpcdemotools/cpclib-xfer/"}
 cpclib-xfertool = {path = "../rust.cpcdemotools/cpclib-xfertool/"}
 cpclib-z80emu = {path = "../rust.cpcdemotools/cpclib-z80emu/"}
-hxcfe = {path = "../hxc_rust/hxcfe"}
-hxcfe-sys = {path = "../hxc_rust/hxcfe-sys"}
 
 [profile.test]
 # The tests run the emulator for whole frames, seconds of a CPC: unoptimised they took half an
