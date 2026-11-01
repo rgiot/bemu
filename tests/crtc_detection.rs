@@ -5,7 +5,6 @@ use amsrust::crtc::CrtcType;
 use amsrust::motherboard::MotherboardBuilder;
 use amsrust::z80::{HasValue, Reg16, Reg8};
 
-use cpclib_macros;
 
 enum CrtcTest {
     MadramAmslive,
@@ -52,7 +51,7 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
     );
 
     // inject it in memory
-    motherboard.write_buffer(addr, &test);
+    motherboard.write_buffer(addr, test);
     motherboard.write_buffer(0x38, inter_code);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr);
 
@@ -70,7 +69,7 @@ fn test_crtc(crtc_type: CrtcType, crtc_test: CrtcTest) {
         }
 
         // detect if it is the end
-        let current_pattern = [motherboard.read_byte(pc + 0), motherboard.read_byte(pc + 1)];
+        let current_pattern = [motherboard.read_byte(pc), motherboard.read_byte(pc + 1)];
 
         if current_pattern == *end_pattern {
             eprintln!("reached end at pc={pc:04x} a={:#x}", motherboard.cpu().reg8(Reg8::A).value());

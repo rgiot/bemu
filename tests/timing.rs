@@ -74,7 +74,7 @@ fn timing_nop() {
 	);
 	assert_eq!(
 		motherboard.t_state_counter().value(),
-		1*4
+		4
 	);
 
 	assert_eq!(
@@ -247,7 +247,7 @@ fn test_timing_exchange() {
 	cpd         | ED A9 | SZ!H!!1. | 4  	";
 
 	// not tested yet
-	"
+	let _not_tested_yet = "
 	cpir        | ED B1 | SZ!H!!1. | 6 / 4 for last iteration.
 	cpdr        | ED B9 | SZ!H!!1. | 6 / 4 for last iteration.
 	";

@@ -225,7 +225,7 @@ fn alu(y: u8, operand: DataAccess) -> Token {
         Mnemonic::Or,
         Mnemonic::Cp
     ][y as usize];
-    let accumulator = (mnemonic == Mnemonic::Sbc).then(|| DataAccess::Register8(Register8::A));
+    let accumulator = (mnemonic == Mnemonic::Sbc).then_some(DataAccess::Register8(Register8::A));
     op(mnemonic, accumulator, Some(operand))
 }
 

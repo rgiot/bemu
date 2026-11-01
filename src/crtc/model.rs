@@ -21,8 +21,10 @@ pub type Registers = [u8; NB_REGISTERS];
 /// CPC's chip, numbered after 3 because it was discovered after it).
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum CrtcType {
     /// Hitachi HD6845S / UMC UM6845
+    #[default]
     Crtc0 = 0,
     /// UMC UM6845R
     Crtc1 = 1,
@@ -34,11 +36,6 @@ pub enum CrtcType {
     Crtc4 = 4
 }
 
-impl Default for CrtcType {
-    fn default() -> Self {
-        CrtcType::Crtc0
-    }
-}
 
 impl CrtcType {
     pub const ALL: [CrtcType; 5] = [

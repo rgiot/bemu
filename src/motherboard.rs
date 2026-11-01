@@ -836,7 +836,7 @@ impl Motherboard {
             self.t_state_counter.inc();
 
             // By definition it is a new opcode because the previous one has been executed
-            if self.t_state_counter.value() % 4 == 0 {
+            if self.t_state_counter.value().is_multiple_of(4) {
                 self.nops_counter.inc();
             }
         }
@@ -1024,8 +1024,7 @@ impl Motherboard {
         loop {
             on_tick(self.tick());
 
-            has_executed_first_state_counter =
-                has_executed_first_state_counter | !self.cpu.next_state.is_new_opcode();
+            has_executed_first_state_counter |= !self.cpu.next_state.is_new_opcode();
 
             if has_executed_first_state_counter && self.cpu.is_downfront(Z80::clock_pin()) {
                 has_finished_z80_execution = true;
@@ -1624,7 +1623,7 @@ impl Motherboard {
     /// = a fully populated 512K expansion, the standard CPC6128-style RAM
     /// select's own limit). See [`Memory::set_extra_pages`]. For a real
     /// >512K expansion card (up to 4MB), use [`Self::plug_large_ram_expansion`]
-    /// instead - it calls this with the card's own bank count.
+    /// > instead - it calls this with the card's own bank count.
     pub fn set_extra_ram_pages(&mut self, pages: usize) {
         // A RAM expansion decodes the MMR, on any model.
         self.ram_banking = pages > 0;
@@ -1650,15 +1649,15 @@ impl Motherboard {
 
     /// Plugs a [`LargeRamExpansion`] (the standard Yarek/RAM7/CPC4MB-style
     /// >512K protocol, see `src/expansion.rs`) into the expansion port,
-    /// with `bank_count` 64kb banks fitted (up to 64 = 4MB) - the card's own
-    /// [`Page`]s, not `Memory`'s (see [`Expansion`]'s doc comment
-    /// for why). `Memory::additional_memory` (the CPC's own on-board extra
-    /// page) is left exactly as it was: real hardware wires a plugged-in
-    /// card to the same bus lines, so once one *is* plugged in,
-    /// `RamConfig::with_expansion_high_bits` always redirects every access
-    /// that would have reached it to the card instead - it becomes
-    /// unreachable, not explicitly resized away, matching the spec's own
-    /// note that a real card "replaces", not adds to, that internal page.
+    /// > with `bank_count` 64kb banks fitted (up to 64 = 4MB) - the card's own
+    /// > [`Page`]s, not `Memory`'s (see [`Expansion`]'s doc comment
+    /// > for why). `Memory::additional_memory` (the CPC's own on-board extra
+    /// > page) is left exactly as it was: real hardware wires a plugged-in
+    /// > card to the same bus lines, so once one *is* plugged in,
+    /// > `RamConfig::with_expansion_high_bits` always redirects every access
+    /// > that would have reached it to the card instead - it becomes
+    /// > unreachable, not explicitly resized away, matching the spec's own
+    /// > note that a real card "replaces", not adds to, that internal page.
     pub fn plug_large_ram_expansion(&mut self, bank_count: usize) {
         self.ram_banking = true;
         self.large_ram_expansion = Some(LargeRamExpansion::new(bank_count));
@@ -1676,7 +1675,7 @@ impl Motherboard {
     /// How many 64kb banks the currently plugged-in `LargeRamExpansion`
     /// provides, if any - `None` on a stock machine.
     pub fn large_ram_expansion_bank_count(&self) -> Option<usize> {
-        self.large_ram_expansion.as_ref().map(|e| Expansion::ram_bank_count(e))
+        self.large_ram_expansion.as_ref().map(Expansion::ram_bank_count)
     }
 
     /// The currently plugged-in `LargeRamExpansion`'s last-latched high
@@ -1737,8 +1736,7 @@ impl Motherboard {
     /// current CPU mapping, ROMs ignored.
     pub fn read_physical_ram(&self, page: crate::memory::PageNumber, bank: crate::memory::BankNumber, offset: u16) -> u8 {
         use crate::memory::{BankConfig, MemoryConfig, RamConfig};
-        let mut config = MemoryConfig::default();
-        config.1 = RamConfig([BankConfig(page, bank); 4]);
+        let config = MemoryConfig(MemoryConfig::default().0, RamConfig([BankConfig(page, bank); 4]));
         self.memory.read(offset % 0x4000, &config, self.expansion_ram_source())
     }
 
@@ -1803,9 +1801,7 @@ impl Motherboard {
 
     fn physical_bank_config(&self, bank: u16) -> MemoryConfig {
         let bank_config = BankConfig::of_physical_index(bank, self.large_ram_expansion.is_some());
-        let mut config = MemoryConfig::default();
-        config.1 = RamConfig([bank_config; 4]);
-        config
+        MemoryConfig(MemoryConfig::default().0, RamConfig([bank_config; 4]))
     }
 
     /// One byte of a 16K RAM bank (see [`Self::physical_bank_count`]),
@@ -2105,8 +2101,7 @@ mod test {
         let mut count_crtc = 0;
         for _i in 0..32 {
             println!(
-                "{},{},{}",
-                true,
+                "true,{},{}",
                 motherboard.cpu.is_activated(),
                 motherboard.crtc.is_activated()
             );

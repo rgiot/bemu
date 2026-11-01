@@ -712,7 +712,7 @@ impl DebugServer {
     /// To call once per completed video frame.
     pub fn frame_completed(&mut self, motherboard: &Motherboard) {
         self.frames += 1;
-        if self.frames % FRAME_EVENT_EVERY == 0 && self.events.has_clients() {
+        if self.frames.is_multiple_of(FRAME_EVENT_EVERY) && self.events.has_clients() {
             let mut event = registers_event(motherboard);
             merge(&mut event, json!({ "fps": self.fps, "frame": self.frames, "paused": self.paused }));
             self.events.publish("frame", &event);
@@ -874,7 +874,7 @@ impl DebugServer {
             "crtc": self.crtc(motherboard),
             "psg": psg(motherboard),
             "fdc": fdc(motherboard),
-            "beam": self.beam.map(|beam| beam_json(beam)),
+            "beam": self.beam.map(beam_json),
             "emu": self.emu(motherboard)
         })
     }
@@ -2133,7 +2133,7 @@ fn parse_int(text: &str) -> Option<i64> {
 /// Hex bytes; spaces and ':' are ignored.
 fn parse_hex(text: &str) -> Option<Vec<u8>> {
     let digits: Vec<char> = text.chars().filter(|c| !c.is_whitespace() && *c != ':').collect();
-    if digits.len() % 2 != 0 {
+    if !digits.len().is_multiple_of(2) {
         return None;
     }
     digits

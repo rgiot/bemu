@@ -221,7 +221,8 @@ impl AdcSource {
         if data.len() < 12 || &data[..4] != b"RIFF" || &data[8..12] != b"WAVE" {
             return Err("not a WAV".to_owned());
         }
-        let (mut format, mut samples): (Option<(u16, u32, u16)>, Option<&[u8]>) = (None, None);
+        let mut format: Option<(u16, u32, u16)> = None;
+        let mut samples: Option<&[u8]> = None;
         let mut at = 12;
         while at + 8 <= data.len() {
             let size = le32(at + 4) as usize;

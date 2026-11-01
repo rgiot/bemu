@@ -88,15 +88,15 @@ pub enum GateArrayPin {
     NCPU = 1 << 40,
 }
 
-impl Into<u64> for GateArrayPin {
-    fn into(self) -> u64 {
-        self as u64
+impl From<GateArrayPin> for u64 {
+    fn from(val: GateArrayPin) -> Self {
+        val as u64
     }
 }
 
-impl Into<u64> for &GateArrayPin {
-    fn into(self) -> u64 {
-        *self as u64
+impl From<&GateArrayPin> for u64 {
+    fn from(val: &GateArrayPin) -> Self {
+        *val as u64
     }
 }
 const GA_PIN_DATA_BUS: [GateArrayPin; 8] = [
@@ -140,15 +140,15 @@ impl From<cpclib::image::ga::Pen> for Pen {
     }
 }
 
-impl Into<u8> for &Pen {
-    fn into(self) -> u8 {
-        self.value()
+impl From<&Pen> for u8 {
+    fn from(val: &Pen) -> Self {
+        val.value()
     }
 }
 
-impl Into<u8> for Pen {
-    fn into(self) -> u8 {
-        self.value()
+impl From<Pen> for u8 {
+    fn from(val: Pen) -> Self {
+        val.value()
     }
 }
 
@@ -160,6 +160,9 @@ impl Pen {
         }
     }
 }
+
+/// The 8 pens of a mode 2 byte.
+type Mode2Pens = (Pen, Pen, Pen, Pen, Pen, Pen, Pen, Pen);
 
 lazy_static! {
     /// LUT to retreive the pens in a given byte in mode 0
@@ -182,7 +185,7 @@ lazy_static! {
     });
 
     /// LUT to retreive the pens in a given byte in mode 2
-    static ref BYTE_TO_MODE2_PENS: [(Pen, Pen, Pen, Pen, Pen, Pen, Pen, Pen); 256] =
+    static ref BYTE_TO_MODE2_PENS: [Mode2Pens; 256] =
     array_init(|byte|{
         let pens = cpclib::image::pixels::mode2::byte_to_pens(byte as u8);
         (
@@ -309,18 +312,15 @@ impl ToRGBLevels for Ink {
 pub struct RMR(u8);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Default)]
 pub enum VideoMode {
+    #[default]
     Mode0,
     Mode1,
     Mode2, // Pay attention to its 1 pixel shift
     Mode3,
 }
 
-impl Default for VideoMode {
-    fn default() -> Self {
-        VideoMode::Mode0
-    }
-}
 
 impl From<u8> for VideoMode {
     fn from(u: u8) -> Self {
@@ -612,10 +612,7 @@ impl PixelOrder {
     }
 
     fn is_last(&self) -> bool {
-        match self {
-            PixelOrder::Pixel8 => true,
-            _ => false,
-        }
+        matches!(self, PixelOrder::Pixel8)
     }
 
     /// How many pixels of this byte have already been generated before
@@ -639,17 +636,14 @@ impl PixelOrder {
 
 /// This is this strcuture that has the responsibility to produce the colors
 #[derive(Debug)]
+#[derive(Default)]
 pub enum PixelAutomata {
     /// The pixel to produce next, of the byte, in its mode (the pens: the palette is applied later).
     AvailablePixel(PixelOrder, u8, VideoMode),
+    #[default]
     NeedToReadMemory,
 }
 
-impl Default for PixelAutomata {
-    fn default() -> Self {
-        PixelAutomata::NeedToReadMemory
-    }
-}
 
 impl PixelAutomata {
     /// The new automaton depends on the byte to display and its video mode
@@ -659,10 +653,7 @@ impl PixelAutomata {
 
     /// Automaton is over when pixel 8 is produced
     pub fn is_done(&self) -> bool {
-        match self {
-            PixelAutomata::NeedToReadMemory => true,
-            _ => false,
-        }
+        matches!(self, PixelAutomata::NeedToReadMemory)
     }
 
     /// Select the next step (no computation is involved there)
@@ -876,31 +867,25 @@ pub struct Sync {
 /// Handle the vsync information to generate interrupt
 /// two lines after vsync
 #[derive(Debug)]
+#[derive(Default)]
 pub enum VSyncCounter {
+    #[default]
     NoVsync,
     VSync(usize),
 }
 
-impl Default for VSyncCounter {
-    fn default() -> Self {
-        VSyncCounter::NoVsync
-    }
-}
 
 
 /// Handle the hsync information to generate hsync signal
 /// two nops  after hsync
 #[derive(Debug)]
+#[derive(Default)]
 pub enum HSyncCounter {
+    #[default]
     NoHsync,
     HSync(usize),
 }
 
-impl Default for HSyncCounter {
-    fn default() -> Self {
-        Self::NoHsync
-    }
-}
 
 impl HSyncCounter {
     pub fn inc(&mut self) {
@@ -1210,7 +1195,7 @@ impl Default for GateArray {
 
 impl DataChip for GateArray {
     fn pins_data() -> &'static [Self::PinType; 8] {
-        return &GA_PIN_DATA_BUS;
+        &GA_PIN_DATA_BUS
     }
 }
 
@@ -1242,7 +1227,7 @@ impl GateArray {
     }
 
     pub fn divide_clock(&mut self) {
-        self.set_pin(GateArrayPin::NCPU, ((self.clock + 0) % 4) >= 2); // this delay is needed to let time to CRTC to get cpu infos from pins
+        self.set_pin(GateArrayPin::NCPU, (self.clock % 4) >= 2); // this delay is needed to let time to CRTC to get cpu infos from pins
         self.set_pin(GateArrayPin::CCLK, !(((self.clock + CCLK_PHASE) % 16) >= 8));
     }
 
@@ -1768,7 +1753,7 @@ impl Chip for GateArray {
             // the request is held until the CPU answers it
             self.interrupt_signal_counter = InterruptionSignal::NoSignal;
             self.set_pin(GateArrayPin::INTERRUPT, true);
-            if !self.ack_armed && self.clock % 4 == 0 {
+            if !self.ack_armed && self.clock.is_multiple_of(4) {
                 self.ack_armed = true;
                 // ACCC §27.3.1/§27.7.1: the Gate Array hears of the acknowledge
                 // on the Z80A's own last T-state of the interrupted
@@ -1954,7 +1939,7 @@ mod test {
             let r = at().reconstruct_for_mode_switch(VideoMode::Mode0, ga);
             let v = r.byte().unwrap();
             let pen = BYTE_TO_MODE0_PENS[v as usize].1.value();
-            assert_eq!(pen, (pad << 3) | (0 << 2) | (1 << 1) | 1, "mode 0, pad {pad}");
+            assert_eq!(pen, (pad << 3) | (1 << 1) | 1, "mode 0, pad {pad}");
             assert_eq!(r.step(), Some(&PixelOrder::Pixel5));
         }
         // MODE 3: colour (b1, b5) = (1, 1)
@@ -2130,10 +2115,12 @@ mod test {
 
     #[test]
     fn test_mode2_pixels_generation() {
-        let mut ga = GateArray::default();
-        ga.lookup_lag = 0;
-        ga.sync_black_lag = 0;
-        ga.ga_type = GateArrayType::Ga40007_8;
+        let mut ga = GateArray {
+            lookup_lag: 0,
+            sync_black_lag: 0,
+            ga_type: GateArrayType::Ga40007_8,
+            ..Default::default()
+        };
         ga.set_pin(GateArrayPin::DISPEN, true);
         ga.current_mode = VideoMode::Mode2;
         ga.force_active_video_mode(VideoMode::Mode2);
@@ -2220,7 +2207,7 @@ mod test {
         ga.set_memory_byte(byte);
         assert_eq!(VideoMode::Mode1, ga.pixel_automata.mode().unwrap());
         let pens = BYTE_TO_MODE1_PENS[byte as usize];
-        println!("List of pens to use {:?}", &pens);
+        println!("List of pens to use {:?}", pens);
 
         // the pens are looked up in the Gate Array's palette
         let automata_palette = *ga.palette();

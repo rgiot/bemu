@@ -111,10 +111,10 @@ mod tests {
         let (width, height) = curved.output_size();
         let mut dst = vec![0u32; width * height];
         curved.render(&src, &mut dst);
-        assert_eq!(dst[height / 2 * width + width / 2], 0xc8_64_32);
+        assert_eq!(dst[height / 2 * width + width / 2], 0x00c8_6432);
         assert_eq!(dst[0], 0);
         assert_eq!(dst[width * height - 1], 0);
         // the middle of an edge bulges out: still lit
-        assert_eq!(dst[height / 2 * width], 0xc8_64_32);
+        assert_eq!(dst[height / 2 * width], 0x00c8_6432);
     }
 }

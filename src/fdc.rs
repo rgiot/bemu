@@ -215,7 +215,7 @@ impl Cmd {
 
     /// Direction of the execution-phase transfer: true = the CPU sends the
     /// bytes (Write, Scan and Format take data from the CPU).
-    fn from_cpu(self) -> bool {
+    fn is_from_cpu(self) -> bool {
         matches!(
             self,
             Cmd::WriteData
@@ -564,7 +564,7 @@ impl Fdc {
         match self.phase {
             Phase::Command => self.write_command_byte(val),
             Phase::Execution => {
-                if self.current_cmd.from_cpu() {
+                if self.current_cmd.is_from_cpu() {
                     if let Some(slot) = self.exec_data.get_mut(self.exec_pos) {
                         *slot = val;
                     }
@@ -585,7 +585,7 @@ impl Fdc {
         }
         match self.phase {
             Phase::Execution => {
-                if self.st & msr::RQM != 0 && !self.current_cmd.from_cpu() {
+                if self.st & msr::RQM != 0 && !self.current_cmd.is_from_cpu() {
                     let byte = self.exec_data.get(self.exec_pos).copied().unwrap_or(0xe5);
                     self.exec_pos += 1;
                     self.st &= !msr::RQM;
@@ -625,7 +625,7 @@ impl Fdc {
         self.phase = Phase::Execution;
         self.exec_pos = 0;
         self.st = msr::RQM | msr::EXM | msr::CB;
-        if !self.current_cmd.from_cpu() {
+        if !self.current_cmd.is_from_cpu() {
             self.st |= msr::DIO;
         }
         if self.timing {
@@ -642,7 +642,7 @@ impl Fdc {
                 let slot = (22 + 22 + 12 + 4 + size + 2 + u64::from(self.command[FMT_GPL])) * BYTE_US;
                 self.data_t0 + (pos / 4) * slot + (pos % 4) * BYTE_US
             },
-            cmd if cmd.from_cpu() => self.data_t0 + pos * BYTE_US,
+            cmd if cmd.is_from_cpu() => self.data_t0 + pos * BYTE_US,
             _ => self.data_t0 + pos * BYTE_US
         }
     }

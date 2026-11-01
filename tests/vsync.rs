@@ -182,9 +182,8 @@ fn test_z80_vsync_activated() {
 
 
 	motherboard.execute_next_opcode();
-	assert_eq!(
-		motherboard.cpu().flag(amsrust::z80::Z80Flags::C),
-		true
+	assert!(
+		motherboard.cpu().flag(amsrust::z80::Z80Flags::C)
 	);
 
 

@@ -39,9 +39,9 @@ pub enum PalPin {
     D6_and_D7 = 1 << 38,
 }
 
-impl Into<u64> for PalPin {
-    fn into(self) -> u64 {
-        self as u64
+impl From<PalPin> for u64 {
+    fn from(val: PalPin) -> Self {
+        val as u64
     }
 }
 
@@ -76,15 +76,15 @@ pub struct MemoryMapping(u8);
 #[derive(Debug, PartialEq)]
 pub struct PageMapping(u8);
 
-impl Into<PageNumber> for PageMapping {
-    fn into(self) -> PageNumber {
-        self.0.into()
+impl From<PageMapping> for PageNumber {
+    fn from(val: PageMapping) -> Self {
+        val.0.into()
     }
 }
 
-impl Into<BankNumber> for MemoryMapping {
-    fn into(self) -> BankNumber {
-        self.0.into()
+impl From<MemoryMapping> for BankNumber {
+    fn from(val: MemoryMapping) -> Self {
+        val.0.into()
     }
 }
 
@@ -157,7 +157,7 @@ pub struct Pal {
 
 impl DataChip for Pal {
     fn pins_data() -> &'static [Self::PinType; 8] {
-        return &PAL_PIN_DATA_BUS;
+        &PAL_PIN_DATA_BUS
     }
 }
 
@@ -235,7 +235,7 @@ mod test {
 
         pal.mmr.set(0xc0);
         assert_eq!(pal.mmr.memory_mapping(), MemoryMapping(0));
-        assert_eq!(pal.mmr.use_supplementary_pages(), false);
+        assert!(!pal.mmr.use_supplementary_pages());
         assert_eq!(pal.mmr.page_mapping(), PageMapping(0));
         assert_eq!(
             pal.mmr.get_ram_configuration(),
@@ -249,7 +249,7 @@ mod test {
 
         pal.mmr.set(0xc7);
         assert_eq!(pal.mmr.memory_mapping(), MemoryMapping(3));
-        assert_eq!(pal.mmr.use_supplementary_pages(), true);
+        assert!(pal.mmr.use_supplementary_pages());
         assert_eq!(pal.mmr.page_mapping(), PageMapping(0));
         assert_eq!(
             pal.mmr.get_ram_configuration(),

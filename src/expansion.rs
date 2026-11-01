@@ -133,9 +133,9 @@ pub enum LargeRamExpansionPin {
     D7 = 1 << 15
 }
 
-impl Into<u64> for LargeRamExpansionPin {
-    fn into(self) -> u64 {
-        self as u64
+impl From<LargeRamExpansionPin> for u64 {
+    fn from(val: LargeRamExpansionPin) -> Self {
+        val as u64
     }
 }
 
@@ -219,7 +219,7 @@ mod test {
     #[test]
     fn port_7f_reproduces_plain_dktronics_numbering() {
         let mut card = LargeRamExpansion::new(64);
-        select(&mut card, 0x7Fff, 0b1101_1001); // ccc=001, bbb=011
+        select(&mut card, 0x7fff, 0b1101_1001); // ccc=001, bbb=011
         assert_eq!(card.ram_bank_high_bits(), 0);
     }
 
@@ -229,12 +229,12 @@ mod test {
     fn successive_ports_address_successive_512k_blocks() {
         let mut card = LargeRamExpansion::new(64);
         for (port, expected_high_bits) in [
-            (0x7Fff, 0u8),
-            (0x7Eff, 1),
-            (0x7Dff, 2),
-            (0x7Cff, 3),
-            (0x7Bff, 4),
-            (0x7Aff, 5),
+            (0x7fff, 0u8),
+            (0x7eff, 1),
+            (0x7dff, 2),
+            (0x7cff, 3),
+            (0x7bff, 4),
+            (0x7aff, 5),
             (0x79ff, 6),
             (0x78ff, 7)
         ] {
@@ -248,7 +248,7 @@ mod test {
     #[test]
     fn non_ram_select_writes_are_ignored() {
         let mut card = LargeRamExpansion::new(64);
-        select(&mut card, 0x7Fff, 0b1101_1000); // establishes high_bits=0
+        select(&mut card, 0x7fff, 0b1101_1000); // establishes high_bits=0
         select(&mut card, 0x78ff, 0b0000_0000); // NOT a RAM-select write (bits 7-6 aren't 11)
         assert_eq!(card.ram_bank_high_bits(), 0, "a non-RAM-select write must not change the latch");
     }

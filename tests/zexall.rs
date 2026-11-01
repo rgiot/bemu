@@ -79,13 +79,13 @@ fn zexall() {
             break;
         }
 
-        if debug_every > 0 && operations % debug_every == 0 {
+        if debug_every > 0 && operations.is_multiple_of(debug_every) {
             let pc = motherboard.cpu().reg16(Reg16::Pc).value();
             eprintln!(
                 "[zexall] ops={} pc=0x{:04x} next={}",
                 operations,
                 pc,
-                motherboard.disassemble_next_instruction().to_string()
+                motherboard.disassemble_next_instruction()
             );
         }
 
@@ -125,7 +125,7 @@ fn cpm_bdos(motherboard: &Motherboard, output: &mut String) {
     match c_value {
         2 => {
             // output character in register E
-            let c = cpu.reg8(Reg8::E).value() as u8 as char;
+            let c = cpu.reg8(Reg8::E).value() as char;
             output.push(c);
             print!("{c}");
         },

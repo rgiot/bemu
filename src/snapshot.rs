@@ -487,12 +487,14 @@ mod breakpoint_test {
         let mut snapshot = Snapshot::default();
         let mut remu = RemuChunk::empty();
         remu.add_entry(&RemuEntry::new_breakpoint(0x4000, 0));
-        let mut io = AdvancedRemuBreakPoint::default();
-        io.brk_type = RemuBreakPointType::IO;
-        io.access_mode = RemuBreakPointAccessMode::Write;
-        io.run_mode = RemuBreakPointRunMode::Watch;
-        io.addr = 0x7f00;
-        io.mask = 0xc000;
+        let io = AdvancedRemuBreakPoint {
+            brk_type: RemuBreakPointType::IO,
+            access_mode: RemuBreakPointAccessMode::Write,
+            run_mode: RemuBreakPointRunMode::Watch,
+            addr: 0x7f00,
+            mask: 0xc000,
+            ..Default::default()
+        };
         remu.add_entry(&RemuEntry::new_remu_breakpoint(io));
         snapshot.add_chunk(remu);
         let mut ace = AceBreakPointChunk::empty();
@@ -515,7 +517,7 @@ mod breakpoint_test {
     fn load_crtc_snapshot(version: SnapshotVersion, values: &[(SnapshotFlag, u16)]) -> Motherboard {
         let mut snapshot = Snapshot::default();
         for (flag, value) in values {
-            snapshot.set_value(flag.clone(), *value).unwrap();
+            snapshot.set_value(*flag, *value).unwrap();
         }
         let path = std::env::temp_dir().join(format!("amsrust_crtc_{}_{version:?}.sna", std::process::id()));
         let path = path.to_str().unwrap().to_owned();
@@ -603,11 +605,13 @@ mod breakpoint_test {
     #[test]
     fn remu_advanced_entries_written_by_cpclib() {
         let mut chunk = RemuChunk::empty();
-        let mut brk = AdvancedRemuBreakPoint::default();
-        brk.brk_type = RemuBreakPointType::Mem;
-        brk.access_mode = RemuBreakPointAccessMode::Write;
-        brk.addr = 0xc000;
-        brk.size = 0x4000;
+        let brk = AdvancedRemuBreakPoint {
+            brk_type: RemuBreakPointType::Mem,
+            access_mode: RemuBreakPointAccessMode::Write,
+            addr: 0xc000,
+            size: 0x4000,
+            ..Default::default()
+        };
         chunk.add_entry(&RemuEntry::new_remu_breakpoint(brk));
         let mut breakpoints = SnapshotBreakpoints::default();
         breakpoints_of_chunk("REMU", chunk.data(), &mut breakpoints);

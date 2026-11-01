@@ -439,7 +439,7 @@ fn write_track(track: &Track, out: &mut Vec<u8>) {
     for sector in track.sectors.iter().take(MAX_SECTORS_PER_TRACK) {
         out.extend_from_slice(&sector.data);
     }
-    while (out.len() - start) % 256 != 0 {
+    while !(out.len() - start).is_multiple_of(256) {
         out.push(0);
     }
 }

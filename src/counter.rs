@@ -1,5 +1,4 @@
-///! Counting related stuff
-///
+//! Counting related stuff
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Counter(usize);
@@ -10,9 +9,9 @@ impl From<usize> for Counter {
     }
 }
 
-impl Into<usize> for &Counter {
-    fn into(self) -> usize {
-        self.0
+impl From<&Counter> for usize {
+    fn from(val: &Counter) -> Self {
+        val.0
     }
 }
 

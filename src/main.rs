@@ -354,7 +354,7 @@ fn main() {
     if let Some(path) = &args.save_sna {
         match amsrust::snapshot::save_sna(&motherboard, path) {
             Ok(()) => {
-            let full = std::fs::canonicalize(&path).map_or(path.clone(), |p| p.display().to_string());
+            let full = std::fs::canonicalize(path).map_or(path.clone(), |p| p.display().to_string());
             eprintln!("snapshot saved: {full}")
         },
             Err(e) => eprintln!("cannot save the snapshot: {e}")
@@ -690,6 +690,7 @@ fn save_snapshot(motherboard: &Motherboard) {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // the command line's options for a headless run
 fn run_headless(
     motherboard: &mut amsrust::motherboard::Motherboard,
     dir: &str,
@@ -747,7 +748,7 @@ fn run_headless(
                     if let Some(overlay) = &mut overlay {
                         overlay.draw_and_clear(&mut frame);
                     }
-                    if seen % frames == 0 {
+                    if seen.is_multiple_of(frames) {
                         save(&frame, shot, filter, motherboard.t_state_counter().value());
                         shot += 1;
                     }
@@ -1005,6 +1006,7 @@ const FRAME_T_STATES: usize = 312 * 64 * 4;
 /// At full speed, a frame is shown this often (50 a second).
 const FRAME_SHOWN_EVERY: std::time::Duration = std::time::Duration::from_millis(20);
 
+#[allow(clippy::too_many_arguments)] // the command line's options for the window
 fn run_window(
     motherboard: &mut Motherboard,
     sound: bool,

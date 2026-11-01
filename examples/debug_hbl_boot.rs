@@ -84,7 +84,7 @@ fn main() {
             eprintln!("\ndisassembly leading up to the RST 0 (0x1D90-0x1DD4):");
             for insn in mb.disassemble_instructions_from(0x1D90, 40) {
                 let addr = insn.address;
-                eprintln!("{}", insn.to_string());
+                eprintln!("{}", insn);
                 if addr >= 0x1DD0 {
                     break;
                 }
@@ -102,7 +102,7 @@ fn main() {
             pc_history.pop_front();
         }
 
-        if steps % 10_000_000 == 0 {
+        if steps.is_multiple_of(10_000_000) {
             eprintln!("[step {steps}] PC={pc:04X} motor={motor}");
         }
         if steps >= MAX_STEPS {

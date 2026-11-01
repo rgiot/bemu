@@ -197,14 +197,11 @@ pub struct UpperRomSelector {
 }
 
 #[derive(PartialEq, Copy, Clone, Debug)]
+#[derive(Default)]
 pub enum Flag {
     Enable,
+    #[default]
     Disable,
-}
-impl Default for Flag {
-    fn default() -> Self {
-        Flag::Disable
-    }
 }
 
 impl Flag {
@@ -244,15 +241,15 @@ pub enum UpperRomSelectorPin {
     WR = 1 << 10,
 }
 
-impl Into<u64> for UpperRomSelectorPin {
-    fn into(self) -> u64 {
-        self as u64
+impl From<UpperRomSelectorPin> for u64 {
+    fn from(val: UpperRomSelectorPin) -> Self {
+        val as u64
     }
 }
 
-impl Into<u64> for &UpperRomSelectorPin {
-    fn into(self) -> u64 {
-        *self as u64
+impl From<&UpperRomSelectorPin> for u64 {
+    fn from(val: &UpperRomSelectorPin) -> Self {
+        *val as u64
     }
 }
 
@@ -373,7 +370,7 @@ impl From<u8> for BankNumber {
 
 impl DataChip for UpperRomSelector {
     fn pins_data() -> &'static [Self::PinType; 8] {
-        return &URS_PIN_DATA_BUS;
+        &URS_PIN_DATA_BUS
     }
 }
 
@@ -433,14 +430,8 @@ impl UpperRomSelector {
 
 impl Default for Memory {
     fn default() -> Self {
-        let mut roms = Vec::new();
-        roms.push(Some(Rom::basic_6128())); // 0
-        roms.push(None);
-        roms.push(None);
-        roms.push(None);
-        roms.push(None);
-        roms.push(None);
-        roms.push(None);
+        let mut roms = vec![Some(Rom::basic_6128())]; // 0
+        roms.extend([None, None, None, None, None, None]);
         roms.push(Some(Rom::amsdos())); // 7
 
         Memory {

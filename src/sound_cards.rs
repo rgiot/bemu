@@ -250,6 +250,7 @@ impl Ctc {
 
 #[cfg(feature = "playcity")]
 /// The PlayCity card.
+#[derive(Default)]
 pub struct PlayCity {
     pub ctc: Ctc,
     /// Right then left.
@@ -258,13 +259,6 @@ pub struct PlayCity {
     ay_clock: bool,
     /// The level of the source of [`Self::ay_clock`], for its edges.
     ay_clock_source: bool
-}
-
-#[cfg(feature = "playcity")]
-impl Default for PlayCity {
-    fn default() -> Self {
-        Self { ctc: Ctc::default(), ays: [Psg::default(), Psg::default()], ay_clock: false, ay_clock_source: false }
-    }
 }
 
 #[cfg(feature = "playcity")]

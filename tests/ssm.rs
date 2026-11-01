@@ -1,8 +1,8 @@
-///! SSM (ScreenShot Management) protocol tests - see SSM-STANDARD-EN.pdf.
-///!
-///! SSM repurposes 177 "neutral" (undefined) ED-prefixed suffix bytes: two
-///! of them executed back to back form a 16-bit request code that the
-///! emulator surfaces via `Z80::take_ssm_codes`.
+//! SSM (ScreenShot Management) protocol tests - see SSM-STANDARD-EN.pdf.
+//!
+//! SSM repurposes 177 "neutral" (undefined) ED-prefixed suffix bytes: two
+//! of them executed back to back form a 16-bit request code that the
+//! emulator surfaces via `Z80::take_ssm_codes`.
 
 use amsrust::motherboard::MotherboardBuilder;
 use amsrust::z80::{HasValue, Reg16};

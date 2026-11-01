@@ -78,7 +78,7 @@ pub trait Chip {
         // review in [[project_cpu_tick_performance]].
         debug_assert_eq!(pin.count_ones(), 1);
 
-        let ref mut buffer = self.pins_buffer_mut().1;
+        let buffer = &mut self.pins_buffer_mut().1;
         // all the other bits kept, this one set to `value`, without a branch
         *buffer = (*buffer & pin.not()) | (pin & u64::from(value).wrapping_neg());
     }
@@ -98,7 +98,7 @@ pub trait Chip {
         // See `set_pin`'s comment just above - same reasoning.
         debug_assert_eq!(pin.count_ones(), 1);
 
-        let ref current = self.pins_buffer().1;
+        let current = &self.pins_buffer().1;
         0 != (current & pin)
     }
 
@@ -111,12 +111,12 @@ pub trait Chip {
         // `Motherboard::tick()`), so this was on the hottest path too.
         debug_assert_eq!(pin.count_ones(), 1);
 
-        let &PinsBuffer(ref previous, ref current) = self.pins_buffer();
+        let PinsBuffer(previous, current) = self.pins_buffer();
 
         let current = 0 != (current & pin);
         let previous = 0 != (previous & pin);
 
-        previous == false && current == true
+        !previous && current
     }
 
     /// Check if the pin is in a down front state
@@ -125,12 +125,12 @@ pub trait Chip {
         
         debug_assert_eq!(pin.count_ones(), 1);
 
-        let &PinsBuffer(ref previous, ref current) = self.pins_buffer();
+        let PinsBuffer(previous, current) = self.pins_buffer();
 
         let current = 0 != (current & pin);
         let previous = 0 != (previous & pin);
 
-        previous == true && current == false
+        previous && !current
     }
 
     /// Whether *any* pin changed since the last [`save_pins_state`](Self::save_pins_state)
@@ -151,8 +151,8 @@ pub trait Chip {
 
         let &mut PinsBuffer(ref mut previous, ref mut current) = self.pins_buffer_mut();
 
-        *previous = *previous | pin;
-        *current = *current & !pin;
+        *previous |= pin;
+        *current &= !pin;
     }
 
     /// Force to save all the bits of the current state to test is_front and so on
@@ -176,7 +176,7 @@ pub trait Chip {
         // same hot path for no behavioural benefit.
         let two = V::from_u8(2).unwrap();
         for pin in pins.iter().rev() {
-            self.set_pin(pin.clone(), value.is_odd());
+            self.set_pin(*pin, value.is_odd());
             value = value.div_floor(&two);
         }
         //  assert!(value.to_usize().unwrap() == 0);
@@ -197,7 +197,7 @@ pub trait Chip {
     }
 
     fn get_8bit_value_from_pins(&self, pins: &[Self::PinType]) -> u8 {
-        return (self.get_value_from_pins(pins) & 0xff) as u8;
+        (self.get_value_from_pins(pins) & 0xff) as u8
     }
 }
 
@@ -301,9 +301,9 @@ mod test {
         C = 1 << 2,
     }
 
-    impl Into<u64> for MyChipPin {
-        fn into(self) -> u64 {
-            self as u64
+    impl From<MyChipPin> for u64 {
+        fn from(val: MyChipPin) -> Self {
+            val as u64
         }
     }
 

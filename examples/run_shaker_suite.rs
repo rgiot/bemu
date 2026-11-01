@@ -127,9 +127,9 @@ fn write_summary(module_dir: &Path, module: char, report: &amsrust::csl_runner::
     );
     for (i, shot) in report.screenshots.iter().enumerate() {
         let comma = if i + 1 == report.screenshots.len() { "" } else { "," };
-        let _ = write!(
+        let _ = writeln!(
             json,
-            "    {{\"path\": {:?}, \"ssm_code\": {}, \"crtc\": {}, \"at_us\": {}}}{comma}\n",
+            "    {{\"path\": {:?}, \"ssm_code\": {}, \"crtc\": {}, \"at_us\": {}}}{comma}",
             shot.path.file_name().unwrap().to_string_lossy(),
             shot.ssm_code.map_or("null".to_owned(), |c| format!("{c}")),
             shot.crtc as u8,

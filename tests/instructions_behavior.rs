@@ -40,7 +40,7 @@ fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
 		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 
 		// detect if it is the end
-		let current_pattern = [motherboard.read_byte(pc + 0), motherboard.read_byte(pc + 1)];
+		let current_pattern = [motherboard.read_byte(pc), motherboard.read_byte(pc + 1)];
 
 		nb_operations += 1;
 
@@ -153,7 +153,7 @@ fn execute_and3() {
 	let a = motherboard.cpu().reg8(Reg8::A).value();
 	let f = motherboard.cpu().reg8(Reg8::F).value();
 	assert_eq!(
-		08,
+		8,
 		a
 	);
 	assert!(
