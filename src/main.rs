@@ -255,6 +255,12 @@ fn main() {
             eprintln!("Willy with an S2P at &{base:04X} ({soundfont})");
         }
     }
+    if let Some(spec) = &args.cart {
+        let cartridge = amsrust::asic::Cartridge::load_file(spec).unwrap_or_else(|e| panic!("--cart {e}"));
+        eprintln!("{spec}: a cartridge of {}K", cartridge.page_count() * 16);
+        motherboard.insert_cartridge(Some(cartridge));
+        motherboard.restart();
+    }
     for (slot, path) in &args.roms {
         let data = amsrust::roms::load_rom(path).unwrap_or_else(|e| panic!("--rom {e}"));
         motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));

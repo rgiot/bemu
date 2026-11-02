@@ -82,6 +82,12 @@ pub struct Memory {
     /// Roms
     upper_roms: Vec<Option<Rom>>,
     lower_rom: Rom,
+    /// The CPC+'s cartridge, which replaces the lower ROM, BASIC and AMSDOS.
+    cartridge: Option<crate::asic::Cartridge>,
+    /// ROM 7 selects the cartridge's AMSDOS page (a 6128+).
+    cartridge_disc_rom: bool,
+    /// The cartridge is the system one (it follows the keyboard layout).
+    system_cartridge: bool,
 }
 
 /// Number of the page
@@ -218,6 +224,10 @@ pub struct RomConfig {
     pub lower_rom: Flag,
     pub upper_rom: Flag,
     pub rom_number: u8,
+    /// With a cartridge (CPC+, RMR2): the cartridge page of the lower ROM (0-7) and the 16K
+    /// quarter of the address space it is in (0: &0000, 1: &4000, 2: &8000).
+    pub lower_rom_page: u8,
+    pub lower_rom_quarter: u8,
 }
 
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -275,6 +285,15 @@ impl Default for Bank {
                 *byte = 0xff;
             }
         });
+        Self(bank)
+    }
+}
+
+impl Bank {
+    /// A ROM bank of `data` (16K at most), erased (&FF) beyond it.
+    pub fn from_bytes(data: &[u8]) -> Self {
+        let mut bank = [0xffu8; 0x4000];
+        bank[..data.len()].copy_from_slice(data);
         Self(bank)
     }
 }
@@ -439,6 +458,9 @@ impl Default for Memory {
             additional_memory: vec![Page::default(); 1],
             upper_roms: roms,
             lower_rom: Rom::os6128(),
+            cartridge: None,
+            cartridge_disc_rom: false,
+            system_cartridge: false,
         }
     }
 }
@@ -450,6 +472,8 @@ impl Default for MemoryConfig {
                 lower_rom: Flag::Disable,
                 upper_rom: Flag::Disable,
                 rom_number: 7,
+                lower_rom_page: 0,
+                lower_rom_quarter: 0,
             },
             RamConfig([
                 BankConfig(PageNumber::Base, BankNumber::Bank0),
@@ -464,9 +488,7 @@ impl Default for MemoryConfig {
 impl MemoryConfig {
     /// Check if we have to read in the lower rom
     pub fn is_in_enabled_lower_rom(&self, addr: u16) -> bool {
-        self.0.lower_rom.is_enabled() &&
-       /* addr >= 0x0000 &&*/
-        addr < 0x4000
+        self.0.lower_rom.is_enabled() && addr >> 14 == u16::from(self.0.lower_rom_quarter)
     }
 
     /// Check if we have to read in the upper rom
@@ -512,10 +534,32 @@ impl Memory {
             (CpcModel::Cpc464, _) => (Rom::os464(), Rom::basic464()),
             (CpcModel::Cpc664, _) => (Rom::os664(), Rom::basic664()),
             (CpcModel::Cpc6128, KeyboardLayout::Uk) => (Rom::os6128(), Rom::basic_6128()),
-            (CpcModel::Cpc6128, KeyboardLayout::French) => (Rom::os6128_azerty(), Rom::basic_6128_azerty())
+            (CpcModel::Cpc6128, KeyboardLayout::French) => (Rom::os6128_azerty(), Rom::basic_6128_azerty()),
+            (_, layout) => {
+                // a CPC+: the system cartridge, unless another one is in the slot
+                if self.cartridge.is_none() || self.system_cartridge {
+                    self.cartridge = Some(crate::asic::Cartridge::system(layout == KeyboardLayout::French));
+                    self.system_cartridge = true;
+                }
+                self.upper_roms[0] = None;
+                self.upper_roms[7] = None;
+                return;
+            }
         };
+        self.cartridge = None;
+        self.system_cartridge = false;
         self.lower_rom = os;
         self.upper_roms[0] = Some(basic);
+    }
+
+    /// Put `cartridge` in the slot of a CPC+ (`None`: the system cartridge back).
+    pub fn insert_cartridge(&mut self, cartridge: Option<crate::asic::Cartridge>) {
+        self.system_cartridge = cartridge.is_none();
+        self.cartridge = Some(cartridge.unwrap_or_else(|| crate::asic::Cartridge::system(false)));
+    }
+
+    pub fn cartridge(&self) -> Option<&crate::asic::Cartridge> {
+        self.cartridge.as_ref()
     }
 
     /// Fit `data` as upper ROM `slot` (a 16K ROM; an AMSDOS header before it is skipped, a
@@ -544,7 +588,12 @@ impl Memory {
 
     /// Fit AMSDOS as upper ROM 7 (a disc interface), or nothing there.
     pub fn set_amsdos(&mut self, fitted: bool) {
-        self.upper_roms[7] = fitted.then(Rom::amsdos);
+        if self.cartridge.is_some() {
+            // the CPC+: AMSDOS is the cartridge's page 3
+            self.cartridge_disc_rom = fitted;
+        } else {
+            self.upper_roms[7] = fitted.then(Rom::amsdos);
+        }
     }
 
     /// Change how many extra 64kb pages are actually fitted, beyond the
@@ -597,7 +646,7 @@ impl Memory {
     /// any (see [`Expansion`]).
     pub fn read(&self, addr: u16, conf: &MemoryConfig, expansion: Option<&dyn Expansion>) -> u8 {
         let byte = if conf.is_in_enabled_lower_rom(addr) {
-            self.lower_rom_bank().read(MemoryConfig::relative_address_at(addr))
+            self.lower_rom_bank(conf.0.lower_rom_page).read(MemoryConfig::relative_address_at(addr))
         } else if conf.is_in_enabled_upper_rom(addr) {
             self.upper_rom_bank(conf.0.rom_number, expansion).read(MemoryConfig::relative_address_at(addr))
         } else {
@@ -622,6 +671,19 @@ impl Memory {
         if let Some(rom) = expansion.and_then(|e| e.upper_rom(number)) {
             return rom;
         }
+        if let Some(cartridge) = &self.cartridge {
+            // Arnold V 2.8: a ROM board's ROM comes first; then 128-159 select the cartridge's
+            // pages, the disc ROM's number its AMSDOS page (3), any other number BASIC (page 1)
+            if let Some(Some(rom)) = self.upper_roms.get(usize::from(number)) {
+                return &rom.0;
+            }
+            let page = match number {
+                0x80.. => number & 0x1f,
+                7 if self.cartridge_disc_rom => 3,
+                _ => 1
+            };
+            return cartridge.page(page);
+        }
 
         let index = number as usize;
         if index >= self.upper_roms.len() {
@@ -637,8 +699,11 @@ impl Memory {
         }
     }
 
-    fn lower_rom_bank(&self) -> &Bank {
-        &self.lower_rom.0
+    fn lower_rom_bank(&self, page: u8) -> &Bank {
+        match &self.cartridge {
+            Some(cartridge) => cartridge.page(page & 7),
+            None => &self.lower_rom.0
+        }
     }
 
     /// Get the memory for the given bank.

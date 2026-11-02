@@ -117,7 +117,10 @@ fn snapshot_of(motherboard: &Motherboard) -> Result<Snapshot, String> {
     set(CPC_TYPE, match motherboard.model() {
         CpcModel::Cpc464 => 0,
         CpcModel::Cpc664 => 1,
-        CpcModel::Cpc6128 => 2
+        CpcModel::Cpc6128 => 2,
+        CpcModel::Cpc6128Plus => 4,
+        CpcModel::Cpc464Plus => 5,
+        CpcModel::Gx4000 => 6
     });
 
     // the CRTC as `load_crtc` reads it back
@@ -143,6 +146,10 @@ fn snapshot_of(motherboard: &Motherboard) -> Result<Snapshot, String> {
         snapshot.set_value(flag, value).map_err(|e| format!("{flag:?}: {e:?}"))?;
     }
 
+    if let Some(chunk) = motherboard.asic_snapshot_chunk() {
+        snapshot.add_chunk(cpclib::sna::UnknownChunk::new("CPC+", chunk));
+    }
+
     let ram = motherboard.ram_dump();
     snapshot.resize(ram.len() / 0x10000);
     for (address, &value) in ram.iter().enumerate() {
@@ -164,6 +171,10 @@ fn load_snapshot(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(
     load_gate_array(motherboard, &byte);
     load_psg(motherboard, &byte);
     motherboard.ppi_mut().restore(byte(SnapshotFlag::PPI_CTL), byte(SnapshotFlag::PPI_A), byte(SnapshotFlag::PPI_C));
+    // the CPC+'s ASIC, after the Gate Array whose inks also reach its palette
+    if let Some(chunk) = snapshot.chunks().iter().find(|chunk| chunk.code().as_str() == "CPC+") {
+        motherboard.restore_asic_snapshot_chunk(chunk.data())?;
+    }
 
     Ok(())
 }
@@ -197,8 +208,8 @@ fn load_registers(motherboard: &mut Motherboard, word: &impl Fn(SnapshotFlag) ->
 /// The machine the snapshot was taken on (version 2 and later): a 464,
 /// 664 or 6128 gets its ROMs and RAM banking (see
 /// [`Motherboard::set_model`]); the disc interface, an add-on on a 464, is
-/// kept as it was. Other types (unknown, Plus range) leave the machine
-/// as it is.
+/// kept as it was; a CPC+ type gives that CPC+ (its ASIC's state is the snapshot's "CPC+" chunk).
+/// The unknown type leaves the machine as it is.
 pub fn model_of_snapshot(snapshot: &Snapshot) -> Option<CpcModel> {
     if snapshot.version_header() < 2 {
         return None;
@@ -207,6 +218,9 @@ pub fn model_of_snapshot(snapshot: &Snapshot) -> Option<CpcModel> {
         0 => Some(CpcModel::Cpc464),
         1 => Some(CpcModel::Cpc664),
         2 => Some(CpcModel::Cpc6128),
+        4 => Some(CpcModel::Cpc6128Plus),
+        5 => Some(CpcModel::Cpc464Plus),
+        6 => Some(CpcModel::Gx4000),
         _ => None
     }
 }
@@ -586,9 +600,9 @@ mod breakpoint_test {
 
         let (motherboard, _) = load_typed(1, 0xc0, SnapshotVersion::V2);
         assert_eq!(motherboard.model(), CpcModel::Cpc664);
-        // Version 1 has no CPC type; unknown and Plus types leave it.
+        // Version 1 has no CPC type, it leaves the model; the CPC+ types give a CPC+.
         assert_eq!(load_typed(0, 0xc0, SnapshotVersion::V1).0.model(), CpcModel::Cpc6128);
-        assert_eq!(load_typed(4, 0xc0, SnapshotVersion::V2).0.model(), CpcModel::Cpc6128);
+        assert_eq!(load_typed(4, 0xc0, SnapshotVersion::V2).0.model(), CpcModel::Cpc6128Plus);
     }
 
     #[test]

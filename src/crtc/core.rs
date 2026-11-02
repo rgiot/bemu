@@ -86,6 +86,12 @@ pub struct Core {
     pub(super) parity_r6: bool,
     pub(super) parity_c9: bool,
     pub(super) ivm_lines: bool,
+    /// The CPC+'s vertical soft scroll (the ASIC's SSCR bits 6-4): lines added to C9 on the
+    /// address bus, the row ending on the scrolled line.
+    pub(super) plus_vscroll: u8,
+    /// The CPC+'s screen split (the ASIC's SPLT and SSA): VMA' takes the address at C0=R1 on
+    /// that line.
+    pub(super) plus_split: Option<(u8, u16)>,
 
     /// CRTC-VMA (ACCC §17.1/§20.2): the live 14-bit video memory address
     /// counter. Genuinely incremented once per character, whatever the
@@ -143,6 +149,8 @@ impl Default for Core {
             parity_frame: false,
             parity_r6: false,
             parity_c9: false,
+            plus_vscroll: 0,
+            plus_split: None,
             ivm_lines: false,
             crtc_vma: 0,
             crtc_vma_prime: 0,

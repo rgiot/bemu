@@ -20,6 +20,8 @@ itertools = "0.10.0"
 cpclib-macros = {path = "../rust.cpcdemotools/cpclib-macros"}
 cpclib-disc = {path = "../rust.cpcdemotools/cpclib-disc", default-features = false}
 cpclib-csl = {path = "../rust.cpcdemotools/cpclib-csl"}
+# CPC+ cartridges (.cpr)
+cpclib-cpr = {path = "../rust.cpcdemotools/cpclib-cpr"}
 serde = {version = "1", features = ["derive"]}
 serde_json = "1"
 rand="0.8.3"

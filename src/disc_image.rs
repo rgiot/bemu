@@ -530,6 +530,12 @@ pub fn load_disc_bytes(bytes: &[u8], name: &str, entry: Option<&str>) -> Result<
 
 /// The name and content of the archive entry `wanted`, or of its first disc image.
 fn zip_entry(bytes: &[u8], wanted: Option<&str>) -> Result<(String, Vec<u8>), String> {
+    zip_entry_with(bytes, wanted, &DISC_EXTENSIONS, "disc image (.dsk, .hfe)")
+}
+
+/// The name and content of the archive entry `wanted`, or of its first file with one of
+/// `extensions` (`what` they are, for the error).
+pub(crate) fn zip_entry_with(bytes: &[u8], wanted: Option<&str>, extensions: &[&str], what: &str) -> Result<(String, Vec<u8>), String> {
     use std::io::Read;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
     let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
@@ -540,8 +546,8 @@ fn zip_entry(bytes: &[u8], wanted: Option<&str>) -> Result<(String, Vec<u8>), St
             .or_else(|| files().find(|n| n.eq_ignore_ascii_case(wanted)))
             .ok_or_else(|| format!("no {wanted} in the archive (it holds: {})", files().cloned().collect::<Vec<_>>().join(", ")))?,
         None => files()
-            .find(|n| has_extension(n, &DISC_EXTENSIONS))
-            .ok_or_else(|| format!("no disc image (.dsk, .hfe) in the archive (it holds: {})", files().cloned().collect::<Vec<_>>().join(", ")))?
+            .find(|n| has_extension(n, extensions))
+            .ok_or_else(|| format!("no {what} in the archive (it holds: {})", files().cloned().collect::<Vec<_>>().join(", ")))?
     }
     .clone();
     let mut file = archive.by_name(&chosen).map_err(|e| e.to_string())?;

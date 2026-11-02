@@ -32,7 +32,9 @@ fn zexall() {
         RomConfig{
             lower_rom: Flag::Disable,
             upper_rom: Flag::Disable,
-            rom_number: 0
+            rom_number: 0,
+            lower_rom_page: 0,
+            lower_rom_quarter: 0
         }
     );
 

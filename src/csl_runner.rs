@@ -277,6 +277,11 @@ pub struct CslRunner {
     gate_array: crate::ga::GateArrayType,
     /// Chosen by `memory_exp`, applied at the next `reset`.
     memory_exp: cpclib_csl::MemoryExpansion,
+    /// Chosen by `cpc_model` and `rom_config C` (a CPC+ cartridge), applied at the next `reset`.
+    model: Option<crate::motherboard::CpcModel>,
+    cartridge: Option<crate::asic::Cartridge>,
+    /// Where `rom_config` looks (`rom_dir`), else `base_dir`.
+    rom_dir: Option<PathBuf>,
     disc: [Option<DiscImage>; 2],
     /// The kind of each drive (3" by default), kept across resets.
     drive_kinds: [crate::fdc::DriveKind; 2],
@@ -333,10 +338,13 @@ impl CslRunner {
         let base = MotherboardBuilder::default();
         let crtc = CrtcType::default();
         CslRunner {
-            motherboard: Self::machine(base, crtc, crate::ga::GateArrayType::default(), cpclib_csl::MemoryExpansion::Kb128),
+            motherboard: Self::machine(base, crtc, crate::ga::GateArrayType::default(), cpclib_csl::MemoryExpansion::Kb128, None, None),
             base,
             gate_array: crate::ga::GateArrayType::default(),
             memory_exp: cpclib_csl::MemoryExpansion::Kb128,
+            model: None,
+            cartridge: None,
+            rom_dir: None,
             crtc,
             disc: [None, None],
             drive_kinds: Default::default(),
@@ -374,7 +382,7 @@ impl CslRunner {
         self.crtc = machine.crtc();
         self.gate_array = machine.gate_array_type();
         self.memory_exp = cpclib_csl::MemoryExpansion::Kb128;
-        self.motherboard = Self::machine(self.base, self.crtc, self.gate_array, self.memory_exp);
+        self.motherboard = Self::machine(self.base, self.crtc, self.gate_array, self.memory_exp, self.model, self.cartridge.as_ref());
         for (unit, disc) in self.disc.iter().enumerate() {
             self.motherboard.fdc_mut().set_drive_kind(drive(unit), self.drive_kinds[unit]);
             self.motherboard.fdc_mut().insert_image(drive(unit), disc.clone());
@@ -411,23 +419,34 @@ impl CslRunner {
         self.manifest = Some(MANIFEST.get_or_init(Manifest::bundled));
     }
 
-    /// `memory`: `Kb128` keeps the memory of `base`.
+    /// `memory`: `Kb128` keeps the memory of `base`; `model`, when given, replaces its model;
+    /// `cartridge` goes in the slot of a CPC+.
     fn machine(
         base: MotherboardBuilder,
         crtc: CrtcType,
         gate_array: crate::ga::GateArrayType,
-        memory: cpclib_csl::MemoryExpansion
+        memory: cpclib_csl::MemoryExpansion,
+        model: Option<crate::motherboard::CpcModel>,
+        cartridge: Option<&crate::asic::Cartridge>
     ) -> Motherboard {
         use cpclib_csl::MemoryExpansion::*;
         let mut builder = base;
         builder.set_crtc(crtc).set_gate_array_type(gate_array).enable_interruptions();
+        if let Some(model) = model {
+            builder.set_model(model);
+        }
         match memory {
             Kb128 => {},
             Kb256Standard | Kb256Silicon => { builder.set_extra_ram_pages(3); },
             Kb512DkTronics => { builder.set_extra_ram_pages(7); },
             Mb4 => { builder.plug_large_ram_expansion(64); },
         }
-        builder.build()
+        let mut motherboard = builder.build();
+        if let Some(cartridge) = cartridge.filter(|_| motherboard.model().is_plus()) {
+            motherboard.insert_cartridge(Some(cartridge.clone()));
+            motherboard.restart();
+        }
+        motherboard
     }
 
     /// The machine being driven.
@@ -638,6 +657,24 @@ impl CslRunner {
                 }
             },
             MemoryExp(expansion) => self.memory_exp = *expansion,
+            CpcModel(model) => {
+                use crate::motherboard::CpcModel as Model;
+                self.model = Some(match model {
+                    cpclib_csl::CpcModel::Cpc464 => Model::Cpc464,
+                    cpclib_csl::CpcModel::Cpc664 => Model::Cpc664,
+                    cpclib_csl::CpcModel::Cpc6128 => Model::Cpc6128,
+                    cpclib_csl::CpcModel::Cpc6128Plus => Model::Cpc6128Plus,
+                    cpclib_csl::CpcModel::Cpc464Plus => Model::Cpc464Plus,
+                    cpclib_csl::CpcModel::GX4000 => Model::Gx4000
+                });
+            },
+            RomDir(dir) => self.rom_dir = Some(resolve(&self.base_dir, dir.as_str())),
+            RomConfig(config) if config.rom_type == cpclib_csl::RomType::Cartridge => {
+                // a CPC+ cartridge, for the next reset
+                let path = resolve(self.rom_dir.as_ref().unwrap_or(&self.base_dir), config.filename.as_str());
+                let bytes = std::fs::read(&path).map_err(|e| format!("rom_config {}: {e}", path.display()))?;
+                self.cartridge = Some(crate::asic::Cartridge::from_bytes(&bytes, &path.display().to_string(), None)?);
+            },
             Reset(_) => self.reset(),
             Wait(us) => {
                 let target = self.motherboard.t_state_counter().value() + *us as usize * T_STATES_PER_UNIT;
@@ -723,7 +760,7 @@ impl CslRunner {
         self.elapsed_before_reset_us = self.elapsed_us();
         let mut previous = std::mem::replace(
             &mut self.motherboard,
-            Self::machine(self.base, self.crtc, self.gate_array, self.memory_exp)
+            Self::machine(self.base, self.crtc, self.gate_array, self.memory_exp, self.model, self.cartridge.as_ref())
         );
         // The sound recorded so far (and its settings) outlives the machine.
         self.motherboard.psg_mut().take_audio_output_from(previous.psg_mut());

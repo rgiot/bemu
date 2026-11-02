@@ -1,3 +1,4 @@
+pub mod asic;
 pub mod chip;
 
 pub mod crtc;

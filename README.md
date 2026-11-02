@@ -12,7 +12,7 @@ cargo run --example emulator
 
 ### Machines
 
-`--model 464|664|6128` (default 6128) picks the firmware and BASIC (1.0 on the
+`--model 464|664|6128` (default 6128; the CPC+ below) picks the firmware and BASIC (1.0 on the
 464, 1.1 on the others). The 464 and 664 have 64K: `--ram 128` (up to 576)
 adds a RAM expansion, banked through the same `&7Fxx` register as the 6128's
 second 64K. The 664 and 6128 have a disc interface; `--ddi` adds a DDI-1
@@ -24,6 +24,29 @@ as an expansion on a 464/664. In the library:
 ```sh
 cargo run --release -- --model 464 --ram 128 --ddi --window --dsk game.dsk
 ```
+
+### CPC+ and GX4000
+
+`--model 6128plus|464plus|gx4000` is a CPC+: its ASIC (`src/asic.rs`) replaces the CRTC
+(always type 3), the Gate Array, the PAL and the PPI, and a cartridge replaces the ROMs. The
+6128+ has 128K and a disc interface, the 464+ and the GX4000 64K (Arnold V specification).
+The system cartridge (firmware, BASIC, AMSDOS, Burnin' Rubber; French with `--french`) is built
+in; `--cart game.cpr` (or a zip archive, `archive.zip#game.cpr`) puts another one in the slot
+and makes the machine a 6128+ unless `--model` names another CPC+. In a CSL script:
+`cpc_model 4|5|6` and `rom_config C 0 'game.cpr'` (`rom_dir`), at the next `reset`.
+
+```sh
+cargo run --release -- --cart sonic.cpr --window
+cargo run --release -- --model 6128plus --dsk demo.dsk --window   # f1 for BASIC, then RUN"
+```
+
+What the ASIC adds is emulated: the lock (the sequence on `&BCxx`), RMR2 (`&7Fxx`, `&A0-&BF`:
+the cartridge page of the lower ROM, where it is, the register page at `&4000`), the cartridge
+pages at `&C000` (`&DFxx`, `&80-&9F`), the 32 colours of 4096, the 16 sprites, the soft scroll
+(horizontal, vertical, the wider border), the screen split, the programmable raster interrupt,
+the vectored interrupts (IVR, DCSR) and the 3 sound DMA channels. Not yet: what an `IN` on the
+Gate Array or CRTC ports writes on a CPC+, the snapshot's `CPC+` chunk, the analogue
+joysticks (they read as nothing plugged), the vectored interrupt bug.
 
 ### Discs and drives
 

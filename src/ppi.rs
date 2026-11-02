@@ -174,6 +174,8 @@ pub struct Ppi {
     /// The PPI inside the CPC+'s ASIC does not (it keeps port C, which the
     /// CRTC detection programs use to recognise such a machine).
     clears_ports_on_mode_set: bool,
+    /// The last byte written to the control register (what the ASIC's PPI reads back).
+    last_control: u8,
 }
 
 impl Default for Ppi {
@@ -194,6 +196,7 @@ impl Default for Ppi {
             direction_c_lower: Default::default(),
             direction_c_upper: Default::default(),
             clears_ports_on_mode_set: true,
+            last_control: 0,
         };
         ppi.reset();
         ppi
@@ -469,6 +472,13 @@ impl Chip for Ppi {
             } else {
                 unimplemented!()
             }
+        } else if self.is_control_addressed() && !self.get_pin(PpiPin::Neg_RD) {
+            // Reading the control register: "illegal" on an 8255, which leaves the bus alone. The
+            // PPI of the CPC+'s ASIC answers &00 after a mode set whose bit 4 is clear, &FF after
+            // anything else ("Extra CPC Plus Hardware Information").
+            if !self.clears_ports_on_mode_set {
+                self.set_data_on_pins(if self.last_control & 0x90 == 0x80 { 0x00 } else { 0xff });
+            }
         } else if self.is_control_addressed() {
             // Per the datasheet's "Bit Set/Reset Function" section (e.g.
             // `doc/ppi.82c55a.oki.pdf`): writes to the control register's
@@ -479,6 +489,7 @@ impl Chip for Ppi {
             // nothing to do with which mode Port C's own address write
             // dispatch above is in.
             let byte = self.get_data_from_pins();
+            self.last_control = byte;
             if byte & (1 << 7) != 0 {
                 self.set_control_configuration(byte);
 

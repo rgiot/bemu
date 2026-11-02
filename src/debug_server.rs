@@ -2500,7 +2500,8 @@ mod test {
 
     #[test]
     fn basic_programs_load_list_and_stop_on_lines_and_statements() {
-        for model in crate::motherboard::CpcModel::ALL {
+        // (a CPC+ starts in its cartridge's menu, not in BASIC)
+        for model in crate::motherboard::CpcModel::ALL.into_iter().filter(|model| !model.is_plus()) {
             basic_program_on(model);
         }
     }

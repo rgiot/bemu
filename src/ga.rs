@@ -422,7 +422,9 @@ pub const DISPEN_LATCH_TICKS: usize = 6;
 enum Shown {
     /// Blanking: nothing, whatever the palette is.
     Black,
-    Pen(Pen)
+    Pen(Pen),
+    /// A CPC+ hardware sprite's colour (1-15).
+    Sprite(u8)
 }
 
 /// Ticks the black zone of an R3l=2 HSYNC (the window the CRTC opens a character before the pulse,
@@ -1102,6 +1104,9 @@ pub struct GateArray {
 
     /// hsync counter
     r52: Bit8Max6,
+
+    /// The CPC+: the ASIC's palette, sprites, soft scroll and RMR2.
+    plus: Option<Box<crate::asic::AsicVideo>>,
 }
 
 impl Default for GateArray {
@@ -1186,6 +1191,7 @@ impl Default for GateArray {
             },
 
             r52: Default::default(),
+            plus: None,
         };
         ga.reset();
         ga.divide_clock();
@@ -1415,10 +1421,15 @@ impl GateArray {
             // to know exactly where the switch landed). Only the
             // *displayed* output is blanked below - not consumption.
             let mode = self.pixel_automata.mode();
-            let border = !self.get_pin(GateArrayPin::DISPEN);
-            let raw = self.pixel_automata.generate_pen(false);
-            let computed = Shown::Pen(if border { Pen::Border } else { raw });
             let tick = self.byte_tick;
+            let mut border = !self.get_pin(GateArrayPin::DISPEN);
+            let mut raw = self.pixel_automata.generate_pen(false);
+            if let Some(plus) = &mut self.plus {
+                // the CPC+'s soft scroll: the screen pens come late, the border can widen
+                raw = Pen::Pen(plus.scroll(raw.value()));
+                border |= plus.extended_border(tick);
+            }
+            let computed = Shown::Pen(if border { Pen::Border } else { raw });
             if tick < DISPEN_LATCH_TICKS {
                 self.byte_pens[tick] = (raw, border);
             }
@@ -1429,8 +1440,17 @@ impl GateArray {
             // ACCC §9.3 (GA 40007/8/10): the pixels of MODE 2 are displayed one
             // pixel earlier than those of the other modes (the BORDER stops and
             // starts one pixel earlier too); the other modes are what we delay
-            let pixel = if mode == Some(VideoMode::Mode2) { computed } else { self.shown_previous };
+            let mut pixel = if mode == Some(VideoMode::Mode2) { computed } else { self.shown_previous };
             self.shown_previous = computed;
+            if let Some(plus) = &mut self.plus {
+                // the sprites, in front of the screen and behind the border
+                if !border {
+                    let sprite = plus.sprite_pen(tick);
+                    if sprite != 0 {
+                        pixel = Shown::Sprite(sprite);
+                    }
+                }
+            }
             self.rgb_delayed = mode != Some(VideoMode::Mode2);
             // the black zone of an R3l=2 window comes BLANK_DELAY_TICKS later (see the constant); the
             // HSYNC-GA's own blanking does not
@@ -1452,10 +1472,13 @@ impl GateArray {
         }
         self.palette_ring.push(self.palette);
         let palette = &self.palette_ring.get(self.ga_type.palette_write_delay_ticks());
-        self.rgb = match self.shown_ring.get(self.lookup_lag) {
+        self.rgb = match (self.shown_ring.get(self.lookup_lag), &self.plus) {
             _ if sync_black => (0., 0., 0.).into(),
-            Shown::Black => (0., 0., 0.).into(),
-            Shown::Pen(pen) => palette[pen.value() as usize].into()
+            (Shown::Black, _) => (0., 0., 0.).into(),
+            (Shown::Pen(pen), None) => palette[pen.value() as usize].into(),
+            (Shown::Pen(pen), Some(plus)) => plus.rgb(pen.value() as usize),
+            (Shown::Sprite(pen), Some(plus)) => plus.rgb(16 + pen as usize),
+            (Shown::Sprite(_), None) => (0., 0., 0.).into()
         };
     }
 
@@ -1544,7 +1567,7 @@ impl GateArray {
             Some(true) => {
                 let interrupt = self.r52.bit(5);
                 self.r52.reset();
-                if interrupt {
+                if interrupt && self.r52_interrupts() {
                     self.schedule_interrupt();
                 }
             }
@@ -1552,13 +1575,30 @@ impl GateArray {
             None => {
                 if *self.r52.deref() >= 52 {
                     self.r52.reset();
-                    self.schedule_interrupt();
+                    if self.r52_interrupts() {
+                        self.schedule_interrupt();
+                    }
                 }
             }
         }
     }
 
+    /// The R52 counter raises interrupts: not on a CPC+ whose programmable raster interrupt
+    /// replaces them ("Extra CPC Plus Hardware Information").
+    fn r52_interrupts(&self) -> bool {
+        self.plus.as_ref().is_none_or(|plus| !plus.pri_active)
+    }
+
+    /// The CPC+'s programmable raster interrupt: the INT line as R52's, whose bit 5 it resets
+    /// ("Extra CPC Plus Hardware Information": the next R52 interrupt is at least 32 lines away).
+    pub fn raise_raster_interrupt(&mut self) {
+
+        self.r52.bitand_assign(0b011111);
+        self.request_interrupt();
+    }
+
     fn request_interrupt(&mut self) {
+
   //      dbg!("GA request interrupt");
         self.interrupt_signal_counter = InterruptionSignal::Signal(0);
         self.set_pin(GateArrayPin::INTERRUPT, false); //activate when low
@@ -1634,6 +1674,19 @@ impl GateArray {
         self.ga_type = ga_type;
     }
 
+    /// Become the CPC+'s ASIC (its palette, sprites, soft scroll, RMR2), or a Gate Array again.
+    pub fn set_plus(&mut self, plus: bool) {
+        self.plus = plus.then(Default::default);
+    }
+
+    pub fn plus(&self) -> Option<&crate::asic::AsicVideo> {
+        self.plus.as_deref()
+    }
+
+    pub fn plus_mut(&mut self) -> Option<&mut crate::asic::AsicVideo> {
+        self.plus.as_deref_mut()
+    }
+
     /// Ticks between the sync and its black on the output (see [`SYNC_BLACK_LAG_TICKS`]).
     pub fn set_sync_black_lag_ticks(&mut self, ticks: usize) {
         self.sync_black_lag = ticks.min(ASIC_SYNC_BLACK_LAG_TICKS);
@@ -1692,7 +1745,7 @@ impl Chip for GateArray {
     /// Change the screen mode when hsync is set
     fn pre_tick(&mut self) {
         self.abs_tick += 1;
-        if self.get_pin(GateArrayPin::Neg_IORQ) || !self.get_pin(GateArrayPin::Neg_RD) {
+        if self.get_pin(GateArrayPin::Neg_IORQ) {
             self.write_seen = false;
         }
         self.mode_history.push(self.rmr.video_mode());
@@ -1790,6 +1843,13 @@ impl Chip for GateArray {
     /// React to the port addressing of the CPU
     fn execute_tick(&mut self) {
         if !self.get_pin(GateArrayPin::Neg_RD) {
+            // the CPC+: an IN writes, the value the ASIC reads (see `AsicVideo::bus_value`)
+            if let Some(value) = self.plus.as_ref().map(|plus| plus.bus_value) {
+                if !self.write_seen && self.clock == GA_WRITE_LATCH_CLOCK {
+                    self.write_seen = true;
+                    self.write_register(value);
+                }
+            }
             // The real gate array has no data-output driver at all on a
             // read - it's write-only from the CPU's perspective, so a read
             // that decodes to it (partial address decoding makes this a
@@ -1821,6 +1881,9 @@ impl Chip for GateArray {
     fn reset(&mut self) {
         self.clock = RESET_CLOCK;
         self.on(GateArrayPin::INTERRUPT);
+        if let Some(plus) = &mut self.plus {
+            plus.reset();
+        }
     }
 }
 
@@ -1837,6 +1900,12 @@ impl GateArray {
         } else if INKR::is_addressed(command) {
             self.inkr = INKR(command);
             self.set_ink(self.pen(), self.ink());
+            if let Some(plus) = &mut self.plus {
+                plus.set_ink(self.penr.pen().value(), command & 0x1f);
+            }
+        } else if let Some(plus) = self.plus.as_mut().filter(|plus| plus.unlocked && command & 0xe0 == 0xa0) {
+            // the CPC+'s RMR2, there once the lock is open (Arnold V 2.8)
+            plus.rmr2 = command & 0x1f;
         } else if RMR::is_addressed(command) {
             self.rmr = RMR(command);
             if self.interrupt_counter() {

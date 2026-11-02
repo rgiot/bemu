@@ -32,7 +32,7 @@ const EXPANSIONS: &str = "Expansions";
 #[command(name = "amsrust", version, after_long_help = AFTER_HELP)]
 pub struct Args {
     /// The model, its ROMs: the 464 and 664 have 64K, the 6128 128K; the 664 and 6128 a disc
-    /// interface.
+    /// interface. The CPC+ (464plus, 6128plus, gx4000) has its ASIC (CRTC 3) and a cartridge.
     #[arg(long, default_value = "6128", help_heading = MACHINE)]
     pub model: CpcModel,
 
@@ -85,6 +85,12 @@ pub struct Args {
     /// 3" drive.
     #[arg(long = "dsk", value_name = "PATH", help_heading = MEDIA)]
     pub dsk_a: Option<String>,
+
+    /// A CPC+ cartridge: a .cpr, a zip archive (its first .cpr) or `archive.zip#name.cpr`,
+    /// instead of the system cartridge (firmware, BASIC, AMSDOS). The machine is a 6128+ unless
+    /// --model names another CPC+.
+    #[arg(long, value_name = "PATH", help_heading = MEDIA)]
+    pub cart: Option<String>,
 
     /// A disc in drive B (as --dsk; Shift+F5 flips it).
     #[arg(long, value_name = "PATH", help_heading = MEDIA)]
@@ -431,6 +437,10 @@ pub fn parse_args() -> Args {
     }
     if args.orgams {
         args.fit_orgams();
+    }
+    if args.cart.is_some() && !args.model.is_plus() {
+        // a cartridge needs a CPC+
+        args.model = CpcModel::Cpc6128Plus;
     }
     args
 }

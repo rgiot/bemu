@@ -13,6 +13,10 @@ pub static BASIC664: &RomImage = include_bytes!("../roms/basic664.rom");
 pub static BASIC6128: &RomImage = include_bytes!("../roms/basic6128.rom");
 pub static BASIC6128_AZERTY: &RomImage = include_bytes!("../roms/basic6128_azerty.rom");
 pub static AMSDOS: &RomImage = include_bytes!("../roms/amsdos.rom");
+/// The system cartridge of the 6128+ and 464+ (firmware, BASIC, AMSDOS and Burnin' Rubber), with
+/// the English firmware, and with the French one (AZERTY).
+pub static PLUS_SYSTEM_UK: &[u8] = include_bytes!("../roms/plus_system_uk.cpr");
+pub static PLUS_SYSTEM_FR: &[u8] = include_bytes!("../roms/plus_system_fr.cpr");
 /// The M4 board's ROM (Duke's M4ROM v2.0.8).
 #[cfg(feature = "m4")]
 pub static M4: &RomImage = include_bytes!("../roms/m4rom.rom");

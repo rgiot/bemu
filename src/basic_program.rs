@@ -79,7 +79,9 @@ impl BasicRom {
         match model {
             CpcModel::Cpc464 => Self::BASIC_464,
             CpcModel::Cpc664 => Self::BASIC_664,
-            CpcModel::Cpc6128 => Self::BASIC_6128
+            // the CPC+'s BASIC (its system cartridge's page 1) differs from the 6128's, but not
+            // in its statement hook nor its workspace
+            CpcModel::Cpc6128 | CpcModel::Cpc464Plus | CpcModel::Cpc6128Plus | CpcModel::Gx4000 => Self::BASIC_6128
         }
     }
 

@@ -120,6 +120,7 @@ dependencies = [
  "cpal",
  "cpclib",
  "cpclib-asm",
+ "cpclib-cpr",
  "cpclib-csl",
  "cpclib-disc",
  "cpclib-macros",

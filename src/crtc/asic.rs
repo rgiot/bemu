@@ -208,6 +208,40 @@ impl CrtcChip for Asic {
         core.vlc.value() >= core.regs[9]
     }
 
+    /// The CPC+'s vertical soft scroll: the line on the address bus is C9 plus the scroll,
+    /// kept within the character (folded by R9+1, as CPCSE does).
+    fn c9_vma(&self, core: &Core) -> u8 {
+        let line = core.vlc.value() + core.plus_vscroll;
+        if core.plus_vscroll != 0 && line > core.regs[9] {
+            line - (core.regs[9] + 1)
+        } else {
+            line
+        }
+    }
+
+    /// VMA' takes the next row's address on the row's last line, which the vertical soft scroll
+    /// moves to the line whose scrolled C9 is R9: the picture moves up a line at a time, the
+    /// next row's address coming that much earlier (CPCSE's reading of the ASIC).
+    ///
+    /// The screen split takes VMA' instead, at C0=R1 on the programmed line (the line number
+    /// being 5 bits of C4 and 3 of C9: "Extra CPC Plus Hardware Information").
+    fn r1_reached(&mut self, core: &mut Core) {
+        if let Some((line, address)) = core.plus_split {
+            if ((core.vcc.value() & 0x1f) << 3) | (core.vlc.value() & 7) == line {
+                core.crtc_vma_prime = address & 0x3fff;
+                return;
+            }
+        }
+        let last = if core.plus_vscroll == 0 {
+            self.c9_is_last(core)
+        } else {
+            (core.vlc.value() + core.plus_vscroll) & 7 == core.regs[9] & 7
+        };
+        if last {
+            core.crtc_vma_prime = core.crtc_vma;
+        }
+    }
+
     // ---- BORDER ----
 
     /// ACCC 18.2.4: C4=R6 is only tested when C0 goes to 0; it then sets the BORDER until the next

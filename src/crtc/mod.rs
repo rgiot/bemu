@@ -779,6 +779,17 @@ impl Crtc {
         }
     }
 
+    /// The CPC+'s vertical soft scroll (SSCR bits 6-4), from the next character on.
+    pub fn set_plus_vertical_scroll(&mut self, lines: u8) {
+        self.core.plus_vscroll = lines & 7;
+    }
+
+    /// The CPC+'s screen split: after line `line` (as the ASIC numbers lines), the display
+    /// goes on from `address` (`None`: no split).
+    pub fn set_plus_split(&mut self, split: Option<(u8, u16)>) {
+        self.core.plus_split = split;
+    }
+
     /// The Video display address. This is derived from the MA register in the CRTC, the horizontal character count HCC and the current row address (RA) register in the CRTC. This is effectively the CPC memory address of the data displayed on the monitor.
     pub fn vma(&self) -> u16 {
         self.get_address_from_pins()
