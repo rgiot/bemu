@@ -9,3 +9,5 @@
 
 # Python bytecode of the validation tools
 __pycache__/
+# The examples' downloads (examples/download.sh)
+/examples/downloads/
