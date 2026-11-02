@@ -10,12 +10,17 @@
 //! winit 0.30 wants to own the event loop; `pump_app_events` lets the
 //! emulator keep its own loop, polling the events once per frame.
 //!
-//! F11 toggles fullscreen. When the monitor offers a video mode at its own size
-//! and about 50 Hz (the CPC's rate), that mode is taken (exclusive fullscreen):
-//! the presents then follow the screen's vertical sync (FIFO), one CPC frame per
-//! refresh, and the frontend stops pacing on its own clock. Otherwise the window
-//! goes borderless fullscreen at the desktop's rate; F11 again goes back to the
-//! window. F4 closes the emulator. Neither is a CPC key.
+//! F11, or Ctrl+Cmd+F (macOS's own, where F11 shows the desktop), toggles fullscreen. On
+//! Windows and X11, when the monitor offers a video mode at a multiple of 50 Hz (the CPC's
+//! rate: 50, 100, 150 or 200 Hz), that mode is taken (exclusive fullscreen), at the monitor's
+//! own size and the lowest rate first: the presents then follow the screen's vertical sync
+//! (FIFO), each CPC frame shown on 1, 2, 3 or 4 refreshes, and the frontend stops pacing on
+//! its own clock. Otherwise, and always on macOS (whose exclusive mode captures the display:
+//! nothing shown) and Wayland (which has none), the window goes borderless fullscreen at the
+//! desktop's rate, paced the same way when it is a multiple of 50 Hz, by the clock when it
+//! is not; the toggle again goes back to the
+//! window, as does the window's own control (macOS's green button). F4 closes the emulator.
+//! None of them is a CPC key.
 //!
 //! Keyboard: the keys held are the *logical* ones (what the layout says the
 //! key is), as the minifb frontend reports them, with the characters typed:
@@ -35,6 +40,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, KeyCode, KeyLocation, NamedKey, PhysicalKey};
 use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::monitor::VideoModeHandle;
+use winit::keyboard::ModifiersState;
 use winit::window::{Fullscreen, Window, WindowId};
 
 /// The window's initial width, in logical pixels.
@@ -129,8 +135,9 @@ impl Gfx {
         self.crt = Some(CrtState { mode, pass, target, bind_group, size: params.output_size() });
     }
 
-    /// Draw `mode`'s picture of the frame already uploaded.
-    fn draw(&mut self, mode: DisplayMode) -> Result<(), String> {
+    /// Draw `mode`'s picture of the frame already uploaded (`again`: the same frame shown on
+    /// one more refresh, the CRT's picture of it already drawn).
+    fn draw(&mut self, mode: DisplayMode, again: bool) -> Result<(), String> {
         let surface_texture = match self.surface.get_current_texture() {
             Ok(texture) => texture,
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
@@ -145,7 +152,9 @@ impl Gfx {
 
         let (bind_group, (picture_w, picture_h)) = match (mode, self.crt.as_ref()) {
             (DisplayMode::Crt(_), Some(crt)) => {
-                crt.pass.encode(&mut encoder, &crt.target.create_view(&wgpu::TextureViewDescriptor::default()));
+                if !again {
+                    crt.pass.encode(&mut encoder, &crt.target.create_view(&wgpu::TextureViewDescriptor::default()));
+                }
                 (&crt.bind_group, crt.size)
             },
             _ => (&self.raw_bind_group, (RAW_WIDTH, RAW_HEIGHT))
@@ -176,6 +185,14 @@ impl Gfx {
         self.shown = Some(mode);
         Ok(())
     }
+}
+
+/// F11, or Ctrl+Cmd+F (macOS's fullscreen shortcut: F11 shows its desktop there).
+fn is_fullscreen_toggle(event: &KeyEvent, modifiers: ModifiersState) -> bool {
+    event.logical_key == Key::Named(NamedKey::F11)
+        || (modifiers.control_key()
+            && modifiers.super_key()
+            && event.physical_key == PhysicalKey::Code(KeyCode::KeyF))
 }
 
 /// The physical key, by its place on a US keyboard (`HostInput::placed`), whatever the layout.
@@ -308,53 +325,104 @@ struct App {
     error: Option<String>,
     /// F11 asked for fullscreen (kept here: the window manager may refuse it).
     fullscreen: bool,
-    /// Fullscreen in a ~50 Hz video mode: the vertical sync paces the frames.
-    vsync_paced: bool
+    /// The modifiers held, for Ctrl+Cmd+F.
+    modifiers: ModifiersState,
+    /// In fullscreen at a multiple of 50 Hz (the CPC's rate): how many refreshes show a CPC
+    /// frame (1 at 50 Hz, 2 at 100 Hz...), the vertical sync pacing the emulation. `None`: the
+    /// clock paces it.
+    refreshes_per_frame: Option<u32>
 }
 
-/// A video mode of `window`'s monitor at its own size (or the largest) and within
-/// half a hertz of 50, the deepest colours first.
-fn fifty_hertz_mode(window: &Window) -> Option<VideoModeHandle> {
+/// How many refreshes at `millihertz` show a CPC frame, if it is a multiple of 50 Hz (within
+/// half a hertz per frame shown): 1 at 50 Hz, 2 at 100 Hz... up to 4 (200 Hz).
+fn refreshes_per_frame(millihertz: u32) -> Option<u32> {
+    (1..=4u32).find(|k| (50_000 * k).abs_diff(millihertz) <= 500 * k)
+}
+
+/// A video mode of `window`'s monitor at a multiple of 50 Hz, and how many of its refreshes
+/// show a CPC frame: at the monitor's own size (or the largest), the fewest refreshes per frame,
+/// the deepest colours first.
+fn paced_mode(window: &Window) -> Option<(VideoModeHandle, u32)> {
     let monitor = window.current_monitor()?;
     let size = monitor.size();
     monitor
         .video_modes()
-        .filter(|mode| (49_500..=50_500).contains(&mode.refresh_rate_millihertz()))
-        .max_by_key(|mode| (mode.size() == size, mode.size().width * mode.size().height, mode.bit_depth()))
+        .filter_map(|mode| refreshes_per_frame(mode.refresh_rate_millihertz()).map(|k| (mode, k)))
+        .max_by_key(|(mode, k)| (mode.size() == size, std::cmp::Reverse(*k), mode.size().width * mode.size().height, mode.bit_depth()))
 }
 
 impl App {
-    /// F11: fullscreen in a 50 Hz mode when there is one, borderless otherwise; back
-    /// to the window.
-    fn toggle_fullscreen(&mut self) {
+    /// F11: fullscreen in a 50 Hz mode when there is one (and the system has an exclusive
+    /// mode that shows us), borderless otherwise; back to the window.
+    fn toggle_fullscreen(&mut self, event_loop: &ActiveEventLoop) {
         let Some(window) = &self.window else {
             return;
         };
-        self.fullscreen = !self.fullscreen;
-        if !self.fullscreen {
+        if self.fullscreen {
             window.set_fullscreen(None);
-            window.set_cursor_visible(true);
-            self.vsync_paced = false;
+            self.left_fullscreen();
             return;
         }
-        match fifty_hertz_mode(window) {
-            Some(mode) => {
+        self.fullscreen = true;
+        self.refreshes_per_frame = None;
+        let exclusive = if exclusive_fullscreen_works(event_loop) { paced_mode(window) } else { None };
+        if let Some((mode, k)) = exclusive {
+            window.set_fullscreen(Some(Fullscreen::Exclusive(mode.clone())));
+            // a mode the system turned down: borderless
+            if matches!(window.fullscreen(), Some(Fullscreen::Exclusive(_))) {
+                self.refreshes_per_frame = Some(k);
                 eprintln!(
-                    "fullscreen {}x{} at {:.3} Hz",
+                    "fullscreen {}x{} at {:.3} Hz: a CPC frame every {k} refresh(es)",
                     mode.size().width,
                     mode.size().height,
                     f64::from(mode.refresh_rate_millihertz()) / 1000.0
                 );
-                window.set_fullscreen(Some(Fullscreen::Exclusive(mode)));
-                self.vsync_paced = true;
-            },
-            None => {
-                eprintln!("fullscreen: no 50 Hz video mode on this monitor, borderless at the desktop's rate");
-                window.set_fullscreen(Some(Fullscreen::Borderless(None)));
-                self.vsync_paced = false;
+            }
+        }
+        if self.refreshes_per_frame.is_none() {
+            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+            // the desktop's own rate, if a multiple of 50 Hz, paces it too
+            let desktop = window.current_monitor().and_then(|monitor| monitor.refresh_rate_millihertz());
+            self.refreshes_per_frame = desktop.and_then(refreshes_per_frame);
+            match (desktop, self.refreshes_per_frame) {
+                (Some(rate), Some(k)) => eprintln!(
+                    "fullscreen: borderless at the desktop's {:.3} Hz: a CPC frame every {k} refresh(es)",
+                    f64::from(rate) / 1000.0
+                ),
+                _ => eprintln!("fullscreen: borderless at the desktop's rate (not a multiple of 50 Hz: the clock paces the emulation)")
             }
         }
         window.set_cursor_visible(false);
+    }
+
+    /// Out of fullscreen, by the toggle or by the window's own control.
+    fn left_fullscreen(&mut self) {
+        self.fullscreen = false;
+        self.refreshes_per_frame = None;
+        if let Some(window) = &self.window {
+            window.set_cursor_visible(true);
+        }
+    }
+}
+
+/// Whether an exclusive (video mode) fullscreen shows the picture: Windows' and X11's do;
+/// Wayland has none (the request is ignored) and macOS's captures the display, where the
+/// window's Metal layer shows nothing; its borderless fullscreen is the idiomatic one.
+fn exclusive_fullscreen_works(event_loop: &ActiveEventLoop) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = event_loop;
+        true
+    }
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android"), not(target_os = "ios")))]
+    {
+        use winit::platform::x11::ActiveEventLoopExtX11;
+        event_loop.is_x11()
+    }
+    #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos"), not(target_os = "android"), not(target_os = "ios")))))]
+    {
+        let _ = event_loop;
+        false
     }
 }
 
@@ -379,21 +447,26 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => self.closed = true,
             WindowEvent::Resized(size) => {
                 if let Some(gfx) = &mut self.gfx {
                     gfx.resize(size.width, size.height);
                 }
+                // out of fullscreen by the window's own control (macOS's green button)
+                if self.fullscreen && self.window.as_ref().is_some_and(|window| window.fullscreen().is_none()) {
+                    self.left_fullscreen();
+                }
             },
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput { event, .. } => {
                 match event.state {
                     // F4 closes the emulator
                     ElementState::Pressed if event.logical_key == Key::Named(NamedKey::F4) => self.closed = true,
-                    ElementState::Pressed if event.logical_key == Key::Named(NamedKey::F11) => {
+                    ElementState::Pressed if is_fullscreen_toggle(&event, self.modifiers) => {
                         if !event.repeat {
-                            self.toggle_fullscreen();
+                            self.toggle_fullscreen(event_loop);
                         }
                     },
                     ElementState::Pressed => {
@@ -451,7 +524,8 @@ impl WinitGpuFrontend {
                 closed: false,
                 error: None,
                 fullscreen: false,
-                vsync_paced: false
+                modifiers: ModifiersState::empty(),
+                refreshes_per_frame: None
             },
             frame_time: None,
             deadline: Instant::now()
@@ -480,7 +554,7 @@ impl WinitGpuFrontend {
     /// Wait for the end of the frame when the rate is capped (not in a 50 Hz
     /// fullscreen mode: the vertical sync, FIFO, does it).
     fn pace(&mut self) {
-        if self.app.vsync_paced {
+        if self.app.refreshes_per_frame.is_some() {
             self.deadline = Instant::now();
             return;
         }
@@ -536,7 +610,11 @@ impl Frontend for WinitGpuFrontend {
         let gfx = self.gfx()?;
         gfx.use_mode(mode);
         gfx.frame.upload(&gfx.queue, frame);
-        gfx.draw(mode)?;
+        gfx.draw(mode, false)?;
+        // at 100 Hz (or more) the frame on each refresh of its own: the vertical sync paces 50
+        for _ in 1..self.app.refreshes_per_frame.unwrap_or(1) {
+            self.gfx()?.draw(mode, true)?;
+        }
         self.pace();
         Ok(())
     }
@@ -545,6 +623,26 @@ impl Frontend for WinitGpuFrontend {
         let gfx = self.gfx()?;
         let mode = gfx.shown.unwrap_or_default();
         gfx.use_mode(mode);
-        gfx.draw(mode)
+        gfx.draw(mode, false)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::refreshes_per_frame;
+
+    #[test]
+    fn multiples_of_50_hz_show_each_frame_on_their_refreshes() {
+        assert_eq!(refreshes_per_frame(50_000), Some(1));
+        assert_eq!(refreshes_per_frame(49_920), Some(1), "a monitor's 49.92 Hz");
+        assert_eq!(refreshes_per_frame(100_000), Some(2));
+        assert_eq!(refreshes_per_frame(99_300), Some(2), "half a hertz per frame shown");
+        assert_eq!(refreshes_per_frame(150_000), Some(3));
+        assert_eq!(refreshes_per_frame(200_000), Some(4));
+        assert_eq!(refreshes_per_frame(60_000), None);
+        assert_eq!(refreshes_per_frame(59_940), None);
+        assert_eq!(refreshes_per_frame(120_000), None);
+        assert_eq!(refreshes_per_frame(144_000), None);
+        assert_eq!(refreshes_per_frame(250_000), None, "more than 4 refreshes a frame");
     }
 }

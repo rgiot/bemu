@@ -173,7 +173,8 @@ pub struct Args {
     pub host_keyboard_layout: Option<HostLayout>,
 
     /// The window's backend: winit is a window the GPU draws, the CRT included, with nothing read
-    /// back (a build with --features gpu-window); F11 toggles its fullscreen.
+    /// back (a build with --features gpu-window); F11 (or Ctrl+Cmd+F) toggles its
+    /// fullscreen, which minifb has none of.
     #[arg(long, value_enum, default_value_t = FrontendKind::Minifb, help_heading = RUN)]
     pub frontend: FrontendKind,
 
