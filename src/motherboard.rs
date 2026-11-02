@@ -267,7 +267,7 @@ pub struct MotherboardBuilder {
     /// The files it writes by itself, once idle.
     dmp2000_export: Option<&'static str>,
     dmp2000_charset: u8,
-    /// The printer's EPROM, for its own characters.
+    /// Another EPROM than the one embedded, for the printer's characters.
     dmp2000_font: Option<&'static [u8]>,
     dmp2000_realtime: bool,
     /// Willy with an OPL3LPT, at this base.
@@ -446,10 +446,9 @@ impl MotherboardBuilder {
             if let Some(prefix) = self.dmp2000_export {
                 printer.export_to(prefix);
             }
-            if let Some(eprom) = self.dmp2000_font {
-                if let Err(e) = printer.load_font_rom(eprom) {
-                    eprintln!("--dmp2000-rom: {e}");
-                }
+            // its own characters: the EPROM it has, or the one it is given
+            if let Err(e) = printer.load_font_rom(self.dmp2000_font.unwrap_or(crate::roms::DMP2000)) {
+                eprintln!("DMP2000's EPROM: {e}");
             }
             printer.set_international_set(self.dmp2000_charset);
             printer.set_realtime(self.dmp2000_realtime);

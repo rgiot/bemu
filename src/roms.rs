@@ -13,6 +13,8 @@ pub static BASIC664: &RomImage = include_bytes!("../roms/basic664.rom");
 pub static BASIC6128: &RomImage = include_bytes!("../roms/basic6128.rom");
 pub static BASIC6128_AZERTY: &RomImage = include_bytes!("../roms/basic6128_azerty.rom");
 pub static AMSDOS: &RomImage = include_bytes!("../roms/amsdos.rom");
+/// The EPROM of the Amstrad DMP2000 printer (the Spanish one, from CPCWiki): its characters.
+pub static DMP2000: &RomImage = include_bytes!("../roms/dmp2000.rom");
 /// The M4 board's ROM (Duke's M4ROM v2.0.8).
 #[cfg(feature = "m4")]
 pub static M4: &RomImage = include_bytes!("../roms/m4rom.rom");
@@ -59,6 +61,7 @@ pub fn embedded_roms() -> Vec<Embedded> {
         ("basic6128", BASIC6128, "BASIC 1.1"),
         ("basic6128_azerty", BASIC6128_AZERTY, "BASIC 1.1, French"),
         ("amsdos", AMSDOS, "AMSDOS"),
+        ("dmp2000", DMP2000, "the DMP2000 printer's EPROM (its characters)"),
     ];
     #[cfg(feature = "m4")]
     roms.push(("m4", M4, "the M4 board's ROM v2.0.8"));

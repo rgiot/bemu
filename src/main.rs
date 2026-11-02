@@ -140,11 +140,7 @@ fn main() {
         without_feature("--digiblaster", "digiblaster");
     }
     if let Some(path) = &args.dmp2000_rom {
-        let eprom = std::fs::read(path).unwrap_or_else(|e| panic!("--dmp2000-rom {path}: {e}"));
-        builder.set_dmp2000_font(Box::leak(eprom.into_boxed_slice()));
-    }
-    if let Some(path) = &args.dmp2000_rom {
-        let eprom = std::fs::read(path).unwrap_or_else(|e| panic!("--dmp2000-rom {path}: {e}"));
+        let eprom = amsrust::roms::load_rom(path).unwrap_or_else(|e| panic!("--dmp2000-rom {e}"));
         builder.set_dmp2000_font(Box::leak(eprom.into_boxed_slice()));
     }
     if let Some(prefix) = &args.dmp2000 {

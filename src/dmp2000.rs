@@ -1417,6 +1417,20 @@ mod test {
     }
 
     #[test]
+    fn the_embedded_eprom_is_the_printers() {
+        let mut printer = printer();
+        printer.load_font_rom(crate::roms::DMP2000).unwrap();
+        assert_eq!(printer.glyph(b'A').columns.len(), 11);
+        assert_eq!(printer.glyph(b'g').descent, 1, "g descends");
+        assert_eq!(printer.glyph(b'A').descent, 0);
+        // the national characters are the EPROM's: a pound is not a drawn one
+        printer.set_international_set(3);
+        let pound = printer.glyph(b'#');
+        assert_eq!(pound.columns.len(), 11);
+        assert_ne!(pound.columns, printer.glyph(b'A').columns);
+    }
+
+    #[test]
     fn a_descender_is_struck_a_needle_lower() {
         let mut high = printer();
         high.load_font_rom(&eprom()).unwrap();
