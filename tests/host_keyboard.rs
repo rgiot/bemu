@@ -22,11 +22,16 @@ fn screen_after(frames: &[Frame]) -> Vec<u8> {
 
 /// [`screen_after`] on a 6128 of `layout` (`--french`: the French ROMs, the AZERTY keyboard).
 fn screen_after_on(layout: KeyboardLayout, frames: &[Frame]) -> Vec<u8> {
+    screen_after_with(layout, KeyboardMapping::Symbolic, frames)
+}
+
+/// [`screen_after_on`] with the host keyboard's `mapping`.
+fn screen_after_with(layout: KeyboardLayout, mapping: KeyboardMapping, frames: &[Frame]) -> Vec<u8> {
     let mut motherboard = MotherboardBuilder::default().set_keyboard_layout(layout).build();
     for _ in 0..150 {
         frame(&mut motherboard);
     }
-    let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+    let mut keyboard = HostKeyboard::new(mapping);
     for (down, typed) in frames {
         keyboard.apply(&mut motherboard, &HostInput { down: down.clone(), typed: typed.clone(), ..Default::default() });
         frame(&mut motherboard);
@@ -66,4 +71,58 @@ fn on_a_french_cpc_shift_and_ampersand_types_1() {
     let one = screen_after_on(french, &typed('1'));
     assert!(screen_after_on(french, &shifted(HostKey::Key1, '1')) == one, "Shift+& is 1 on a French CPC");
     assert!(screen_after_on(french, &typed('&')) != one);
+}
+
+/// A key typed as a person types it: down for a few frames with its character, then up.
+fn key(host: HostKey, c: Option<char>) -> Vec<Frame> {
+    let mut frames = vec![(vec![host], c.into_iter().collect())];
+    frames.extend(std::iter::repeat_n((vec![host], vec![]), 4));
+    frames.extend(std::iter::repeat_n((vec![], vec![]), 3));
+    frames
+}
+
+/// The cursor keys move BASIC's cursor: `ab`, left, `x` is the line `axb`.
+#[test]
+fn the_cursor_keys_move_the_cursor() {
+    use HostKey::*;
+    let line = |keys: &[(HostKey, Option<char>)]| -> Vec<Frame> {
+        keys.iter().flat_map(|&(host, c)| key(host, c)).chain(key(Enter, None)).collect()
+    };
+    let typed = line(&[(A, Some('a')), (X, Some('x')), (B, Some('b'))]);
+    let edited = line(&[(A, Some('a')), (B, Some('b')), (Left, None), (X, Some('x'))]);
+    for mapping in [KeyboardMapping::Symbolic, KeyboardMapping::Positional] {
+        let expected = screen_after_with(KeyboardLayout::Uk, mapping, &typed);
+        assert!(screen_after_with(KeyboardLayout::Uk, mapping, &edited) == expected, "{mapping:?}: left");
+    }
+}
+
+/// The CPC's way of editing a line on the screen: Shift with the arrows moves the copy cursor,
+/// COPY (the host's Alt) copies what is under it. `print 1` copied from the line above runs again.
+#[test]
+fn shift_and_the_arrows_move_the_copy_cursor() {
+    use HostKey::*;
+    let print_1: Vec<Frame> = [(P, 'p'), (R, 'r'), (I, 'i'), (N, 'n'), (T, 't'), (Space, ' '), (Key1, '1')]
+        .into_iter()
+        .flat_map(|(host, c)| key(host, Some(c)))
+        .chain(key(Enter, None))
+        .collect();
+    let twice: Vec<Frame> = print_1.iter().chain(&print_1).cloned().collect();
+    // Shift held: up 3 lines (Ready, 1, print 1), then COPY 7 times, then RETURN
+    let mut copied = print_1.clone();
+    let mut shifted = |host: HostKey| {
+        copied.extend(std::iter::repeat_n((vec![LeftShift, host], vec![]), 4));
+        copied.extend(std::iter::repeat_n((vec![LeftShift], vec![]), 3));
+    };
+    for _ in 0..3 {
+        shifted(Up);
+    }
+    copied.extend(std::iter::repeat_n((vec![], vec![]), 3));
+    for _ in 0..7 {
+        copied.extend(key(LeftAlt, None));
+    }
+    copied.extend(key(Enter, None));
+    for mapping in [KeyboardMapping::Symbolic, KeyboardMapping::Positional] {
+        let expected = screen_after_with(KeyboardLayout::Uk, mapping, &twice);
+        assert!(screen_after_with(KeyboardLayout::Uk, mapping, &copied) == expected, "{mapping:?}: copied");
+    }
 }

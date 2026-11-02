@@ -237,6 +237,41 @@ curl -s -X POST http://127.0.0.1:6128/api/step                 # one instruction
 curl -s -X POST http://127.0.0.1:6128/api/config -d '{"paused":false}'
 ```
 
+## Keyboard
+
+The host's keys press the CPC's: the letters, digits and punctuation, RETURN (Enter), the
+keypad's ENTER, DEL (Backspace), CLR (Delete), ESC, TAB, CAPS LOCK, SHIFT, CONTROL (Ctrl),
+COPY (Alt) and the cursor keys; the keypad's digits and dot are the CPC's f0-f9 and f.
+`--keyboard` picks how (F12 switches it in the window), as VICE's mappings:
+- **symbolic** (the default): a key types the character it types on your keyboard, whatever
+  its language and the CPC's (`--french`: the French 6128, AZERTY);
+- **positional**: a key presses the CPC key at its place, for games (on Linux, in the default
+  window, give `--host-keyboard-layout azerty` or `qwertz` if yours isn't QWERTY).
+
+On the CPC, the cursor keys alone move only inside the line being typed: at `Ready` they move
+nothing. To edit a line already on the screen, hold SHIFT with the cursor keys to move the copy
+cursor to it, then press COPY (Alt) to copy its characters into the line being typed, as on a
+real CPC.
+
+## Example scripts
+
+`examples/` holds scripts that set a machine up and run something on it (`--window`); each
+one's header says more.
+
+| script | what it shows |
+|---|---|
+| `examples/unidos.sh FOLDER [RUN]` | UniDOS on a Nova and an Albireo, the USB key a host folder |
+| `examples/uniload.sh [FOLDER]` | UniLoad, Roudoudou's game launcher, on UniDOS |
+| `examples/willy.sh --pack [FOLDER] [PATH]` | Willy's OPL3: PulkoMandy's vgmplay plays a tune of the OPL3 player pack |
+| `examples/willy.sh [--s2p FILE.sf2] [DSK]` | Willy's OPL3 and S2P, from BASIC |
+| `examples/rulezcharge.sh [SD_FOLDER]` | RulezCharge on the M4, downloading from cpcrulez.fr |
+| `examples/dandanator.sh [ROMSET.rom]` | the CPC Dandanator Mini |
+
+UniLoad and the OPL3 player pack are their authors' archives, not part of bemu: without a
+FOLDER, the scripts download them from roudoudou.com (about 60 MB each, once) into
+`examples/downloads/`. `examples/willy.sh --pack` alone plays Wolfenstein 3D's title tune;
+PATH picks another (`MUS0F/ALONEDRK/01INTRO.VGM`), or `-` leaves the player's prompt to you.
+
 ## Licence
 
 bemu is licensed under either of the [MIT licence](LICENSE-MIT) or the

@@ -20,6 +20,7 @@
 
 use std::any::Any;
 
+use crate::dmp2000_charsets;
 use crate::expansion_port::{PrinterDevice, PrinterPin, PrinterPort};
 
 /// Pixels per inch of the images, both ways.
@@ -38,13 +39,22 @@ const FEED_UNITS_PER_INCH: i32 = 216;
 const PIN_PITCH: i32 = 3;
 /// 1/6 inch.
 const DEFAULT_FEED: i32 = 36;
-/// The first line of a page is one line under the perforation.
-const TOP_OF_FORM: i32 = DEFAULT_FEED;
+/// A page starts at the top of its sheet.
+const TOP_OF_FORM: i32 = 0;
+/// The first line's needles are 1/18 inch under the perforation, so that the 66th line's end
+/// above the next one.
+const PAPER_TOP_OFFSET: i32 = 12;
 const DEFAULT_PAGE_LENGTH: i32 = 11 * FEED_UNITS_PER_INCH;
 
 /// Cycles the printer is BUSY for, in microseconds. Short ones: the head's speed is not
 /// emulated.
 const BUSY_BYTE_US: u32 = 40;
+/// The head prints 105 characters a second, 10.5 inch a second: 1/240 inch takes 397 us. It
+/// comes back faster.
+const HEAD_US_PER_PIXEL: u32 = 397;
+const HEAD_RETURN_US_PER_PIXEL: u32 = 200;
+/// A 1/6 inch line feed takes 200 ms.
+const LINE_FEED_US: u32 = 200_000;
 /// The files are written this long after the last byte (2 seconds).
 const EXPORT_IDLE_US: u32 = 2_000_000;
 
@@ -58,7 +68,8 @@ fn feed_px(units: i32) -> f32 {
 /// A sheet: the ink the needles left, 0 (none) to 255 (a lot).
 #[derive(Clone)]
 pub struct Page {
-    ink: Vec<u8>,
+    /// A row of pixels once a needle has struck it.
+    ink: Vec<Option<Box<[u8]>>>,
     height: i32,
     inked: bool
 }
@@ -66,7 +77,7 @@ pub struct Page {
 impl Page {
     fn new(height_units: i32) -> Self {
         let height = feed_px(height_units).round() as i32;
-        Self { ink: vec![0; (PAPER_WIDTH_PX * height) as usize], height, inked: false }
+        Self { ink: vec![None; height as usize], height, inked: false }
     }
 
     /// A needle's dot.
@@ -78,7 +89,8 @@ impl Page {
                 let distance = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
                 let coverage = (radius + 0.5 - distance).clamp(0.0, 1.0);
                 if coverage > 0.0 {
-                    let pixel = &mut self.ink[(y * PAPER_WIDTH_PX + x) as usize];
+                    let row = self.ink[y as usize].get_or_insert_with(|| vec![0; PAPER_WIDTH_PX as usize].into_boxed_slice());
+                    let pixel = &mut row[x as usize];
                     *pixel = (f32::from(*pixel) + coverage * strength * 255.0).min(255.0) as u8;
                     self.inked = true;
                 }
@@ -141,7 +153,7 @@ impl Page {
                     }
                 }
 
-                let ink = f32::from(self.ink[(y * PAPER_WIDTH_PX + x) as usize]) / 255.0 * 0.93;
+                let ink = f32::from(self.ink[y as usize].as_ref().map_or(0, |row| row[x as usize])) / 255.0 * 0.93;
                 for (value, inked) in colour.iter().zip(INK) {
                     rgb.push((value * (1.0 - ink) + inked * ink).round() as u8);
                 }
@@ -194,9 +206,28 @@ struct Download {
     columns: [u8; 11]
 }
 
+/// A character of the printer's EPROM: the attribute (as a download character's: bit 7 clear
+/// when it descends, bits 4-6 where it starts and bits 0-3 where it ends in the 11 columns) and
+/// the 11 columns of each of the two passes.
+#[derive(Clone, Debug)]
+struct RealGlyph {
+    attribute: u8,
+    pass: [[u8; 11]; 2]
+}
+
+/// The needles a column byte strikes: the top bit is the first needle.
+fn pins_of(column: u8) -> u16 {
+    (0..8).filter(|pin| column & (0x80 >> pin) != 0).map(|pin| 1u16 << pin).sum::<u16>()
+}
+
 /// A glyph, seen by the needles: the pins (bit n: the needle n) struck in each column.
 struct Glyph {
     columns: Vec<u16>,
+    /// The second pass of a near letter quality character (struck half a dot lower and to the
+    /// right of the first).
+    second: Option<Vec<u16>>,
+    /// Needles the character is lowered by (a descender).
+    descent: i32,
     /// Columns before the first and after the last the proportional spacing drops.
     first: usize,
     last: usize
@@ -231,8 +262,16 @@ pub struct Dmp2000 {
     eighth_bit: EighthBit,
     extended_codes: bool,
     international_set: u8,
+    /// The one the DIP switches choose: what ESC @ goes back to.
+    dip_set: u8,
+    /// The head's and the paper's time is taken: BUSY lasts what the work takes.
+    realtime: bool,
+    /// Microseconds of work the byte being handled asks for.
+    work_us: u32,
     download_selected: bool,
     downloads: Vec<Option<Download>>,
+    /// The printer's own characters, from its EPROM (see [`Self::load_font_rom`]).
+    real_font: Option<Vec<RealGlyph>>,
     /// The density the ESC K, L, Y, Z set (ESC ? changes it).
     density_modes: [u8; 4],
 
@@ -259,7 +298,7 @@ pub struct Dmp2000 {
 impl Dmp2000 {
     /// The characters come from the CPC's lower ROM (its 8x8 font at &3800).
     pub fn with_os_rom(os_rom: &[u8]) -> Self {
-        let font = (0..256)
+        let mut font: Vec<[u8; 8]> = (0..256)
             .map(|code| {
                 let mut glyph = [0u8; 8];
                 if let Some(rows) = os_rom.get(0x3800 + code * 8..0x3800 + code * 8 + 8) {
@@ -268,6 +307,7 @@ impl Dmp2000 {
                 glyph
             })
             .collect();
+        font[usize::from(b'^')] = dmp2000_charsets::caret();
         let mut printer = Self {
             font,
             raw: Vec::new(),
@@ -291,8 +331,12 @@ impl Dmp2000 {
             eighth_bit: EighthBit::Accept,
             extended_codes: false,
             international_set: 0,
+            dip_set: 0,
+            realtime: false,
+            work_us: 0,
             download_selected: false,
             downloads: vec![None; 256],
+            real_font: None,
             density_modes: [0, 1, 2, 3],
             x: 0,
             y: TOP_OF_FORM,
@@ -329,7 +373,7 @@ impl Dmp2000 {
         self.control_code_printing = false;
         self.eighth_bit = EighthBit::Accept;
         self.extended_codes = false;
-        self.international_set = 0;
+        self.international_set = self.dip_set;
         self.download_selected = false;
         self.downloads = vec![None; 256];
         self.density_modes = [0, 1, 2, 3];
@@ -343,6 +387,47 @@ impl Dmp2000 {
             tabs.clear();
         }
         self.channel = 0;
+    }
+
+    /// The country's character set, as ESC R n numbers them: 0 USA, 1 France, 2 Germany, 3 UK,
+    /// 4 Denmark, 5 Sweden, 6 Italy, 7 Spain, 8 Japan (the printer's DIP switches choose it at
+    /// power on).
+    pub fn set_international_set(&mut self, set: u8) {
+        self.dip_set = set.min(8);
+        self.international_set = self.dip_set;
+    }
+
+    /// The printer's own characters, from a dump of its EPROM (16K): the near letter quality
+    /// font of 128 characters, 12 bytes each (an attribute, then 11 columns, the needles' bits
+    /// top first), the first pass from `&3400` and the second from `&3A00`. With it the
+    /// characters are the printer's (the draft ones, in the processor's internal ROM, are not
+    /// in the dump: the draft is the two passes of the letter quality struck together).
+    pub fn load_font_rom(&mut self, rom: &[u8]) -> Result<(), String> {
+        const FIRST_PASS: usize = 0x3400;
+        const SECOND_PASS: usize = 0x3a00;
+        if rom.len() < 0x4000 {
+            return Err(format!("{} bytes: the printer's EPROM is 16K", rom.len()));
+        }
+        let font: Vec<RealGlyph> = (0..128)
+            .map(|code| {
+                let mut pass = [[0u8; 11]; 2];
+                for (which, base) in [FIRST_PASS, SECOND_PASS].into_iter().enumerate() {
+                    pass[which].copy_from_slice(&rom[base + code * 12 + 1..base + code * 12 + 12]);
+                }
+                RealGlyph { attribute: rom[FIRST_PASS + code * 12], pass }
+            })
+            .collect();
+        if font[usize::from(b'A')].pass[0].iter().all(|&column| column == 0) {
+            return Err("no A where the near letter quality font should be: not a DMP2000 EPROM".to_owned());
+        }
+        self.real_font = Some(font);
+        Ok(())
+    }
+
+    /// BUSY lasts as long as the real printer's work: 105 characters per second, 200 ms a
+    /// line feed... (otherwise it is down 40 us after a byte).
+    pub fn set_realtime(&mut self, realtime: bool) {
+        self.realtime = realtime;
     }
 
     /// Writes the files (see [`Self::write_files`]) by itself, [`EXPORT_IDLE_US`] after the last
@@ -362,6 +447,12 @@ impl Dmp2000 {
         let line = Self::line_to_text(&self.line);
         if !line.trim().is_empty() {
             text.push_str(&line);
+            text.push('\n');
+        }
+        // the blank lines that end the last page are paper, not text
+        let kept = text.trim_end_matches('\n').len();
+        text.truncate(kept);
+        if !text.is_empty() {
             text.push('\n');
         }
         text
@@ -405,14 +496,28 @@ impl Dmp2000 {
     /// The CPC's byte, strobed.
     pub fn receive(&mut self, byte: u8) {
         self.raw.push(byte);
-        self.busy_us = BUSY_BYTE_US;
         self.unexported = true;
         self.idle_us = 0;
+        // the eighth bit is the one of the characters: a control code (ESC to cancel it) and what
+        // a command takes keep theirs
         let byte = match self.eighth_bit {
             EighthBit::Accept => byte,
+            _ if !matches!(self.parse, Parse::Idle) => byte,
+            EighthBit::Set if byte < 0x20 || byte == 0x7f => byte,
             EighthBit::Set => byte | 0x80,
             EighthBit::Unset => byte & 0x7f
         };
+        self.work_us = 0;
+        self.handle_byte(byte);
+        self.busy_us = if self.realtime { BUSY_BYTE_US.max(self.work_us) } else { BUSY_BYTE_US };
+    }
+
+    /// The head or the paper moves: the time it takes (when the printer runs in real time).
+    fn work(&mut self, us: u32) {
+        self.work_us = self.work_us.saturating_add(us);
+    }
+
+    fn handle_byte(&mut self, byte: u8) {
         let parse = std::mem::replace(&mut self.parse, Parse::Idle);
         match parse {
             Parse::Idle => self.idle_byte(byte),
@@ -523,7 +628,10 @@ impl Dmp2000 {
             0x0a => self.line_feed(),
             0x0b => self.vertical_tab(),
             0x0c => self.form_feed(),
-            0x0d => self.x = self.left,
+            0x0d => {
+                self.work((self.x - self.left).max(0) as u32 * HEAD_RETURN_US_PER_PIXEL);
+                self.x = self.left;
+            },
             0x0e => self.double_width = true,
             0x0f => self.condensed = true,
             0x12 => self.condensed = false,
@@ -679,6 +787,7 @@ impl Dmp2000 {
 
     fn line_feed(&mut self) {
         self.flush_line();
+        self.work(LINE_FEED_US * self.feed.max(1) as u32 / DEFAULT_FEED as u32);
         self.advance_paper(self.feed);
     }
 
@@ -688,10 +797,20 @@ impl Dmp2000 {
         if self.y < 0 {
             self.y = 0;
         }
-        let foot = self.page_length - self.skip_perforation - self.feed.max(DEFAULT_FEED);
-        if units > 0 && self.y > foot {
+        // a page is its length of paper, from the top of form
+        if units > 0 && self.y >= self.page_length - self.skip_perforation {
             self.next_page();
         }
+    }
+
+    /// Where the head's top needle strikes, in pixels from the top of the sheet.
+    fn head_px(&self) -> f32 {
+        feed_px(self.y + PAPER_TOP_OFFSET)
+    }
+
+    /// The right margin, unless it is not past the left one (then it is ignored).
+    fn right_limit(&self) -> i32 {
+        if self.right > self.left { self.right } else { LINE_PX }
     }
 
     fn next_page(&mut self) {
@@ -701,6 +820,8 @@ impl Dmp2000 {
 
     fn form_feed(&mut self) {
         self.flush_line();
+        let remaining = (self.page_length - self.y).max(0) as u32;
+        self.work(LINE_FEED_US * remaining / DEFAULT_FEED as u32);
         self.next_page();
         self.x = self.left;
     }
@@ -725,7 +846,7 @@ impl Dmp2000 {
             self.horizontal_tabs.iter().copied().find(|&tab| tab > column)
         };
         if let Some(target) = target {
-            self.x = (target * cell).min(self.right);
+            self.x = (target * cell).min(self.right_limit());
         }
     }
 
@@ -794,22 +915,51 @@ impl Dmp2000 {
     fn glyph(&self, code: u8) -> Glyph {
         if self.download_selected {
             if let Some(download) = &self.downloads[usize::from(code)] {
-                let columns: Vec<u16> = download
-                    .columns
-                    .iter()
-                    .map(|&data| (0..8).filter(|pin| data & (0x80 >> pin) != 0).map(|pin| 1u16 << pin).sum::<u16>())
-                    .collect();
+                let columns: Vec<u16> = download.columns.iter().map(|&data| pins_of(data)).collect();
                 let first = usize::from(download.start).min(columns.len());
-                return Glyph { columns, first, last: 10 };
+                return Glyph { columns, second: None, descent: 0, first, last: 10 };
             }
         }
-        let rows = &self.font[usize::from(code)];
+        if let Some(font) = &self.real_font {
+            // the country's character is in the codes below 32 of the EPROM
+            let code = match self.national_char(code) {
+                Some(character) => dmp2000_charsets::eprom_code(character),
+                None => Some(code)
+            };
+            if let Some(real) = code.and_then(|code| font.get(usize::from(code))) {
+                let first = usize::from(real.attribute >> 4 & 7);
+                let last = usize::from(real.attribute & 15).saturating_sub(1).min(10);
+                let pass = |which: usize| -> Vec<u16> { real.pass[which].iter().map(|&data| pins_of(data)).collect() };
+                // the draft is one pass: the two of the letter quality together
+                return Glyph {
+                    columns: if self.nlq { pass(0) } else { pass(0).iter().zip(pass(1)).map(|(a, b)| a | b).collect() },
+                    second: self.nlq.then(|| pass(1)),
+                    descent: i32::from(real.attribute & 0x80 == 0),
+                    first,
+                    last
+                };
+            }
+        }
+        let rows = &self.rom_glyph(code);
         let columns: Vec<u16> = (0..8)
             .map(|column| (0..8).filter(|row| rows[*row] & (0x80 >> column) != 0).map(|row| 1u16 << row).sum::<u16>())
             .collect();
         let used: Vec<usize> = (0..8).filter(|&column| columns[column] != 0).collect();
         let (first, last) = (used.first().copied().unwrap_or(0), used.last().copied().unwrap_or(0));
-        Glyph { columns, first, last }
+        Glyph { columns, second: None, descent: 0, first, last }
+    }
+
+    /// The country's own character at `code`, when it has one.
+    fn national_char(&self, code: u8) -> Option<char> {
+        let character = dmp2000_charsets::national_char(self.international_set, code)?;
+        (character != char::from(code)).then_some(character)
+    }
+
+    /// The 8x8 pattern of `code`: the CPC's font, with the country's characters.
+    fn rom_glyph(&self, code: u8) -> [u8; 8] {
+        self.national_char(code)
+            .and_then(|character| dmp2000_charsets::glyph(character, &self.font))
+            .unwrap_or(self.font[usize::from(code)])
     }
 
     fn print_character(&mut self, code: u8) {
@@ -824,14 +974,17 @@ impl Dmp2000 {
             cell
         };
 
-        if self.x + advance > self.right {
+        if self.x + advance > self.right_limit() {
             // the line is full: a new one starts
             self.flush_line();
             self.x = self.left;
             self.advance_paper(self.feed);
         }
 
-        let printable = if (0x20..0x7f).contains(&code) || code >= 0xa0 {
+        let printable = if let Some(character) = self.national_char(code) {
+            Some(character)
+        }
+        else if (0x20..0x7f).contains(&code) || code >= 0xa0 {
             Some(char::from(code))
         }
         else {
@@ -841,6 +994,7 @@ impl Dmp2000 {
             self.line.push((self.x, character));
         }
 
+        self.work(advance as u32 * HEAD_US_PER_PIXEL);
         self.strike_glyph(&glyph);
         self.x += advance;
     }
@@ -866,24 +1020,28 @@ impl Dmp2000 {
         let strength = if passes.len() == 1 { 0.85 } else { 0.6 };
         let radius = if self.nlq { 1.2 } else { 1.5 } * if self.condensed { 0.9 } else { 1.0 };
 
-        for (column, &pins) in glyph.columns.iter().enumerate() {
-            for pin in 0..8 {
-                if pins & (1 << pin) == 0 {
-                    continue;
-                }
-                // sub and superscripts squeeze the 8 needles in 4
-                let row = match self.script {
-                    None => pin as f32,
-                    Some(Script::Super) => pin as f32 / 2.0,
-                    Some(Script::Sub) => pin as f32 / 2.0 + 5.0
-                };
-                let slant = if self.italic { (7.0 - pin as f32) * column_pitch / 4.0 } else { 0.0 };
-                // a double width dot is struck twice, side by side
-                let sides: &[f32] = if self.double_width { &[0.0, 0.5] } else { &[0.0] };
-                for (&(dx, dy), &side) in passes.iter().flat_map(|pass| sides.iter().map(move |side| (pass, side))) {
-                    let x = side * column_pitch + LEFT_PX as f32 + self.x as f32 + column as f32 * column_pitch + 1.0 - shift + slant + dx;
-                    let y = feed_px(self.y) + feed_px(PIN_PITCH) * row + dy;
-                    self.strike(x, y, radius, strength);
+        let layers = std::iter::once((&glyph.columns, 0.0, 0.0)).chain(glyph.second.as_ref().map(|second| (second, 1.0, 1.0)));
+        for (columns, layer_dx, layer_dy) in layers {
+            for (column, &pins) in columns.iter().enumerate() {
+                for pin in 0..8 {
+                    if pins & (1 << pin) == 0 {
+                        continue;
+                    }
+                    let needle = pin + glyph.descent;
+                    // sub and superscripts squeeze the 8 needles in 4
+                    let row = match self.script {
+                        None => needle as f32,
+                        Some(Script::Super) => needle as f32 / 2.0,
+                        Some(Script::Sub) => needle as f32 / 2.0 + 5.0
+                    };
+                    let slant = if self.italic { (7.0 - pin as f32) * column_pitch / 4.0 } else { 0.0 };
+                    // a double width dot is struck twice, side by side
+                    let sides: &[f32] = if self.double_width { &[0.0, 0.5] } else { &[0.0] };
+                    for (&(dx, dy), &side) in passes.iter().flat_map(|pass| sides.iter().map(move |side| (pass, side))) {
+                        let x = side * column_pitch + LEFT_PX as f32 + self.x as f32 + column as f32 * column_pitch + 1.0 - shift + slant + dx + layer_dx;
+                        let y = self.head_px() + feed_px(PIN_PITCH) * row + dy + layer_dy;
+                        self.strike(x, y, radius, strength);
+                    }
                 }
             }
         }
@@ -892,7 +1050,7 @@ impl Dmp2000 {
             let mut x = 0.0;
             let cell = self.cell_width() as f32;
             while x < cell {
-                self.strike(LEFT_PX as f32 + self.x as f32 + x + 1.0, feed_px(self.y) + feed_px(PIN_PITCH) * 8.0, 1.2, 0.85);
+                self.strike(LEFT_PX as f32 + self.x as f32 + x + 1.0, self.head_px() + feed_px(PIN_PITCH) * 8.0, 1.2, 0.85);
                 x += pitch;
             }
         }
@@ -932,19 +1090,20 @@ impl Dmp2000 {
 
     fn graphics_column(&mut self, mode: u8, column: &[u8], dots: i32) {
         let pitch = Self::dot_pitch(mode);
+        self.work((pitch * HEAD_US_PER_PIXEL as f32) as u32);
         let x = self.x as f32 + dots as f32 * pitch;
-        if x >= self.right as f32 || x >= LINE_PX as f32 {
+        if x >= self.right_limit() as f32 {
             return; // past the end of the line: ignored
         }
         let radius = (pitch * 0.7).clamp(1.0, 1.5);
         for pin in 0..8 {
             if column[0] & (0x80 >> pin) != 0 {
-                let y = feed_px(self.y) + feed_px(PIN_PITCH) * pin as f32;
+                let y = self.head_px() + feed_px(PIN_PITCH) * pin as f32;
                 self.strike(LEFT_PX as f32 + x + 1.0, y, radius, 0.9);
             }
         }
         if column.len() == 2 && column[1] & 0x80 != 0 {
-            let y = feed_px(self.y) + feed_px(PIN_PITCH) * 8.0;
+            let y = self.head_px() + feed_px(PIN_PITCH) * 8.0;
             self.strike(LEFT_PX as f32 + x + 1.0, y, radius, 0.9);
         }
     }
@@ -992,7 +1151,7 @@ mod test {
     }
 
     fn ink(printer: &Dmp2000) -> u64 {
-        printer.pages().iter().flat_map(|page| page.ink.iter()).map(|&ink| u64::from(ink)).sum()
+        printer.pages().iter().flat_map(|page| page.ink.iter().flatten().flat_map(|row| row.iter())).map(|&ink| u64::from(ink)).sum()
     }
 
     #[test]
@@ -1049,7 +1208,7 @@ mod test {
         assert!(top.abs_diff(ink(&other)) * 50 < top);
         let rows = |printer: &Dmp2000| -> Vec<i32> {
             let page = &printer.pages()[0];
-            (0..page.height).filter(|&y| (0..PAPER_WIDTH_PX).any(|x| page.ink[(y * PAPER_WIDTH_PX + x) as usize] > 0)).collect()
+            (0..page.height).filter(|&y| page.ink[y as usize].as_ref().is_some_and(|row| row.iter().any(|&ink| ink > 0))).collect()
         };
         assert!(rows(&other)[0] > rows(&printer)[0] + 15);
     }
@@ -1119,6 +1278,172 @@ mod test {
             std::fs::remove_file(format!("{prefix}.{extension}")).ok();
         }
         std::fs::remove_file(format!("{prefix}_001.png")).ok();
+    }
+
+    #[test]
+    fn the_blank_lines_ending_the_last_page_are_not_text() {
+        let mut printer = printer();
+        send(&mut printer, b"a\r\n\r\n\r\n\r\n");
+        assert_eq!(printer.text(), "a\n");
+    }
+
+    #[test]
+    fn a_country_changes_its_codes() {
+        let mut printer = printer();
+        send(&mut printer, b"#{");
+        assert_eq!(printer.text(), "#{\n");
+        let usa = ink(&printer);
+        let mut uk = Dmp2000::with_os_rom(crate::roms::OS6128);
+        send(&mut uk, &[ESC, b'R', 3]);
+        send(&mut uk, b"#{");
+        assert_eq!(uk.text(), "£{\n");
+        let mut france = Dmp2000::with_os_rom(crate::roms::OS6128);
+        send(&mut france, &[ESC, b'R', 1]);
+        send(&mut france, b"#{");
+        assert_eq!(france.text(), "#é\n");
+        assert_ne!(ink(&france), usa);
+    }
+
+    #[test]
+    fn the_dip_switches_set_is_the_one_a_reset_goes_back_to() {
+        let mut printer = printer();
+        printer.set_international_set(3);
+        send(&mut printer, &[ESC, b'R', 1, ESC, b'@']);
+        send(&mut printer, b"#");
+        assert_eq!(printer.text(), "£\n");
+    }
+
+    #[test]
+    fn in_real_time_busy_lasts_what_the_work_takes() {
+        let mut printer = printer();
+        printer.set_realtime(true);
+        printer.receive(b'A');
+        // a 10 cpi character at 105 per second
+        let mut us = 0;
+        while printer.is_busy() {
+            printer.advance_us();
+            us += 1;
+        }
+        assert!((9_000..10_000).contains(&us), "{us}");
+        printer.receive(b'\n');
+        let mut us = 0;
+        while printer.is_busy() {
+            printer.advance_us();
+            us += 1;
+        }
+        assert_eq!(us, 200_000);
+    }
+
+    #[test]
+    fn a_page_of_66_lines_is_a_sheet() {
+        let mut printer = printer();
+        // Protext: 66 line feeds a page, whatever is printed
+        for page in 0..3 {
+            send(&mut printer, b"x\r\n");
+            for _ in 1..66 {
+                send(&mut printer, b"\r\n");
+            }
+            assert_eq!(printer.inked_pages().count(), page + 1);
+        }
+        // the first line of each is at the top, not one line further each time
+        let rows = |page: &Page| (0..page.height).find(|&y| page.ink[y as usize].is_some()).unwrap();
+        let first = rows(&printer.pages()[0]);
+        assert_eq!(rows(&printer.pages()[2]), first);
+        assert!(first < DPI / 4);
+    }
+
+    #[test]
+    fn the_eighth_bit_can_be_cancelled_after_it_was_set() {
+        let mut printer = printer();
+        send(&mut printer, &[ESC, b'>', b'A']);
+        send(&mut printer, &[ESC, b'#']);
+        send(&mut printer, b"B");
+        // the ESC # was understood (it did not print as a character, nor did its #)
+        assert!(!printer.text().contains('#'), "{:?}", printer.text());
+        assert!(printer.text().ends_with("B\n"));
+    }
+
+    #[test]
+    fn a_right_margin_before_the_left_one_is_ignored() {
+        let mut printer = printer();
+        send(&mut printer, &[ESC, b'l', 10, ESC, b'Q', 5]);
+        send(&mut printer, b"\rabc");
+        assert_eq!(printer.text(), format!("{}abc\n", " ".repeat(10)));
+    }
+
+    #[test]
+    fn a_page_only_keeps_the_rows_a_needle_struck() {
+        let mut printer = printer();
+        send(&mut printer, b"x");
+        let page = &printer.pages()[0];
+        let rows = page.ink.iter().filter(|row| row.is_some()).count();
+        assert!(rows > 0 && rows < page.height as usize / 10, "{rows} rows");
+    }
+
+    /// An EPROM with an `A` of one column of needles (and its second pass another), a `g` that
+    /// descends.
+    fn eprom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x4000];
+        for (pass, base) in [0x3400usize, 0x3a00].into_iter().enumerate() {
+            let a = base + usize::from(b'A') * 12;
+            rom[a] = 0x2a; // start 2, end 10, does not descend (bit 7 set would be "no")
+            rom[a] |= 0x80;
+            rom[a + 1 + 5] = if pass == 0 { 0xff } else { 0x81 };
+            let g = base + usize::from(b'g') * 12;
+            rom[g] = 0x0a; // bit 7 clear: descends
+            rom[g + 1 + 5] = 0x80; // the top needle only
+        }
+        rom
+    }
+
+    #[test]
+    fn the_printers_own_characters_come_from_its_eprom() {
+        let mut printer = printer();
+        assert!(printer.load_font_rom(&[0; 100]).is_err());
+        assert!(printer.load_font_rom(&vec![0; 0x4000]).is_err(), "no A in it");
+        printer.load_font_rom(&eprom()).unwrap();
+        let glyph = printer.glyph(b'A');
+        // 11 columns; the draft is the two passes together
+        assert_eq!(glyph.columns.len(), 11);
+        assert_eq!(glyph.columns[5], 0xff);
+        assert!(glyph.second.is_none());
+        assert_eq!(glyph.descent, 0);
+        assert_eq!((glyph.first, glyph.last), (2, 9));
+        // the near letter quality has its second pass
+        send(&mut printer, &[ESC, b'x', 1]);
+        assert_eq!(printer.glyph(b'A').second.unwrap()[5], 0x81);
+        // a descender is lowered
+        assert_eq!(printer.glyph(b'g').descent, 1);
+    }
+
+    #[test]
+    fn the_embedded_eprom_is_the_printers() {
+        let mut printer = printer();
+        printer.load_font_rom(crate::roms::DMP2000).unwrap();
+        assert_eq!(printer.glyph(b'A').columns.len(), 11);
+        assert_eq!(printer.glyph(b'g').descent, 1, "g descends");
+        assert_eq!(printer.glyph(b'A').descent, 0);
+        // the national characters are the EPROM's: a pound is not a drawn one
+        printer.set_international_set(3);
+        let pound = printer.glyph(b'#');
+        assert_eq!(pound.columns.len(), 11);
+        assert_ne!(pound.columns, printer.glyph(b'A').columns);
+    }
+
+    #[test]
+    fn a_descender_is_struck_a_needle_lower() {
+        let mut high = printer();
+        high.load_font_rom(&eprom()).unwrap();
+        let mut low = printer();
+        low.load_font_rom(&eprom()).unwrap();
+        send(&mut high, b"A");
+        send(&mut low, b"g");
+        let first_row = |printer: &Dmp2000| {
+            let page = &printer.pages()[0];
+            (0..page.height).find(|&y| page.ink[y as usize].is_some()).unwrap()
+        };
+        // 'A' has all its needles, 'g' only the top one: that one is a needle (1/72 inch) lower
+        assert!(first_row(&low) > first_row(&high));
     }
 
     #[test]

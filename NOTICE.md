@@ -15,6 +15,7 @@ everything. Each stays its authors' property, under its own terms.
 | `m4rom` | The M4 board's ROM, v2.0.8 | Duke (M4Duke); its source is published at <https://github.com/M4Duke/m4rom>. |
 | `unidos`, `unidos-nova`, `unidos-albireo`, `unidos-m4`, `unitools` | UniDOS 1.51, its nodes, UniTools | Futurs' |
 | `orgams`, `orgext`, `monogams`, `bricbrac`, `orgass` | The Orgams assembler and its ROMs | The Orgams authors |
+| `dmp2000` | The EPROM of the Amstrad DMP2000 printer (its characters; the Spanish version, dumped by the CPC community and published on CPCWiki's DMP2000 page) | Amstrad |
 | `rulezcharge` | RulezCharge 0.9b2 for the M4 | CPCrulez (<https://cpcrulez.fr>); its licence is unknown. |
 
 Anyone who owns one of these and does not want it here can ask for its removal; each sits behind

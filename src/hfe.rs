@@ -240,10 +240,23 @@ impl Bitstream {
     }
 }
 
+/// The tests that use the library themselves hold this while they do.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use library::lock as library_lock;
+
 #[cfg(not(target_arch = "wasm32"))]
 mod library {
     use super::*;
     use hxcfe::{HeadId, Hxcfe, Img, SectorAccess, SectorId, TrackEncoding, TrackId};
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
+    /// libhxcfe keeps global state: its images are used one call at a time, from whatever thread
+    /// (the tests run in parallel, and got images and sectors mixed up).
+    static LIBRARY: Mutex<()> = Mutex::new(());
+
+    pub fn lock() -> MutexGuard<'static, ()> {
+        LIBRARY.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 
     /// Load `bytes` in the library, under a unique temporary name (it loads through a file).
     fn load(bytes: &[u8]) -> Result<Img, String> {
@@ -312,6 +325,7 @@ mod library {
         /// An HFE image (any version) loaded by the library, with the sectors of each side of
         /// each track (`found[track][side]`).
         pub fn load(bytes: &[u8]) -> Result<(Self, Vec<[Vec<FoundSector>; 2]>), String> {
+            let _library = lock();
             let img = load(bytes)?;
             let nb_tracks = img.nb_tracks_per_head().max(0) as usize;
             let sides = img.nb_sides().clamp(1, 2) as u8;
@@ -346,6 +360,7 @@ mod library {
 
         /// The sectors the library finds on a track as it is now (after a format).
         pub fn sectors(&self, track: usize, side: usize) -> Result<Vec<FoundSector>, String> {
+            let _library = lock();
             let img = current(self)?;
             Ok(sectors(&img, track, side, &self.tracks[track][side]))
         }
@@ -353,6 +368,7 @@ mod library {
         /// The image as HFE version 3, written by the library: the source with the rebuilt tracks
         /// and the sectors the FDC wrote. It becomes the new source.
         pub fn save(&mut self) -> Result<Vec<u8>, String> {
+            let _library = lock();
             let img = current(self)?;
             {
                 let access = SectorAccess::new(&img).ok_or("the library's sector access")?;

@@ -774,8 +774,12 @@ mod test {
 
         // an HFE stays an HFE, the field encoded in its bits
         let hfe = dir.join("rhino.hfe").display().to_string();
-        let img = hxcfe::Hxcfe::get().load_from_buffer(&rhino, "amsrust_test_save.dsk").unwrap();
-        std::fs::write(&hfe, img.save_to_buffer(hxcfe::ImageFormat::HxcHfe).unwrap()).unwrap();
+        let made = {
+            let _library = crate::hfe::library_lock();
+            let img = hxcfe::Hxcfe::get().load_from_buffer(&rhino, "amsrust_test_save.dsk").unwrap();
+            img.save_to_buffer(hxcfe::ImageFormat::HxcHfe).unwrap()
+        };
+        std::fs::write(&hfe, made).unwrap();
         let mut image = load_disc_file(&hfe).unwrap();
         assert!(image.is_bitstream());
         write_first_sector(&mut image, 0x43);
@@ -812,9 +816,11 @@ mod test {
     #[test]
     fn an_hfe_image_gives_the_sectors_of_the_disc_it_was_made_from() {
         let rhino = std::fs::read("validation/RHINO.DSK").unwrap();
-        let hxc = hxcfe::Hxcfe::get();
-        let img = hxc.load_from_buffer(&rhino, "amsrust_test_rhino.dsk").unwrap();
-        let hfe = img.save_to_buffer(hxcfe::ImageFormat::HxcHfe).unwrap();
+        let hfe = {
+            let _library = crate::hfe::library_lock();
+            let img = hxcfe::Hxcfe::get().load_from_buffer(&rhino, "amsrust_test_rhino.dsk").unwrap();
+            img.save_to_buffer(hxcfe::ImageFormat::HxcHfe).unwrap()
+        };
         assert!(hfe.starts_with(b"HXCPICFE"));
 
         let back = load_disc_bytes(&hfe, "rhino.hfe", None).unwrap();

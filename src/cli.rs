@@ -179,7 +179,8 @@ pub struct Args {
     pub host_keyboard_layout: Option<HostLayout>,
 
     /// The window's backend: winit is a window the GPU draws, the CRT included, with nothing read
-    /// back (a build with --features gpu-window); F11 toggles its fullscreen.
+    /// back (a build with --features gpu-window); F11 (or Ctrl+Cmd+F) toggles its
+    /// fullscreen, which minifb has none of.
     #[arg(long, value_enum, default_value_t = FrontendKind::Minifb, help_heading = RUN)]
     pub frontend: FrontendKind,
 
@@ -198,7 +199,7 @@ pub struct Args {
 
     /// Typed on the CPC keyboard at --type-at, the keys written as in CSL's key_output: \n,
     /// \(RET), \(ESC), \(CPY), \(DEL)... and \(WAIT n), n seconds (a program's prompt) before
-    /// the keys after it.
+    /// the keys after it. Keys pressed together are in braces: {\(CTR)h} is Ctrl+H.
     #[arg(long = "type", value_name = "TEXT", value_parser = parse_typed, help_heading = TYPING)]
     pub text: Option<String>,
 
@@ -263,6 +264,24 @@ pub struct Args {
     /// A DAC on the printer port (a signed byte written to &EFxx).
     #[arg(long, help_heading = EXPANSIONS)]
     pub digiblaster: bool,
+
+    /// The DMP2000's character set: usa, france, germany, uk, denmark, sweden, italy, spain, japan
+    /// (the printer's DIP switches; ESC R n changes it). The CPC's own £ is not the printer's:
+    /// uk makes code &23 a £.
+    #[arg(long, value_name = "COUNTRY", value_parser = parse_charset, requires = "dmp2000", help_heading = EXPANSIONS)]
+    pub dmp2000_charset: Option<u8>,
+
+    /// Another EPROM than the DMP2000's own (embedded, from a Spanish one; FILE or inner://NAME),
+    /// 16K: its near letter quality characters are the printer's (the draft ones, in the
+    /// processor, are not in a dump: the two passes of the letter quality ones are struck
+    /// together).
+    #[arg(long, value_name = "FILE", requires = "dmp2000", help_heading = EXPANSIONS)]
+    pub dmp2000_rom: Option<String>,
+
+    /// The DMP2000 takes the time a real one takes: 105 characters a second, 200 ms a line feed
+    /// (BUSY stays up meanwhile), instead of printing at once.
+    #[arg(long, requires = "dmp2000", help_heading = EXPANSIONS)]
+    pub dmp2000_realtime: bool,
 
     /// An Amstrad DMP2000 printer on the printer port (PRINT #8, LIST #8, CTRL-SHIFT-ESC...).
     ///
@@ -453,6 +472,15 @@ fn parse_ram(value: &str) -> Result<usize, String> {
     else {
         Err("64, 128, ... 576 (KB)".to_owned())
     }
+}
+
+fn parse_charset(value: &str) -> Result<u8, String> {
+    const NAMES: [&str; 9] = ["usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan"];
+    NAMES
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(value))
+        .map(|position| position as u8)
+        .ok_or_else(|| NAMES.join(", "))
 }
 
 fn parse_crtc(value: &str) -> Result<CrtcType, String> {
