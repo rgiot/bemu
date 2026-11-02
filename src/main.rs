@@ -141,7 +141,10 @@ fn main() {
     }
     if let Some(prefix) = &args.dmp2000 {
         // the builder is Copy: the prefix lives as long as the program
-        builder.plug_dmp2000().export_dmp2000_to(Box::leak(prefix.clone().into_boxed_str()));
+        builder
+            .plug_dmp2000()
+            .export_dmp2000_to(Box::leak(prefix.clone().into_boxed_str()))
+            .set_dmp2000(args.dmp2000_charset.unwrap_or(0), args.dmp2000_realtime);
     }
     if args.french {
         builder.set_keyboard_layout(amsrust::keyboard::KeyboardLayout::French);

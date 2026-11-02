@@ -20,6 +20,7 @@
 
 use std::any::Any;
 
+use crate::dmp2000_charsets;
 use crate::expansion_port::{PrinterDevice, PrinterPin, PrinterPort};
 
 /// Pixels per inch of the images, both ways.
@@ -45,6 +46,12 @@ const DEFAULT_PAGE_LENGTH: i32 = 11 * FEED_UNITS_PER_INCH;
 /// Cycles the printer is BUSY for, in microseconds. Short ones: the head's speed is not
 /// emulated.
 const BUSY_BYTE_US: u32 = 40;
+/// The head prints 105 characters a second, 10.5 inch a second: 1/240 inch takes 397 us. It
+/// comes back faster.
+const HEAD_US_PER_PIXEL: u32 = 397;
+const HEAD_RETURN_US_PER_PIXEL: u32 = 200;
+/// A 1/6 inch line feed takes 200 ms.
+const LINE_FEED_US: u32 = 200_000;
 /// The files are written this long after the last byte (2 seconds).
 const EXPORT_IDLE_US: u32 = 2_000_000;
 
@@ -231,6 +238,12 @@ pub struct Dmp2000 {
     eighth_bit: EighthBit,
     extended_codes: bool,
     international_set: u8,
+    /// The one the DIP switches choose: what ESC @ goes back to.
+    dip_set: u8,
+    /// The head's and the paper's time is taken: BUSY lasts what the work takes.
+    realtime: bool,
+    /// Microseconds of work the byte being handled asks for.
+    work_us: u32,
     download_selected: bool,
     downloads: Vec<Option<Download>>,
     /// The density the ESC K, L, Y, Z set (ESC ? changes it).
@@ -259,7 +272,7 @@ pub struct Dmp2000 {
 impl Dmp2000 {
     /// The characters come from the CPC's lower ROM (its 8x8 font at &3800).
     pub fn with_os_rom(os_rom: &[u8]) -> Self {
-        let font = (0..256)
+        let mut font: Vec<[u8; 8]> = (0..256)
             .map(|code| {
                 let mut glyph = [0u8; 8];
                 if let Some(rows) = os_rom.get(0x3800 + code * 8..0x3800 + code * 8 + 8) {
@@ -268,6 +281,7 @@ impl Dmp2000 {
                 glyph
             })
             .collect();
+        font[usize::from(b'^')] = dmp2000_charsets::caret();
         let mut printer = Self {
             font,
             raw: Vec::new(),
@@ -291,6 +305,9 @@ impl Dmp2000 {
             eighth_bit: EighthBit::Accept,
             extended_codes: false,
             international_set: 0,
+            dip_set: 0,
+            realtime: false,
+            work_us: 0,
             download_selected: false,
             downloads: vec![None; 256],
             density_modes: [0, 1, 2, 3],
@@ -329,7 +346,7 @@ impl Dmp2000 {
         self.control_code_printing = false;
         self.eighth_bit = EighthBit::Accept;
         self.extended_codes = false;
-        self.international_set = 0;
+        self.international_set = self.dip_set;
         self.download_selected = false;
         self.downloads = vec![None; 256];
         self.density_modes = [0, 1, 2, 3];
@@ -343,6 +360,20 @@ impl Dmp2000 {
             tabs.clear();
         }
         self.channel = 0;
+    }
+
+    /// The country's character set, as ESC R n numbers them: 0 USA, 1 France, 2 Germany, 3 UK,
+    /// 4 Denmark, 5 Sweden, 6 Italy, 7 Spain, 8 Japan (the printer's DIP switches choose it at
+    /// power on).
+    pub fn set_international_set(&mut self, set: u8) {
+        self.dip_set = set.min(8);
+        self.international_set = self.dip_set;
+    }
+
+    /// BUSY lasts as long as the real printer's work: 105 characters per second, 200 ms a
+    /// line feed... (otherwise it is down 40 us after a byte).
+    pub fn set_realtime(&mut self, realtime: bool) {
+        self.realtime = realtime;
     }
 
     /// Writes the files (see [`Self::write_files`]) by itself, [`EXPORT_IDLE_US`] after the last
@@ -362,6 +393,12 @@ impl Dmp2000 {
         let line = Self::line_to_text(&self.line);
         if !line.trim().is_empty() {
             text.push_str(&line);
+            text.push('\n');
+        }
+        // the blank lines that end the last page are paper, not text
+        let kept = text.trim_end_matches('\n').len();
+        text.truncate(kept);
+        if !text.is_empty() {
             text.push('\n');
         }
         text
@@ -405,7 +442,6 @@ impl Dmp2000 {
     /// The CPC's byte, strobed.
     pub fn receive(&mut self, byte: u8) {
         self.raw.push(byte);
-        self.busy_us = BUSY_BYTE_US;
         self.unexported = true;
         self.idle_us = 0;
         let byte = match self.eighth_bit {
@@ -413,6 +449,17 @@ impl Dmp2000 {
             EighthBit::Set => byte | 0x80,
             EighthBit::Unset => byte & 0x7f
         };
+        self.work_us = 0;
+        self.handle_byte(byte);
+        self.busy_us = if self.realtime { BUSY_BYTE_US.max(self.work_us) } else { BUSY_BYTE_US };
+    }
+
+    /// The head or the paper moves: the time it takes (when the printer runs in real time).
+    fn work(&mut self, us: u32) {
+        self.work_us = self.work_us.saturating_add(us);
+    }
+
+    fn handle_byte(&mut self, byte: u8) {
         let parse = std::mem::replace(&mut self.parse, Parse::Idle);
         match parse {
             Parse::Idle => self.idle_byte(byte),
@@ -523,7 +570,10 @@ impl Dmp2000 {
             0x0a => self.line_feed(),
             0x0b => self.vertical_tab(),
             0x0c => self.form_feed(),
-            0x0d => self.x = self.left,
+            0x0d => {
+                self.work((self.x - self.left).max(0) as u32 * HEAD_RETURN_US_PER_PIXEL);
+                self.x = self.left;
+            },
             0x0e => self.double_width = true,
             0x0f => self.condensed = true,
             0x12 => self.condensed = false,
@@ -679,6 +729,7 @@ impl Dmp2000 {
 
     fn line_feed(&mut self) {
         self.flush_line();
+        self.work(LINE_FEED_US * self.feed.max(1) as u32 / DEFAULT_FEED as u32);
         self.advance_paper(self.feed);
     }
 
@@ -701,6 +752,8 @@ impl Dmp2000 {
 
     fn form_feed(&mut self) {
         self.flush_line();
+        let remaining = (self.page_length - self.y).max(0) as u32;
+        self.work(LINE_FEED_US * remaining / DEFAULT_FEED as u32);
         self.next_page();
         self.x = self.left;
     }
@@ -803,13 +856,26 @@ impl Dmp2000 {
                 return Glyph { columns, first, last: 10 };
             }
         }
-        let rows = &self.font[usize::from(code)];
+        let rows = &self.rom_glyph(code);
         let columns: Vec<u16> = (0..8)
             .map(|column| (0..8).filter(|row| rows[*row] & (0x80 >> column) != 0).map(|row| 1u16 << row).sum::<u16>())
             .collect();
         let used: Vec<usize> = (0..8).filter(|&column| columns[column] != 0).collect();
         let (first, last) = (used.first().copied().unwrap_or(0), used.last().copied().unwrap_or(0));
         Glyph { columns, first, last }
+    }
+
+    /// The country's own character at `code`, when it has one.
+    fn national_char(&self, code: u8) -> Option<char> {
+        let character = dmp2000_charsets::national_char(self.international_set, code)?;
+        (character != char::from(code)).then_some(character)
+    }
+
+    /// The 8x8 pattern of `code`: the CPC's font, with the country's characters.
+    fn rom_glyph(&self, code: u8) -> [u8; 8] {
+        self.national_char(code)
+            .and_then(|character| dmp2000_charsets::glyph(character, &self.font))
+            .unwrap_or(self.font[usize::from(code)])
     }
 
     fn print_character(&mut self, code: u8) {
@@ -831,7 +897,10 @@ impl Dmp2000 {
             self.advance_paper(self.feed);
         }
 
-        let printable = if (0x20..0x7f).contains(&code) || code >= 0xa0 {
+        let printable = if let Some(character) = self.national_char(code) {
+            Some(character)
+        }
+        else if (0x20..0x7f).contains(&code) || code >= 0xa0 {
             Some(char::from(code))
         }
         else {
@@ -841,6 +910,7 @@ impl Dmp2000 {
             self.line.push((self.x, character));
         }
 
+        self.work(advance as u32 * HEAD_US_PER_PIXEL);
         self.strike_glyph(&glyph);
         self.x += advance;
     }
@@ -932,6 +1002,7 @@ impl Dmp2000 {
 
     fn graphics_column(&mut self, mode: u8, column: &[u8], dots: i32) {
         let pitch = Self::dot_pitch(mode);
+        self.work((pitch * HEAD_US_PER_PIXEL as f32) as u32);
         let x = self.x as f32 + dots as f32 * pitch;
         if x >= self.right as f32 || x >= LINE_PX as f32 {
             return; // past the end of the line: ignored
@@ -1119,6 +1190,60 @@ mod test {
             std::fs::remove_file(format!("{prefix}.{extension}")).ok();
         }
         std::fs::remove_file(format!("{prefix}_001.png")).ok();
+    }
+
+    #[test]
+    fn the_blank_lines_ending_the_last_page_are_not_text() {
+        let mut printer = printer();
+        send(&mut printer, b"a\r\n\r\n\r\n\r\n");
+        assert_eq!(printer.text(), "a\n");
+    }
+
+    #[test]
+    fn a_country_changes_its_codes() {
+        let mut printer = printer();
+        send(&mut printer, b"#{");
+        assert_eq!(printer.text(), "#{\n");
+        let usa = ink(&printer);
+        let mut uk = Dmp2000::with_os_rom(crate::roms::OS6128);
+        send(&mut uk, &[ESC, b'R', 3]);
+        send(&mut uk, b"#{");
+        assert_eq!(uk.text(), "£{\n");
+        let mut france = Dmp2000::with_os_rom(crate::roms::OS6128);
+        send(&mut france, &[ESC, b'R', 1]);
+        send(&mut france, b"#{");
+        assert_eq!(france.text(), "#é\n");
+        assert_ne!(ink(&france), usa);
+    }
+
+    #[test]
+    fn the_dip_switches_set_is_the_one_a_reset_goes_back_to() {
+        let mut printer = printer();
+        printer.set_international_set(3);
+        send(&mut printer, &[ESC, b'R', 1, ESC, b'@']);
+        send(&mut printer, b"#");
+        assert_eq!(printer.text(), "£\n");
+    }
+
+    #[test]
+    fn in_real_time_busy_lasts_what_the_work_takes() {
+        let mut printer = printer();
+        printer.set_realtime(true);
+        printer.receive(b'A');
+        // a 10 cpi character at 105 per second
+        let mut us = 0;
+        while printer.is_busy() {
+            printer.advance_us();
+            us += 1;
+        }
+        assert!((9_000..10_000).contains(&us), "{us}");
+        printer.receive(b'\n');
+        let mut us = 0;
+        while printer.is_busy() {
+            printer.advance_us();
+            us += 1;
+        }
+        assert_eq!(us, 200_000);
     }
 
     #[test]

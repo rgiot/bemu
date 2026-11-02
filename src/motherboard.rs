@@ -266,6 +266,8 @@ pub struct MotherboardBuilder {
     dmp2000: bool,
     /// The files it writes by itself, once idle.
     dmp2000_export: Option<&'static str>,
+    dmp2000_charset: u8,
+    dmp2000_realtime: bool,
     /// Willy with an OPL3LPT, at this base.
     #[cfg(feature = "willy")]
     willy_opl3: Option<u16>,
@@ -330,6 +332,13 @@ impl MotherboardBuilder {
     /// Plug an Amstrad DMP2000 printer on the printer port.
     pub fn plug_dmp2000(&mut self) -> &mut Self {
         self.dmp2000 = true;
+        self
+    }
+
+    /// The DMP2000's character set (ESC R n's numbers), and whether it takes its real time.
+    pub fn set_dmp2000(&mut self, charset: u8, realtime: bool) -> &mut Self {
+        self.dmp2000_charset = charset;
+        self.dmp2000_realtime = realtime;
         self
     }
 
@@ -429,6 +438,8 @@ impl MotherboardBuilder {
             if let Some(prefix) = self.dmp2000_export {
                 printer.export_to(prefix);
             }
+            printer.set_international_set(self.dmp2000_charset);
+            printer.set_realtime(self.dmp2000_realtime);
             motherboard.plug_printer(Box::new(printer));
         }
         if let Some(brand) = self.brand {

@@ -258,6 +258,17 @@ pub struct Args {
     #[arg(long, help_heading = EXPANSIONS)]
     pub digiblaster: bool,
 
+    /// The DMP2000's character set: usa, france, germany, uk, denmark, sweden, italy, spain, japan
+    /// (the printer's DIP switches; ESC R n changes it). The CPC's own £ is not the printer's:
+    /// uk makes code &23 a £.
+    #[arg(long, value_name = "COUNTRY", value_parser = parse_charset, requires = "dmp2000", help_heading = EXPANSIONS)]
+    pub dmp2000_charset: Option<u8>,
+
+    /// The DMP2000 takes the time a real one takes: 105 characters a second, 200 ms a line feed
+    /// (BUSY stays up meanwhile), instead of printing at once.
+    #[arg(long, requires = "dmp2000", help_heading = EXPANSIONS)]
+    pub dmp2000_realtime: bool,
+
     /// An Amstrad DMP2000 printer on the printer port (PRINT #8, LIST #8, CTRL-SHIFT-ESC...).
     ///
     /// When the run ends, what it printed is written as PREFIX.txt (the text), PREFIX.prn (the
@@ -443,6 +454,15 @@ fn parse_ram(value: &str) -> Result<usize, String> {
     else {
         Err("64, 128, ... 576 (KB)".to_owned())
     }
+}
+
+fn parse_charset(value: &str) -> Result<u8, String> {
+    const NAMES: [&str; 9] = ["usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan"];
+    NAMES
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(value))
+        .map(|position| position as u8)
+        .ok_or_else(|| NAMES.join(", "))
 }
 
 fn parse_crtc(value: &str) -> Result<CrtcType, String> {

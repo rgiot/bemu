@@ -4,6 +4,7 @@ pub mod crtc;
 pub mod csl_runner;
 pub mod disc_image;
 pub mod dmp2000;
+mod dmp2000_charsets;
 pub mod expansion;
 pub mod fdc;
 pub mod hfe;
