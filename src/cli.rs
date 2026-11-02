@@ -265,6 +265,12 @@ pub struct Args {
     #[arg(long, value_name = "COUNTRY", value_parser = parse_charset, requires = "dmp2000", help_heading = EXPANSIONS)]
     pub dmp2000_charset: Option<u8>,
 
+    /// A dump of the DMP2000's EPROM (16K): its own near letter quality characters instead of the
+    /// CPC's font (its draft ones, in the processor, are not in the dump: the two passes of the
+    /// letter quality ones are struck together).
+    #[arg(long, value_name = "FILE", requires = "dmp2000", help_heading = EXPANSIONS)]
+    pub dmp2000_rom: Option<String>,
+
     /// The DMP2000 takes the time a real one takes: 105 characters a second, 200 ms a line feed
     /// (BUSY stays up meanwhile), instead of printing at once.
     #[arg(long, requires = "dmp2000", help_heading = EXPANSIONS)]

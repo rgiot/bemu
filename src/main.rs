@@ -139,6 +139,14 @@ fn main() {
         #[cfg(not(feature = "digiblaster"))]
         without_feature("--digiblaster", "digiblaster");
     }
+    if let Some(path) = &args.dmp2000_rom {
+        let eprom = std::fs::read(path).unwrap_or_else(|e| panic!("--dmp2000-rom {path}: {e}"));
+        builder.set_dmp2000_font(Box::leak(eprom.into_boxed_slice()));
+    }
+    if let Some(path) = &args.dmp2000_rom {
+        let eprom = std::fs::read(path).unwrap_or_else(|e| panic!("--dmp2000-rom {path}: {e}"));
+        builder.set_dmp2000_font(Box::leak(eprom.into_boxed_slice()));
+    }
     if let Some(prefix) = &args.dmp2000 {
         // the builder is Copy: the prefix lives as long as the program
         builder

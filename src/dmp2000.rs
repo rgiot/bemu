@@ -206,9 +206,28 @@ struct Download {
     columns: [u8; 11]
 }
 
+/// A character of the printer's EPROM: the attribute (as a download character's: bit 7 clear
+/// when it descends, bits 4-6 where it starts and bits 0-3 where it ends in the 11 columns) and
+/// the 11 columns of each of the two passes.
+#[derive(Clone, Debug)]
+struct RealGlyph {
+    attribute: u8,
+    pass: [[u8; 11]; 2]
+}
+
+/// The needles a column byte strikes: the top bit is the first needle.
+fn pins_of(column: u8) -> u16 {
+    (0..8).filter(|pin| column & (0x80 >> pin) != 0).map(|pin| 1u16 << pin).sum::<u16>()
+}
+
 /// A glyph, seen by the needles: the pins (bit n: the needle n) struck in each column.
 struct Glyph {
     columns: Vec<u16>,
+    /// The second pass of a near letter quality character (struck half a dot lower and to the
+    /// right of the first).
+    second: Option<Vec<u16>>,
+    /// Needles the character is lowered by (a descender).
+    descent: i32,
     /// Columns before the first and after the last the proportional spacing drops.
     first: usize,
     last: usize
@@ -251,6 +270,8 @@ pub struct Dmp2000 {
     work_us: u32,
     download_selected: bool,
     downloads: Vec<Option<Download>>,
+    /// The printer's own characters, from its EPROM (see [`Self::load_font_rom`]).
+    real_font: Option<Vec<RealGlyph>>,
     /// The density the ESC K, L, Y, Z set (ESC ? changes it).
     density_modes: [u8; 4],
 
@@ -315,6 +336,7 @@ impl Dmp2000 {
             work_us: 0,
             download_selected: false,
             downloads: vec![None; 256],
+            real_font: None,
             density_modes: [0, 1, 2, 3],
             x: 0,
             y: TOP_OF_FORM,
@@ -373,6 +395,33 @@ impl Dmp2000 {
     pub fn set_international_set(&mut self, set: u8) {
         self.dip_set = set.min(8);
         self.international_set = self.dip_set;
+    }
+
+    /// The printer's own characters, from a dump of its EPROM (16K): the near letter quality
+    /// font of 128 characters, 12 bytes each (an attribute, then 11 columns, the needles' bits
+    /// top first), the first pass from `&3400` and the second from `&3A00`. With it the
+    /// characters are the printer's (the draft ones, in the processor's internal ROM, are not
+    /// in the dump: the draft is the two passes of the letter quality struck together).
+    pub fn load_font_rom(&mut self, rom: &[u8]) -> Result<(), String> {
+        const FIRST_PASS: usize = 0x3400;
+        const SECOND_PASS: usize = 0x3a00;
+        if rom.len() < 0x4000 {
+            return Err(format!("{} bytes: the printer's EPROM is 16K", rom.len()));
+        }
+        let font: Vec<RealGlyph> = (0..128)
+            .map(|code| {
+                let mut pass = [[0u8; 11]; 2];
+                for (which, base) in [FIRST_PASS, SECOND_PASS].into_iter().enumerate() {
+                    pass[which].copy_from_slice(&rom[base + code * 12 + 1..base + code * 12 + 12]);
+                }
+                RealGlyph { attribute: rom[FIRST_PASS + code * 12], pass }
+            })
+            .collect();
+        if font[usize::from(b'A')].pass[0].iter().all(|&column| column == 0) {
+            return Err("no A where the near letter quality font should be: not a DMP2000 EPROM".to_owned());
+        }
+        self.real_font = Some(font);
+        Ok(())
     }
 
     /// BUSY lasts as long as the real printer's work: 105 characters per second, 200 ms a
@@ -866,13 +915,29 @@ impl Dmp2000 {
     fn glyph(&self, code: u8) -> Glyph {
         if self.download_selected {
             if let Some(download) = &self.downloads[usize::from(code)] {
-                let columns: Vec<u16> = download
-                    .columns
-                    .iter()
-                    .map(|&data| (0..8).filter(|pin| data & (0x80 >> pin) != 0).map(|pin| 1u16 << pin).sum::<u16>())
-                    .collect();
+                let columns: Vec<u16> = download.columns.iter().map(|&data| pins_of(data)).collect();
                 let first = usize::from(download.start).min(columns.len());
-                return Glyph { columns, first, last: 10 };
+                return Glyph { columns, second: None, descent: 0, first, last: 10 };
+            }
+        }
+        if let Some(font) = &self.real_font {
+            // the country's character is in the codes below 32 of the EPROM
+            let code = match self.national_char(code) {
+                Some(character) => dmp2000_charsets::eprom_code(character),
+                None => Some(code)
+            };
+            if let Some(real) = code.and_then(|code| font.get(usize::from(code))) {
+                let first = usize::from(real.attribute >> 4 & 7);
+                let last = usize::from(real.attribute & 15).saturating_sub(1).min(10);
+                let pass = |which: usize| -> Vec<u16> { real.pass[which].iter().map(|&data| pins_of(data)).collect() };
+                // the draft is one pass: the two of the letter quality together
+                return Glyph {
+                    columns: if self.nlq { pass(0) } else { pass(0).iter().zip(pass(1)).map(|(a, b)| a | b).collect() },
+                    second: self.nlq.then(|| pass(1)),
+                    descent: i32::from(real.attribute & 0x80 == 0),
+                    first,
+                    last
+                };
             }
         }
         let rows = &self.rom_glyph(code);
@@ -881,7 +946,7 @@ impl Dmp2000 {
             .collect();
         let used: Vec<usize> = (0..8).filter(|&column| columns[column] != 0).collect();
         let (first, last) = (used.first().copied().unwrap_or(0), used.last().copied().unwrap_or(0));
-        Glyph { columns, first, last }
+        Glyph { columns, second: None, descent: 0, first, last }
     }
 
     /// The country's own character at `code`, when it has one.
@@ -955,24 +1020,28 @@ impl Dmp2000 {
         let strength = if passes.len() == 1 { 0.85 } else { 0.6 };
         let radius = if self.nlq { 1.2 } else { 1.5 } * if self.condensed { 0.9 } else { 1.0 };
 
-        for (column, &pins) in glyph.columns.iter().enumerate() {
-            for pin in 0..8 {
-                if pins & (1 << pin) == 0 {
-                    continue;
-                }
-                // sub and superscripts squeeze the 8 needles in 4
-                let row = match self.script {
-                    None => pin as f32,
-                    Some(Script::Super) => pin as f32 / 2.0,
-                    Some(Script::Sub) => pin as f32 / 2.0 + 5.0
-                };
-                let slant = if self.italic { (7.0 - pin as f32) * column_pitch / 4.0 } else { 0.0 };
-                // a double width dot is struck twice, side by side
-                let sides: &[f32] = if self.double_width { &[0.0, 0.5] } else { &[0.0] };
-                for (&(dx, dy), &side) in passes.iter().flat_map(|pass| sides.iter().map(move |side| (pass, side))) {
-                    let x = side * column_pitch + LEFT_PX as f32 + self.x as f32 + column as f32 * column_pitch + 1.0 - shift + slant + dx;
-                    let y = self.head_px() + feed_px(PIN_PITCH) * row + dy;
-                    self.strike(x, y, radius, strength);
+        let layers = std::iter::once((&glyph.columns, 0.0, 0.0)).chain(glyph.second.as_ref().map(|second| (second, 1.0, 1.0)));
+        for (columns, layer_dx, layer_dy) in layers {
+            for (column, &pins) in columns.iter().enumerate() {
+                for pin in 0..8 {
+                    if pins & (1 << pin) == 0 {
+                        continue;
+                    }
+                    let needle = pin + glyph.descent;
+                    // sub and superscripts squeeze the 8 needles in 4
+                    let row = match self.script {
+                        None => needle as f32,
+                        Some(Script::Super) => needle as f32 / 2.0,
+                        Some(Script::Sub) => needle as f32 / 2.0 + 5.0
+                    };
+                    let slant = if self.italic { (7.0 - pin as f32) * column_pitch / 4.0 } else { 0.0 };
+                    // a double width dot is struck twice, side by side
+                    let sides: &[f32] = if self.double_width { &[0.0, 0.5] } else { &[0.0] };
+                    for (&(dx, dy), &side) in passes.iter().flat_map(|pass| sides.iter().map(move |side| (pass, side))) {
+                        let x = side * column_pitch + LEFT_PX as f32 + self.x as f32 + column as f32 * column_pitch + 1.0 - shift + slant + dx + layer_dx;
+                        let y = self.head_px() + feed_px(PIN_PITCH) * row + dy + layer_dy;
+                        self.strike(x, y, radius, strength);
+                    }
                 }
             }
         }
@@ -1309,6 +1378,58 @@ mod test {
         let page = &printer.pages()[0];
         let rows = page.ink.iter().filter(|row| row.is_some()).count();
         assert!(rows > 0 && rows < page.height as usize / 10, "{rows} rows");
+    }
+
+    /// An EPROM with an `A` of one column of needles (and its second pass another), a `g` that
+    /// descends.
+    fn eprom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x4000];
+        for (pass, base) in [0x3400usize, 0x3a00].into_iter().enumerate() {
+            let a = base + usize::from(b'A') * 12;
+            rom[a] = 0x2a; // start 2, end 10, does not descend (bit 7 set would be "no")
+            rom[a] |= 0x80;
+            rom[a + 1 + 5] = if pass == 0 { 0xff } else { 0x81 };
+            let g = base + usize::from(b'g') * 12;
+            rom[g] = 0x0a; // bit 7 clear: descends
+            rom[g + 1 + 5] = 0x80; // the top needle only
+        }
+        rom
+    }
+
+    #[test]
+    fn the_printers_own_characters_come_from_its_eprom() {
+        let mut printer = printer();
+        assert!(printer.load_font_rom(&[0; 100]).is_err());
+        assert!(printer.load_font_rom(&vec![0; 0x4000]).is_err(), "no A in it");
+        printer.load_font_rom(&eprom()).unwrap();
+        let glyph = printer.glyph(b'A');
+        // 11 columns; the draft is the two passes together
+        assert_eq!(glyph.columns.len(), 11);
+        assert_eq!(glyph.columns[5], 0xff);
+        assert!(glyph.second.is_none());
+        assert_eq!(glyph.descent, 0);
+        assert_eq!((glyph.first, glyph.last), (2, 9));
+        // the near letter quality has its second pass
+        send(&mut printer, &[ESC, b'x', 1]);
+        assert_eq!(printer.glyph(b'A').second.unwrap()[5], 0x81);
+        // a descender is lowered
+        assert_eq!(printer.glyph(b'g').descent, 1);
+    }
+
+    #[test]
+    fn a_descender_is_struck_a_needle_lower() {
+        let mut high = printer();
+        high.load_font_rom(&eprom()).unwrap();
+        let mut low = printer();
+        low.load_font_rom(&eprom()).unwrap();
+        send(&mut high, b"A");
+        send(&mut low, b"g");
+        let first_row = |printer: &Dmp2000| {
+            let page = &printer.pages()[0];
+            (0..page.height).find(|&y| page.ink[y as usize].is_some()).unwrap()
+        };
+        // 'A' has all its needles, 'g' only the top one: that one is a needle (1/72 inch) lower
+        assert!(first_row(&low) > first_row(&high));
     }
 
     #[test]

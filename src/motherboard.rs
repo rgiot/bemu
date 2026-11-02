@@ -267,6 +267,8 @@ pub struct MotherboardBuilder {
     /// The files it writes by itself, once idle.
     dmp2000_export: Option<&'static str>,
     dmp2000_charset: u8,
+    /// The printer's EPROM, for its own characters.
+    dmp2000_font: Option<&'static [u8]>,
     dmp2000_realtime: bool,
     /// Willy with an OPL3LPT, at this base.
     #[cfg(feature = "willy")]
@@ -332,6 +334,12 @@ impl MotherboardBuilder {
     /// Plug an Amstrad DMP2000 printer on the printer port.
     pub fn plug_dmp2000(&mut self) -> &mut Self {
         self.dmp2000 = true;
+        self
+    }
+
+    /// The DMP2000's EPROM (its characters).
+    pub fn set_dmp2000_font(&mut self, eprom: &'static [u8]) -> &mut Self {
+        self.dmp2000_font = Some(eprom);
         self
     }
 
@@ -437,6 +445,11 @@ impl MotherboardBuilder {
             let mut printer = crate::dmp2000::Dmp2000::with_os_rom(crate::roms::OS6128);
             if let Some(prefix) = self.dmp2000_export {
                 printer.export_to(prefix);
+            }
+            if let Some(eprom) = self.dmp2000_font {
+                if let Err(e) = printer.load_font_rom(eprom) {
+                    eprintln!("--dmp2000-rom: {e}");
+                }
             }
             printer.set_international_set(self.dmp2000_charset);
             printer.set_realtime(self.dmp2000_realtime);

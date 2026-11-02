@@ -47,6 +47,13 @@ fn lower(glyph: [u8; 8]) -> [u8; 8] {
     lowered
 }
 
+/// Where the printer's EPROM keeps a national character (codes 0-31: the font of its near
+/// letter quality has the ASCII ones where ASCII has them).
+pub fn eprom_code(character: char) -> Option<u8> {
+    const CODES: &str = "àèùòì°£¡¿Ññ¤₧Ååç§ßÆæØø¨ÄÖÜäöüÉé¥";
+    CODES.chars().position(|c| c == character).map(|code| code as u8)
+}
+
 /// The printer's `^`: the CPC's font has an arrow at that code.
 pub fn caret() -> [u8; 8] {
     art(["..##....", ".#..#...", "#....#..", "........", "........", "........", "........", "........"])
@@ -185,6 +192,19 @@ mod test {
                 assert!(glyph.iter().any(|&row| row != 0), "{character} is blank");
             }
         }
+    }
+
+    #[test]
+    fn the_eprom_has_every_national_character() {
+        for set in SETS {
+            for character in set.chars().filter(|c| !c.is_ascii()) {
+                assert!(eprom_code(character).is_some(), "{character}");
+            }
+        }
+        assert_eq!(eprom_code('à'), Some(0));
+        assert_eq!(eprom_code('£'), Some(6));
+        assert_eq!(eprom_code('¥'), Some(31));
+        assert_eq!(eprom_code('a'), None);
     }
 
     #[test]
