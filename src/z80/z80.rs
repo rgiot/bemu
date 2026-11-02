@@ -740,6 +740,19 @@ impl Z80 {
 
                     false
                 }
+                // A DD/FD prefix followed by another prefix: the first one was only its own M1 (4
+                // T-states), the new one starts afresh - `FD DD 21 nn nn` is `LD IX,nnnn`, `DD ED
+                // 44` is `NEG` (Zilog's Z80 user manual; RE-WIRED's loader starts with `FD DD 21`).
+                0xdd | 0xfd | 0xed if matches!(current_prefix, OpcodePrefix::Dd | OpcodePrefix::Fd) => {
+                    self.pending_ssm_low = None;
+                    let prefix = match self.ir.get() {
+                        0xdd => OpcodePrefix::Dd,
+                        0xfd => OpcodePrefix::Fd,
+                        _ => OpcodePrefix::Ed
+                    };
+                    self.next_state = MCycle::FetchOpcode(TState::T1, 0, prefix);
+                    false
+                }
                 0xcb if matches!(current_prefix, OpcodePrefix::None | OpcodePrefix::Dd | OpcodePrefix::Fd) => {
                     self.pending_ssm_low = None;
                     match current_prefix {
