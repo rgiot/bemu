@@ -136,15 +136,16 @@ impl Gfx {
     }
 
     /// Draw `mode`'s picture of the frame already uploaded (`again`: the same frame shown on
-    /// one more refresh, the CRT's picture of it already drawn).
-    fn draw(&mut self, mode: DisplayMode, again: bool) -> Result<(), String> {
+    /// one more refresh, the CRT's picture of it already drawn). Whether it was shown: not when
+    /// the surface had to be configured again (a resize, a fullscreen switch).
+    fn draw(&mut self, mode: DisplayMode, again: bool) -> Result<bool, String> {
         let surface_texture = match self.surface.get_current_texture() {
             Ok(texture) => texture,
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
                 self.surface.configure(&self.device, &self.config);
-                return Ok(());
+                return Ok(false);
             },
-            Err(wgpu::SurfaceError::Timeout) => return Ok(()),
+            Err(wgpu::SurfaceError::Timeout) => return Ok(false),
             Err(e) => return Err(format!("cannot draw in the window: {e}"))
         };
         let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -183,7 +184,7 @@ impl Gfx {
         self.queue.submit([encoder.finish()]);
         surface_texture.present();
         self.shown = Some(mode);
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -334,9 +335,10 @@ struct App {
 }
 
 /// How many refreshes at `millihertz` show a CPC frame, if it is a multiple of 50 Hz (within
-/// half a hertz per frame shown): 1 at 50 Hz, 2 at 100 Hz... up to 4 (200 Hz).
+/// 0.1 Hz per frame shown, a "50 Hz" mode's 49.92 or 50.08): 1 at 50 Hz, 2 at 100 Hz... up to 4
+/// (200 Hz). Further off, the sound (paced by its device) would run dry or pile up.
 fn refreshes_per_frame(millihertz: u32) -> Option<u32> {
-    (1..=4u32).find(|k| (50_000 * k).abs_diff(millihertz) <= 500 * k)
+    (1..=4u32).find(|k| (50_000 * k).abs_diff(millihertz) <= 100 * k)
 }
 
 /// A video mode of `window`'s monitor at a multiple of 50 Hz, and how many of its refreshes
@@ -355,17 +357,18 @@ impl App {
     /// F11: fullscreen in a 50 Hz mode when there is one (and the system has an exclusive
     /// mode that shows us), borderless otherwise; back to the window.
     fn toggle_fullscreen(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(window) = &self.window else {
+        let Some(window) = self.window.clone() else {
             return;
         };
-        if self.fullscreen {
+        // fullscreen too when the system put the window there (macOS's green button)
+        if self.fullscreen || window.fullscreen().is_some() {
             window.set_fullscreen(None);
             self.left_fullscreen();
             return;
         }
         self.fullscreen = true;
         self.refreshes_per_frame = None;
-        let exclusive = if exclusive_fullscreen_works(event_loop) { paced_mode(window) } else { None };
+        let exclusive = if exclusive_fullscreen_works(event_loop) { paced_mode(&window) } else { None };
         if let Some((mode, k)) = exclusive {
             window.set_fullscreen(Some(Fullscreen::Exclusive(mode.clone())));
             // a mode the system turned down: borderless
@@ -381,16 +384,26 @@ impl App {
         }
         if self.refreshes_per_frame.is_none() {
             window.set_fullscreen(Some(Fullscreen::Borderless(None)));
-            // the desktop's own rate, if a multiple of 50 Hz, paces it too
-            let desktop = window.current_monitor().and_then(|monitor| monitor.refresh_rate_millihertz());
-            self.refreshes_per_frame = desktop.and_then(refreshes_per_frame);
-            match (desktop, self.refreshes_per_frame) {
-                (Some(rate), Some(k)) => eprintln!(
-                    "fullscreen: borderless at the desktop's {:.3} Hz: a CPC frame every {k} refresh(es)",
-                    f64::from(rate) / 1000.0
-                ),
-                _ => eprintln!("fullscreen: borderless at the desktop's rate (not a multiple of 50 Hz: the clock paces the emulation)")
-            }
+            self.entered_borderless();
+        }
+        window.set_cursor_visible(false);
+    }
+
+    /// In borderless fullscreen (asked for, or by the system): the desktop's own rate, if a
+    /// multiple of 50 Hz, paces the emulation, else the clock.
+    fn entered_borderless(&mut self) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        self.fullscreen = true;
+        let desktop = window.current_monitor().and_then(|monitor| monitor.refresh_rate_millihertz());
+        self.refreshes_per_frame = desktop.and_then(refreshes_per_frame);
+        match (desktop, self.refreshes_per_frame) {
+            (Some(rate), Some(k)) => eprintln!(
+                "fullscreen: borderless at the desktop's {:.3} Hz: a CPC frame every {k} refresh(es)",
+                f64::from(rate) / 1000.0
+            ),
+            _ => eprintln!("fullscreen: borderless at the desktop's rate (not a multiple of 50 Hz: the clock paces the emulation)")
         }
         window.set_cursor_visible(false);
     }
@@ -454,9 +467,14 @@ impl ApplicationHandler for App {
                 if let Some(gfx) = &mut self.gfx {
                     gfx.resize(size.width, size.height);
                 }
-                // out of fullscreen by the window's own control (macOS's green button)
-                if self.fullscreen && self.window.as_ref().is_some_and(|window| window.fullscreen().is_none()) {
+                // in or out of fullscreen by the window's own control (macOS's green button, a
+                // window manager's shortcut)
+                let system = self.window.as_ref().is_some_and(|window| window.fullscreen().is_some());
+                if self.fullscreen && !system {
                     self.left_fullscreen();
+                }
+                else if !self.fullscreen && system {
+                    self.entered_borderless();
                 }
             },
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
@@ -502,6 +520,18 @@ pub struct WinitGpuFrontend {
     /// Time between two presents, if capped.
     frame_time: Option<Duration>,
     deadline: Instant
+}
+
+impl Drop for WinitGpuFrontend {
+    /// Out of an exclusive fullscreen first: X11 keeps a video mode the program set (winit
+    /// restores the desktop's only when the window leaves it), Windows reverts it at exit.
+    fn drop(&mut self) {
+        if let Some(window) = &self.app.window {
+            if matches!(window.fullscreen(), Some(Fullscreen::Exclusive(_))) {
+                window.set_fullscreen(None);
+            }
+        }
+    }
 }
 
 impl WinitGpuFrontend {
@@ -555,6 +585,13 @@ impl WinitGpuFrontend {
     /// fullscreen mode: the vertical sync, FIFO, does it).
     fn pace(&mut self) {
         if self.app.refreshes_per_frame.is_some() {
+            // a present that didn't wait for the refresh (a hidden window, another Space):
+            // the clock's frame, so that the emulation doesn't run free
+            const FRAME: Duration = Duration::from_millis(20);
+            let took = self.deadline.elapsed();
+            if took < FRAME / 2 {
+                std::thread::sleep(FRAME - took);
+            }
             self.deadline = Instant::now();
             return;
         }
@@ -610,10 +647,11 @@ impl Frontend for WinitGpuFrontend {
         let gfx = self.gfx()?;
         gfx.use_mode(mode);
         gfx.frame.upload(&gfx.queue, frame);
-        gfx.draw(mode, false)?;
+        let mut shown = gfx.draw(mode, false)?;
         // at 100 Hz (or more) the frame on each refresh of its own: the vertical sync paces 50
+        // (the CRT's picture drawn by the first draw that was shown)
         for _ in 1..self.app.refreshes_per_frame.unwrap_or(1) {
-            self.gfx()?.draw(mode, true)?;
+            shown |= self.gfx()?.draw(mode, shown)?;
         }
         self.pace();
         Ok(())
@@ -623,7 +661,7 @@ impl Frontend for WinitGpuFrontend {
         let gfx = self.gfx()?;
         let mode = gfx.shown.unwrap_or_default();
         gfx.use_mode(mode);
-        gfx.draw(mode, false)
+        gfx.draw(mode, false).map(|_| ())
     }
 }
 
@@ -636,7 +674,9 @@ mod test {
         assert_eq!(refreshes_per_frame(50_000), Some(1));
         assert_eq!(refreshes_per_frame(49_920), Some(1), "a monitor's 49.92 Hz");
         assert_eq!(refreshes_per_frame(100_000), Some(2));
-        assert_eq!(refreshes_per_frame(99_300), Some(2), "half a hertz per frame shown");
+        assert_eq!(refreshes_per_frame(99_850), Some(2), "0.1 Hz per frame shown");
+        assert_eq!(refreshes_per_frame(99_300), None, "too far: the clock paces it");
+        assert_eq!(refreshes_per_frame(49_500), None);
         assert_eq!(refreshes_per_frame(150_000), Some(3));
         assert_eq!(refreshes_per_frame(200_000), Some(4));
         assert_eq!(refreshes_per_frame(60_000), None);
