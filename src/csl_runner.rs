@@ -1133,9 +1133,16 @@ pub fn keys_of_text(text: &str, layout: KeyboardLayout) -> Result<Vec<Vec<CpcKey
     };
     let mut strokes = Vec::new();
     let mut rest = text;
-    while let Some(open) = bracket(rest, '{') {
+    // only a group with a special key in it (`{\(CTR)h}`) is one: `{h}` stays the three characters
+    // it always was
+    let group = |text: &str| {
+        let open = bracket(text, '{')?;
+        let close = open + 1 + bracket(&text[open + 1..], '}')?;
+        text[open..close].contains("\\(").then_some((open, close))
+    };
+    while let Some((open, close)) = group(rest) {
         let after = &rest[open + 1..];
-        let close = bracket(after, '}').ok_or_else(|| format!("no }} closing the {{ of \"{}\"", &rest[open..]))?;
+        let close = close - open - 1;
         strokes.extend(keys_of_plain_text(&rest[..open], layout)?);
         let mut group: Vec<CpcKey> = Vec::new();
         for key in keys_of_plain_text(&after[..close], layout)?.into_iter().flatten() {
@@ -1204,6 +1211,9 @@ mod test {
         use CpcKey::*;
         let keys = keys_of_text(r"a{\(CTR)h}\(RET)", KeyboardLayout::default()).unwrap();
         assert_eq!(keys, vec![vec![A], vec![Control, H], vec![Return]]);
+        // braces around plain characters are only characters
+        let keys = keys_of_text("{h}", KeyboardLayout::default()).unwrap();
+        assert_eq!(keys.len(), 3);
     }
 
     #[test]

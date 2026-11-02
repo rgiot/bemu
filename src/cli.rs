@@ -193,7 +193,7 @@ pub struct Args {
 
     /// Typed on the CPC keyboard at --type-at, the keys written as in CSL's key_output: \n,
     /// \(RET), \(ESC), \(CPY), \(DEL)... and \(WAIT n), n seconds (a program's prompt) before
-    /// the keys after it.
+    /// the keys after it. Keys pressed together are in braces: {\(CTR)h} is Ctrl+H.
     #[arg(long = "type", value_name = "TEXT", value_parser = parse_typed, help_heading = TYPING)]
     pub text: Option<String>,
 

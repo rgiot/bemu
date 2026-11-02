@@ -39,8 +39,11 @@ const FEED_UNITS_PER_INCH: i32 = 216;
 const PIN_PITCH: i32 = 3;
 /// 1/6 inch.
 const DEFAULT_FEED: i32 = 36;
-/// The first line of a page is one line under the perforation.
-const TOP_OF_FORM: i32 = DEFAULT_FEED;
+/// A page starts at the top of its sheet.
+const TOP_OF_FORM: i32 = 0;
+/// The first line's needles are 1/18 inch under the perforation, so that the 66th line's end
+/// above the next one.
+const PAPER_TOP_OFFSET: i32 = 12;
 const DEFAULT_PAGE_LENGTH: i32 = 11 * FEED_UNITS_PER_INCH;
 
 /// Cycles the printer is BUSY for, in microseconds. Short ones: the head's speed is not
@@ -65,7 +68,8 @@ fn feed_px(units: i32) -> f32 {
 /// A sheet: the ink the needles left, 0 (none) to 255 (a lot).
 #[derive(Clone)]
 pub struct Page {
-    ink: Vec<u8>,
+    /// A row of pixels once a needle has struck it.
+    ink: Vec<Option<Box<[u8]>>>,
     height: i32,
     inked: bool
 }
@@ -73,7 +77,7 @@ pub struct Page {
 impl Page {
     fn new(height_units: i32) -> Self {
         let height = feed_px(height_units).round() as i32;
-        Self { ink: vec![0; (PAPER_WIDTH_PX * height) as usize], height, inked: false }
+        Self { ink: vec![None; height as usize], height, inked: false }
     }
 
     /// A needle's dot.
@@ -85,7 +89,8 @@ impl Page {
                 let distance = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
                 let coverage = (radius + 0.5 - distance).clamp(0.0, 1.0);
                 if coverage > 0.0 {
-                    let pixel = &mut self.ink[(y * PAPER_WIDTH_PX + x) as usize];
+                    let row = self.ink[y as usize].get_or_insert_with(|| vec![0; PAPER_WIDTH_PX as usize].into_boxed_slice());
+                    let pixel = &mut row[x as usize];
                     *pixel = (f32::from(*pixel) + coverage * strength * 255.0).min(255.0) as u8;
                     self.inked = true;
                 }
@@ -148,7 +153,7 @@ impl Page {
                     }
                 }
 
-                let ink = f32::from(self.ink[(y * PAPER_WIDTH_PX + x) as usize]) / 255.0 * 0.93;
+                let ink = f32::from(self.ink[y as usize].as_ref().map_or(0, |row| row[x as usize])) / 255.0 * 0.93;
                 for (value, inked) in colour.iter().zip(INK) {
                     rgb.push((value * (1.0 - ink) + inked * ink).round() as u8);
                 }
@@ -444,8 +449,12 @@ impl Dmp2000 {
         self.raw.push(byte);
         self.unexported = true;
         self.idle_us = 0;
+        // the eighth bit is the one of the characters: a control code (ESC to cancel it) and what
+        // a command takes keep theirs
         let byte = match self.eighth_bit {
             EighthBit::Accept => byte,
+            _ if !matches!(self.parse, Parse::Idle) => byte,
+            EighthBit::Set if byte < 0x20 || byte == 0x7f => byte,
             EighthBit::Set => byte | 0x80,
             EighthBit::Unset => byte & 0x7f
         };
@@ -739,10 +748,20 @@ impl Dmp2000 {
         if self.y < 0 {
             self.y = 0;
         }
-        let foot = self.page_length - self.skip_perforation - self.feed.max(DEFAULT_FEED);
-        if units > 0 && self.y > foot {
+        // a page is its length of paper, from the top of form
+        if units > 0 && self.y >= self.page_length - self.skip_perforation {
             self.next_page();
         }
+    }
+
+    /// Where the head's top needle strikes, in pixels from the top of the sheet.
+    fn head_px(&self) -> f32 {
+        feed_px(self.y + PAPER_TOP_OFFSET)
+    }
+
+    /// The right margin, unless it is not past the left one (then it is ignored).
+    fn right_limit(&self) -> i32 {
+        if self.right > self.left { self.right } else { LINE_PX }
     }
 
     fn next_page(&mut self) {
@@ -778,7 +797,7 @@ impl Dmp2000 {
             self.horizontal_tabs.iter().copied().find(|&tab| tab > column)
         };
         if let Some(target) = target {
-            self.x = (target * cell).min(self.right);
+            self.x = (target * cell).min(self.right_limit());
         }
     }
 
@@ -890,7 +909,7 @@ impl Dmp2000 {
             cell
         };
 
-        if self.x + advance > self.right {
+        if self.x + advance > self.right_limit() {
             // the line is full: a new one starts
             self.flush_line();
             self.x = self.left;
@@ -952,7 +971,7 @@ impl Dmp2000 {
                 let sides: &[f32] = if self.double_width { &[0.0, 0.5] } else { &[0.0] };
                 for (&(dx, dy), &side) in passes.iter().flat_map(|pass| sides.iter().map(move |side| (pass, side))) {
                     let x = side * column_pitch + LEFT_PX as f32 + self.x as f32 + column as f32 * column_pitch + 1.0 - shift + slant + dx;
-                    let y = feed_px(self.y) + feed_px(PIN_PITCH) * row + dy;
+                    let y = self.head_px() + feed_px(PIN_PITCH) * row + dy;
                     self.strike(x, y, radius, strength);
                 }
             }
@@ -962,7 +981,7 @@ impl Dmp2000 {
             let mut x = 0.0;
             let cell = self.cell_width() as f32;
             while x < cell {
-                self.strike(LEFT_PX as f32 + self.x as f32 + x + 1.0, feed_px(self.y) + feed_px(PIN_PITCH) * 8.0, 1.2, 0.85);
+                self.strike(LEFT_PX as f32 + self.x as f32 + x + 1.0, self.head_px() + feed_px(PIN_PITCH) * 8.0, 1.2, 0.85);
                 x += pitch;
             }
         }
@@ -1004,18 +1023,18 @@ impl Dmp2000 {
         let pitch = Self::dot_pitch(mode);
         self.work((pitch * HEAD_US_PER_PIXEL as f32) as u32);
         let x = self.x as f32 + dots as f32 * pitch;
-        if x >= self.right as f32 || x >= LINE_PX as f32 {
+        if x >= self.right_limit() as f32 {
             return; // past the end of the line: ignored
         }
         let radius = (pitch * 0.7).clamp(1.0, 1.5);
         for pin in 0..8 {
             if column[0] & (0x80 >> pin) != 0 {
-                let y = feed_px(self.y) + feed_px(PIN_PITCH) * pin as f32;
+                let y = self.head_px() + feed_px(PIN_PITCH) * pin as f32;
                 self.strike(LEFT_PX as f32 + x + 1.0, y, radius, 0.9);
             }
         }
         if column.len() == 2 && column[1] & 0x80 != 0 {
-            let y = feed_px(self.y) + feed_px(PIN_PITCH) * 8.0;
+            let y = self.head_px() + feed_px(PIN_PITCH) * 8.0;
             self.strike(LEFT_PX as f32 + x + 1.0, y, radius, 0.9);
         }
     }
@@ -1063,7 +1082,7 @@ mod test {
     }
 
     fn ink(printer: &Dmp2000) -> u64 {
-        printer.pages().iter().flat_map(|page| page.ink.iter()).map(|&ink| u64::from(ink)).sum()
+        printer.pages().iter().flat_map(|page| page.ink.iter().flatten().flat_map(|row| row.iter())).map(|&ink| u64::from(ink)).sum()
     }
 
     #[test]
@@ -1120,7 +1139,7 @@ mod test {
         assert!(top.abs_diff(ink(&other)) * 50 < top);
         let rows = |printer: &Dmp2000| -> Vec<i32> {
             let page = &printer.pages()[0];
-            (0..page.height).filter(|&y| (0..PAPER_WIDTH_PX).any(|x| page.ink[(y * PAPER_WIDTH_PX + x) as usize] > 0)).collect()
+            (0..page.height).filter(|&y| page.ink[y as usize].as_ref().is_some_and(|row| row.iter().any(|&ink| ink > 0))).collect()
         };
         assert!(rows(&other)[0] > rows(&printer)[0] + 15);
     }
@@ -1244,6 +1263,52 @@ mod test {
             us += 1;
         }
         assert_eq!(us, 200_000);
+    }
+
+    #[test]
+    fn a_page_of_66_lines_is_a_sheet() {
+        let mut printer = printer();
+        // Protext: 66 line feeds a page, whatever is printed
+        for page in 0..3 {
+            send(&mut printer, b"x\r\n");
+            for _ in 1..66 {
+                send(&mut printer, b"\r\n");
+            }
+            assert_eq!(printer.inked_pages().count(), page + 1);
+        }
+        // the first line of each is at the top, not one line further each time
+        let rows = |page: &Page| (0..page.height).find(|&y| page.ink[y as usize].is_some()).unwrap();
+        let first = rows(&printer.pages()[0]);
+        assert_eq!(rows(&printer.pages()[2]), first);
+        assert!(first < DPI / 4);
+    }
+
+    #[test]
+    fn the_eighth_bit_can_be_cancelled_after_it_was_set() {
+        let mut printer = printer();
+        send(&mut printer, &[ESC, b'>', b'A']);
+        send(&mut printer, &[ESC, b'#']);
+        send(&mut printer, b"B");
+        // the ESC # was understood (it did not print as a character, nor did its #)
+        assert!(!printer.text().contains('#'), "{:?}", printer.text());
+        assert!(printer.text().ends_with("B\n"));
+    }
+
+    #[test]
+    fn a_right_margin_before_the_left_one_is_ignored() {
+        let mut printer = printer();
+        send(&mut printer, &[ESC, b'l', 10, ESC, b'Q', 5]);
+        send(&mut printer, b"\rabc");
+        assert_eq!(printer.text(), format!("{}abc\n", " ".repeat(10)));
+    }
+
+    #[test]
+    fn a_page_only_keeps_the_rows_a_needle_struck() {
+        let mut printer = printer();
+        send(&mut printer, b"x");
+        let page = &printer.pages()[0];
+        let rows = page.ink.iter().filter(|row| row.is_some()).count();
+        assert!(rows > 0 && rows < page.height as usize / 10, "{rows} rows");
     }
 
     #[test]
