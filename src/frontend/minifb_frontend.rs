@@ -57,6 +57,9 @@ impl Frontend for MinifbFrontend {
     }
 
     fn poll_input(&mut self) -> HostInput {
+        if self.window.is_key_pressed(Key::F11, minifb::KeyRepeat::No) {
+            eprintln!("fullscreen: this window has none, --frontend winit has (F11 or Ctrl+Cmd+F)");
+        }
         let down: Vec<HostKey> = self.window.get_keys().into_iter().filter_map(host_key).collect();
         let typed = std::mem::take(&mut *self.typed.0.borrow_mut());
         let placed = match &mut self.places {
