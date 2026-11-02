@@ -92,7 +92,10 @@ export class Bemu {
     #lastTime = undefined;
     #owed = 0;
     #intervals = [];
-    #vsyncPaced = false;
+    /** 1, 2, 3 or 4 refreshes of a display at 50, 100, 150 or 200 Hz per CPC frame; 0 at
+     * another rate. */
+    #refreshesPerFrame = 0;
+    #refreshes = 0;
     #audio = null;
     #audioStarting = null;
     #volume = 1;
@@ -138,8 +141,10 @@ export class Bemu {
     get running() { return this.#running; }
     /** Whether a CSL script is playing. */
     get cslRunning() { return this.#core.csl_running(); }
-    /** Whether the frames follow the display's own 50 Hz refresh. */
-    get vsyncPaced() { return this.#vsyncPaced; }
+    /** Whether the frames follow the display's own refresh (50 Hz, or 100, 150 or 200). */
+    get vsyncPaced() { return this.#refreshesPerFrame > 0; }
+    /** At 50, 100, 150 or 200 Hz, how many refreshes show a CPC frame (1 to 4); else 0. */
+    get refreshesPerFrame() { return this.#refreshesPerFrame; }
     /** Times real time: 1, another factor, or Infinity (full speed). */
     get speed() { return this.#speed; }
 
@@ -432,10 +437,14 @@ export class Bemu {
                 this.#core.redraw();
                 return;
             }
-            if (this.#vsyncPaced) {
-                // one CPC frame per refresh of a 50 Hz display
-                this.#runFrame();
-                this.#core.redraw();
+            if (this.#refreshesPerFrame > 0) {
+                // one CPC frame every refresh of a 50 Hz display, every other one at 100 Hz...:
+                // each frame on the screen as long as the others (the last one stays shown)
+                if (++this.#refreshes >= this.#refreshesPerFrame) {
+                    this.#refreshes = 0;
+                    this.#runFrame();
+                    this.#core.redraw();
+                }
                 return;
             }
             let frames;
@@ -475,6 +484,7 @@ export class Bemu {
         if (this.#intervals.length < 30) return;
         const sorted = [...this.#intervals].sort((a, b) => a - b);
         const median = sorted[sorted.length >> 1];
-        this.#vsyncPaced = Math.abs(1000 / median - 50) < 1.5;
+        const hertz = 1000 / median;
+        this.#refreshesPerFrame = [1, 2, 3, 4].find((k) => Math.abs(hertz - 50 * k) < 1.5 * k) ?? 0;
     }
 }

@@ -106,7 +106,8 @@ and `fetch` don't work from `file://`.
 - `canvas`.
 - `running`.
 - `cslRunning`.
-- `vsyncPaced`: whether frames follow a 50 Hz display, see "Timing".
+- `vsyncPaced`: whether frames follow the display's refresh (50 Hz, or 100, 150, 200), see "Timing".
+- `refreshesPerFrame`: then how many refreshes show a CPC frame (1 at 50 Hz, 2 at 100 Hz…), else `0`.
 - `speed`: `1`, another factor, or `Infinity` (full speed).
 - `muted`.
 - `tape`: `{ position, duration, playing }` (seconds), or `undefined` without a tape.
@@ -177,11 +178,15 @@ setTimeout(() => emu.setSpeed(1), 10000); // back to real time once it has loade
 
 ### Timing
 
-A web page cannot set the display's refresh rate, so the library measures it.
-- **About 50 Hz** (for example a monitor set to 50 Hz): one CPC frame is shown per refresh, as
-  the desktop's 50 Hz fullscreen does. Scrolling is then smooth.
-- **Otherwise:** the sound's clock paces the emulation, as on the desktop. Before sound starts,
-  the browser's clock does, at 50 frames per second.
+A web page cannot set the display's refresh rate (the browser's fullscreen only enlarges the
+page: the screen keeps the desktop's rate), so the library measures it.
+- **About 50 Hz, 100, 150 or 200 Hz** (a monitor set to it): one CPC frame is shown every 1, 2,
+  3 or 4 refreshes, as the desktop's fullscreen does. Every frame stays on the screen as long as
+  the others, so scrolling is smooth.
+- **Otherwise** (60, 120, 144 Hz…): the sound's clock paces the emulation, as on the desktop,
+  and each refresh shows the latest frame: at 60 Hz, one frame in five is shown twice, which
+  a scrolling shows as a slight judder. Before sound starts, the browser's clock paces it, at
+  50 frames per second.
 
 ### Drawing
 - **WebGPU:** used when the browser has it. The picture fills the canvas, letterboxed, with the
