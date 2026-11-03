@@ -544,9 +544,10 @@ mod test {
         assert_eq!(psg.selected_register(), Some(6));
 
         assert_eq!(psg.bus_cycle(BusControl::Write, 0x99), None);
-        assert_eq!(psg.register(6), 0x99);
+        // the noise period keeps 5 bits
+        assert_eq!(psg.register(6), 0x19);
 
-        assert_eq!(psg.bus_cycle(BusControl::Read, 0xAA /* ignored */), Some(0x99));
+        assert_eq!(psg.bus_cycle(BusControl::Read, 0xAA /* ignored */), Some(0x19));
     }
 
     #[test]
@@ -914,12 +915,14 @@ mod test {
     }
 
     #[test]
-    fn register_reads_are_not_masked_by_the_sound_chip() {
+    fn register_reads_keep_only_the_bits_the_ay_uses() {
+        // Kevin Thacker's acid test "reg write/read mask test", on a CPC
         let mut psg = Psg::default();
-        write(&mut psg, 1, 0xff);
-        assert_eq!(psg.chip().read_register(1), 0x0f);
-        psg.bus_cycle(BusControl::LatchAddress, 1);
-        assert_eq!(psg.bus_cycle(BusControl::Read, 0), Some(0xff));
+        for (register, mask) in REGISTER_MASKS.iter().enumerate() {
+            write(&mut psg, register as u8, 0xff);
+            psg.bus_cycle(BusControl::LatchAddress, register as u8);
+            assert_eq!(psg.bus_cycle(BusControl::Read, 0), Some(*mask), "register {register}");
+        }
     }
 
     // -------------------------------------------------------- resampling

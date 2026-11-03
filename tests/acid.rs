@@ -48,8 +48,9 @@ fn return_with(motherboard: &mut Motherboard, a: u8, carry: bool) {
 }
 
 /// Runs `bin` (an AMSDOS binary) on a 6128 with `crtc`, or a 6128+ for CRTC 3: what it printed,
-/// up to "Done." or `seconds` of emulated time.
-fn printed(bin: &str, crtc: CrtcType, seconds: usize) -> String {
+/// up to "Done." or `seconds` of emulated time. The key waits get `answers`, then `n`.
+fn printed(bin: &str, crtc: CrtcType, seconds: usize, answers: &[u8]) -> String {
+    let mut answers = answers.iter().copied();
     let file = std::fs::read(format!("{FIXTURES}/{bin}")).unwrap_or_else(|e| panic!("{bin}: {e}"));
     let (header, body) = file.split_at(128);
     let load = u16::from_le_bytes([header[0x15], header[0x16]]);
@@ -91,7 +92,8 @@ fn printed(bin: &str, crtc: CrtcType, seconds: usize) -> String {
                 if log.contains("Done.") {
                     break;
                 }
-                return_with(&mut motherboard, b'n', true);
+                let key = answers.next().unwrap_or(b'n');
+                return_with(&mut motherboard, key, true);
                 continue;
             }
             0xbb09 => {
@@ -120,8 +122,8 @@ fn results(log: &str) -> Vec<(String, bool)> {
 
 /// Runs `bin` and checks its results: every test it ran passed but the `known_failures`, and it
 /// ran at least `expected` tests.
-fn check(bin: &str, crtc: CrtcType, seconds: usize, expected: usize, known_failures: &[&str]) {
-    let log = printed(bin, crtc, seconds);
+fn check(bin: &str, crtc: CrtcType, seconds: usize, answers: &[u8], expected: usize, known_failures: &[&str]) {
+    let log = printed(bin, crtc, seconds, answers);
     let results = results(&log);
     let new: Vec<&str> = results
         .iter()
@@ -137,4 +139,56 @@ fn check(bin: &str, crtc: CrtcType, seconds: usize, expected: usize, known_failu
     }
     assert!(new.is_empty(), "{bin}: new failures {new:?}\n{log}");
     assert!(results.len() >= expected, "{bin}: {} tests ran, {expected} expected\n{log}", results.len());
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn cpc() {
+    check("cpctest.bin", CrtcType::Crtc0, 120, &[], 4, &[
+        // On Kevin's type 0 CPCs the VSYNC, read on the PPI, still runs 1 us later than bemu ends it
+        "CPC int (HSYNC width)",
+        // "GA I/O decode test" isn't listed: it gives io_decode an uninitialised BC as its restore
+        // hook (every other caller sets it), and bemu jumps to &0000 with it
+    ]);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn ppi() {
+    check("ppi.bin", CrtcType::Crtc0, 900, &[], 23, &[
+        "mode 2: port A mode 2, port B mode 0, port C bits input",
+        "mode 1: port A mode 1 (input), port B mode 0, port C bits output",
+        "mode 1: port A mode 1 (output), port B mode 0, port C bits output",
+        "mode 1: port A mode 1 (input), port B mode 0, port C bits input",
+        "mode 1: port A mode 1 (output), port B mode 0, port C bits input",
+    ]);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn psg() {
+    check("psg.bin", CrtcType::Crtc0, 900, &[], 20, &[]);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn z80() {
+    check("cpu.bin", CrtcType::Crtc0, 300, &[], 8, &[]);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn z80_in_flags() {
+    check("inout.bin", CrtcType::Crtc0, 120, &[], 8, &[]);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn asic_crtc_status() {
+    check("crtc3_4_status.bin", CrtcType::Crtc3, 300, &[], 5, &[
+        // both fail on Kevin's 6128+ and type 4 CPC too, the same way ("failed 4 times, remainder
+        // ok", "ok, then failed")
+        "Vsync end",
+        "Cursor active on scanline",
+    ]);
 }
