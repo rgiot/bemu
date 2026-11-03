@@ -155,13 +155,7 @@ fn cpc() {
 #[test]
 #[ignore = "slow: minutes of emulated time"]
 fn ppi() {
-    check("ppi.bin", CrtcType::Crtc0, 900, &[], 23, &[
-        "mode 2: port A mode 2, port B mode 0, port C bits input",
-        "mode 1: port A mode 1 (input), port B mode 0, port C bits output",
-        "mode 1: port A mode 1 (output), port B mode 0, port C bits output",
-        "mode 1: port A mode 1 (input), port B mode 0, port C bits input",
-        "mode 1: port A mode 1 (output), port B mode 0, port C bits input",
-    ]);
+    check("ppi.bin", CrtcType::Crtc0, 900, &[], 23, &[]);
 }
 
 #[test]
