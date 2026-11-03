@@ -203,9 +203,9 @@ fn read_status(crtc: CrtcType, vertical_border: bool, noise: bool) -> u8 {
 
 #[test]
 fn only_crtc1_has_a_status_register() {
-    // ACCC §21.3.1/§21.3.3: x L V x x x x x, V = BORDER by R6, L = 0 (R16/17 readable)
-    assert_eq!(read_status(Crtc1, true, false), 1 << 5);
-    assert_eq!(read_status(Crtc1, false, false), 0);
+    // ACCC §21.3.1/§21.3.3: x L V x x x x x, V = BORDER by R6, L = 1 (no light pen strobe)
+    assert_eq!(read_status(Crtc1, true, false), 0x40 | 1 << 5);
+    assert_eq!(read_status(Crtc1, false, false), 0x40);
 }
 
 #[test]
