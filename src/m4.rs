@@ -16,7 +16,10 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use cpclib_disc::amsdos::{AmsdosCatalog, AmsdosManagerNonMut};
+use cpclib_disc::edsk::{ExtendedDsk, Head};
 
 use crate::chip::Chip;
 use crate::expansion_port::{ExpansionDevice, ExpansionPin, ExpansionPort};
@@ -418,7 +421,9 @@ impl M4Board {
 
     fn change_dir(&mut self, name: &str) -> bool {
         let Ok(path) = self.host_path(name) else { return false };
-        if !path.is_dir() {
+        // a DSK image is entered as a directory, its AMSDOS files in it (read only)
+        let image = matches!(dsk_parts(&path), Some((_, None))) && dsk_files(&path).is_some();
+        if !path.is_dir() && !image {
             return false;
         }
         let Ok(relative) = path.strip_prefix(&self.root) else { return false };
@@ -443,6 +448,18 @@ impl M4Board {
         self.close(fd);
         let Ok(mut path) = self.host_path(&name) else { return vec![fd, FR_NO_PATH] };
         let writing = mode & FA_WRITE != 0;
+        if let Some((image, Some(file))) = dsk_parts(&path) {
+            if writing {
+                return vec![fd, FR_DENIED];
+            }
+            return match dsk_file(&image, &file) {
+                Some(data) => {
+                    self.files.insert(fd, OpenFile::Memory(Cursor::new(data)));
+                    vec![fd, 0]
+                },
+                None => vec![fd, FR_NO_FILE]
+            };
+        }
         if !writing && !path.is_file() && !name.contains('.') {
             // as AMSDOS: the name as given, then .BAS, then .BIN
             for extension in ["bas", "bin"] {
@@ -614,9 +631,25 @@ impl M4Board {
         }
     }
 
-    /// The entries of the current directory, by name, those starting with a dot left out.
+    /// The entries of the current directory, by name, those starting with a dot left out; in a
+    /// DSK image, its AMSDOS files (not the system ones).
     fn directory(&self) -> Vec<DirEntry> {
         let Ok(path) = self.host_path(".") else { return Vec::new() };
+        if let Some((_, catalog)) = dsk_files(&path) {
+            let mut entries: Vec<DirEntry> = (0..catalog.len())
+                .map(|index| &catalog[index])
+                .filter(|entry| !entry.system())
+                .map(|entry| DirEntry {
+                    name: entry.file_name().ibm_filename(),
+                    directory: false,
+                    size: entry.size() as u64 * 1024,
+                    read_only: true
+                })
+                .collect();
+            entries.retain(|entry| self.pattern.is_empty() || wildcard(&self.pattern, &entry.name));
+            entries.sort_by_key(|entry| entry.name.to_ascii_uppercase());
+            return entries;
+        }
         let mut entries: Vec<DirEntry> = std::fs::read_dir(path)
             .map(|entries| {
                 entries
@@ -734,6 +767,41 @@ impl ExpansionDevice for M4Board {
 }
 
 /// The file type of a valid AMSDOS header (its checksum: bytes 0-66, at 67-68).
+/// A DSK image on the SD card (`path` itself), or a file of one (`path` in it): the image and
+/// the file's name.
+fn dsk_parts(path: &Path) -> Option<(PathBuf, Option<String>)> {
+    let is_image = |path: &Path| path.is_file() && path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("dsk"));
+    if is_image(path) {
+        return Some((path.to_path_buf(), None));
+    }
+    let parent = path.parent()?;
+    is_image(parent).then(|| (parent.to_path_buf(), path.file_name().map(|name| name.to_string_lossy().into_owned())))
+}
+
+/// A DSK image's disc and AMSDOS catalogue (its data format's, side A).
+fn dsk_files(image: &Path) -> Option<(ExtendedDsk, AmsdosCatalog)> {
+    let disc = ExtendedDsk::from_buffer(&std::fs::read(image).ok()?).ok()?;
+    let catalog = AmsdosManagerNonMut::new_from_disc(&disc, Head::A).catalog().ok()?.to_amsdos_catalog();
+    Some((disc, catalog))
+}
+
+/// The file `name` of a DSK image, its AMSDOS header included, as AMSDOS finds it: the name as
+/// given, the case ignored, then with .BAS, then .BIN.
+fn dsk_file(image: &Path, name: &str) -> Option<Vec<u8>> {
+    let (disc, catalog) = dsk_files(image)?;
+    let mut candidates = vec![name.to_owned()];
+    if !name.contains('.') {
+        candidates.extend([format!("{name}.BAS"), format!("{name}.BIN")]);
+    }
+    let entry = candidates.iter().find_map(|candidate| {
+        (0..catalog.len())
+            .map(|index| &catalog[index])
+            .find(|entry| entry.file_name().ibm_filename().eq_ignore_ascii_case(candidate))
+    })?;
+    let file = AmsdosManagerNonMut::new_from_disc(&disc, Head::A).get_file(*entry.file_name()).ok()??;
+    Some(file.header_and_content().to_vec())
+}
+
 fn amsdos_header_type(header: &[u8; 128]) -> Option<u8> {
     let sum: u16 = header[..67].iter().map(|&b| u16::from(b)).sum();
     (sum == u16::from_le_bytes([header[67], header[68]])).then_some(header[18])
@@ -910,6 +978,37 @@ mod test {
         assert_eq!(run(&mut board, C_ERASEFILE, &nul_terminated("other.bin")), vec![0]);
         assert!(!sd.join("other.bin").exists());
         assert_eq!(run(&mut board, C_ERASEFILE, &nul_terminated("other.bin"))[0], 0xff);
+    }
+
+    /// A DSK image is entered as a directory (RulezCharge's "Reset + Open .DSK"), its AMSDOS
+    /// files listed and read, read only, and left with `..`.
+    #[test]
+    fn a_dsk_image_is_a_directory() {
+        let (mut board, sd) = board("dsk");
+        let image = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m4sd/Columns_CPC_v2004.1.1__ENGLISH.dsk");
+        std::fs::copy(image, sd.join("Columns.dsk")).unwrap();
+        assert_eq!(run(&mut board, C_CD, &nul_terminated("columns.DSK")), vec![0]);
+        assert_eq!(run(&mut board, C_GETPATH, &[]), nul_terminated("/Columns.dsk"));
+
+        run(&mut board, C_DIRSETARGS, &[0]);
+        let mut entry = run(&mut board, C_READDIR, &[]);
+        assert!(entry[9] & 0x80 != 0, "read only: the extension's bit 7");
+        entry[9] &= 0x7f;
+        assert_eq!(&entry[..17], b"COLUMNS .BAS   3K");
+        assert!(run(&mut board, C_READDIR, &[]).is_empty(), "one file");
+
+        // RUN"COLUMNS: the name without extension, then .BAS; its AMSDOS header first
+        assert_eq!(run(&mut board, C_OPEN, &named("columns", 0x01))[1], 0);
+        let data = run(&mut board, C_READ, &[1, 128, 0]);
+        assert_eq!(&data[2..9], b"COLUMNS", "the header's name");
+        assert_eq!(run(&mut board, C_OPEN, &named("nothere.bas", 0x01))[1], FR_NO_FILE);
+        assert_eq!(run(&mut board, C_OPEN, &named("columns.bas", FA_WRITE | FA_CREATE_ALWAYS))[1], FR_DENIED);
+
+        assert_eq!(run(&mut board, C_CD, &nul_terminated("..")), vec![0]);
+        assert_eq!(board.path(), "/");
+        // a file that isn't a disc image is no directory
+        std::fs::write(sd.join("bad.dsk"), b"not a disc").unwrap();
+        assert_eq!(run(&mut board, C_CD, &nul_terminated("bad.dsk")), vec![0xff]);
     }
 
     #[test]
