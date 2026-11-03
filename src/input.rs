@@ -24,6 +24,10 @@ pub enum HostKey {
     NumPadDot, NumPadEnter,
     /// The ISO keyboards' key left of Z (`<>` or `\|`).
     IntlBackslash,
+    /// F1-F3 press the CPC's keypad 1-3 (f1-f3), for hosts without a keypad.
+    F1,
+    F2,
+    F3,
     /// Not CPC keys: the emulator's own (F7 saves a snapshot, F8 pauses and resumes, F9 cycles
     /// the display, F10 toggles full speed).
     F7,
@@ -600,6 +604,7 @@ pub const HOST_KEY_MAP: &[(HostKey, CpcKey)] = {
         (Hk::NumPad8, Keypad8), (Hk::NumPad9, Keypad9),
         (Hk::NumPadDot, KeypadDot),
         (Hk::NumPadEnter, KeypadEnter),
+        (Hk::F1, Keypad1), (Hk::F2, Keypad2), (Hk::F3, Keypad3),
     ]
 };
 
@@ -643,6 +648,7 @@ pub const POSITIONAL_MAP: &[(HostKey, CpcKey)] = {
         (Hk::NumPad8, Keypad8), (Hk::NumPad9, Keypad9),
         (Hk::NumPadDot, KeypadDot),
         (Hk::NumPadEnter, KeypadEnter),
+        (Hk::F1, Keypad1), (Hk::F2, Keypad2), (Hk::F3, Keypad3),
     ]
 };
 
