@@ -62,6 +62,11 @@
 
 use ym2149::{Ym2149, Ym2149Backend};
 
+/// The bits of each register the AY-3-8912 keeps (the others read back 0): 12-bit tone periods,
+/// 5-bit noise period and volumes, 4-bit envelope shape (Kevin Thacker's acid test "reg
+/// write/read mask test", on a CPC).
+const REGISTER_MASKS: [u8; 16] = [0xff, 0x0f, 0xff, 0x0f, 0xff, 0x0f, 0x1f, 0xff, 0x1f, 0x1f, 0x1f, 0xff, 0xff, 0x0f, 0xff, 0xff];
+
 /// BDIR/BC1 bus state, decoded from PPI port C bits 7 and 6 - see the
 /// module doc comment for the truth table this collapses from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,6 +353,7 @@ impl Psg {
         self.frame_log.as_mut().map(|log| std::mem::take(&mut log.frames)).unwrap_or_default()
     }
 
+    /// The register as the CPU reads it back.
     pub fn register(&self, idx: u8) -> u8 {
         self.registers[idx as usize & 0x0f]
     }
@@ -361,6 +367,8 @@ impl Psg {
 
     pub fn set_register(&mut self, idx: u8, value: u8) {
         let idx = idx & 0x0f;
+        // the AY-3-8912 keeps only the bits it uses: the others read back 0
+        let value = value & REGISTER_MASKS[idx as usize];
         self.registers[idx as usize] = value;
         if idx == 13 {
             if let Some(log) = &mut self.frame_log {

@@ -382,11 +382,11 @@ fn asics_status_registers_report_the_counters_events() {
     for (register, value) in [(0, 63), (1, 40), (2, 46), (3, 0x8e), (4, 38), (6, 25), (7, 30), (9, 7)] {
         registers[register] = value;
     }
-    let read = |crtc: CrtcType, selected: u8, c0: u8, c4: u8, c9: u8, vsync_line: Option<u8>| {
+    let read_in = |crtc: CrtcType, selected: u8, c0: u8, c4: u8, c9: u8, vsync_line: Option<u8>, vertical_border: bool| {
         crtc.new_chip().read_register(&ReadContext {
             registers: &registers,
             selected,
-            vertical_border: false,
+            vertical_border,
             noise: false,
             c0,
             c4,
@@ -397,9 +397,15 @@ fn asics_status_registers_report_the_counters_events() {
             fields: 0
         })
     };
+    let read = |crtc, selected, c0, c4, c9, vsync_line| read_in(crtc, selected, c0, c4, c9, vsync_line, true);
+    // STATUS 1's bit 6: always set on CRTC 4, the vertical border on CRTC 3 (Kevin Thacker's acid
+    // test "VBlank")
+    assert_eq!(read_in(Crtc4, 10, 10, 0, 0, None, false) & 0x40, 0x40);
+    assert_eq!(read_in(Crtc3, 10, 10, 0, 0, None, false) & 0x40, 0);
+    assert_eq!(read_in(Crtc3, 10, 10, 30, 0, None, true) & 0x40, 0x40);
     for crtc in [Crtc3, Crtc4] {
-        // STATUS 1: bit 6 always set; bit 0 set at C0=R0; bit 3 cleared at C0=R2; bit 5 cleared on
-        // the VSYNC's last line (OffseT's TestCRTC: the end of the VBL)
+        // STATUS 1 (in the border): bit 6 set; bit 0 set at C0=R0; bit 3 cleared at C0=R2; bit 5
+        // cleared on the VSYNC's last line (OffseT's TestCRTC: the end of the VBL)
         assert_eq!(read(crtc, 10, 10, 0, 0, None) & 0x41, 0x40, "{crtc:?}");
         assert_eq!(read(crtc, 10, 63, 0, 0, None) & 0x01, 0x01, "{crtc:?} C0=R0");
         assert_eq!(read(crtc, 10, 46, 0, 0, None) & 0x08, 0, "{crtc:?} C0=R2");

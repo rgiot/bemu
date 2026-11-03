@@ -40,6 +40,17 @@ impl Asic {
 impl Asic {
     /// STATUS 1 (R10, ACCC §21.3.4.1): events of the line, each bit its event's value while it
     /// lasts and the other one otherwise.
+    /// STATUS 1's bit 6: always 1 on CRTC 4 (ACCC §21.3.4.1), the vertical border (C4 >= R6) on the
+    /// CPC+'s ASIC (CRTC 3): 0 over the 200 lines displayed, 1 over the border (Kevin Thacker's
+    /// acid test "VBlank" in crtc3_4_status, measured on a 6128+ and a type 4 CPC).
+    fn status_1_bit_6(&self, context: &ReadContext) -> u8 {
+        if self.crtc_type == CrtcType::Crtc3 && !context.vertical_border {
+            0
+        } else {
+            1 << 6
+        }
+    }
+
     fn status_1(&self, context: &ReadContext) -> u8 {
         let register = |number| context.register(number);
         let (c0, r0, r1, r2) = (context.c0, register(0), register(1), register(2));
@@ -60,7 +71,7 @@ impl Asic {
             | event(3, c0 == r2, false)
             | event(4, c0 == hsync_end, false)
             | (u8::from(bit5) << 5)
-            | 1 << 6
+            | self.status_1_bit_6(context)
             | event(7, low, false)
     }
 }

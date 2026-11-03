@@ -407,3 +407,30 @@ fn test_interrupt_mode_2_vectors_through_the_i_register() {
 	// the interrupted NOP (1 us) then the response (6 us)
 	assert_eq!(found, Some(1 + 6), "NOP + IM 2 response in us");
 }
+
+/// NMOS Z80: an interrupt accepted right after `LD A,I` (or `LD A,R`) leaves P/V at 0, not IFF2
+/// (Kevin Thacker's acid test "ld a,r/ld a,i p/v int test" on a CPC). Without an interrupt
+/// there, P/V is IFF2.
+#[test]
+fn ld_a_i_p_v_reads_0_when_an_interrupt_follows() {
+	let mut motherboard = MotherboardBuilder::default()
+		.disable_lower_rom()
+		.disable_upper_rom()
+		.enable_interruptions()
+		.build();
+	// F at the interrupt in &81, then stops
+	motherboard.write_buffer(0x38, cpclib_macros::assemble!(" push af : pop bc : ld a,c : ld (&81),a : jr $"));
+	// P/V of a LD A,I with no interrupt in &80, then nothing but LD A,I
+	let start = cpclib_macros::assemble!(" ei : ld a,i : push af : pop bc : ld a,c : ld (&80),a");
+	motherboard.write_buffer(0x100, start);
+	let sled: Vec<u8> = [0xed, 0x57].repeat(0x2000);
+	motherboard.write_buffer(0x100 + start.len() as u16, &sled);
+	motherboard.write_buffer(0x80, &[0xff, 0xff]);
+	motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
+	while motherboard.nops_counter().value() < 2 * 19968 && motherboard.read_byte(0x81) == 0xff {
+		motherboard.execute_next_opcode();
+	}
+	assert_eq!(motherboard.read_byte(0x80) & 0x04, 0x04, "P/V = IFF2 = 1 after EI");
+	assert_ne!(motherboard.read_byte(0x81), 0xff, "no interrupt");
+	assert_eq!(motherboard.read_byte(0x81) & 0x04, 0, "P/V after the LD A,I the interrupt followed");
+}

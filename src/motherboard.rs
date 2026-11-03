@@ -1295,6 +1295,10 @@ impl Motherboard {
             self.ppi.set_port_a_input(if a_out { latch & read_value } else { read_value });
         } else if a_out {
             self.ppi.set_port_a_input(latch);
+        } else {
+            // port A an input, the PSG not read: nothing drives the bus, it floats high (Kevin
+            // Thacker's acid test "psg inactive; PPI port A input, write PPI port A and read back")
+            self.ppi.set_port_a_input(0xff);
         }
 
         // The PSG's CLOCK pin is wired to the gate array's 1MHz output, the

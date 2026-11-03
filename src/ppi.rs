@@ -166,6 +166,8 @@ pub struct Ppi {
     /// What the CPU last wrote to port A (the output latch): it drives the pins only when port A is
     /// an output, and the PSG reading the shared bus must not overwrite it
     port_a_latch: u8,
+    /// Port C's output latch: a write reaches the pins of its output nibbles only.
+    port_c_latch: u8,
     direction_b: PpiDirection,
     /// What the CPU last wrote to port B: its pins are the CPC's signals (VSYNC, the jumpers...),
     /// never driven, but a real 8255 reads this latch back while port B is an output (OffseT's
@@ -196,6 +198,7 @@ impl Default for Ppi {
 
             direction_a: Default::default(),
             port_a_latch: 0,
+            port_c_latch: 0,
             direction_b: PpiDirection::Input, // no idea if it is the best choice, but it allows to directly test vsync
             port_b_latch: 0,
             direction_c_lower: Default::default(),
@@ -285,7 +288,19 @@ impl Ppi {
         if self.port_a_is_output() {
             self.set_data_a_on_pins(port_a);
         }
+        self.port_c_latch = port_c;
         self.set_data_c_on_pins(port_c);
+    }
+
+    /// The pins of port C its output nibbles drive (a real 8255: the CPC+'s ASIC drives them
+    /// all).
+    fn port_c_output_mask(&self) -> u8 {
+        if !self.clears_ports_on_mode_set {
+            return 0xff;
+        }
+        let upper = if self.direction_c_upper == PpiDirection::Output { 0xf0 } else { 0 };
+        let lower = if self.direction_c_lower == PpiDirection::Output { 0x0f } else { 0 };
+        upper | lower
     }
 
     /// The port A output latch (what the CPU last wrote).
@@ -393,7 +408,9 @@ impl Chip for Ppi {
                 // `direction_a` either.
                 let byte = self.get_data_from_pins();
                 self.port_a_latch = byte;
-                self.set_data_a_on_pins(byte);
+                if self.port_a_is_output() {
+                    self.set_data_a_on_pins(byte);
+                }
             } else if !self.get_pin(PpiPin::Neg_RD) {
                 // Reading an input-configured port returns the live input
                 // pins; reading an output-configured one returns the
@@ -469,8 +486,13 @@ impl Chip for Ppi {
             // the keyboard matrix, which HBL's own checksum self-test
             // (correctly) treated as a hardware fault and cold-reset on.
             if !self.get_pin(PpiPin::Neg_WR) {
+                // the latch takes it, only the output nibbles' pins follow (Kevin Thacker's acid
+                // test "mode 0: port c read": port C set as an input reads the same after writes)
                 let byte = self.get_data_from_pins();
-                self.set_data_c_on_pins(byte);
+                self.port_c_latch = byte;
+                let mask = self.port_c_output_mask();
+                let pins = self.get_data_c_from_pins();
+                self.set_data_c_on_pins(pins & !mask | byte & mask);
             } else if !self.get_pin(PpiPin::Neg_RD) {
                 // See the port A comment: valid regardless of
                 // direction_c_lower/direction_c_upper - e.g. the Madram/
@@ -514,6 +536,7 @@ impl Chip for Ppi {
                     // jumpers and the refresh-rate strap. Zeroing them here would
                     // wipe out the brand the firmware is about to read back.
                     self.drive_hardwired_port_b_bits();
+                    self.port_c_latch = 0;
                     self.set_data_c_on_pins(0);
                 }
             } else {
@@ -528,7 +551,11 @@ impl Chip for Ppi {
                     PpiPin::C6,
                     PpiPin::C7,
                 ][((byte & 0b1110) >> 1) as usize];
-                self.set_pin(pin, bit)
+                let mask = 1 << ((byte & 0b1110) >> 1);
+                self.port_c_latch = if bit { self.port_c_latch | mask } else { self.port_c_latch & !mask };
+                if self.port_c_output_mask() & mask != 0 {
+                    self.set_pin(pin, bit)
+                }
             }
         } else {
             unimplemented!()

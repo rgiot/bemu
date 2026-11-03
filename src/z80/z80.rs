@@ -316,6 +316,18 @@ pub struct Z80 {
     /// still shadowed.
     ei_shadow: u8,
 
+    /// The instruction ending is `LD A,I` or `LD A,R`: on the NMOS Z80, an interrupt accepted
+    /// right after it leaves P/V at 0 instead of IFF2 (Kevin Thacker's acid test
+    /// "ld a,r/ld a,i p/v int test", on a CPC).
+    ld_a_ir_ending: bool,
+
+    /// T-states of the instruction running so far, and the one INT was first seen low on: the Z80
+    /// samples INT on the last T-state the instruction uses, so an INT that only comes during the
+    /// idle T-states the CPC pads it with to its last microsecond waits for the next instruction
+    /// (Kevin Thacker's acid test "ld a,r/ld a,i p/v int test": LD A,I has 3 of them).
+    instr_t: u32,
+    int_first_t: Option<u32>,
+
     /// IM 2 response: 0 = none, 1 = the return address is being pushed, 2 = the
     /// vector is being read (address `I<<8 | #FF`, the data bus being pulled up).
     im2_stage: u8,
@@ -1405,6 +1417,7 @@ impl Z80 {
                     self.set_flag_off(Z80Flags::N);
                     self.set_flag_off(Z80Flags::H);
                     self.set_flag(Z80Flags::P, self.iff2);
+                    self.ld_a_ir_ending = true;
                 }
             }
             
@@ -2153,6 +2166,7 @@ impl Z80 {
 
 
         }
+        let ld_a_ir = std::mem::take(&mut self.ld_a_ir_ending);
         let shadowed = self.ei_shadow > 0;
         if shadowed {
             self.ei_shadow -= 1;
@@ -2164,15 +2178,21 @@ impl Z80 {
             self.next_state = MCycle::new_interruption();
             return;
         }
+        // an INT first seen in the idle T-states padding the instruction came after the Z80 sampled
+        let int_too_late = self.int_first_t.is_some_and(|t| t + u32::from(self.last_idle_t) >= self.instr_t);
         if self.interruption_received
         && self.iff1
-        && !shadowed/*
+        && !shadowed
+        && !int_too_late/*
         && matches!(
             self.next_state,
             MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)
         )*/ /* this test was a nonsense and wrong, it is up to the caller to be sure to call it at the right time*/
              {
             //dbg!("z80 treat interrupt request");
+            if ld_a_ir {
+                self.set_flag_off(Z80Flags::P);
+            }
             self.iff1 = false;
             self.iff2 = false;
             self.interruption_received = false;
@@ -2505,8 +2525,14 @@ impl Chip for Z80 {
             }
         }
       //  dbg!(&self.next_state)
+        if matches!(self.next_state, MCycle::FetchOpcode(TState::T1, 0, OpcodePrefix::None)) {
+            self.instr_t = 0;
+            self.int_first_t = if self.interruption_received { Some(0) } else { None };
+        }
+        self.instr_t += 1;
         if  !self.get_pin(Z80Pin::Neg_INT) && !self.next_state.is_interruption() {
             self.interruption_received |= true;
+            self.int_first_t.get_or_insert(self.instr_t - 1);
   //          dbg!("Z80 see interrupt pin", self.interruption_received, self.iff1);
         }
         match self.next_state {
