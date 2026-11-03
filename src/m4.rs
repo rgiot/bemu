@@ -108,6 +108,8 @@ impl<T: Read + Write + Seek> ReadWriteSeek for T {}
 /// One directory entry, as listed.
 struct DirEntry {
     name: String,
+    /// Its 8.3 name, as CAT and |DIR show it.
+    short: String,
     directory: bool,
     size: u64,
     read_only: bool
@@ -403,14 +405,14 @@ impl M4Board {
         }
         let mut path = self.root.clone();
         for part in &parts {
-            let found = std::fs::read_dir(&path)
-                .ok()
-                .and_then(|entries| {
-                    entries
-                        .flatten()
-                        .find(|entry| entry.file_name().to_string_lossy().eq_ignore_ascii_case(part))
-                })
-                .map(|entry| entry.file_name());
+            // the long name, else the 8.3 one (ROMCON~1.BIN for romconfig.bin), the case ignored
+            let entries = fat_directory(&path);
+            let short = part.trim_end_matches('.');
+            let found = entries
+                .iter()
+                .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case(part))
+                .or_else(|| entries.iter().find(|(_, name)| name.eq_ignore_ascii_case(short)))
+                .map(|(name, _)| name.clone());
             match found {
                 Some(found) => path.push(found),
                 None => path.push(part)
@@ -606,7 +608,7 @@ impl M4Board {
         payload.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
         payload.extend_from_slice(&[0; 4]);
         payload.push(if metadata.is_dir() { 0x10 } else { 0x20 });
-        let mut short = short_name(&long_name).into_bytes();
+        let mut short = path.parent().map(|dir| short_name_in(dir, &long_name)).unwrap_or_default().into_bytes();
         short.resize(13, 0);
         payload.extend(short);
         payload.extend(nul_terminated(&long_name));
@@ -641,6 +643,7 @@ impl M4Board {
                 .filter(|entry| !entry.system())
                 .map(|entry| DirEntry {
                     name: entry.file_name().ibm_filename(),
+                    short: entry.file_name().filename(),
                     directory: false,
                     size: entry.size() as u64 * 1024,
                     read_only: true
@@ -650,23 +653,20 @@ impl M4Board {
             entries.sort_by_key(|entry| entry.name.to_ascii_uppercase());
             return entries;
         }
-        let mut entries: Vec<DirEntry> = std::fs::read_dir(path)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter_map(|entry| {
-                        let name = entry.file_name().to_string_lossy().into_owned();
-                        let metadata = entry.metadata().ok()?;
-                        (!name.starts_with('.')).then(|| DirEntry {
-                            name,
-                            directory: metadata.is_dir(),
-                            size: metadata.len(),
-                            read_only: metadata.permissions().readonly()
-                        })
-                    })
-                    .collect()
+        let mut entries: Vec<DirEntry> = fat_directory(&path)
+            .into_iter()
+            .filter_map(|(name, short)| {
+                let metadata = std::fs::metadata(path.join(&name)).ok()?;
+                let name = name.to_string_lossy().into_owned();
+                (!name.starts_with('.')).then(|| DirEntry {
+                    name,
+                    short,
+                    directory: metadata.is_dir(),
+                    size: metadata.len(),
+                    read_only: metadata.permissions().readonly()
+                })
             })
-            .unwrap_or_default();
+            .collect();
         entries.retain(|entry| self.pattern.is_empty() || wildcard(&self.pattern, &entry.name));
         entries.sort_by_key(|entry| (!entry.directory, entry.name.to_ascii_uppercase()));
         entries
@@ -692,8 +692,8 @@ impl M4Board {
             payload.extend(format!("{:>4}K", entry.size.div_ceil(1024).min(9999)).bytes());
             return payload;
         }
-        let short = short_name(&entry.name);
-        let (base, extension) = short.split_once('.').unwrap_or((&short, ""));
+        let short = &entry.short;
+        let (base, extension) = short.split_once('.').unwrap_or((short, ""));
         if entry.directory {
             let mut payload = format!(">{short}").into_bytes();
             payload.resize(20, 0);
@@ -846,15 +846,112 @@ fn truncate(text: &str, width: usize) -> String {
 }
 
 /// An 8.3 name, upper case: 8 characters of the name, 3 of the extension.
-fn short_name(name: &str) -> String {
-    let (base, extension) = match name.rsplit_once('.') {
-        Some((base, extension)) if !base.is_empty() => (base, extension),
-        _ => (name, "")
-    };
-    let clean = |text: &str, length: usize| -> String {
-        text.chars().filter(|c| !c.is_whitespace() && *c != '.').take(length).collect::<String>().to_ascii_uppercase()
-    };
-    format!("{}.{}", clean(base, 8), clean(extension, 3))
+/// A long name's 8.3 form as FatFs's create_name makes it (upper case; spaces and the dots but
+/// the last one dropped; `+,;=[]` and what isn't ASCII as `_`; at most 8 and 3 characters), and
+/// whether something was lost, which asks for a numbered tail (`~1`).
+fn fat_base_name(name: &str) -> (String, String, bool) {
+    let name = name.trim_end_matches([' ', '.']);
+    let trimmed = name.trim_start_matches([' ', '.']);
+    let mut lossy = trimmed.len() != name.len();
+    let last_dot = trimmed.rfind('.');
+    let (mut base, mut extension) = (String::new(), String::new());
+    for (index, c) in trimmed.char_indices() {
+        if c == ' ' || (c == '.' && Some(index) != last_dot) {
+            lossy = true;
+            continue;
+        }
+        if Some(index) == last_dot {
+            continue;
+        }
+        let c = if !c.is_ascii() || "+,;=[]".contains(c) {
+            lossy = true;
+            '_'
+        }
+        else {
+            c.to_ascii_uppercase()
+        };
+        let (part, length) = if last_dot.is_some_and(|dot| index > dot) { (&mut extension, 3) } else { (&mut base, 8) };
+        if part.len() < length {
+            part.push(c);
+        }
+        else {
+            lossy = true;
+        }
+    }
+    (base, extension, lossy)
+}
+
+/// FatFs's gen_numname: `base` with the tail `~` and `seq` in hexadecimal, shortened to fit 8
+/// characters; above 5, the tail is a CRC of the long name instead.
+fn fat_numbered(base: &str, long: &str, seq: u32) -> String {
+    let mut number = seq;
+    if seq > 5 {
+        let mut sreg = seq;
+        for unit in long.encode_utf16() {
+            let mut wc = u32::from(unit);
+            for _ in 0..16 {
+                sreg = (sreg << 1) + (wc & 1);
+                wc >>= 1;
+                if sreg & 0x10000 != 0 {
+                    sreg ^= 0x11021;
+                }
+            }
+        }
+        number = sreg;
+    }
+    let mut tail = String::new();
+    loop {
+        tail.insert(0, char::from_digit(number % 16, 16).unwrap().to_ascii_uppercase());
+        number /= 16;
+        if number == 0 || tail.len() == 7 {
+            break;
+        }
+    }
+    tail.insert(0, '~');
+    let keep = 8 - tail.len();
+    format!("{}{tail}", base.chars().take(keep).collect::<String>())
+}
+
+/// The 8.3 names of a directory's entries (`names`, in the same order), as a FAT card holds
+/// them: a name that fits keeps it, upper case; the others get `~1`, `~2`... the first free,
+/// in the names' order (a card's follows the files' creation, which the host doesn't keep).
+fn fat_short_names(names: &[String]) -> Vec<String> {
+    let parts: Vec<(String, String, bool)> = names.iter().map(|name| fat_base_name(name)).collect();
+    let join = |base: &str, extension: &str| if extension.is_empty() { base.to_owned() } else { format!("{base}.{extension}") };
+    let mut taken: std::collections::HashSet<String> =
+        parts.iter().filter(|(_, _, lossy)| !lossy).map(|(base, extension, _)| join(base, extension)).collect();
+    let mut order: Vec<usize> = (0..names.len()).filter(|&index| parts[index].2).collect();
+    order.sort_by_key(|&index| names[index].to_ascii_uppercase());
+    let mut short: Vec<String> = parts.iter().map(|(base, extension, _)| join(base, extension)).collect();
+    for index in order {
+        let (base, extension, _) = &parts[index];
+        let name = (1..=0xffff)
+            .map(|seq| join(&fat_numbered(base, &names[index], seq), extension))
+            .find(|name| !taken.contains(name))
+            .unwrap_or_else(|| join(base, extension));
+        taken.insert(name.clone());
+        short[index] = name;
+    }
+    short
+}
+
+/// The names in host directory `dir` (all of them: FAT numbers the hidden ones too), with their
+/// 8.3 names.
+fn fat_directory(dir: &Path) -> Vec<(std::ffi::OsString, String)> {
+    let names: Vec<std::ffi::OsString> =
+        std::fs::read_dir(dir).map(|entries| entries.flatten().map(|entry| entry.file_name()).collect()).unwrap_or_default();
+    let long: Vec<String> = names.iter().map(|name| name.to_string_lossy().into_owned()).collect();
+    names.into_iter().zip(fat_short_names(&long)).collect()
+}
+
+/// The 8.3 name of `long` in host directory `dir`, `NAME.EXT` (`NAME.` without an extension).
+fn short_name_in(dir: &Path, long: &str) -> String {
+    let short = fat_directory(dir)
+        .into_iter()
+        .find(|(name, _)| name.to_string_lossy() == long)
+        .map(|(_, short)| short)
+        .unwrap_or_else(|| fat_short_names(&[long.to_owned()]).remove(0));
+    if short.contains('.') { short } else { format!("{short}.") }
 }
 
 /// `*` and `?` wildcards, ignoring case.
@@ -988,6 +1085,14 @@ mod test {
         let image = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m4sd/Columns_CPC_v2004.1.1__ENGLISH.dsk");
         std::fs::copy(image, sd.join("Columns.dsk")).unwrap();
         assert_eq!(run(&mut board, C_CD, &nul_terminated("columns.DSK")), vec![0]);
+        assert_eq!(run(&mut board, C_CD, &nul_terminated("..")), vec![0]);
+        // by its 8.3 name too (CAT shows it so)
+        std::fs::rename(sd.join("Columns.dsk"), sd.join("Columns_CPC_v2004.1.1__ENGLISH.dsk")).unwrap();
+        run(&mut board, C_DIRSETARGS, &[0]);
+        assert_eq!(&run(&mut board, C_READDIR, &[])[..12], b"COLUMN~1.DSK");
+        assert_eq!(run(&mut board, C_CD, &nul_terminated("column~1.dsk")), vec![0]);
+        std::fs::rename(sd.join("Columns_CPC_v2004.1.1__ENGLISH.dsk"), sd.join("Columns.dsk")).unwrap();
+        assert_eq!(run(&mut board, C_CD, &nul_terminated("/columns.DSK")), vec![0]);
         assert_eq!(run(&mut board, C_GETPATH, &[]), nul_terminated("/Columns.dsk"));
 
         run(&mut board, C_DIRSETARGS, &[0]);
@@ -1047,8 +1152,21 @@ mod test {
 
     #[test]
     fn names() {
-        assert_eq!(short_name("hello.world.txt"), "HELLOWOR.TXT");
-        assert_eq!(short_name("readme"), "README.");
+        let short = |names: &[&str]| fat_short_names(&names.iter().map(|name| name.to_string()).collect::<Vec<_>>());
+        // the M4's documentation (|LONGNAME): "ROMCON~1.BIN" is romconfig.bin
+        assert_eq!(short(&["romconfig.bin"]), ["ROMCON~1.BIN"]);
+        assert_eq!(
+            short(&["Columns_CPC_v2004.1.1__ENGLISH.dsk", "Blight-Benediction.dsk"]),
+            ["COLUMN~1.DSK", "BLIGHT~1.DSK"]
+        );
+        // 8.3 names keep theirs, upper case; dots but the last, spaces, +,;=[] are lost
+        assert_eq!(short(&["readme", "Game.bas", "hello.world.txt", "a b.txt", "x+y.bin"]), ["README", "GAME.BAS", "HELLOW~1.TXT", "AB~1.TXT", "X_Y~1.BIN"]);
+        // collisions take the next number, in the names' order; past 5 a hash of the long name
+        let many: Vec<String> = (1..=7).map(|n| format!("longfilename{n}.txt")).collect();
+        let names = fat_short_names(&many);
+        assert_eq!(&names[..5], ["LONGFI~1.TXT", "LONGFI~2.TXT", "LONGFI~3.TXT", "LONGFI~4.TXT", "LONGFI~5.TXT"]);
+        assert!(names[5].starts_with("LO") && names[5].contains('~') && names[5].len() == 12, "{}", names[5]);
+        assert_ne!(names[5], names[6]);
         assert!(wildcard("*.BAS", "game.bas"));
         assert!(!wildcard("*.BAS", "game.bin"));
         assert!(wildcard("g?me*", "GAME.BIN"));
