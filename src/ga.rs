@@ -1434,7 +1434,7 @@ impl GateArray {
                 extended = plus.extended_border(!dispen_border);
             }
             let border = dispen_border || extended;
-            let computed = Shown::Pen(if border { Pen::Border } else { raw });
+            let mut computed = Shown::Pen(if border { Pen::Border } else { raw });
             if tick < DISPEN_LATCH_TICKS {
                 self.byte_pens[tick] = (raw, dispen_border, extended);
             }
@@ -1442,20 +1442,24 @@ impl GateArray {
                 self.byte_shown[tick] = if mode == Some(VideoMode::Mode2) { Some(tick) } else { tick.checked_sub(1) };
             }
             self.byte_tick += 1;
-            // ACCC §9.3 (GA 40007/8/10): the pixels of MODE 2 are displayed one
-            // pixel earlier than those of the other modes (the BORDER stops and
-            // starts one pixel earlier too); the other modes are what we delay
-            let mut pixel = if mode == Some(VideoMode::Mode2) { computed } else { self.shown_previous };
-            self.shown_previous = computed;
             if let Some(plus) = &mut self.plus {
-                // the sprites, in front of the screen and behind the border
+                // the sprites, in front of the screen and behind the border, on the screen's
+                // pixels: mixed before the delay of the modes 0 and 1 below, so that a sprite
+                // covers the pixel it is placed on (Eerie Forest's black sprites hide its scene
+                // to the display's last pixel, which came out a tick late, uncovered, in the
+                // border's first tick)
                 if !border {
                     let sprite = plus.sprite_pen(tick);
                     if sprite != 0 {
-                        pixel = Shown::Sprite(sprite);
+                        computed = Shown::Sprite(sprite);
                     }
                 }
             }
+            // ACCC §9.3 (GA 40007/8/10): the pixels of MODE 2 are displayed one
+            // pixel earlier than those of the other modes (the BORDER stops and
+            // starts one pixel earlier too); the other modes are what we delay
+            let pixel = if mode == Some(VideoMode::Mode2) { computed } else { self.shown_previous };
+            self.shown_previous = computed;
             self.rgb_delayed = mode != Some(VideoMode::Mode2);
             // the black zone of an R3l=2 window comes BLANK_DELAY_TICKS later (see the constant); the
             // HSYNC-GA's own blanking does not
