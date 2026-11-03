@@ -108,6 +108,11 @@ const PPI_PIN_DATA_C_BUS: [PpiPin; 8] = [
     PpiPin::C0,
 ];
 
+/// What port C's pins read as inputs on a CPC (a 6128, types 1 and 2: Kevin Thacker's acid test
+/// notes "2f all the time"): the 74LS145 keyboard decoder's TTL inputs float high on bits 0-3,
+/// the cassette write line on bit 5; the motor relay (bit 4) and the AY's BDIR/BC1 stay low.
+const PORT_C_FLOATING: u8 = 0x2f;
+
 #[derive(PartialEq, Clone, Copy)]
 #[derive(Default)]
 pub enum PpiMode {
@@ -303,6 +308,25 @@ impl Ppi {
         upper | lower
     }
 
+    /// The bits of port C a direct write reaches (a real 8255): the groups in mode 0 only, the
+    /// others going through bit set/reset (Kevin Thacker's acid test "mode 1: port A mode 1 ...,
+    /// port C bits output": "this write only effects 2,1,0").
+    fn port_c_writable_mask(&self) -> u8 {
+        if !self.clears_ports_on_mode_set {
+            return 0xff;
+        }
+        let upper = if self.mode_a == PpiMode::Mode0 { 0xf8 } else { 0 };
+        let lower = if self.mode_b == PpiMode::Mode0 { 0x07 } else { 0 };
+        upper | lower
+    }
+
+    /// Port C's pins from its latch: the output nibbles drive it, the input ones float to what
+    /// the CPC's wiring pulls them to.
+    fn drive_port_c(&mut self) {
+        let mask = self.port_c_output_mask();
+        self.set_data_c_on_pins(self.port_c_latch & mask | PORT_C_FLOATING & !mask);
+    }
+
     /// The port A output latch (what the CPU last wrote).
     pub fn port_a_latch(&self) -> u8 {
         self.port_a_latch
@@ -489,10 +513,9 @@ impl Chip for Ppi {
                 // the latch takes it, only the output nibbles' pins follow (Kevin Thacker's acid
                 // test "mode 0: port c read": port C set as an input reads the same after writes)
                 let byte = self.get_data_from_pins();
-                self.port_c_latch = byte;
-                let mask = self.port_c_output_mask();
-                let pins = self.get_data_c_from_pins();
-                self.set_data_c_on_pins(pins & !mask | byte & mask);
+                let writable = self.port_c_writable_mask();
+                self.port_c_latch = self.port_c_latch & !writable | byte & writable;
+                self.drive_port_c();
             } else if !self.get_pin(PpiPin::Neg_RD) {
                 // See the port A comment: valid regardless of
                 // direction_c_lower/direction_c_upper - e.g. the Madram/
@@ -537,7 +560,7 @@ impl Chip for Ppi {
                     // wipe out the brand the firmware is about to read back.
                     self.drive_hardwired_port_b_bits();
                     self.port_c_latch = 0;
-                    self.set_data_c_on_pins(0);
+                    self.drive_port_c();
                 }
             } else {
                 let bit = byte & 1 << 0 != 0;
