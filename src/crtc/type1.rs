@@ -67,10 +67,11 @@ impl CrtcChip for Crtc1 {
     /// `x L V x x x x x`. L (bit 6) is 1 for a light pen reading and 0 when
     /// R16/R17 can be read; V (bit 5) is 1 while the BORDER by R6 holds.
     /// The other bits are unused and read 0. No light pen strobe is emulated (LPSTB, pin 47
-    /// of the expansion port), so L stays 1, which is what Madram's CRTC detection (Amstrad
-    /// Live, 05/2000) expects of a CRTC 1: `&40` once V is masked out.
+    /// of the expansion port), so L is 1 from power on, which is what Madram's CRTC detection
+    /// (Amstrad Live, 05/2000) expects of a CRTC 1 (`&40` once V is masked out), until R16 or
+    /// R17 is read (Kevin Thacker's acid test "type 1 status (clear lpen)").
     fn read_status(&self, context: &ReadContext) -> u8 {
-        (1 << 6) | if context.vertical_border { 1 << 5 } else { 0 }
+        (if context.light_pen_full { 1 << 6 } else { 0 }) | if context.vertical_border { 1 << 5 } else { 0 }
     }
 
     /// ACCC §14.6: with R3l = 0, CRTC 1 does not produce an HSYNC.

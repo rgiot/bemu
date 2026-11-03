@@ -76,7 +76,9 @@ pub struct ReadContext<'a> {
     pub vsync_line: Option<u8>,
     pub vma: u16,
     pub vma_prime: u16,
-    pub fields: u8
+    pub fields: u8,
+    /// The light pen registers hold a strobe not read yet (the UM6845R's L status bit).
+    pub light_pen_full: bool
 }
 
 /// Bits of a pointer register (R12-R17) that read back: the high registers

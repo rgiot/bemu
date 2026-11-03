@@ -268,6 +268,9 @@ impl Crtc {
     /// Execute the CRTC register read (read of &BF00).
     pub fn read_crtc_register(&mut self) {
         let data = self.chip.read_register(&Self::read_context(&mut self.core));
+        if matches!(self.core.ar & 0x1f, 16 | 17) {
+            self.core.light_pen_read = true;
+        }
         self.set_data_on_pins(data);
     }
 
@@ -289,7 +292,8 @@ impl Crtc {
             vsync_line: core.vsync_running.then_some(core.vsc),
             vma: core.crtc_vma,
             vma_prime: core.crtc_vma_prime,
-            fields: core.fields
+            fields: core.fields,
+            light_pen_full: !core.light_pen_read
         }
     }
 

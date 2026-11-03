@@ -186,3 +186,52 @@ fn asic_crtc_status() {
         "Cursor active on scanline",
     ]);
 }
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn crtc1_status() {
+    check("type1ctrl.bin", CrtcType::Crtc1, 300, &[], 5, &[]);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn rom_decoding() {
+    // it asks the machine: 3, a 6128
+    check("romtest.bin", CrtcType::Crtc0, 300, b"3", 1, &[]);
+}
+
+/// The CRTC test, which asks the type it runs on.
+fn crtc(crtc: CrtcType, known_failures: &[&str]) {
+    let digit = b'0' + crtc as u8;
+    check("crtctest.bin", crtc, 1800, &[digit], 20, known_failures);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn crtc0() {
+    crtc(CrtcType::Crtc0, &[]);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn crtc1() {
+    crtc(CrtcType::Crtc1, &[]);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn crtc2() {
+    crtc(CrtcType::Crtc2, &[]);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn crtc3() {
+    crtc(CrtcType::Crtc3, &[]);
+}
+
+#[test]
+#[ignore = "slow: minutes of emulated time"]
+fn crtc4() {
+    crtc(CrtcType::Crtc4, &[]);
+}

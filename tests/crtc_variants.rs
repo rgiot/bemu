@@ -90,7 +90,8 @@ fn read_register(crtc: CrtcType, selected: u8) -> u8 {
         vsync_line: None,
         vma: 0,
         vma_prime: 0,
-        fields: 0
+        fields: 0,
+        light_pen_full: true
     })
 }
 
@@ -129,7 +130,8 @@ fn pointer_registers_read_back_six_or_eight_bits() {
             vsync_line: None,
             vma: 0,
             vma_prime: 0,
-            fields: 0
+            fields: 0,
+        light_pen_full: true
         });
         assert_eq!(value, 0x3f, "{crtc:?} R{selected}");
     }
@@ -197,7 +199,8 @@ fn read_status(crtc: CrtcType, vertical_border: bool, noise: bool) -> u8 {
         vsync_line: None,
         vma: 0,
         vma_prime: 0,
-        fields: 0
+        fields: 0,
+        light_pen_full: true
     })
 }
 
@@ -394,7 +397,8 @@ fn asics_status_registers_report_the_counters_events() {
             vsync_line,
             vma: 0,
             vma_prime: 0,
-            fields: 0
+            fields: 0,
+        light_pen_full: true
         })
     };
     let read = |crtc, selected, c0, c4, c9, vsync_line| read_in(crtc, selected, c0, c4, c9, vsync_line, true);

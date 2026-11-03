@@ -18,6 +18,9 @@ notice:
 | `cpu.bin` | `z80tests/cpu.asm` | Z80: OUT (C),0, interrupts after EI/DD/FD, LD A,I P/V |
 | `inout.bin` | `z80tests/inout.asm` | Z80: the flags of IN |
 | `crtc3_4_status.bin` | `crtc/crtc3_4_status.asm` | The CPC+'s ASIC CRTC: its status registers |
+| `type1ctrl.bin` | `crtc/type1ctrl.asm` | CRTC 1: its status register |
+| `crtctest.bin` | `crtc/crtctest.asm` | Each CRTC: registers, VSYNC, HSYNC, I/O decoding |
+| `romtest.bin` | `cpcrom/romtest.asm` | Expansion ROM selection without expansions |
 
 Kevin ran them on the machines described in the suite's `desc.txt` (a 6128 with each CRTC type,
 a 6128+, a GX4000 and others). `tests/acid.rs` runs them.

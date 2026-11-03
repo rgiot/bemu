@@ -55,6 +55,9 @@ pub struct Core {
     pub(super) write_taken: bool,
     /// The VSYNCs begun, for the cursor's blinking.
     pub(super) fields: u8,
+    /// R16 or R17 read since the last light pen strobe (none is emulated): what clears the
+    /// UM6845R's L status bit.
+    pub(super) light_pen_read: bool,
 
     /// Number of line ends (C0 back to 0 through R0) since reset; for tests and tools
     pub line_ends: u64,
@@ -137,6 +140,7 @@ impl Default for Core {
             vsync_running: false,
             write_taken: false,
             fields: 0,
+            light_pen_read: false,
             line_ends: 0,
             phase_ticks: 0,
             hsync_late_ticks: 0,
