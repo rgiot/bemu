@@ -67,7 +67,16 @@ pub struct ReadContext<'a> {
     /// (the "V" bit of the UM6845R status register).
     pub vertical_border: bool,
     /// A random bit, for the floating values some chips return.
-    pub noise: bool
+    pub noise: bool,
+    /// The counters, for the status registers of the CRTCs 3 and 4 (ACCC §21.3.4): C0, C4, C9,
+    /// C3h (the VSYNC's line, while it runs), VMA and VMA', and the VSYNCs begun.
+    pub c0: u8,
+    pub c4: u8,
+    pub c9: u8,
+    pub vsync_line: Option<u8>,
+    pub vma: u16,
+    pub vma_prime: u16,
+    pub fields: u8
 }
 
 /// Bits of a pointer register (R12-R17) that read back: the high registers
