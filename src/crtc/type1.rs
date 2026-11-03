@@ -66,9 +66,11 @@ impl CrtcChip for Crtc1 {
     /// ACCC §21.3.1/§21.3.3: the only chip with a status register:
     /// `x L V x x x x x`. L (bit 6) is 1 for a light pen reading and 0 when
     /// R16/R17 can be read; V (bit 5) is 1 while the BORDER by R6 holds.
-    /// The other bits are unused and read 0.
+    /// The other bits are unused and read 0. No light pen strobe is emulated (LPSTB, pin 47
+    /// of the expansion port), so L stays 1, which is what Madram's CRTC detection (Amstrad
+    /// Live, 05/2000) expects of a CRTC 1: `&40` once V is masked out.
     fn read_status(&self, context: &ReadContext) -> u8 {
-        if context.vertical_border { 1 << 5 } else { 0 }
+        (1 << 6) | if context.vertical_border { 1 << 5 } else { 0 }
     }
 
     /// ACCC §14.6: with R3l = 0, CRTC 1 does not produce an HSYNC.

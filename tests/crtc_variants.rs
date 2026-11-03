@@ -83,7 +83,14 @@ fn read_register(crtc: CrtcType, selected: u8) -> u8 {
         registers: &registers,
         selected,
         vertical_border: false,
-        noise: false
+        noise: false,
+        c0: 0,
+        c4: 0,
+        c9: 0,
+        vsync_line: None,
+        vma: 0,
+        vma_prime: 0,
+        fields: 0
     })
 }
 
@@ -115,7 +122,14 @@ fn pointer_registers_read_back_six_or_eight_bits() {
             registers: &registers,
             selected,
             vertical_border: false,
-            noise: false
+            noise: false,
+            c0: 0,
+            c4: 0,
+            c9: 0,
+            vsync_line: None,
+            vma: 0,
+            vma_prime: 0,
+            fields: 0
         });
         assert_eq!(value, 0x3f, "{crtc:?} R{selected}");
     }
@@ -176,15 +190,22 @@ fn read_status(crtc: CrtcType, vertical_border: bool, noise: bool) -> u8 {
         registers: &registers,
         selected: 12,
         vertical_border,
-        noise
+        noise,
+        c0: 0,
+        c4: 0,
+        c9: 0,
+        vsync_line: None,
+        vma: 0,
+        vma_prime: 0,
+        fields: 0
     })
 }
 
 #[test]
 fn only_crtc1_has_a_status_register() {
-    // ACCC §21.3.1/§21.3.3: x L V x x x x x, V = BORDER by R6, L = 0 (R16/17 readable)
-    assert_eq!(read_status(Crtc1, true, false), 1 << 5);
-    assert_eq!(read_status(Crtc1, false, false), 0);
+    // ACCC §21.3.1/§21.3.3: x L V x x x x x, V = BORDER by R6, L = 1 (no light pen strobe)
+    assert_eq!(read_status(Crtc1, true, false), 0x40 | 1 << 5);
+    assert_eq!(read_status(Crtc1, false, false), 0x40);
 }
 
 #[test]
@@ -349,5 +370,45 @@ fn rhino_identifies_every_crtc_type() {
             crtc as u8,
             "RHINO took {crtc:?} for another chip"
         );
+    }
+}
+
+/// The ASICs' status registers (ACCC §21.3.4) at chosen counters: STATUS 1 (R10, read as
+/// register 2 or 10) and STATUS 2 (R11).
+#[test]
+fn asics_status_registers_report_the_counters_events() {
+    let mut registers = registers();
+    // R0 63, R1 40, R2 46, R3 &8E (VSYNC 8 lines), R4 38, R6 25, R7 30, R9 7
+    for (register, value) in [(0, 63), (1, 40), (2, 46), (3, 0x8e), (4, 38), (6, 25), (7, 30), (9, 7)] {
+        registers[register] = value;
+    }
+    let read = |crtc: CrtcType, selected: u8, c0: u8, c4: u8, c9: u8, vsync_line: Option<u8>| {
+        crtc.new_chip().read_register(&ReadContext {
+            registers: &registers,
+            selected,
+            vertical_border: false,
+            noise: false,
+            c0,
+            c4,
+            c9,
+            vsync_line,
+            vma: 0,
+            vma_prime: 0,
+            fields: 0
+        })
+    };
+    for crtc in [Crtc3, Crtc4] {
+        // STATUS 1: bit 6 always set; bit 0 set at C0=R0; bit 3 cleared at C0=R2; bit 5 cleared on
+        // the VSYNC's last line (OffseT's TestCRTC: the end of the VBL)
+        assert_eq!(read(crtc, 10, 10, 0, 0, None) & 0x41, 0x40, "{crtc:?}");
+        assert_eq!(read(crtc, 10, 63, 0, 0, None) & 0x01, 0x01, "{crtc:?} C0=R0");
+        assert_eq!(read(crtc, 10, 46, 0, 0, None) & 0x08, 0, "{crtc:?} C0=R2");
+        assert_eq!(read(crtc, 2, 10, 30, 0, Some(6)) & 0x20, 0x20, "{crtc:?} during the VSYNC (R2 reads R10)");
+        assert_eq!(read(crtc, 10, 10, 30, 7, Some(7)) & 0x20, 0, "{crtc:?} its last line");
+        // STATUS 2: bit 4 set, bit 6 clear; bit 5 cleared on C9=R9; bit 0 cleared on the screen's
+        // last character
+        assert_eq!(read(crtc, 11, 10, 0, 0, None) & 0x50, 0x10, "{crtc:?}");
+        assert_eq!(read(crtc, 11, 10, 0, 7, None) & 0x20, 0, "{crtc:?} C9=R9");
+        assert_eq!(read(crtc, 11, 63, 38, 7, None) & 0x01, 0, "{crtc:?} the last character");
     }
 }

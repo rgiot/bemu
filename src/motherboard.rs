@@ -2160,10 +2160,11 @@ impl Motherboard {
                 return plus.bus_value;
             }
         }
+        // The Gate Array is write-only: it has no data output driver, so an IN from its port
+        // reads the floating bus (&FF), as Madram's CRTC detection (Amstrad Live, 05/2000)
+        // expects of every CPC but the CPC+.
         if self.ppi().must_execute_tick() {
             self.ppi().get_data_from_pins()
-        } else if self.ga().must_execute_tick() {
-            self.ga().get_data_from_pins()
         } else if self.crtc().must_execute_tick() {
             self.crtc().get_data_from_pins()
         } else if self.disc_interface && Self::is_fdc_status_addr(addr) {

@@ -37,6 +37,50 @@ impl Asic {
     }
 }
 
+impl Asic {
+    /// STATUS 1 (R10, ACCC §21.3.4.1): events of the line, each bit its event's value while it
+    /// lasts and the other one otherwise.
+    fn status_1(&self, context: &ReadContext) -> u8 {
+        let register = |number| context.register(number);
+        let (c0, r0, r1, r2) = (context.c0, register(0), register(1), register(2));
+        let event = |bit: u8, happens: bool, value: bool| -> u8 { if happens == value { 1 << bit } else { 0 } };
+        let hsync_end = r2.wrapping_add(self.hsync_width(register(3)).unwrap_or(16));
+        // bit 5: the VSYNC's last line (R3h > 0), else 15 lines from the VSYNC (OffseT's
+        // TestCRTC finds the end of the VBL with it)
+        let width = register(3) >> 4;
+        let bit5 = match (width, context.vsync_line) {
+            (0, Some(line)) => line < 15,
+            (0, None) => false,
+            (_, line) => line != Some(width - 1)
+        };
+        let low = if c0 == r0 { context.vma_prime & 0xff == 0 } else { context.vma & 0xff == 0xff };
+        event(0, c0 == r0, true)
+            | event(1, c0 == r0 / 2, false)
+            | event(2, r0 >= r1 && c0 == r1.wrapping_sub(1), false)
+            | event(3, c0 == r2, false)
+            | event(4, c0 == hsync_end, false)
+            | (u8::from(bit5) << 5)
+            | 1 << 6
+            | event(7, low, false)
+    }
+}
+
+/// STATUS 2 (R11, ACCC §21.3.4.2): events of the frame.
+fn status_2(context: &ReadContext) -> u8 {
+    let register = |number| context.register(number);
+    let (c0, c4, c9, r0, r9) = (context.c0, context.c4, context.c9, register(0), register(9));
+    let event = |bit: u8, happens: bool, value: bool| -> u8 { if happens == value { 1 << bit } else { 0 } };
+    let row_end = c9 == r9 && c0 == r0;
+    event(0, row_end && c4 == register(4), false)
+        | event(1, row_end && c4 == register(6).wrapping_sub(1), false)
+        | event(2, row_end && c4 == register(7).wrapping_sub(1), false)
+        // toggles every 16 frames
+        | (u8::from(context.fields & 16 != 0) << 3)
+        | 1 << 4
+        | event(5, c9 == r9, false)
+        | event(7, row_end || (c9 == 0 && c0 < r0), true)
+}
+
 impl CrtcChip for Asic {
     fn crtc_type(&self) -> CrtcType {
         self.crtc_type
@@ -61,9 +105,8 @@ impl CrtcChip for Asic {
         match context.selected & 7 {
             0 => context.register(16) & pointer_mask(16),
             1 => context.register(17) & pointer_mask(17),
-            // TODO the status registers (ACCC §21.3.4) report live counter
-            // events; they read as "nothing happening" until modelled.
-            2 | 3 => 0,
+            2 => self.status_1(context),
+            3 => status_2(context),
             number => {
                 let register = 8 + number;
                 context.register(register) & pointer_mask(register)

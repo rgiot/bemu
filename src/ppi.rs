@@ -167,6 +167,10 @@ pub struct Ppi {
     /// an output, and the PSG reading the shared bus must not overwrite it
     port_a_latch: u8,
     direction_b: PpiDirection,
+    /// What the CPU last wrote to port B: its pins are the CPC's signals (VSYNC, the jumpers...),
+    /// never driven, but a real 8255 reads this latch back while port B is an output (OffseT's
+    /// TestCRTC tells the CPC+'s ASIC, which reads its inputs, from it so).
+    port_b_latch: u8,
     direction_c_lower: PpiDirection,
     direction_c_upper: PpiDirection,
 
@@ -193,6 +197,7 @@ impl Default for Ppi {
             direction_a: Default::default(),
             port_a_latch: 0,
             direction_b: PpiDirection::Input, // no idea if it is the best choice, but it allows to directly test vsync
+            port_b_latch: 0,
             direction_c_lower: Default::default(),
             direction_c_upper: Default::default(),
             clears_ports_on_mode_set: true,
@@ -415,6 +420,12 @@ impl Chip for Ppi {
                 // Silently discarding the byte is correct; overwriting
                 // B0-B7 the way port A/C's write does would corrupt VSYNC/
                 // brand/refresh with whatever the CPU happened to write.
+                // Only the 8255's latch takes it (read back below).
+                self.port_b_latch = self.get_data_from_pins();
+            } else if !self.get_pin(PpiPin::Neg_RD) && self.direction_b == PpiDirection::Output && self.clears_ports_on_mode_set {
+                // A real 8255 reads an output port's latch: TestCRTC writes a value to port B set
+                // as an output and reads it back; the CPC+'s ASIC (below) reads its inputs.
+                self.set_data_on_pins(self.port_b_latch);
             } else if !self.get_pin(PpiPin::Neg_RD) {
                 // Same reasoning as the write side, mirrored: reading
                 // always returns the live hardwired pins, regardless of
@@ -495,6 +506,7 @@ impl Chip for Ppi {
 
                 if self.clears_ports_on_mode_set {
                     self.port_a_latch = 0;
+                    self.port_b_latch = 0;
                     self.set_data_a_on_pins(0);
                     // Real 8255 hardware clears port B's output latch to 0 on a
                     // mode-set write, but in this emulator B0/B1-B3/B4 aren't CPU

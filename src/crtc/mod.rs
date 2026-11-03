@@ -282,7 +282,14 @@ impl Crtc {
             registers: &core.regs,
             selected: core.ar,
             vertical_border: core.vertical_border,
-            noise: core.noise & 1 != 0
+            noise: core.noise & 1 != 0,
+            c0: core.hcc,
+            c4: core.vcc.value(),
+            c9: core.vlc.value(),
+            vsync_line: core.vsync_running.then_some(core.vsc),
+            vma: core.crtc_vma,
+            vma_prime: core.crtc_vma_prime,
+            fields: core.fields
         }
     }
 

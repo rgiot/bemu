@@ -1106,11 +1106,7 @@ impl Z80 {
                         // evaluable at all without a PC to resolve it
                         // against).
                         let displacement = self.reg8(Reg8::Z).value() as i8;
-                        if displacement > 0 {
-                            self.pc.add(displacement as u16);
-                        } else {
-                            self.pc.sub(-displacement as u16);
-                        }
+                        self.pc.add(displacement as i16 as u16); // sign-extended, wrapping (-128 included)
                         self.next_state = MCycle::new_fake(2);
                     }
                     else {
@@ -1278,11 +1274,7 @@ impl Z80 {
                         let displacement = self.reg8(Reg8::Z).value() as i8;
              
                       
-                        if displacement > 0 {
-                            self.pc.add(displacement as u16);
-                        } else {
-                            self.pc.sub(-displacement as u16);
-                        }
+                        self.pc.add(displacement as i16 as u16); // sign-extended, wrapping (-128 included)
 
                     }
 
