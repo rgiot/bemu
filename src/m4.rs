@@ -405,9 +405,11 @@ impl M4Board {
         }
         let mut path = self.root.clone();
         for part in &parts {
-            // the long name, else the 8.3 one (ROMCON~1.BIN for romconfig.bin), the case ignored
+            // the long name, else the 8.3 one (ROMCON~1.BIN for romconfig.bin), the case ignored,
+            // its spaces dropped as AMSDOS does (a name copied from CAT: "COLUMNS .BAS")
             let entries = fat_directory(&path);
-            let short = part.trim_end_matches('.');
+            let compact: String = part.chars().filter(|c| *c != ' ').collect();
+            let short = compact.trim_end_matches('.');
             let found = entries
                 .iter()
                 .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case(part))
@@ -789,6 +791,9 @@ fn dsk_files(image: &Path) -> Option<(ExtendedDsk, AmsdosCatalog)> {
 /// given, the case ignored, then with .BAS, then .BIN.
 fn dsk_file(image: &Path, name: &str) -> Option<Vec<u8>> {
     let (disc, catalog) = dsk_files(image)?;
+    // its spaces dropped, as AMSDOS does (a name copied from CAT: "COLUMNS .BAS")
+    let name: String = name.chars().filter(|c| *c != ' ').collect();
+    let name = name.trim_end_matches('.');
     let mut candidates = vec![name.to_owned()];
     if !name.contains('.') {
         candidates.extend([format!("{name}.BAS"), format!("{name}.BIN")]);
@@ -1091,6 +1096,7 @@ mod test {
         run(&mut board, C_DIRSETARGS, &[0]);
         assert_eq!(&run(&mut board, C_READDIR, &[])[..12], b"COLUMN~1.DSK");
         assert_eq!(run(&mut board, C_CD, &nul_terminated("column~1.dsk")), vec![0]);
+        assert_eq!(run(&mut board, C_CD, &nul_terminated("/COLUMN~1 .DSK")), vec![0], "as CAT pads it");
         std::fs::rename(sd.join("Columns_CPC_v2004.1.1__ENGLISH.dsk"), sd.join("Columns.dsk")).unwrap();
         assert_eq!(run(&mut board, C_CD, &nul_terminated("/columns.DSK")), vec![0]);
         assert_eq!(run(&mut board, C_GETPATH, &[]), nul_terminated("/Columns.dsk"));
@@ -1104,6 +1110,8 @@ mod test {
 
         // RUN"COLUMNS: the name without extension, then .BAS; its AMSDOS header first
         assert_eq!(run(&mut board, C_OPEN, &named("columns", 0x01))[1], 0);
+        // as CAT shows it, its spaces dropped
+        assert_eq!(run(&mut board, C_OPEN, &named("COLUMNS .BAS", 0x01))[1], 0);
         let data = run(&mut board, C_READ, &[1, 128, 0]);
         assert_eq!(&data[2..9], b"COLUMNS", "the header's name");
         assert_eq!(run(&mut board, C_OPEN, &named("nothere.bas", 0x01))[1], FR_NO_FILE);
