@@ -99,7 +99,7 @@ lto = "fat"
 codegen-units = 1
 
 [features]
-default = ["audio", "playcity", "digiblaster", "m4", "m4-wifi", "albireo", "nova", "booster", "willy", "dandanator", "unidos", "orgams"]
+default = ["audio", "playcity", "digiblaster", "m4", "m4-wifi", "albireo", "nova", "booster", "willy", "dandanator", "unidos", "orgams", "gpu-window"]
 # The extensions, each of which can be left out of a build:
 # the PlayCity (two more AYs and a CTC, on the expansion port)
 playcity = []

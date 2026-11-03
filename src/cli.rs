@@ -15,6 +15,13 @@ pub enum FrontendKind {
     Winit
 }
 
+/// The window backend without `--frontend`: the GPU window when the build has it (the default
+/// build does), else minifb.
+#[cfg(feature = "gpu-window")]
+const DEFAULT_FRONTEND: FrontendKind = FrontendKind::Winit;
+#[cfg(not(feature = "gpu-window"))]
+const DEFAULT_FRONTEND: FrontendKind = FrontendKind::Minifb;
+
 /// ACE-DL's own: ink black is a dark grey, not the 0 of the blanking.
 pub const DEFAULT_BLACK_LEVEL: u8 = 8;
 
@@ -179,9 +186,9 @@ pub struct Args {
     pub host_keyboard_layout: Option<HostLayout>,
 
     /// The window's backend: winit is a window the GPU draws, the CRT included, with nothing read
-    /// back (a build with --features gpu-window); F11 (or Ctrl+Cmd+F) toggles its
+    /// back (the default build; --no-default-features drops it); F11 (or Ctrl+Cmd+F) toggles its
     /// fullscreen, which minifb has none of.
-    #[arg(long, value_enum, default_value_t = FrontendKind::Minifb, help_heading = RUN)]
+    #[arg(long, value_enum, default_value_t = DEFAULT_FRONTEND, help_heading = RUN)]
     pub frontend: FrontendKind,
 
     /// A video with sound through ffmpeg: what the window shows until it is closed, or without
