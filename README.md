@@ -251,7 +251,8 @@ COPY (Alt) and the cursor keys; the keypad's digits and dot are the CPC's f0-f9 
 On the CPC, the cursor keys alone move only inside the line being typed: at `Ready` they move
 nothing. To edit a line already on the screen, hold SHIFT with the cursor keys to move the copy
 cursor to it, then press COPY (Alt) to copy its characters into the line being typed, as on a
-real CPC.
+real CPC. That is also how a character the CPC has no key for is typed: the `~` of an M4's 8.3
+name (`COLUMN~1.DSK`, as `CAT` shows it) is copied from the screen, or written `CHR$(126)`.
 
 ## Example scripts
 
