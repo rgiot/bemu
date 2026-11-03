@@ -426,7 +426,10 @@ impl M4Board {
     fn change_dir(&mut self, name: &str) -> bool {
         let Ok(path) = self.host_path(name) else { return false };
         // a DSK image is entered as a directory, its AMSDOS files in it (read only)
-        let image = matches!(dsk_parts(&path), Some((_, None))) && dsk_files(&path).is_some();
+        let image = matches!(dsk_parts(&path), Some((_, None)))
+            && read_dsk(&path)
+                .inspect_err(|e| eprintln!("M4: {} can't be entered: {e}", path.display()))
+                .is_ok();
         if !path.is_dir() && !image {
             return false;
         }
@@ -782,9 +785,18 @@ fn dsk_parts(path: &Path) -> Option<(PathBuf, Option<String>)> {
 
 /// A DSK image's disc and AMSDOS catalogue (its data format's, side A).
 fn dsk_files(image: &Path) -> Option<(ExtendedDsk, AmsdosCatalog)> {
-    let disc = ExtendedDsk::from_buffer(&std::fs::read(image).ok()?).ok()?;
-    let catalog = AmsdosManagerNonMut::new_from_disc(&disc, Head::A).catalog().ok()?.to_amsdos_catalog();
-    Some((disc, catalog))
+    read_dsk(image).ok()
+}
+
+/// [`dsk_files`], or why the image can't be read as a directory.
+fn read_dsk(image: &Path) -> Result<(ExtendedDsk, AmsdosCatalog), String> {
+    let bytes = std::fs::read(image).map_err(|e| e.to_string())?;
+    let disc = ExtendedDsk::from_buffer(&bytes).map_err(|e| format!("not a DSK image: {e}"))?;
+    let catalog = AmsdosManagerNonMut::new_from_disc(&disc, Head::A)
+        .catalog()
+        .map_err(|e| format!("no AMSDOS catalogue: {e}"))?
+        .to_amsdos_catalog();
+    Ok((disc, catalog))
 }
 
 /// The file `name` of a DSK image, its AMSDOS header included, as AMSDOS finds it: the name as
