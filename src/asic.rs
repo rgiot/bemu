@@ -95,11 +95,11 @@ const ADC_IDLE: [u8; 8] = [0x3f, 0x3f, 0x3f, 0x3f, 0x3f, 0x00, 0x3f, 0x00];
 /// The size of a snapshot's "CPC+" chunk (Kevin Thacker's snapshot format, version 3).
 pub const SNAPSHOT_CHUNK_LEN: usize = 0x8f8;
 
-/// Characters from the HSYNC start to the programmable raster interrupt, at most: the HSYNC's
-/// width when it is shorter. "Extra CPC Plus Hardware Information" gives 10 us, "to be checked";
-/// CPCSE's 7 lets Eerie Forest (Logon System) run, whose stack-driven code is done just before
-/// the interrupt of its line 1 (10 lands inside it and corrupts its table).
-const RASTER_INTERRUPT_CHARACTERS: u8 = 7;
+/// Microseconds from the moment the line is PRI's while HSYNC is on to the programmable raster
+/// interrupt, whatever the HSYNC's width. ACE-DL and AMSpiriT agree (a HALT on PRI 1 with R2=46
+/// wakes into &0038 at C0=52 of line 1 for widths 3, 6 and 14); CPCSE's min(width, 7) and the
+/// "10 us" of "Extra CPC Plus Hardware Information" ("to be checked") are later.
+const RASTER_INTERRUPT_DELAY: u8 = 2;
 
 /// Microseconds a DMA LOAD lasts (Arnold V 2.6: "at least 8 cycles").
 const DMA_LOAD_US: u8 = 8;
@@ -147,6 +147,8 @@ pub struct Asic {
     ga_interrupt: bool,
     /// The CRTC's HSYNC at the previous microsecond.
     hsync: bool,
+    /// The line was PRI's while HSYNC was on, at the previous microsecond.
+    raster_match: bool,
     /// Microseconds before the programmable raster interrupt.
     raster_countdown: Option<u8>,
     /// Microseconds since the HSYNC started, while the DMA channels work.
@@ -174,6 +176,7 @@ impl Default for Asic {
             raster_acknowledged: false,
             ga_interrupt: false,
             hsync: false,
+            raster_match: false,
             raster_countdown: None,
             dma_us: None,
             dma_active: [false; 3],
@@ -224,7 +227,7 @@ impl Asic {
         was != self.unlocked
     }
 
-    /// The screen split for the CRTC: the line after which the display goes on from SSA.
+    /// The screen split as programmed: the line after which the display goes on from SSA.
     pub fn split(&self) -> Option<(u8, u16)> {
         (self.splt != 0).then_some((self.splt, self.ssa))
     }
@@ -325,7 +328,12 @@ impl Asic {
                 match address & 3 {
                     0 => channel.address = (channel.address & 0xff00) | u16::from(value & 0xfe),
                     1 => channel.address = (channel.address & 0x00ff) | (u16::from(value) << 8),
-                    2 => channel.prescaler = value,
+                    // taken at once: the count in progress wraps at the next HSYNC ("L'unité de
+                    // pause est prise en compte immédiatement", ASMtrad, DMA son)
+                    2 => {
+                        channel.prescaler = value;
+                        channel.pause_hsyncs = 0;
+                    }
                     _ => {}
                 }
             }
@@ -466,16 +474,19 @@ impl Asic {
         let counters = crtc.counters();
         let hsync = crtc.get_pin(CrtcPin::HS);
         if hsync && !self.hsync {
-            if self.pri != 0 && line_number(counters.vcc, counters.vlc) == self.pri {
-                let width = match crtc.r3() & 0x0f {
-                    0 => 16,
-                    width => width
-                };
-                self.raster_countdown = Some(width.min(RASTER_INTERRUPT_CHARACTERS));
-            }
             self.start_dma_line();
         }
         self.hsync = hsync;
+
+        // the raster interrupt is asked when the line is PRI's while HSYNC is on: from the HSYNC
+        // start on that line, or from the line start when the previous line's HSYNC runs over
+        // into it (ACE-DL: R2=51 and a width of 14, the HSYNC ending on C0=0; RE-WIRED, Benediction
+        // 2026, writes its split line for each line just after this interrupt and relies on it)
+        let matches = hsync && self.pri != 0 && line_number(counters.vcc, counters.vlc) == self.pri;
+        if matches && !self.raster_match {
+            self.raster_countdown = Some(RASTER_INTERRUPT_DELAY);
+        }
+        self.raster_match = matches;
 
         if let Some(left) = self.raster_countdown {
             if left <= 1 {
@@ -573,7 +584,8 @@ impl Asic {
             dma.pause = argument;
             dma.pause_hsyncs = dma.prescaler;
         }
-        if kind & 2 != 0 {
+        // REPEAT 0, as PAUSE 0, has no effect (Arnold V 2.6)
+        if kind & 2 != 0 && argument != 0 {
             dma.loop_count = argument;
             dma.loop_address = dma.address;
         }
@@ -663,7 +675,9 @@ pub struct AsicVideo {
     scroll_ring: [u8; 16],
     /// Where the byte being displayed is: X of its first pixel, Y of its line.
     byte_x: u16,
-    byte_y: u16
+    byte_y: u16,
+    /// Pixels displayed since the border ended on this line (for the extended border).
+    displayed: u16
 }
 
 impl Default for AsicVideo {
@@ -682,7 +696,8 @@ impl Default for AsicVideo {
             line: None,
             scroll_ring: [0; 16],
             byte_x: 0,
-            byte_y: 0
+            byte_y: 0,
+            displayed: 0
         }
     }
 }
@@ -809,10 +824,18 @@ impl AsicVideo {
         self.scroll_ring[usize::from(self.sscr & 0x0f)]
     }
 
-    /// SSCR bit 7: the border covers the first 2 bytes of each line. `pixel` is the pixel of
-    /// the byte being displayed.
-    pub fn extended_border(&self, pixel: usize) -> bool {
-        self.sscr & 0x80 != 0 && self.byte_x + (pixel as u16) < 16
+    /// SSCR bit 7: the border covers the first 2 bytes (16 mode 2 pixels) of each line, counted
+    /// from where the display starts. Called for every pixel, `display` the display enable as
+    /// the Gate Array shows it (the character fetched is a character ahead of the one shown: by
+    /// C0 the mask fell on border and Eerie Forest showed its 2 bytes of garbage on the left,
+    /// which AMSpiriT masks).
+    pub fn extended_border(&mut self, display: bool) -> bool {
+        if !display {
+            self.displayed = 0;
+            return false;
+        }
+        self.displayed = self.displayed.saturating_add(1);
+        self.sscr & 0x80 != 0 && self.displayed <= 16
     }
 
     /// The sprite pen (1-15, 0 for none) at pixel `pixel` of the byte being displayed.
@@ -976,5 +999,63 @@ mod test {
         asic.note_ga_interrupt(true);
         assert_eq!(asic.acknowledge(0x2345), 0x46);
         assert_eq!(asic.acknowledge(0x1345), 0x44);
+    }
+
+    #[test]
+    fn repeat_0_does_nothing_and_a_prescaler_write_restarts_the_pause_unit() {
+        let mut asic = Asic::default();
+        let mut video = AsicVideo::default();
+        let mut psg = crate::psg::Psg::default();
+        asic.write(&mut video, 0x6c0f, 0x01);
+        asic.dma[0].address = 0x0102;
+        asic.execute_dma(0, 0x2003, &mut psg); // REPEAT 3
+        asic.dma[0].address = 0x0200;
+        asic.execute_dma(0, 0x2000, &mut psg); // REPEAT 0
+        assert_eq!((asic.dma[0].loop_count, asic.dma[0].loop_address), (3, 0x0102), "REPEAT 0 is a NOP");
+
+        asic.write(&mut video, 0x6c02, 5);
+        asic.execute_dma(0, 0x1002, &mut psg); // PAUSE 2
+        asic.start_dma_line();
+        asic.start_dma_line();
+        assert_eq!(asic.dma[0].pause_hsyncs, 3);
+        asic.write(&mut video, 0x6c02, 1);
+        asic.start_dma_line();
+        assert_eq!((asic.dma[0].pause, asic.dma[0].pause_hsyncs), (1, 1), "the count in progress wrapped at once");
+    }
+
+    /// Where the raster interrupt is asked for PRI 1 (C4, C9, C0), with HSYNC at `r2` for 14
+    /// characters on a 64 character line.
+    fn raster_interrupt_position(r2: u8) -> (u8, u8, u8) {
+        use crate::chip::Chip;
+        use crate::crtc::{Crtc, CrtcType};
+        use crate::ga::{GateArray, GateArrayPin};
+        let mut crtc = Crtc::from(CrtcType::Crtc3);
+        for (register, value) in [(0, 63), (1, 40), (2, r2), (3, 0x8e), (4, 38), (6, 25), (7, 30), (9, 7)] {
+            crtc.do_write_register(register, value);
+        }
+        let mut ga = GateArray::default();
+        ga.set_plus(true);
+        ga.reset();
+        let mut psg = crate::psg::Psg::default();
+        let mut asic = Asic::default();
+        let mut video = AsicVideo::default();
+        asic.write(&mut video, 0x6800, 1);
+        for _ in 0..40_000 {
+            crtc.tick();
+            asic.microsecond(&crtc, &mut ga, &mut psg, |_| 0);
+            if !ga.get_pin(GateArrayPin::INTERRUPT) {
+                let c = crtc.counters();
+                return (c.vcc, c.vlc, c.hcc);
+            }
+        }
+        panic!("no raster interrupt");
+    }
+
+    #[test]
+    fn the_raster_interrupt_is_asked_where_line_and_hsync_meet() {
+        // INT on C0=47: the Z80 halted there is in &0038 on C0=52, as in ACE-DL and AMSpiriT
+        assert_eq!(raster_interrupt_position(46), (0, 1, 47), "just after the HSYNC start of line 1");
+        let (vcc, vlc, hcc) = raster_interrupt_position(51);
+        assert!((vcc, vlc) == (0, 1) && hcc < 4, "line 0's HSYNC running over into line 1: {hcc}");
     }
 }

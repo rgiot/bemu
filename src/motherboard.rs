@@ -1971,6 +1971,9 @@ impl Motherboard {
         if self.in_register_page(addr) {
             if let (Some(asic), Some(video)) = (self.asic.as_deref_mut(), self.ga.plus_mut()) {
                 asic.write(video, addr, byte);
+                if addr == 0x6800 && byte != 0 {
+                    self.ga.cancel_r52_interrupt();
+                }
             }
             return;
         }

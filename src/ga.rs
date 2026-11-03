@@ -1049,10 +1049,10 @@ pub struct GateArray {
     rgb_delayed: bool,
     /// Ticks since the video byte being displayed was loaded (see [`DISPEN_LATCH_TICKS`])
     byte_tick: usize,
-    /// For the first ticks of the byte: the pen computed (without border), whether it was shown as
-    /// border, and the tick of the byte whose pen the output showed (MODE 2 its own, the other
-    /// modes the previous one)
-    byte_pens: [(Pen, bool); DISPEN_LATCH_TICKS],
+    /// For the first ticks of the byte: the pen computed (without border), whether DISPEN made it
+    /// border, whether the CPC+'s extended border covers it, and the tick of the byte whose pen
+    /// the output showed (MODE 2 its own, the other modes the previous one)
+    byte_pens: [(Pen, bool, bool); DISPEN_LATCH_TICKS],
     byte_shown: [Option<usize>; DISPEN_LATCH_TICKS + 1],
     /// GA clock ticks since power-on (timestamps of the RMR mode writes).
     abs_tick: u64,
@@ -1071,6 +1071,8 @@ pub struct GateArray {
     mode_latched: bool,
     /// Ticks left before the INT line rises (see `schedule_interrupt`).
     interrupt_delay: Option<u32>,
+    /// The interrupt requested last is the CPC+'s programmable raster interrupt, not R52's.
+    raster_interrupt: bool,
     /// T-states the last executed instruction left idle (see `z80::tstates`).
     last_idle_t: u8,
     ack_armed: bool,
@@ -1136,7 +1138,7 @@ impl Default for GateArray {
             sync_black_ring: History::new(false),
             sync_black_lag: SYNC_BLACK_LAG_TICKS,
             byte_tick: 0,
-            byte_pens: [(Pen::Border, true); DISPEN_LATCH_TICKS],
+            byte_pens: [(Pen::Border, true, false); DISPEN_LATCH_TICKS],
             byte_shown: [None; DISPEN_LATCH_TICKS + 1],
             rgb_delayed: false,
             abs_tick: 0,
@@ -1148,6 +1150,7 @@ impl Default for GateArray {
             mode_history: History::new(VideoMode::Mode1),
             mode_latched: false,
             interrupt_delay: None,
+            raster_interrupt: false,
             last_idle_t: 0,
             ack_armed: false,
             ack_countdown: None,
@@ -1422,16 +1425,18 @@ impl GateArray {
             // *displayed* output is blanked below - not consumption.
             let mode = self.pixel_automata.mode();
             let tick = self.byte_tick;
-            let mut border = !self.get_pin(GateArrayPin::DISPEN);
+            let dispen_border = !self.get_pin(GateArrayPin::DISPEN);
             let mut raw = self.pixel_automata.generate_pen(false);
+            let mut extended = false;
             if let Some(plus) = &mut self.plus {
                 // the CPC+'s soft scroll: the screen pens come late, the border can widen
                 raw = Pen::Pen(plus.scroll(raw.value()));
-                border |= plus.extended_border(tick);
+                extended = plus.extended_border(!dispen_border);
             }
+            let border = dispen_border || extended;
             let computed = Shown::Pen(if border { Pen::Border } else { raw });
             if tick < DISPEN_LATCH_TICKS {
-                self.byte_pens[tick] = (raw, border);
+                self.byte_pens[tick] = (raw, dispen_border, extended);
             }
             if tick <= DISPEN_LATCH_TICKS {
                 self.byte_shown[tick] = if mode == Some(VideoMode::Mode2) { Some(tick) } else { tick.checked_sub(1) };
@@ -1489,10 +1494,10 @@ impl GateArray {
         for tick in 0..=DISPEN_LATCH_TICKS {
             // (the pen of this very tick already follows DISPEN as it is now)
             let Some(source) = self.byte_shown[tick].filter(|&source| source < DISPEN_LATCH_TICKS) else { continue };
-            let (raw, was_border) = self.byte_pens[source];
+            let (raw, was_border, extended) = self.byte_pens[source];
             let age = DISPEN_LATCH_TICKS - tick;
             if was_border != border && matches!(self.shown_ring.get(age), Shown::Pen(_)) {
-                self.shown_ring.set(age, Shown::Pen(if border { Pen::Border } else { raw }));
+                self.shown_ring.set(age, Shown::Pen(if border || extended { Pen::Border } else { raw }));
             }
         }
     }
@@ -1595,10 +1600,23 @@ impl GateArray {
 
         self.r52.bitand_assign(0b011111);
         self.request_interrupt();
+        self.raster_interrupt = true;
+    }
+
+    /// PRI is set to a line on a CPC+: the R52 interrupts are cancelled, the one already
+    /// requested and not acknowledged included ("Lorsqu'une interruption raster est mise, les
+    /// interruptions GA sont annulées", Asic: interruptions raster et DMA). Eerie Forest (Logon
+    /// System, 2017) keeps the interrupts disabled for 0.76 s with PRI at 0, then sets PRI to 1
+    /// and enables them: it must get its first interrupt at line 1, not R52's at once.
+    pub fn cancel_r52_interrupt(&mut self) {
+        self.interrupt_delay = None;
+        if !self.raster_interrupt {
+            self.cancel_interrupt();
+        }
     }
 
     fn request_interrupt(&mut self) {
-
+        self.raster_interrupt = false;
   //      dbg!("GA request interrupt");
         self.interrupt_signal_counter = InterruptionSignal::Signal(0);
         self.set_pin(GateArrayPin::INTERRUPT, false); //activate when low
@@ -2342,5 +2360,20 @@ mod test {
             println!("pixel {}", i);
             assert_eq!(expected[i], obtained[i]);
         }
+    }
+
+    #[test]
+    fn a_raster_line_cancels_the_pending_r52_interrupt_of_a_plus() {
+        let mut ga = GateArray::default();
+        ga.set_plus(true);
+        ga.reset();
+        ga.request_interrupt();
+        assert!(!ga.get_pin(GateArrayPin::INTERRUPT), "R52's interrupt, pending");
+        ga.cancel_r52_interrupt();
+        assert!(ga.get_pin(GateArrayPin::INTERRUPT), "PRI set: R52's interrupt is cancelled");
+
+        ga.raise_raster_interrupt();
+        ga.cancel_r52_interrupt();
+        assert!(!ga.get_pin(GateArrayPin::INTERRUPT), "the raster's own interrupt stays");
     }
 }
