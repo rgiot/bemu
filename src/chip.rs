@@ -262,25 +262,41 @@ pub trait Activable: Chip {
 }
 
 /// Synchronize the pins of the first chip to the pins of the second chip
+#[inline(always)]
 pub fn sync_pins<C1: Chip, C2: Chip, const COUNT: usize>(
     chip1: &C1,
     pins1: &[C1::PinType; COUNT],
     chip2: &mut C2,
     pins2: &[C2::PinType; COUNT],
 ) {
-    //   assert_eq!(pins1.len(), pins2.len());
+    // Read the source once. Pins moving by the same distance (e.g. A8/A9 -> RS/RW) form a run
+    // moved by one mask and one shift; the destination is written once. With constant pin
+    // arrays the grouping is resolved at compile time.
+    #[inline(always)]
+    fn shifted(bits: u64, delta: i32) -> u64 {
+        if delta >= 0 { bits << delta } else { bits >> -delta }
+    }
 
-    // as `chip2.set_pin(pin2, chip1.get_pin(pin1))` pin by pin, with the pins of each chip read and
-    // written once (millions of times a second: `Motherboard::sync_chips_pins`)
     let source = chip1.pins_buffer().1;
-    let mut destination = chip2.pins_buffer().1;
+    let mut moved = 0_u64;
+    let mut written = 0_u64;
+    let mut run_mask = 0_u64;
+    let mut run_delta = 0_i32;
     for (&pin1, &pin2) in pins1.iter().zip(pins2.iter()) {
         let (pin1, pin2): (u64, u64) = (pin1.into(), pin2.into());
         debug_assert!(pin1.count_ones() == 1 && pin2.count_ones() == 1);
-        let value = u64::from(source & pin1 != 0);
-        destination = (destination & !pin2) | (pin2 & value.wrapping_neg());
+        let delta = pin2.trailing_zeros() as i32 - pin1.trailing_zeros() as i32;
+        if run_mask != 0 && delta != run_delta {
+            moved |= shifted(source & run_mask, run_delta);
+            run_mask = 0;
+        }
+        run_delta = delta;
+        run_mask |= pin1;
+        written |= pin2;
     }
-    chip2.pins_buffer_mut().1 = destination;
+    moved |= shifted(source & run_mask, run_delta);
+    let destination = &mut chip2.pins_buffer_mut().1;
+    *destination = (*destination & !written) | moved;
 }
 
 #[cfg(test)]

@@ -203,7 +203,10 @@ fn rom_decoding() {
 /// The CRTC test, which asks the type it runs on.
 fn crtc(crtc: CrtcType, known_failures: &[&str]) {
     let digit = b'0' + crtc as u8;
-    check("crtctest.bin", crtc, 3600, &[digit], 20, known_failures);
+    // Its I/O decode test scans the 65536 ports, each one waiting for a VSYNC (or its timeout),
+    // so it takes hours of emulated time: only worth running optimised.
+    let seconds = if cfg!(debug_assertions) { 3600 } else { 20000 };
+    check("crtctest.bin", crtc, seconds, &[digit], 20, known_failures);
 }
 
 #[test]
