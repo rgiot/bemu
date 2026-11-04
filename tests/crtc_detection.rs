@@ -147,17 +147,10 @@ fn type_text(motherboard: &mut Motherboard, text: &str) {
     }
 }
 
-/// A machine with `crtc` at BASIC's prompt (a CPC+ leaves its system cartridge's menu with f1).
+/// A machine with `crtc` at BASIC's prompt.
 fn at_basic_prompt(crtc: CrtcType) -> Motherboard {
     let mut motherboard = builder(crtc).build();
     run_until(&mut motherboard, 3, |_| false);
-    if crtc == CrtcType::Crtc3 {
-        // (0.1 s: held longer, it repeats into BASIC's line)
-        motherboard.keyboard_mut().set_pressed(CpcKey::Keypad1, true);
-        run_for(&mut motherboard, 400_000);
-        motherboard.keyboard_mut().set_pressed(CpcKey::Keypad1, false);
-        run_until(&mut motherboard, 4, |_| false);
-    }
     motherboard
 }
 

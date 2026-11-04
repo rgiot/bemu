@@ -62,14 +62,9 @@ fn printed(bin: &str, crtc: CrtcType, seconds: usize, answers: &[u8]) -> String 
     }
     builder.set_crtc(crtc);
     let mut motherboard = builder.build();
+    // nobody looks at the picture (the CPC+'s ASIC does depend on the video fetches)
+    motherboard.set_video(crtc == CrtcType::Crtc3);
     run_for(&mut motherboard, 3 * 4_000_000);
-    if crtc == CrtcType::Crtc3 {
-        // out of the system cartridge's menu: f1, BASIC (briefly: held, it repeats into BASIC)
-        motherboard.keyboard_mut().set_pressed(CpcKey::Keypad1, true);
-        run_for(&mut motherboard, 400_000);
-        motherboard.keyboard_mut().set_pressed(CpcKey::Keypad1, false);
-        run_for(&mut motherboard, 4 * 4_000_000);
-    }
     motherboard.write_buffer(load, body);
     for c in format!("CALL &{exec:04X}").chars() {
         let keys = motherboard.keyboard_layout().keys_of_char(c).unwrap();
@@ -205,7 +200,7 @@ fn crtc(crtc: CrtcType, known_failures: &[&str]) {
     let digit = b'0' + crtc as u8;
     // Its I/O decode test scans the 65536 ports, each one waiting for a VSYNC (or its timeout),
     // so it takes hours of emulated time: only worth running optimised.
-    let seconds = if cfg!(debug_assertions) { 3600 } else { 20000 };
+    let seconds = if cfg!(debug_assertions) { 3600 } else { 100_000 };
     check("crtctest.bin", crtc, seconds, &[digit], 20, known_failures);
 }
 
