@@ -9,8 +9,11 @@
 //! them with the video. Both are produced in emulated time, so picture and
 //! sound stay in sync even when the emulation runs slower than real time.
 //!
-//! The container and codecs are chosen by `ffmpeg` from the output file's
-//! extension (`.mp4`, `.mkv`, `.webm`, ...).
+//! The container is chosen by `ffmpeg` from the output file's extension (`.mp4`,
+//! `.mkv`, `.webm`, ...). For `.mp4`, `.mkv` and `.mov` the final pass follows ACE's
+//! settings: 2160 lines high, bt601 -> bt709, x264 at CRF 25, MP3 audio. Its crop is not
+//! applied (our frames are the `--display` filter's), only its display aspect, which
+//! differs on a CPC+ (its wider picture).
 
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -21,6 +24,13 @@ use amsrust::psg::AudioConfig;
 /// The CPC frame rate, as a fraction ffmpeg understands.
 const FRAME_RATE: &str = "15625/312";
 
+/// The height of the final video.
+const VIDEO_HEIGHT: usize = 2160;
+
+/// ACE's output sizes (3008x2160 and 3064x2160): the display aspect of the picture.
+const CPC_ASPECT: (usize, usize) = (3008, 2160);
+const PLUS_ASPECT: (usize, usize) = (3064, 2160);
+
 pub struct Recorder {
     output: PathBuf,
     width: usize,
@@ -30,6 +40,7 @@ pub struct Recorder {
     frames_in: BufWriter<ChildStdin>,
     video_only: PathBuf,
     audio: Option<(AudioConfig, PathBuf, BufWriter<std::fs::File>)>,
+    plus: bool,
     frames: usize,
     /// Reused for the RGB bytes of each frame.
     rgb: Vec<u8>
@@ -37,8 +48,14 @@ pub struct Recorder {
 
 impl Recorder {
     /// Start recording `width`x`height` frames, with the PSG's samples in
-    /// the `audio` format if any.
-    pub fn start(output: &Path, width: usize, height: usize, audio: Option<AudioConfig>) -> Result<Self, String> {
+    /// the `audio` format if any. `plus` is for a CPC+, whose picture is wider.
+    pub fn start(
+        output: &Path,
+        width: usize,
+        height: usize,
+        audio: Option<AudioConfig>,
+        plus: bool
+    ) -> Result<Self, String> {
         check_ffmpeg()?;
         let video_only = temporary(output, "video.mkv");
         let size = format!("{width}x{height}");
@@ -74,6 +91,7 @@ impl Recorder {
             frames_in,
             video_only,
             audio,
+            plus,
             frames: 0,
             rgb: Vec::with_capacity(width * height * 3)
         })
@@ -131,6 +149,20 @@ impl Recorder {
                 .arg(&path);
             self.audio = Some((config, path, out));
         }
+        if uses_ace_settings(&self.output) {
+            let (aspect_width, aspect_height) = if self.plus { PLUS_ASPECT } else { CPC_ASPECT };
+            // an even width, as yuv420p needs
+            let video_width = VIDEO_HEIGHT * aspect_width / aspect_height / 2 * 2;
+            let filter = format!(
+                "colorspace=all=bt709:iall=bt601-6-625:fast=1,scale={video_width}:{VIDEO_HEIGHT},setsar=1:1"
+            );
+            mux.args(["-vf", &filter])
+                .args(["-colorspace", "1", "-color_primaries", "1", "-color_trc", "1"])
+                .args(["-vcodec", "libx264", "-crf", "25"]);
+            if self.audio.is_some() {
+                mux.args(["-codec:a", "libmp3lame", "-qscale:a", "0"]);
+            }
+        }
         // yuv420p: the pixel format every player can read.
         mux.args(["-pix_fmt", "yuv420p"]).arg(&self.output);
         let status = mux.status().map_err(|e| format!("cannot start ffmpeg: {e}"))?;
@@ -164,6 +196,14 @@ fn detach_from_terminal_signals(command: &mut Command) {
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         command.creation_flags(CREATE_NEW_PROCESS_GROUP);
     }
+}
+
+/// The containers the x264 + MP3 settings suit; the others (`.webm`...) keep ffmpeg's codecs.
+fn uses_ace_settings(output: &Path) -> bool {
+    output
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| ["mp4", "mkv", "mov"].iter().any(|known| extension.eq_ignore_ascii_case(known)))
 }
 
 fn check_ffmpeg() -> Result<(), String> {

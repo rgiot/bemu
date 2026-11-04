@@ -870,8 +870,8 @@ fn run_headless(
 /// The format the PSG is recorded in when no audio device dictates it.
 const RECORD_AUDIO: fn() -> AudioConfig = || AudioConfig::stereo(48_000);
 
-fn start_recorder(path: &str, audio: Option<AudioConfig>, size: (usize, usize)) -> recorder::Recorder {
-    recorder::Recorder::start(std::path::Path::new(path), size.0, size.1, audio)
+fn start_recorder(path: &str, audio: Option<AudioConfig>, size: (usize, usize), plus: bool) -> recorder::Recorder {
+    recorder::Recorder::start(std::path::Path::new(path), size.0, size.1, audio, plus)
         .unwrap_or_else(|e| {
             eprintln!("{e}");
             std::process::exit(1)
@@ -899,7 +899,7 @@ fn run_recording(
     black_level: u8
 ) {
     motherboard.set_audio_output(Some(RECORD_AUDIO()));
-    let mut recorder = start_recorder(path, Some(RECORD_AUDIO()), filter.output_size());
+    let mut recorder = start_recorder(path, Some(RECORD_AUDIO()), filter.output_size(), motherboard.asic().is_some());
     let (width, height) = filter.output_size();
     let mut buffer = vec![0u32; width * height];
     let target_t_states = seconds as usize * T_STATES_PER_SECOND;
@@ -1112,7 +1112,7 @@ fn run_window(
             motherboard.set_audio_output(Some(RECORD_AUDIO()));
             RECORD_AUDIO()
         });
-        start_recorder(path, Some(config), (width, height))
+        start_recorder(path, Some(config), (width, height), motherboard.asic().is_some())
     });
 
     let mut host_keyboard = HostKeyboard::new(keyboard);
