@@ -13,10 +13,12 @@ pub static BASIC664: &RomImage = include_bytes!("../roms/basic664.rom");
 pub static BASIC6128: &RomImage = include_bytes!("../roms/basic6128.rom");
 pub static BASIC6128_AZERTY: &RomImage = include_bytes!("../roms/basic6128_azerty.rom");
 pub static AMSDOS: &RomImage = include_bytes!("../roms/amsdos.rom");
-/// The system cartridge of the 6128+ and 464+ (firmware, BASIC, AMSDOS and Burnin' Rubber), with
-/// the English firmware, and with the French one (AZERTY).
-pub static PLUS_SYSTEM_UK: &[u8] = include_bytes!("../roms/plus_system_uk.cpr");
-pub static PLUS_SYSTEM_FR: &[u8] = include_bytes!("../roms/plus_system_fr.cpr");
+/// The system cartridge of the 6128+ and 464+ (firmware, BASIC, AMSDOS), with the English firmware,
+/// and with the French one (AZERTY). Its f1/f2 menu (Amstrad BASIC / Burnin' Rubber) is skipped:
+/// the routine at &CDD7 of its page 3 starts BASIC directly (`ld hl,0 : jp &BD16`, what f1 does).
+/// `plus_system_*.cpr` are the original cartridges, with the menu.
+pub static PLUS_SYSTEM_UK: &[u8] = include_bytes!("../roms/plus_basic_uk.cpr");
+pub static PLUS_SYSTEM_FR: &[u8] = include_bytes!("../roms/plus_basic_fr.cpr");
 /// The EPROM of the Amstrad DMP2000 printer (the Spanish one, from CPCWiki): its characters.
 pub static DMP2000: &RomImage = include_bytes!("../roms/dmp2000.rom");
 /// The M4 board's ROM (Duke's M4ROM v2.0.8).
