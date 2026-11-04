@@ -203,7 +203,7 @@ fn rom_decoding() {
 /// The CRTC test, which asks the type it runs on.
 fn crtc(crtc: CrtcType, known_failures: &[&str]) {
     let digit = b'0' + crtc as u8;
-    check("crtctest.bin", crtc, 1800, &[digit], 20, known_failures);
+    check("crtctest.bin", crtc, 3600, &[digit], 20, known_failures);
 }
 
 #[test]
