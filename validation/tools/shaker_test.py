@@ -64,7 +64,8 @@ def runner_for(ref, fresh):
     if (directory / RUNNER).exists():
         return directory
     directory.mkdir(parents=True, exist_ok=True)
-    tree = REGRESS / f"wt_{sha[:12]}"
+    # next to the repository: Cargo.toml finds cpclib at ../rust.cpcdemotools
+    tree = REPO.parent / f".bemu-shaker-{sha[:12]}"
     shutil.rmtree(tree, ignore_errors=True)
     git("worktree", "add", "--detach", str(tree), sha)
     try:
