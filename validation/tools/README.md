@@ -15,6 +15,16 @@ import `_work.py` next to them). Needs python3 with numpy and Pillow.
     ./build_cpcse_oracle.sh           # optional: builds CPCSyntaxError headless (needs cmake, g++)
     pdftotext -layout ../../doc/ACCC1.9-EN.pdf $SHAKER_WORK/accc.txt   # optional, to grep the compendium
 
+## Regression test
+
+    ./shaker_test.py                      # the working tree vs master, modules A B C (~1 h)
+    ./shaker_test.py --base master --head my-branch --modules A C
+
+Builds each version in a temporary git worktree, plays the modules in parallel, compares the
+two versions' screens pixel for pixel and scores them against the references, then lists every
+test that changed and exits with 1 if one got worse (`--threshold`, in percentage points). A
+commit's results are kept in `$SHAKER_WORK/regress/<sha>/` and reused, so the base is played once.
+
 ## The loop that worked
 
 1. Run one test (about a minute) or a whole module (A ~8 min, B ~45, C ~9):
