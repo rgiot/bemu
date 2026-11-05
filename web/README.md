@@ -96,7 +96,9 @@ and `fetch` don't work from `file://`.
 | `typeText(text)` | type `text` on the CPC's keyboard (`\n` is RETURN), a paste; not while a script plays |
 | `screenshot()` | the last frame as a PNG file (`Uint8Array`, the raw 768×272 picture), or `undefined` |
 | `getDisc(drive)` | the DSK image in drive `'A'` or `'B'`, with what the CPC wrote on it (`Uint8Array`), or `undefined` |
+| `driveActive` | `true` while the drive motor runs, i.e. the drive is being accessed |
 | `fullscreen()` | toggle fullscreen (also `F11` on the emulator) |
+| `enableAudio()` | start the sound from a click or key handler of the page, instead of waiting for the first click in the emulator |
 | `setVolume(v)`, `setMuted(muted)` | `0` to `1`; silence the sound or bring it back |
 | `on(event, fn)`, `off(event, fn)` | events, see below |
 | `destroy()` | stop and release everything: listeners, sound, wasm memory |
@@ -126,7 +128,9 @@ and `fetch` don't work from `file://`.
 - **`files`**: maps the names the script uses to their sources. Files can also be given
   beforehand with `addFile`.
 - **Names:** a file is found by its name only, whatever directory and case the script gives.
-  When a script names a disc it wasn't given and exactly one disc was given, that one is used,
+  A disc a script names is also looked for inside the zip archives given (a production's
+  download, whose DSK is in a directory), by its file name.
+  When a script names a disc it wasn't given and exactly one disc (or zip archive) was given, that one is used,
   with a note in the report. The desktop runner does the same with the discs next to the script.
 - **Machine:** the script starts from the configuration. Its own `crtc_select`, `gate_array` and
   `memory_exp` apply at its `reset`.

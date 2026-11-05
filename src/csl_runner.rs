@@ -197,8 +197,12 @@ impl CslFiles for MemFiles {
         if let Some(bytes) = self.get(name) {
             return Ok(bytes.clone());
         }
-        // as on disc: the only disc image given stands in for one the script names wrongly
-        let mut discs = self.files.iter().filter(|(file, _)| file.ends_with(".dsk"));
+        // a disc inside an archive (zip, 7z, tar.gz) given (a production's download), by its file name
+        if let Some(bytes) = self.files.values().find_map(|bytes| crate::disc_image::zip_entry_by_file_name(bytes, name)) {
+            return Ok(bytes);
+        }
+        // as on disc: the only disc image (or archive) given stands in for one the script names wrongly
+        let mut discs = self.files.iter().filter(|(file, _)| [".dsk", ".hfe", ".zip", ".7z", ".gz", ".tgz"].iter().any(|ext| file.ends_with(ext)));
         match (discs.next(), discs.next()) {
             (Some((file, bytes)), None) => {
                 notes.push(format!("disk_insert: {name:?} not found, using {file} instead"));
@@ -529,7 +533,7 @@ impl CslRunner {
     pub fn start_text(&mut self, text: &str, base_dir: impl Into<PathBuf>) -> Result<(), String> {
         self.base_dir = base_dir.into();
         let text = self.apply_errata(text.to_owned());
-        let script = parse_csl_with_rich_errors(&text, None).map_err(|e| format!("{e:?}"))?;
+        let script = parse_csl_with_rich_errors(&text, None).map_err(|e| e.to_string())?;
         self.script = script.iter().cloned().collect();
         self.waiting = None;
         Ok(())
@@ -540,7 +544,7 @@ impl CslRunner {
         let (path, text) = self.files.script(dir, name)?;
         let text = self.apply_errata(text);
         let script = parse_csl_with_rich_errors(&text, Some(path.display().to_string()))
-            .map_err(|e| format!("{}: {e:?}", path.display()))?;
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         self.base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
         self.script = script.iter().cloned().collect();
         self.waiting = None;
@@ -1356,6 +1360,25 @@ mod test {
         assert!(files.snapshot(base, "a.sna").is_err());
         files.insert("other.dsk", vec![2]);
         assert!(files.disc(base, "shaker26.dsk", &mut notes).is_err(), "two discs: no guess");
+    }
+
+    /// A disc a script names is found inside a zip archive given, by its file name; a lone archive
+    /// stands in for a disc not found.
+    #[test]
+    fn discs_are_found_in_given_archives() {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("dist/Demo.DSK", options).unwrap();
+        zip.write_all(&[7]).unwrap();
+        let archive = zip.finish().unwrap().into_inner();
+        let mut files = MemFiles::default();
+        files.insert("demo.zip", archive.clone());
+        let (mut notes, base) = (Vec::new(), Path::new("x"));
+        assert_eq!(files.disc(base, "DEMO.dsk", &mut notes), Ok(vec![7]));
+        assert!(notes.is_empty());
+        assert_eq!(files.disc(base, "other.dsk", &mut notes), Ok(archive), "the lone archive stands in");
+        assert_eq!(notes.len(), 1);
     }
 
     /// Shaker 2.7 module A: the wait after the AU key is lengthened, nothing else changes.

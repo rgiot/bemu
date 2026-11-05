@@ -510,16 +510,16 @@ fn has_extension(name: &str, extensions: &[&str]) -> bool {
 }
 
 /// A disc image from the bytes of a file named `name`: a DSK or extended DSK, an HFE image (kept as
-/// its bitstream), or a zip archive holding one of them. In an archive, `entry`
+/// its bitstream), or a zip, 7z or tar.gz archive holding one of them. In an archive, `entry`
 /// names the image (its path in the archive, the case ignored); without it the first DSK or HFE
 /// file is taken.
 pub fn load_disc_bytes(bytes: &[u8], name: &str, entry: Option<&str>) -> Result<DiscImage, String> {
-    if bytes.starts_with(b"PK\x03\x04") {
+    if is_archive(bytes) {
         let (entry_name, data) = zip_entry(bytes, entry).map_err(|e| format!("{name}: {e}"))?;
         return load_disc_bytes(&data, &entry_name, None).map_err(|e| format!("{name}#{entry_name}: {e}"));
     }
     if let Some(entry) = entry {
-        return Err(format!("{name} is not a zip archive, it has no {entry}"));
+        return Err(format!("{name} is not an archive, it has no {entry}"));
     }
     if crate::hfe::Bitstream::is_hfe(bytes) || has_extension(name, &["hfe"]) {
         let (bitstream, found) = crate::hfe::Bitstream::load(bytes)?;
@@ -533,12 +533,63 @@ fn zip_entry(bytes: &[u8], wanted: Option<&str>) -> Result<(String, Vec<u8>), St
     zip_entry_with(bytes, wanted, &DISC_EXTENSIONS, "disc image (.dsk, .hfe)")
 }
 
+/// Whether `bytes` is a zip, a 7z or a gzip (tar.gz) archive.
+pub(crate) fn is_archive(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(SEVENZ_MAGIC) || bytes.starts_with(&[0x1f, 0x8b])
+}
+
+const SEVENZ_MAGIC: &[u8] = &[b'7', b'z', 0xBC, 0xAF, 0x27, 0x1C];
+
+/// Every file of a 7z or tar.gz archive, with its path. (A zip is read entry by entry instead.)
+fn unpack_all(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    use std::io::Read;
+    let mut files = Vec::new();
+    if bytes.starts_with(SEVENZ_MAGIC) {
+        let mut reader = sevenz_rust2::ArchiveReader::new(std::io::Cursor::new(bytes), sevenz_rust2::Password::empty())
+            .map_err(|e| format!("7z: {e}"))?;
+        reader
+            .for_each_entries(|entry, data| {
+                let mut content = Vec::new();
+                data.read_to_end(&mut content)?;
+                if !entry.is_directory() {
+                    files.push((entry.name().to_owned(), content));
+                }
+                Ok(true)
+            })
+            .map_err(|e| format!("7z: {e}"))?;
+    }
+    else {
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
+        for entry in archive.entries().map_err(|e| format!("tar.gz: {e}"))? {
+            let mut entry = entry.map_err(|e| format!("tar.gz: {e}"))?;
+            if !entry.header().entry_type().is_file() {
+                continue;
+            }
+            let name = entry.path().map_err(|e| format!("tar.gz: {e}"))?.to_string_lossy().into_owned();
+            let mut content = Vec::new();
+            entry.read_to_end(&mut content).map_err(|e| format!("tar.gz: {e}"))?;
+            files.push((name, content));
+        }
+    }
+    Ok(files)
+}
+
 /// The name and content of the archive entry `wanted`, or of its first file with one of
-/// `extensions` (`what` they are, for the error).
+/// `extensions` (`what` they are, for the error). The archive is a zip, a 7z or a tar.gz.
 pub(crate) fn zip_entry_with(bytes: &[u8], wanted: Option<&str>, extensions: &[&str], what: &str) -> Result<(String, Vec<u8>), String> {
     use std::io::Read;
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
-    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    let mut unpacked = Vec::new();
+    let mut zip = None;
+    let names: Vec<String> = if bytes.starts_with(b"PK\x03\x04") {
+        let archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+        let names = archive.file_names().map(str::to_owned).collect();
+        zip = Some(archive);
+        names
+    }
+    else {
+        unpacked = unpack_all(bytes)?;
+        unpacked.iter().map(|(name, _)| name.clone()).collect()
+    };
     let files = || names.iter().filter(|n| !n.ends_with('/'));
     let chosen = match wanted {
         Some(wanted) => files()
@@ -550,17 +601,40 @@ pub(crate) fn zip_entry_with(bytes: &[u8], wanted: Option<&str>, extensions: &[&
             .ok_or_else(|| format!("no {what} in the archive (it holds: {})", files().cloned().collect::<Vec<_>>().join(", ")))?
     }
     .clone();
-    let mut file = archive.by_name(&chosen).map_err(|e| e.to_string())?;
-    let mut data = Vec::new();
-    file.read_to_end(&mut data).map_err(|e| e.to_string())?;
+    if let Some(mut archive) = zip {
+        let mut file = archive.by_name(&chosen).map_err(|e| e.to_string())?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data).map_err(|e| e.to_string())?;
+        return Ok((chosen, data));
+    }
+    let data = unpacked.into_iter().find(|(name, _)| *name == chosen).map(|(_, data)| data).unwrap_or_default();
     Ok((chosen, data))
+}
+
+/// The content of the entry of the archive `bytes` (zip, 7z or tar.gz) whose file name is `name`'s
+/// (the directories and the case ignored), if there is one.
+pub(crate) fn zip_entry_by_file_name(bytes: &[u8], name: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
+    if !is_archive(bytes) {
+        return None;
+    }
+    let file_name = |path: &str| path.replace('\\', "/").rsplit('/').next().unwrap_or_default().to_lowercase();
+    let wanted = file_name(name);
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return unpack_all(bytes).ok()?.into_iter().find(|(path, _)| file_name(path) == wanted).map(|(_, data)| data);
+    }
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+    let entry = archive.file_names().find(|n| !n.ends_with('/') && file_name(n) == wanted)?.to_owned();
+    let mut data = Vec::new();
+    archive.by_name(&entry).ok()?.read_to_end(&mut data).ok()?;
+    Some(data)
 }
 
 /// Split a disc argument into the file and, for a zip archive, the entry after a `#`
 /// (`games.zip#side b.dsk`). A `#` in a name that is not an archive's stays in the path.
 pub fn split_disc_spec(spec: &str) -> (&str, Option<&str>) {
     match spec.rsplit_once('#') {
-        Some((path, entry)) if has_extension(path, &["zip"]) && !entry.is_empty() => (path, Some(entry)),
+        Some((path, entry)) if has_extension(path, &["zip", "7z", "gz", "tgz"]) && !entry.is_empty() => (path, Some(entry)),
         _ => (spec, None)
     }
 }
@@ -577,6 +651,9 @@ pub fn save_disc_file(spec: &str, image: &DiscImage) -> Result<(), String> {
         Some(hfe) => hfe?,
         None => image.to_bytes()
     };
+    if has_extension(path, &["7z", "gz", "tgz"]) {
+        return Err(format!("{path}: a 7z or tar.gz archive cannot be written back"));
+    }
     if !has_extension(path, &["zip"]) {
         return std::fs::write(path, content).map_err(|e| format!("{path}: {e}"));
     }
@@ -802,6 +879,24 @@ mod test {
         let archive = zip::ZipArchive::new(std::fs::File::open(&zip).unwrap()).unwrap();
         assert_eq!(archive.file_names().count(), 2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_tar_gz_gives_its_disc_image() {
+        let rhino = std::fs::read("validation/RHINO.DSK").unwrap();
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, data) in [("readme.txt", &b"hello"[..]), ("dir/Rhino.dsk", &rhino[..])] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_cksum();
+            builder.append_data(&mut header, name, data).unwrap();
+        }
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &builder.into_inner().unwrap()).unwrap();
+        let archive = gz.finish().unwrap();
+        assert!(load_disc_bytes(&archive, "pack.tar.gz", None).is_ok());
+        assert!(zip_entry_by_file_name(&archive, "RHINO.DSK").is_some());
+        assert_eq!(split_disc_spec("p.tar.gz#a.dsk"), ("p.tar.gz", Some("a.dsk")));
     }
 
     #[test]

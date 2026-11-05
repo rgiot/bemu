@@ -13,10 +13,10 @@ amsrust = { path = "..", default-features = false, features = ["crt-gpu"] }
 image = "0.23.14"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
-wasm-bindgen = "0.2"
+wasm-bindgen = "0.2.130"
 wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
-web-sys = { version = "0.3", features = ["HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "console"] }
+js-sys = "0.3.107"
+web-sys = { version = "0.3.107", features = ["HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "console"] }
 wgpu = { version = "27", default-features = false, features = ["wgsl", "webgpu"] }
 console_error_panic_hook = "0.1"
 

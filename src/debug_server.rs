@@ -1514,7 +1514,7 @@ impl DebugServer {
             || bytes.starts_with(b"EXTENDED CPC DSK")
             || bytes.starts_with(b"HXCPICFE")
             || bytes.starts_with(b"HXCHFEV3")
-            || (bytes.starts_with(b"PK\x03\x04") && crate::disc_image::split_disc_spec(name).0.to_ascii_lowercase().ends_with(".zip"))
+            || (crate::disc_image::is_archive(bytes) && [".zip", ".7z", ".gz", ".tgz"].iter().any(|ext| crate::disc_image::split_disc_spec(name).0.to_ascii_lowercase().ends_with(ext)))
         {
             // a DSK, an HFE, or a zip archive holding one (`name` may be `games.zip#side b.dsk`)
             let (file, entry) = crate::disc_image::split_disc_spec(name);

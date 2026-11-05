@@ -181,8 +181,13 @@ export class Bemu {
     /** 'symbolic' (a key types its character) or 'positional' (the CPC key at its place, for games). */
     setKeyboard(mapping) { this.#core.set_keyboard(mapping); }
 
-    /** A DSK image in drive 'A' or 'B', from a URL, a File/Blob or bytes. */
-    async insertDisc(drive, source) { this.#core.insert_disc(driveNumber(drive), await bytesOf(source)); }
+    /**
+     * A DSK image in drive 'A' or 'B', from a URL, a File/Blob or bytes: a zip, 7z or tar.gz
+     * archive gives its first DSK, or the one named `entry`.
+     */
+    async insertDisc(drive, source, entry) {
+        this.#core.insert_disc(driveNumber(drive), await bytesOf(source), entry);
+    }
     eject(drive) { this.#core.eject(driveNumber(drive)); }
     /** A CDT tape in the cassette deck (PLAY down), from a URL, a File/Blob or bytes. */
     async insertTape(source) { return this.#core.insert_tape(await bytesOf(source)); }
@@ -246,6 +251,15 @@ export class Bemu {
 
     /** The DSK image in drive 'A' or 'B' with what the CPC wrote on it (Uint8Array), or undefined. */
     getDisc(drive) { return this.#core.disc_image(driveNumber(drive)); }
+    /** Whether the drive motor runs (the drive is being accessed). */
+    get driveActive() { return this.#core.drive_active(); }
+    /** How many disc transfers began so far (wrapping): the drive light flashes when it changes. */
+    get driveTransfers() { return this.#core.drive_transfers(); }
+    /** Press (down true) or release a key of the CPC by its KeyboardEvent `code` and `key`, as a virtual keyboard does. */
+    pressKey(code, key, down) {
+        if (down) this.#core.key_down(code, key, false);
+        else this.#core.key_up(code);
+    }
 
     /** The machine's state as an SNA snapshot file (Uint8Array, version 3), for loadSnapshot later. */
     saveSnapshot() { return this.#core.save_snapshot(); }
@@ -270,6 +284,12 @@ export class Bemu {
         else await this.#canvas.requestFullscreen();
         this.#canvas.focus();
     }
+
+    /**
+     * Start the sound now, from a click or key handler of the page (browsers only allow it after
+     * one), rather than at the first click or key in the emulator.
+     */
+    enableAudio() { return this.#startAudio(); }
 
     /** 0 (silent) to 1. Sound starts with the first click or key in the emulator. */
     setVolume(volume) {

@@ -8,7 +8,7 @@ use std::rc::Rc;
 use amsrust::csl_runner::{CslReport, CslRunner, MemFiles, Progress, ScreenshotSink};
 use amsrust::disc_image::{load_disc_bytes, DiscImage};
 use amsrust::display::DisplayMode;
-use amsrust::fdc::FdcDrive;
+use amsrust::fdc::{DriveKind, FdcDrive};
 use amsrust::input::{HostInput, HostKey, HostKeyboard};
 use amsrust::monitor::Monitor;
 use amsrust::motherboard::Motherboard;
@@ -30,6 +30,15 @@ const FRAME_T_STATES: usize = 312 * 64 * 4;
 const CSL_SLICE_T_STATES: usize = 20_000;
 
 type Callback = Rc<RefCell<Option<Function>>>;
+
+/// The configured machine, its drives 3.5" ones: they read both sides of any disc image.
+fn build_machine(config: &Config) -> Result<Motherboard, JsError> {
+    let mut motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
+    for drive in [FdcDrive::A, FdcDrive::B] {
+        motherboard.fdc_mut().set_drive_kind(drive, DriveKind::ThreeAndHalfInch);
+    }
+    Ok(motherboard)
+}
 
 #[wasm_bindgen]
 pub struct Emulator {
@@ -73,7 +82,7 @@ impl Emulator {
         let display = config.display().map_err(|e| JsError::new(&e))?;
         let curvature = config.curvature().map_err(|e| JsError::new(&e))?;
         let keyboard = config.keyboard().map_err(|e| JsError::new(&e))?;
-        let motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
+        let motherboard = build_machine(&config)?;
         let gfx = Gfx::new(canvas, webgpu).await.map_err(|e| JsError::new(&e))?;
         Ok(Emulator {
             monitor: Monitor::default().with_black_level(config.black_level()),
@@ -108,7 +117,7 @@ impl Emulator {
         let display = config.display().map_err(|e| JsError::new(&e))?;
         let curvature = config.curvature().map_err(|e| JsError::new(&e))?;
         let keyboard = config.keyboard().map_err(|e| JsError::new(&e))?;
-        let motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
+        let motherboard = build_machine(&config)?;
         self.keyboard.set_mapping(keyboard);
         self.config = config;
         self.display = display;
@@ -121,7 +130,7 @@ impl Emulator {
     /// Switch the machine off and on.
     pub fn reset(&mut self) -> Result<(), JsError> {
         self.csl = None;
-        let motherboard = self.config.machine().map_err(|e| JsError::new(&e))?.build();
+        let motherboard = build_machine(&self.config)?;
         self.replace_machine(motherboard);
         Ok(())
     }
@@ -146,9 +155,10 @@ impl Emulator {
         self.gfx.resize(width, height);
     }
 
-    /// Insert a disc in drive 0 (A) or 1 (B): a DSK, or a zip archive (its first DSK).
-    pub fn insert_disc(&mut self, drive: u8, bytes: &[u8]) -> Result<(), JsError> {
-        let image = load_disc_bytes(bytes, "disc", None).map_err(|e| JsError::new(&e))?;
+    /// Insert a disc in drive 0 (A) or 1 (B): a DSK, or a zip, 7z or tar.gz archive (its first DSK, or the
+    /// one named `entry`).
+    pub fn insert_disc(&mut self, drive: u8, bytes: &[u8], entry: Option<String>) -> Result<(), JsError> {
+        let image = load_disc_bytes(bytes, "disc", entry.as_deref()).map_err(|e| JsError::new(&e))?;
         let unit = usize::from(drive.min(1));
         self.machine().fdc_mut().insert_image(fdc_drive(unit), Some(image.clone()));
         self.discs[unit] = Some(image);
@@ -227,6 +237,8 @@ impl Emulator {
             "screenshots"
         );
         runner.set_machine(self.config.machine().map_err(|e| JsError::new(&e))?);
+        runner.set_drive_kind(0, DriveKind::ThreeAndHalfInch);
+        runner.set_drive_kind(1, DriveKind::ThreeAndHalfInch);
         runner.motherboard_mut().psg_mut().take_audio_output_from(self.motherboard.psg_mut());
         runner.start_text(text, ".").map_err(|e| JsError::new(&e))?;
         self.csl = Some(runner);
@@ -334,6 +346,18 @@ impl Emulator {
             .write_to(&mut png, image::ImageOutputFormat::Png)
             .map_err(|e| JsError::new(&e.to_string()))?;
         Ok(Some(png))
+    }
+
+    /// Whether the disc drive motor is running, i.e. the drive is being accessed.
+    pub fn drive_active(&self) -> bool {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        machine.fdc().motor()
+    }
+
+    /// How many disc transfers the machine has begun (wrapping): the drive light flashes when it changes.
+    pub fn drive_transfers(&self) -> u32 {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        machine.fdc().executions()
     }
 
     /// The DSK image in drive 0 (A) or 1 (B), as the machine has written it; none if empty.

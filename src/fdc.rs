@@ -358,6 +358,8 @@ struct Transfer {
 
 pub struct Fdc {
     motor: bool,
+    /// Commands that reached their execution phase (sector transfers), wrapping: a drive light's flashes.
+    executions: u32,
     drives: [Drive; NB_UNITS],
 
     /// Main status register.
@@ -414,6 +416,7 @@ impl Default for Fdc {
     fn default() -> Self {
         let mut fdc = Self {
             motor: false,
+            executions: 0,
             drives: Default::default(),
             st: 0,
             st0: 0,
@@ -553,6 +556,11 @@ impl Fdc {
 
     pub fn motor(&self) -> bool {
         self.motor
+    }
+
+    /// How many commands reached their execution phase so far (wrapping): a change means a transfer.
+    pub fn executions(&self) -> u32 {
+        self.executions
     }
 
     /// Put a `cpclib-disc` disc in a drive (an empty drive - `None` -
@@ -726,6 +734,7 @@ impl Fdc {
     }
 
     fn go_to_execution_phase(&mut self) {
+        self.executions = self.executions.wrapping_add(1);
         self.phase = Phase::Execution;
         self.exec_pos = 0;
         self.st = msr::RQM | msr::EXM | msr::CB;
