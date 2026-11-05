@@ -23,8 +23,6 @@ use crate::gfx::Gfx;
 use crate::keys;
 
 /// T-states after which a frame is given up (a machine that never synchronises): two frames.
-/// How long the drive stays empty when the disc is changed (1.5 s).
-const SWAP_FRAMES: u32 = 75;
 const MAX_FRAME_T_STATES: usize = 2 * FRAME_T_STATES;
 /// T-states of a CPC frame: 312 lines of 64 µs at 4 MHz.
 const FRAME_T_STATES: usize = 312 * 64 * 4;
@@ -55,8 +53,6 @@ pub struct Emulator {
     frame: Option<RgbImage>,
     /// The discs the page inserted, for a new machine.
     discs: [Option<DiscImage>; 2],
-    /// A disc being swapped: the frames to wait, the drive, the new disc.
-    swap: Option<(u32, usize, DiscImage)>,
     /// A CSL script playing, with its own machine.
     csl: Option<CslRunner>,
     /// Files a CSL script names.
@@ -97,7 +93,6 @@ impl Emulator {
             motherboard,
             frame: None,
             discs: [None, None],
-            swap: None,
             csl: None,
             files: MemFiles::default(),
             on_screenshot: Rc::default(),
@@ -170,32 +165,13 @@ impl Emulator {
         Ok(())
     }
 
-    /// Changes the disc of a running machine the way a person does: the drive stays empty for a
-    /// moment (a program waits for it to see the change) and the new disc comes after.
+    /// Changes the disc of a running machine at once: the program sees the new disc on its next access.
     pub fn swap_disc(&mut self, drive: u8, bytes: &[u8], entry: Option<String>) -> Result<(), JsError> {
         let image = load_disc_bytes(bytes, "disc", entry.as_deref()).map_err(|e| JsError::new(&e))?;
         let unit = usize::from(drive.min(1));
-        self.finish_swap();
-        self.machine().fdc_mut().insert_image(fdc_drive(unit), None);
-        self.discs[unit] = None;
-        self.swap = Some((SWAP_FRAMES, unit, image));
+        self.machine().fdc_mut().insert_image(fdc_drive(unit), Some(image.clone()));
+        self.discs[unit] = Some(image);
         Ok(())
-    }
-
-    fn finish_swap(&mut self) {
-        if let Some((_, unit, image)) = self.swap.take() {
-            self.machine().fdc_mut().insert_image(fdc_drive(unit), Some(image.clone()));
-            self.discs[unit] = Some(image);
-        }
-    }
-
-    fn wait_swap(&mut self) {
-        if let Some(swap) = self.swap.as_mut() {
-            swap.0 = swap.0.saturating_sub(1);
-            if swap.0 == 0 {
-                self.finish_swap();
-            }
-        }
     }
 
     pub fn eject(&mut self, drive: u8) {
@@ -331,7 +307,6 @@ impl Emulator {
     /// Run the machine to its next frame without showing it ([`Self::redraw`] shows the last
     /// one): several frames a refresh, at more than real time, only the last needs drawing.
     pub fn advance_frame(&mut self) -> Result<(), JsError> {
-        self.wait_swap();
         let step = self.csl.as_mut().map(runner_frame);
         match step {
             Some(step) => self.csl_frame(step)?,
@@ -347,7 +322,6 @@ impl Emulator {
         if self.csl.is_some() {
             return self.advance_frame();
         }
-        self.wait_swap();
         self.apply_keyboard();
         self.motherboard.set_video(false);
         let end = self.motherboard.t_state_counter().value() + FRAME_T_STATES;
@@ -460,9 +434,6 @@ impl Emulator {
 
     /// `motherboard` replaces the machine: the discs go in, the sound goes on.
     fn replace_machine(&mut self, mut motherboard: Motherboard) {
-        if let Some((_, unit, image)) = self.swap.take() {
-            self.discs[unit] = Some(image);
-        }
         motherboard.psg_mut().take_audio_output_from(self.motherboard.psg_mut());
         if let (Some(rate), None) = (self.audio_rate, motherboard.psg().audio_config()) {
             motherboard.set_audio_output(Some(AudioConfig::stereo(rate)));

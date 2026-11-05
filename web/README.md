@@ -86,7 +86,7 @@ and `fetch` don't work from `file://`.
 | `setCurvature(c)` | how curved a CRT's glass is, as the `curvature` configuration |
 | `setKeyboard(mapping)` | `'symbolic'` or `'positional'`, as the `keyboard` configuration |
 | `insertDisc(drive, source)`, `eject(drive)` | a DSK image in drive `'A'` or `'B'` |
-| `swapDisc(drive, source, entry)` | changes the disc of the running machine: the drive stays empty 1.5 s, then the new disc goes in |
+| `swapDisc(drive, source, entry)` | changes the disc of the running machine: the new disc is in the drive at once |
 | `insertTape(source)`, `ejectTape()` | a CDT tape in the cassette deck, PLAY down: it plays when the CPC starts the motor (`RUN"` on a 464, `\|TAPE` first on a 664/6128); returns what was skipped of it |
 | `tapeControl(key)` | the deck's keys: `'play'`, `'stop'`, `'rewind'` |
 | `loadSnapshot(source)` | an SNA snapshot |
