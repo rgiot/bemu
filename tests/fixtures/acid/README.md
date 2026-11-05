@@ -19,7 +19,7 @@ notice:
 | `inout.bin` | `z80tests/inout.asm` | Z80: the flags of IN |
 | `crtc3_4_status.bin` | `crtc/crtc3_4_status.asm` | The CPC+'s ASIC CRTC: its status registers |
 | `type1ctrl.bin` | `crtc/type1ctrl.asm` | CRTC 1: its status register |
-| `crtctest.bin` | `crtc/crtctest.asm` | Each CRTC: registers, VSYNC, HSYNC, I/O decoding |
+| `crtctest.bin` | `crtc/crtctest.asm` | Each CRTC: registers, VSYNC, HSYNC, I/O decoding. Not run: its I/O decode test scans the 65536 ports, each waiting for a VSYNC or its timeout, and did not finish in 12 h |
 | `romtest.bin` | `cpcrom/romtest.asm` | Expansion ROM selection without expansions |
 
 Kevin ran them on the machines described in the suite's `desc.txt` (a 6128 with each CRTC type,
