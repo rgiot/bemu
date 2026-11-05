@@ -876,12 +876,8 @@ impl Fdc {
             let from = self.drives[unit].track;
             let to = target_track.min(self.drives[unit].kind.max_track());
             let steps = u64::from(from.abs_diff(to));
-            let st0 = if self.drives[unit].disc.is_some() {
-                st0::SE | unit as u8
-            }
-            else {
-                st0::IC_ABNORMAL | st0::NR | unit as u8
-            };
+            // The READY line is tied high on a CPC: even without a disc the seek ends normally
+            let st0 = st0::SE | unit as u8;
             let done = self.now_us + steps * self.step_us + if steps > 0 { SETTLE_US } else { 1_000 };
             self.seeks.retain(|seek| seek.1 != unit);
             self.seeks.push((done, unit, to, st0));
@@ -893,13 +889,8 @@ impl Fdc {
         drive.track = target_track.min(drive.kind.max_track());
         drive.cursor = 0;
 
-        // A seek on a drive with no disc cannot complete normally.
-        let st0 = if drive.disc.is_some() {
-            st0::SE | unit as u8
-        }
-        else {
-            st0::IC_ABNORMAL | st0::NR | unit as u8
-        };
+        // The READY line is tied high on a CPC: even without a disc the seek ends normally
+        let st0 = st0::SE | unit as u8;
         self.pending_interrupt[unit] = Some(st0);
         self.go_to_command_phase();
     }

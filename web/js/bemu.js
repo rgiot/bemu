@@ -188,6 +188,13 @@ export class Bemu {
     async insertDisc(drive, source, entry) {
         this.#core.insert_disc(driveNumber(drive), await bytesOf(source), entry);
     }
+    /**
+     * Changes the disc of the running machine like a person: the drive stays empty for 1.5 s of
+     * emulated time (a program can see the change), then the new disc goes in.
+     */
+    async swapDisc(drive, source, entry) {
+        this.#core.swap_disc(driveNumber(drive), await bytesOf(source), entry);
+    }
     eject(drive) { this.#core.eject(driveNumber(drive)); }
     /** A CDT tape in the cassette deck (PLAY down), from a URL, a File/Blob or bytes. */
     async insertTape(source) { return this.#core.insert_tape(await bytesOf(source)); }
