@@ -8,6 +8,9 @@
 //! - From emu-info's acid tests (Kevin Thacker's collection, in Pasmo's syntax), typed in as
 //!   `CALL &xxxx` from BASIC: Batman Begins' (Rhino) and Madram's of Amslive (06/2002), which
 //!   print the type, and Longshot's TEST CRTC V1.1 (Logon System, 1991), which leaves it at &BF00.
+//! - tinyAst's detection (Amstrad Plus by the PPI's bug, then CRTC 4, 0, 1 and 2 by their reads):
+//!   `tests/fixtures/tinyast_crtc.asm`, whose listing ends on the five empty labels `crtc0` to
+//!   `crtc4`: the harness gives each one its answer.
 //! - OffseT's TestCRTC v3.0 (Futurs', 2005, after Longshot's of Logon System; the one Blight
 //!   uses): `tests/fixtures/offset_testcrtc_v3.asm`. Each of its 11 tests narrows a mask of the
 //!   CRTCs it can be (bit n: CRTC n); none may rule out the CRTC emulated, together they must
@@ -250,4 +253,34 @@ fn longshot_finds_each_crtc() {
         })
         .collect();
     assert_eq!(found, [0, 1, 2, 3, 4], "Longshot's TEST CRTC V1.1 on CRTC 0 to 4");
+}
+
+/// Where the harness keeps tinyAst's answer.
+const TINYAST_ANSWER: u16 = 0x9ff0;
+
+/// tinyAst's detection, whose listing falls through to its five empty `crtcN` labels at the end:
+/// they are replaced by labels that keep N and loop (JR $).
+#[test]
+fn tinyast_finds_each_crtc() {
+    let listing: String = include_str!("fixtures/tinyast_crtc.asm")
+        .lines()
+        .filter(|line| !matches!(line.trim(), "crtc0" | "crtc1" | "crtc2" | "crtc3" | "crtc4"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let mut source = format!(" org &a000\n{listing}");
+    for n in 0..5 {
+        source += &format!("crtc{n}\n ld a,{n}\n ld (&{TINYAST_ANSWER:04x}),a\n jr $\n");
+    }
+    let code = cpclib_asm::assemble(&source).unwrap_or_else(|e| panic!("{e}"));
+    let found: Vec<u8> = CRTCS
+        .iter()
+        .map(|&crtc| {
+            let motherboard = call_from_basic(crtc, &code, 0xa000, |_| (), |motherboard| {
+                let pc = motherboard.pc();
+                pc >= 0xa000 && [motherboard.read_byte(pc), motherboard.read_byte(pc.wrapping_add(1))] == [0x18, 0xfe]
+            });
+            motherboard.read_byte(TINYAST_ANSWER)
+        })
+        .collect();
+    assert_eq!(found, [0, 1, 2, 3, 4], "tinyAst's detection on CRTC 0 to 4");
 }
