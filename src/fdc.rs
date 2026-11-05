@@ -579,7 +579,7 @@ impl Fdc {
         self.drives[unit].disc = image;
         self.drives[unit].flipped = false;
         self.drives[unit].modified = false;
-        self.drives[unit].track = 0;
+        // the head stays where it was: a person changing the disc does not move it
         self.drives[unit].cursor = 0;
         self.drives[unit].reads.clear();
         self.pending_interrupt[unit] = Some(st0::IC_READY_CHANGED | unit as u8);

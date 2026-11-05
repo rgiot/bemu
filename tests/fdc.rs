@@ -182,7 +182,7 @@ fn recalibrate_resets_track_to_zero() {
 }
 
 #[test]
-fn seek_on_an_empty_drive_is_reported_not_ready() {
+fn seek_on_an_empty_drive_ends_normally() {
     let mut fdc = Fdc::default();
     fdc.set_motor(true);
     for &byte in &[0x0f, 0x00, 0x05] {
@@ -190,7 +190,8 @@ fn seek_on_an_empty_drive_is_reported_not_ready() {
     }
     fdc.write_data(0x08);
     let st0 = fdc.read_data();
-    assert_eq!(st0 & 0xc8, 0x48, "abnormal termination, not ready");
+    // the READY line is tied high on a CPC: a program seeking drive B without disc is not stopped
+    assert_eq!(st0 & 0xe8, 0x20, "seek end, normal termination");
 }
 
 /// Sense Interrupt Status until it answers "invalid" (nothing pending),
