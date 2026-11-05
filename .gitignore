@@ -11,3 +11,9 @@
 __pycache__/
 # The examples' downloads (examples/download.sh)
 /examples/downloads/
+shaker_results*
+m4sd
+*.csv
+*.sna
+*.mp4
+*.log
