@@ -8,7 +8,7 @@
 use amsrust::display::{Blit, CrtParams, CrtPass, CrtProfile, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH};
 use image::RgbImage;
 use wasm_bindgen::{Clamped, JsCast};
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, OffscreenCanvas, OffscreenCanvasRenderingContext2d};
 
 use crate::scanlines::double_scanlines;
 
@@ -34,9 +34,40 @@ pub struct Gpu {
     crt: Option<CrtState>
 }
 
+/// The page's canvas, or the one a page handed to a worker.
+pub enum Canvas {
+    Element(HtmlCanvasElement),
+    Offscreen(OffscreenCanvas)
+}
+
+impl Canvas {
+    /// From a `<canvas>` or an `OffscreenCanvas`.
+    pub fn from_js(value: wasm_bindgen::JsValue) -> Result<Self, String> {
+        match value.dyn_into::<HtmlCanvasElement>() {
+            Ok(element) => Ok(Self::Element(element)),
+            Err(value) => value
+                .dyn_into::<OffscreenCanvas>()
+                .map(Self::Offscreen)
+                .map_err(|_| "expected a canvas or an OffscreenCanvas".to_owned())
+        }
+    }
+
+    fn size(&self) -> (u32, u32) {
+        match self {
+            Self::Element(canvas) => (canvas.width(), canvas.height()),
+            Self::Offscreen(canvas) => (canvas.width(), canvas.height())
+        }
+    }
+}
+
+enum Context2d {
+    Element(CanvasRenderingContext2d),
+    Offscreen(OffscreenCanvasRenderingContext2d)
+}
+
 /// The raw picture on Canvas 2D: each scanline twice, RGBA.
 pub struct Flat {
-    context: CanvasRenderingContext2d,
+    context: Context2d,
     rgba: Vec<u8>
 }
 
@@ -48,18 +79,36 @@ pub enum Gfx {
 impl Gfx {
     /// WebGPU if `webgpu`, else Canvas 2D. A canvas WebGPU failed on has no 2D context any more:
     /// the page tries again with a new one.
-    pub async fn new(canvas: HtmlCanvasElement, webgpu: bool) -> Result<Self, String> {
+    pub async fn new(canvas: Canvas, webgpu: bool) -> Result<Self, String> {
         if webgpu {
             return Ok(Self::Gpu(Box::new(Gpu::new(canvas).await?)));
         }
-        canvas.set_width(RAW_WIDTH as u32);
-        canvas.set_height(RAW_HEIGHT as u32);
-        let context = canvas
-            .get_context("2d")
-            .map_err(|e| format!("no 2D context: {e:?}"))?
-            .ok_or("no 2D context")?
-            .dyn_into::<CanvasRenderingContext2d>()
-            .map_err(|_| "no 2D context")?;
+        let context = match canvas {
+            Canvas::Element(canvas) => {
+                canvas.set_width(RAW_WIDTH as u32);
+                canvas.set_height(RAW_HEIGHT as u32);
+                Context2d::Element(
+                    canvas
+                        .get_context("2d")
+                        .map_err(|e| format!("no 2D context: {e:?}"))?
+                        .ok_or("no 2D context")?
+                        .dyn_into::<CanvasRenderingContext2d>()
+                        .map_err(|_| "no 2D context")?
+                )
+            },
+            Canvas::Offscreen(canvas) => {
+                canvas.set_width(RAW_WIDTH as u32);
+                canvas.set_height(RAW_HEIGHT as u32);
+                Context2d::Offscreen(
+                    canvas
+                        .get_context("2d")
+                        .map_err(|e| format!("no 2D context: {e:?}"))?
+                        .ok_or("no 2D context")?
+                        .dyn_into::<OffscreenCanvasRenderingContext2d>()
+                        .map_err(|_| "no 2D context")?
+                )
+            }
+        };
         Ok(Self::Flat(Flat { context, rgba: vec![255; RAW_WIDTH * RAW_HEIGHT * 4] }))
     }
 
@@ -98,19 +147,27 @@ impl Flat {
         double_scanlines(frame, &mut self.rgba);
         let image = ImageData::new_with_u8_clamped_array_and_sh(Clamped(&self.rgba), RAW_WIDTH as u32, RAW_HEIGHT as u32)
             .map_err(|e| format!("{e:?}"))?;
-        self.context.put_image_data(&image, 0.0, 0.0).map_err(|e| format!("{e:?}"))
+        match &self.context {
+            Context2d::Element(context) => context.put_image_data(&image, 0.0, 0.0),
+            Context2d::Offscreen(context) => context.put_image_data(&image, 0.0, 0.0)
+        }
+        .map_err(|e| format!("{e:?}"))
     }
 }
 
 impl Gpu {
-    async fn new(canvas: HtmlCanvasElement) -> Result<Self, String> {
-        let (width, height) = (canvas.width().max(1), canvas.height().max(1));
+    async fn new(canvas: Canvas) -> Result<Self, String> {
+        let (width, height) = (canvas.size().0.max(1), canvas.size().1.max(1));
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
             ..Default::default()
         });
+        let target = match canvas {
+            Canvas::Element(canvas) => wgpu::SurfaceTarget::Canvas(canvas),
+            Canvas::Offscreen(canvas) => wgpu::SurfaceTarget::OffscreenCanvas(canvas)
+        };
         let surface = instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+            .create_surface(target)
             .map_err(|e| format!("no WebGPU canvas: {e}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {

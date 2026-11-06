@@ -8,7 +8,7 @@
 // - An underrun fades out and an (re)start fades in: no step in the signal.
 // - Whole stereo frames only: the channels never swap.
 //
-// Messages in: a Float32Array of samples, or { target } (seconds). Out, about every 20 ms:
+// Messages in: { feed: MessagePort } (the emulator's channel, which then carries the rest), a Float32Array of samples, or { target } (seconds). Out, about every 20 ms:
 // { fill, time, playing, underruns }, the queued frames and the context's time of the report.
 
 const RATE_RANGE = 0.01;
@@ -33,11 +33,16 @@ class BemuAudio extends AudioWorkletProcessor {
         this.lastRight = 0;
         this.underruns = 0;
         this.blocks = 0;
+        this.out = this.port; // reports go where the samples come from
         this.port.onmessage = (event) => this.receive(event.data);
     }
 
     receive(data) {
         if (ArrayBuffer.isView(data)) this.push(data);
+        else if (data && data.feed) { // the emulator's own channel (it runs in a worker)
+            this.out = data.feed;
+            this.out.onmessage = (event) => this.receive(event.data);
+        }
         else if (data && typeof data.target === 'number') this.target = Math.max(1, Math.round(data.target * sampleRate));
     }
 
@@ -106,7 +111,7 @@ class BemuAudio extends AudioWorkletProcessor {
 
         if (++this.blocks >= REPORT_BLOCKS) {
             this.blocks = 0;
-            this.port.postMessage({
+            this.out.postMessage({
                 fill: Math.max(0, this.written - this.position),
                 time: currentTime,
                 playing: this.playing,

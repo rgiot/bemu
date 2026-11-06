@@ -8,10 +8,11 @@ import { pathToFileURL } from 'node:url';
 // Load the actual wrapper with a stub for its generated wasm bindings.
 const dir = await mkdtemp(join(tmpdir(), 'bemu-test-'));
 try {
-    await copyFile(new URL('../js/bemu.js', import.meta.url), join(dir, 'bemu.js'));
+    for (const file of ['bemu.js', 'engine.js']) await copyFile(new URL(`../js/${file}`, import.meta.url), join(dir, file));
     await writeFile(join(dir, 'package.json'), '{"type":"module"}');
     await writeFile(join(dir, 'bemu_web.js'), 'export default async function init() {} export class Emulator {}');
     const { Bemu } = await import(pathToFileURL(join(dir, 'bemu.js')));
+    const { Engine, LocalTransport } = await import(pathToFileURL(join(dir, 'engine.js')));
 
     function machine(advance = () => {}) {
         const canvas = { addEventListener() {}, removeEventListener() {} };
@@ -19,67 +20,48 @@ try {
             on_screenshot() {}, on_csl_done() {}, backend: () => 'canvas2d',
             advance_frame: advance, redraw() {}, audio_samples: () => [], free() {}
         };
-        return { emu: new Bemu(canvas, core, {}), core };
+        const transport = new LocalTransport(({ emit, onTick }) => new Engine(core, { canvas, emit, onTick }));
+        return { emu: new Bemu(canvas, transport, {}), core };
+    }
+
+    // The engine alone, with a clock and display refreshes the test drives.
+    function engineWith(advance) {
+        const core = {
+            on_screenshot() {}, on_csl_done() {}, backend: () => 'canvas2d',
+            advance_frame: advance, redraw() {}, audio_samples: () => [], free() {}
+        };
+        const clock = { now: 0, scheduled: null };
+        const scheduler = { request: (fn) => { clock.scheduled = fn; return 1; }, cancel() {} };
+        const engine = new Engine(core, { scheduler, now: () => clock.now });
+        return { engine, core, clock };
     }
 
     await test('normal-speed catch-up yields after a slow frame and retains the debt', () => {
-        const saved = {
-            performance: Object.getOwnPropertyDescriptor(globalThis, 'performance'),
-            requestAnimationFrame: globalThis.requestAnimationFrame,
-            cancelAnimationFrame: globalThis.cancelAnimationFrame
-        };
-        let now = 0;
-        let scheduled;
         let frames = 0;
-        Object.defineProperty(globalThis, 'performance', { configurable: true, value: { now: () => now } });
-        globalThis.requestAnimationFrame = (fn) => { scheduled = fn; return 1; };
-        globalThis.cancelAnimationFrame = () => {};
-        const { emu } = machine(() => { frames++; now += 30; });
-        try {
-            emu.start();
-            scheduled(0);
-            assert.equal(frames, 1);
-            scheduled(100);
-            assert.equal(frames, 2, 'a slow refresh must not execute four frames');
-            scheduled(101);
-            assert.equal(frames, 3, 'unexecuted frames remain owed');
-        } finally {
-            emu.destroy();
-            Object.defineProperty(globalThis, 'performance', saved.performance);
-            globalThis.requestAnimationFrame = saved.requestAnimationFrame;
-            globalThis.cancelAnimationFrame = saved.cancelAnimationFrame;
-        }
+        const { engine, clock } = engineWith(() => { frames++; clock.now += 30; });
+        engine.start();
+        clock.scheduled(0);
+        assert.equal(frames, 1);
+        clock.scheduled(100);
+        assert.equal(frames, 2, 'a slow refresh must not execute four frames');
+        clock.scheduled(101);
+        assert.equal(frames, 3, 'unexecuted frames remain owed');
+        engine.destroy();
     });
 
     await test('fast catch-up can run several frames and does not redraw an unchanged Canvas 2D frame', () => {
-        const saved = {
-            performance: Object.getOwnPropertyDescriptor(globalThis, 'performance'),
-            requestAnimationFrame: globalThis.requestAnimationFrame,
-            cancelAnimationFrame: globalThis.cancelAnimationFrame
-        };
-        let now = 0;
-        let scheduled;
         let frames = 0;
         let draws = 0;
-        Object.defineProperty(globalThis, 'performance', { configurable: true, value: { now: () => now } });
-        globalThis.requestAnimationFrame = (fn) => { scheduled = fn; return 1; };
-        globalThis.cancelAnimationFrame = () => {};
-        const { emu, core } = machine(() => { frames++; now++; });
+        const { engine, core, clock } = engineWith(() => { frames++; clock.now++; });
         core.redraw = () => { draws++; };
-        try {
-            emu.start();
-            scheduled(0);
-            scheduled(1);
-            assert.equal(draws, 1);
-            scheduled(100);
-            assert.equal(frames, 5);
-            assert.equal(draws, 2);
-        } finally {
-            emu.destroy();
-            Object.defineProperty(globalThis, 'performance', saved.performance);
-            globalThis.requestAnimationFrame = saved.requestAnimationFrame;
-            globalThis.cancelAnimationFrame = saved.cancelAnimationFrame;
-        }
+        engine.start();
+        clock.scheduled(0);
+        clock.scheduled(1);
+        assert.equal(draws, 1);
+        clock.scheduled(100);
+        assert.equal(frames, 5);
+        assert.equal(draws, 2);
+        engine.destroy();
     });
 
     await test('unavailable AudioWorklet reports a useful error, closes, and can retry', async () => {
@@ -173,7 +155,8 @@ try {
             configure: (config) => { display = config.display ?? 'raw'; },
             resize() {}, redraw() {}, free() {}
         };
-        const emu = new Bemu(canvas, core, {});
+        const transport = new LocalTransport(({ emit, onTick }) => new Engine(core, { canvas, emit, onTick }));
+        const emu = new Bemu(canvas, transport, {});
         const warnings = [];
         emu.on('display-warning', (warning) => warnings.push(warning));
         try {

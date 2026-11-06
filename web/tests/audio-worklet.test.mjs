@@ -100,3 +100,14 @@ test('it reports its fill level and follows a new target', () => {
     p.receive({ target: 0.1 });
     assert.equal(p.target, 4800);
 });
+
+test('the emulator\'s own channel carries the samples in and the reports out', () => {
+    const p = processor(0.01);
+    const feed = { messages: [], postMessage(message) { this.messages.push(message); } };
+    p.receive({ feed });
+    feed.onmessage({ data: stereo(2000, 0, 0) });
+    for (let i = 0; i < 8; i++) block(p);
+    assert.equal(feed.messages.length, 1);
+    assert.equal(feed.messages[0].playing, true);
+    assert.equal(p.port.messages.length, 0);
+});

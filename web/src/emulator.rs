@@ -16,10 +16,9 @@ use amsrust::psg::AudioConfig;
 use image::RgbImage;
 use js_sys::{Array, Function, Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
-use web_sys::HtmlCanvasElement;
 
 use crate::config::Config;
-use crate::gfx::Gfx;
+use crate::gfx::{Canvas, Gfx};
 use crate::keys;
 
 /// T-states after which a frame is given up (a machine that never synchronises): two frames.
@@ -76,13 +75,14 @@ impl Emulator {
     /// An emulator drawing in `canvas`, configured by `config` (see `config.rs`); on WebGPU when
     /// `webgpu`, else on Canvas 2D (raw picture only). Fails when WebGPU does, leaving the canvas
     /// unusable for Canvas 2D.
-    pub async fn create(canvas: HtmlCanvasElement, config: JsValue, webgpu: bool) -> Result<Emulator, JsError> {
+    pub async fn create(canvas: JsValue, config: JsValue, webgpu: bool) -> Result<Emulator, JsError> {
         console_error_panic_hook::set_once();
         let config = Config::from_js(config).map_err(|e| JsError::new(&e))?;
         let display = config.display().map_err(|e| JsError::new(&e))?;
         let curvature = config.curvature().map_err(|e| JsError::new(&e))?;
         let keyboard = config.keyboard().map_err(|e| JsError::new(&e))?;
         let motherboard = build_machine(&config)?;
+        let canvas = Canvas::from_js(canvas).map_err(|e| JsError::new(&e))?;
         let gfx = Gfx::new(canvas, webgpu).await.map_err(|e| JsError::new(&e))?;
         Ok(Emulator {
             monitor: Monitor::default().with_black_level(config.black_level()),

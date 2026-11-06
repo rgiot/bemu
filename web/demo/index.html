@@ -142,16 +142,16 @@ function download(bytes, name, type) {
   link.click();
   URL.revokeObjectURL(link.href);
 }
-document.querySelector('#shot').onclick = () => {
-  const png = emu.screenshot();
+document.querySelector('#shot').onclick = async () => {
+  const png = await emu.screenshot();
   if (png) download(png, 'bemu.png', 'image/png');
 };
-document.querySelector('#saveA').onclick = () => {
-  const dsk = emu.getDisc('A');
+document.querySelector('#saveA').onclick = async () => {
+  const dsk = await emu.getDisc('A');
   if (dsk) download(dsk, 'disc-a.dsk', 'application/octet-stream');
   else status('no disc in drive A');
 };
-document.querySelector('#saveSna').onclick = () => download(emu.saveSnapshot(), 'bemu.sna', 'application/octet-stream');
+document.querySelector('#saveSna').onclick = async () => download(await emu.saveSnapshot(), 'bemu.sna', 'application/octet-stream');
 
 // files: discs and snapshots go in at once, a script plays with all the files given so far
 async function take(files, driveB) {

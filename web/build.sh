@@ -17,7 +17,7 @@ wasm-bindgen --target web --out-dir pkg --out-name bemu_web \
 # Optimize for execution speed, not just download size.
 "$wasm_opt" -O3 --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
     --enable-mutable-globals pkg/bemu_web_bg.wasm -o pkg/bemu_web_bg.wasm
-cp js/bemu.js js/audio-worklet.js pkg/
+cp js/bemu.js js/engine.js js/worker.js js/audio-worklet.js pkg/
 cat > pkg/package.json <<JSON
 {
   "name": "bemu",
@@ -26,7 +26,7 @@ cat > pkg/package.json <<JSON
   "type": "module",
   "module": "bemu.js",
   "main": "bemu.js",
-  "files": ["bemu.js", "audio-worklet.js", "bemu_web.js", "bemu_web_bg.wasm", "bemu_web.d.ts"]
+  "files": ["bemu.js", "engine.js", "worker.js", "audio-worklet.js", "bemu_web.js", "bemu_web_bg.wasm", "bemu_web.d.ts"]
 }
 JSON
 echo "web/pkg is ready"

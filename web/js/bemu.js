@@ -5,33 +5,16 @@
 //   await emu.insertDisc('A', 'https://example.org/game.dsk');
 //   emu.start();
 //
+// The emulation runs in a Web Worker (worker.js, engine.js) that draws in the canvas and feeds the
+// sound itself; this page-side class forwards the calls and the keys. Where a worker cannot draw
+// (no OffscreenCanvas), it runs in the page instead, with the same API.
+//
 // See README.md for the whole API.
 
-import init, { Emulator } from './bemu_web.js';
+import { createCore, Engine, FRAME_MS, LocalTransport } from './engine.js';
 
-/** The CPC's frame: 312 lines of 64 µs. */
-const FRAME_MS = 312 * 64 / 1000;
-/** Sound kept ahead of the speakers, in seconds. */
+/** Sound kept ahead of the speakers, in seconds (the engine adapts it, see engine.js). */
 const AUDIO_TARGET_S = 0.06;
-/** After an underrun the target grows by this factor, up to the maximum: a slow or busy machine
- * trades latency for continuity. */
-const AUDIO_TARGET_GROWTH = 1.5;
-const AUDIO_TARGET_MAX_S = 0.2;
-const AUDIO_MAX_S = 0.4;
-/** At more than real time, the emulation takes this share of each animation frame (the rest is
- * the page's: drawing, input), between these many milliseconds: on a computer too slow to keep
- * up, the refreshes get longer and so does the emulation's share. */
-const BUSY_SHARE = 0.9;
-const BUSY_MIN_MS = 40;
-const BUSY_MAX_MS = 100;
-/** Limit catch-up work at normal speed so a slow machine can still service input and audio. */
-const REALTIME_BUDGET_MS = FRAME_MS;
-
-let wasm;
-function loadWasm(url) {
-    wasm ??= init(url ? { module_or_path: url } : undefined);
-    return wasm;
-}
 
 /** The bytes of a URL (string or URL), a Blob/File, an ArrayBuffer or a typed array. */
 export async function bytesOf(source) {
@@ -53,14 +36,97 @@ function driveNumber(drive) {
     throw new RangeError(`drive must be 'A' or 'B', not ${drive}`);
 }
 
+/** The page's side of an engine running in a Web Worker. */
+export class WorkerTransport {
+    #worker;
+    #pending = new Map();
+    #nextId = 1;
+    #state = null;
+    onEvent = () => {};
+    onState = () => {};
+    /** Whether the page has to send the display's refreshes (workers without requestAnimationFrame). */
+    needsFrames = false;
+
+    /** Starts a worker that draws in `canvas` (control of it moves to the worker). */
+    static async create({ canvas, config, webgpu, wasmUrl }) {
+        const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+        const transport = new WorkerTransport(worker);
+        try {
+            const offscreen = canvas.transferControlToOffscreen();
+            const { hasFrames } = await transport.#request({ type: 'init', canvas: offscreen, config, webgpu, wasmUrl }, [offscreen]);
+            transport.needsFrames = !hasFrames;
+            return transport;
+        } catch (error) {
+            worker.terminate();
+            throw error;
+        }
+    }
+
+    constructor(worker) {
+        this.#worker = worker;
+        worker.onmessage = ({ data }) => this.#receive(data);
+        worker.onerror = (event) => {
+            event.preventDefault?.();
+            this.#failAll(new Error(event.message || 'the emulator worker failed'));
+        };
+        worker.onmessageerror = () => this.#failAll(new Error('the emulator worker sent an unreadable message'));
+    }
+
+    get state() { return this.#state; }
+
+    call(method, args = [], transfer = []) {
+        return this.#request({ type: 'call', method, args }, transfer);
+    }
+
+    postFrame(time) { this.#worker.postMessage({ type: 'frame', time }); }
+
+    dispose() {
+        this.#failAll(new Error('the emulator was destroyed'));
+        this.#worker.postMessage({ type: 'dispose' });
+    }
+
+    #request(message, transfer = []) {
+        const id = this.#nextId++;
+        return new Promise((resolve, reject) => {
+            this.#pending.set(id, { resolve, reject });
+            this.#worker.postMessage({ ...message, id }, transfer);
+        });
+    }
+
+    #failAll(error) {
+        for (const { reject } of this.#pending.values()) reject(error);
+        this.#pending.clear();
+    }
+
+    #receive(data) {
+        switch (data.type) {
+            case 'state':
+                this.#state = data.state;
+                this.onState(data.state);
+                break;
+            case 'event':
+                this.onEvent(data.event, data.event === 'error' ? new Error(data.detail.message) : data.detail);
+                break;
+            case 'result':
+            case 'failure': {
+                const request = this.#pending.get(data.id);
+                this.#pending.delete(data.id);
+                if (data.type === 'result') request?.resolve(data.value);
+                else request?.reject(new Error(data.message));
+                break;
+            }
+        }
+    }
+}
+
 export class Bemu {
     /**
      * An emulator in `target`: a canvas, or an element a canvas is added to (filling it).
      * `config`: { model, crtc, gateArray, ramKb, discInterface, brand, display, blackLevel, keyboard }.
-     * `options`: { webgpu (true), wasmUrl, fullscreenKey ('F11', or null), autoStart (false) }.
+     * `options`: { webgpu (true), worker (true), wasmUrl, fullscreenKey ('F11', or null), autoStart (false) }.
+     * With `worker`, the emulation runs in a Web Worker when the browser can draw in one.
      */
     static async create(target, config = {}, options = {}) {
-        await loadWasm(options.wasmUrl);
         let canvas = target;
         if (!(target instanceof HTMLCanvasElement)) {
             canvas = document.createElement('canvas');
@@ -71,37 +137,55 @@ export class Bemu {
         }
         if (canvas.tabIndex < 0) canvas.tabIndex = 0;
         if (!canvas.style.background) canvas.style.background = 'black';
-        let core = null;
-        if (options.webgpu !== false && await Bemu.#hasWebGpu()) {
-            Bemu.#fitCanvas(canvas);
-            try {
-                core = await Emulator.create(canvas, config, true);
-            } catch (error) {
-                console.warn('bemu: no WebGPU, the picture is drawn raw on Canvas 2D:', error);
-                // a canvas WebGPU was tried on has no 2D context: a new one takes its place
+
+        const canWorker = options.worker !== false && typeof Worker !== 'undefined'
+            && typeof OffscreenCanvas !== 'undefined' && typeof canvas.transferControlToOffscreen === 'function';
+        const canGpu = options.webgpu !== false && await Bemu.#hasWebGpu();
+        // Each way fails differently (WebGPU, workers, drawing in a worker): the best that works.
+        const attempts = [];
+        if (canWorker && canGpu) attempts.push({ worker: true, webgpu: true });
+        if (canWorker) attempts.push({ worker: true, webgpu: false });
+        if (canGpu) attempts.push({ worker: false, webgpu: true });
+        attempts.push({ worker: false, webgpu: false });
+
+        let failure;
+        for (const [index, attempt] of attempts.entries()) {
+            if (index > 0) {
+                // a canvas that was tried on can no longer be used for another context
                 const fresh = canvas.cloneNode(false);
                 canvas.replaceWith(fresh);
                 canvas = fresh;
             }
+            try {
+                const size = Bemu.#measure(canvas);
+                if (attempt.webgpu) {
+                    canvas.width = size[0];
+                    canvas.height = size[1];
+                }
+                const transport = attempt.worker
+                    ? await WorkerTransport.create({ canvas, config, webgpu: attempt.webgpu, wasmUrl: options.wasmUrl })
+                    : await Bemu.#localTransport(canvas, config, attempt.webgpu, options.wasmUrl);
+                const emu = new Bemu(canvas, transport, options, size);
+                if (options.autoStart) emu.start();
+                return emu;
+            } catch (error) {
+                failure = error;
+                console.warn(`bemu: ${attempt.worker ? 'worker' : 'page'}, ${attempt.webgpu ? 'WebGPU' : 'Canvas 2D'} failed:`, error);
+            }
         }
-        core ??= await Emulator.create(canvas, config, false);
-        const emu = new Bemu(canvas, core, options);
-        if (options.autoStart) emu.start();
-        return emu;
+        throw failure;
     }
 
-    #canvas; #core; #options;
+    static async #localTransport(canvas, config, webgpu, wasmUrl) {
+        const core = await createCore(canvas, config, webgpu, wasmUrl);
+        return new LocalTransport(({ emit, onTick }) => new Engine(core, { canvas, emit, onTick }));
+    }
+
+    #canvas; #transport; #options;
     #listeners = new Map();
     #handlers = [];
     #running = false;
-    #frameRequest = 0;
-    #lastTime = undefined;
-    #owed = 0;
-    #intervals = [];
-    /** 1, 2, 3 or 4 refreshes of a display at 50, 100, 150 or 200 Hz per CPC frame; 0 at
-     * another rate. */
-    #refreshesPerFrame = 0;
-    #refreshes = 0;
+    #frameLoop = 0;
     #audio = null;
     #audioStarting = null;
     #volume = 1;
@@ -110,36 +194,44 @@ export class Bemu {
     #speed = 1;
     /** The speed F10 goes back to from full speed. */
     #lastSpeed = 1;
-    #stats = { since: undefined, frames: 0 };
+    #state;
+    /** The canvas's drawing buffer in physical pixels (a worker's canvas cannot be read). */
+    #size;
     #resizeObserver = null;
     #pixelRatioQuery = null;
     #pixelRatioChanged = null;
     #destroyed = false;
     #displayWarningKey = '';
 
-    constructor(canvas, core, options) {
+    constructor(canvas, transport, options, size = [canvas.width, canvas.height]) {
         this.#canvas = canvas;
-        this.#core = core;
+        this.#transport = transport;
+        this.#size = size;
+        this.#state = transport.state;
         this.#options = { fullscreenKey: 'F11', turboKey: 'F10', ...options };
-        core.on_screenshot((name, png) => this.#emit('screenshot', { name, png }));
-        core.on_csl_done((report) => this.#emit('csl-done', report));
+        transport.onEvent = (event, detail) => this.#onEvent(event, detail);
+        transport.onState = (state) => {
+            this.#state = state;
+            this.#updateDisplayWarning();
+        };
 
         this.#listen(canvas, 'keydown', (event) => this.#keyDown(event));
         this.#listen(canvas, 'keyup', (event) => {
-            this.#core.key_up(event.code);
+            this.#send('keyUp', event.code);
             if (this.#isCpcKey(event)) event.preventDefault();
         });
-        this.#listen(canvas, 'blur', () => this.#core.release_keys());
+        this.#listen(canvas, 'blur', () => this.#send('releaseKeys'));
         this.#listen(canvas, 'pointerdown', () => {
             canvas.focus();
             this.#startAudio();
         });
         if (this.backend === 'webgpu') {
             const resize = () => {
-                Bemu.#fitCanvas(canvas);
-                core.resize(canvas.width, canvas.height);
+                const next = Bemu.#measure(canvas);
+                if (next[0] === this.#size[0] && next[1] === this.#size[1]) return;
+                this.#size = next;
+                this.#send('resize', next[0], next[1]);
                 this.#updateDisplayWarning();
-                if (!this.#running) this.#safely(() => core.redraw());
             };
             if (typeof ResizeObserver !== 'undefined') {
                 this.#resizeObserver = new ResizeObserver(resize);
@@ -158,24 +250,25 @@ export class Bemu {
     }
 
     /** 'webgpu' or 'canvas2d' (raw picture only). */
-    get backend() { return this.#core.backend(); }
+    get backend() { return this.#state.backend; }
     get canvas() { return this.#canvas; }
     get running() { return this.#running; }
+    /** Whether the emulation runs in a Web Worker (else in the page). */
+    get threaded() { return this.#transport instanceof WorkerTransport; }
     /** Whether a CSL script is playing. */
-    get cslRunning() { return this.#core.csl_running(); }
+    get cslRunning() { return this.#state.cslRunning; }
     /** Whether the frames follow the display's own refresh (50 Hz, or 100, 150 or 200). */
-    get vsyncPaced() { return this.#refreshesPerFrame > 0; }
+    get vsyncPaced() { return this.#state.refreshesPerFrame > 0; }
     /** At 50, 100, 150 or 200 Hz, how many refreshes show a CPC frame (1 to 4); else 0. */
-    get refreshesPerFrame() { return this.#refreshesPerFrame; }
+    get refreshesPerFrame() { return this.#state.refreshesPerFrame; }
     /** Times real time: 1, another factor, or Infinity (full speed). */
     get speed() { return this.#speed; }
     /** A CTM scaling warning, or null when the physical canvas is large enough. */
     get displayWarning() {
         if (this.backend !== 'webgpu') return null;
-        const width = this.#core.ctm_width();
-        const height = this.#core.ctm_height();
-        if (!width || (this.#canvas.width >= width && this.#canvas.height >= height)) return null;
-        return { width: this.#canvas.width, height: this.#canvas.height, requiredWidth: width, requiredHeight: height };
+        const [width, height] = this.#state.ctm;
+        if (!width || (this.#size[0] >= width && this.#size[1] >= height)) return null;
+        return { width: this.#size[0], height: this.#size[1], requiredWidth: width, requiredHeight: height };
     }
 
     /**
@@ -193,55 +286,48 @@ export class Bemu {
         return this;
     }
 
+    // The calls below reach the emulator asynchronously: they return a promise, rejected when the
+    // emulator refuses (a bad configuration, a disc that cannot be read...).
+
     /** A new machine (the discs stay in). */
-    configure(config) { this.#core.configure(config); this.#updateDisplayWarning(); }
-    reset() { this.#core.reset(); }
+    configure(config) { return this.#transport.call('configure', [config]); }
+    reset() { return this.#transport.call('reset'); }
     /** 'raw', 'ctm', 'trinitron', 'gt65' or 'atari'. */
-    setDisplay(name) {
-        this.#core.set_display(name);
-        this.#updateDisplayWarning();
-        if (!this.#running) this.#safely(() => this.#core.redraw());
-    }
+    setDisplay(name) { return this.#transport.call('setDisplay', [name]); }
 
     /** How curved a CRT's glass is, times its profile's bulge: 0 (flat) to 4, 1 by default. */
-    setCurvature(curvature) {
-        this.#core.set_curvature(curvature);
-        if (!this.#running) this.#safely(() => this.#core.redraw());
-    }
+    setCurvature(curvature) { return this.#transport.call('setCurvature', [curvature]); }
 
     /** 'symbolic' (a key types its character) or 'positional' (the CPC key at its place, for games). */
-    setKeyboard(mapping) { this.#core.set_keyboard(mapping); }
+    setKeyboard(mapping) { return this.#transport.call('setKeyboard', [mapping]); }
 
     /**
      * A DSK image in drive 'A' or 'B', from a URL, a File/Blob or bytes: a zip, 7z or tar.gz
      * archive gives its first DSK, or the one named `entry`.
      */
     async insertDisc(drive, source, entry) {
-        this.#core.insert_disc(driveNumber(drive), await bytesOf(source), entry);
+        await this.#transport.call('insertDisc', [driveNumber(drive), await bytesOf(source), entry]);
     }
     /**
      * Changes the disc of the running machine like a person: the drive stays empty for 1.5 s of
      * emulated time (a program can see the change), then the new disc goes in.
      */
     async swapDisc(drive, source, entry) {
-        this.#core.swap_disc(driveNumber(drive), await bytesOf(source), entry);
+        await this.#transport.call('swapDisc', [driveNumber(drive), await bytesOf(source), entry]);
     }
-    eject(drive) { this.#core.eject(driveNumber(drive)); }
+    eject(drive) { return this.#transport.call('eject', [driveNumber(drive)]); }
     /** A CDT tape in the cassette deck (PLAY down), from a URL, a File/Blob or bytes. */
-    async insertTape(source) { return this.#core.insert_tape(await bytesOf(source)); }
-    ejectTape() { this.#core.eject_tape(); }
+    async insertTape(source) { return this.#transport.call('insertTape', [await bytesOf(source)]); }
+    ejectTape() { return this.#transport.call('ejectTape'); }
     /** The deck's keys: 'play', 'stop' or 'rewind'. */
-    tapeControl(key) { this.#core.tape_control(key); }
+    tapeControl(key) { return this.#transport.call('tapeControl', [key]); }
     /** { position, duration } in seconds and whether PLAY is down, or undefined without a tape. */
-    get tape() {
-        const t = this.#core.tape_position();
-        return t && { position: t[0], duration: t[1], playing: t[2] !== 0 };
-    }
+    get tape() { return this.#state.tape ?? undefined; }
 
     /** An SNA snapshot, from a URL, a File/Blob or bytes. */
-    async loadSnapshot(source) { this.#core.load_snapshot(await bytesOf(source)); }
+    async loadSnapshot(source) { await this.#transport.call('loadSnapshot', [await bytesOf(source)]); }
     /** A file a CSL script names (disk_insert, snapshot_load, csl_load). */
-    async addFile(name, source) { this.#core.add_file(name, await bytesOf(source)); }
+    async addFile(name, source) { await this.#transport.call('addFile', [name, await bytesOf(source)]); }
 
     /**
      * Play a CSL script live: `script` is its text (several lines), a URL, a File/Blob or bytes;
@@ -253,10 +339,10 @@ export class Bemu {
         const text = typeof script === 'string' && script.includes('\n')
             ? script
             : new TextDecoder().decode(await bytesOf(script));
-        this.#core.run_csl(text);
-        this.start();
+        await this.#transport.call('runCsl', [text]);
+        this.#setRunning(true);
     }
-    stopCsl() { this.#core.stop_csl(); }
+    stopCsl() { return this.#transport.call('stopCsl'); }
 
     /**
      * How fast the emulation runs: 1 (real time, the default), another factor (2: twice as
@@ -266,54 +352,43 @@ export class Bemu {
     setSpeed(speed) {
         const value = speed === 'max' ? Infinity : Number(speed);
         if (!(value > 0)) throw new RangeError(`speed must be a positive number or 'max', not ${speed}`);
-        if (value !== 1) this.#core.audio_samples(); // what is queued is dropped, not played late
         this.#speed = value;
-        this.#owed = 0;
+        return this.#transport.call('setSpeed', [value]);
     }
 
     /** Type `text` on the CPC's keyboard (\n is RETURN), as if typed: a paste. */
-    typeText(text) { this.#core.type_text(String(text)); }
+    typeText(text) { return this.#transport.call('typeText', [String(text)]); }
 
     /** While paused: one more frame, shown. */
     stepFrame() {
-        if (this.#running) return;
-        this.#safely(() => {
-            this.#core.advance_frame();
-            this.#core.audio_samples();
-            this.#core.redraw();
-        });
+        if (this.#running) return Promise.resolve();
+        return this.#transport.call('stepFrame');
     }
 
-    /** The last frame as a PNG file (Uint8Array, the monitor's 768x272 picture), or undefined. */
-    screenshot() { return this.#core.screenshot(); }
+    /** The last frame as a PNG file (a Promise of a Uint8Array, the monitor's 768x272 picture), or undefined. */
+    screenshot() { return this.#transport.call('screenshot'); }
 
-    /** The DSK image in drive 'A' or 'B' with what the CPC wrote on it (Uint8Array), or undefined. */
-    getDisc(drive) { return this.#core.disc_image(driveNumber(drive)); }
+    /** The DSK image in drive 'A' or 'B' with what the CPC wrote on it (a Promise of a Uint8Array), or undefined. */
+    getDisc(drive) { return this.#transport.call('getDisc', [driveNumber(drive)]); }
     /** Whether the drive motor runs (the drive is being accessed). */
-    get driveActive() { return this.#core.drive_active(); }
+    get driveActive() { return this.#state.driveActive; }
     /** How many disc transfers began so far (wrapping): the drive light flashes when it changes. */
-    get driveTransfers() { return this.#core.drive_transfers(); }
+    get driveTransfers() { return this.#state.driveTransfers; }
     /** Press (down true) or release a key of the CPC by its KeyboardEvent `code` and `key`, as a virtual keyboard does. */
     pressKey(code, key, down) {
-        if (down) this.#core.key_down(code, key, false);
-        else this.#core.key_up(code);
+        if (down) this.#send('keyDown', code, key, false);
+        else this.#send('keyUp', code);
     }
 
-    /** The machine's state as an SNA snapshot file (Uint8Array, version 3), for loadSnapshot later. */
-    saveSnapshot() { return this.#core.save_snapshot(); }
+    /** The machine's state as an SNA snapshot file (a Promise of a Uint8Array, version 3), for loadSnapshot later. */
+    saveSnapshot() { return this.#transport.call('saveSnapshot'); }
 
     start() {
-        if (this.#running || this.#destroyed) return;
-        this.#running = true;
-        this.#lastTime = undefined;
-        this.#owed = 0;
-        this.#stats.since = undefined;
-        this.#frameRequest = requestAnimationFrame((time) => this.#tick(time));
+        if (this.#destroyed) return;
+        this.#setRunning(true);
     }
     pause() {
-        this.#running = false;
-        cancelAnimationFrame(this.#frameRequest);
-        this.#audio?.context.suspend();
+        this.#setRunning(false);
     }
 
     /** The emulator alone on the screen (the browser's Fullscreen API). */
@@ -342,6 +417,7 @@ export class Bemu {
     get muted() { return this.#muted; }
 
     destroy() {
+        if (this.#destroyed) return;
         this.pause();
         this.#destroyed = true;
         for (const [target, type, fn] of this.#handlers) target.removeEventListener(type, fn);
@@ -351,7 +427,7 @@ export class Bemu {
         this.#audio?.context.close();
         this.#audio = null;
         this.#listeners.clear();
-        this.#core.free();
+        this.#transport.dispose();
     }
 
     // ---------------------------------------------------------------- internals
@@ -364,12 +440,13 @@ export class Bemu {
         }
     }
 
-    static #fitCanvas(canvas) {
+    /** The canvas's drawing buffer for its size on the screen: physical pixels. */
+    static #measure(canvas) {
         const ratio = window.devicePixelRatio || 1;
-        const width = Math.max(1, Math.round((canvas.clientWidth || 768) * ratio));
-        const height = Math.max(1, Math.round((canvas.clientHeight || 544) * ratio));
-        if (canvas.width !== width) canvas.width = width;
-        if (canvas.height !== height) canvas.height = height;
+        return [
+            Math.max(1, Math.round((canvas.clientWidth || 768) * ratio)),
+            Math.max(1, Math.round((canvas.clientHeight || 544) * ratio))
+        ];
     }
 
     #watchPixelRatio() {
@@ -389,20 +466,53 @@ export class Bemu {
         }
     }
 
+    #onEvent(event, detail) {
+        if (event === 'error') {
+            // the engine stopped itself
+            this.#setRunning(false, false);
+            if (!this.#listeners.get('error')?.size) console.error(detail);
+        }
+        this.#emit(event, detail);
+    }
+
+    /** A call whose outcome only matters when it fails: input, resizing. */
+    #send(method, ...args) {
+        this.#transport.call(method, args).catch((error) => {
+            if (this.#destroyed) return;
+            this.#emit('error', error);
+            if (!this.#listeners.get('error')?.size) console.error(error);
+        });
+    }
+
+    #setRunning(running, tellEngine = true) {
+        if (running === this.#running && tellEngine) {
+            // the engine may have stopped itself since: ask again
+            if (!running) return;
+        }
+        this.#running = running;
+        if (tellEngine) this.#send(running ? 'start' : 'pause');
+        if (running) this.#audio?.context.resume();
+        else this.#audio?.context.suspend();
+        this.#driveFrames();
+    }
+
+    /** Workers without requestAnimationFrame get the display's refreshes from the page. */
+    #driveFrames() {
+        cancelAnimationFrame(this.#frameLoop);
+        if (!this.#running || !this.#transport.needsFrames) return;
+        const loop = (time) => {
+            this.#transport.postFrame(time);
+            this.#frameLoop = requestAnimationFrame(loop);
+        };
+        this.#frameLoop = requestAnimationFrame(loop);
+    }
+
     #updateDisplayWarning() {
         const warning = this.displayWarning;
         const key = JSON.stringify(warning);
         if (key !== this.#displayWarningKey) {
             this.#displayWarningKey = key;
             this.#emit('display-warning', warning);
-        }
-    }
-
-    #safely(fn) {
-        try { return fn(); } catch (error) {
-            this.pause();
-            this.#emit('error', error);
-            if (!this.#listeners.get('error')?.size) console.error(error);
         }
     }
 
@@ -428,13 +538,17 @@ export class Bemu {
             }
             return;
         }
-        this.#core.key_down(event.code, event.key, event.ctrlKey || event.metaKey);
+        this.#send('keyDown', event.code, event.key, event.ctrlKey || event.metaKey);
         // the page does not scroll or move the focus on the CPC's keys
         if (this.#isCpcKey(event)) event.preventDefault();
     }
 
     async #startAudio() {
-        if (this.#destroyed || this.#audio) return;
+        if (this.#destroyed) return;
+        if (this.#audio) {
+            if (this.#running && this.#audio.context.state === 'suspended') this.#audio.context.resume();
+            return;
+        }
         if (this.#audioStarting) return this.#audioStarting;
         this.#audioStarting = (async () => {
             let context;
@@ -460,14 +574,15 @@ export class Bemu {
                     await context.close();
                     return;
                 }
-                this.#core.enable_audio(context.sampleRate);
-                const audio = {
-                    context, node, gain, target: AUDIO_TARGET_S,
-                    // the worklet's last report, and the frames sent since
-                    fill: 0, reportTime: context.currentTime, playing: false, underruns: 0, sentSince: 0
-                };
-                node.port.onmessage = (event) => this.#audioReport(audio, event.data);
-                this.#audio = audio;
+                // the emulator talks to the worklet directly, not through this page
+                const channel = new MessageChannel();
+                node.port.postMessage({ feed: channel.port1 }, [channel.port1]);
+                await this.#transport.call('attachAudio', [channel.port2, context.sampleRate], [channel.port2]);
+                if (this.#destroyed) {
+                    await context.close();
+                    return;
+                }
+                this.#audio = { context, node, gain };
                 this.#emit('audio-ready');
             } catch (error) {
                 if (context && !this.#audio && context.state !== 'closed') {
@@ -482,143 +597,9 @@ export class Bemu {
         return this.#audioStarting;
     }
 
-    /** Seconds of sound queued and not yet played, from the worklet's last report. */
-    #audioBuffered() {
-        const audio = this.#audio;
-        if (!audio) return 0;
-        const rate = audio.context.sampleRate;
-        const played = audio.playing ? Math.max(0, audio.context.currentTime - audio.reportTime) : 0;
-        return Math.max(0, audio.fill / rate + audio.sentSince / rate - played);
-    }
-
-    #audioReport(audio, report) {
-        audio.fill = report.fill;
-        audio.reportTime = report.time;
-        audio.playing = report.playing;
-        audio.sentSince = 0;
-        if (report.underruns > audio.underruns) {
-            audio.underruns = report.underruns;
-            audio.target = Math.min(audio.target * AUDIO_TARGET_GROWTH, AUDIO_TARGET_MAX_S);
-            audio.node.port.postMessage({ target: audio.target });
-        }
-    }
-
     #applyVolume() {
         if (this.#audio) this.#audio.gain.gain.value = this.#muted ? 0 : this.#volume;
     }
-
-    /**
-     * A frame emulated, not drawn; its sound queued at real time, dropped otherwise. `unseen`: no
-     * frame of it is shown (above real time, all but the last of a refresh), it runs without
-     * any picture.
-     */
-    #runFrame(unseen = false) {
-        if (unseen) this.#core.advance_frame_unseen();
-        else this.#core.advance_frame();
-        this.#stats.frames++;
-        const audio = this.#audio;
-        if (!audio) return;
-        const samples = this.#core.audio_samples();
-        if (samples.length === 0 || this.#speed !== 1) return;
-        if (this.#audioBuffered() > AUDIO_MAX_S) return; // too far ahead: drop
-        audio.sentSince += samples.length / 2;
-        audio.node.port.postMessage(samples, [samples.buffer]);
-    }
-
-    #tick(time) {
-        if (!this.#running) return;
-        this.#frameRequest = requestAnimationFrame((next) => this.#tick(next));
-        if (this.#audio?.context.state === 'suspended') this.#audio.context.resume();
-        const elapsed = this.#lastTime === undefined ? FRAME_MS : time - this.#lastTime;
-        this.#lastTime = time;
-        this.#measureRefresh(elapsed);
-        this.#safely(() => {
-            this.#emitStats(time);
-            const budget = Math.min(Math.max(elapsed * BUSY_SHARE, BUSY_MIN_MS), BUSY_MAX_MS);
-            if (this.#speed === Infinity) {
-                // full speed: frames without picture for most of the refresh, then one shown
-                const start = performance.now();
-                while (performance.now() - start < budget) this.#runFrame(true);
-                this.#runFrame();
-                this.#core.redraw();
-                return;
-            }
-            if (this.#speed !== 1) {
-                // n times real time, by the browser's clock
-                this.#owed = Math.min(this.#owed + elapsed * this.#speed, 4 * this.#speed * FRAME_MS);
-                const start = performance.now();
-                while (this.#owed >= 2 * FRAME_MS && performance.now() - start < budget) {
-                    this.#runFrame(true);
-                    this.#owed -= FRAME_MS;
-                }
-                if (this.#owed >= FRAME_MS) {
-                    this.#runFrame();
-                    this.#owed -= FRAME_MS;
-                }
-                this.#core.redraw();
-                return;
-            }
-            if (this.#refreshesPerFrame > 0) {
-                // one CPC frame every refresh of a 50 Hz display, every other one at 100 Hz...:
-                // each frame on the screen as long as the others (the last one stays shown)
-                if (++this.#refreshes >= this.#refreshesPerFrame) {
-                    this.#refreshes = 0;
-                    // the sound is not this clock's: a frame more when it runs short, one less
-                    // when it runs ahead
-                    const audio = this.#audio;
-                    const buffered = audio ? this.#audioBuffered() : 0;
-                    const frame = FRAME_MS / 1000;
-                    if (!audio || buffered < audio.target + 2 * frame) {
-                        if (audio && buffered < audio.target - frame) this.#runFrame(true);
-                        this.#runFrame();
-                    }
-                    this.#core.redraw();
-                }
-                return;
-            }
-            let frames;
-            if (this.#audio) {
-                // the sound's clock: keep a little of it ahead of the speakers
-                frames = Math.ceil((this.#audio.target - this.#audioBuffered()) * 1000 / FRAME_MS);
-            } else {
-                this.#owed = Math.min(this.#owed + elapsed, 4 * FRAME_MS);
-                frames = Math.floor(this.#owed / FRAME_MS);
-            }
-            frames = Math.max(0, Math.min(frames, 4));
-            const start = performance.now();
-            let completed = 0;
-            while (completed < frames && (completed === 0 || performance.now() - start < REALTIME_BUDGET_MS)) {
-                this.#runFrame();
-                completed++;
-            }
-            if (!this.#audio) this.#owed -= completed * FRAME_MS;
-            if (completed || this.backend === 'webgpu') this.#core.redraw();
-        });
-    }
-
-    /** The 'stats' event, once a second. */
-    #emitStats(time) {
-        const stats = this.#stats;
-        if (stats.since === undefined) {
-            stats.since = time;
-            stats.frames = 0;
-            return;
-        }
-        if (time - stats.since < 1000) return;
-        const fps = stats.frames * 1000 / (time - stats.since);
-        stats.since = time;
-        stats.frames = 0;
-        this.#emit('stats', { fps, speed: fps * FRAME_MS / 1000 });
-    }
-
-    /** Whether the display refreshes at about 50 Hz, from the last 60 animation frames. */
-    #measureRefresh(elapsed) {
-        this.#intervals.push(elapsed);
-        if (this.#intervals.length > 60) this.#intervals.shift();
-        if (this.#intervals.length < 30) return;
-        const sorted = [...this.#intervals].sort((a, b) => a - b);
-        const median = sorted[sorted.length >> 1];
-        const hertz = 1000 / median;
-        this.#refreshesPerFrame = [1, 2, 3, 4].find((k) => Math.abs(hertz - 50 * k) < 1.5 * k) ?? 0;
-    }
 }
+
+export { FRAME_MS };
