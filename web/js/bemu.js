@@ -123,7 +123,7 @@ export class Bemu {
     /**
      * An emulator in `target`: a canvas, or an element a canvas is added to (filling it).
      * `config`: { model, crtc, gateArray, ramKb, discInterface, brand, display, blackLevel, keyboard }.
-     * `options`: { webgpu (true), worker (true), wasmUrl, fullscreenKey ('F11', or null), autoStart (false) }.
+     * `options`: { webgpu (true), worker (true; false in Firefox unless asked), wasmUrl, fullscreenKey ('F11', or null), autoStart (false) }.
      * With `worker`, the emulation runs in a Web Worker when the browser can draw in one.
      */
     static async create(target, config = {}, options = {}) {
@@ -136,9 +136,13 @@ export class Bemu {
             target.appendChild(canvas);
         }
         if (canvas.tabIndex < 0) canvas.tabIndex = 0;
+        // Canvas 2D stretches the 768x272 picture: sharp pixels, not smoothed ones
+        canvas.style.imageRendering = 'pixelated';
         if (!canvas.style.background) canvas.style.background = 'black';
 
-        const canWorker = options.worker !== false && typeof Worker !== 'undefined'
+        // Firefox's OffscreenCanvas is not reliable yet (late pictures and input): the page unless asked
+        const workerWanted = options.worker ?? !/\bFirefox\//.test(navigator.userAgent);
+        const canWorker = workerWanted && typeof Worker !== 'undefined'
             && typeof OffscreenCanvas !== 'undefined' && typeof canvas.transferControlToOffscreen === 'function';
         const canGpu = options.webgpu !== false && await Bemu.#hasWebGpu();
         // Each way fails differently (WebGPU, workers, drawing in a worker): the best that works.
@@ -198,6 +202,7 @@ export class Bemu {
     /** The canvas's drawing buffer in physical pixels (a worker's canvas cannot be read). */
     #size;
     #resizeObserver = null;
+    #deviceSize = null;
     #pixelRatioQuery = null;
     #pixelRatioChanged = null;
     #destroyed = false;
@@ -227,15 +232,25 @@ export class Bemu {
         });
         if (this.backend === 'webgpu') {
             const resize = () => {
-                const next = Bemu.#measure(canvas);
+                const next = this.#deviceSize ?? Bemu.#measure(canvas);
                 if (next[0] === this.#size[0] && next[1] === this.#size[1]) return;
                 this.#size = next;
                 this.#send('resize', next[0], next[1]);
                 this.#updateDisplayWarning();
             };
             if (typeof ResizeObserver !== 'undefined') {
-                this.#resizeObserver = new ResizeObserver(resize);
-                this.#resizeObserver.observe(canvas);
+                this.#resizeObserver = new ResizeObserver((entries) => {
+                    // the exact physical pixels of the canvas, where the browser says (the CSS size
+                    // times the pixel ratio is not whole with a fractional zoom or scale)
+                    const box = entries?.at(-1)?.devicePixelContentBoxSize?.[0];
+                    if (box) this.#deviceSize = [Math.max(1, box.inlineSize), Math.max(1, box.blockSize)];
+                    resize();
+                });
+                try {
+                    this.#resizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
+                } catch {
+                    this.#resizeObserver.observe(canvas);
+                }
             }
             this.#listen(window, 'resize', resize);
             if (window.matchMedia) {
@@ -434,7 +449,9 @@ export class Bemu {
 
     static async #hasWebGpu() {
         try {
-            return Boolean(await navigator.gpu?.requestAdapter());
+            // a software adapter cannot draw the CRT shader at 50 Hz: Canvas 2D does better
+            const adapter = await navigator.gpu?.requestAdapter();
+            return Boolean(adapter) && !adapter.isFallbackAdapter;
         } catch {
             return false;
         }
@@ -443,9 +460,10 @@ export class Bemu {
     /** The canvas's drawing buffer for its size on the screen: physical pixels. */
     static #measure(canvas) {
         const ratio = window.devicePixelRatio || 1;
+        const box = canvas.getBoundingClientRect?.();
         return [
-            Math.max(1, Math.round((canvas.clientWidth || 768) * ratio)),
-            Math.max(1, Math.round((canvas.clientHeight || 544) * ratio))
+            Math.max(1, Math.round((box?.width || canvas.clientWidth || 768) * ratio)),
+            Math.max(1, Math.round((box?.height || canvas.clientHeight || 544) * ratio))
         ];
     }
 
