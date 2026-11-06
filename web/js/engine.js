@@ -42,6 +42,8 @@ const defaultScheduler = {
 export class Engine {
     #core; #canvas; #emit; #onTick; #scheduler; #now;
     #running = false;
+    /** A frame was emulated by the sound's clock and not drawn yet. */
+    #fresh = false;
     #frameRequest = 0;
     #lastTime = undefined;
     #owed = 0;
@@ -217,6 +219,22 @@ export class Engine {
             audio.target = Math.min(audio.target * AUDIO_TARGET_GROWTH, AUDIO_TARGET_MAX_S);
             audio.port.postMessage({ target: audio.target });
         }
+        this.#refill();
+    }
+
+    /**
+     * On the sound's clock (its reports come every ~20 ms whatever the display does): emulate the
+     * frames the speakers will miss. Only when the emulation is not paced by a steady 50 Hz display.
+     */
+    #refill() {
+        const audio = this.#audio;
+        if (!audio || !this.#running || this.#speed !== 1 || this.#refreshesPerFrame > 0) return;
+        const frames = Math.max(0, Math.min(4, Math.ceil((audio.target - this.#audioBuffered()) * 1000 / FRAME_MS)));
+        const start = this.#now();
+        for (let i = 0; i < frames && (i === 0 || this.#now() - start < REALTIME_BUDGET_MS); i++) {
+            this.#safely(() => this.#runFrame());
+            this.#fresh = true;
+        }
     }
 
     /**
@@ -304,7 +322,8 @@ export class Engine {
                 completed++;
             }
             if (!this.#audio) this.#owed -= completed * FRAME_MS;
-            if (completed || this.#core.backend() === 'webgpu') this.#core.redraw();
+            if (completed || this.#fresh || this.#core.backend() === 'webgpu') this.#core.redraw();
+            this.#fresh = false;
         });
         this.#onTick();
     }
