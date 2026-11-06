@@ -77,7 +77,7 @@ slower.
 
 - **`options`**:
   - `webgpu` (default `true`): `false` keeps to Canvas 2D.
-  - `worker` (default `true`, but `false` in Firefox, whose OffscreenCanvas is not reliable yet): runs the emulation in a Web Worker; `emu.threaded` tells which mode is used. A software WebGPU adapter is ignored (Canvas 2D is used).
+  - `worker` (default `true`): runs the emulation in a Web Worker; `emu.threaded` tells which mode is used. Without WebGPU (or with a software adapter) the CRT shaders run on WebGL 2 when it exists, else Canvas 2D shows the raw picture only.
   - `wasmUrl`: where `bemu_web_bg.wasm` is, if not next to `bemu.js`.
   - `fullscreenKey` (default `'F11'`, or `null` for none).
   - `turboKey` (default `'F10'`, or `null` for none): toggles full speed, see "Speed".

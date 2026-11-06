@@ -123,7 +123,7 @@ export class Bemu {
     /**
      * An emulator in `target`: a canvas, or an element a canvas is added to (filling it).
      * `config`: { model, crtc, gateArray, ramKb, discInterface, brand, display, blackLevel, keyboard }.
-     * `options`: { webgpu (true), worker (true; false in Firefox unless asked), wasmUrl, fullscreenKey ('F11', or null), autoStart (false) }.
+     * `options`: { webgpu (true), worker (true), wasmUrl, fullscreenKey ('F11', or null), autoStart (false) }.
      * With `worker`, the emulation runs in a Web Worker when the browser can draw in one.
      */
     static async create(target, config = {}, options = {}) {
@@ -140,9 +140,7 @@ export class Bemu {
         canvas.style.imageRendering = 'pixelated';
         if (!canvas.style.background) canvas.style.background = 'black';
 
-        // Firefox's OffscreenCanvas is not reliable yet (late pictures and input): the page unless asked
-        const workerWanted = options.worker ?? !/\bFirefox\//.test(navigator.userAgent);
-        const canWorker = workerWanted && typeof Worker !== 'undefined'
+        const canWorker = options.worker !== false && typeof Worker !== 'undefined'
             && typeof OffscreenCanvas !== 'undefined' && typeof canvas.transferControlToOffscreen === 'function';
         const canGpu = options.webgpu !== false && await Bemu.#hasWebGpu();
         // Each way fails differently (WebGPU, workers, drawing in a worker): the best that works.
@@ -451,7 +449,13 @@ export class Bemu {
         try {
             // a software adapter cannot draw the CRT shader at 50 Hz: Canvas 2D does better
             const adapter = await navigator.gpu?.requestAdapter();
-            return Boolean(adapter) && !adapter.isFallbackAdapter;
+            if (adapter) return !adapter.isFallbackAdapter;
+        } catch {
+            // no WebGPU
+        }
+        // no WebGPU (Firefox on Linux): the same shaders run on WebGL 2
+        try {
+            return Boolean(document.createElement('canvas').getContext('webgl2'));
         } catch {
             return false;
         }

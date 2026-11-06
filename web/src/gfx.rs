@@ -159,7 +159,7 @@ impl Gpu {
     async fn new(canvas: Canvas) -> Result<Self, String> {
         let (width, height) = (canvas.size().0.max(1), canvas.size().1.max(1));
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU,
+            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             ..Default::default()
         });
         let target = match canvas {
@@ -177,7 +177,10 @@ impl Gpu {
             .await
             .map_err(|e| format!("no WebGPU adapter: {e}"))?;
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+                ..Default::default()
+            })
             .await
             .map_err(|e| format!("cannot use WebGPU: {e}"))?;
 

@@ -8,7 +8,8 @@ let engine;
 let pendingFrame = null;
 let lastState = '';
 
-const hasFrames = typeof self.requestAnimationFrame === 'function';
+// Firefox's worker requestAnimationFrame is starved: its pictures and inputs come late.
+const hasFrames = typeof self.requestAnimationFrame === 'function' && !/\bFirefox\//.test(self.navigator?.userAgent ?? '');
 // Without requestAnimationFrame in workers, the page sends the display's refreshes.
 const scheduler = hasFrames
     ? { request: (callback) => self.requestAnimationFrame(callback), cancel: (id) => self.cancelAnimationFrame(id) }
