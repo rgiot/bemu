@@ -13,7 +13,11 @@ import init, { Emulator } from './bemu_web.js';
 const FRAME_MS = 312 * 64 / 1000;
 /** Sound kept ahead of the speakers, in seconds. */
 const AUDIO_TARGET_S = 0.06;
-const AUDIO_MAX_S = 0.25;
+/** After an underrun the target grows by this factor, up to the maximum: a slow or busy machine
+ * trades latency for continuity. */
+const AUDIO_TARGET_GROWTH = 1.5;
+const AUDIO_TARGET_MAX_S = 0.2;
+const AUDIO_MAX_S = 0.4;
 /** At more than real time, the emulation takes this share of each animation frame (the rest is
  * the page's: drawing, input), between these many milliseconds: on a computer too slow to keep
  * up, the refreshes get longer and so does the emulation's share. */
@@ -445,7 +449,10 @@ export class Bemu {
                     await context.close();
                     return;
                 }
-                const node = new AudioWorkletNode(context, 'bemu-audio', { outputChannelCount: [2] });
+                const node = new AudioWorkletNode(context, 'bemu-audio', {
+                    outputChannelCount: [2],
+                    processorOptions: { target: AUDIO_TARGET_S }
+                });
                 const gain = new GainNode(context, { gain: this.#muted ? 0 : this.#volume });
                 node.connect(gain).connect(context.destination);
                 if (!this.#running) await context.suspend();
@@ -454,7 +461,13 @@ export class Bemu {
                     return;
                 }
                 this.#core.enable_audio(context.sampleRate);
-                this.#audio = { context, node, gain, sent: 0, startedAt: context.currentTime };
+                const audio = {
+                    context, node, gain, target: AUDIO_TARGET_S,
+                    // the worklet's last report, and the frames sent since
+                    fill: 0, reportTime: context.currentTime, playing: false, underruns: 0, sentSince: 0
+                };
+                node.port.onmessage = (event) => this.#audioReport(audio, event.data);
+                this.#audio = audio;
             } catch (error) {
                 if (context && !this.#audio && context.state !== 'closed') {
                     try { await context.close(); } catch (closeError) { console.warn('bemu: cannot close audio context', closeError); }
@@ -468,12 +481,25 @@ export class Bemu {
         return this.#audioStarting;
     }
 
-    /** Seconds of sound queued and not yet played. */
+    /** Seconds of sound queued and not yet played, from the worklet's last report. */
     #audioBuffered() {
         const audio = this.#audio;
         if (!audio) return 0;
-        const played = (audio.context.currentTime - audio.startedAt);
-        return audio.sent / audio.context.sampleRate - played;
+        const rate = audio.context.sampleRate;
+        const played = audio.playing ? Math.max(0, audio.context.currentTime - audio.reportTime) : 0;
+        return Math.max(0, audio.fill / rate + audio.sentSince / rate - played);
+    }
+
+    #audioReport(audio, report) {
+        audio.fill = report.fill;
+        audio.reportTime = report.time;
+        audio.playing = report.playing;
+        audio.sentSince = 0;
+        if (report.underruns > audio.underruns) {
+            audio.underruns = report.underruns;
+            audio.target = Math.min(audio.target * AUDIO_TARGET_GROWTH, AUDIO_TARGET_MAX_S);
+            audio.node.port.postMessage({ target: audio.target });
+        }
     }
 
     #applyVolume() {
@@ -494,8 +520,7 @@ export class Bemu {
         const samples = this.#core.audio_samples();
         if (samples.length === 0 || this.#speed !== 1) return;
         if (this.#audioBuffered() > AUDIO_MAX_S) return; // too far ahead: drop
-        audio.sent = Math.max(audio.sent, (audio.context.currentTime - audio.startedAt) * audio.context.sampleRate);
-        audio.sent += samples.length / 2;
+        audio.sentSince += samples.length / 2;
         audio.node.port.postMessage(samples, [samples.buffer]);
     }
 
@@ -537,7 +562,15 @@ export class Bemu {
                 // each frame on the screen as long as the others (the last one stays shown)
                 if (++this.#refreshes >= this.#refreshesPerFrame) {
                     this.#refreshes = 0;
-                    this.#runFrame();
+                    // the sound is not this clock's: a frame more when it runs short, one less
+                    // when it runs ahead
+                    const audio = this.#audio;
+                    const buffered = audio ? this.#audioBuffered() : 0;
+                    const frame = FRAME_MS / 1000;
+                    if (!audio || buffered < audio.target + 2 * frame) {
+                        if (audio && buffered < audio.target - frame) this.#runFrame(true);
+                        this.#runFrame();
+                    }
                     this.#core.redraw();
                 }
                 return;
@@ -545,7 +578,7 @@ export class Bemu {
             let frames;
             if (this.#audio) {
                 // the sound's clock: keep a little of it ahead of the speakers
-                frames = Math.ceil((AUDIO_TARGET_S - this.#audioBuffered()) * 1000 / FRAME_MS);
+                frames = Math.ceil((this.#audio.target - this.#audioBuffered()) * 1000 / FRAME_MS);
             } else {
                 this.#owed = Math.min(this.#owed + elapsed, 4 * FRAME_MS);
                 frames = Math.floor(this.#owed / FRAME_MS);

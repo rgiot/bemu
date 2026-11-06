@@ -37,7 +37,7 @@ web/build.sh                                       # gives web/pkg
   build uses release optimization, whole-program LTO and `wasm-opt -O3` for speed.
 - Like the desktop build, it needs cpclib next to the repository (`../rust.cpcdemotools`).
 
-The JavaScript scheduling and audio-startup regression tests run with `node --test web/tests/bemu.test.mjs`.
+The JavaScript scheduling and audio-startup regression tests run with `node --test web/tests/`.
 
 **Trying it:**
 
@@ -203,7 +203,9 @@ A web page cannot set the display's refresh rate (the browser's fullscreen only 
 page: the screen keeps the desktop's rate), so the library measures it.
 - **About 50 Hz, 100, 150 or 200 Hz** (a monitor set to it): one CPC frame is shown every 1, 2,
   3 or 4 refreshes, as the desktop's fullscreen does. Every frame stays on the screen as long as
-  the others, so scrolling is smooth.
+  the others, so scrolling is smooth. The sound card's clock is not the display's, so the sound
+  queue is watched: a frame is skipped when it runs ahead, an extra one run (not shown) when it
+  runs short.
 - **Otherwise** (60, 120, 144 Hz…): the sound's clock paces the emulation, as on the desktop,
   and each refresh shows the latest frame: at 60 Hz, one frame in five is shown twice, which
   a scrolling shows as a slight judder. Before sound starts, the browser's clock paces it, at
@@ -212,6 +214,13 @@ page: the screen keeps the desktop's rate), so the library measures it.
 On a computer that cannot keep up, catch-up work at normal speed is limited between browser
 refreshes to keep input and audio responsive. The emulator still slows down if a single CPC frame
 takes longer than real time; the limit does not make the emulation itself faster.
+
+### Sound quality
+
+The worklet plays from a ring buffer. It starts once about 60 ms are queued (and again after an
+underrun), changes its playback speed by at most 1% to follow the queue instead of dropping or
+repeating samples, and fades out or in around a gap rather than clicking. After an underrun the
+queue target grows (up to 200 ms): a slow or busy machine trades latency for continuity.
 
 ### Drawing
 - **WebGPU:** used when the browser has it. The picture fills the canvas, letterboxed, with the
