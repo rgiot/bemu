@@ -5,10 +5,12 @@
 //! blit scales the picture, letterboxed, to the canvas (as the desktop's `--frontend winit`
 //! window does). Canvas 2D shows the raw picture only.
 
-use amsrust::display::{Blit, CrtParams, CrtPass, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH};
+use amsrust::display::{Blit, CrtParams, CrtPass, CrtProfile, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH};
 use image::RgbImage;
 use wasm_bindgen::{Clamped, JsCast};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
+
+use crate::scanlines::double_scanlines;
 
 /// The picture of a CRT display, in its own texture.
 struct CrtState {
@@ -17,6 +19,7 @@ struct CrtState {
     pass: CrtPass,
     target: wgpu::Texture,
     bind_group: wgpu::BindGroup,
+    pixel_bind_group: wgpu::BindGroup,
     size: (usize, usize)
 }
 
@@ -92,23 +95,7 @@ impl Gfx {
 
 impl Flat {
     fn show(&mut self, frame: &RgbImage) -> Result<(), String> {
-        let (width, height) = (frame.width() as usize, frame.height() as usize);
-        let raw = frame.as_raw();
-        for y in 0..RAW_HEIGHT {
-            let row = &mut self.rgba[y * RAW_WIDTH * 4..(y + 1) * RAW_WIDTH * 4];
-            let src = y / 2;
-            if src >= height {
-                row.chunks_exact_mut(4).for_each(|pixel| pixel[..3].fill(0));
-                continue;
-            }
-            let line = &raw[src * width * 3..(src + 1) * width * 3];
-            for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
-                match line.get(x * 3..x * 3 + 3) {
-                    Some(rgb) => pixel[..3].copy_from_slice(rgb),
-                    None => pixel[..3].fill(0)
-                }
-            }
-        }
+        double_scanlines(frame, &mut self.rgba);
         let image = ImageData::new_with_u8_clamped_array_and_sh(Clamped(&self.rgba), RAW_WIDTH as u32, RAW_HEIGHT as u32)
             .map_err(|e| format!("{e:?}"))?;
         self.context.put_image_data(&image, 0.0, 0.0).map_err(|e| format!("{e:?}"))
@@ -185,7 +172,8 @@ impl Gpu {
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         // the CRT pass already bends the beam under the glass
         let bind_group = self.blit.bind_group(&self.device, &view, true, Warp::FLAT);
-        self.crt = Some(CrtState { mode, warp, pass, target, bind_group, size: params.output_size() });
+        let pixel_bind_group = self.blit.bind_group(&self.device, &view, false, Warp::FLAT);
+        self.crt = Some(CrtState { mode, warp, pass, target, bind_group, pixel_bind_group, size: params.output_size() });
     }
 
     /// Draw `mode`'s picture of the frame already uploaded.
@@ -202,18 +190,22 @@ impl Gpu {
         let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
-        let (bind_group, (picture_w, picture_h)) = match (mode, self.crt.as_ref()) {
+        let (picture_size, crt) = match (mode, self.crt.as_ref()) {
             (DisplayMode::Crt(_), Some(crt)) => {
                 crt.pass.encode(&mut encoder, &crt.target.create_view(&wgpu::TextureViewDescriptor::default()));
-                (&crt.bind_group, crt.size)
+                (crt.size, Some(crt))
             },
-            _ => (&self.raw_bind_group, (RAW_WIDTH, RAW_HEIGHT))
+            _ => ((RAW_WIDTH, RAW_HEIGHT), None)
         };
 
-        // the picture, as large as the canvas allows, centred
-        let (canvas_w, canvas_h) = (self.config.width as f32, self.config.height as f32);
-        let scale = (canvas_w / picture_w as f32).min(canvas_h / picture_h as f32);
-        let (w, h) = (picture_w as f32 * scale, picture_h as f32 * scale);
+        let is_ctm = mode == DisplayMode::Crt(CrtProfile::Ctm644);
+        let (x, y, w, h, pixel_aligned) =
+            crate::viewport::fit((self.config.width, self.config.height), picture_size, is_ctm);
+        let bind_group = match crt {
+            Some(crt) if pixel_aligned => &crt.pixel_bind_group,
+            Some(crt) => &crt.bind_group,
+            None => &self.raw_bind_group
+        };
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("canvas"),
@@ -227,7 +219,7 @@ impl Gpu {
                 timestamp_writes: None,
                 occlusion_query_set: None
             });
-            pass.set_viewport((canvas_w - w) / 2.0, (canvas_h - h) / 2.0, w, h, 0.0, 1.0);
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
             self.blit.draw(&mut pass, bind_group);
         }
         self.queue.submit([encoder.finish()]);
@@ -235,4 +227,3 @@ impl Gpu {
         Ok(())
     }
 }
-

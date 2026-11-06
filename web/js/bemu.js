@@ -20,6 +20,8 @@ const AUDIO_MAX_S = 0.25;
 const BUSY_SHARE = 0.9;
 const BUSY_MIN_MS = 40;
 const BUSY_MAX_MS = 100;
+/** Limit catch-up work at normal speed so a slow machine can still service input and audio. */
+const REALTIME_BUDGET_MS = FRAME_MS;
 
 let wasm;
 function loadWasm(url) {
@@ -106,7 +108,10 @@ export class Bemu {
     #lastSpeed = 1;
     #stats = { since: undefined, frames: 0 };
     #resizeObserver = null;
+    #pixelRatioQuery = null;
+    #pixelRatioChanged = null;
     #destroyed = false;
+    #displayWarningKey = '';
 
     constructor(canvas, core, options) {
         this.#canvas = canvas;
@@ -125,14 +130,27 @@ export class Bemu {
             canvas.focus();
             this.#startAudio();
         });
-        if (this.backend === 'webgpu' && typeof ResizeObserver !== 'undefined') {
-            this.#resizeObserver = new ResizeObserver(() => {
+        if (this.backend === 'webgpu') {
+            const resize = () => {
                 Bemu.#fitCanvas(canvas);
                 core.resize(canvas.width, canvas.height);
+                this.#updateDisplayWarning();
                 if (!this.#running) this.#safely(() => core.redraw());
-            });
-            this.#resizeObserver.observe(canvas);
+            };
+            if (typeof ResizeObserver !== 'undefined') {
+                this.#resizeObserver = new ResizeObserver(resize);
+                this.#resizeObserver.observe(canvas);
+            }
+            this.#listen(window, 'resize', resize);
+            if (window.matchMedia) {
+                this.#pixelRatioChanged = () => {
+                    this.#watchPixelRatio();
+                    resize();
+                };
+                this.#watchPixelRatio();
+            }
         }
+        this.#displayWarningKey = JSON.stringify(this.displayWarning);
     }
 
     /** 'webgpu' or 'canvas2d' (raw picture only). */
@@ -147,11 +165,19 @@ export class Bemu {
     get refreshesPerFrame() { return this.#refreshesPerFrame; }
     /** Times real time: 1, another factor, or Infinity (full speed). */
     get speed() { return this.#speed; }
+    /** A CTM scaling warning, or null when the physical canvas is large enough. */
+    get displayWarning() {
+        if (this.backend !== 'webgpu') return null;
+        const width = this.#core.ctm_width();
+        const height = this.#core.ctm_height();
+        if (!width || (this.#canvas.width >= width && this.#canvas.height >= height)) return null;
+        return { width: this.#canvas.width, height: this.#canvas.height, requiredWidth: width, requiredHeight: height };
+    }
 
     /**
-     * `fn(detail)` on 'screenshot' ({ name, png }), 'csl-done' (report), 'error' (Error) or
-     * 'stats' (each second while running: { fps, speed }, the frames emulated a second and the
-     * times real time they make).
+     * `fn(detail)` on 'screenshot' ({ name, png }), 'csl-done' (report), 'error' (Error),
+     * 'audio-error' (Error), 'display-warning' (see displayWarning), or 'stats' (each second while running: { fps, speed }, the frames
+     * emulated a second and the times real time they make).
      */
     on(event, fn) {
         if (!this.#listeners.has(event)) this.#listeners.set(event, new Set());
@@ -164,11 +190,12 @@ export class Bemu {
     }
 
     /** A new machine (the discs stay in). */
-    configure(config) { this.#core.configure(config); }
+    configure(config) { this.#core.configure(config); this.#updateDisplayWarning(); }
     reset() { this.#core.reset(); }
     /** 'raw', 'ctm', 'trinitron', 'gt65' or 'atari'. */
     setDisplay(name) {
         this.#core.set_display(name);
+        this.#updateDisplayWarning();
         if (!this.#running) this.#safely(() => this.#core.redraw());
     }
 
@@ -316,6 +343,7 @@ export class Bemu {
         for (const [target, type, fn] of this.#handlers) target.removeEventListener(type, fn);
         this.#handlers = [];
         this.#resizeObserver?.disconnect();
+        this.#pixelRatioQuery?.removeEventListener('change', this.#pixelRatioChanged);
         this.#audio?.context.close();
         this.#audio = null;
         this.#listeners.clear();
@@ -340,6 +368,12 @@ export class Bemu {
         if (canvas.height !== height) canvas.height = height;
     }
 
+    #watchPixelRatio() {
+        this.#pixelRatioQuery?.removeEventListener('change', this.#pixelRatioChanged);
+        this.#pixelRatioQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+        this.#pixelRatioQuery.addEventListener('change', this.#pixelRatioChanged);
+    }
+
     #listen(target, type, fn) {
         target.addEventListener(type, fn);
         this.#handlers.push([target, type, fn]);
@@ -348,6 +382,15 @@ export class Bemu {
     #emit(event, detail) {
         for (const fn of this.#listeners.get(event) ?? []) {
             try { fn(detail); } catch (error) { console.error(error); }
+        }
+    }
+
+    #updateDisplayWarning() {
+        const warning = this.displayWarning;
+        const key = JSON.stringify(warning);
+        if (key !== this.#displayWarningKey) {
+            this.#displayWarningKey = key;
+            this.#emit('display-warning', warning);
         }
     }
 
@@ -387,17 +430,42 @@ export class Bemu {
     }
 
     async #startAudio() {
-        if (this.#audio || this.#audioStarting || typeof AudioContext === 'undefined') return;
+        if (this.#destroyed || this.#audio) return;
+        if (this.#audioStarting) return this.#audioStarting;
         this.#audioStarting = (async () => {
-            const context = new AudioContext({ latencyHint: 'interactive' });
-            await context.audioWorklet.addModule(new URL('./audio-worklet.js', import.meta.url));
-            const node = new AudioWorkletNode(context, 'bemu-audio', { outputChannelCount: [2] });
-            const gain = new GainNode(context, { gain: this.#muted ? 0 : this.#volume });
-            node.connect(gain).connect(context.destination);
-            this.#core.enable_audio(context.sampleRate);
-            this.#audio = { context, node, gain, sent: 0, startedAt: context.currentTime };
-            if (!this.#running) context.suspend();
-        })().catch((error) => console.warn('bemu: no sound', error));
+            let context;
+            try {
+                if (typeof AudioContext === 'undefined') throw new Error('Web Audio is not available in this browser.');
+                context = new AudioContext({ latencyHint: 'interactive' });
+                if (!context.audioWorklet) {
+                    throw new Error('AudioWorklet is unavailable. Serve this page over HTTPS or use localhost, and check browser support.');
+                }
+                await context.audioWorklet.addModule(new URL('./audio-worklet.js', import.meta.url));
+                if (this.#destroyed) {
+                    await context.close();
+                    return;
+                }
+                const node = new AudioWorkletNode(context, 'bemu-audio', { outputChannelCount: [2] });
+                const gain = new GainNode(context, { gain: this.#muted ? 0 : this.#volume });
+                node.connect(gain).connect(context.destination);
+                if (!this.#running) await context.suspend();
+                if (this.#destroyed) {
+                    await context.close();
+                    return;
+                }
+                this.#core.enable_audio(context.sampleRate);
+                this.#audio = { context, node, gain, sent: 0, startedAt: context.currentTime };
+            } catch (error) {
+                if (context && !this.#audio && context.state !== 'closed') {
+                    try { await context.close(); } catch (closeError) { console.warn('bemu: cannot close audio context', closeError); }
+                }
+                if (!this.#destroyed) {
+                    console.warn('bemu: no sound', error);
+                    this.#emit('audio-error', error);
+                }
+            }
+        })().finally(() => { this.#audioStarting = null; });
+        return this.#audioStarting;
     }
 
     /** Seconds of sound queued and not yet played. */
@@ -481,11 +549,16 @@ export class Bemu {
             } else {
                 this.#owed = Math.min(this.#owed + elapsed, 4 * FRAME_MS);
                 frames = Math.floor(this.#owed / FRAME_MS);
-                this.#owed -= frames * FRAME_MS;
             }
             frames = Math.max(0, Math.min(frames, 4));
-            for (let i = 0; i < frames; i++) this.#runFrame();
-            this.#core.redraw();
+            const start = performance.now();
+            let completed = 0;
+            while (completed < frames && (completed === 0 || performance.now() - start < REALTIME_BUDGET_MS)) {
+                this.#runFrame();
+                completed++;
+            }
+            if (!this.#audio) this.#owed -= completed * FRAME_MS;
+            if (completed || this.backend === 'webgpu') this.#core.redraw();
         });
     }
 

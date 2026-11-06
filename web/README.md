@@ -27,14 +27,17 @@ page that uses it.
 
 ```sh
 rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version 0.2.129   # the wasm-bindgen of Cargo.lock
+cargo install wasm-bindgen-cli --version 0.2.130   # the wasm-bindgen of web/Cargo.lock
+# Install Binaryen (e.g. brew install binaryen on macOS) for wasm-opt.
 web/build.sh                                       # gives web/pkg
 ```
 
 - `web/pkg` is the library: copy it next to your page, or publish it (it has a `package.json`).
-- If Binaryen's `wasm-opt` is on the `PATH` (or in `WASM_OPT`), the module comes out about 25%
-  smaller and 10% faster.
+- Binaryen's `wasm-opt` is required on the `PATH` (or set `WASM_OPT` to its executable). The
+  build uses release optimization, whole-program LTO and `wasm-opt -O3` for speed.
 - Like the desktop build, it needs cpclib next to the repository (`../rust.cpcdemotools`).
+
+The JavaScript scheduling and audio-startup regression tests run with `node --test web/tests/bemu.test.mjs`.
 
 **Trying it:**
 
@@ -44,6 +47,11 @@ cd web && python3 -m http.server 8000
 
 then open <http://localhost:8000/demo/index.html>. The page has to be served over HTTP: ES modules
 and `fetch` don't work from `file://`.
+For sound on other devices, serve the page and the audio worklet over HTTPS. Browsers generally
+only expose AudioWorklet in a secure context; `localhost` is a development exception, but a LAN
+address served over plain HTTP is not. Configure the server to serve `.wasm` as `application/wasm`
+for streaming compilation; the browser can still load it with another MIME type, but startup is
+slower.
 
 ## API
 
@@ -107,6 +115,9 @@ and `fetch` don't work from `file://`.
 **Properties:**
 - `backend`: `'webgpu'` or `'canvas2d'`.
 - `canvas`.
+- `displayWarning`: `null`, or `{ width, height, requiredWidth, requiredHeight }` in physical
+  pixels when the WebGPU CTM canvas is too small for its phosphor mask. Read this after creation
+  to display an initial warning.
 - `running`.
 - `cslRunning`.
 - `vsyncPaced`: whether frames follow the display's refresh (50 Hz, or 100, 150, 200), see "Timing".
@@ -119,6 +130,10 @@ and `fetch` don't work from `file://`.
 - `'screenshot'`: `{ name, png }`, where `png` is a `Uint8Array` holding a PNG file;
 - `'csl-done'`: `{ screenshots, ssmCodes, ignored, elapsedUs }`, or `{ error }`;
 - `'error'`: an `Error` from the emulation, which pauses.
+- `'audio-error'`: an error starting sound (the emulation keeps running). A later user gesture
+  retries the audio setup.
+- `'display-warning'`: the current `displayWarning` when it changes, including `null` when the
+  warning clears. Embedding pages should display it; the demo shows a warning below the canvas.
 - `'stats'`: once a second while running, `{ fps, speed }`: the frames emulated in that second,
   and the times real time they make (`1` is a real CPC).
 
@@ -178,7 +193,8 @@ setTimeout(() => emu.setSpeed(1), 10000); // back to real time once it has loade
   - Function keys and Ctrl/Meta shortcuts are left to the browser, except the emulator's own:
     `F10` (full speed) and `F11` (fullscreen), which the options can change or turn off.
 - **Sound:** browsers only allow it after a click or a key, so it starts with the first click or
-  key in the emulator.
+  key in the emulator. AudioWorklet also needs HTTPS or localhost; errors are reported through
+  `'audio-error'` and in the console.
 - **Fullscreen:** the browser's Fullscreen API on the canvas.
 
 ### Timing
@@ -193,11 +209,20 @@ page: the screen keeps the desktop's rate), so the library measures it.
   a scrolling shows as a slight judder. Before sound starts, the browser's clock paces it, at
   50 frames per second.
 
+On a computer that cannot keep up, catch-up work at normal speed is limited between browser
+refreshes to keep input and audio responsive. The emulator still slows down if a single CPC frame
+takes longer than real time; the limit does not make the emulation itself faster.
+
 ### Drawing
 - **WebGPU:** used when the browser has it. The picture fills the canvas, letterboxed, with the
   CRT profiles drawn on the GPU (the shader of the desktop's `--crt-gpu`), seen through the
   tube's glass, flat by default; `curvature: 1` bulges the picture and rounds the corners, as
-  on the desktop. The raw display is never curved.
+  on the desktop. The raw display is never curved. CTM's 1440×1088 phosphor texture uses
+  pixel-aligned integer scaling when the canvas drawing buffer is large enough, with black
+  margins. On a smaller canvas the picture remains visible but is downscaled and may show
+  aliasing; enlarge the canvas or use fullscreen. Sizes are physical pixels (CSS pixels times
+  device pixel ratio), not necessarily CSS pixels. Browser zoom or compositing can still resample
+  the canvas itself.
 - **Canvas 2D:** used otherwise. It shows the raw picture at 768×544, and the page scales the
   canvas.
 

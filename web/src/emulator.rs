@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use amsrust::csl_runner::{CslReport, CslRunner, MemFiles, Progress, ScreenshotSink};
 use amsrust::disc_image::{load_disc_bytes, DiscImage};
-use amsrust::display::DisplayMode;
+use amsrust::display::{CrtProfile, DisplayMode};
 use amsrust::fdc::{DriveKind, FdcDrive};
 use amsrust::input::{HostInput, HostKey, HostKeyboard};
 use amsrust::monitor::Monitor;
@@ -109,6 +109,19 @@ impl Emulator {
     /// "webgpu" or "canvas2d".
     pub fn backend(&self) -> String {
         self.gfx.backend().to_owned()
+    }
+
+    /// Minimum physical canvas size for the CTM phosphor mask; zero for other modes.
+    pub fn ctm_width(&self) -> u32 {
+        if self.gfx.backend() == "webgpu" && self.display == DisplayMode::Crt(CrtProfile::Ctm644) {
+            CrtProfile::Ctm644.params().output_size().0 as u32
+        } else {
+            0
+        }
+    }
+
+    pub fn ctm_height(&self) -> u32 {
+        if self.ctm_width() != 0 { CrtProfile::Ctm644.params().output_size().1 as u32 } else { 0 }
     }
 
     /// A new machine as `config` says (a script playing stops); the discs stay in.

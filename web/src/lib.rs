@@ -12,6 +12,10 @@ mod keys;
 mod emulator;
 #[cfg(target_arch = "wasm32")]
 mod gfx;
+#[cfg(any(target_arch = "wasm32", test))]
+mod scanlines;
+#[cfg(any(target_arch = "wasm32", test))]
+mod viewport;
 
 #[cfg(target_arch = "wasm32")]
 pub use emulator::Emulator;

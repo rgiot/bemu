@@ -21,6 +21,7 @@
 <body>
 <h1>bemu</h1>
 <div id="cpc"></div>
+<p id="display-warning" role="status" hidden></p>
 
 <form id="config">
   <label>Model <select name="model"><option>464</option><option>664</option><option selected>6128</option></select></label>
@@ -86,6 +87,16 @@ function config() {
 const emu = await Bemu.create(document.querySelector('#cpc'), config());
 window.emu = emu; // for the console (and the tests)
 emu.on('error', (error) => status(`error: ${error.message ?? error}`));
+emu.on('audio-error', (error) => status(`no sound: ${error.message ?? error}`));
+const displayWarning = document.querySelector('#display-warning');
+function showDisplayWarning(warning) {
+  displayWarning.hidden = !warning;
+  displayWarning.textContent = warning
+    ? `CTM needs at least ${warning.requiredWidth}×${warning.requiredHeight} physical pixels for an undistorted phosphor mask; this canvas has ${warning.width}×${warning.height}. Enlarge it or use fullscreen.`
+    : '';
+}
+emu.on('display-warning', showDisplayWarning);
+showDisplayWarning(emu.displayWarning);
 emu.on('screenshot', ({ name, png }) => {
   const figure = document.createElement('figure');
   const img = document.createElement('img');
