@@ -2560,6 +2560,20 @@ mod model_test {
     }
 
     #[test]
+    fn ram_banking_ignores_a14() {
+        let mut builder = MotherboardBuilder::default();
+        builder.set_model(CpcModel::Cpc6128).disable_lower_rom().disable_upper_rom();
+        let mut mb = builder.build();
+        // LD BC,&01C4: OUT (C),C - A15=0 selects the RAM configuration even with A14=0.
+        mb.write_buffer(0x8000, &[0x01, 0xc4, 0x01, 0xed, 0x49, 0x3e, 0x42, 0x32, 0x00, 0x40]);
+        mb.cpu_mut().reg16_mut(crate::z80::Reg16::Pc).set(0x8000);
+        for _ in 0..4 {
+            mb.execute_next_opcode_no_video();
+        }
+        assert_eq!(mb.read_bank_byte(4, 0), Some(0x42));
+    }
+
+    #[test]
     fn a_plus_maps_its_cartridge_and_its_register_page() {
         let mut mb = MotherboardBuilder::default().set_model(CpcModel::Cpc6128Plus).build();
         assert_eq!(mb.crtc().crtc_type(), CrtcType::Crtc3, "the ASIC's CRTC");

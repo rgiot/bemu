@@ -183,7 +183,9 @@ impl Chip for Pal {
     }
 
     fn must_execute_tick(&self) -> bool {
-        !self.get_pin(PalPin::A15) && self.get_pin(PalPin::A14) && self.get_pin(PalPin::IOWR)
+        // The RAM configuration is decoded on A15=0 only (A14 is ignored), so
+        // programs may write it through ports such as &01C4.
+        !self.get_pin(PalPin::A15) && self.get_pin(PalPin::IOWR)
     }
 
     /// Retreive the MMR value and store it
