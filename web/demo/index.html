@@ -15,6 +15,7 @@
   #drop.over { border-color: #4a8; }
   #shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
   #shots figure { margin: 0; font-size: 12px; } #shots img { width: 100%; }
+  #audio-error { border: 1px solid #c33; background: #c332; border-radius: 6px; padding: 8px 12px; }
   #status { font-family: monospace; white-space: pre-wrap; }
 </style>
 </head>
@@ -22,6 +23,7 @@
 <h1>bemu</h1>
 <div id="cpc"></div>
 <p id="display-warning" role="status" hidden></p>
+<p id="audio-error" role="alert" hidden></p>
 
 <form id="config">
   <label>Model <select name="model"><option>464</option><option>664</option><option selected>6128</option></select></label>
@@ -87,7 +89,13 @@ function config() {
 const emu = await Bemu.create(document.querySelector('#cpc'), config());
 window.emu = emu; // for the console (and the tests)
 emu.on('error', (error) => status(`error: ${error.message ?? error}`));
-emu.on('audio-error', (error) => status(`no sound: ${error.message ?? error}`));
+const audioError = document.querySelector('#audio-error');
+emu.on('audio-ready', () => { audioError.hidden = true; });
+emu.on('audio-error', (error) => {
+  const secure = window.isSecureContext ? '' : ' This page is not in a secure context: serve it over HTTPS (or use localhost) for sound.';
+  audioError.textContent = `No sound: ${error.message ?? error}${secure}`;
+  audioError.hidden = false;
+});
 const displayWarning = document.querySelector('#display-warning');
 function showDisplayWarning(warning) {
   displayWarning.hidden = !warning;

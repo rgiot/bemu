@@ -180,7 +180,7 @@ export class Bemu {
 
     /**
      * `fn(detail)` on 'screenshot' ({ name, png }), 'csl-done' (report), 'error' (Error),
-     * 'audio-error' (Error), 'display-warning' (see displayWarning), or 'stats' (each second while running: { fps, speed }, the frames
+     * 'audio-error' (Error), 'audio-ready' (sound started, after an error or not), 'display-warning' (see displayWarning), or 'stats' (each second while running: { fps, speed }, the frames
      * emulated a second and the times real time they make).
      */
     on(event, fn) {
@@ -468,6 +468,7 @@ export class Bemu {
                 };
                 node.port.onmessage = (event) => this.#audioReport(audio, event.data);
                 this.#audio = audio;
+                this.#emit('audio-ready');
             } catch (error) {
                 if (context && !this.#audio && context.state !== 'closed') {
                     try { await context.close(); } catch (closeError) { console.warn('bemu: cannot close audio context', closeError); }

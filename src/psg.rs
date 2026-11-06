@@ -105,12 +105,14 @@ const STEP_RATE_HZ: u32 = PSG_CLOCK_HZ / CLOCKS_PER_STEP as u32;
 
 /// What [`Psg::take_samples`] produces.
 ///
-/// Resampling: the channel levels are a 1MHz piecewise-constant signal;
-/// each output sample is the exact average of that signal over its own
-/// 1/`sample_rate` window (box filter, the fractional microsecond at each
-/// window edge is split between the two samples it straddles). This keeps
-/// the energy of tones above the output Nyquist frequency from folding
-/// back at full strength and is drift-free (integer phase accumulator).
+/// Resampling: the channel levels are a 1MHz piecewise-constant signal,
+/// which holds energy far above the output's Nyquist frequency; any
+/// conversion to `sample_rate` has to remove it first or it folds back
+/// into the audible band. Each level change is therefore added to the
+/// output as a band-limited step (a windowed-sinc low-pass, flat up to
+/// about 0.42 x `sample_rate`, see [`StepKernel`]). Output is delayed by
+/// [`KERNEL_HALF_TAPS`] samples. Silence stays exactly silent, a constant
+/// level exactly constant, and the cost is only paid when a level changes.
 ///
 /// Mixing:
 /// - mono: (A + B + C) / 3, what reaches the CPC's internal speaker;
@@ -162,16 +164,65 @@ impl DcBlocker {
     }
 }
 
+/// Half the number of output samples a band-limited step spreads over.
+const KERNEL_HALF_TAPS: usize = 16;
+const KERNEL_TAPS: usize = 2 * KERNEL_HALF_TAPS;
+/// Sub-sample positions of a level change the kernel is tabulated for.
+const KERNEL_PHASES: usize = 128;
+/// Cut-off of the anti-aliasing low-pass, in cycles per output sample.
+const KERNEL_CUTOFF: f64 = 0.42;
+const RING_SIZE: usize = 64;
+
+/// The windowed-sinc low-pass impulse, tabulated for each sub-sample position of the
+/// event. Every phase is normalised to sum to 1: integrating the impulses gives a step
+/// that settles exactly on the new level.
+#[derive(Debug, Clone)]
+struct StepKernel {
+    taps: Vec<f32>
+}
+
+impl StepKernel {
+    fn new() -> Self {
+        let mut taps = Vec::with_capacity(KERNEL_PHASES * KERNEL_TAPS);
+        let half = KERNEL_HALF_TAPS as f64;
+        for phase in 0..KERNEL_PHASES {
+            let fraction = phase as f64 / KERNEL_PHASES as f64;
+            let mut row = [0.0f64; KERNEL_TAPS];
+            for (tap, value) in row.iter_mut().enumerate() {
+                let x = tap as f64 - half + 1.0 - fraction;
+                let arg = 2.0 * KERNEL_CUTOFF * x;
+                let sinc = if arg.abs() < 1e-12 { 1.0 } else { (std::f64::consts::PI * arg).sin() / (std::f64::consts::PI * arg) };
+                let angle = std::f64::consts::PI * x / half;
+                let window = 0.42 + 0.5 * angle.cos() + 0.08 * (2.0 * angle).cos();
+                *value = sinc * window;
+            }
+            let sum: f64 = row.iter().sum();
+            taps.extend(row.iter().map(|v| (v / sum) as f32));
+        }
+        Self { taps }
+    }
+
+    fn phase(&self, phase: usize) -> &[f32] {
+        &self.taps[phase * KERNEL_TAPS..(phase + 1) * KERNEL_TAPS]
+    }
+}
+
 /// Mixer + resampler from the 1MHz level stream to `config.sample_rate`.
 #[derive(Debug, Clone)]
 struct AudioOutput {
     config: AudioConfig,
-    /// Time accumulated in the sample being built, in units of
+    kernel: StepKernel,
+    /// Time inside the output sample being built, in units of
     /// 1 / (PSG_CLOCK_HZ * sample_rate) seconds: each microsecond adds
     /// `sample_rate`, a sample is complete at `PSG_CLOCK_HZ`.
     phase: u32,
-    /// Level integrated over the current window, in the same unit.
-    sums: [f64; 2],
+    /// Index of the output sample being built, and of the next to emit.
+    now: usize,
+    emitted: usize,
+    /// Level changes spread by the kernel, per output sample (ring) and their running sum.
+    ring: [[f64; RING_SIZE]; 2],
+    integrated: [f64; 2],
+    last_frame: [f64; 2],
     dc_filter_r: f64,
     dc_blockers: [DcBlocker; 2],
     samples: Vec<f32>
@@ -188,12 +239,49 @@ impl AudioOutput {
             (-2.0 * std::f64::consts::PI * DC_FILTER_CUTOFF_HZ / config.sample_rate as f64).exp();
         Self {
             config,
+            kernel: StepKernel::new(),
             phase: 0,
-            sums: [0.0; 2],
+            // the first samples are the kernel's lead-in: silence
+            now: KERNEL_HALF_TAPS,
+            emitted: 0,
+            ring: [[0.0; RING_SIZE]; 2],
+            integrated: [0.0; 2],
+            last_frame: [0.0; 2],
             dc_filter_r,
             dc_blockers: Default::default(),
             samples: Vec::new()
         }
+    }
+
+    /// Add the change of `channel` to `level` at the current time, spread by the kernel.
+    fn step_to(&mut self, channel: usize, level: f64) {
+        let delta = level - self.last_frame[channel];
+        self.last_frame[channel] = level;
+        let position = f64::from(self.phase) / f64::from(PSG_CLOCK_HZ) * KERNEL_PHASES as f64;
+        let mut phase = (position + 0.5) as usize;
+        let mut index = self.now;
+        if phase == KERNEL_PHASES {
+            phase = 0;
+            index += 1;
+        }
+        let first = index + 1 - KERNEL_HALF_TAPS;
+        for (tap, weight) in self.kernel.phase(phase).iter().enumerate() {
+            self.ring[channel][(first + tap) % RING_SIZE] += delta * f64::from(*weight);
+        }
+    }
+
+    fn emit(&mut self) {
+        let slot = self.emitted % RING_SIZE;
+        for channel in 0..self.config.nb_channels() {
+            self.integrated[channel] += self.ring[channel][slot];
+            self.ring[channel][slot] = 0.0;
+            let mut sample = self.integrated[channel];
+            if self.config.dc_filter {
+                sample = self.dc_blockers[channel].process(sample, self.dc_filter_r);
+            }
+            self.samples.push(sample as f32);
+        }
+        self.emitted += 1;
     }
 
     fn mix(&self, [a, b, c]: [f32; 3]) -> [f64; 2] {
@@ -221,32 +309,19 @@ impl AudioOutput {
                 frame = [frame[0] * gain + extra, frame[1] * gain + extra];
             }
         }
-        let rate = self.config.sample_rate;
-        self.phase += rate;
-        if self.phase < PSG_CLOCK_HZ {
-            for (sum, level) in self.sums.iter_mut().zip(frame) {
-                *sum += level * rate as f64;
-            }
-            return;
-        }
-
-        // This microsecond straddles the end of the window: its first part
-        // completes the sample, the rest starts the next one.
-        let overflow = self.phase - PSG_CLOCK_HZ;
-        let inside = (rate - overflow) as f64;
-        #[allow(clippy::needless_range_loop)] // the channel indexes four arrays
         for channel in 0..self.config.nb_channels() {
-            let sum = self.sums[channel] + frame[channel] * inside;
-            let mut sample = sum / PSG_CLOCK_HZ as f64;
-            if self.config.dc_filter {
-                sample = self.dc_blockers[channel].process(sample, self.dc_filter_r);
+            if frame[channel] != self.last_frame[channel] {
+                self.step_to(channel, frame[channel]);
             }
-            self.samples.push(sample as f32);
         }
-        for (sum, level) in self.sums.iter_mut().zip(frame) {
-            *sum = level * overflow as f64;
+        self.phase += self.config.sample_rate;
+        if self.phase >= PSG_CLOCK_HZ {
+            self.phase -= PSG_CLOCK_HZ;
+            self.now += 1;
+            while self.now - self.emitted > KERNEL_HALF_TAPS {
+                self.emit();
+            }
         }
-        self.phase = overflow;
     }
 }
 
@@ -965,7 +1040,7 @@ mod test {
         write_all(&mut psg, &[(7, mixer(0, 0)), (8, 15), (9, 7)]);
         let samples = run_audio(&mut psg, 100_000);
         let [a, b, _] = psg.channel_levels();
-        for sample in &samples[2..] {
+        for sample in &samples[KERNEL_TAPS + 2..] {
             assert!((*sample - (a + b) / 3.0).abs() < 1e-5, "{sample}");
         }
     }
@@ -985,21 +1060,34 @@ mod test {
             .filter(|&i| samples[i - 1] < mean && samples[i] >= mean)
             .count();
         assert!((499..=501).contains(&crossings), "{crossings}");
-        assert!(samples.iter().all(|s| (-1e-6..=level + 1e-6).contains(s)));
+        // band-limiting overshoots the square wave a little (Gibbs)
+        assert!(samples.iter().all(|s| (-0.15 * level..=1.15 * level).contains(s)));
     }
 
     #[test]
-    fn an_ultrasonic_tone_is_averaged_out() {
+    fn an_ultrasonic_tone_is_removed_not_folded_back() {
         let mut psg = Psg::default();
         psg.set_audio_output(undc(AudioConfig::mono(44_100)));
-        // TP = 2: 31.25kHz, above the output's Nyquist frequency.
+        // TP = 2: 31.25kHz, above the output's Nyquist frequency: it must not come back
+        // as an audible alias (13.1kHz when folded).
         write_all(&mut psg, &[(7, mixer(0b001, 0)), (0, 2), (8, 15)]);
         let samples = run_audio(&mut psg, 100_000);
         let level = dac_level(15)[0] / 3.0;
-        // A point-sampled square wave would swing between 0 and `level`.
-        for sample in &samples[2..] {
-            assert!((sample - level / 2.0).abs() < level * 0.25, "{sample}");
+        for sample in &samples[KERNEL_TAPS + 2..] {
+            assert!((sample - level / 2.0).abs() < level * 0.02, "{sample}");
         }
+    }
+
+    #[test]
+    fn a_tone_below_the_cutoff_passes_at_full_amplitude() {
+        let mut psg = Psg::default();
+        psg.set_audio_output(undc(AudioConfig::mono(48_000)));
+        // TP = 10: 6.25kHz
+        write_all(&mut psg, &[(7, mixer(0b001, 0)), (0, 10), (8, 15)]);
+        let samples = run_audio(&mut psg, 100_000);
+        let level = dac_level(15)[0] / 3.0;
+        let peak = samples[KERNEL_TAPS + 2..].iter().cloned().fold(0.0f32, f32::max);
+        assert!(peak > 0.9 * level, "{peak}");
     }
 
     #[test]
