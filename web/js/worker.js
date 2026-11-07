@@ -2,7 +2,9 @@
 // over and feeds the audio worklet directly, so a busy page cannot stall them. The page's side is
 // WorkerTransport (bemu.js).
 
-import { createCore, Engine } from './engine.js';
+const engineUrl = new URL('./engine.js', import.meta.url);
+engineUrl.search = new URL(import.meta.url).search;
+const engineModule = import(engineUrl);
 
 let engine;
 let pendingFrame = null;
@@ -29,6 +31,7 @@ function transferablesOf(value) {
 }
 
 async function init({ canvas, config, webgpu, wasmUrl }) {
+    const { createCore, Engine } = await engineModule;
     const core = await createCore(canvas, config, webgpu, wasmUrl);
     engine = new Engine(core, {
         canvas,
@@ -48,7 +51,11 @@ self.onmessage = async ({ data }) => {
     if (type === 'frame') {
         const callback = pendingFrame;
         pendingFrame = null;
-        callback?.(data.time);
+        try {
+            callback?.(data.time);
+        } finally {
+            self.postMessage({ type: 'frame-done' });
+        }
         return;
     }
     try {

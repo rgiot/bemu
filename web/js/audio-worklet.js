@@ -9,7 +9,7 @@
 // - Whole stereo frames only: the channels never swap.
 //
 // Messages in: { feed: MessagePort } (the emulator's channel, which then carries the rest), a Float32Array of samples, or { target } (seconds). Out, about every 20 ms:
-// { fill, time, playing, underruns }, the queued frames and the context's time of the report.
+// { fill, received, time, playing, underruns }, the queued and received frames and context time.
 
 const RATE_RANGE = 0.01;
 const RATE_SMOOTHING = 0.02;
@@ -25,6 +25,7 @@ class BemuAudio extends AudioWorkletProcessor {
         this.right = new Float32Array(this.capacity);
         this.target = Math.max(1, Math.round(wanted * sampleRate));
         this.written = 0; // frames received, ever
+        this.received = 0; // includes any frames discarded on receipt
         this.position = 0; // frames played, ever (fractional: the rate follows the fill)
         this.rate = 1;
         this.playing = false;
@@ -48,6 +49,7 @@ class BemuAudio extends AudioWorkletProcessor {
 
     push(samples) {
         let frames = samples.length >> 1;
+        this.received += frames;
         let from = 0;
         if (frames > this.capacity) { // more than the buffer holds: the newest
             from = frames - this.capacity;
@@ -113,6 +115,7 @@ class BemuAudio extends AudioWorkletProcessor {
             this.blocks = 0;
             this.out.postMessage({
                 fill: Math.max(0, this.written - this.position),
+                received: this.received,
                 time: currentTime,
                 playing: this.playing,
                 underruns: this.underruns

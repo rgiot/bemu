@@ -1,4 +1,4 @@
-/// Fit a picture in the physical canvas. CTM's phosphor pixels are preserved when possible.
+/// Fit a picture in the physical canvas, preserving pixel sizes when requested and possible.
 pub fn fit(canvas: (u32, u32), picture: (usize, usize), integer: bool) -> (f32, f32, f32, f32, bool) {
     let (cw, ch) = canvas;
     let (pw, ph) = picture;
@@ -28,5 +28,12 @@ mod tests {
         assert_eq!(fit((720, 544), (1440, 1088), true), (0.0, 0.0, 720.0, 544.0, false));
         assert_eq!(fit((720, 1088), (1440, 1088), true), (0.0, 272.0, 720.0, 544.0, false));
         assert_eq!(fit((2160, 1632), (1440, 1088), false), (0.0, 0.0, 2160.0, 1632.0, false));
+    }
+
+    #[test]
+    fn raw_pixels_are_integer_scaled_and_centered_when_possible() {
+        assert_eq!(fit((1100, 800), (768, 544), true), (166.0, 128.0, 768.0, 544.0, true));
+        assert_eq!(fit((1921, 1201), (768, 544), true), (192.0, 56.0, 1536.0, 1088.0, true));
+        assert_eq!(fit((384, 272), (768, 544), true), (0.0, 0.0, 384.0, 272.0, false));
     }
 }

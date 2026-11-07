@@ -47,6 +47,10 @@ cd web && python3 -m http.server 8000
 
 then open <http://localhost:8000/demo/index.html>. The page has to be served over HTTP: ES modules
 and `fetch` don't work from `file://`.
+Raw output uses the largest whole-number physical-pixel scale that fits, centred in the canvas,
+on both GPU and Canvas 2D. If the canvas is smaller than 768 × 544 physical pixels, downscaling
+is unavoidable and some source pixels will not occupy equal space. Enlarge the canvas or use
+fullscreen for uniform raw pixels.
 For sound on other devices, serve the page and the audio worklet over HTTPS. Browsers generally
 only expose AudioWorklet in a secure context; `localhost` is a development exception, but a LAN
 address served over plain HTTP is not. Configure the server to serve `.wasm` as `application/wasm`
@@ -79,6 +83,9 @@ slower.
   - `webgpu` (default `true`): `false` keeps to Canvas 2D.
   - `worker` (default `true`): runs the emulation in a Web Worker; `emu.threaded` tells which mode is used. Without WebGPU (or with a software adapter) the CRT shaders run on WebGL 2 when it exists, else Canvas 2D shows the raw picture only.
   - `wasmUrl`: where `bemu_web_bg.wasm` is, if not next to `bemu.js`.
+  - `audioContext`: an `AudioContext` created during a user gesture, to satisfy browser autoplay
+    policies while the emulator loads asynchronously. The emulator owns and closes it after
+    successful creation; if `Bemu.create` fails, the caller remains responsible for closing it.
   - `fullscreenKey` (default `'F11'`, or `null` for none).
   - `turboKey` (default `'F10'`, or `null` for none): toggles full speed, see "Speed".
   - `autoStart` (default `false`).
@@ -119,6 +126,8 @@ slower.
 - `displayWarning`: `null`, or `{ width, height, requiredWidth, requiredHeight }` in physical
   pixels when the WebGPU CTM canvas is too small for its phosphor mask. Read this after creation
   to display an initial warning.
+- `displaySize`: `{ width, height }` in physical pixels, including in worker mode.
+- `ctmMinimumSize`: the `{ width, height }` needed for the CTM mask, or `null` on Canvas 2D.
 - `running`.
 - `cslRunning`.
 - `vsyncPaced`: whether frames follow the display's refresh (50 Hz, or 100, 150, 200), see "Timing".
@@ -133,10 +142,25 @@ slower.
 - `'error'`: an `Error` from the emulation, which pauses.
 - `'audio-error'`: an error starting sound (the emulation keeps running). A later user gesture
   retries the audio setup.
+- `'audio-blocked'`: the audio context is suspended; the page can prompt for a click that calls
+  `enableAudio()`. Emulation keeps running until sound is available.
 - `'display-warning'`: the current `displayWarning` when it changes, including `null` when the
   warning clears. Embedding pages should display it; the demo shows a warning below the canvas.
+- `'display-size'`: the new `displaySize` after a physical canvas resize.
 - `'stats'`: once a second while running, `{ fps, speed }`: the frames emulated in that second,
-  and the times real time they make (`1` is a real CPC).
+  and the times real time they make (`1` is a real CPC). It also includes `audio`, either `null`
+  or `{ underruns, bufferedMs, targetMs, playing }`. An increasing `underruns` count indicates
+  that the audio buffer ran dry; it does not detect every possible audio glitch. `performance`
+  contains `frameMs` (average), `maxFrameMs`, `drawMs` (average CPU-side draw call duration),
+  and `draws` for the interval. Draw timing does not measure asynchronous GPU completion.
+
+To bypass stale cached assets when testing, add a new `?bemuVersion=...` value to the demo URL
+and reload. The demo passes this value to the emulator module, which propagates its query string
+to the worker, engine, audio worklet, bindings and default WASM URL. Embedding pages can do the
+same by importing `bemu.js?v=...` and changing the version whenever they deploy a new bundle.
+Serve the page itself with appropriate cache headers or reload it before testing a new version.
+An explicitly configured `wasmUrl` is used as supplied. The exported `DIAGNOSTIC_REVISION`
+identifies the diagnostic protocol, not the precise build of every asset.
 
 ### CSL scripts
 

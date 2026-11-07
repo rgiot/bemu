@@ -2,7 +2,9 @@
 // Worker (worker.js), so the page's own work never makes the emulation or the sound stutter, or
 // in the page itself when workers cannot draw (LocalTransport).
 
-import init, { Emulator } from './bemu_web.js';
+const bindingsUrl = new URL('./bemu_web.js', import.meta.url);
+bindingsUrl.search = new URL(import.meta.url).search;
+const { default: init, Emulator } = await import(bindingsUrl);
 
 /** The CPC's frame: 312 lines of 64 µs. */
 export const FRAME_MS = 312 * 64 / 1000;
@@ -24,7 +26,9 @@ const REALTIME_BUDGET_MS = FRAME_MS;
 
 let wasm;
 export function loadWasm(url) {
-    wasm ??= init(url ? { module_or_path: url } : undefined);
+    const defaultUrl = new URL('./bemu_web_bg.wasm', import.meta.url);
+    defaultUrl.search = new URL(import.meta.url).search;
+    wasm ??= init({ module_or_path: url || defaultUrl });
     return wasm;
 }
 
@@ -42,7 +46,7 @@ const defaultScheduler = {
 export class Engine {
     #core; #canvas; #emit; #onTick; #scheduler; #now;
     #running = false;
-    /** A frame was emulated by the sound's clock and not drawn yet. */
+    /** The frame or its display settings changed since the last draw. */
     #fresh = false;
     #frameRequest = 0;
     #lastTime = undefined;
@@ -55,12 +59,12 @@ export class Engine {
     #audio = null;
     /** Times real time: 1, more, or Infinity (as fast as possible). */
     #speed = 1;
-    #stats = { since: undefined, frames: 0 };
+    #stats = { since: undefined, frames: 0, frameMs: 0, maxFrameMs: 0, draws: 0, drawMs: 0 };
 
     /**
      * `core`: the wasm Emulator. `emit(event, detail)`: what the page hears ('screenshot',
      * 'csl-done', 'stats', 'error'). `onTick()`: after each refresh. `scheduler`: { request(callback), cancel(id) } for the
-     * display's refreshes. `canvas`: resized when the page's size changes (WebGPU).
+     * display's refreshes. `canvas`: resized when the page's size changes.
      */
     constructor(core, { canvas, emit = () => {}, onTick = () => {}, scheduler = defaultScheduler, now = () => performance.now() } = {}) {
         this.#core = core;
@@ -83,6 +87,7 @@ export class Engine {
             refreshesPerFrame: this.#refreshesPerFrame,
             cslRunning: this.#core.csl_running?.() ?? false,
             ctm: [this.#core.ctm_width?.() ?? 0, this.#core.ctm_height?.() ?? 0],
+            ctmMinimum: [this.#core.ctm_min_width?.() ?? 0, this.#core.ctm_min_height?.() ?? 0],
             tape: tape ? { position: tape[0], duration: tape[1], playing: tape[2] !== 0 } : null,
             driveActive: this.#core.drive_active?.() ?? false,
             driveTransfers: this.#core.drive_transfers?.() ?? 0
@@ -103,7 +108,6 @@ export class Engine {
     }
     setKeyboard(mapping) { this.#core.set_keyboard(mapping); }
     resize(width, height) {
-        if (this.state().backend !== 'webgpu') return;
         if (this.#canvas) {
             if (this.#canvas.width !== width) this.#canvas.width = width;
             if (this.#canvas.height !== height) this.#canvas.height = height;
@@ -144,7 +148,8 @@ export class Engine {
         this.#safely(() => {
             this.#core.advance_frame();
             this.#core.audio_samples();
-            this.#core.redraw();
+            this.#fresh = true;
+            this.#draw();
         });
     }
 
@@ -171,8 +176,8 @@ export class Engine {
         this.#core.enable_audio(sampleRate);
         const audio = {
             port, rate: sampleRate, target: AUDIO_TARGET_S,
-            // the worklet's last report, when it came, and the frames sent since
-            fill: 0, arrivedAt: this.#now(), playing: false, underruns: 0, sentSince: 0
+            // Count frames in transit as well as those in the last worklet report.
+            fill: 0, arrivedAt: this.#now(), playing: false, underruns: 0, sent: 0, received: 0
         };
         port.onmessage = (event) => this.#audioReport(audio, event.data);
         this.#audio = audio;
@@ -191,7 +196,17 @@ export class Engine {
     // ---------------------------------------------------------------- internals
 
     #redrawIfPaused() {
-        if (!this.#running) this.#safely(() => this.#core.redraw());
+        this.#fresh = true;
+        if (!this.#running) this.#safely(() => this.#draw());
+    }
+
+    #draw() {
+        if (!this.#fresh) return;
+        const start = this.#now();
+        this.#core.redraw();
+        this.#stats.drawMs += this.#now() - start;
+        this.#stats.draws++;
+        this.#fresh = false;
     }
 
     #safely(fn) {
@@ -206,14 +221,20 @@ export class Engine {
         const audio = this.#audio;
         if (!audio) return 0;
         const played = audio.playing ? Math.max(0, this.#now() - audio.arrivedAt) / 1000 : 0;
-        return Math.max(0, (audio.fill + audio.sentSince) / audio.rate - played);
+        return Math.max(0, (audio.fill + audio.sent - audio.received) / audio.rate - played);
     }
 
     #audioReport(audio, report) {
+        if (!report || !Number.isFinite(report.received) || !Number.isFinite(report.fill) ||
+            !Number.isFinite(report.underruns)) {
+            this.pause();
+            this.#emit('error', new Error('Invalid audio worklet report. Reload the page to update cached emulator files.'));
+            return;
+        }
         audio.fill = report.fill;
         audio.arrivedAt = this.#now();
         audio.playing = report.playing;
-        audio.sentSince = 0;
+        audio.received = report.received;
         if (report.underruns > audio.underruns) {
             audio.underruns = report.underruns;
             audio.target = Math.min(audio.target * AUDIO_TARGET_GROWTH, AUDIO_TARGET_MAX_S);
@@ -224,17 +245,18 @@ export class Engine {
 
     /**
      * On the sound's clock (its reports come every ~20 ms whatever the display does): emulate the
-     * frames the speakers will miss. Only when the emulation is not paced by a steady 50 Hz display.
+     * frames the speakers will miss, including when display refreshes are delayed.
      */
     #refill() {
         const audio = this.#audio;
-        if (!audio || !this.#running || this.#speed !== 1 || this.#refreshesPerFrame > 0) return;
+        if (!audio || !this.#running || this.#speed !== 1) return;
         const frames = Math.max(0, Math.min(4, Math.ceil((audio.target - this.#audioBuffered()) * 1000 / FRAME_MS)));
         const start = this.#now();
-        for (let i = 0; i < frames && (i === 0 || this.#now() - start < REALTIME_BUDGET_MS); i++) {
-            this.#safely(() => this.#runFrame());
-            this.#fresh = true;
-        }
+        this.#safely(() => {
+            for (let i = 0; i < frames && (i === 0 || this.#now() - start < REALTIME_BUDGET_MS); i++) {
+                this.#runFrame();
+            }
+        });
     }
 
     /**
@@ -243,15 +265,20 @@ export class Engine {
      * any picture.
      */
     #runFrame(unseen = false) {
+        const start = this.#now();
         if (unseen) this.#core.advance_frame_unseen();
         else this.#core.advance_frame();
+        const frameMs = this.#now() - start;
+        this.#stats.frameMs += frameMs;
+        this.#stats.maxFrameMs = Math.max(this.#stats.maxFrameMs, frameMs);
+        if (!unseen) this.#fresh = true;
         this.#stats.frames++;
         const audio = this.#audio;
         if (!audio) return;
         const samples = this.#core.audio_samples();
         if (samples.length === 0 || this.#speed !== 1) return;
         if (this.#audioBuffered() > AUDIO_MAX_S) return; // too far ahead: drop
-        audio.sentSince += samples.length / 2;
+        audio.sent += samples.length / 2;
         audio.port.postMessage(samples, [samples.buffer]);
     }
 
@@ -270,7 +297,7 @@ export class Engine {
                 const start = this.#now();
                 while (this.#now() - start < budget) this.#runFrame(true);
                 this.#runFrame();
-                this.#core.redraw();
+                this.#draw();
                 return;
             }
             if (this.#speed !== 1) {
@@ -285,7 +312,7 @@ export class Engine {
                     this.#runFrame();
                     this.#owed -= FRAME_MS;
                 }
-                this.#core.redraw();
+                this.#draw();
                 return;
             }
             if (this.#refreshesPerFrame > 0) {
@@ -293,16 +320,13 @@ export class Engine {
                 // each frame on the screen as long as the others (the last one stays shown)
                 if (++this.#refreshes >= this.#refreshesPerFrame) {
                     this.#refreshes = 0;
-                    // the sound is not this clock's: a frame more when it runs short, one less
-                    // when it runs ahead
                     const audio = this.#audio;
-                    const buffered = audio ? this.#audioBuffered() : 0;
-                    const frame = FRAME_MS / 1000;
-                    if (!audio || buffered < audio.target + 2 * frame) {
-                        if (audio && buffered < audio.target - frame) this.#runFrame(true);
+                    if (!audio) {
+                        this.#runFrame();
+                    } else if (this.#audioBuffered() < audio.target) {
                         this.#runFrame();
                     }
-                    this.#core.redraw();
+                    this.#draw();
                 }
                 return;
             }
@@ -322,8 +346,7 @@ export class Engine {
                 completed++;
             }
             if (!this.#audio) this.#owed -= completed * FRAME_MS;
-            if (completed || this.#fresh || this.#core.backend() === 'webgpu') this.#core.redraw();
-            this.#fresh = false;
+            this.#draw();
         });
         this.#onTick();
     }
@@ -334,13 +357,28 @@ export class Engine {
         if (stats.since === undefined) {
             stats.since = time;
             stats.frames = 0;
+            stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = 0;
             return;
         }
         if (time - stats.since < 1000) return;
         const fps = stats.frames * 1000 / (time - stats.since);
+        const performance = {
+            frameMs: stats.frames ? stats.frameMs / stats.frames : 0,
+            maxFrameMs: stats.maxFrameMs,
+            drawMs: stats.draws ? stats.drawMs / stats.draws : 0,
+            draws: stats.draws
+        };
         stats.since = time;
         stats.frames = 0;
-        this.#emit('stats', { fps, speed: fps * FRAME_MS / 1000 });
+        stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = 0;
+        const audio = this.#audio;
+        this.#emit('stats', {
+            fps, speed: fps * FRAME_MS / 1000, performance,
+            audio: audio ? {
+                underruns: audio.underruns, bufferedMs: this.#audioBuffered() * 1000,
+                targetMs: audio.target * 1000, playing: audio.playing
+            } : null
+        });
     }
 
     /** Whether the display refreshes at about 50 Hz, from the last 60 animation frames. */

@@ -284,12 +284,26 @@ impl Monitor {
     }
 
     /// Handle the information sent from the CPC by the GA, one 16MHz tick.
-    pub fn receive(&mut self, rgb: RgbLevels, Sync { vsync, hsync }: Sync) {
+    pub fn receive(&mut self, rgb: RgbLevels, sync: Sync) {
+        self.receive_impl::<true>(rgb, sync);
+    }
+
+    #[inline(always)]
+    fn receive_impl<const FAST: bool>(&mut self, rgb: RgbLevels, Sync { vsync, hsync }: Sync) {
         // The Gate Array sends one composite signal, C-SYNC = C-HSYNC XNOR C-VSYNC (ACCC 16.2.2): the
         // sync is active when exactly one of them is. The monitor separates it itself: the line
         // oscillator follows the ends of its pulses, the frame oscillator a pulse long enough. When a
         // C-VSYNC begins right where a C-HSYNC ends (R3l <= 6), the two make one pulse.
         let sync = hsync != vsync;
+        // The common interval between pulses changes no sync or oscillator state.
+        if FAST && !sync && self.hsync_run == 0 && self.vsync_level == 0
+            && self.x < RASTER_LINE_LENGTH && self.hold == 0
+        {
+            self.vsync_seen = false;
+            self.now += 1;
+            self.paint(rgb, vsync, false);
+            return;
+        }
         let hsync_pulse = self.hsync_run;
         if sync {
             if self.hsync_run == 0 {
@@ -400,6 +414,11 @@ impl Monitor {
             self.hold -= 1;
             return;
         }
+        self.paint(rgb, vsync, hsync);
+    }
+
+    #[inline(always)]
+    fn paint(&mut self, rgb: RgbLevels, vsync: bool, hsync: bool) {
         let y = self.line.wrapping_sub(MONITOR_FIRST_LINE);
         let px = (self.x as isize - MONITOR_FIRST_PIXEL as isize + self.shift as isize) as usize;
         let visible = px < MONITOR_ACTIVE_PIXELS && y < MONITOR_HEIGHT;
@@ -552,6 +571,38 @@ fn pixel_of(rgb: RgbLevels, black: u8) -> Rgb<u8> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn idle_fast_path_matches_full_monitor_for_varied_syncs() {
+        let mut fast = Monitor::default().with_black_level(8);
+        let mut reference = Monitor::default().with_black_level(8);
+        fast.keep_full_frames();
+        reference.keep_full_frames();
+        for t in 0..(RASTER_LINE_LENGTH * 750) {
+            let line = t / RASTER_LINE_LENGTH;
+            let x = t % RASTER_LINE_LENGTH;
+            let vsync = line % 312 < 16 || (line % 83 == 0 && (300..317).contains(&x));
+            let hsync = (736..800).contains(&x) || (line % 7 == 0 && (170..184).contains(&x));
+            let rgb = (((t % 101) as f32), ((t / 13 % 101) as f32), ((t / 71 % 101) as f32)).into();
+            let sync = Sync { vsync, hsync };
+            fast.receive(rgb, sync);
+            reference.receive_impl::<false>(rgb, sync);
+            if x == RASTER_LINE_LENGTH - 1 {
+                macro_rules! same {
+                    ($($field:ident),+ $(,)?) => { $(assert_eq!(fast.$field, reference.$field, "{} at tick {t}", stringify!($field));)+ };
+                }
+                same!(x, line, hsync_run, hsync_listened, vsync_level, vsync_seen, locked,
+                    free_lines, synchronised, ran_free, pll_active, sync_adj, hold, now,
+                    pulses, last_sync_start, shift, next_shift, frame_t0, last_levels);
+                assert_eq!(fast.texture, reference.texture, "texture at tick {t}");
+                assert_eq!(fast.frame, reference.frame, "frame at tick {t}");
+                let a = fast.full.as_ref().unwrap();
+                let b = reference.full.as_ref().unwrap();
+                assert_eq!(a.drawing, b.drawing, "full texture at tick {t}");
+                assert_eq!(a.done, b.done, "full frame at tick {t}");
+            }
+        }
+    }
 
     /// A black ink is above the blanking and the sync pulses, which stay 0.
     #[test]

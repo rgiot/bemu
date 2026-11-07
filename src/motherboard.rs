@@ -1002,12 +1002,11 @@ impl Motherboard {
 
     // Manage the operations where CPU requests a write
     pub fn handle_write_access(&mut self) {
-        let addr = self.cpu.get_address_from_pins();
-        let byte = self.cpu.get_data_from_pins();
-
         if self.ga_request_read() {
             unimplemented!();
         }  else if self.cpu_request_byte_write() {
+            let addr = self.cpu.get_address_from_pins();
+            let byte = self.cpu.get_data_from_pins();
         //    eprintln!("0x{:x}=0x{:x}", addr, byte);
             self.write_byte(addr, byte);
             self.log_bus(BusAccessKind::MemoryWrite, addr, byte);
@@ -1021,6 +1020,8 @@ impl Motherboard {
             // `OUT` instruction (matching real M-cycle timing), so the
             // actual write only happens once, on the first such tick.
             if !self.fdc_write_active {
+                let addr = self.cpu.get_address_from_pins();
+                let byte = self.cpu.get_data_from_pins();
                 self.log_bus(BusAccessKind::IoWrite, addr, byte);
                 if let Some(writes) = &mut self.io_writes {
                     writes.push((addr, byte));
@@ -1084,12 +1085,11 @@ impl Motherboard {
 
     /// Manage the operations where CPU requests a read
     pub fn handle_read_access(&mut self) {
-        let addr = self.cpu.get_address_from_pins();
-
         if self.ga_request_read() {
             unimplemented!();
         
         } else  if self.cpu_request_byte_read() {
+            let addr = self.cpu.get_address_from_pins();
             let mut byte = self.read_byte(addr);
             if let Some(port) = &self.expansion_port {
                 // ROMDIS and RAMDIS take the CPC's ROM and RAM off the bus: a card's byte instead
@@ -1113,6 +1113,7 @@ impl Motherboard {
             let acknowledge = !self.cpu.get_pin(Z80Pin::Neg_M1);
             let latch = self.input_ticks == if acknowledge { 0 } else { INPUT_LATCH_TICKS };
             if latch {
+                let addr = self.cpu.get_address_from_pins();
                 self.cached_input_byte = self.input_byte(addr);
                 if !acknowledge && addr & 0x4300 == 0 {
                     // an IN from the CRTC's select register: on a CPC+ the lock hears it too

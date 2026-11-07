@@ -11,7 +11,18 @@
 //
 // See README.md for the whole API.
 
-import { createCore, Engine, FRAME_MS, LocalTransport } from './engine.js';
+const engineUrl = new URL('./engine.js', import.meta.url);
+engineUrl.search = new URL(import.meta.url).search;
+const { createCore, Engine, FRAME_MS, LocalTransport } = await import(engineUrl);
+
+/** Identifies the audio/cache diagnostic protocol, not the exact WASM build. */
+export const DIAGNOSTIC_REVISION = 'audio-start-20261107';
+
+function moduleUrl(path) {
+    const url = new URL(path, import.meta.url);
+    url.search = new URL(import.meta.url).search;
+    return url;
+}
 
 /** Sound kept ahead of the speakers, in seconds (the engine adapts it, see engine.js). */
 const AUDIO_TARGET_S = 0.06;
@@ -42,6 +53,7 @@ export class WorkerTransport {
     #pending = new Map();
     #nextId = 1;
     #state = null;
+    #framePending = false;
     onEvent = () => {};
     onState = () => {};
     /** Whether the page has to send the display's refreshes (workers without requestAnimationFrame). */
@@ -49,7 +61,7 @@ export class WorkerTransport {
 
     /** Starts a worker that draws in `canvas` (control of it moves to the worker). */
     static async create({ canvas, config, webgpu, wasmUrl }) {
-        const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+        const worker = new Worker(moduleUrl('./worker.js'), { type: 'module' });
         const transport = new WorkerTransport(worker);
         try {
             const offscreen = canvas.transferControlToOffscreen();
@@ -78,7 +90,11 @@ export class WorkerTransport {
         return this.#request({ type: 'call', method, args }, transfer);
     }
 
-    postFrame(time) { this.#worker.postMessage({ type: 'frame', time }); }
+    postFrame(time) {
+        if (this.#framePending) return;
+        this.#framePending = true;
+        this.#worker.postMessage({ type: 'frame', time });
+    }
 
     dispose() {
         this.#failAll(new Error('the emulator was destroyed'));
@@ -100,6 +116,9 @@ export class WorkerTransport {
 
     #receive(data) {
         switch (data.type) {
+            case 'frame-done':
+                this.#framePending = false;
+                break;
             case 'state':
                 this.#state = data.state;
                 this.onState(data.state);
@@ -123,7 +142,7 @@ export class Bemu {
     /**
      * An emulator in `target`: a canvas, or an element a canvas is added to (filling it).
      * `config`: { model, crtc, gateArray, ramKb, discInterface, brand, display, blackLevel, keyboard }.
-     * `options`: { webgpu (true), worker (true), wasmUrl, fullscreenKey ('F11', or null), autoStart (false) }.
+     * `options`: { webgpu (true), worker (true), wasmUrl, audioContext, fullscreenKey ('F11', or null), autoStart (false) }.
      * With `worker`, the emulation runs in a Web Worker when the browser can draw in one.
      */
     static async create(target, config = {}, options = {}) {
@@ -136,7 +155,7 @@ export class Bemu {
             target.appendChild(canvas);
         }
         if (canvas.tabIndex < 0) canvas.tabIndex = 0;
-        // Canvas 2D stretches the 768x272 picture: sharp pixels, not smoothed ones
+        // Keep browser scaling sharp when the physical canvas size is rounded.
         canvas.style.imageRendering = 'pixelated';
         if (!canvas.style.background) canvas.style.background = 'black';
 
@@ -160,10 +179,8 @@ export class Bemu {
             }
             try {
                 const size = Bemu.#measure(canvas);
-                if (attempt.webgpu) {
-                    canvas.width = size[0];
-                    canvas.height = size[1];
-                }
+                canvas.width = size[0];
+                canvas.height = size[1];
                 const transport = attempt.worker
                     ? await WorkerTransport.create({ canvas, config, webgpu: attempt.webgpu, wasmUrl: options.wasmUrl })
                     : await Bemu.#localTransport(canvas, config, attempt.webgpu, options.wasmUrl);
@@ -189,6 +206,7 @@ export class Bemu {
     #running = false;
     #frameLoop = 0;
     #audio = null;
+    #preparedAudioContext = null;
     #audioStarting = null;
     #volume = 1;
     #muted = false;
@@ -212,6 +230,7 @@ export class Bemu {
         this.#size = size;
         this.#state = transport.state;
         this.#options = { fullscreenKey: 'F11', turboKey: 'F10', ...options };
+        this.#preparedAudioContext = options.audioContext ?? null;
         transport.onEvent = (event, detail) => this.#onEvent(event, detail);
         transport.onState = (state) => {
             this.#state = state;
@@ -228,12 +247,13 @@ export class Bemu {
             canvas.focus();
             this.#startAudio();
         });
-        if (this.backend === 'webgpu') {
+        if (typeof window !== 'undefined') {
             const resize = () => {
                 const next = this.#deviceSize ?? Bemu.#measure(canvas);
                 if (next[0] === this.#size[0] && next[1] === this.#size[1]) return;
                 this.#size = next;
                 this.#send('resize', next[0], next[1]);
+                this.#emit('display-size', this.displaySize);
                 this.#updateDisplayWarning();
             };
             if (typeof ResizeObserver !== 'undefined') {
@@ -250,10 +270,14 @@ export class Bemu {
                     this.#resizeObserver.observe(canvas);
                 }
             }
-            this.#listen(window, 'resize', resize);
+            this.#listen(window, 'resize', () => {
+                this.#deviceSize = null;
+                resize();
+            });
             if (window.matchMedia) {
                 this.#pixelRatioChanged = () => {
                     this.#watchPixelRatio();
+                    this.#deviceSize = null;
                     resize();
                 };
                 this.#watchPixelRatio();
@@ -276,6 +300,13 @@ export class Bemu {
     get refreshesPerFrame() { return this.#state.refreshesPerFrame; }
     /** Times real time: 1, another factor, or Infinity (full speed). */
     get speed() { return this.#speed; }
+    /** Physical canvas size; the worker's transferred canvas cannot be read from the page. */
+    get displaySize() { return { width: this.#size[0], height: this.#size[1] }; }
+    /** Physical size for an undistorted CTM mask, or null without a GPU renderer. */
+    get ctmMinimumSize() {
+        const [width, height] = this.#state.ctmMinimum;
+        return width && height ? { width, height } : null;
+    }
     /** A CTM scaling warning, or null when the physical canvas is large enough. */
     get displayWarning() {
         if (this.backend !== 'webgpu') return null;
@@ -286,8 +317,8 @@ export class Bemu {
 
     /**
      * `fn(detail)` on 'screenshot' ({ name, png }), 'csl-done' (report), 'error' (Error),
-     * 'audio-error' (Error), 'audio-ready' (sound started, after an error or not), 'display-warning' (see displayWarning), or 'stats' (each second while running: { fps, speed }, the frames
-     * emulated a second and the times real time they make).
+     * 'audio-error' (Error), 'audio-blocked' (sound awaits a gesture), 'audio-ready',
+     * 'display-warning' (see displayWarning), 'display-size', or 'stats' ({ fps, speed, audio } each second).
      */
     on(event, fn) {
         if (!this.#listeners.has(event)) this.#listeners.set(event, new Set());
@@ -439,6 +470,8 @@ export class Bemu {
         this.#pixelRatioQuery?.removeEventListener('change', this.#pixelRatioChanged);
         this.#audio?.context.close();
         this.#audio = null;
+        this.#preparedAudioContext?.close();
+        this.#preparedAudioContext = null;
         this.#listeners.clear();
         this.#transport.dispose();
     }
@@ -513,9 +546,17 @@ export class Bemu {
         }
         this.#running = running;
         if (tellEngine) this.#send(running ? 'start' : 'pause');
-        if (running) this.#audio?.context.resume();
-        else this.#audio?.context.suspend();
+        if (this.#audio) {
+            const change = running ? this.#audio.context.resume() : this.#audio.context.suspend();
+            change.catch((error) => this.#audioStateError(error));
+        }
         this.#driveFrames();
+    }
+
+    #audioStateError(error) {
+        if (this.#destroyed) return;
+        console.warn('bemu: cannot change audio state', error);
+        this.#emit('audio-error', error);
     }
 
     /** Workers without requestAnimationFrame get the display's refreshes from the page. */
@@ -568,19 +609,26 @@ export class Bemu {
     async #startAudio() {
         if (this.#destroyed) return;
         if (this.#audio) {
-            if (this.#running && this.#audio.context.state === 'suspended') this.#audio.context.resume();
+            if (this.#audio.context.state === 'suspended') {
+                this.#audio.context.resume().catch((error) => this.#audioStateError(error));
+            }
+            if (this.#audio.context.state === 'running') this.#attachAudio();
             return;
         }
         if (this.#audioStarting) return this.#audioStarting;
         this.#audioStarting = (async () => {
             let context;
             try {
-                if (typeof AudioContext === 'undefined') throw new Error('Web Audio is not available in this browser.');
-                context = new AudioContext({ latencyHint: 'interactive' });
+                context = this.#preparedAudioContext;
+                this.#preparedAudioContext = null;
+                if (!context) {
+                    if (typeof AudioContext === 'undefined') throw new Error('Web Audio is not available in this browser.');
+                    context = new AudioContext({ latencyHint: 'interactive' });
+                }
                 if (!context.audioWorklet) {
                     throw new Error('AudioWorklet is unavailable. Serve this page over HTTPS or use localhost, and check browser support.');
                 }
-                await context.audioWorklet.addModule(new URL('./audio-worklet.js', import.meta.url));
+                await context.audioWorklet.addModule(moduleUrl('./audio-worklet.js'));
                 if (this.#destroyed) {
                     await context.close();
                     return;
@@ -591,21 +639,25 @@ export class Bemu {
                 });
                 const gain = new GainNode(context, { gain: this.#muted ? 0 : this.#volume });
                 node.connect(gain).connect(context.destination);
-                if (!this.#running) await context.suspend();
                 if (this.#destroyed) {
                     await context.close();
                     return;
                 }
-                // the emulator talks to the worklet directly, not through this page
-                const channel = new MessageChannel();
-                node.port.postMessage({ feed: channel.port1 }, [channel.port1]);
-                await this.#transport.call('attachAudio', [channel.port2, context.sampleRate], [channel.port2]);
-                if (this.#destroyed) {
-                    await context.close();
-                    return;
+                this.#audio = { context, node, gain, attaching: false, attached: false };
+                // A suspended worklet cannot report its queue. Attaching it too early would
+                // leave the entire emulator waiting on a sound clock that is not running.
+                this.#listen(context, 'statechange', () => {
+                    if (context.state === 'running') {
+                        if (this.#audio?.attached) this.#emit('audio-ready');
+                        else this.#attachAudio();
+                    }
+                    else if (context.state === 'suspended' && this.#running) this.#emit('audio-blocked');
+                });
+                if (context.state === 'running') this.#attachAudio();
+                else if (context.state === 'suspended') {
+                    this.#emit('audio-blocked');
+                    if (this.#running) context.resume().catch((error) => this.#audioStateError(error));
                 }
-                this.#audio = { context, node, gain };
-                this.#emit('audio-ready');
             } catch (error) {
                 if (context && !this.#audio && context.state !== 'closed') {
                     try { await context.close(); } catch (closeError) { console.warn('bemu: cannot close audio context', closeError); }
@@ -617,6 +669,26 @@ export class Bemu {
             }
         })().finally(() => { this.#audioStarting = null; });
         return this.#audioStarting;
+    }
+
+    #attachAudio() {
+        const audio = this.#audio;
+        if (!audio || audio.attaching || this.#destroyed) return;
+        audio.attaching = true;
+        const channel = new MessageChannel();
+        audio.node.port.postMessage({ feed: channel.port1 }, [channel.port1]);
+        this.#transport.call('attachAudio', [channel.port2, audio.context.sampleRate], [channel.port2])
+            .then(() => {
+                audio.attached = true;
+                if (!this.#destroyed && audio.context.state === 'running') this.#emit('audio-ready');
+            })
+            .catch((error) => {
+                if (this.#destroyed) return;
+                audio.attaching = false;
+                channel.port2.close();
+                console.warn('bemu: no sound', error);
+                this.#emit('audio-error', error);
+            });
     }
 
     #applyVolume() {

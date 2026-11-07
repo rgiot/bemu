@@ -111,17 +111,26 @@ impl Emulator {
         self.gfx.backend().to_owned()
     }
 
+    /// Physical size needed to display the CTM mask without downscaling, or zero without GPU.
+    pub fn ctm_min_width(&self) -> u32 {
+        if self.gfx.backend() == "webgpu" { CrtProfile::Ctm644.params().output_size().0 as u32 } else { 0 }
+    }
+
+    pub fn ctm_min_height(&self) -> u32 {
+        if self.gfx.backend() == "webgpu" { CrtProfile::Ctm644.params().output_size().1 as u32 } else { 0 }
+    }
+
     /// Minimum physical canvas size for the CTM phosphor mask; zero for other modes.
     pub fn ctm_width(&self) -> u32 {
-        if self.gfx.backend() == "webgpu" && self.display == DisplayMode::Crt(CrtProfile::Ctm644) {
-            CrtProfile::Ctm644.params().output_size().0 as u32
+        if self.display == DisplayMode::Crt(CrtProfile::Ctm644) {
+            self.ctm_min_width()
         } else {
             0
         }
     }
 
     pub fn ctm_height(&self) -> u32 {
-        if self.ctm_width() != 0 { CrtProfile::Ctm644.params().output_size().1 as u32 } else { 0 }
+        if self.ctm_width() != 0 { self.ctm_min_height() } else { 0 }
     }
 
     /// A new machine as `config` says (a script playing stops); the discs stay in.

@@ -1,4 +1,4 @@
-//! Drawing in the page's canvas: WebGPU when the browser has it, Canvas 2D otherwise.
+//! Drawing in the page's canvas: WebGPU or WebGL when available, Canvas 2D otherwise.
 //!
 //! On WebGPU the monitor's frame is uploaded as a texture and, for a CRT display, the shader
 //! pass of `amsrust::display::CrtPass` draws the tube's picture in a texture of its own size; a
@@ -68,6 +68,9 @@ enum Context2d {
 /// The raw picture on Canvas 2D: each scanline twice, RGBA.
 pub struct Flat {
     context: Context2d,
+    source: Canvas,
+    source_context: Context2d,
+    size: (u32, u32),
     rgba: Vec<u8>
 }
 
@@ -83,33 +86,36 @@ impl Gfx {
         if webgpu {
             return Ok(Self::Gpu(Box::new(Gpu::new(canvas).await?)));
         }
-        let context = match canvas {
+        let size = (canvas.size().0.max(1), canvas.size().1.max(1));
+        let (context, source, source_context) = match canvas {
             Canvas::Element(canvas) => {
-                canvas.set_width(RAW_WIDTH as u32);
-                canvas.set_height(RAW_HEIGHT as u32);
-                Context2d::Element(
-                    canvas
-                        .get_context("2d")
-                        .map_err(|e| format!("no 2D context: {e:?}"))?
-                        .ok_or("no 2D context")?
-                        .dyn_into::<CanvasRenderingContext2d>()
-                        .map_err(|_| "no 2D context")?
-                )
+                let context = canvas.get_context("2d").map_err(|e| format!("no 2D context: {e:?}"))?
+                    .ok_or("no 2D context")?.dyn_into::<CanvasRenderingContext2d>()
+                    .map_err(|_| "no 2D context")?;
+                let source = web_sys::window().and_then(|window| window.document())
+                    .ok_or("no document for 2D canvas")?.create_element("canvas")
+                    .map_err(|e| format!("cannot create 2D canvas: {e:?}"))?
+                    .dyn_into::<HtmlCanvasElement>().map_err(|_| "cannot create 2D canvas")?;
+                source.set_width(RAW_WIDTH as u32);
+                source.set_height(RAW_HEIGHT as u32);
+                let source_context = source.get_context("2d").map_err(|e| format!("no 2D source context: {e:?}"))?
+                    .ok_or("no 2D source context")?.dyn_into::<CanvasRenderingContext2d>()
+                    .map_err(|_| "no 2D source context")?;
+                (Context2d::Element(context), Canvas::Element(source), Context2d::Element(source_context))
             },
             Canvas::Offscreen(canvas) => {
-                canvas.set_width(RAW_WIDTH as u32);
-                canvas.set_height(RAW_HEIGHT as u32);
-                Context2d::Offscreen(
-                    canvas
-                        .get_context("2d")
-                        .map_err(|e| format!("no 2D context: {e:?}"))?
-                        .ok_or("no 2D context")?
-                        .dyn_into::<OffscreenCanvasRenderingContext2d>()
-                        .map_err(|_| "no 2D context")?
-                )
+                let context = canvas.get_context("2d").map_err(|e| format!("no 2D context: {e:?}"))?
+                    .ok_or("no 2D context")?.dyn_into::<OffscreenCanvasRenderingContext2d>()
+                    .map_err(|_| "no 2D context")?;
+                let source = OffscreenCanvas::new(RAW_WIDTH as u32, RAW_HEIGHT as u32)
+                    .map_err(|e| format!("cannot create 2D canvas: {e:?}"))?;
+                let source_context = source.get_context("2d").map_err(|e| format!("no 2D source context: {e:?}"))?
+                    .ok_or("no 2D source context")?.dyn_into::<OffscreenCanvasRenderingContext2d>()
+                    .map_err(|_| "no 2D source context")?;
+                (Context2d::Offscreen(context), Canvas::Offscreen(source), Context2d::Offscreen(source_context))
             }
         };
-        Ok(Self::Flat(Flat { context, rgba: vec![255; RAW_WIDTH * RAW_HEIGHT * 4] }))
+        Ok(Self::Flat(Flat { context, source, source_context, size, rgba: vec![255; RAW_WIDTH * RAW_HEIGHT * 4] }))
     }
 
     /// "webgpu" or "canvas2d".
@@ -120,16 +126,15 @@ impl Gfx {
         }
     }
 
-    /// The canvas's drawing buffer is now `width` x `height` (WebGPU only: Canvas 2D keeps the
-    /// raw picture's size, the page scales the element).
+    /// The canvas's drawing buffer is now `width` x `height`.
     pub fn resize(&mut self, width: u32, height: u32) {
-        if let Self::Gpu(gpu) = self {
-            gpu.resize(width, height);
+        match self {
+            Self::Gpu(gpu) => gpu.resize(width, height),
+            Self::Flat(flat) => flat.size = (width, height)
         }
     }
 
-    /// Show `frame` (the monitor's 768x272 picture) as `mode` says, a CRT through its glass
-    /// curved `curvature` times its bulge (WebGPU only).
+    /// Show `frame` (the monitor's 768x272 picture) as `mode` says, with CRT effects on the GPU.
     pub fn show(&mut self, frame: &RgbImage, mode: DisplayMode, curvature: f32) -> Result<(), String> {
         match self {
             Self::Gpu(gpu) => {
@@ -147,21 +152,45 @@ impl Flat {
         double_scanlines(frame, &mut self.rgba);
         let image = ImageData::new_with_u8_clamped_array_and_sh(Clamped(&self.rgba), RAW_WIDTH as u32, RAW_HEIGHT as u32)
             .map_err(|e| format!("{e:?}"))?;
-        match &self.context {
+        match &self.source_context {
             Context2d::Element(context) => context.put_image_data(&image, 0.0, 0.0),
             Context2d::Offscreen(context) => context.put_image_data(&image, 0.0, 0.0)
         }
-        .map_err(|e| format!("{e:?}"))
+        .map_err(|e| format!("{e:?}"))?;
+        let (x, y, w, h, _) = crate::viewport::fit(self.size, (RAW_WIDTH, RAW_HEIGHT), true);
+        match (&self.context, &self.source) {
+            (Context2d::Element(context), Canvas::Element(source)) => {
+                context.clear_rect(0.0, 0.0, self.size.0 as f64, self.size.1 as f64);
+                context.set_image_smoothing_enabled(false);
+                context.draw_image_with_html_canvas_element_and_dw_and_dh(source, x as f64, y as f64, w as f64, h as f64)
+            },
+            (Context2d::Offscreen(context), Canvas::Offscreen(source)) => {
+                context.clear_rect(0.0, 0.0, self.size.0 as f64, self.size.1 as f64);
+                context.set_image_smoothing_enabled(false);
+                context.draw_image_with_offscreen_canvas_and_dw_and_dh(source, x as f64, y as f64, w as f64, h as f64)
+            },
+            _ => unreachable!("2D source and destination must use the same canvas type")
+        }.map_err(|e| format!("cannot draw 2D frame: {e:?}"))
     }
 }
 
 impl Gpu {
     async fn new(canvas: Canvas) -> Result<Self, String> {
         let (width, height) = (canvas.size().0.max(1), canvas.size().1.max(1));
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
+        let webgpu = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::BROWSER_WEBGPU,
             ..Default::default()
         });
+        // wgpu chooses WebGPU when navigator.gpu exists, even if requestAdapter returns null.
+        // Probe before creating a surface so a failed WebGPU context cannot lock the canvas.
+        let instance = if webgpu.request_adapter(&wgpu::RequestAdapterOptions::default()).await.is_ok() {
+            webgpu
+        } else {
+            wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::GL,
+                ..Default::default()
+            })
+        };
         let target = match canvas {
             Canvas::Element(canvas) => wgpu::SurfaceTarget::Canvas(canvas),
             Canvas::Offscreen(canvas) => wgpu::SurfaceTarget::OffscreenCanvas(canvas)
@@ -258,9 +287,9 @@ impl Gpu {
             _ => ((RAW_WIDTH, RAW_HEIGHT), None)
         };
 
-        let is_ctm = mode == DisplayMode::Crt(CrtProfile::Ctm644);
+        let integer = matches!(mode, DisplayMode::Raw | DisplayMode::Crt(CrtProfile::Ctm644));
         let (x, y, w, h, pixel_aligned) =
-            crate::viewport::fit((self.config.width, self.config.height), picture_size, is_ctm);
+            crate::viewport::fit((self.config.width, self.config.height), picture_size, integer);
         let bind_group = match crt {
             Some(crt) if pixel_aligned => &crt.pixel_bind_group,
             Some(crt) => &crt.bind_group,

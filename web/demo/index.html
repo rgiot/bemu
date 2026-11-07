@@ -64,9 +64,10 @@
 <div id="shots"></div>
 
 <script type="module">
-import { Bemu } from '../pkg/bemu.js';
-
 const params = new URLSearchParams(location.search);
+const moduleUrl = new URL('../pkg/bemu.js', import.meta.url);
+if (params.has('bemuVersion')) moduleUrl.searchParams.set('v', params.get('bemuVersion'));
+const { Bemu, DIAGNOSTIC_REVISION } = await import(moduleUrl);
 const form = document.querySelector('#config');
 const status = (text) => document.querySelector('#status').textContent = text;
 
@@ -129,8 +130,9 @@ document.querySelector('#mute').onchange = (event) => emu.setMuted(event.target.
 const speed = document.querySelector('#speed');
 speed.onchange = () => { emu.setSpeed(speed.value); emu.canvas.focus(); };
 document.querySelector('#step').onclick = () => emu.stepFrame();
-emu.on('stats', ({ fps, speed: times }) =>
-  document.querySelector('#stats').textContent = `${fps.toFixed(1)} frames/s, ${times.toFixed(2)}\u00d7 real time`);
+emu.on('stats', ({ fps, speed: times, audio }) =>
+  document.querySelector('#stats').textContent = `${fps.toFixed(1)} frames/s, ${times.toFixed(2)}\u00d7 real time` +
+    (audio ? `; audio underruns: ${audio.underruns}, buffer: ${audio.bufferedMs.toFixed(0)}/${audio.targetMs.toFixed(0)} ms` : ''));
 document.querySelector('#type').onclick = () => {
   emu.typeText(document.querySelector('#text').value + '\n');
   emu.canvas.focus();
@@ -196,7 +198,7 @@ try {
   status(error.message);
 }
 emu.start();
-status(document.querySelector('#status').textContent || `running on ${emu.backend}; click the screen to type and hear it`);
+status(document.querySelector('#status').textContent || `running on ${emu.backend} (${emu.threaded ? 'worker' : 'page'}); diagnostics: ${DIAGNOSTIC_REVISION}; module: ${moduleUrl.href}; click the screen to type and hear it`);
 </script>
 </body>
 </html>
