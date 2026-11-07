@@ -431,6 +431,16 @@ impl Dmp2000 {
     /// The country's character set, as ESC R n numbers them: 0 USA, 1 France, 2 Germany, 3 UK,
     /// 4 Denmark, 5 Sweden, 6 Italy, 7 Spain, 8 Japan (the printer's DIP switches choose it at
     /// power on).
+    /// The character set its DIP switches select (0 USA ... 8 Japan).
+    pub fn international_set(&self) -> u8 {
+        self.international_set
+    }
+
+    /// Whether it prints at its own speed.
+    pub fn realtime(&self) -> bool {
+        self.realtime
+    }
+
     pub fn set_international_set(&mut self, set: u8) {
         self.dip_set = set.min(8);
         self.international_set = self.dip_set;
@@ -1325,6 +1335,10 @@ impl PrinterDevice for Dmp2000 {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }

@@ -589,6 +589,14 @@ impl Memory {
         self.cartridge.as_ref()
     }
 
+    /// The 16K of upper ROM `slot`, if one is fitted there.
+    pub fn upper_rom(&self, slot: u8) -> Option<&[u8]> {
+        self.upper_roms
+            .get(usize::from(slot))?
+            .as_ref()
+            .map(|rom| &rom.0 .0[..])
+    }
+
     /// Fit `data` as upper ROM `slot` (a 16K ROM; an AMSDOS header before it is skipped, a
     /// shorter one is padded with &FF), or nothing there with `None`.
     pub fn set_upper_rom(&mut self, slot: u8, data: Option<&[u8]>) -> Result<(), String> {

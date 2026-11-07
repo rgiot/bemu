@@ -39,10 +39,15 @@
 mod api_doc;
 
 use std::collections::{HashSet, VecDeque};
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use serde_json::{json, Value};
 
@@ -362,6 +367,15 @@ pub struct DebugServer {
     pending_basic: Option<PendingBasic>,
     /// Names of addresses, for the breakpoints and the history.
     symbols: crate::symbols::SymbolTable,
+    /// Run until the CPU reaches this address (step over, run to), then pause.
+    run_to: Option<u16>,
+    /// Step out: pause once the stack is above this SP (the routine returned).
+    step_out_sp: Option<u16>,
+    /// Pause at the end of the frame.
+    step_frame: bool,
+    /// The HTTP server, when the API is served.
+    #[cfg(not(target_arch = "wasm32"))]
+    listener: Option<(u16, std::sync::Arc<tiny_http::Server>)>,
 }
 
 /// AMSpiriT's default depth of `GET /api/history`.
@@ -439,17 +453,54 @@ impl EventHub {
 
 impl DebugServer {
     /// Listen on `127.0.0.1:port` (loopback only).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn start(port: u16) -> Result<Self, String> {
-        let server = tiny_http::Server::http(("127.0.0.1", port))
-            .map_err(|e| format!("debug server on port {port}: {e}"))?;
+        let mut debug_server = Self::offline();
+        debug_server.listen(port)?;
+        Ok(debug_server)
+    }
+
+    /// The debugger without a server: breakpoints, stepping, counters and history for the
+    /// window's menus (see [`crate::commands`]); [`Self::listen`] serves it later.
+    pub fn offline() -> Self {
+        Self::with_requests(mpsc::channel().1)
+    }
+
+    /// Serve the API on `127.0.0.1:port`, in place of the requests served so far.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn listen(&mut self, port: u16) -> Result<(), String> {
+        self.stop_listening();
+        let server = std::sync::Arc::new(
+            tiny_http::Server::http(("127.0.0.1", port))
+                .map_err(|e| format!("debug server on port {port}: {e}"))?,
+        );
         let (sender, requests) = mpsc::channel();
-        let debug_server = Self::with_requests(requests);
-        let events = debug_server.events.clone();
+        self.requests = requests;
+        let events = self.events.clone();
+        let served = std::sync::Arc::clone(&server);
         std::thread::Builder::new()
             .name("debug-server".to_owned())
-            .spawn(move || serve(server, sender, events))
+            .spawn(move || serve(&served, sender, events))
             .map_err(|e| e.to_string())?;
-        Ok(debug_server)
+        self.listener = Some((port, server));
+        Ok(())
+    }
+
+    /// Stop serving the API (the debugger stays, breakpoints and all).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn stop_listening(&mut self) {
+        if let Some((_, server)) = self.listener.take() {
+            server.unblock();
+        }
+        self.requests = mpsc::channel().1;
+    }
+
+    /// The port the API is served on, if it is.
+    pub fn listening_port(&self) -> Option<u16> {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.listener.as_ref().map(|(port, _)| *port);
+        #[cfg(target_arch = "wasm32")]
+        None
     }
 
     /// A server fed by `requests` instead of a socket (tests, embedding).
@@ -487,6 +538,11 @@ impl DebugServer {
             basic_target: None,
             pending_basic: None,
             symbols: Default::default(),
+            run_to: None,
+            step_out_sp: None,
+            step_frame: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            listener: None,
         }
     }
 
@@ -626,6 +682,17 @@ impl DebugServer {
         }
         if stepped {
             self.paused = true;
+        }
+        if self.run_to == Some(pc) {
+            self.run_to = None;
+            self.stop(motherboard, json!({ "kind": "run_to" }));
+        }
+        if self
+            .step_out_sp
+            .is_some_and(|sp| motherboard.sp() > sp && !stepped)
+        {
+            self.step_out_sp = None;
+            self.stop(motherboard, json!({ "kind": "step_out" }));
         }
         self.fetched = Some((pc, instruction_bytes(motherboard, pc)));
         self.report_pause();
@@ -777,6 +844,10 @@ impl DebugServer {
     /// To call once per completed video frame.
     pub fn frame_completed(&mut self, motherboard: &Motherboard) {
         self.frames += 1;
+        if std::mem::take(&mut self.step_frame) {
+            self.paused = true;
+            self.report_pause();
+        }
         if self.frames.is_multiple_of(FRAME_EVENT_EVERY) && self.events.has_clients() {
             let mut event = registers_event(motherboard);
             merge(
@@ -803,6 +874,187 @@ impl DebugServer {
         self.cmd_seq += 1;
         self.unapplied = true;
         self.cmd_seq
+    }
+
+    // ------------------------------------------------- run control (commands)
+
+    /// Run one instruction, then pause (`POST /api/step`, Debug > Step-in).
+    pub fn step(&mut self) {
+        self.paused = false;
+        self.stepping = true;
+        self.command();
+    }
+
+    /// Run one instruction, a `CALL`, `RST` or a `DJNZ` / block loop as a whole: a temporary
+    /// breakpoint after it (Debug > Step over).
+    pub fn step_over(&mut self, motherboard: &Motherboard) {
+        let pc = motherboard.pc();
+        let next = motherboard.disassemble_next_instruction();
+        let opcode = motherboard.read_byte(pc);
+        let ed = motherboard.read_byte(pc.wrapping_add(1));
+        let runs_whole = opcode == 0xCD                         // CALL nn
+            || opcode & 0b1100_0111 == 0b1100_0100              // CALL cc,nn
+            || opcode & 0b1100_0111 == 0b1100_0111              // RST n
+            || opcode == 0x10                                   // DJNZ
+            || (opcode == 0xED && matches!(ed, 0xB0..=0xB3 | 0xB8..=0xBB)); // LDIR, CPIR...
+        if runs_whole {
+            self.run_to(pc.wrapping_add(next.len() as u16));
+        } else {
+            self.step();
+        }
+    }
+
+    /// Run until the current routine returns: the stack goes above where it is now (Debug >
+    /// Step-out).
+    pub fn step_out(&mut self, motherboard: &Motherboard) {
+        self.step_out_sp = Some(motherboard.sp().wrapping_add(1));
+        self.paused = false;
+        self.command();
+    }
+
+    /// Run until the CPU reaches `address`, then pause.
+    pub fn run_to(&mut self, address: u16) {
+        self.run_to = Some(address);
+        self.paused = false;
+        self.command();
+    }
+
+    /// Run to the end of the frame, then pause.
+    pub fn step_frame(&mut self) {
+        self.step_frame = true;
+        self.paused = false;
+        self.command();
+    }
+
+    /// The number of instructions the history keeps (resizing empties it, as in AMSpiriT).
+    pub fn set_history_size(&mut self, size: usize) {
+        self.history_size = size.clamp(1, 100_000);
+        self.history.clear();
+    }
+
+    pub fn history_size(&self) -> usize {
+        self.history_size
+    }
+
+    /// The executed instructions, oldest first: (PC, the bytes as fetched).
+    pub fn history(&self) -> impl Iterator<Item = &(u16, [u8; 4])> {
+        self.history.iter()
+    }
+
+    /// Tell the debugger's clients the machine was reset.
+    pub fn reset_done(&mut self, hard: bool) {
+        self.events.publish("reset", &json!({ "hard": hard }));
+        self.command();
+    }
+
+    /// The emulator is asked to leave (`POST /api/quit`, File > Exit).
+    pub fn request_quit(&mut self) {
+        self.quit = true;
+        self.command();
+    }
+
+    /// The names known for addresses.
+    pub fn symbols(&self) -> &crate::symbols::SymbolTable {
+        &self.symbols
+    }
+
+    /// Every breakpoint gone: execution, memory / I/O, raster and BASIC ones.
+    pub fn clear_breakpoints(&mut self, motherboard: &mut Motherboard) {
+        self.exec_breakpoints.clear();
+        self.advanced.clear();
+        self.raster_breakpoints.clear();
+        self.basic_breakpoints.clear();
+        motherboard.watch_bus(false);
+        self.command();
+    }
+
+    /// Whether some breakpoint is set.
+    pub fn has_breakpoints(&self) -> bool {
+        !self.exec_breakpoints.is_empty()
+            || !self.advanced.is_empty()
+            || !self.raster_breakpoints.is_empty()
+            || !self.basic_breakpoints.is_empty()
+    }
+
+    /// Type `text` on the CPC's keyboard, a key every 2 frames (`POST /api/keytype`).
+    pub fn type_text(
+        &mut self,
+        text: &str,
+        layout: crate::keyboard::KeyboardLayout,
+    ) -> Result<(), String> {
+        let mut keys = Vec::new();
+        for c in text.chars() {
+            let c = if c == '\r' { '\n' } else { c };
+            keys.push(
+                layout
+                    .keys_of_char(c)
+                    .ok_or_else(|| format!("cannot type {c:?}"))?,
+            );
+        }
+        self.typing.extend(keys);
+        self.command();
+        Ok(())
+    }
+
+    /// Type the keys of `keys`, one combination after the other (see `csl_runner::keys_of_text`).
+    pub fn type_keys(&mut self, keys: Vec<Vec<CpcKey>>) {
+        self.typing.extend(keys);
+        self.command();
+    }
+
+    /// Whether typed keys are still to come.
+    pub fn is_typing(&self) -> bool {
+        !self.typing.is_empty() || self.typed_pressed.is_some()
+    }
+
+    /// The counters' names and NOPs, and whether each runs.
+    pub fn counters(&self) -> Vec<(String, u64, bool)> {
+        self.counters
+            .iter()
+            .map(|(name, c)| {
+                (
+                    name.clone(),
+                    c.t_states / T_STATES_PER_NOP as u64,
+                    c.running,
+                )
+            })
+            .collect()
+    }
+
+    /// Answer an API call made from inside the emulator (the menus): the same code as the
+    /// HTTP route, its JSON reply, or its error.
+    pub fn api(
+        &mut self,
+        method: &str,
+        path: &str,
+        query: &[(&str, &str)],
+        body: &str,
+        motherboard: &mut Motherboard,
+    ) -> Result<Value, String> {
+        let request = ApiRequest {
+            method: method.to_owned(),
+            path: path.to_owned(),
+            query: query
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            body: body.as_bytes().to_vec(),
+        };
+        let response = self.handle(&request, motherboard);
+        let text = String::from_utf8_lossy(&response.body).into_owned();
+        let value: Value = if response.content_type == "application/json" {
+            serde_json::from_str(&text).unwrap_or(Value::Null)
+        } else {
+            Value::String(text.clone())
+        };
+        if response.status == 200 {
+            Ok(value)
+        } else {
+            Err(value
+                .get("error")
+                .and_then(Value::as_str)
+                .map_or(text, str::to_owned))
+        }
     }
 
     /// Route `request`.
@@ -2637,8 +2889,9 @@ fn parse_hex(text: &str) -> Option<Vec<u8>> {
 // --------------------------------------------------------------- HTTP
 
 /// The HTTP thread: parse, hand to the emulation thread, write the answer.
+#[cfg(not(target_arch = "wasm32"))]
 fn serve(
-    server: tiny_http::Server,
+    server: &tiny_http::Server,
     sender: Sender<(ApiRequest, Sender<ApiResponse>)>,
     events: EventHub,
 ) {
@@ -2710,6 +2963,7 @@ fn serve(
 
 /// One SSE client's connection: HTTP/1.1 headers, then the events as they
 /// come, a `: ping` comment after 15s of silence.
+#[cfg(not(target_arch = "wasm32"))]
 fn stream_events(mut writer: Box<dyn Write + Send>, queue: Arc<(Mutex<SseQueue>, Condvar)>) {
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\
                 Access-Control-Allow-Origin: *\r\nConnection: keep-alive\r\n\r\n";
@@ -2739,6 +2993,7 @@ fn stream_events(mut writer: Box<dyn Write + Send>, queue: Arc<(Mutex<SseQueue>,
     queue.0.lock().unwrap().closed = true;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn header(name: &str, value: &str) -> tiny_http::Header {
     tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()).unwrap()
 }

@@ -97,6 +97,8 @@ pub struct Motherboard {
     io_writes: Option<Vec<(u16, u8)>>,
 
     model: CpcModel,
+    /// The CRTC of the CPC before it became a CPC+ ([`Self::change_model`]).
+    crtc_before_plus: CrtcType,
     /// The MMR banks RAM: a 6128, or a RAM expansion on a 464/664.
     ram_banking: bool,
     /// A disc interface (AMSDOS and the FDC ports): a 664/6128, or a
@@ -172,6 +174,7 @@ impl Default for Motherboard {
             saved_disc_files: Vec::new(),
             io_writes: None,
             model: CpcModel::default(),
+            crtc_before_plus: CrtcType::Crtc0,
             ram_banking: true,
             disc_interface: true,
             keyboard_layout: Default::default(),
@@ -704,6 +707,10 @@ impl Motherboard {
 
     pub fn expansion_port_mut(&mut self) -> Option<&mut ExpansionPort> {
         self.expansion_port.as_deref_mut()
+    }
+
+    pub fn printer_port_mut(&mut self) -> Option<&mut PrinterPort> {
+        self.printer_port.as_deref_mut()
     }
 
     pub fn printer_port(&self) -> Option<&PrinterPort> {
@@ -1883,6 +1890,104 @@ impl Motherboard {
         });
     }
 
+    /// Fit a CRTC of another type while the machine runs: the registers (masked as the new
+    /// chip stores them), the selected register and the counters go over to the new chip, as a
+    /// version 3 snapshot carries them, so the picture goes on where it was. A CPC+ keeps its
+    /// ASIC (CRTC 3).
+    pub fn change_crtc(&mut self, crtc_type: CrtcType) -> Result<(), String> {
+        if self.model.is_plus() && crtc_type != CrtcType::Crtc3 {
+            return Err(format!(
+                "the {} has its CRTC in its ASIC (CRTC 3)",
+                self.model.name()
+            ));
+        }
+        if self.crtc.crtc_type() == crtc_type {
+            return Ok(());
+        }
+        let (registers, selected, counters) = (
+            self.crtc.registers(),
+            self.crtc.selected_register(),
+            self.crtc.counters(),
+        );
+        let mut crtc: Crtc = crtc_type.into();
+        crtc.restore(&registers, selected, Some(counters));
+        self.crtc = crtc;
+        self.fit_crtc_chips(crtc_type);
+        Ok(())
+    }
+
+    /// Become another model while running, as [`Self::set_model`] then the reset button: the
+    /// RAM, the discs, the tape, the cards on the ports and the extra RAM stay. Back from a
+    /// CPC+, the CRTC is the one the CPC had before (CRTC 0 when there was none).
+    pub fn change_model(&mut self, model: CpcModel) {
+        if model == self.model {
+            return;
+        }
+        let extra_pages = self.extra_ram_pages();
+        let extra_banking = self.ram_banking && !self.model.has_ram_banking();
+        if !self.model.is_plus() {
+            self.crtc_before_plus = self.crtc.crtc_type();
+        }
+        let disc_interface = self.disc_interface;
+        let leaves_plus = self.model.is_plus() && !model.is_plus();
+        self.set_model(model);
+        if leaves_plus {
+            let crtc_type = self.crtc_before_plus;
+            let _ = self.change_crtc(crtc_type);
+        }
+        // A RAM expansion stays plugged, a DDI-1 stays on a 464.
+        if extra_banking {
+            self.set_extra_ram_pages(extra_pages);
+        }
+        if disc_interface && !model.has_disc_interface() && !model.is_plus() {
+            self.set_disc_interface(true);
+        }
+        self.restart();
+    }
+
+    /// The RAM in all (64K to 576K, in 64K steps): the extra pages are added or removed, the
+    /// ones kept keep what they hold. The model's own RAM (64K, 128K on a 6128) is
+    /// `None`.
+    pub fn set_total_ram_kb(&mut self, kb: Option<usize>) -> Result<(), String> {
+        let pages = match kb {
+            None if self.model.has_ram_banking() => 1,
+            None => 0,
+            Some(kb) if kb % 64 == 0 && (64..=576).contains(&kb) => kb / 64 - 1,
+            Some(kb) => return Err(format!("{kb}K: 64K to 576K, in steps of 64K")),
+        };
+        self.set_extra_ram_pages(pages);
+        // the 6128's own 128K banks RAM, with or without extension
+        if self.model.has_ram_banking() {
+            self.ram_banking = true;
+        }
+        Ok(())
+    }
+
+    /// Unplug the first card of type `T` from the expansion port, the machine running on.
+    pub fn unplug_expansion<T: ExpansionDevice>(&mut self) -> Option<Box<dyn ExpansionDevice>> {
+        let port = self.expansion_port.as_deref_mut()?;
+        let card = port.unplug::<T>();
+        if port.is_empty() {
+            self.expansion_port = None;
+        }
+        self.update_sound_mix();
+        card
+    }
+
+    /// Whether a card of type `T` is on the expansion port.
+    pub fn has_expansion<T: ExpansionDevice>(&self) -> bool {
+        self.expansion_port
+            .as_deref()
+            .is_some_and(|port| port.device::<T>().is_some())
+    }
+
+    /// Unplug whatever is on the printer port.
+    pub fn unplug_printer(&mut self) -> Option<Box<dyn PrinterDevice>> {
+        let device = self.printer_port.take().and_then(|mut port| port.unplug());
+        self.update_sound_mix();
+        device
+    }
+
     /// Put `cartridge` in the slot of a CPC+ (`None`: its system cartridge). Restart it
     /// afterwards, as the cartridge is changed with the power off.
     pub fn insert_cartridge(&mut self, cartridge: Option<crate::asic::Cartridge>) {
@@ -1916,6 +2021,11 @@ impl Motherboard {
 
     /// Fit `data` as upper ROM `slot` (`None` empties the slot: selecting it gives BASIC, as
     /// on a CPC).
+    /// The ROM fitted in upper ROM `slot`, if any.
+    pub fn upper_rom(&self, slot: u8) -> Option<&[u8]> {
+        self.memory.upper_rom(slot)
+    }
+
     pub fn set_upper_rom(&mut self, slot: u8, data: Option<&[u8]>) -> Result<(), String> {
         self.memory.set_upper_rom(slot, data)
     }

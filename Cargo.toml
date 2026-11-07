@@ -71,6 +71,8 @@ cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm", default-features = false
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens", default-features = false}
 wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "webgpu"] }
 getrandom = { version = "0.2", features = ["js"] }
+# std::time::Instant panics in a browser: the debugger's frame rate uses this one there
+web-time = "1"
 # getrandom 0.3 also needs `getrandom_backend="wasm_js"`, see .cargo/config.toml
 getrandom-03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 
