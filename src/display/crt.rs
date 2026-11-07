@@ -41,7 +41,7 @@ pub enum CrtProfile {
     /// Amstrad GT65: no mask structure, visible scanlines only.
     Gt65,
     /// Atari colour monitor: grille with strong scanlines.
-    AtariColor
+    AtariColor,
 }
 
 impl CrtProfile {
@@ -58,7 +58,7 @@ impl CrtProfile {
         match self {
             CrtProfile::Ctm644 | CrtProfile::Gt65 => (0.025, 0.035),
             CrtProfile::Trinitron => (0.0, 0.025),
-            CrtProfile::AtariColor => (0.035, 0.045)
+            CrtProfile::AtariColor => (0.035, 0.045),
         }
     }
 }
@@ -72,11 +72,14 @@ pub struct Warp {
     /// `(x (1 + kx y²), y (1 + ky x²))`.
     pub k: (f32, f32),
     /// Radius of the glass's corners, in half-sizes of the picture.
-    pub corner: f32
+    pub corner: f32,
 }
 
 impl Warp {
-    pub const FLAT: Warp = Warp { k: (0.0, 0.0), corner: 0.0 };
+    pub const FLAT: Warp = Warp {
+        k: (0.0, 0.0),
+        corner: 0.0,
+    };
 
     /// The glass of `profile`, its bulge times `scale` (0: flat).
     pub fn of(profile: CrtProfile, scale: f32) -> Self {
@@ -84,7 +87,10 @@ impl Warp {
             return Self::FLAT;
         }
         let (kx, ky) = profile.curvature();
-        Warp { k: (kx * scale, ky * scale), corner: 0.08 }
+        Warp {
+            k: (kx * scale, ky * scale),
+            corner: 0.08,
+        }
     }
 
     pub fn is_flat(&self) -> bool {
@@ -100,8 +106,7 @@ impl Warp {
         let wy = y * (1.0 + self.k.1 * x * x);
         let alpha = if self.is_flat() {
             1.0
-        }
-        else {
+        } else {
             // distance to the rounded rectangle |w| <= 1 (negative inside), in half-sizes
             let r = self.corner;
             let qx = wx.abs() - (1.0 - r);
@@ -124,7 +129,7 @@ impl FromStr for CrtProfile {
             "trinitron" => Ok(Self::Trinitron),
             "gt65" => Ok(Self::Gt65),
             "atari" => Ok(Self::AtariColor),
-            other => Err(format!("unknown CRT {other:?} (expected {})", Self::NAMES))
+            other => Err(format!("unknown CRT {other:?} (expected {})", Self::NAMES)),
         }
     }
 }
@@ -159,7 +164,7 @@ pub struct CrtParams {
     /// white field has the same mean light as without a mask. Each gun lights
     /// only a third of the surface, so 3 keeps the mean light of a picture
     /// (ACE-DL's 2.6): the brightest slots clip.
-    pub gain: f32
+    pub gain: f32,
 }
 
 impl CrtParams {
@@ -175,11 +180,17 @@ impl CrtParams {
             beam_sigma_v: 0.38,
             spill: 0.5,
             halation: 0.10,
-            gain: 3.0
+            gain: 3.0,
         };
         match profile {
             CrtProfile::Ctm644 => base,
-            CrtProfile::Trinitron => Self { slot_fill: (0.9, 1.2), stagger: 0.0, spill: 0.4, gain: 3.0, ..base },
+            CrtProfile::Trinitron => Self {
+                slot_fill: (0.9, 1.2),
+                stagger: 0.0,
+                spill: 0.4,
+                gain: 3.0,
+                ..base
+            },
             CrtProfile::Gt65 => Self {
                 slot_fill: (1.0, 1.2),
                 stagger: 0.0,
@@ -196,7 +207,7 @@ impl CrtParams {
                 beam_sigma_v: 0.30,
                 gain: 3.0,
                 ..base
-            }
+            },
         }
     }
 
@@ -211,7 +222,10 @@ impl CrtParams {
     }
 
     pub fn output_size(&self) -> (usize, usize) {
-        (TRIADS_ACROSS * self.triad_px, SRC_HEIGHT * self.rows_per_line)
+        (
+            TRIADS_ACROSS * self.triad_px,
+            SRC_HEIGHT * self.rows_per_line,
+        )
     }
 
     /// Output pixels per monitor pixel.
@@ -251,11 +265,18 @@ impl CrtParams {
         let pitch = self.pitch_rows() as f32;
         let slot = x / self.slot_px();
         let triad = slot / 3;
-        let shift = if triad % 2 == 1 { self.stagger * pitch } else { 0.0 };
+        let shift = if triad % 2 == 1 {
+            self.stagger * pitch
+        } else {
+            0.0
+        };
         // position in the slot's cell, the cell's centre being the origin
         let px = (x as f32 + 0.5) - (slot as f32 * slot_w) - slot_w / 2.0;
         let py = ((y as f32 + 0.5 - shift).rem_euclid(pitch)) - pitch / 2.0;
-        let half = (self.slot_fill.0 * slot_w / 2.0, self.slot_fill.1 * pitch / 2.0);
+        let half = (
+            self.slot_fill.0 * slot_w / 2.0,
+            self.slot_fill.1 * pitch / 2.0,
+        );
         let radius = (self.corner_radius * half.0.min(half.1)).max(0.0);
         rounded_box_distance(px, py, half.0, half.1, radius)
     }
@@ -297,20 +318,32 @@ mod test {
     #[test]
     fn channels_repeat_red_green_blue() {
         let p = CrtProfile::Ctm644.params();
-        assert_eq!((0..7).map(|x| p.channel(x)).collect::<Vec<_>>(), [0, 1, 2, 0, 1, 2, 0]);
+        assert_eq!(
+            (0..7).map(|x| p.channel(x)).collect::<Vec<_>>(),
+            [0, 1, 2, 0, 1, 2, 0]
+        );
         let wide = CrtParams { triad_px: 6, ..p };
-        assert_eq!((0..6).map(|x| wide.channel(x)).collect::<Vec<_>>(), [0, 0, 1, 1, 2, 2]);
+        assert_eq!(
+            (0..6).map(|x| wide.channel(x)).collect::<Vec<_>>(),
+            [0, 0, 1, 1, 2, 2]
+        );
     }
 
     #[test]
     fn mask_is_periodic_and_staggered() {
-        let p = CrtParams { triad_px: 9, ..CrtProfile::Ctm644.params() };
+        let p = CrtParams {
+            triad_px: 9,
+            ..CrtProfile::Ctm644.params()
+        };
         let pitch = p.pitch_rows();
         for x in 0..30 {
             for y in 0..pitch {
                 assert_eq!(p.slot_distance(x, y), p.slot_distance(x, y + 3 * pitch));
                 // two triads further, the same
-                assert_eq!(p.slot_distance(x, y), p.slot_distance(x + 2 * p.triad_px, y));
+                assert_eq!(
+                    p.slot_distance(x, y),
+                    p.slot_distance(x + 2 * p.triad_px, y)
+                );
             }
         }
         // odd triads are shifted by half a pitch (slot 1 of triad 0 is at x=4,
@@ -318,7 +351,10 @@ mod test {
         for y in 0..pitch {
             let odd = p.slot_distance(4 + p.triad_px, y);
             let even_shifted = p.slot_distance(4, y + pitch / 2);
-            assert!((odd - even_shifted).abs() < 1e-4, "row {y}: {odd} vs {even_shifted}");
+            assert!(
+                (odd - even_shifted).abs() < 1e-4,
+                "row {y}: {odd} vs {even_shifted}"
+            );
         }
     }
 

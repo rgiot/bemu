@@ -49,22 +49,26 @@ fn disc() -> DiscImage {
 
     let mut image = DiscImage::new(3, 1);
     image
-        .set_track(0, 0, Track {
-            track: 0,
-            head: 0,
-            gap3: 0x4e,
-            filler: 0xe5,
-            sectors: vec![
-                sector(0, 0, 1, 1, 1),
-                sector(0, 0, 2, 1, 2),
-                sector(0, 0, 3, 1, 3),
-                deleted,
-                crc,
-                weak,
-                sector(1, 0, 7, 1, 7),
-                sector(0xff, 0, 8, 1, 8),
-            ]
-        })
+        .set_track(
+            0,
+            0,
+            Track {
+                track: 0,
+                head: 0,
+                gap3: 0x4e,
+                filler: 0xe5,
+                sectors: vec![
+                    sector(0, 0, 1, 1, 1),
+                    sector(0, 0, 2, 1, 2),
+                    sector(0, 0, 3, 1, 3),
+                    deleted,
+                    crc,
+                    weak,
+                    sector(1, 0, 7, 1, 7),
+                    sector(0xff, 0, 8, 1, 8),
+                ],
+            },
+        )
         .unwrap();
     image
 }
@@ -134,7 +138,11 @@ fn reading_a_sector_returns_its_data_and_id() {
     let mut fdc = ready_fdc();
     let (data, result) = read(&mut fdc, &rw(READ_DATA, 0, 0, 2, 1, 2), 256);
     assert_eq!(data, vec![2; 256]);
-    assert_eq!(result, [0x40, 0x80, 0x00, 0, 0, 2, 1], "ends with End of Cylinder");
+    assert_eq!(
+        result,
+        [0x40, 0x80, 0x00, 0, 0, 2, 1],
+        "ends with End of Cylinder"
+    );
 }
 
 #[test]
@@ -215,7 +223,18 @@ fn read_id_walks_the_track_and_wraps() {
     // physical order, then round again
     assert_eq!(
         seen,
-        [(0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (1, 7), (0xff, 8), (0, 1), (0, 2)]
+        [
+            (0, 1),
+            (0, 2),
+            (0, 3),
+            (0, 4),
+            (0, 5),
+            (0, 6),
+            (1, 7),
+            (0xff, 8),
+            (0, 1),
+            (0, 2)
+        ]
     );
 }
 
@@ -284,7 +303,11 @@ fn read_deleted_data_wants_the_deleted_sector() {
     let mut fdc = ready_fdc();
     let (data, result) = read(&mut fdc, &rw(READ_DELETED_DATA, 0, 0, 4, 1, 4), 256);
     assert_eq!(data, vec![4; 256]);
-    assert_eq!(result[2] & 0x40, 0x00, "the mark is the expected one: no CM");
+    assert_eq!(
+        result[2] & 0x40,
+        0x00,
+        "the mark is the expected one: no CM"
+    );
 
     // a normal sector met by Read Deleted Data raises CM
     let (_, result) = read(&mut fdc, &rw(READ_DELETED_DATA, 0, 0, 2, 1, 2), 256);
@@ -322,7 +345,11 @@ fn rewriting_a_sector_with_a_crc_error_repairs_it() {
 
     let (data, result) = read(&mut fdc, &rw(READ_DATA, 0, 0, 5, 1, 5), 256);
     assert_eq!(data, vec![0x77; 256]);
-    assert_eq!(result[..3], [0x40, 0x80, 0], "End of Cylinder, nothing else");
+    assert_eq!(
+        result[..3],
+        [0x40, 0x80, 0],
+        "End of Cylinder, nothing else"
+    );
 }
 
 #[test]
@@ -345,7 +372,11 @@ fn a_read_continues_through_the_sectors_up_to_eot() {
     assert_eq!(&data[..256], vec![1; 256].as_slice());
     assert_eq!(&data[256..512], vec![2; 256].as_slice());
     assert_eq!(&data[512..], vec![3; 256].as_slice());
-    assert_eq!(result, [0x40, 0x80, 0x00, 0, 0, 3, 1], "ends with End of Cylinder");
+    assert_eq!(
+        result,
+        [0x40, 0x80, 0x00, 0, 0, 3, 1],
+        "ends with End of Cylinder"
+    );
 }
 
 #[test]
@@ -364,13 +395,19 @@ fn two_sided() -> DiscImage {
     let mut image = DiscImage::new(1, 2);
     for head in 0..2u8 {
         image
-            .set_track(head, 0, Track {
-                track: 0,
+            .set_track(
                 head,
-                gap3: 0x4e,
-                filler: 0xe5,
-                sectors: (1..=2).map(|r| sector(0, head, r, 1, 0x10 * head + r)).collect()
-            })
+                0,
+                Track {
+                    track: 0,
+                    head,
+                    gap3: 0x4e,
+                    filler: 0xe5,
+                    sectors: (1..=2)
+                        .map(|r| sector(0, head, r, 1, 0x10 * head + r))
+                        .collect(),
+                },
+            )
             .unwrap();
     }
     image
@@ -392,10 +429,18 @@ fn multi_track_carries_on_with_the_other_side() {
     let (data, result) = read(&mut fdc, &rw(READ_DATA | MT, 0, 0, 1, 1, 2), 4 * 256);
     assert_eq!(&data[..256], vec![0x01; 256].as_slice());
     assert_eq!(&data[256..512], vec![0x02; 256].as_slice());
-    assert_eq!(&data[512..768], vec![0x11; 256].as_slice(), "side 1, sector 1");
+    assert_eq!(
+        &data[512..768],
+        vec![0x11; 256].as_slice(),
+        "side 1, sector 1"
+    );
     assert_eq!(&data[768..], vec![0x12; 256].as_slice());
     assert_eq!(result[0] & 0xc0, 0x40, "End of Cylinder");
-    assert_eq!((result[3], result[4], result[5]), (0, 1, 2), "ends on H=1 R=2");
+    assert_eq!(
+        (result[3], result[4], result[5]),
+        (0, 1, 2),
+        "ends on H=1 R=2"
+    );
 }
 
 #[test]
@@ -413,13 +458,17 @@ fn without_multi_track_the_read_stays_on_its_side() {
 fn n_zero_limits_the_transfer_to_dtl_bytes() {
     let mut image = DiscImage::new(1, 1);
     image
-        .set_track(0, 0, Track {
-            track: 0,
-            head: 0,
-            gap3: 0x4e,
-            filler: 0xe5,
-            sectors: vec![sector(0, 0, 1, 0, 0x33)]
-        })
+        .set_track(
+            0,
+            0,
+            Track {
+                track: 0,
+                head: 0,
+                gap3: 0x4e,
+                filler: 0xe5,
+                sectors: vec![sector(0, 0, 1, 0, 0x33)],
+            },
+        )
         .unwrap();
     let mut fdc = fdc_with(image);
 
@@ -465,7 +514,11 @@ fn format_track_creates_the_sectors_the_cpu_describes() {
     drain_interrupts(&mut fdc);
 
     send(&mut fdc, &[FORMAT_TRACK, 0x00, 0x02, 0x03, 0x4e, 0xe5]);
-    assert_eq!(fdc.read_status() & (RQM | DIO), RQM, "the CPU sends the IDs");
+    assert_eq!(
+        fdc.read_status() & (RQM | DIO),
+        RQM,
+        "the CPU sends the IDs"
+    );
     for id in [[1u8, 0, 0xa1, 2], [1, 0, 0xa3, 2], [1, 0, 0xa2, 2]] {
         send(&mut fdc, &id);
     }
@@ -479,7 +532,10 @@ fn format_track_creates_the_sectors_the_cpu_describes() {
         let result = receive(&mut fdc, 7);
         ids.push((result[3], result[5], result[6]));
     }
-    assert_eq!(ids, [(1, 0xa1, 2), (1, 0xa3, 2), (1, 0xa2, 2), (1, 0xa1, 2)]);
+    assert_eq!(
+        ids,
+        [(1, 0xa1, 2), (1, 0xa3, 2), (1, 0xa2, 2), (1, 0xa1, 2)]
+    );
 
     // and they hold the filler byte, 512 bytes each
     let (data, _) = read(&mut fdc, &rw(READ_DATA, 1, 0, 0xa2, 2, 0xa2), 512);
@@ -613,7 +669,15 @@ fn sense_drive_status_reflects_disc_motor_and_head_position() {
 fn a_3_inch_drive_reads_the_side_put_up_whatever_the_head_selected() {
     let mut fdc = fdc_with(two_sided());
     // head 1 selected: a 3" drive has only one head, it reads side A of the disc
-    let (data, _) = read(&mut fdc, &rw(READ_DATA, 0, 0, 1, 1, 1).iter().enumerate().map(|(i, &b)| if i == 1 { b | 4 } else { b }).collect::<Vec<_>>(), 256);
+    let (data, _) = read(
+        &mut fdc,
+        &rw(READ_DATA, 0, 0, 1, 1, 1)
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| if i == 1 { b | 4 } else { b })
+            .collect::<Vec<_>>(),
+        256,
+    );
     assert_eq!(data, vec![0x01; 256], "side A");
     // the disc turned over: side B is under the head, with head 0 selected
     assert_eq!(fdc.flip_disc(FdcDrive::A), Some(1));
@@ -623,7 +687,11 @@ fn a_3_inch_drive_reads_the_side_put_up_whatever_the_head_selected() {
     // a multi-track read does not switch heads on a 3" drive
     let (data, result) = read(&mut fdc, &rw(READ_DATA | MT, 0, 1, 1, 1, 2), 2 * 256);
     assert_eq!(&data[256..], vec![0x12; 256].as_slice());
-    assert_eq!(result[0] & 0xc0, 0x40, "End of Cylinder after the side put up");
+    assert_eq!(
+        result[0] & 0xc0,
+        0x40,
+        "End of Cylinder after the side put up"
+    );
     assert_eq!((result[3], result[4], result[5]), (0, 1, 2));
     assert_eq!(fdc.read_status(), RQM, "done: no other side to go on with");
 }
@@ -631,7 +699,15 @@ fn a_3_inch_drive_reads_the_side_put_up_whatever_the_head_selected() {
 #[test]
 fn a_3_5_inch_drive_reads_the_side_its_head_selects_and_cannot_be_flipped() {
     let mut fdc = fdc_35_with(two_sided());
-    let (data, _) = read(&mut fdc, &rw(READ_DATA, 0, 1, 1, 1, 1).iter().enumerate().map(|(i, &b)| if i == 1 { b | 4 } else { b }).collect::<Vec<_>>(), 256);
+    let (data, _) = read(
+        &mut fdc,
+        &rw(READ_DATA, 0, 1, 1, 1, 1)
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| if i == 1 { b | 4 } else { b })
+            .collect::<Vec<_>>(),
+        256,
+    );
     assert_eq!(data, vec![0x11; 256], "head 1 reads side B");
     assert_eq!(fdc.flip_disc(FdcDrive::A), None);
 }
@@ -707,13 +783,25 @@ fn seek_end_interrupts_are_reported_lowest_unit_first() {
 fn execution_phase_status_matches_the_direction() {
     let mut fdc = ready_fdc();
     send(&mut fdc, &rw(READ_DATA, 0, 0, 1, 1, 1));
-    assert_eq!(fdc.read_status(), RQM | DIO | (1 << 5) | CB, "execution, FDC to CPU");
+    assert_eq!(
+        fdc.read_status(),
+        RQM | DIO | (1 << 5) | CB,
+        "execution, FDC to CPU"
+    );
     receive(&mut fdc, 256);
-    assert_eq!(fdc.read_status() & (RQM | DIO | CB), RQM | DIO | CB, "result phase");
+    assert_eq!(
+        fdc.read_status() & (RQM | DIO | CB),
+        RQM | DIO | CB,
+        "result phase"
+    );
     receive(&mut fdc, 7);
 
     send(&mut fdc, &rw(WRITE_DATA, 0, 0, 1, 1, 1));
-    assert_eq!(fdc.read_status(), RQM | (1 << 5) | CB, "execution, CPU to FDC");
+    assert_eq!(
+        fdc.read_status(),
+        RQM | (1 << 5) | CB,
+        "execution, CPU to FDC"
+    );
 }
 
 #[test]

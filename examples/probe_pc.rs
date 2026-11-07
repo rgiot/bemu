@@ -21,11 +21,15 @@ fn main() {
     }
     let mut v: Vec<_> = hist.into_iter().collect();
     v.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
-    for (pc, c) in v.iter().take(40) { println!("{pc:04X} {c}"); }
+    for (pc, c) in v.iter().take(40) {
+        println!("{pc:04X} {c}");
+    }
     if let Some(from) = from {
         for row in 0..(len / 16) {
             let base = from.wrapping_add((row * 16) as u16);
-            let bytes: Vec<String> = (0..16).map(|i| format!("{:02X}", mb.read_byte(base.wrapping_add(i)))).collect();
+            let bytes: Vec<String> = (0..16)
+                .map(|i| format!("{:02X}", mb.read_byte(base.wrapping_add(i))))
+                .collect();
             println!("{base:04X}: {}", bytes.join(" "));
         }
     }

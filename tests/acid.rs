@@ -41,7 +41,10 @@ fn press(motherboard: &mut Motherboard, keys: &[CpcKey]) {
 fn return_with(motherboard: &mut Motherboard, a: u8, carry: bool) {
     let sp = motherboard.cpu().reg16(Reg16::Sp).value();
     let pc = motherboard.read_word(sp);
-    motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(sp.wrapping_add(2));
+    motherboard
+        .cpu_mut()
+        .reg16_mut(Reg16::Sp)
+        .set(sp.wrapping_add(2));
     motherboard.cpu_mut().reg8_mut(Reg8::A).set(a);
     motherboard.cpu_mut().set_flag(Z80Flags::C, carry);
     motherboard.set_pc(pc);
@@ -72,7 +75,9 @@ fn printed(bin: &str, crtc: CrtcType, seconds: usize, answers: &[u8]) -> String 
     }
     motherboard.keyboard_mut().set_pressed(CpcKey::Return, true);
     run_for(&mut motherboard, 240_000);
-    motherboard.keyboard_mut().set_pressed(CpcKey::Return, false);
+    motherboard
+        .keyboard_mut()
+        .set_pressed(CpcKey::Return, false);
 
     let mut log = String::new();
     let end = motherboard.t_state_counter().value() + seconds * 4_000_000;
@@ -81,7 +86,7 @@ fn printed(bin: &str, crtc: CrtcType, seconds: usize, answers: &[u8]) -> String 
             0xbb5a => match motherboard.cpu().reg8(Reg8::A).value() {
                 13 => log.push('\n'),
                 c @ 32..=126 => log.push(c as char),
-                _ => ()
+                _ => (),
             },
             0xbb06 => {
                 if log.contains("Done.") {
@@ -95,7 +100,7 @@ fn printed(bin: &str, crtc: CrtcType, seconds: usize, answers: &[u8]) -> String 
                 return_with(&mut motherboard, 0, false);
                 continue;
             }
-            _ => ()
+            _ => (),
         }
         motherboard.execute_next_opcode_no_video();
     }
@@ -110,14 +115,24 @@ fn results(log: &str) -> Vec<(String, bool)> {
             let line = line.rsplit("Press a key to start").next().unwrap_or(line);
             line.strip_suffix("-PASS")
                 .map(|name| (name.to_owned(), true))
-                .or_else(|| line.strip_suffix("-FAIL").map(|name| (name.to_owned(), false)))
+                .or_else(|| {
+                    line.strip_suffix("-FAIL")
+                        .map(|name| (name.to_owned(), false))
+                })
         })
         .collect()
 }
 
 /// Runs `bin` and checks its results: every test it ran passed but the `known_failures`, and it
 /// ran at least `expected` tests.
-fn check(bin: &str, crtc: CrtcType, seconds: usize, answers: &[u8], expected: usize, known_failures: &[&str]) {
+fn check(
+    bin: &str,
+    crtc: CrtcType,
+    seconds: usize,
+    answers: &[u8],
+    expected: usize,
+    known_failures: &[&str],
+) {
     let log = printed(bin, crtc, seconds, answers);
     let results = results(&log);
     let new: Vec<&str> = results
@@ -127,24 +142,39 @@ fn check(bin: &str, crtc: CrtcType, seconds: usize, answers: &[u8], expected: us
         .collect();
     let fixed: Vec<&&str> = known_failures
         .iter()
-        .filter(|known| results.iter().any(|(name, passed)| *passed && name == *known))
+        .filter(|known| {
+            results
+                .iter()
+                .any(|(name, passed)| *passed && name == *known)
+        })
         .collect();
     if !fixed.is_empty() {
         eprintln!("{bin}: these pass now, remove them from the known failures: {fixed:?}");
     }
     assert!(new.is_empty(), "{bin}: new failures {new:?}\n{log}");
-    assert!(results.len() >= expected, "{bin}: {} tests ran, {expected} expected\n{log}", results.len());
+    assert!(
+        results.len() >= expected,
+        "{bin}: {} tests ran, {expected} expected\n{log}",
+        results.len()
+    );
 }
 
 #[test]
 #[ignore = "slow: minutes of emulated time"]
 fn cpc() {
-    check("cpctest.bin", CrtcType::Crtc0, 120, &[], 4, &[
-        // On Kevin's type 0 CPCs the VSYNC, read on the PPI, still runs 1 us later than bemu ends it
-        "CPC int (HSYNC width)",
-        // "GA I/O decode test" isn't listed: it gives io_decode an uninitialised BC as its restore
-        // hook (every other caller sets it), and bemu jumps to &0000 with it
-    ]);
+    check(
+        "cpctest.bin",
+        CrtcType::Crtc0,
+        120,
+        &[],
+        4,
+        &[
+            // On Kevin's type 0 CPCs the VSYNC, read on the PPI, still runs 1 us later than bemu ends it
+            "CPC int (HSYNC width)",
+            // "GA I/O decode test" isn't listed: it gives io_decode an uninitialised BC as its restore
+            // hook (every other caller sets it), and bemu jumps to &0000 with it
+        ],
+    );
 }
 
 #[test]
@@ -174,12 +204,19 @@ fn z80_in_flags() {
 #[test]
 #[ignore = "slow: minutes of emulated time"]
 fn asic_crtc_status() {
-    check("crtc3_4_status.bin", CrtcType::Crtc3, 300, &[], 5, &[
-        // both fail on Kevin's 6128+ and type 4 CPC too, the same way ("failed 4 times, remainder
-        // ok", "ok, then failed")
-        "Vsync end",
-        "Cursor active on scanline",
-    ]);
+    check(
+        "crtc3_4_status.bin",
+        CrtcType::Crtc3,
+        300,
+        &[],
+        5,
+        &[
+            // both fail on Kevin's 6128+ and type 4 CPC too, the same way ("failed 4 times, remainder
+            // ok", "ok, then failed")
+            "Vsync end",
+            "Cursor active on scanline",
+        ],
+    );
 }
 
 #[test]

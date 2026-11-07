@@ -87,7 +87,7 @@ fn bit_on_hl_indirect_sets_the_documented_flags() {
             let motherboard = run(
                 &[0x21, 0x00, 0x80, 0xb7, 0xcb, 0x46 + bit * 8],
                 3,
-                Some((0x8000, value))
+                Some((0x8000, value)),
             );
             assert_eq!(
                 flags(&motherboard) & !XY,
@@ -104,9 +104,19 @@ fn bit_on_an_indexed_operand_sets_the_documented_flags() {
         for bit in 0..8u8 {
             // LD IX,&8000 ; SCF ; BIT bit,(IX+3)
             let motherboard = run(
-                &[0xdd, 0x21, 0x00, 0x80, 0x37, 0xdd, 0xcb, 0x03, 0x46 + bit * 8],
+                &[
+                    0xdd,
+                    0x21,
+                    0x00,
+                    0x80,
+                    0x37,
+                    0xdd,
+                    0xcb,
+                    0x03,
+                    0x46 + bit * 8,
+                ],
                 3,
-                Some((0x8003, value))
+                Some((0x8003, value)),
             );
             assert_eq!(
                 flags(&motherboard) & !XY,
@@ -132,5 +142,9 @@ fn the_firmware_esc_test_returns_when_esc_is_not_held() {
     program.extend_from_slice(&[0xcb, 0x56, 0xc8, 0x3e, 0x11, 0xc9]); // BIT 2,(HL) ; RET Z ; LD A,&11 ; RET
     let motherboard = run(&program, 6, Some((0x8000, 0x00)));
     // instructions: LD HL, CALL, BIT, RET Z (taken), LD A,&77 -> A = &77
-    assert_eq!(motherboard.cpu().reg16(Reg16::Af).value() >> 8, 0x77, "RET Z was not taken");
+    assert_eq!(
+        motherboard.cpu().reg16(Reg16::Af).value() >> 8,
+        0x77,
+        "RET Z was not taken"
+    );
 }

@@ -47,7 +47,10 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::basic_program::{self, BasicState};
-use crate::breakpoints::{AdvancedBreakpoint, BreakpointAccess, BreakpointKind, Condition, ConditionContext, CounterAction, RunMode};
+use crate::breakpoints::{
+    AdvancedBreakpoint, BreakpointAccess, BreakpointKind, Condition, ConditionContext,
+    CounterAction, RunMode,
+};
 use crate::keyboard::CpcKey;
 use crate::memory::PhysicalAddress;
 use crate::monitor::Monitor;
@@ -69,7 +72,7 @@ pub struct ApiRequest {
     pub path: String,
     pub query: Vec<(String, String)>,
     /// The raw body (media uploads are binary).
-    pub body: Vec<u8>
+    pub body: Vec<u8>,
 }
 
 impl ApiRequest {
@@ -79,7 +82,10 @@ impl ApiRequest {
     }
 
     fn param(&self, name: &str) -> Option<&str> {
-        self.query.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+        self.query
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -90,16 +96,24 @@ pub struct ApiResponse {
     pub content_type: &'static str,
     pub body: Vec<u8>,
     /// Extra headers (`Allow` of a 405, screenshot geometry).
-    pub headers: Vec<(String, String)>
+    pub headers: Vec<(String, String)>,
 }
 
 impl ApiResponse {
     fn json(status: u16, value: Value) -> Self {
-        Self { status, content_type: "application/json", body: value.to_string().into_bytes(), headers: Vec::new() }
+        Self {
+            status,
+            content_type: "application/json",
+            body: value.to_string().into_bytes(),
+            headers: Vec::new(),
+        }
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     fn ok(value: Value) -> Self {
@@ -111,16 +125,22 @@ impl ApiResponse {
 #[derive(Debug)]
 struct ApiError {
     error: String,
-    field: Option<String>
+    field: Option<String>,
 }
 
 impl ApiError {
     fn new(error: impl Into<String>) -> Self {
-        Self { error: error.into(), field: None }
+        Self {
+            error: error.into(),
+            field: None,
+        }
     }
 
     fn field(field: &str, error: impl Into<String>) -> Self {
-        Self { error: error.into(), field: Some(field.to_owned()) }
+        Self {
+            error: error.into(),
+            field: Some(field.to_owned()),
+        }
     }
 
     fn response(self) -> ApiResponse {
@@ -141,7 +161,7 @@ struct Route {
     methods: &'static [&'static str],
     summary: &'static str,
     /// Not part of the AMSpiriT API.
-    extension: bool
+    extension: bool,
 }
 
 const ROUTES: &[Route] = &[
@@ -192,14 +212,14 @@ enum BasicTarget {
     /// The start of a line.
     Line(u16),
     /// A statement, by its address in `/api/basic_listing`.
-    Address(u16)
+    Address(u16),
 }
 
 /// A program to load once the firmware booted after a reset.
 struct PendingBasic {
     source: String,
     run: bool,
-    at_t_states: usize
+    at_t_states: usize,
 }
 
 /// T-states the firmware takes, after a reset, before BASIC is ready.
@@ -213,7 +233,7 @@ pub struct Beam {
     pub x: usize,
     pub line: usize,
     pub crop_x: isize,
-    pub crop_y: usize
+    pub crop_y: usize,
 }
 
 /// Ticks of the monitor in one NOP (1us), NOPs in a line and lines in a
@@ -251,7 +271,7 @@ struct RasterBreakpoint {
     /// The line; `None`: every line.
     line: Option<usize>,
     /// In monitor ticks.
-    x: usize
+    x: usize,
 }
 
 impl RasterBreakpoint {
@@ -264,14 +284,15 @@ impl RasterBreakpoint {
                 let (before, after) = (before.linear(), after.linear());
                 if after >= before {
                     before < target && target <= after
-                }
-                else {
+                } else {
                     // A new frame started.
                     target > before || target <= after
                 }
-            },
-            None if after.line == before.line && after.x >= before.x => before.x < self.x && self.x <= after.x,
-            None => self.x > before.x || self.x <= after.x
+            }
+            None if after.line == before.line && after.x >= before.x => {
+                before.x < self.x && self.x <= after.x
+            }
+            None => self.x > before.x || self.x <= after.x,
         }
     }
 
@@ -290,7 +311,7 @@ impl RasterBreakpoint {
 #[derive(Clone, Debug)]
 struct NopCounter {
     t_states: u64,
-    running: bool
+    running: bool,
 }
 
 /// The server: owned by the emulation thread.
@@ -340,7 +361,7 @@ pub struct DebugServer {
     basic_target: Option<BasicTarget>,
     pending_basic: Option<PendingBasic>,
     /// Names of addresses, for the breakpoints and the history.
-    symbols: crate::symbols::SymbolTable
+    symbols: crate::symbols::SymbolTable,
 }
 
 /// AMSpiriT's default depth of `GET /api/history`.
@@ -349,20 +370,20 @@ const DEFAULT_HISTORY_SIZE: usize = 20;
 /// One SSE client: the events waiting to be written to it.
 struct SseClient {
     topics: Option<Vec<String>>,
-    queue: Arc<(Mutex<SseQueue>, Condvar)>
+    queue: Arc<(Mutex<SseQueue>, Condvar)>,
 }
 
 #[derive(Default)]
 struct SseQueue {
     events: VecDeque<String>,
-    closed: bool
+    closed: bool,
 }
 
 /// The Server-Sent Events clients, shared by the HTTP thread (which adds
 /// them) and the emulation thread (which publishes).
 #[derive(Clone, Default)]
 pub struct EventHub {
-    clients: Arc<Mutex<Vec<SseClient>>>
+    clients: Arc<Mutex<Vec<SseClient>>>,
 }
 
 /// AMSpiriT's limits: 8 clients, 32 queued events each (oldest dropped).
@@ -382,10 +403,15 @@ impl EventHub {
         clients.retain(|client| !client.queue.0.lock().unwrap().closed);
         let mut message = None;
         for client in clients.iter() {
-            if client.topics.as_ref().is_some_and(|topics| !topics.iter().any(|t| t == topic)) {
+            if client
+                .topics
+                .as_ref()
+                .is_some_and(|topics| !topics.iter().any(|t| t == topic))
+            {
                 continue;
             }
-            let message = message.get_or_insert_with(|| format!("event: {topic}\ndata: {data}\n\n"));
+            let message =
+                message.get_or_insert_with(|| format!("event: {topic}\ndata: {data}\n\n"));
             let (queue, ready) = &*client.queue;
             let mut queue = queue.lock().unwrap();
             queue.events.push_back(message.clone());
@@ -403,7 +429,10 @@ impl EventHub {
             return None;
         }
         let queue = Arc::new((Mutex::new(SseQueue::default()), Condvar::new()));
-        clients.push(SseClient { topics, queue: Arc::clone(&queue) });
+        clients.push(SseClient {
+            topics,
+            queue: Arc::clone(&queue),
+        });
         Some(queue)
     }
 }
@@ -411,7 +440,8 @@ impl EventHub {
 impl DebugServer {
     /// Listen on `127.0.0.1:port` (loopback only).
     pub fn start(port: u16) -> Result<Self, String> {
-        let server = tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| format!("debug server on port {port}: {e}"))?;
+        let server = tiny_http::Server::http(("127.0.0.1", port))
+            .map_err(|e| format!("debug server on port {port}: {e}"))?;
         let (sender, requests) = mpsc::channel();
         let debug_server = Self::with_requests(requests);
         let events = debug_server.events.clone();
@@ -456,7 +486,7 @@ impl DebugServer {
             basic_breakpoints: Default::default(),
             basic_target: None,
             pending_basic: None,
-            symbols: Default::default()
+            symbols: Default::default(),
         }
     }
 
@@ -485,7 +515,7 @@ impl DebugServer {
     pub fn set_frame(&mut self, frame: &image::RgbImage) {
         match &mut self.last_frame {
             Some(last) if last.dimensions() == frame.dimensions() => last.copy_from_slice(frame),
-            last => *last = Some(frame.clone())
+            last => *last = Some(frame.clone()),
         }
     }
 
@@ -525,7 +555,8 @@ impl DebugServer {
         // A step resumes for one instruction only: not a transition.
         if self.paused != self.reported_paused && !self.stepping {
             self.reported_paused = self.paused;
-            self.events.publish("pause", &json!({ "paused": self.paused }));
+            self.events
+                .publish("pause", &json!({ "paused": self.paused }));
         }
     }
 
@@ -555,7 +586,11 @@ impl DebugServer {
         }
         // The instruction about to be executed.
         let pc = motherboard.pc();
-        if !self.exec_breakpoints.is_empty() && self.exec_breakpoints.contains(&motherboard.physical_address(pc)) {
+        if !self.exec_breakpoints.is_empty()
+            && self
+                .exec_breakpoints
+                .contains(&motherboard.physical_address(pc))
+        {
             self.stop(motherboard, json!({ "kind": "exec" }));
         }
         for index in 0..self.advanced.len() {
@@ -563,18 +598,29 @@ impl DebugServer {
                 self.hit(index, None, motherboard);
             }
         }
-        if (!self.basic_breakpoints.is_empty() || self.basic_target.is_some()) && basic_program::at_statement(motherboard) {
+        if (!self.basic_breakpoints.is_empty() || self.basic_target.is_some())
+            && basic_program::at_statement(motherboard)
+        {
             self.basic_statement(motherboard);
         }
-        if self.pending_basic.as_ref().is_some_and(|p| motherboard.t_state_counter().value() >= p.at_t_states) {
+        if self
+            .pending_basic
+            .as_ref()
+            .is_some_and(|p| motherboard.t_state_counter().value() >= p.at_t_states)
+        {
             let pending = self.pending_basic.take().unwrap();
             // asked before the machine was ready: its error has no request left to answer
             if let Err(error) = self.load_basic(&pending.source, pending.run, motherboard) {
-                self.events.publish("basic_error", &json!({ "error": error }));
+                self.events
+                    .publish("basic_error", &json!({ "error": error }));
             }
         }
         if let (Some(before), Some(after)) = (self.previous_beam.take(), self.beam) {
-            if self.raster_breakpoints.iter().any(|brk| brk.passed(before, after)) {
+            if self
+                .raster_breakpoints
+                .iter()
+                .any(|brk| brk.passed(before, after))
+            {
                 self.stop(motherboard, json!({ "kind": "raster" }));
             }
         }
@@ -592,7 +638,11 @@ impl DebugServer {
     fn hit(&mut self, index: usize, access: Option<BusAccess>, motherboard: &Motherboard) {
         let brk = &mut self.advanced[index];
         if let Some(condition) = &brk.condition {
-            if !condition.holds(&MachineContext { motherboard, access, beam: self.beam }) {
+            if !condition.holds(&MachineContext {
+                motherboard,
+                access,
+                beam: self.beam,
+            }) {
                 return;
             }
         }
@@ -627,7 +677,7 @@ impl DebugServer {
                 }
                 merge(&mut event, info);
                 self.events.publish("watch", &event);
-            },
+            }
             RunMode::Count => {}
         }
     }
@@ -638,12 +688,15 @@ impl DebugServer {
         let counter = match (action, self.counters.get_mut(name)) {
             (_, Some(counter)) => counter,
             (CounterAction::Stop, None) => return,
-            (_, None) => self.counters.entry(name.to_owned()).or_insert(NopCounter { t_states: 0, running: false })
+            (_, None) => self.counters.entry(name.to_owned()).or_insert(NopCounter {
+                t_states: 0,
+                running: false,
+            }),
         };
         match action {
             CounterAction::Start => counter.running = true,
             CounterAction::Stop => counter.running = false,
-            CounterAction::Reset => counter.t_states = 0
+            CounterAction::Reset => counter.t_states = 0,
         }
     }
 
@@ -666,23 +719,29 @@ impl DebugServer {
     /// end of a step, at a run-to target.
     fn basic_statement(&mut self, motherboard: &Motherboard) {
         let state = BasicState::read(motherboard);
-        let Some(line) = state.line
-        else {
+        let Some(line) = state.line else {
             return; // direct mode
         };
         let reason = match self.basic_target {
             Some(BasicTarget::Statement) => Some("step"),
-            Some(BasicTarget::LineAfter(from)) if from != Some(line) || state.first_statement => Some("step"),
-            Some(BasicTarget::Line(target)) if target == line && state.first_statement => Some("runto"),
+            Some(BasicTarget::LineAfter(from)) if from != Some(line) || state.first_statement => {
+                Some("step")
+            }
+            Some(BasicTarget::Line(target)) if target == line && state.first_statement => {
+                Some("runto")
+            }
             Some(BasicTarget::Address(target)) if target == state.stmt_addr => Some("runto"),
-            _ if state.first_statement && self.basic_breakpoints.contains(&line) => Some("breakpoint"),
-            _ => None
+            _ if state.first_statement && self.basic_breakpoints.contains(&line) => {
+                Some("breakpoint")
+            }
+            _ => None,
         };
         if let Some(reason) = reason {
             self.basic_target = None;
             self.paused = true;
             self.last_stop = Some(motherboard.pc());
-            let mut event = json!({ "line": line, "addr": hex16(state.stmt_addr), "reason": reason });
+            let mut event =
+                json!({ "line": line, "addr": hex16(state.stmt_addr), "reason": reason });
             if !self.counters.is_empty() {
                 event["counters"] = self.counters_json();
             }
@@ -705,8 +764,13 @@ impl DebugServer {
         Value::Object(
             self.counters
                 .iter()
-                .map(|(name, counter)| (name.clone(), json!(counter.t_states / T_STATES_PER_NOP as u64)))
-                .collect()
+                .map(|(name, counter)| {
+                    (
+                        name.clone(),
+                        json!(counter.t_states / T_STATES_PER_NOP as u64),
+                    )
+                })
+                .collect(),
         )
     }
 
@@ -715,7 +779,10 @@ impl DebugServer {
         self.frames += 1;
         if self.frames.is_multiple_of(FRAME_EVENT_EVERY) && self.events.has_clients() {
             let mut event = registers_event(motherboard);
-            merge(&mut event, json!({ "fps": self.fps, "frame": self.frames, "paused": self.paused }));
+            merge(
+                &mut event,
+                json!({ "fps": self.fps, "frame": self.frames, "paused": self.paused }),
+            );
             self.events.publish("frame", &event);
         }
         let elapsed = self.fps_window.0.elapsed();
@@ -748,15 +815,19 @@ impl DebugServer {
         &mut self,
         request: &ApiRequest,
         motherboard: &mut Motherboard,
-        monitor: Option<&Monitor>
+        monitor: Option<&Monitor>,
     ) -> ApiResponse {
-        let Some(route) = ROUTES.iter().find(|route| route.path == request.path)
-        else {
+        let Some(route) = ROUTES.iter().find(|route| route.path == request.path) else {
             return ApiResponse::json(404, json!({ "error": "not found", "path": request.path }));
         };
         if !route.methods.contains(&request.method.as_str()) {
-            let mut response = ApiResponse::json(405, json!({ "error": "method not allowed", "allow": route.methods }));
-            response.headers.push(("Allow".to_owned(), route.methods.join(", ")));
+            let mut response = ApiResponse::json(
+                405,
+                json!({ "error": "method not allowed", "allow": route.methods }),
+            );
+            response
+                .headers
+                .push(("Allow".to_owned(), route.methods.join(", ")));
             return response;
         }
         let result = match (request.method.as_str(), request.path.as_str()) {
@@ -775,8 +846,10 @@ impl DebugServer {
             ("POST", "/api/step") => {
                 self.paused = false;
                 self.stepping = true;
-                Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
-            },
+                Ok(ApiResponse::ok(
+                    json!({ "ok": true, "cmd_seq": self.command() }),
+                ))
+            }
             ("GET", "/api/config") => Ok(ApiResponse::ok(json!({
                 "crtc_type": motherboard.crtc().crtc_type() as u8,
                 "paused": self.paused,
@@ -795,17 +868,24 @@ impl DebugServer {
             ("GET", "/api/doc") => doc(request),
             ("POST", "/api/quit") => {
                 self.quit = true;
-                Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
-            },
+                Ok(ApiResponse::ok(
+                    json!({ "ok": true, "cmd_seq": self.command() }),
+                ))
+            }
             ("GET", "/api/history") => self.history_list(request, motherboard),
             ("GET", "/api/screenshot") => self.screenshot(request, monitor),
             ("POST", "/api/media") => self.media(request, motherboard),
-            ("GET", "/api/snapshot") => crate::snapshot::save_sna_bytes(motherboard).map_err(ApiError::new).map(|body| ApiResponse {
-                status: 200,
-                content_type: "application/octet-stream",
-                body,
-                headers: vec![("Content-Disposition".into(), "attachment; filename=\"bemu.sna\"".into())]
-            }),
+            ("GET", "/api/snapshot") => crate::snapshot::save_sna_bytes(motherboard)
+                .map_err(ApiError::new)
+                .map(|body| ApiResponse {
+                    status: 200,
+                    content_type: "application/octet-stream",
+                    body,
+                    headers: vec![(
+                        "Content-Disposition".into(),
+                        "attachment; filename=\"bemu.sna\"".into(),
+                    )],
+                }),
             ("GET", "/api/memmap") => Ok(ApiResponse::ok(memmap(motherboard))),
             ("GET", "/api/crtc") => Ok(ApiResponse::ok(self.crtc(motherboard))),
             ("GET", "/api/ga") => Ok(ApiResponse::ok(ga(motherboard))),
@@ -822,32 +902,55 @@ impl DebugServer {
             ("GET", "/api/basic_export") => Ok(ApiResponse {
                 status: 200,
                 content_type: "text/plain; charset=utf-8",
-                body: basic_program::program(motherboard).map(|p| p.to_string()).unwrap_or_default().into_bytes(),
-                headers: Vec::new()
+                body: basic_program::program(motherboard)
+                    .map(|p| p.to_string())
+                    .unwrap_or_default()
+                    .into_bytes(),
+                headers: Vec::new(),
             }),
             ("GET", "/api/basic_listing") => basic_listing(motherboard),
             ("POST", "/api/basic_step") => {
                 let target = match request.param("mode") {
                     Some("line") => BasicTarget::LineAfter(BasicState::read(motherboard).line),
                     None | Some("") | Some("stmt") | Some("statement") => BasicTarget::Statement,
-                    Some(other) => return ApiError::field("mode", format!("unknown mode \"{other}\": line or statement")).response()
+                    Some(other) => {
+                        return ApiError::field(
+                            "mode",
+                            format!("unknown mode \"{other}\": line or statement"),
+                        )
+                        .response()
+                    }
                 };
                 Ok(self.run_basic_to(target))
-            },
-            ("GET", "/api/basic_bp") => Ok(ApiResponse::ok(json!({ "lines": self.basic_breakpoints }))),
+            }
+            ("GET", "/api/basic_bp") => {
+                Ok(ApiResponse::ok(json!({ "lines": self.basic_breakpoints })))
+            }
             ("POST", "/api/basic_bp") => self.set_basic_breakpoints(request),
             ("POST", "/api/basic_runto") => {
-                let number = |name: &str| request.param(name).map(|v| parse_int(v).filter(|v| (0..=0xffff).contains(v)));
+                let number = |name: &str| {
+                    request
+                        .param(name)
+                        .map(|v| parse_int(v).filter(|v| (0..=0xffff).contains(v)))
+                };
                 match (number("line"), number("addr")) {
                     (Some(Some(line)), _) => Ok(self.run_basic_to(BasicTarget::Line(line as u16))),
-                    (None, Some(Some(addr))) => Ok(self.run_basic_to(BasicTarget::Address(addr as u16))),
-                    (Some(None), _) => Err(ApiError::field("line", "line must be a number from 0 to 65535")),
-                    (None, Some(None)) => Err(ApiError::field("addr", "addr must be a number from 0 to 65535")),
-                    (None, None) => Err(ApiError::new("missing ?line= or ?addr="))
+                    (None, Some(Some(addr))) => {
+                        Ok(self.run_basic_to(BasicTarget::Address(addr as u16)))
+                    }
+                    (Some(None), _) => Err(ApiError::field(
+                        "line",
+                        "line must be a number from 0 to 65535",
+                    )),
+                    (None, Some(None)) => Err(ApiError::field(
+                        "addr",
+                        "addr must be a number from 0 to 65535",
+                    )),
+                    (None, None) => Err(ApiError::new("missing ?line= or ?addr=")),
                 }
-            },
+            }
             ("DELETE", "/api/counters") => self.delete_counters(request),
-            _ => unreachable!("{} {}", request.method, request.path)
+            _ => unreachable!("{} {}", request.method, request.path),
         };
         result.unwrap_or_else(ApiError::response)
     }
@@ -905,7 +1008,9 @@ impl DebugServer {
     // ------------------------------------------------------------- beam
 
     fn beam_position(&self, request: &ApiRequest) -> ApiResult {
-        let beam = self.beam.ok_or_else(|| ApiError::new("no beam position: the emulation is not driving a monitor"))?;
+        let beam = self.beam.ok_or_else(|| {
+            ApiError::new("no beam position: the emulation is not driving a monitor")
+        })?;
         let crop = request.param("crop").is_some_and(|v| v != "0");
         let mut value = beam.json();
         if crop {
@@ -913,7 +1018,10 @@ impl DebugServer {
             value["y"] = json!(beam.line as isize - beam.crop_y as isize);
         }
         merge(&mut value, beam_crop(beam));
-        merge(&mut value, json!({ "nops_per_line": NOPS_PER_LINE, "nops_per_frame": NOPS_PER_LINE * LINES_PER_FRAME }));
+        merge(
+            &mut value,
+            json!({ "nops_per_line": NOPS_PER_LINE, "nops_per_frame": NOPS_PER_LINE * LINES_PER_FRAME }),
+        );
         Ok(ApiResponse::ok(value))
     }
 
@@ -934,7 +1042,9 @@ impl DebugServer {
                 Some(text) => parse_int(text)
                     .filter(|&v| (0..=max as i64).contains(&v))
                     .map(|v| Some(v as usize))
-                    .ok_or_else(|| ApiError::field(name, format!("{name} must be a number from 0 to {max}")))
+                    .ok_or_else(|| {
+                        ApiError::field(name, format!("{name} must be a number from 0 to {max}"))
+                    }),
             }
         };
         let enable = param("enable", 1)?.unwrap_or(1) == 1;
@@ -947,21 +1057,32 @@ impl DebugServer {
         let frame_nop = param("frame_nop", NOPS_PER_LINE * LINES_PER_FRAME - 1)?;
 
         let breakpoint = if let Some(frame_nop) = frame_nop {
-            Some(RasterBreakpoint { line: Some(frame_nop / NOPS_PER_LINE), x: frame_nop % NOPS_PER_LINE * BEAM_TICKS_PER_NOP })
-        }
-        else if nop.is_some() || line.is_some() {
-            Some(RasterBreakpoint { line, x: nop.unwrap_or(0) * BEAM_TICKS_PER_NOP })
-        }
-        else if x.is_some() || y.is_some() {
+            Some(RasterBreakpoint {
+                line: Some(frame_nop / NOPS_PER_LINE),
+                x: frame_nop % NOPS_PER_LINE * BEAM_TICKS_PER_NOP,
+            })
+        } else if nop.is_some() || line.is_some() {
+            Some(RasterBreakpoint {
+                line,
+                x: nop.unwrap_or(0) * BEAM_TICKS_PER_NOP,
+            })
+        } else if x.is_some() || y.is_some() {
             let (dx, dy) = match (crop, self.beam) {
                 (true, Some(beam)) => (beam.crop_x, beam.crop_y as isize),
-                (true, None) => return Err(ApiError::field("crop", "no beam position to crop against yet")),
-                (false, _) => (0, 0)
+                (true, None) => {
+                    return Err(ApiError::field(
+                        "crop",
+                        "no beam position to crop against yet",
+                    ))
+                }
+                (false, _) => (0, 0),
             };
             let x = (x.unwrap_or(0) as isize + dx).max(0) as usize;
-            Some(RasterBreakpoint { line: y.map(|y| (y as isize + dy).max(0) as usize), x })
-        }
-        else {
+            Some(RasterBreakpoint {
+                line: y.map(|y| (y as isize + dy).max(0) as usize),
+                x,
+            })
+        } else {
             None
         };
         if !add || !enable {
@@ -969,8 +1090,12 @@ impl DebugServer {
         }
         match (enable, breakpoint) {
             (true, Some(breakpoint)) => self.raster_breakpoints.push(breakpoint),
-            (true, None) if !add => {},
-            (true, None) => return Err(ApiError::new("add=1 needs a position: x/y, line/nop or frame_nop")),
+            (true, None) if !add => {}
+            (true, None) => {
+                return Err(ApiError::new(
+                    "add=1 needs a position: x/y, line/nop or frame_nop",
+                ))
+            }
             (false, _) => {}
         }
         let mut reply = self.list_raster_breakpoints();
@@ -988,20 +1113,35 @@ impl DebugServer {
 
     fn set_basic_breakpoints(&mut self, request: &ApiRequest) -> ApiResult {
         let mut lines = std::collections::BTreeSet::new();
-        for entry in request.text().split(',').map(str::trim).filter(|e| !e.is_empty()) {
-            let line = entry
-                .parse::<u16>()
-                .map_err(|_| ApiError::new(format!("{entry}: expected a BASIC line number (0-65535)")))?;
+        for entry in request
+            .text()
+            .split(',')
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+        {
+            let line = entry.parse::<u16>().map_err(|_| {
+                ApiError::new(format!("{entry}: expected a BASIC line number (0-65535)"))
+            })?;
             lines.insert(line);
         }
         self.basic_breakpoints = lines;
-        Ok(ApiResponse::ok(json!({ "ok": true, "lines": self.basic_breakpoints, "cmd_seq": self.command() })))
+        Ok(ApiResponse::ok(
+            json!({ "ok": true, "lines": self.basic_breakpoints, "cmd_seq": self.command() }),
+        ))
     }
 
     /// `POST /api/basic[?reset=1][&run=1]`: after a reset, the program is
     /// loaded once the firmware booted.
-    fn basic_load_request(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let flag = |name: &str| request.param(name).is_some_and(|v| v != "0" && !v.is_empty());
+    fn basic_load_request(
+        &mut self,
+        request: &ApiRequest,
+        motherboard: &mut Motherboard,
+    ) -> ApiResult {
+        let flag = |name: &str| {
+            request
+                .param(name)
+                .is_some_and(|v| v != "0" && !v.is_empty())
+        };
         let source = request.text();
         // Checked now, to answer 400 rather than fail later.
         cpclib::basic::BasicProgram::parse(&source)
@@ -1012,28 +1152,38 @@ impl DebugServer {
             self.pending_basic = Some(PendingBasic {
                 source,
                 run: flag("run"),
-                at_t_states: motherboard.t_state_counter().value() + BASIC_BOOT_T_STATES
+                at_t_states: motherboard.t_state_counter().value() + BASIC_BOOT_T_STATES,
             });
-        }
-        else if motherboard.t_state_counter().value() < BASIC_BOOT_T_STATES {
+        } else if motherboard.t_state_counter().value() < BASIC_BOOT_T_STATES {
             // Just powered on, the firmware still booting: BASIC would clear
             // the program as it starts. Loaded once it is up, like after a
             // reset (a debugger that starts the emulator injects at once).
-            self.pending_basic = Some(PendingBasic { source, run: flag("run"), at_t_states: BASIC_BOOT_T_STATES });
-        }
-        else {
+            self.pending_basic = Some(PendingBasic {
+                source,
+                run: flag("run"),
+                at_t_states: BASIC_BOOT_T_STATES,
+            });
+        } else {
             self.load_basic(&source, flag("run"), motherboard)
                 .map_err(|e| ApiError::new(format!("BASIC inject failed: {e}")))?;
         }
-        Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
+        Ok(ApiResponse::ok(
+            json!({ "ok": true, "cmd_seq": self.command() }),
+        ))
     }
 
-    fn load_basic(&mut self, source: &str, run: bool, motherboard: &mut Motherboard) -> Result<usize, String> {
+    fn load_basic(
+        &mut self,
+        source: &str,
+        run: bool,
+        motherboard: &mut Motherboard,
+    ) -> Result<usize, String> {
         let size = basic_program::load(motherboard, source)?;
         self.ram_seq += 1;
         if run {
             let layout = motherboard.keyboard_layout();
-            self.typing.extend("RUN\n".chars().filter_map(|c| layout.keys_of_char(c)));
+            self.typing
+                .extend("RUN\n".chars().filter_map(|c| layout.keys_of_char(c)));
         }
         Ok(size)
     }
@@ -1057,27 +1207,51 @@ impl DebugServer {
         let body = parse_body(&request.text())?;
         let name = match find_key(&body, "name") {
             Some(Value::String(name)) if !name.is_empty() => name.clone(),
-            _ => return Err(ApiError::field("name", "missing field \"name\": the counter's name"))
+            _ => {
+                return Err(ApiError::field(
+                    "name",
+                    "missing field \"name\": the counter's name",
+                ))
+            }
         };
         let action = match find_key(&body, "action") {
             None => "create",
             Some(Value::String(action)) => action.as_str(),
-            Some(_) => return Err(ApiError::field("action", "field \"action\" must be a string"))
+            Some(_) => {
+                return Err(ApiError::field(
+                    "action",
+                    "field \"action\" must be a string",
+                ))
+            }
         };
         let running = match find_key(&body, "running") {
             None => true,
             Some(Value::Bool(b)) => *b,
-            Some(_) => return Err(ApiError::field("running", "field \"running\" must be a boolean"))
+            Some(_) => {
+                return Err(ApiError::field(
+                    "running",
+                    "field \"running\" must be a boolean",
+                ))
+            }
         };
         // Count from the instruction about to run.
         self.count_nops(motherboard);
         match action {
             "create" => {
                 if self.counters.contains_key(&name) {
-                    return Err(ApiError::field("name", format!("counter \"{name}\" exists (reset or delete it)")));
+                    return Err(ApiError::field(
+                        "name",
+                        format!("counter \"{name}\" exists (reset or delete it)"),
+                    ));
                 }
-                self.counters.insert(name, NopCounter { t_states: 0, running });
-            },
+                self.counters.insert(
+                    name,
+                    NopCounter {
+                        t_states: 0,
+                        running,
+                    },
+                );
+            }
             "reset" | "start" | "stop" => {
                 let counter = self
                     .counters
@@ -1086,11 +1260,14 @@ impl DebugServer {
                 match action {
                     "reset" => counter.t_states = 0,
                     "start" => counter.running = true,
-                    _ => counter.running = false
+                    _ => counter.running = false,
                 }
-            },
+            }
             other => {
-                return Err(ApiError::field("action", format!("unknown action \"{other}\": create, reset, start or stop")))
+                return Err(ApiError::field(
+                    "action",
+                    format!("unknown action \"{other}\": create, reset, start or stop"),
+                ))
             }
         }
         let mut reply = self.list_counters();
@@ -1116,13 +1293,31 @@ impl DebugServer {
 
     fn set_z80(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let body = parse_body(&request.text())?;
-        let words = [("PC", Reg16::Pc), ("SP", Reg16::Sp), ("IX", Reg16::Ix), ("IY", Reg16::Iy)];
+        let words = [
+            ("PC", Reg16::Pc),
+            ("SP", Reg16::Sp),
+            ("IX", Reg16::Ix),
+            ("IY", Reg16::Iy),
+        ];
         let bytes = [
-            ("A", Reg8::A), ("F", Reg8::F), ("B", Reg8::B), ("C", Reg8::C),
-            ("D", Reg8::D), ("E", Reg8::E), ("H", Reg8::H), ("L", Reg8::L),
-            ("A2", Reg8::A2), ("F2", Reg8::F2), ("B2", Reg8::B2), ("C2", Reg8::C2),
-            ("D2", Reg8::D2), ("E2", Reg8::E2), ("H2", Reg8::H2), ("L2", Reg8::L2),
-            ("I", Reg8::I), ("R", Reg8::R)
+            ("A", Reg8::A),
+            ("F", Reg8::F),
+            ("B", Reg8::B),
+            ("C", Reg8::C),
+            ("D", Reg8::D),
+            ("E", Reg8::E),
+            ("H", Reg8::H),
+            ("L", Reg8::L),
+            ("A2", Reg8::A2),
+            ("F2", Reg8::F2),
+            ("B2", Reg8::B2),
+            ("C2", Reg8::C2),
+            ("D2", Reg8::D2),
+            ("E2", Reg8::E2),
+            ("H2", Reg8::H2),
+            ("L2", Reg8::L2),
+            ("I", Reg8::I),
+            ("R", Reg8::R),
         ];
         // Validate everything before changing anything.
         let mut word_values = Vec::new();
@@ -1140,8 +1335,15 @@ impl DebugServer {
         let iff1 = int_field(&body, "IFF1", 0, 1)?;
         let iff2 = int_field(&body, "IFF2", 0, 1)?;
         let im = int_field(&body, "IM", 0, 2)?;
-        if word_values.is_empty() && byte_values.is_empty() && iff1.is_none() && iff2.is_none() && im.is_none() {
-            return Err(ApiError::new("no recognised field: expected Z80 register names (PC, A, IFF1, IM...)"));
+        if word_values.is_empty()
+            && byte_values.is_empty()
+            && iff1.is_none()
+            && iff2.is_none()
+            && im.is_none()
+        {
+            return Err(ApiError::new(
+                "no recognised field: expected Z80 register names (PC, A, IFF1, IM...)",
+            ));
         }
 
         let cpu = motherboard.cpu_mut();
@@ -1153,12 +1355,23 @@ impl DebugServer {
         }
         if iff1.is_some() || iff2.is_some() {
             let (current1, current2) = (cpu.iff1(), cpu.iff2());
-            cpu.set_iffs(iff1.map_or(current1, |v| v == 1), iff2.map_or(current2, |v| v == 1));
+            cpu.set_iffs(
+                iff1.map_or(current1, |v| v == 1),
+                iff2.map_or(current2, |v| v == 1),
+            );
         }
         if let Some(im) = im {
-            cpu.set_im([InterruptMode::Mode0, InterruptMode::Mode1, InterruptMode::Mode2][im as usize]);
+            cpu.set_im(
+                [
+                    InterruptMode::Mode0,
+                    InterruptMode::Mode1,
+                    InterruptMode::Mode2,
+                ][im as usize],
+            );
         }
-        Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
+        Ok(ApiResponse::ok(
+            json!({ "ok": true, "cmd_seq": self.command() }),
+        ))
     }
 
     fn write_ram(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
@@ -1168,28 +1381,51 @@ impl DebugServer {
         let bank = int_field(&body, "bank", 0, bank_count - 1)?.unwrap_or(0) as usize;
         let data = match find_key(&body, "data") {
             None => Vec::new(),
-            Some(Value::String(text)) => parse_hex(text).ok_or_else(|| ApiError::field("data", "field \"data\" must be a hex string"))?,
-            Some(_) => return Err(ApiError::field("data", "field \"data\" must be a hex string"))
+            Some(Value::String(text)) => parse_hex(text)
+                .ok_or_else(|| ApiError::field("data", "field \"data\" must be a hex string"))?,
+            Some(_) => {
+                return Err(ApiError::field(
+                    "data",
+                    "field \"data\" must be a hex string",
+                ))
+            }
         };
         let exec = match find_key(&body, "exec") {
             None => false,
             Some(Value::Bool(b)) => *b,
-            Some(_) => return Err(ApiError::field("exec", "field \"exec\" must be a boolean"))
+            Some(_) => return Err(ApiError::field("exec", "field \"exec\" must be a boolean")),
         };
         let entry = int_field(&body, "entry", 0, 0xffff)?;
         if data.is_empty() && !exec {
-            return Err(ApiError::new("nothing to do: no \"data\" to write and no \"exec\""));
+            return Err(ApiError::new(
+                "nothing to do: no \"data\" to write and no \"exec\"",
+            ));
         }
         let addr = match (addr, data.is_empty()) {
             (Some(addr), _) => addr as usize,
             (None, true) => 0,
-            (None, false) => return Err(ApiError::field("addr", "missing field \"addr\": where to write \"data\""))
+            (None, false) => {
+                return Err(ApiError::field(
+                    "addr",
+                    "missing field \"addr\": where to write \"data\"",
+                ))
+            }
         };
         for (i, &byte) in data.iter().enumerate() {
             // An offset past 0x3FFF carries into the next banks.
             let linear = bank * 0x4000 + addr + i;
-            if !motherboard.write_bank_byte((linear / 0x4000) as u16, (linear % 0x4000) as u16, byte) {
-                return Err(ApiError::field("data", format!("the write runs past the last RAM bank (B{:02X})", bank_count - 1)));
+            if !motherboard.write_bank_byte(
+                (linear / 0x4000) as u16,
+                (linear % 0x4000) as u16,
+                byte,
+            ) {
+                return Err(ApiError::field(
+                    "data",
+                    format!(
+                        "the write runs past the last RAM bank (B{:02X})",
+                        bank_count - 1
+                    ),
+                ));
             }
         }
         if exec {
@@ -1197,15 +1433,20 @@ impl DebugServer {
             motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(target);
         }
         self.ram_seq += 1;
-        Ok(ApiResponse::ok(json!({ "ok": true, "seq": self.ram_seq, "cmd_seq": self.command() })))
+        Ok(ApiResponse::ok(
+            json!({ "ok": true, "seq": self.ram_seq, "cmd_seq": self.command() }),
+        ))
     }
 
     fn exec(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let body = parse_body(&request.text())?;
-        let addr = int_field(&body, "addr", 0, 0xffff)?.ok_or_else(|| ApiError::field("addr", "missing field \"addr\": the new PC"))?;
+        let addr = int_field(&body, "addr", 0, 0xffff)?
+            .ok_or_else(|| ApiError::field("addr", "missing field \"addr\": the new PC"))?;
         motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr as u16);
         self.ram_seq += 1;
-        Ok(ApiResponse::ok(json!({ "ok": true, "seq": self.ram_seq, "cmd_seq": self.command() })))
+        Ok(ApiResponse::ok(
+            json!({ "ok": true, "seq": self.ram_seq, "cmd_seq": self.command() }),
+        ))
     }
 
     fn config(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
@@ -1214,7 +1455,10 @@ impl DebugServer {
             match find_key(&body, name) {
                 None => Ok(None),
                 Some(Value::Bool(b)) => Ok(Some(*b)),
-                Some(_) => Err(ApiError::field(name, format!("field \"{name}\" must be a boolean")))
+                Some(_) => Err(ApiError::field(
+                    name,
+                    format!("field \"{name}\" must be a boolean"),
+                )),
             }
         };
         let paused = bool_field("paused")?;
@@ -1235,8 +1479,7 @@ impl DebugServer {
             // Soft: the reset button (RAM kept). Hard: power off and on.
             if hard {
                 motherboard.power_cycle();
-            }
-            else {
+            } else {
                 motherboard.restart();
             }
             self.events.publish("reset", &json!({ "hard": hard }));
@@ -1244,7 +1487,9 @@ impl DebugServer {
         if let Some(paused) = paused {
             self.paused = paused;
         }
-        Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
+        Ok(ApiResponse::ok(
+            json!({ "ok": true, "cmd_seq": self.command() }),
+        ))
     }
 
     /// `POST /api/z80_bp`: CPU addresses are resolved against the live
@@ -1260,13 +1505,16 @@ impl DebugServer {
                 Some((bank, offset)) if bank.starts_with(['B', 'b', 'C', 'c']) => {
                     let decimal = bank.starts_with(['C', 'c']);
                     if decimal {
-                        warnings.push(format!("{entry}: the Cnn: form is deprecated, use Bnn: (hex bank)"));
+                        warnings.push(format!(
+                            "{entry}: the Cnn: form is deprecated, use Bnn: (hex bank)"
+                        ));
                     }
                     let bank = u32::from_str_radix(&bank[1..], if decimal { 10 } else { 16 }).ok();
                     let offset = u32::from_str_radix(offset.trim_start_matches("0x"), 16).ok();
-                    let (Some(bank), Some(offset)) = (bank, offset)
-                    else {
-                        return Err(ApiError::new(format!("{entry}: expected Bnn:hhhh (hex bank, hex offset)")));
+                    let (Some(bank), Some(offset)) = (bank, offset) else {
+                        return Err(ApiError::new(format!(
+                            "{entry}: expected Bnn:hhhh (hex bank, hex offset)"
+                        )));
                     };
                     let linear = bank as u64 * 0x4000 + offset as u64;
                     let bank = linear / 0x4000;
@@ -1276,8 +1524,11 @@ impl DebugServer {
                             motherboard.physical_bank_count() - 1
                         )));
                     }
-                    PhysicalAddress::Ram { bank: bank as u16, offset: (linear % 0x4000) as u16 }
-                },
+                    PhysicalAddress::Ram {
+                        bank: bank as u16,
+                        offset: (linear % 0x4000) as u16,
+                    }
+                }
                 _ => {
                     let address = parse_int(entry)
                         .filter(|v| (0..=0xffff).contains(v))
@@ -1304,7 +1555,11 @@ impl DebugServer {
 
     /// `GET /api/breakpoints` (extension).
     fn list_breakpoints(&self) -> Value {
-        let mut exec: Vec<String> = self.exec_breakpoints.iter().map(|l| location_name(*l)).collect();
+        let mut exec: Vec<String> = self
+            .exec_breakpoints
+            .iter()
+            .map(|l| location_name(*l))
+            .collect();
         exec.sort();
         json!({
             "z80_bp": exec,
@@ -1319,32 +1574,51 @@ impl DebugServer {
     fn add_breakpoint(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let body = parse_body(&request.text())?;
         let brk = match find_key(&body, "remu") {
-            Some(Value::String(text)) => AdvancedBreakpoint::parse_remu(text).map_err(|e| ApiError::field("remu", e))?,
+            Some(Value::String(text)) => {
+                AdvancedBreakpoint::parse_remu(text).map_err(|e| ApiError::field("remu", e))?
+            }
             Some(_) => return Err(ApiError::field("remu", "field \"remu\" must be a string")),
-            None => breakpoint_of_json(&body)?
+            None => breakpoint_of_json(&body)?,
         };
         self.advanced.push(brk);
         motherboard.watch_bus(self.watches_bus());
-        Ok(ApiResponse::ok(json!({ "ok": true, "index": self.advanced.len() - 1, "cmd_seq": self.command() })))
+        Ok(ApiResponse::ok(
+            json!({ "ok": true, "index": self.advanced.len() - 1, "cmd_seq": self.command() }),
+        ))
     }
 
     /// `DELETE /api/breakpoints[?index=N]` (extension): one, or all.
-    fn remove_breakpoints(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
+    fn remove_breakpoints(
+        &mut self,
+        request: &ApiRequest,
+        motherboard: &mut Motherboard,
+    ) -> ApiResult {
         match request.query.iter().find(|(k, _)| k == "index") {
             Some((_, index)) => {
                 let index = parse_int(index)
                     .filter(|i| (0..self.advanced.len() as i64).contains(i))
-                    .ok_or_else(|| ApiError::field("index", "parameter \"index\" must name an existing breakpoint"))?;
+                    .ok_or_else(|| {
+                        ApiError::field(
+                            "index",
+                            "parameter \"index\" must name an existing breakpoint",
+                        )
+                    })?;
                 self.advanced.remove(index as usize);
-            },
-            None => self.advanced.clear()
+            }
+            None => self.advanced.clear(),
         }
         motherboard.watch_bus(self.watches_bus());
-        Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
+        Ok(ApiResponse::ok(
+            json!({ "ok": true, "cmd_seq": self.command() }),
+        ))
     }
 
     /// Breakpoints read from elsewhere (e.g. a snapshot's chunks).
-    pub fn add_advanced_breakpoint(&mut self, brk: AdvancedBreakpoint, motherboard: &mut Motherboard) {
+    pub fn add_advanced_breakpoint(
+        &mut self,
+        brk: AdvancedBreakpoint,
+        motherboard: &mut Motherboard,
+    ) {
         self.advanced.push(brk);
         motherboard.watch_bus(self.watches_bus());
     }
@@ -1356,12 +1630,17 @@ impl DebugServer {
 
     /// `GET /api/symbols` (extension): `[{name, address}]`, by address.
     fn list_symbols(&self) -> Value {
-        json!(self.symbols.iter().map(|(name, address)| json!({ "name": name, "address": address })).collect::<Vec<_>>())
+        json!(self
+            .symbols
+            .iter()
+            .map(|(name, address)| json!({ "name": name, "address": address }))
+            .collect::<Vec<_>>())
     }
 
     /// An execution breakpoint on a CPU address, resolved now.
     pub fn add_exec_breakpoint(&mut self, address: u16, motherboard: &Motherboard) {
-        self.exec_breakpoints.insert(motherboard.physical_address(address));
+        self.exec_breakpoints
+            .insert(motherboard.physical_address(address));
     }
 
     /// `GET /api/history[?n=N]`: oldest first.
@@ -1370,7 +1649,9 @@ impl DebugServer {
             None => self.history.len(),
             Some(text) => parse_int(text)
                 .filter(|n| (1..=100_000).contains(n))
-                .ok_or_else(|| ApiError::field("n", "parameter \"n\" must be between 1 and 100000"))? as usize
+                .ok_or_else(|| {
+                    ApiError::field("n", "parameter \"n\" must be between 1 and 100000")
+                })? as usize,
         };
         let hex = |bytes: [u8; 4]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
         let entries: Vec<Value> = self
@@ -1404,30 +1685,39 @@ impl DebugServer {
                 None | Some("") => Ok(default),
                 Some("0") => Ok(false),
                 Some("1") => Ok(true),
-                Some(_) => Err(ApiError::field(name, format!("{name} must be 0 or 1")))
+                Some(_) => Err(ApiError::field(name, format!("{name} must be 0 or 1"))),
             }
         };
         let crop = flag("crop", true)?;
         let live = flag("live", self.paused)?;
         let alone = flag("full", true)?;
-        let no_frame = || Ok(ApiResponse::json(503, json!({ "error": "no frame available" })));
+        let no_frame = || {
+            Ok(ApiResponse::json(
+                503,
+                json!({ "error": "no frame available" }),
+            ))
+        };
 
-        let settled = if crop { self.last_frame.as_ref() } else { monitor.and_then(Monitor::full_frame) };
+        let settled = if crop {
+            self.last_frame.as_ref()
+        } else {
+            monitor.and_then(Monitor::full_frame)
+        };
         let drawing = match (live, monitor) {
             (true, Some(monitor)) if crop => Some(monitor.image_in_progress()),
             (true, Some(monitor)) => monitor.full_frame_in_progress(),
-            _ => None
+            _ => None,
         };
         if !crop && monitor.and_then(Monitor::full_frame_in_progress).is_none() {
             return Ok(ApiResponse::json(
                 503,
-                json!({ "error": "whole frames are not kept here (crop=0 needs the emulator's monitor)" })
+                json!({ "error": "whole frames are not kept here (crop=0 needs the emulator's monitor)" }),
             ));
         }
         // Where the beam is in the returned picture: what is drawn so far.
         let (origin_x, origin_y) = match (crop, self.beam) {
             (true, Some(beam)) => (beam.crop_x, beam.crop_y as isize),
-            _ => (0, 0)
+            _ => (0, 0),
         };
         let image = match drawing {
             Some(drawing) if alone || settled.is_none() => drawing.clone(),
@@ -1437,13 +1727,13 @@ impl DebugServer {
                     drawing,
                     settled.unwrap(),
                     beam.line as isize - origin_y,
-                    beam.x as isize - origin_x
+                    beam.x as isize - origin_x,
                 )
-            },
+            }
             None => match settled {
                 Some(settled) => settled.clone(),
-                None => return no_frame()
-            }
+                None => return no_frame(),
+            },
         };
 
         let mut png = std::io::Cursor::new(Vec::new());
@@ -1455,7 +1745,7 @@ impl DebugServer {
             ("X-Crop-W", width.to_string()),
             ("X-Crop-H", height.to_string()),
             ("X-Crop-X", origin_x.to_string()),
-            ("X-Crop-Y", origin_y.to_string())
+            ("X-Crop-Y", origin_y.to_string()),
         ];
         if let Some(beam) = self.beam {
             headers.push(("X-Beam-X", beam.x.to_string()));
@@ -1465,7 +1755,10 @@ impl DebugServer {
             status: 200,
             content_type: "image/png",
             body: png.into_inner(),
-            headers: headers.into_iter().map(|(name, value)| (name.to_owned(), value)).collect()
+            headers: headers
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value))
+                .collect(),
         })
     }
 
@@ -1479,23 +1772,34 @@ impl DebugServer {
     fn media(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let bytes = &request.body;
         if bytes.is_empty() {
-            return Err(ApiError::new("empty body: expected the raw media file bytes"));
+            return Err(ApiError::new(
+                "empty body: expected the raw media file bytes",
+            ));
         }
         let name = request.param("name").unwrap_or("");
         let drive = match request.param("drive") {
             None | Some("0") => crate::fdc::FdcDrive::A,
             Some("1") => crate::fdc::FdcDrive::B,
-            Some(_) => return Err(ApiError::field("drive", "parameter \"drive\" must be 0 or 1"))
+            Some(_) => {
+                return Err(ApiError::field(
+                    "drive",
+                    "parameter \"drive\" must be 0 or 1",
+                ))
+            }
         };
         if let Some(crtc) = request.param("crtc") {
             if !matches!(crtc, "keep" | "sna") {
-                return Err(ApiError::field("crtc", "parameter \"crtc\" must be one of keep, sna"));
+                return Err(ApiError::field(
+                    "crtc",
+                    "parameter \"crtc\" must be one of keep, sna",
+                ));
             }
         }
         let lower_name = name.to_ascii_lowercase();
         let mut reply = json!({ "ok": true });
         if bytes.starts_with(b"MV - SNA") {
-            let breakpoints = crate::snapshot::load_sna_bytes(motherboard, bytes).map_err(ApiError::new)?;
+            let breakpoints =
+                crate::snapshot::load_sna_bytes(motherboard, bytes).map_err(ApiError::new)?;
             for brk in &breakpoints.exec {
                 self.add_exec_breakpoint(brk.address, motherboard);
             }
@@ -1509,28 +1813,32 @@ impl DebugServer {
             if !breakpoints.ignored.is_empty() {
                 reply["warnings"] = json!(breakpoints.ignored);
             }
-        }
-        else if bytes.starts_with(b"MV - CPC")
+        } else if bytes.starts_with(b"MV - CPC")
             || bytes.starts_with(b"EXTENDED CPC DSK")
             || bytes.starts_with(b"HXCPICFE")
             || bytes.starts_with(b"HXCHFEV3")
-            || (crate::disc_image::is_archive(bytes) && [".zip", ".7z", ".gz", ".tgz"].iter().any(|ext| crate::disc_image::split_disc_spec(name).0.to_ascii_lowercase().ends_with(ext)))
+            || (crate::disc_image::is_archive(bytes)
+                && [".zip", ".7z", ".gz", ".tgz"].iter().any(|ext| {
+                    crate::disc_image::split_disc_spec(name)
+                        .0
+                        .to_ascii_lowercase()
+                        .ends_with(ext)
+                }))
         {
             // a DSK, an HFE, or a zip archive holding one (`name` may be `games.zip#side b.dsk`)
             let (file, entry) = crate::disc_image::split_disc_spec(name);
-            let image = crate::disc_image::load_disc_bytes(bytes, file, entry).map_err(ApiError::new)?;
+            let image =
+                crate::disc_image::load_disc_bytes(bytes, file, entry).map_err(ApiError::new)?;
             motherboard.insert_disc(drive, Some(image));
             reply["media"] = json!("dsk");
-        }
-        else if bytes.starts_with(b"ZXTape!") {
+        } else if bytes.starts_with(b"ZXTape!") {
             let tape = crate::tape::Tape::from_cdt(bytes).map_err(ApiError::new)?;
             if !tape.notes.is_empty() {
                 reply["warnings"] = json!(tape.notes);
             }
             motherboard.insert_tape(Some(tape));
             reply["media"] = json!("cdt");
-        }
-        else if lower_name.ends_with(".bin") || lower_name.ends_with(".amsdos") {
+        } else if lower_name.ends_with(".bin") || lower_name.ends_with(".amsdos") {
             let binary = parse_binary(name, bytes).map_err(|e| ApiError::field("name", e))?;
             motherboard.write_buffer(binary.load, binary.data);
             if let Some(entry) = binary.jump {
@@ -1542,8 +1850,7 @@ impl DebugServer {
             if let Some(entry) = binary.entry {
                 reply["entry"] = json!(entry);
             }
-        }
-        else {
+        } else {
             return Err(ApiError::new(
                 "unsupported media: a .sna or .dsk image (recognised by its content), or a .bin/.amsdos named by ?name="
             ));
@@ -1552,19 +1859,32 @@ impl DebugServer {
         Ok(ApiResponse::ok(reply))
     }
 
-    fn keytype(&mut self, request: &ApiRequest, layout: crate::keyboard::KeyboardLayout) -> ApiResult {
+    fn keytype(
+        &mut self,
+        request: &ApiRequest,
+        layout: crate::keyboard::KeyboardLayout,
+    ) -> ApiResult {
         let body = parse_body(&request.text())?;
         let text = match find_key(&body, "text") {
             Some(Value::String(text)) => text.clone(),
             Some(_) => return Err(ApiError::field("text", "field \"text\" must be a string")),
-            None => return Err(ApiError::field("text", "missing field \"text\": the characters to type"))
+            None => {
+                return Err(ApiError::field(
+                    "text",
+                    "missing field \"text\": the characters to type",
+                ))
+            }
         };
         for c in text.chars() {
             let c = if c == '\r' { '\n' } else { c };
-            let keys = layout.keys_of_char(c).ok_or_else(|| ApiError::field("text", format!("cannot type {c:?}")))?;
+            let keys = layout
+                .keys_of_char(c)
+                .ok_or_else(|| ApiError::field("text", format!("cannot type {c:?}")))?;
             self.typing.push_back(keys);
         }
-        Ok(ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() })))
+        Ok(ApiResponse::ok(
+            json!({ "ok": true, "cmd_seq": self.command() }),
+        ))
     }
 
     /// Press/release the typed keys that are due.
@@ -1584,8 +1904,7 @@ impl DebugServer {
             for key in keys {
                 motherboard.keyboard_mut().set_pressed(key, false);
             }
-        }
-        else if let Some(keys) = self.typing.pop_front() {
+        } else if let Some(keys) = self.typing.pop_front() {
             for &key in &keys {
                 motherboard.keyboard_mut().set_pressed(key, true);
             }
@@ -1624,7 +1943,8 @@ fn basic_state(motherboard: &Motherboard) -> Value {
 }
 
 fn basic_listing(motherboard: &Motherboard) -> ApiResult {
-    let lines = basic_program::listing(motherboard).map_err(|e| ApiError::new(format!("cannot decode the program: {e}")))?;
+    let lines = basic_program::listing(motherboard)
+        .map_err(|e| ApiError::new(format!("cannot decode the program: {e}")))?;
     Ok(ApiResponse::ok(json!({
         "lines": lines.iter().map(|line| json!({
             "addr": line.addr,
@@ -1642,7 +1962,12 @@ const SCREENSHOT_SIZE: (usize, usize) = (768, 272);
 /// The frame being drawn over the previous one: `drawing` where the beam
 /// has been (the rows before `row`, and `row` up to `column`), `previous`
 /// elsewhere.
-fn composite(drawing: &image::RgbImage, previous: &image::RgbImage, row: isize, column: isize) -> image::RgbImage {
+fn composite(
+    drawing: &image::RgbImage,
+    previous: &image::RgbImage,
+    row: isize,
+    column: isize,
+) -> image::RgbImage {
     let mut out = previous.clone();
     if out.dimensions() != drawing.dimensions() {
         return drawing.clone();
@@ -1727,19 +2052,34 @@ fn fdc(motherboard: &Motherboard) -> Value {
 
 /// `POST /api/drive?drive=0|1[&kind=3|3.5][&flip=1]`: make a drive a 3" or a 3.5" one, turn the
 /// disc of a 3" drive over. Replies with the FDC state.
-fn drive_command(request: &ApiRequest, motherboard: &mut Motherboard) -> Result<ApiResponse, ApiError> {
+fn drive_command(
+    request: &ApiRequest,
+    motherboard: &mut Motherboard,
+) -> Result<ApiResponse, ApiError> {
     use crate::fdc::{DriveKind, FdcDrive};
     let drive = match request.param("drive") {
         None | Some("0") => FdcDrive::A,
         Some("1") => FdcDrive::B,
-        Some(_) => return Err(ApiError::field("drive", "parameter \"drive\" must be 0 or 1"))
+        Some(_) => {
+            return Err(ApiError::field(
+                "drive",
+                "parameter \"drive\" must be 0 or 1",
+            ))
+        }
     };
     if let Some(kind) = request.param("kind") {
-        let kind: DriveKind = kind.parse().map_err(|e: String| ApiError::field("kind", e))?;
+        let kind: DriveKind = kind
+            .parse()
+            .map_err(|e: String| ApiError::field("kind", e))?;
         motherboard.fdc_mut().set_drive_kind(drive, kind);
     }
-    if request.param("flip").is_some_and(|v| v == "1") && motherboard.fdc_mut().flip_disc(drive).is_none() {
-        return Err(ApiError::field("flip", "only the disc of a 3\" drive with a disc in it can be turned over"));
+    if request.param("flip").is_some_and(|v| v == "1")
+        && motherboard.fdc_mut().flip_disc(drive).is_none()
+    {
+        return Err(ApiError::field(
+            "flip",
+            "only the disc of a 3\" drive with a disc in it can be turned over",
+        ));
     }
     Ok(ApiResponse::ok(fdc(motherboard)))
 }
@@ -1752,15 +2092,20 @@ fn memmap(motherboard: &Motherboard) -> Value {
             let base = region * 0x4000;
             let ram_bank = match motherboard.physical_address_for_write(base) {
                 PhysicalAddress::Ram { bank, .. } => bank,
-                _ => unreachable!("writes always reach RAM")
+                _ => unreachable!("writes always reach RAM"),
             };
             let mut value = json!({ "base": base, "name": format!("{base:04X}") });
             match motherboard.physical_address(base) {
-                PhysicalAddress::LowerRom { .. } => merge(&mut value, json!({ "rom": true, "rom_bank": 255 })),
-                PhysicalAddress::UpperRom { rom, .. } => merge(&mut value, json!({ "rom": true, "rom_bank": rom })),
-                PhysicalAddress::Ram { bank, .. } => {
-                    merge(&mut value, json!({ "rom": false, "ram_bank": bank, "ext": bank >= 4 }))
+                PhysicalAddress::LowerRom { .. } => {
+                    merge(&mut value, json!({ "rom": true, "rom_bank": 255 }))
                 }
+                PhysicalAddress::UpperRom { rom, .. } => {
+                    merge(&mut value, json!({ "rom": true, "rom_bank": rom }))
+                }
+                PhysicalAddress::Ram { bank, .. } => merge(
+                    &mut value,
+                    json!({ "rom": false, "ram_bank": bank, "ext": bank >= 4 }),
+                ),
             }
             // Extension: where writes go, ROM or not.
             value["write_bank"] = json!(ram_bank);
@@ -1802,7 +2147,7 @@ struct Binary<'b> {
     /// The program's entry (header or name).
     entry: Option<u16>,
     /// The entry to jump to: only one given in the name.
-    jump: Option<u16>
+    jump: Option<u16>,
 }
 
 /// An AMSDOS header (128 bytes, checksum of bytes 0-66 at 67-68) gives the
@@ -1811,7 +2156,10 @@ struct Binary<'b> {
 fn parse_binary<'b>(name: &str, bytes: &'b [u8]) -> Result<Binary<'b>, String> {
     let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
     let mut parts = stem.split('@').skip(1);
-    let hex = |text: &str| u16::from_str_radix(text, 16).map_err(|_| format!("{text}: expected a hex address in the name"));
+    let hex = |text: &str| {
+        u16::from_str_radix(text, 16)
+            .map_err(|_| format!("{text}: expected a hex address in the name"))
+    };
     let named_load = parts.next().map(hex).transpose()?;
     let named_entry = parts.next().map(hex).transpose()?;
 
@@ -1826,11 +2174,17 @@ fn parse_binary<'b>(name: &str, bytes: &'b [u8]) -> Result<Binary<'b>, String> {
             load: named_load.unwrap_or(word(21)),
             data: &bytes[128..128 + length],
             entry: named_entry.or(Some(word(26))),
-            jump: named_entry
+            jump: named_entry,
         });
     }
-    let load = named_load.ok_or("no AMSDOS header: give the load address in the name, e.g. game@4000.bin")?;
-    Ok(Binary { load, data: bytes, entry: named_entry, jump: named_entry })
+    let load = named_load
+        .ok_or("no AMSDOS header: give the load address in the name, e.g. game@4000.bin")?;
+    Ok(Binary {
+        load,
+        data: bytes,
+        entry: named_entry,
+        jump: named_entry,
+    })
 }
 
 /// Decode `%XX` and `+` in a query value.
@@ -1841,11 +2195,14 @@ fn percent_decode(text: &str) -> String {
     while i < bytes.len() {
         match bytes[i] {
             b'+' => out.push(b' '),
-            b'%' if let Some(byte) = text.get(i + 1..i + 3).and_then(|hex| u8::from_str_radix(hex, 16).ok()) => {
+            b'%' if let Some(byte) = text
+                .get(i + 1..i + 3)
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok()) =>
+            {
                 out.push(byte);
                 i += 2;
-            },
-            b => out.push(b)
+            }
+            b => out.push(b),
         }
         i += 1;
     }
@@ -1857,7 +2214,7 @@ struct MachineContext<'m> {
     motherboard: &'m Motherboard,
     access: Option<BusAccess>,
     /// For `LineCount`/`LineCycle`: the beam, when a monitor drives it.
-    beam: Option<Beam>
+    beam: Option<Beam>,
 }
 
 impl ConditionContext for MachineContext<'_> {
@@ -1866,21 +2223,50 @@ impl ConditionContext for MachineContext<'_> {
         let r8 = |reg: Reg8| Some(cpu.reg8(reg).get() as i64);
         let r16 = |reg: Reg16| Some(cpu.reg16(reg).get() as i64);
         match name {
-            "A" => r8(Reg8::A), "F" => r8(Reg8::F), "B" => r8(Reg8::B), "C" => r8(Reg8::C),
-            "D" => r8(Reg8::D), "E" => r8(Reg8::E), "H" => r8(Reg8::H), "L" => r8(Reg8::L),
-            "I" => r8(Reg8::I), "R" => r8(Reg8::R),
-            "IXH" => r8(Reg8::Ixh), "IXL" => r8(Reg8::Ixl), "IYH" => r8(Reg8::Iyh), "IYL" => r8(Reg8::Iyl),
-            "AF" => r16(Reg16::Af), "BC" => r16(Reg16::Bc), "DE" => r16(Reg16::De), "HL" => r16(Reg16::Hl),
-            "IX" => r16(Reg16::Ix), "IY" => r16(Reg16::Iy), "SP" => r16(Reg16::Sp), "PC" => r16(Reg16::Pc),
-            "A'" => r8(Reg8::A2), "F'" => r8(Reg8::F2), "B'" => r8(Reg8::B2), "C'" => r8(Reg8::C2),
-            "D'" => r8(Reg8::D2), "E'" => r8(Reg8::E2), "H'" => r8(Reg8::H2), "L'" => r8(Reg8::L2),
-            "AF'" => r16(Reg16::Af2), "BC'" => r16(Reg16::Bc2), "DE'" => r16(Reg16::De2), "HL'" => r16(Reg16::Hl2),
+            "A" => r8(Reg8::A),
+            "F" => r8(Reg8::F),
+            "B" => r8(Reg8::B),
+            "C" => r8(Reg8::C),
+            "D" => r8(Reg8::D),
+            "E" => r8(Reg8::E),
+            "H" => r8(Reg8::H),
+            "L" => r8(Reg8::L),
+            "I" => r8(Reg8::I),
+            "R" => r8(Reg8::R),
+            "IXH" => r8(Reg8::Ixh),
+            "IXL" => r8(Reg8::Ixl),
+            "IYH" => r8(Reg8::Iyh),
+            "IYL" => r8(Reg8::Iyl),
+            "AF" => r16(Reg16::Af),
+            "BC" => r16(Reg16::Bc),
+            "DE" => r16(Reg16::De),
+            "HL" => r16(Reg16::Hl),
+            "IX" => r16(Reg16::Ix),
+            "IY" => r16(Reg16::Iy),
+            "SP" => r16(Reg16::Sp),
+            "PC" => r16(Reg16::Pc),
+            "A'" => r8(Reg8::A2),
+            "F'" => r8(Reg8::F2),
+            "B'" => r8(Reg8::B2),
+            "C'" => r8(Reg8::C2),
+            "D'" => r8(Reg8::D2),
+            "E'" => r8(Reg8::E2),
+            "H'" => r8(Reg8::H2),
+            "L'" => r8(Reg8::L2),
+            "AF'" => r16(Reg16::Af2),
+            "BC'" => r16(Reg16::Bc2),
+            "DE'" => r16(Reg16::De2),
+            "HL'" => r16(Reg16::Hl2),
             "IFF1" => Some(cpu.iff1() as i64),
             "IFF2" => Some(cpu.iff2() as i64),
-            "IM" => Some(match cpu.im() { InterruptMode::Mode0 => 0, InterruptMode::Mode1 => 1, InterruptMode::Mode2 => 2 }),
+            "IM" => Some(match cpu.im() {
+                InterruptMode::Mode0 => 0,
+                InterruptMode::Mode1 => 1,
+                InterruptMode::Mode2 => 2,
+            }),
             "ADDRESS" => self.access.map(|a| a.address as i64),
             "VALUE" => self.access.map(|a| a.value as i64),
-            _ => self.ace_variable(name)
+            _ => self.ace_variable(name),
         }
     }
 
@@ -1898,7 +2284,10 @@ impl MachineContext<'_> {
         let crtc = motherboard.crtc();
         let mmr = motherboard.mmr();
         let ga = motherboard.ga();
-        if let Some(number) = name.strip_prefix("CRTCR").and_then(|n| n.parse::<u8>().ok()) {
+        if let Some(number) = name
+            .strip_prefix("CRTCR")
+            .and_then(|n| n.parse::<u8>().ok())
+        {
             return Some(crtc.register_value(number) as i64);
         }
         match name {
@@ -1927,7 +2316,7 @@ impl MachineContext<'_> {
             // A Plus's: no ASIC here, the lower ROM is the firmware's at 0.
             "LOWERROMNUM" | "LOWERROMADR" | "ASICPAGEON" => Some(0),
             "ASICPAGEOFF" => Some(1),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -1964,7 +2353,7 @@ fn kind_name(kind: BreakpointKind) -> &'static str {
     match kind {
         BreakpointKind::Exec => "exec",
         BreakpointKind::Memory => "mem",
-        BreakpointKind::Io => "io"
+        BreakpointKind::Io => "io",
     }
 }
 
@@ -1973,7 +2362,7 @@ fn location_name(location: PhysicalAddress) -> String {
     match location {
         PhysicalAddress::Ram { bank, offset } => format!("B{bank:02X}:{offset:04X}"),
         PhysicalAddress::LowerRom { offset } => format!("LOWER:{offset:04X}"),
-        PhysicalAddress::UpperRom { rom, offset } => format!("UPPER{rom:02X}:{offset:04X}")
+        PhysicalAddress::UpperRom { rom, offset } => format!("UPPER{rom:02X}:{offset:04X}"),
     }
 }
 
@@ -1998,7 +2387,10 @@ fn breakpoint_of_json(body: &Value) -> Result<AdvancedBreakpoint, ApiError> {
         match find_key(body, name) {
             None => Ok(None),
             Some(Value::String(text)) => Ok(Some(text.to_ascii_lowercase())),
-            Some(_) => Err(ApiError::field(name, format!("field \"{name}\" must be a string")))
+            Some(_) => Err(ApiError::field(
+                name,
+                format!("field \"{name}\" must be a string"),
+            )),
         }
     };
     let mut brk = AdvancedBreakpoint::exec(0);
@@ -2006,21 +2398,37 @@ fn breakpoint_of_json(body: &Value) -> Result<AdvancedBreakpoint, ApiError> {
         None | Some("exec") => BreakpointKind::Exec,
         Some("mem" | "memory") => BreakpointKind::Memory,
         Some("io") => BreakpointKind::Io,
-        Some(_) => return Err(ApiError::field("kind", "field \"kind\" must be one of exec, mem, io"))
+        Some(_) => {
+            return Err(ApiError::field(
+                "kind",
+                "field \"kind\" must be one of exec, mem, io",
+            ))
+        }
     };
     brk.access = match text("access")?.as_deref() {
         None | Some("rw") => BreakpointAccess::ReadWrite,
         Some("r" | "read") => BreakpointAccess::Read,
         Some("w" | "write") => BreakpointAccess::Write,
-        Some(_) => return Err(ApiError::field("access", "field \"access\" must be one of r, w, rw"))
+        Some(_) => {
+            return Err(ApiError::field(
+                "access",
+                "field \"access\" must be one of r, w, rw",
+            ))
+        }
     };
     brk.run = match text("run")?.as_deref() {
         None | Some("stop") => RunMode::Stop,
         Some("watch") => RunMode::Watch,
         Some("count") => RunMode::Count,
-        Some(_) => return Err(ApiError::field("run", "field \"run\" must be one of stop, watch, count"))
+        Some(_) => {
+            return Err(ApiError::field(
+                "run",
+                "field \"run\" must be one of stop, watch, count",
+            ))
+        }
     };
-    brk.address = int_field(body, "addr", 0, 0xffff)?.ok_or_else(|| ApiError::field("addr", "missing field \"addr\""))? as u16;
+    brk.address = int_field(body, "addr", 0, 0xffff)?
+        .ok_or_else(|| ApiError::field("addr", "missing field \"addr\""))? as u16;
     brk.mask = int_field(body, "mask", 0, 0xffff)?.unwrap_or(0xffff) as u16;
     brk.size = int_field(body, "size", 1, 0xffff)?.unwrap_or(1) as u16;
     brk.value = int_field(body, "value", 0, 0xff)?.unwrap_or(0) as u8;
@@ -2028,45 +2436,77 @@ fn breakpoint_of_json(body: &Value) -> Result<AdvancedBreakpoint, ApiError> {
     brk.name = match find_key(body, "name") {
         None | Some(Value::Null) => None,
         Some(Value::String(name)) => Some(name.clone()),
-        Some(_) => return Err(ApiError::field("name", "field \"name\" must be a string"))
+        Some(_) => return Err(ApiError::field("name", "field \"name\" must be a string")),
     };
     brk.condition = match find_key(body, "condition") {
         None | Some(Value::Null) => None,
         Some(Value::String(text)) if text.trim().is_empty() => None,
-        Some(Value::String(text)) => Some(Condition::parse(text).map_err(|e| ApiError::field("condition", e))?),
-        Some(_) => return Err(ApiError::field("condition", "field \"condition\" must be a string"))
+        Some(Value::String(text)) => {
+            Some(Condition::parse(text).map_err(|e| ApiError::field("condition", e))?)
+        }
+        Some(_) => {
+            return Err(ApiError::field(
+                "condition",
+                "field \"condition\" must be a string",
+            ))
+        }
     };
     // "start"/"stop"/"reset": a counter name or a list of them.
-    for action in [CounterAction::Reset, CounterAction::Start, CounterAction::Stop] {
+    for action in [
+        CounterAction::Reset,
+        CounterAction::Start,
+        CounterAction::Stop,
+    ] {
         let field = action.name();
         let names = match find_key(body, field) {
             None | Some(Value::Null) => Vec::new(),
             Some(Value::String(name)) => vec![name.clone()],
-            Some(Value::Array(names)) if names.iter().all(Value::is_string) => {
-                names.iter().map(|n| n.as_str().unwrap().to_owned()).collect()
-            },
-            Some(_) => return Err(ApiError::field(field, format!("field \"{field}\" must be a counter name or a list of them")))
+            Some(Value::Array(names)) if names.iter().all(Value::is_string) => names
+                .iter()
+                .map(|n| n.as_str().unwrap().to_owned())
+                .collect(),
+            Some(_) => {
+                return Err(ApiError::field(
+                    field,
+                    format!("field \"{field}\" must be a counter name or a list of them"),
+                ))
+            }
         };
         if names.iter().any(String::is_empty) {
             return Err(ApiError::field(field, "a counter name cannot be empty"));
         }
-        brk.counters.extend(names.into_iter().map(|name| (action, name)));
+        brk.counters
+            .extend(names.into_iter().map(|name| (action, name)));
     }
     brk.after = int_field(body, "after", 0, u32::MAX as i64)?.unwrap_or(0) as u64;
     if brk.run == RunMode::Count && brk.counters.is_empty() {
-        return Err(ApiError::field("run", "run \"count\" needs counters to act on: start, stop or reset"));
+        return Err(ApiError::field(
+            "run",
+            "run \"count\" needs counters to act on: start, stop or reset",
+        ));
     }
     Ok(brk)
 }
 
 fn read_ram(request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
-    let param = |name: &str| request.query.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
+    let param = |name: &str| {
+        request
+            .query
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    };
     let int_param = |name: &str, default: i64, min: i64, max: i64| -> Result<i64, ApiError> {
         match param(name) {
             None => Ok(default),
             Some(text) => parse_int(text)
                 .filter(|v| (min..=max).contains(v))
-                .ok_or_else(|| ApiError::field(name, format!("parameter \"{name}\" must be an integer between {min} and {max}")))
+                .ok_or_else(|| {
+                    ApiError::field(
+                        name,
+                        format!("parameter \"{name}\" must be an integer between {min} and {max}"),
+                    )
+                }),
         }
     };
     let addr = int_param("addr", 0, 0, 0xffff)?;
@@ -2080,12 +2520,17 @@ fn read_ram(request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
             "cpu" => motherboard.read_byte((addr + i) as u16),
             _ => {
                 let linear = (bank * 0x4000 + addr + i) % total;
-                motherboard.read_bank_byte((linear / 0x4000) as u16, (linear % 0x4000) as u16).unwrap_or(0xff)
+                motherboard
+                    .read_bank_byte((linear / 0x4000) as u16, (linear % 0x4000) as u16)
+                    .unwrap_or(0xff)
             }
         }
     };
     if !matches!(view, "raw" | "cpu") {
-        return Err(ApiError::field("view", "parameter \"view\" must be one of raw, cpu"));
+        return Err(ApiError::field(
+            "view",
+            "parameter \"view\" must be one of raw, cpu",
+        ));
     }
     let hex: String = (0..len).map(|i| format!("{:02x}", byte_at(i))).collect();
     let mut body = json!({ "addr": addr, "len": len, "hex": hex });
@@ -2097,20 +2542,29 @@ fn read_ram(request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
 
 /// `GET /api/doc[?endpoint=][&format=json|openapi|html]`.
 fn doc(request: &ApiRequest) -> ApiResult {
-    match (request.param("format").unwrap_or("json"), request.param("endpoint")) {
+    match (
+        request.param("format").unwrap_or("json"),
+        request.param("endpoint"),
+    ) {
         ("json", None) => Ok(ApiResponse::ok(api_doc::index())),
         ("json", Some(name)) => match api_doc::endpoint(name) {
             Some(value) => Ok(ApiResponse::ok(value)),
-            None => Err(ApiError::field("endpoint", format!("no endpoint \"{name}\" (GET /api/doc lists them)")))
+            None => Err(ApiError::field(
+                "endpoint",
+                format!("no endpoint \"{name}\" (GET /api/doc lists them)"),
+            )),
         },
         ("openapi", _) => Ok(ApiResponse::ok(api_doc::openapi())),
         ("html", _) => Ok(ApiResponse {
             status: 200,
             content_type: "text/html; charset=utf-8",
             body: api_doc::html().into_bytes(),
-            headers: Vec::new()
+            headers: Vec::new(),
         }),
-        (other, _) => Err(ApiError::field("format", format!("unknown format \"{other}\": json, openapi or html")))
+        (other, _) => Err(ApiError::field(
+            "format",
+            format!("unknown format \"{other}\": json, openapi or html"),
+        )),
     }
 }
 
@@ -2123,7 +2577,7 @@ fn parse_body(body: &str) -> Result<Value, ApiError> {
     match serde_json::from_str::<Value>(body) {
         Ok(value @ Value::Object(_)) => Ok(value),
         Ok(_) => Err(ApiError::new("expected a JSON object")),
-        Err(e) => Err(ApiError::new(format!("expected a JSON object: {e}")))
+        Err(e) => Err(ApiError::new(format!("expected a JSON object: {e}"))),
     }
 }
 
@@ -2131,9 +2585,11 @@ fn parse_body(body: &str) -> Result<Value, ApiError> {
 /// `{"x":{"a":1}}` both carry `a`.
 fn find_key<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
     match value {
-        Value::Object(map) => map.get(key).or_else(|| map.values().find_map(|v| find_key(v, key))),
+        Value::Object(map) => map
+            .get(key)
+            .or_else(|| map.values().find_map(|v| find_key(v, key))),
         Value::Array(items) => items.iter().find_map(|v| find_key(v, key)),
-        _ => None
+        _ => None,
     }
 }
 
@@ -2143,11 +2599,14 @@ fn int_field(body: &Value, name: &str, min: i64, max: i64) -> Result<Option<i64>
         None => return Ok(None),
         Some(Value::Number(n)) => n.as_i64(),
         Some(Value::String(text)) => parse_int(text),
-        Some(_) => None
+        Some(_) => None,
     }
     .ok_or_else(|| ApiError::field(name, format!("field \"{name}\" must be an integer")))?;
     if !(min..=max).contains(&value) {
-        return Err(ApiError::field(name, format!("field \"{name}\" must be between {min} and {max}")));
+        return Err(ApiError::field(
+            name,
+            format!("field \"{name}\" must be between {min} and {max}"),
+        ));
     }
     Ok(Some(value))
 }
@@ -2156,13 +2615,16 @@ fn parse_int(text: &str) -> Option<i64> {
     let text = text.trim();
     match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
         Some(hex) => i64::from_str_radix(hex, 16).ok(),
-        None => text.parse().ok()
+        None => text.parse().ok(),
     }
 }
 
 /// Hex bytes; spaces and ':' are ignored.
 fn parse_hex(text: &str) -> Option<Vec<u8>> {
-    let digits: Vec<char> = text.chars().filter(|c| !c.is_whitespace() && *c != ':').collect();
+    let digits: Vec<char> = text
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != ':')
+        .collect();
     if !digits.len().is_multiple_of(2) {
         return None;
     }
@@ -2175,7 +2637,11 @@ fn parse_hex(text: &str) -> Option<Vec<u8>> {
 // --------------------------------------------------------------- HTTP
 
 /// The HTTP thread: parse, hand to the emulation thread, write the answer.
-fn serve(server: tiny_http::Server, sender: Sender<(ApiRequest, Sender<ApiResponse>)>, events: EventHub) {
+fn serve(
+    server: tiny_http::Server,
+    sender: Sender<(ApiRequest, Sender<ApiResponse>)>,
+    events: EventHub,
+) {
     for mut request in server.incoming_requests() {
         let url = request.url().to_owned();
         let (path, query) = url.split_once('?').unwrap_or((&url, ""));
@@ -2183,17 +2649,24 @@ fn serve(server: tiny_http::Server, sender: Sender<(ApiRequest, Sender<ApiRespon
             let topics = query
                 .split('&')
                 .find_map(|pair| pair.strip_prefix("topics="))
-                .map(|list| list.split(',').filter(|t| !t.is_empty()).map(str::to_owned).collect());
+                .map(|list| {
+                    list.split(',')
+                        .filter(|t| !t.is_empty())
+                        .map(str::to_owned)
+                        .collect()
+                });
             match events.subscribe(topics) {
                 Some(queue) => {
                     let writer = request.into_writer();
                     let _ = std::thread::Builder::new()
                         .name("debug-server-events".to_owned())
                         .spawn(move || stream_events(writer, queue));
-                },
+                }
                 None => {
                     let body = json!({ "error": format!("too many event clients (max {MAX_SSE_CLIENTS})") });
-                    let _ = request.respond(tiny_http::Response::from_string(body.to_string()).with_status_code(503));
+                    let _ = request.respond(
+                        tiny_http::Response::from_string(body.to_string()).with_status_code(503),
+                    );
                 }
             }
             continue;
@@ -2212,14 +2685,16 @@ fn serve(server: tiny_http::Server, sender: Sender<(ApiRequest, Sender<ApiRespon
             method: request.method().as_str().to_uppercase(),
             path: path.to_owned(),
             query,
-            body
+            body,
         };
         let (reply_sender, reply) = mpsc::channel();
         let response = match sender.send((api_request, reply_sender)) {
             Ok(()) => reply
                 .recv_timeout(Duration::from_secs(5))
-                .unwrap_or_else(|_| ApiResponse::json(503, json!({ "error": "the emulation did not answer" }))),
-            Err(_) => return // the emulation is gone
+                .unwrap_or_else(|_| {
+                    ApiResponse::json(503, json!({ "error": "the emulation did not answer" }))
+                }),
+            Err(_) => return, // the emulation is gone
         };
         let mut http = tiny_http::Response::from_data(response.body)
             .with_status_code(response.status)
@@ -2238,19 +2713,25 @@ fn serve(server: tiny_http::Server, sender: Sender<(ApiRequest, Sender<ApiRespon
 fn stream_events(mut writer: Box<dyn Write + Send>, queue: Arc<(Mutex<SseQueue>, Condvar)>) {
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\
                 Access-Control-Allow-Origin: *\r\nConnection: keep-alive\r\n\r\n";
-    let mut ok = writer.write_all(head.as_bytes()).and_then(|()| writer.flush()).is_ok();
+    let mut ok = writer
+        .write_all(head.as_bytes())
+        .and_then(|()| writer.flush())
+        .is_ok();
     while ok {
         let (lock, ready) = &*queue;
         let pending: Vec<String> = {
             let guard = lock.lock().unwrap();
-            let (mut guard, _) = ready.wait_timeout_while(guard, SSE_HEARTBEAT, |q| q.events.is_empty()).unwrap();
+            let (mut guard, _) = ready
+                .wait_timeout_while(guard, SSE_HEARTBEAT, |q| q.events.is_empty())
+                .unwrap();
             guard.events.drain(..).collect()
         };
         ok = if pending.is_empty() {
             writer.write_all(b": ping\n\n")
-        }
-        else {
-            pending.iter().try_for_each(|event| writer.write_all(event.as_bytes()))
+        } else {
+            pending
+                .iter()
+                .try_for_each(|event| writer.write_all(event.as_bytes()))
         }
         .and_then(|()| writer.flush())
         .is_ok();
@@ -2268,10 +2749,19 @@ mod test {
     use crate::motherboard::MotherboardBuilder;
 
     fn machine() -> Motherboard {
-        MotherboardBuilder::default().disable_lower_rom().disable_upper_rom().build()
+        MotherboardBuilder::default()
+            .disable_lower_rom()
+            .disable_upper_rom()
+            .build()
     }
 
-    fn call(server: &mut DebugServer, motherboard: &mut Motherboard, method: &str, path: &str, body: &str) -> (u16, Value) {
+    fn call(
+        server: &mut DebugServer,
+        motherboard: &mut Motherboard,
+        method: &str,
+        path: &str,
+        body: &str,
+    ) -> (u16, Value) {
         let (path, query) = path.split_once('?').unwrap_or((path, ""));
         let query = query
             .split('&')
@@ -2281,9 +2771,17 @@ mod test {
                 (k.to_owned(), v.to_owned())
             })
             .collect();
-        let request = ApiRequest { method: method.to_owned(), path: path.to_owned(), query, body: body.as_bytes().to_vec() };
+        let request = ApiRequest {
+            method: method.to_owned(),
+            path: path.to_owned(),
+            query,
+            body: body.as_bytes().to_vec(),
+        };
         let response = server.handle(&request, motherboard);
-        (response.status, serde_json::from_slice(&response.body).unwrap())
+        (
+            response.status,
+            serde_json::from_slice(&response.body).unwrap(),
+        )
     }
 
     fn server() -> DebugServer {
@@ -2295,10 +2793,19 @@ mod test {
         let (mut server, mut mb) = (server(), machine());
         // LD BC,0x7FC4: OUT (C),C (page 0 bank 0 at 0x4000);
         // LD C,0: OUT (C),C (pen 0); LD C,0x54: OUT (C),C (hardware 20).
-        mb.write_buffer(0x4000, &[
-            0x01, 0xc4, 0x7f, 0xed, 0x49, 0x0e, 0x00, 0xed, 0x49, 0x0e, 0x54, 0xed, 0x49
-        ]);
-        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        mb.write_buffer(
+            0x4000,
+            &[
+                0x01, 0xc4, 0x7f, 0xed, 0x49, 0x0e, 0x00, 0xed, 0x49, 0x0e, 0x54, 0xed, 0x49,
+            ],
+        );
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/exec",
+            r#"{"addr":16384}"#,
+        );
         // The code runs from 0x4000 in bank 1: copy it into the bank about
         // to be mapped there.
         for i in 0..13 {
@@ -2330,30 +2837,50 @@ mod test {
         let (_, memmap) = call(&mut server, &mut mb, "GET", "/api/memmap", "");
         assert_eq!(memmap["regions"][0]["rom"], true);
         assert_eq!(memmap["regions"][0]["rom_bank"], 255);
-        assert!(memmap["regions"][0].get("ram_bank").is_none(), "only for RAM, as in AMSpiriT");
-        assert_eq!(memmap["regions"][0]["write_bank"], 0, "writes go to the RAM below");
+        assert!(
+            memmap["regions"][0].get("ram_bank").is_none(),
+            "only for RAM, as in AMSpiriT"
+        );
+        assert_eq!(
+            memmap["regions"][0]["write_bank"], 0,
+            "writes go to the RAM below"
+        );
         assert_eq!(memmap["regions"][1]["name"], "4000");
         assert_eq!(memmap["regions"][3]["rom"], true);
         assert_eq!(memmap["regions"][3]["rom_bank"], 0);
     }
 
     fn beam(x: usize, line: usize) -> Beam {
-        Beam { x, line, crop_x: 126, crop_y: 33 }
+        Beam {
+            x,
+            line,
+            crop_x: 126,
+            crop_y: 33,
+        }
     }
 
     #[test]
     fn raster_breakpoints_fire_when_the_beam_passes() {
-        let at = |line, nop| RasterBreakpoint { line, x: nop * BEAM_TICKS_PER_NOP };
+        let at = |line, nop| RasterBreakpoint {
+            line,
+            x: nop * BEAM_TICKS_PER_NOP,
+        };
         // Line 100, NOP 10.
         assert!(at(Some(100), 10).passed(beam(150, 100), beam(170, 100)));
         assert!(at(Some(100), 10).passed(beam(150, 100), beam(160, 100)));
-        assert!(!at(Some(100), 10).passed(beam(160, 100), beam(200, 100)), "already passed");
+        assert!(
+            !at(Some(100), 10).passed(beam(160, 100), beam(200, 100)),
+            "already passed"
+        );
         assert!(!at(Some(100), 10).passed(beam(150, 99), beam(170, 99)));
         // The start of a line, reached through the end of the previous.
         assert!(at(Some(100), 0).passed(beam(1000, 99), beam(30, 100)));
         // Through a new frame.
         assert!(at(Some(0), 1).passed(beam(1000, 311), beam(40, 0)));
-        assert!(at(Some(311), 63).passed(beam(1000, 311), beam(40, 0)), "the end of the frame");
+        assert!(
+            at(Some(311), 63).passed(beam(1000, 311), beam(40, 0)),
+            "the end of the frame"
+        );
         assert!(!at(Some(100), 0).passed(beam(1000, 311), beam(40, 0)));
         // Every line.
         assert!(at(None, 10).passed(beam(150, 7), beam(170, 7)));
@@ -2365,27 +2892,67 @@ mod test {
     #[test]
     fn raster_bp_positions_in_pixels_or_nops() {
         let (mut server, mut mb) = (server(), machine());
-        let (status, set) = call(&mut server, &mut mb, "POST", "/api/raster_bp?x=200&y=50", "");
+        let (status, set) = call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/raster_bp?x=200&y=50",
+            "",
+        );
         assert_eq!(status, 200);
         assert_eq!(set["breakpoints"][0]["frame_nop"], 50 * 64 + 12);
-        call(&mut server, &mut mb, "POST", "/api/raster_bp?frame_nop=19967&add=1", "");
-        call(&mut server, &mut mb, "POST", "/api/raster_bp?nop=5&add=1", "");
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/raster_bp?frame_nop=19967&add=1",
+            "",
+        );
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/raster_bp?nop=5&add=1",
+            "",
+        );
         let (_, list) = call(&mut server, &mut mb, "GET", "/api/raster_bp", "");
         assert_eq!(list["breakpoints"][1]["line"], 311);
         assert_eq!(list["breakpoints"][1]["nop"], 63);
         assert!(list["breakpoints"][2].get("line").is_none(), "{list}");
         // Picture coordinates need the beam.
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/raster_bp?x=0&y=0&crop=1", "").0, 400);
+        assert_eq!(
+            call(
+                &mut server,
+                &mut mb,
+                "POST",
+                "/api/raster_bp?x=0&y=0&crop=1",
+                ""
+            )
+            .0,
+            400
+        );
         server.set_beam(beam(0, 0));
-        let (_, set) = call(&mut server, &mut mb, "POST", "/api/raster_bp?x=2&y=0&crop=1", "");
+        let (_, set) = call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/raster_bp?x=2&y=0&crop=1",
+            "",
+        );
         assert_eq!(set["breakpoints"].as_array().unwrap().len(), 1, "replaces");
         assert_eq!(set["breakpoints"][0]["x"], 128);
         assert_eq!(set["breakpoints"][0]["line"], 33);
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/raster_bp?nop=64", "").0, 400);
+        assert_eq!(
+            call(&mut server, &mut mb, "POST", "/api/raster_bp?nop=64", "").0,
+            400
+        );
         let (_, cleared) = call(&mut server, &mut mb, "POST", "/api/raster_bp?enable=0", "");
         assert_eq!(cleared["breakpoints"], json!([]));
         let (_, position) = call(&mut server, &mut mb, "GET", "/api/beam?crop=1", "");
-        assert_eq!((position["x"].clone(), position["y"].clone()), (json!(-126), json!(-33)));
+        assert_eq!(
+            (position["x"].clone(), position["y"].clone()),
+            (json!(-126), json!(-33))
+        );
         assert_eq!(position["nops_per_frame"], 19968);
     }
 
@@ -2399,14 +2966,25 @@ mod test {
             mb.execute_next_opcode_with_video(|(rgb, sync)| monitor.receive(rgb, sync));
             let (x, line) = monitor.beam();
             let (crop_x, crop_y) = monitor.crop_origin();
-            server.set_beam(Beam { x, line, crop_x, crop_y });
+            server.set_beam(Beam {
+                x,
+                line,
+                crop_x,
+                crop_y,
+            });
             server.after_instruction(mb);
         };
         // Let the firmware set the CRTC up and the monitor lock.
         for _ in 0..4 * 19968 / 3 {
             step(&mut server, &mut mb);
         }
-        call(&mut server, &mut mb, "POST", "/api/raster_bp?line=200&nop=20", "");
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/raster_bp?line=200&nop=20",
+            "",
+        );
         for _ in 0..19968 {
             step(&mut server, &mut mb);
             if server.paused() {
@@ -2418,8 +2996,14 @@ mod test {
         assert_eq!(position["line"], 200, "{position}");
         let nop = position["nop"].as_u64().unwrap();
         assert!((20..20 + 7).contains(&nop), "{position}");
-        let stop = events_of(&events).into_iter().find(|e| e.starts_with("event: z80_bp")).unwrap();
-        assert!(stop.contains(r#""kind":"raster""#) && stop.contains(r#""line":200"#), "{stop}");
+        let stop = events_of(&events)
+            .into_iter()
+            .find(|e| e.starts_with("event: z80_bp"))
+            .unwrap();
+        assert!(
+            stop.contains(r#""kind":"raster""#) && stop.contains(r#""line":200"#),
+            "{stop}"
+        );
     }
 
     #[test]
@@ -2427,22 +3011,72 @@ mod test {
         let (mut server, mut mb) = (server(), machine());
         // NOP; NOP; LD A,1 (2 NOPs); JR -5 (3 NOPs).
         mb.write_buffer(0x4000, &[0x00, 0x00, 0x3e, 0x01, 0x18, 0xfa]);
-        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/exec",
+            r#"{"addr":16384}"#,
+        );
         server.after_instruction(&mut mb);
-        let (status, _) = call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop"}"#);
+        let (status, _) = call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/counters",
+            r#"{"name":"loop"}"#,
+        );
         assert_eq!(status, 200);
-        call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"idle","running":false}"#);
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop"}"#).0, 400, "exists");
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/counters",
+            r#"{"name":"idle","running":false}"#,
+        );
+        assert_eq!(
+            call(
+                &mut server,
+                &mut mb,
+                "POST",
+                "/api/counters",
+                r#"{"name":"loop"}"#
+            )
+            .0,
+            400,
+            "exists"
+        );
         run(&mut server, &mut mb, 4);
         let (_, list) = call(&mut server, &mut mb, "GET", "/api/counters", "");
-        assert_eq!(list["counters"][0], json!({ "name": "idle", "nops": 0, "running": false }));
+        assert_eq!(
+            list["counters"][0],
+            json!({ "name": "idle", "nops": 0, "running": false })
+        );
         assert_eq!(list["counters"][1]["nops"], 7, "{list}");
-        call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop","action":"stop"}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/counters",
+            r#"{"name":"loop","action":"stop"}"#,
+        );
         run(&mut server, &mut mb, 4);
         let (_, list) = call(&mut server, &mut mb, "GET", "/api/counters", "");
         assert_eq!(list["counters"][1]["nops"], 7);
-        call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop","action":"reset"}"#);
-        call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop","action":"start"}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/counters",
+            r#"{"name":"loop","action":"reset"}"#,
+        );
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/counters",
+            r#"{"name":"loop","action":"start"}"#,
+        );
         run(&mut server, &mut mb, 2);
         let (_, list) = call(&mut server, &mut mb, "GET", "/api/counters", "");
         assert_eq!(list["counters"][1]["nops"], 2, "{list}");
@@ -2450,11 +3084,44 @@ mod test {
         let events = server.events.subscribe(None).unwrap();
         call(&mut server, &mut mb, "POST", "/api/z80_bp", "0x4000");
         run(&mut server, &mut mb, 4);
-        let stop = events_of(&events).into_iter().find(|e| e.starts_with("event: z80_bp")).unwrap();
+        let stop = events_of(&events)
+            .into_iter()
+            .find(|e| e.starts_with("event: z80_bp"))
+            .unwrap();
         assert!(stop.contains(r#""counters":{"idle":0,"loop":"#), "{stop}");
-        assert_eq!(call(&mut server, &mut mb, "DELETE", "/api/counters?name=idle", "").0, 200);
-        assert_eq!(call(&mut server, &mut mb, "DELETE", "/api/counters?name=idle", "").0, 400);
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop","action":"x"}"#).0, 400);
+        assert_eq!(
+            call(
+                &mut server,
+                &mut mb,
+                "DELETE",
+                "/api/counters?name=idle",
+                ""
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            call(
+                &mut server,
+                &mut mb,
+                "DELETE",
+                "/api/counters?name=idle",
+                ""
+            )
+            .0,
+            400
+        );
+        assert_eq!(
+            call(
+                &mut server,
+                &mut mb,
+                "POST",
+                "/api/counters",
+                r#"{"name":"loop","action":"x"}"#
+            )
+            .0,
+            400
+        );
         let (_, list) = call(&mut server, &mut mb, "DELETE", "/api/counters", "");
         assert_eq!(list["counters"], json!([]));
     }
@@ -2479,37 +3146,65 @@ mod test {
     fn ace_condition_variables_read_the_machine() {
         let mut mb = booted();
         mb.cpu_mut().reg8_mut(Reg8::F).set(0b0100_0001); // Z and C
-        let beam = Beam { x: 10 * BEAM_TICKS_PER_NOP + 3, line: 100, crop_x: 0, crop_y: 0 };
-        let context = MachineContext { motherboard: &mb, access: None, beam: Some(beam) };
+        let beam = Beam {
+            x: 10 * BEAM_TICKS_PER_NOP + 3,
+            line: 100,
+            crop_x: 0,
+            crop_y: 0,
+        };
+        let context = MachineContext {
+            motherboard: &mb,
+            access: None,
+            beam: Some(beam),
+        };
         let holds = |source: &str| Condition::parse(source).unwrap().holds(&context);
         assert!(holds("FlagZ AND FlagC AND NOT FlagNZ AND FlagNC = 0"));
         assert!(holds("FlagP = 1 AND FlagM = 0 AND FlagPO = 1"));
         // The firmware's CRTC set-up.
-        assert!(holds("CrtcR0 = 63 AND CrtcR1 = 40 AND CrtcR2 = 46 AND CrtcR6 = 25 AND CrtcR7 = 30"));
+        assert!(holds(
+            "CrtcR0 = 63 AND CrtcR1 = 40 AND CrtcR2 = 46 AND CrtcR6 = 25 AND CrtcR7 = 30"
+        ));
         assert!(holds("C0 <= CrtcR0 AND C4 <= CrtcR4 AND C9 <= CrtcR9"));
         assert!(holds("LineCount = 100 AND LineCycle = 10"));
         assert!(holds("MemBankMode = 0 AND MemPage = 0"));
         // BASIC running: the upper ROM (BASIC, ROM 0) paged in at times; the
         // number is read, whatever it is now.
         assert!(holds(&format!("UpperROMNum = {}", mb.upper_rom_number())));
-        assert!(holds("ASICPageOn = 0 AND ASICPageOff = 1 AND LowerROMNum = 0 AND LowerROMAdr = 0"));
+        assert!(holds(
+            "ASICPageOn = 0 AND ASICPageOff = 1 AND LowerROMNum = 0 AND LowerROMAdr = 0"
+        ));
         // No monitor: no beam, the raster variables are 0.
-        let headless = MachineContext { motherboard: &mb, access: None, beam: None };
-        assert!(!Condition::parse("LineCount OR LineCycle").unwrap().holds(&headless));
+        let headless = MachineContext {
+            motherboard: &mb,
+            access: None,
+            beam: None,
+        };
+        assert!(!Condition::parse("LineCount OR LineCycle")
+            .unwrap()
+            .holds(&headless));
     }
 
     #[test]
     fn basic_programs_load_list_and_stop_on_lines_and_statements() {
         // (a CPC+ starts in its cartridge's menu, not in BASIC)
-        for model in crate::motherboard::CpcModel::ALL.into_iter().filter(|model| !model.is_plus()) {
+        for model in crate::motherboard::CpcModel::ALL
+            .into_iter()
+            .filter(|model| !model.is_plus())
+        {
             basic_program_on(model);
         }
     }
 
     fn basic_program_on(model: crate::motherboard::CpcModel) {
         let (mut server, mut mb) = (server(), booted_model(model));
-        assert_eq!(call(&mut server, &mut mb, "GET", "/api/ping", "").1["emu"]["cpc_model"], model.name());
-        let events = server.events.subscribe(Some(vec!["basic_bp".to_owned()])).unwrap();
+        assert_eq!(
+            call(&mut server, &mut mb, "GET", "/api/ping", "").1["emu"]["cpc_model"],
+            model.name()
+        );
+        let events = server
+            .events
+            .subscribe(Some(vec!["basic_bp".to_owned()]))
+            .unwrap();
         let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
         assert_eq!(state["prog_start"], 368, "{state}");
         assert_eq!(state["basic_ver"], model.basic_version());
@@ -2517,12 +3212,26 @@ mod test {
         assert_eq!(state["cur_linenum"], 0xffff);
 
         let source = "10 A=1:B=2\n20 A=A+1:GOTO 20\n";
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/basic?run=1", "10 GOTO GOTO").0, 400);
+        assert_eq!(
+            call(
+                &mut server,
+                &mut mb,
+                "POST",
+                "/api/basic?run=1",
+                "10 GOTO GOTO"
+            )
+            .0,
+            400
+        );
         let (status, _) = call(&mut server, &mut mb, "POST", "/api/basic?run=1", source);
         assert_eq!(status, 200);
         let (_, listing) = call(&mut server, &mut mb, "GET", "/api/basic_listing", "");
         let line10 = &listing["lines"][0];
-        assert_eq!((line10["addr"].clone(), line10["num"].clone()), (json!(368), json!(10)), "{listing}");
+        assert_eq!(
+            (line10["addr"].clone(), line10["num"].clone()),
+            (json!(368), json!(10)),
+            "{listing}"
+        );
         assert_eq!(line10["stmts"][0]["addr"], 371);
         assert_eq!(line10["stmts"][0]["text"], "A=1");
         assert_eq!(line10["stmts"][0]["vars"], json!(["A"]));
@@ -2536,12 +3245,19 @@ mod test {
         // Typed RUN reaches line 20.
         call(&mut server, &mut mb, "POST", "/api/basic_bp", "20");
         run(&mut server, &mut mb, 3_000_000);
-        assert!(server.paused(), "{:?}", call(&mut server, &mut mb, "GET", "/api/basic_state", ""));
+        assert!(
+            server.paused(),
+            "{:?}",
+            call(&mut server, &mut mb, "GET", "/api/basic_state", "")
+        );
         let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
         assert_eq!(state["cur_linenum"], 20);
         assert_eq!(state["stmt_addr"], line20["stmts"][0]["addr"]);
         let hits = events_of(&events);
-        assert!(hits[0].contains(r#""line":20"#) && hits[0].contains(r#""reason":"breakpoint""#), "{hits:?}");
+        assert!(
+            hits[0].contains(r#""line":20"#) && hits[0].contains(r#""reason":"breakpoint""#),
+            "{hits:?}"
+        );
 
         // Statement by statement, then line by line (the same line again).
         call(&mut server, &mut mb, "POST", "/api/basic_bp", "");
@@ -2549,22 +3265,47 @@ mod test {
         run(&mut server, &mut mb, 100_000);
         let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
         assert_eq!(state["stmt_addr"], goto, "{state}");
-        call(&mut server, &mut mb, "POST", "/api/basic_step?mode=line", "");
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/basic_step?mode=line",
+            "",
+        );
         run(&mut server, &mut mb, 100_000);
         let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
-        assert_eq!((state["cur_linenum"].clone(), state["stmt_addr"].clone()), (json!(20), line20["stmts"][0]["addr"].clone()));
-        call(&mut server, &mut mb, "POST", &format!("/api/basic_runto?addr={goto}"), "");
+        assert_eq!(
+            (state["cur_linenum"].clone(), state["stmt_addr"].clone()),
+            (json!(20), line20["stmts"][0]["addr"].clone())
+        );
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            &format!("/api/basic_runto?addr={goto}"),
+            "",
+        );
         run(&mut server, &mut mb, 100_000);
         assert!(server.paused());
-        assert_eq!(call(&mut server, &mut mb, "GET", "/api/basic_state", "").1["stmt_addr"], goto);
-        assert!(events_of(&events).iter().any(|e| e.contains(r#""reason":"runto""#)));
+        assert_eq!(
+            call(&mut server, &mut mb, "GET", "/api/basic_state", "").1["stmt_addr"],
+            goto
+        );
+        assert!(events_of(&events)
+            .iter()
+            .any(|e| e.contains(r#""reason":"runto""#)));
 
         // The variables are where the state says.
         let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
         assert!(state["var_size"].as_u64().unwrap() > 0, "{state}");
         let response = server.handle(
-            &ApiRequest { method: "GET".into(), path: "/api/basic_export".into(), query: vec![], body: vec![] },
-            &mut mb
+            &ApiRequest {
+                method: "GET".into(),
+                path: "/api/basic_export".into(),
+                query: vec![],
+                body: vec![],
+            },
+            &mut mb,
         );
         let text = String::from_utf8(response.body).unwrap();
         assert!(text.contains("GOTO 20"), "{text}");
@@ -2576,19 +3317,38 @@ mod test {
         // program is loaded once BASIC is up, and RUN after it.
         let (mut server, mut mb) = (server(), MotherboardBuilder::default().build());
         call(&mut server, &mut mb, "POST", "/api/basic", "10 GOTO 10\n");
-        call(&mut server, &mut mb, "POST", "/api/keytype", r#"{"text":"RUN\r"}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/keytype",
+            r#"{"text":"RUN\r"}"#,
+        );
         call(&mut server, &mut mb, "POST", "/api/basic_bp", "10");
         run(&mut server, &mut mb, 4_000_000);
         assert!(server.paused(), "line 10 reached");
         let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
-        assert_eq!((state["prog_start"].clone(), state["cur_linenum"].clone()), (json!(368), json!(10)), "{state}");
+        assert_eq!(
+            (state["prog_start"].clone(), state["cur_linenum"].clone()),
+            (json!(368), json!(10)),
+            "{state}"
+        );
     }
 
     #[test]
     fn basic_after_a_reset_loads_once_booted() {
         let (mut server, mut mb) = (server(), booted());
-        let events = server.events.subscribe(Some(vec!["reset".to_owned()])).unwrap();
-        let (status, _) = call(&mut server, &mut mb, "POST", "/api/basic?reset=1&run=1", "10 DIM X(10)\n20 GOTO 20\n");
+        let events = server
+            .events
+            .subscribe(Some(vec!["reset".to_owned()]))
+            .unwrap();
+        let (status, _) = call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/basic?reset=1&run=1",
+            "10 DIM X(10)\n20 GOTO 20\n",
+        );
         assert_eq!(status, 200);
         assert_eq!(events_of(&events).len(), 1);
         call(&mut server, &mut mb, "POST", "/api/basic_bp", "20");
@@ -2596,8 +3356,11 @@ mod test {
         assert!(server.paused());
         let (_, state) = call(&mut server, &mut mb, "GET", "/api/basic_state", "");
         assert_eq!(state["cur_linenum"], 20, "{state}");
-        let (txttop, vartop, arrend) =
-            (state["txttop"].as_u64().unwrap(), state["vartop"].as_u64().unwrap(), state["arrend"].as_u64().unwrap());
+        let (txttop, vartop, arrend) = (
+            state["txttop"].as_u64().unwrap(),
+            state["vartop"].as_u64().unwrap(),
+            state["arrend"].as_u64().unwrap(),
+        );
         assert!(txttop > 368 + 2 && vartop >= txttop, "{state}");
         assert!(arrend >= vartop + 11 * 5, "the array of 11 reals: {state}");
     }
@@ -2607,38 +3370,101 @@ mod test {
         let (mut server, mut mb) = (server(), machine());
         // LD B,10; loop: NOP; NOP; DJNZ loop; JR $
         mb.write_buffer(0x4000, &[0x06, 0x0a, 0x00, 0x00, 0x10, 0xfc, 0x18, 0xfe]);
-        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
-        let add = |server: &mut DebugServer, mb: &mut Motherboard, body: &str| call(server, mb, "POST", "/api/breakpoints", body);
-        assert_eq!(add(&mut server, &mut mb, r#"{"addr":"0x4002","run":"count","reset":"loop","start":"loop","after":0}"#).0, 200);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/exec",
+            r#"{"addr":16384}"#,
+        );
+        let add = |server: &mut DebugServer, mb: &mut Motherboard, body: &str| {
+            call(server, mb, "POST", "/api/breakpoints", body)
+        };
+        assert_eq!(
+            add(
+                &mut server,
+                &mut mb,
+                r#"{"addr":"0x4002","run":"count","reset":"loop","start":"loop","after":0}"#
+            )
+            .0,
+            200
+        );
         // Only reset at the first pass: from the second on, keep counting.
         call(&mut server, &mut mb, "DELETE", "/api/breakpoints", "");
-        add(&mut server, &mut mb, r#"{"addr":"0x4000","run":"count","reset":"loop"}"#);
-        add(&mut server, &mut mb, r#"{"addr":"0x4002","run":"count","start":"loop"}"#);
-        add(&mut server, &mut mb, r#"{"addr":"0x4006","stop":"loop","name":"done"}"#);
+        add(
+            &mut server,
+            &mut mb,
+            r#"{"addr":"0x4000","run":"count","reset":"loop"}"#,
+        );
+        add(
+            &mut server,
+            &mut mb,
+            r#"{"addr":"0x4002","run":"count","start":"loop"}"#,
+        );
+        add(
+            &mut server,
+            &mut mb,
+            r#"{"addr":"0x4006","stop":"loop","name":"done"}"#,
+        );
         let events = server.events.subscribe(None).unwrap();
         run(&mut server, &mut mb, 100);
         assert!(server.paused());
         assert_eq!(mb.pc(), 0x4006);
         let (_, counters) = call(&mut server, &mut mb, "GET", "/api/counters", "");
-        assert_eq!(counters["counters"][0], json!({ "name": "loop", "nops": 9 * 6 + 5, "running": false }), "{counters}");
+        assert_eq!(
+            counters["counters"][0],
+            json!({ "name": "loop", "nops": 9 * 6 + 5, "running": false }),
+            "{counters}"
+        );
         let (_, list) = call(&mut server, &mut mb, "GET", "/api/breakpoints", "");
         assert_eq!(list["advanced"][1]["hits"], 10);
-        assert_eq!(list["advanced"][1]["counters"], json!([{ "action": "start", "name": "loop" }]));
+        assert_eq!(
+            list["advanced"][1]["counters"],
+            json!([{ "action": "start", "name": "loop" }])
+        );
         let all = events_of(&events);
-        assert!(!all.iter().any(|e| e.starts_with("event: watch")), "count mode is silent");
+        assert!(
+            !all.iter().any(|e| e.starts_with("event: watch")),
+            "count mode is silent"
+        );
         let stop = all.iter().find(|e| e.starts_with("event: z80_bp")).unwrap();
-        assert!(stop.contains(r#""counters":{"loop":59}"#) && stop.contains(r#""hits":1"#), "{stop}");
+        assert!(
+            stop.contains(r#""counters":{"loop":59}"#) && stop.contains(r#""hits":1"#),
+            "{stop}"
+        );
 
         // A pass count: stop at the 5th hit inside the loop.
         call(&mut server, &mut mb, "DELETE", "/api/breakpoints", "");
-        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/exec",
+            r#"{"addr":16384}"#,
+        );
         add(&mut server, &mut mb, r#"{"addr":"0x4003","after":4}"#);
-        call(&mut server, &mut mb, "POST", "/api/config", r#"{"paused":false}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/config",
+            r#"{"paused":false}"#,
+        );
         run(&mut server, &mut mb, 100);
-        assert_eq!((mb.pc(), mb.cpu().reg8(crate::z80::Reg8::B).value()), (0x4003, 6));
-        assert_eq!(call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["advanced"][0]["hits"], 5);
+        assert_eq!(
+            (mb.pc(), mb.cpu().reg8(crate::z80::Reg8::B).value()),
+            (0x4003, 6)
+        );
+        assert_eq!(
+            call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["advanced"][0]["hits"],
+            5
+        );
 
-        assert_eq!(add(&mut server, &mut mb, r#"{"addr":1,"run":"count"}"#).0, 400, "count without counters");
+        assert_eq!(
+            add(&mut server, &mut mb, r#"{"addr":1,"run":"count"}"#).0,
+            400,
+            "count without counters"
+        );
         assert_eq!(add(&mut server, &mut mb, r#"{"addr":1,"start":5}"#).0, 400);
     }
 
@@ -2647,13 +3473,32 @@ mod test {
     /// through the debug server is the one the CPC would have stored.
     #[test]
     fn cpclib_tokenises_as_the_rom() {
-        for line in ["10 ON ERROR GOTO 30", "20 ERROR 5", "30 GOTO 30", "40 A=1:PRINT A", "50 DATA 1,2,300", "60 X=RND*100"] {
+        for line in [
+            "10 ON ERROR GOTO 30",
+            "20 ERROR 5",
+            "30 GOTO 30",
+            "40 A=1:PRINT A",
+            "50 DATA 1,2,300",
+            "60 X=RND*100",
+        ] {
             let (mut server, mut mb) = (self::server(), booted());
-            call(&mut server, &mut mb, "POST", "/api/keytype", &format!(r#"{{"text":"{line}\r"}}"#));
+            call(
+                &mut server,
+                &mut mb,
+                "POST",
+                "/api/keytype",
+                &format!(r#"{{"text":"{line}\r"}}"#),
+            );
             run(&mut server, &mut mb, 1_500_000);
-            let ours = cpclib::basic::BasicProgram::parse(format!("{line}\n")).unwrap().as_bytes();
-            let length = u16::from_le_bytes([mb.read_video_ram_byte(0x170), mb.read_video_ram_byte(0x171)]) as usize;
-            let typed: Vec<u8> = (0x170..0x170 + length as u16 + 2).map(|a| mb.read_video_ram_byte(a)).collect();
+            let ours = cpclib::basic::BasicProgram::parse(format!("{line}\n"))
+                .unwrap()
+                .as_bytes();
+            let length =
+                u16::from_le_bytes([mb.read_video_ram_byte(0x170), mb.read_video_ram_byte(0x171)])
+                    as usize;
+            let typed: Vec<u8> = (0x170..0x170 + length as u16 + 2)
+                .map(|a| mb.read_video_ram_byte(a))
+                .collect();
             assert_eq!(ours, typed, "{line}");
         }
     }
@@ -2666,17 +3511,34 @@ mod test {
             let (mut server, mut mb) = (server(), booted_model(model));
             let flag = |mb: &Motherboard, i: usize| mb.read_video_ram_byte(rom.flags[i]);
             // ERR: the last error's number.
-            call(&mut server, &mut mb, "POST", "/api/basic?run=1", "10 ERROR 5\n");
+            call(
+                &mut server,
+                &mut mb,
+                "POST",
+                "/api/basic?run=1",
+                "10 ERROR 5\n",
+            );
             run(&mut server, &mut mb, 3_000_000);
             assert_eq!(flag(&mb, 1), 5, "{}: ERR", model.name());
             // AUTO keeps its next line and step after its flag: typed on a
             // fresh machine, both 10.
             let (mut auto_server, mut auto_mb) = (self::server(), booted_model(model));
-            call(&mut auto_server, &mut auto_mb, "POST", "/api/keytype", r#"{"text":"AUTO\r"}"#);
+            call(
+                &mut auto_server,
+                &mut auto_mb,
+                "POST",
+                "/api/keytype",
+                r#"{"text":"AUTO\r"}"#,
+            );
             run(&mut auto_server, &mut auto_mb, 4_000_000);
             let auto = rom.flags[0];
             let fields = [auto + 1, auto + 3].map(|a| auto_mb.read_video_ram_byte(a));
-            assert_eq!(fields, [10, 10], "{}: AUTO line and step after {auto:#06x}", model.name());
+            assert_eq!(
+                fields,
+                [10, 10],
+                "{}: AUTO line and step after {auto:#06x}",
+                model.name()
+            );
         }
     }
 
@@ -2685,10 +3547,32 @@ mod test {
         let (mut server, mut mb) = (server(), MotherboardBuilder::default().build());
         mb.write_bank_byte(1, 0x10, 0x42);
         mb.write_bank_byte(5, 0x10, 0x43);
-        call(&mut server, &mut mb, "POST", "/api/config", r#"{"do_soft_reset":true}"#);
-        assert_eq!((mb.pc(), mb.read_bank_byte(1, 0x10), mb.read_bank_byte(5, 0x10)), (0, Some(0x42), Some(0x43)));
-        call(&mut server, &mut mb, "POST", "/api/config", r#"{"do_hard_reset":true}"#);
-        assert_eq!((mb.read_bank_byte(1, 0x10), mb.read_bank_byte(5, 0x10)), (Some(0), Some(0)));
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/config",
+            r#"{"do_soft_reset":true}"#,
+        );
+        assert_eq!(
+            (
+                mb.pc(),
+                mb.read_bank_byte(1, 0x10),
+                mb.read_bank_byte(5, 0x10)
+            ),
+            (0, Some(0x42), Some(0x43))
+        );
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/config",
+            r#"{"do_hard_reset":true}"#,
+        );
+        assert_eq!(
+            (mb.read_bank_byte(1, 0x10), mb.read_bank_byte(5, 0x10)),
+            (Some(0), Some(0))
+        );
         mb.execute_next_opcode_no_video();
         assert_ne!(mb.pc(), 0, "runs after a hard reset");
     }
@@ -2707,7 +3591,12 @@ mod test {
     fn unknown_paths_and_methods() {
         let (mut server, mut mb) = (server(), machine());
         assert_eq!(call(&mut server, &mut mb, "GET", "/api/nothing", "").0, 404);
-        let request = ApiRequest { method: "PUT".into(), path: "/api/ram".into(), query: vec![], body: Vec::new() };
+        let request = ApiRequest {
+            method: "PUT".into(),
+            path: "/api/ram".into(),
+            query: vec![],
+            body: Vec::new(),
+        };
         let response = server.handle(&request, &mut mb);
         assert_eq!(response.status, 405);
         assert_eq!(response.header("allow"), Some("GET, POST"));
@@ -2716,25 +3605,57 @@ mod test {
     #[test]
     fn registers_round_trip_and_partial_update() {
         let (mut server, mut mb) = (server(), machine());
-        let (status, body) = call(&mut server, &mut mb, "POST", "/api/z80", r#"{"PC":"0x4000","A":62,"IM":2}"#);
+        let (status, body) = call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/z80",
+            r#"{"PC":"0x4000","A":62,"IM":2}"#,
+        );
         assert_eq!((status, body["ok"].clone()), (200, json!(true)));
         let (_, z80) = call(&mut server, &mut mb, "GET", "/api/z80", "");
-        assert_eq!((z80["PC"].clone(), z80["A"].clone(), z80["IM"].clone()), (json!(0x4000), json!(62), json!(2)));
+        assert_eq!(
+            (z80["PC"].clone(), z80["A"].clone(), z80["IM"].clone()),
+            (json!(0x4000), json!(62), json!(2))
+        );
         let (status, error) = call(&mut server, &mut mb, "POST", "/api/z80", r#"{"A":256}"#);
         assert_eq!((status, error["field"].clone()), (400, json!("A")));
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/z80", r#"{}"#).0, 400);
+        assert_eq!(
+            call(&mut server, &mut mb, "POST", "/api/z80", r#"{}"#).0,
+            400
+        );
     }
 
     #[test]
     fn ram_write_then_read_and_nested_keys() {
         let (mut server, mut mb) = (server(), machine());
-        let (status, body) =
-            call(&mut server, &mut mb, "POST", "/api/ram", r#"{"write":{"addr":4096,"data":"3e 01:c9"}}"#);
+        let (status, body) = call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/ram",
+            r#"{"write":{"addr":4096,"data":"3e 01:c9"}}"#,
+        );
         assert_eq!((status, body["seq"].clone()), (200, json!(1)));
-        let (_, read) = call(&mut server, &mut mb, "GET", "/api/ram?addr=0x1000&len=3", "");
+        let (_, read) = call(
+            &mut server,
+            &mut mb,
+            "GET",
+            "/api/ram?addr=0x1000&len=3",
+            "",
+        );
         assert_eq!(read["hex"], "3e01c9");
-        let (_, cpu) = call(&mut server, &mut mb, "GET", "/api/ram?addr=4096&len=3&view=cpu", "");
-        assert_eq!((cpu["hex"].clone(), cpu["view"].clone()), (json!("3e01c9"), json!("cpu")));
+        let (_, cpu) = call(
+            &mut server,
+            &mut mb,
+            "GET",
+            "/api/ram?addr=4096&len=3&view=cpu",
+            "",
+        );
+        assert_eq!(
+            (cpu["hex"].clone(), cpu["view"].clone()),
+            (json!("3e01c9"), json!("cpu"))
+        );
         let (status, error) = call(&mut server, &mut mb, "GET", "/api/ram?len=0", "");
         assert_eq!((status, error["field"].clone()), (400, json!("len")));
         assert_eq!(call(&mut server, &mut mb, "POST", "/api/ram", "RUN").0, 400);
@@ -2744,8 +3665,20 @@ mod test {
     fn step_runs_one_instruction_then_pauses() {
         let (mut server, mut mb) = (server(), machine());
         mb.write_buffer(0x4000, &[0x3e, 0x42, 0x00]); // LD A,0x42; NOP
-        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
-        call(&mut server, &mut mb, "POST", "/api/config", r#"{"paused":true}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/exec",
+            r#"{"addr":16384}"#,
+        );
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/config",
+            r#"{"paused":true}"#,
+        );
         server.poll(&mut mb);
         let (_, step) = call(&mut server, &mut mb, "POST", "/api/step", "");
         assert!(!server.paused());
@@ -2762,8 +3695,17 @@ mod test {
     fn breakpoints_pause_on_the_address() {
         let (mut server, mut mb) = (server(), machine());
         mb.write_buffer(0x4000, &[0x00, 0x00, 0x00, 0x18, 0xfb]); // NOP x3; JR 0x4000
-        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/z80_bp", "0x4002, 16387").0, 200);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/exec",
+            r#"{"addr":16384}"#,
+        );
+        assert_eq!(
+            call(&mut server, &mut mb, "POST", "/api/z80_bp", "0x4002, 16387").0,
+            200
+        );
         for _ in 0..2 {
             mb.execute_next_opcode_no_video();
             server.after_instruction(&mut mb);
@@ -2772,7 +3714,10 @@ mod test {
         assert_eq!(server.take_stop(), Some(0x4002));
         let bank_count = mb.physical_bank_count();
         let missing = format!("B{bank_count:02X}:0000");
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/z80_bp", &missing).0, 400);
+        assert_eq!(
+            call(&mut server, &mut mb, "POST", "/api/z80_bp", &missing).0,
+            400
+        );
         assert_eq!(call(&mut server, &mut mb, "POST", "/api/z80_bp", "").0, 200);
         assert!(server.exec_breakpoints.is_empty());
     }
@@ -2797,10 +3742,24 @@ mod test {
     fn cpu_addresses_resolve_to_what_is_mapped() {
         let mut server = server();
         let mut mb = MotherboardBuilder::default().disable_upper_rom().build(); // lower ROM on
-        let (_, body) = call(&mut server, &mut mb, "POST", "/api/z80_bp", "0x38,0x4002,B04:4001");
-        let names: Vec<_> = body["resolved"].as_array().unwrap().iter().map(|r| r["location"].clone()).collect();
+        let (_, body) = call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/z80_bp",
+            "0x38,0x4002,B04:4001",
+        );
+        let names: Vec<_> = body["resolved"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["location"].clone())
+            .collect();
         // B04 + 0x4001 carries into B05.
-        assert_eq!(names, vec![json!("LOWER:0038"), json!("B01:0002"), json!("B05:0001")]);
+        assert_eq!(
+            names,
+            vec![json!("LOWER:0038"), json!("B01:0002"), json!("B05:0001")]
+        );
         let (_, deprecated) = call(&mut server, &mut mb, "POST", "/api/z80_bp", "C4:0200");
         assert_eq!(deprecated["resolved"][0]["location"], "B04:0200");
         assert!(deprecated["warnings"].is_array());
@@ -2810,7 +3769,13 @@ mod test {
     fn a_physical_breakpoint_fires_only_on_its_bank() {
         let (mut server, mut mb) = (server(), machine());
         mb.write_buffer(0x4000, &[0x00, 0x00, 0x00, 0x18, 0xfb]); // NOPs; JR 0x4000
-        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/exec",
+            r#"{"addr":16384}"#,
+        );
         // 0x4002 is B01:0002 here: a breakpoint on B04:0002 must not fire.
         call(&mut server, &mut mb, "POST", "/api/z80_bp", "B04:0002");
         run(&mut server, &mut mb, 10);
@@ -2825,11 +3790,40 @@ mod test {
     fn ram_banks_beyond_the_base_64k() {
         let (mut server, mut mb) = (server(), machine());
         assert!(mb.physical_bank_count() >= 8, "a 6128 has 64K of extra RAM");
-        call(&mut server, &mut mb, "POST", "/api/ram", r#"{"bank":4,"addr":0,"data":"a5"}"#);
-        assert_eq!(call(&mut server, &mut mb, "GET", "/api/ram?bank=4&addr=0&len=1", "").1["hex"], "a5");
-        assert_ne!(call(&mut server, &mut mb, "GET", "/api/ram?addr=0&len=1", "").1["hex"], "a5");
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/ram",
+            r#"{"bank":4,"addr":0,"data":"a5"}"#,
+        );
+        assert_eq!(
+            call(
+                &mut server,
+                &mut mb,
+                "GET",
+                "/api/ram?bank=4&addr=0&len=1",
+                ""
+            )
+            .1["hex"],
+            "a5"
+        );
+        assert_ne!(
+            call(&mut server, &mut mb, "GET", "/api/ram?addr=0&len=1", "").1["hex"],
+            "a5"
+        );
         // addr past 0x3FFF carries into the next bank.
-        assert_eq!(call(&mut server, &mut mb, "GET", "/api/ram?bank=3&addr=0x4000&len=1", "").1["hex"], "a5");
+        assert_eq!(
+            call(
+                &mut server,
+                &mut mb,
+                "GET",
+                "/api/ram?bank=3&addr=0x4000&len=1",
+                ""
+            )
+            .1["hex"],
+            "a5"
+        );
         let beyond = format!("/api/ram?bank={}", mb.physical_bank_count());
         assert_eq!(call(&mut server, &mut mb, "GET", &beyond, "").0, 400);
     }
@@ -2840,35 +3834,73 @@ mod test {
         let events = server.events.subscribe(None).unwrap();
         // LD A,0x81; LD (0xC005),A; NOP; JR -6
         mb.write_buffer(0x4000, &[0x3e, 0x81, 0x32, 0x05, 0xc0, 0x00, 0x18, 0xf8]);
-        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/exec",
+            r#"{"addr":16384}"#,
+        );
         let (status, added) = call(
             &mut server,
             &mut mb,
             "POST",
             "/api/breakpoints",
-            r#"{"kind":"mem","access":"w","run":"watch","addr":"0xC000","size":16,"name":"screen"}"#
+            r#"{"kind":"mem","access":"w","run":"watch","addr":"0xC000","size":16,"name":"screen"}"#,
         );
         assert_eq!((status, added["index"].clone()), (200, json!(0)));
         run(&mut server, &mut mb, 2);
         assert!(!server.paused(), "watch only reports");
-        let watch: Vec<_> = events_of(&events).into_iter().filter(|e| e.starts_with("event: watch")).collect();
+        let watch: Vec<_> = events_of(&events)
+            .into_iter()
+            .filter(|e| e.starts_with("event: watch"))
+            .collect();
         assert_eq!(watch.len(), 1);
-        assert!(watch[0].contains(r#""addr":"0xC005""#) && watch[0].contains(r#""name":"screen""#), "{}", watch[0]);
+        assert!(
+            watch[0].contains(r#""addr":"0xC005""#) && watch[0].contains(r#""name":"screen""#),
+            "{}",
+            watch[0]
+        );
 
         // Now stop, written as rasm/basm store it in REMU.
         call(&mut server, &mut mb, "DELETE", "/api/breakpoints", "");
-        let (status, _) =
-            call(&mut server, &mut mb, "POST", "/api/breakpoints", r#"{"remu":"MEM,W,STOP,addr=49157,value=129,valmask=255"}"#);
+        let (status, _) = call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/breakpoints",
+            r#"{"remu":"MEM,W,STOP,addr=49157,value=129,valmask=255"}"#,
+        );
         assert_eq!(status, 200);
         run(&mut server, &mut mb, 4);
         assert!(server.paused());
         assert_eq!(mb.pc(), 0x4005, "stops after the writing instruction");
         let stops = events_of(&events);
-        assert!(stops.iter().any(|e| e.starts_with("event: z80_bp") && e.contains(r#""kind":"mem""#)), "{stops:?}");
-        assert!(stops.iter().any(|e| e.starts_with("event: pause") && e.contains("true")), "{stops:?}");
+        assert!(
+            stops
+                .iter()
+                .any(|e| e.starts_with("event: z80_bp") && e.contains(r#""kind":"mem""#)),
+            "{stops:?}"
+        );
+        assert!(
+            stops
+                .iter()
+                .any(|e| e.starts_with("event: pause") && e.contains("true")),
+            "{stops:?}"
+        );
         let (_, list) = call(&mut server, &mut mb, "GET", "/api/breakpoints", "");
         assert_eq!(list["advanced"][0]["addr"], 0xc005);
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/breakpoints", r#"{"addr":1,"condition":"A=="}"#).0, 400);
+        assert_eq!(
+            call(
+                &mut server,
+                &mut mb,
+                "POST",
+                "/api/breakpoints",
+                r#"{"addr":1,"condition":"A=="}"#
+            )
+            .0,
+            400
+        );
     }
 
     #[test]
@@ -2876,30 +3908,51 @@ mod test {
         let (mut server, mut mb) = (server(), machine());
         // INC A; LD (0xC000),A; JR -5 - writes 1, 2, 3...
         mb.write_buffer(0x4000, &[0x3c, 0x32, 0x00, 0xc0, 0x18, 0xfa]);
-        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/exec",
+            r#"{"addr":16384}"#,
+        );
         let (status, _) = call(
             &mut server,
             &mut mb,
             "POST",
             "/api/breakpoints",
-            r#"{"kind":"mem","access":"w","addr":"0xC000","condition":"value == 3 && A = 3 && peek(0xC000) = 3"}"#
+            r#"{"kind":"mem","access":"w","addr":"0xC000","condition":"value == 3 && A = 3 && peek(0xC000) = 3"}"#,
         );
         assert_eq!(status, 200);
         run(&mut server, &mut mb, 100);
         assert!(server.paused());
         assert_eq!(mb.read_byte(0xc000), 3);
         let (_, list) = call(&mut server, &mut mb, "GET", "/api/breakpoints", "");
-        assert_eq!(list["advanced"][0]["condition"], "value == 3 && A = 3 && peek(0xC000) = 3");
+        assert_eq!(
+            list["advanced"][0]["condition"],
+            "value == 3 && A = 3 && peek(0xC000) = 3"
+        );
     }
 
     #[test]
     fn reset_and_resume_events() {
         let (mut server, mut mb) = (server(), machine());
-        let events = server.events.subscribe(Some(vec!["reset".to_owned()])).unwrap();
-        call(&mut server, &mut mb, "POST", "/api/config", r#"{"do_hard_reset":true,"paused":true}"#);
+        let events = server
+            .events
+            .subscribe(Some(vec!["reset".to_owned()]))
+            .unwrap();
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/config",
+            r#"{"do_hard_reset":true,"paused":true}"#,
+        );
         server.poll(&mut mb);
         // Filtered on "reset": the pause event is not delivered.
-        assert_eq!(events_of(&events), vec!["event: reset\ndata: {\"hard\":true}\n\n".to_owned()]);
+        assert_eq!(
+            events_of(&events),
+            vec!["event: reset\ndata: {\"hard\":true}\n\n".to_owned()]
+        );
     }
 
     #[test]
@@ -2907,18 +3960,47 @@ mod test {
         let (mut server, mut mb) = (server(), machine());
         // LD A,7; XOR A; LD (0x4001),A - the last one zeroes the operand of the first.
         mb.write_buffer(0x4000, &[0x3e, 0x07, 0xaf, 0x32, 0x01, 0x40, 0x00]);
-        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/exec",
+            r#"{"addr":16384}"#,
+        );
         server.after_instruction(&mut mb); // what a loop does once before running
         run(&mut server, &mut mb, 3);
         let (_, history) = call(&mut server, &mut mb, "GET", "/api/history", "");
         let history = history.as_array().unwrap();
         assert_eq!(history.len(), 3);
-        assert_eq!((history[0]["pc"].clone(), history[0]["hex"].clone()), (json!(0x4000), json!("3E07AF32")));
+        assert_eq!(
+            (history[0]["pc"].clone(), history[0]["hex"].clone()),
+            (json!(0x4000), json!("3E07AF32"))
+        );
         assert_eq!(history[0]["current_hex"], "3E00AF32");
         assert_eq!(history[2]["pc"], 0x4003);
-        assert_eq!(call(&mut server, &mut mb, "GET", "/api/history?n=1", "").1.as_array().unwrap().len(), 1);
-        call(&mut server, &mut mb, "POST", "/api/config", r#"{"history_size":1}"#);
-        assert_eq!(call(&mut server, &mut mb, "GET", "/api/history", "").1.as_array().unwrap().len(), 0);
+        assert_eq!(
+            call(&mut server, &mut mb, "GET", "/api/history?n=1", "")
+                .1
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/config",
+            r#"{"history_size":1}"#,
+        );
+        assert_eq!(
+            call(&mut server, &mut mb, "GET", "/api/history", "")
+                .1
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
     #[test]
@@ -2926,7 +4008,10 @@ mod test {
         use crate::monitor::{FULL_FRAME_HEIGHT, FULL_FRAME_WIDTH};
         let (mut server, mut mb) = (server(), MotherboardBuilder::default().build());
         let mut monitor = Monitor::default();
-        let shot = |server: &mut DebugServer, mb: &mut Motherboard, monitor: Option<&Monitor>, query: &str| {
+        let shot = |server: &mut DebugServer,
+                    mb: &mut Motherboard,
+                    monitor: Option<&Monitor>,
+                    query: &str| {
             let query = query
                 .split('&')
                 .filter(|p| !p.is_empty())
@@ -2935,13 +4020,26 @@ mod test {
                     (k.to_owned(), v.to_owned())
                 })
                 .collect();
-            let request = ApiRequest { method: "GET".into(), path: "/api/screenshot".into(), query, body: Vec::new() };
+            let request = ApiRequest {
+                method: "GET".into(),
+                path: "/api/screenshot".into(),
+                query,
+                body: Vec::new(),
+            };
             let response = server.handle_with(&request, mb, monitor);
             let picture = (response.status == 200)
                 .then(|| image::load_from_memory(&response.body).unwrap().to_rgb8());
-            (response.status, picture, response.header("X-Crop-X").map(str::to_owned))
+            (
+                response.status,
+                picture,
+                response.header("X-Crop-X").map(str::to_owned),
+            )
         };
-        assert_eq!(shot(&mut server, &mut mb, Some(&monitor), "crop=0").0, 503, "whole frames not kept");
+        assert_eq!(
+            shot(&mut server, &mut mb, Some(&monitor), "crop=0").0,
+            503,
+            "whole frames not kept"
+        );
         monitor.keep_full_frames();
         // Three frames, the firmware's border drawn, then half of one.
         let mut frames = 0;
@@ -2955,7 +4053,12 @@ mod test {
             });
             let (x, line) = monitor.beam();
             let (crop_x, crop_y) = monitor.crop_origin();
-            server.set_beam(Beam { x, line, crop_x, crop_y });
+            server.set_beam(Beam {
+                x,
+                line,
+                crop_x,
+                crop_y,
+            });
             if let Some(frame) = done {
                 server.set_frame(&frame);
                 return true;
@@ -2973,23 +4076,49 @@ mod test {
 
         let (status, whole, origin) = shot(&mut server, &mut mb, Some(&monitor), "crop=0&live=0");
         let whole = whole.unwrap();
-        assert_eq!((status, whole.dimensions()), (200, (FULL_FRAME_WIDTH, FULL_FRAME_HEIGHT)));
+        assert_eq!(
+            (status, whole.dimensions()),
+            (200, (FULL_FRAME_WIDTH, FULL_FRAME_HEIGHT))
+        );
         assert_eq!(origin.as_deref(), Some("0"));
         let visible = shot(&mut server, &mut mb, Some(&monitor), "").1.unwrap();
         assert_eq!(visible.dimensions(), (768, 272));
         // The visible area is inside the whole frame, where the crop says.
         let (cx, cy) = monitor.crop_origin();
-        assert_eq!(*whole.get_pixel(cx as u32 + 10, cy as u32 + 100), *visible.get_pixel(10, 100));
+        assert_eq!(
+            *whole.get_pixel(cx as u32 + 10, cy as u32 + 100),
+            *visible.get_pixel(10, 100)
+        );
 
         // Live: the half drawn, black below the beam; over the previous frame
         // with full=0.
         let below = 250;
-        let live = shot(&mut server, &mut mb, Some(&monitor), "crop=0&live=1").1.unwrap();
-        assert_eq!(*live.get_pixel(500, below), image::Rgb([0, 0, 0]), "not drawn yet");
-        let composite = shot(&mut server, &mut mb, Some(&monitor), "crop=0&live=1&full=0").1.unwrap();
-        assert_eq!(*composite.get_pixel(500, below), *whole.get_pixel(500, below), "the previous frame");
-        assert_eq!(*composite.get_pixel(500, 100), *live.get_pixel(500, 100), "what is drawn");
-        assert_ne!(*whole.get_pixel(500, below), image::Rgb([0, 0, 0]), "a border is drawn there");
+        let live = shot(&mut server, &mut mb, Some(&monitor), "crop=0&live=1")
+            .1
+            .unwrap();
+        assert_eq!(
+            *live.get_pixel(500, below),
+            image::Rgb([0, 0, 0]),
+            "not drawn yet"
+        );
+        let composite = shot(&mut server, &mut mb, Some(&monitor), "crop=0&live=1&full=0")
+            .1
+            .unwrap();
+        assert_eq!(
+            *composite.get_pixel(500, below),
+            *whole.get_pixel(500, below),
+            "the previous frame"
+        );
+        assert_eq!(
+            *composite.get_pixel(500, 100),
+            *live.get_pixel(500, 100),
+            "what is drawn"
+        );
+        assert_ne!(
+            *whole.get_pixel(500, below),
+            image::Rgb([0, 0, 0]),
+            "a border is drawn there"
+        );
 
         // Without the monitor: the last frame, and no whole frame.
         assert_eq!(shot(&mut server, &mut mb, None, "crop=0").0, 503);
@@ -3000,9 +4129,21 @@ mod test {
     #[test]
     fn screenshot_is_a_png_of_the_last_frame() {
         let (mut server, mut mb) = (server(), machine());
-        assert_eq!(call(&mut server, &mut mb, "GET", "/api/screenshot", "").0, 503);
-        server.set_frame(&image::RgbImage::from_pixel(768, 272, image::Rgb([0, 0, 128])));
-        let request = ApiRequest { method: "GET".into(), path: "/api/screenshot".into(), query: vec![], body: Vec::new() };
+        assert_eq!(
+            call(&mut server, &mut mb, "GET", "/api/screenshot", "").0,
+            503
+        );
+        server.set_frame(&image::RgbImage::from_pixel(
+            768,
+            272,
+            image::Rgb([0, 0, 128]),
+        ));
+        let request = ApiRequest {
+            method: "GET".into(),
+            path: "/api/screenshot".into(),
+            query: vec![],
+            body: Vec::new(),
+        };
         let response = server.handle(&request, &mut mb);
         assert_eq!((response.status, response.content_type), (200, "image/png"));
         assert_eq!(response.header("X-Crop-W"), Some("768"));
@@ -3010,7 +4151,12 @@ mod test {
         assert_eq!(*png.get_pixel(10, 10), image::Rgb([0, 0, 128]));
     }
 
-    fn upload(server: &mut DebugServer, mb: &mut Motherboard, query: &str, body: &[u8]) -> (u16, Value) {
+    fn upload(
+        server: &mut DebugServer,
+        mb: &mut Motherboard,
+        query: &str,
+        body: &[u8],
+    ) -> (u16, Value) {
         let query = query
             .split('&')
             .filter(|p| !p.is_empty())
@@ -3019,16 +4165,32 @@ mod test {
                 (k.to_owned(), v.to_owned())
             })
             .collect();
-        let request = ApiRequest { method: "POST".into(), path: "/api/media".into(), query, body: body.to_vec() };
+        let request = ApiRequest {
+            method: "POST".into(),
+            path: "/api/media".into(),
+            query,
+            body: body.to_vec(),
+        };
         let response = server.handle(&request, mb);
-        (response.status, serde_json::from_slice(&response.body).unwrap())
+        (
+            response.status,
+            serde_json::from_slice(&response.body).unwrap(),
+        )
     }
 
     #[test]
     fn media_binaries_with_and_without_header() {
         let (mut server, mut mb) = (server(), machine());
-        let (status, reply) = upload(&mut server, &mut mb, "name=game@4000@4001.bin", &[0xc9, 0x00]);
-        assert_eq!((status, reply["load"].clone(), reply["len"].clone()), (200, json!(0x4000), json!(2)));
+        let (status, reply) = upload(
+            &mut server,
+            &mut mb,
+            "name=game@4000@4001.bin",
+            &[0xc9, 0x00],
+        );
+        assert_eq!(
+            (status, reply["load"].clone(), reply["len"].clone()),
+            (200, json!(0x4000), json!(2))
+        );
         assert_eq!((mb.read_byte(0x4000), mb.pc()), (0xc9, 0x4001));
 
         let mut amsdos = vec![0u8; 128];
@@ -3040,13 +4202,23 @@ mod test {
         amsdos.extend_from_slice(&[1, 2, 3, 4]);
         let (status, reply) = upload(&mut server, &mut mb, "name=prog.bin", &amsdos);
         assert_eq!((status, reply["entry"].clone()), (200, json!(0x8001)));
-        assert_eq!((mb.read_byte(0x8000), mb.read_byte(0x8002), mb.read_byte(0x8003)), (1, 3, 0));
+        assert_eq!(
+            (
+                mb.read_byte(0x8000),
+                mb.read_byte(0x8002),
+                mb.read_byte(0x8003)
+            ),
+            (1, 3, 0)
+        );
         assert_eq!(mb.pc(), 0x4001, "no @ENTRY in the name: no jump");
 
         assert_eq!(upload(&mut server, &mut mb, "name=raw.bin", &[0]).0, 400);
         assert_eq!(upload(&mut server, &mut mb, "name=x.cdt", &[0]).0, 400);
         let cdt = crate::tape::cdt_of_binary("x", 0x4000, 0x4000, &[0xc9], 2000);
-        assert_eq!(upload(&mut server, &mut mb, "name=x.cdt", &cdt).1["media"], json!("cdt"));
+        assert_eq!(
+            upload(&mut server, &mut mb, "name=x.cdt", &cdt).1["media"],
+            json!("cdt")
+        );
         assert!(mb.tape_deck().is_some_and(|deck| deck.playing()));
         assert_eq!(upload(&mut server, &mut mb, "", &[]).0, 400);
     }
@@ -3063,9 +4235,15 @@ mod test {
         let mut bytes = Vec::new();
         snapshot.write_all(&mut bytes, SnapshotVersion::V3).unwrap();
         let (status, reply) = upload(&mut server, &mut mb, "name=save.sna", &bytes);
-        assert_eq!((status, reply["media"].clone(), reply["breakpoints"].clone()), (200, json!("sna"), json!(1)));
+        assert_eq!(
+            (status, reply["media"].clone(), reply["breakpoints"].clone()),
+            (200, json!("sna"), json!(1))
+        );
         assert_eq!(mb.pc(), 0x1234);
-        assert_eq!(call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["z80_bp"], json!(["B01:0000"]));
+        assert_eq!(
+            call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["z80_bp"],
+            json!(["B01:0000"])
+        );
     }
 
     #[test]
@@ -3077,7 +4255,12 @@ mod test {
         remu.add_entry(&RemuEntry::new_label("main".to_owned(), 0x4000, 0));
         snapshot.add_chunk(remu);
         let mut symb = AceSymbolChunk::empty();
-        symb.add_symbol(AceSymbol::new("loop", 0x4002, AceMemMapType::Undefined, AceSymbolType::Absolute));
+        symb.add_symbol(AceSymbol::new(
+            "loop",
+            0x4002,
+            AceMemMapType::Undefined,
+            AceSymbolType::Absolute,
+        ));
         snapshot.add_chunk(symb);
         let mut bytes = Vec::new();
         snapshot.write_all(&mut bytes, SnapshotVersion::V3).unwrap();
@@ -3093,14 +4276,25 @@ mod test {
         mb.cpu_mut().set_pc(0x4000);
         let (status, reply) = call(&mut server, &mut mb, "POST", "/api/z80_bp", "loop, main+1");
         assert_eq!(status, 200, "{reply}");
-        assert_eq!(call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["z80_bp"], json!(["B01:0001", "B01:0002"]));
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/z80_bp", "nowhere").0, 400);
+        assert_eq!(
+            call(&mut server, &mut mb, "GET", "/api/breakpoints", "").1["z80_bp"],
+            json!(["B01:0001", "B01:0002"])
+        );
+        assert_eq!(
+            call(&mut server, &mut mb, "POST", "/api/z80_bp", "nowhere").0,
+            400
+        );
 
         call(&mut server, &mut mb, "POST", "/api/z80_bp", "");
         server.after_instruction(&mut mb);
         run(&mut server, &mut mb, 3);
         let history = call(&mut server, &mut mb, "GET", "/api/history", "").1;
-        let labels: Vec<Value> = history.as_array().unwrap().iter().map(|entry| entry["label"].clone()).collect();
+        let labels: Vec<Value> = history
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["label"].clone())
+            .collect();
         assert_eq!(labels, vec![json!("main"), json!("main+1"), json!("loop")]);
     }
 
@@ -3108,9 +4302,17 @@ mod test {
     fn a_saved_snapshot_goes_back_through_media() {
         let (mut server, mut mb) = (server(), machine());
         mb.cpu_mut().set_pc(0x4321);
-        let request = ApiRequest { method: "GET".into(), path: "/api/snapshot".into(), query: vec![], body: Vec::new() };
+        let request = ApiRequest {
+            method: "GET".into(),
+            path: "/api/snapshot".into(),
+            query: vec![],
+            body: Vec::new(),
+        };
         let response = server.handle(&request, &mut mb);
-        assert_eq!((response.status, response.content_type), (200, "application/octet-stream"));
+        assert_eq!(
+            (response.status, response.content_type),
+            (200, "application/octet-stream")
+        );
         let mut other = machine();
         let (status, reply) = upload(&mut server, &mut other, "name=saved.sna", &response.body);
         assert_eq!((status, reply["media"].clone()), (200, json!("sna")));
@@ -3145,10 +4347,25 @@ mod test {
     #[test]
     fn keytype_reports_autotyping() {
         let (mut server, mut mb) = (server(), machine());
-        assert_eq!(call(&mut server, &mut mb, "POST", "/api/keytype", r#"{}"#).0, 400);
-        call(&mut server, &mut mb, "POST", "/api/keytype", r#"{"text":"RUN\r"}"#);
+        assert_eq!(
+            call(&mut server, &mut mb, "POST", "/api/keytype", r#"{}"#).0,
+            400
+        );
+        call(
+            &mut server,
+            &mut mb,
+            "POST",
+            "/api/keytype",
+            r#"{"text":"RUN\r"}"#,
+        );
         let (_, ping) = call(&mut server, &mut mb, "GET", "/api/ping", "");
-        assert_eq!((ping["emu"]["autotyping"].clone(), ping["emu"]["autotype_remaining"].clone()), (json!(true), json!(4)));
+        assert_eq!(
+            (
+                ping["emu"]["autotyping"].clone(),
+                ping["emu"]["autotype_remaining"].clone()
+            ),
+            (json!(true), json!(4))
+        );
     }
 
     #[test]
@@ -3157,7 +4374,12 @@ mod test {
         let mut server = DebugServer::with_requests(receiver);
         let mut mb = machine();
         let (reply_sender, reply) = mpsc::channel();
-        let request = ApiRequest { method: "GET".into(), path: "/api/state".into(), query: vec![], body: Vec::new() };
+        let request = ApiRequest {
+            method: "GET".into(),
+            path: "/api/state".into(),
+            query: vec![],
+            body: Vec::new(),
+        };
         sender.send((request, reply_sender)).unwrap();
         server.poll(&mut mb);
         let state: Value = serde_json::from_slice(&reply.recv().unwrap().body).unwrap();

@@ -72,7 +72,11 @@ fn main() {
         ("MA+MD (T23 C8)", 23, &[(23, 0, 0xc8, 2)]),
         ("18x256 (T24 R1,R18)", 24, &[(24, 0, 1, 1), (24, 0, 18, 1)]),
         ("8K sector N=6 CRC (T25)", 25, &[(25, 0, 0xc1, 6)]),
-        ("wrong cylinder C=99 (T26 R41)", 26, &[(26, 0, 0x41, 2), (26, 0, 0xff, 2)]),
+        (
+            "wrong cylinder C=99 (T26 R41)",
+            26,
+            &[(26, 0, 0x41, 2), (26, 0, 0xff, 2)],
+        ),
     ];
     println!("READ ID on unformatted track 22:");
     seek(&mut fdc, 22);

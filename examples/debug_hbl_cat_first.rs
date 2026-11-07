@@ -37,9 +37,14 @@ fn main() {
          key_output 'RUN\"HBL\\(RET)'\n\
          wait 3000000\n"
     );
-    runner.run_text(&boot, ".").unwrap_or_else(|e| panic!("boot failed: {e}"));
+    runner
+        .run_text(&boot, ".")
+        .unwrap_or_else(|e| panic!("boot failed: {e}"));
 
-    eprintln!("boot script done (PC={:04X}), switching to raw single-stepping", runner.motherboard().pc());
+    eprintln!(
+        "boot script done (PC={:04X}), switching to raw single-stepping",
+        runner.motherboard().pc()
+    );
 
     let mb = runner.motherboard_mut();
     let mut last_pc = mb.pc();
@@ -70,7 +75,11 @@ fn main() {
                 eprint!(" {:04X}={:04X}", addr, mb.read_word(addr));
             }
             eprintln!();
-            eprintln!("\ndisassembly leading up to it ({:04X}-{:04X}):", last_pc.saturating_sub(32), last_pc);
+            eprintln!(
+                "\ndisassembly leading up to it ({:04X}-{:04X}):",
+                last_pc.saturating_sub(32),
+                last_pc
+            );
             for insn in mb.disassemble_instructions_from(last_pc.saturating_sub(32), 20) {
                 eprintln!("{}", insn);
             }

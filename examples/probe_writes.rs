@@ -33,7 +33,13 @@ fn main() {
         }
         if hcc != last_hcc && hcc == 0 {
             let c = mb.crtc();
-            println!("C4={:?} C9={} LL={} |{}", c.vcc, c.vlc.value(), c.last_line(), line);
+            println!(
+                "C4={:?} C9={} LL={} |{}",
+                c.vcc,
+                c.vlc.value(),
+                c.last_line(),
+                line
+            );
             line.clear();
             n += 1;
         }

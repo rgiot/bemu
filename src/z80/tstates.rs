@@ -31,16 +31,45 @@ fn unprefixed(op: u8, taken: bool) -> Vec<Cycle> {
         0x34 | 0x35 => vec![B(4), B(3), I(1), B(3)],
         0x36 => vec![B(4), B(3), B(3)],
         0x09 | 0x19 | 0x29 | 0x39 => vec![B(4), I(7)],
-        0x10 => if taken { vec![B(4), I(1), B(3), I(5)] } else { vec![B(4), I(1), B(3)] },
+        0x10 => {
+            if taken {
+                vec![B(4), I(1), B(3), I(5)]
+            } else {
+                vec![B(4), I(1), B(3)]
+            }
+        }
         0x18 => vec![B(4), B(3), I(5)],
-        0x20 | 0x28 | 0x30 | 0x38 => if taken { vec![B(4), B(3), I(5)] } else { vec![B(4), B(3)] },
+        0x20 | 0x28 | 0x30 | 0x38 => {
+            if taken {
+                vec![B(4), B(3), I(5)]
+            } else {
+                vec![B(4), B(3)]
+            }
+        }
         0x22 | 0x2a => vec![B(4), B(3), B(3), B(3), B(3)],
         0x32 | 0x3a => vec![B(4), B(3), B(3), B(3)],
         0x76 => vec![B(4)],
-        0x40..=0x7f => if r == 6 || y == 6 { vec![B(4), B(3)] } else { vec![B(4)] },
-        0x80..=0xbf => if r == 6 { vec![B(4), B(3)] } else { vec![B(4)] },
-        0xc0 | 0xc8 | 0xd0 | 0xd8 | 0xe0 | 0xe8 | 0xf0 | 0xf8 =>
-            if taken { vec![B(4), I(1), B(3), B(3)] } else { vec![B(4), I(1)] },
+        0x40..=0x7f => {
+            if r == 6 || y == 6 {
+                vec![B(4), B(3)]
+            } else {
+                vec![B(4)]
+            }
+        }
+        0x80..=0xbf => {
+            if r == 6 {
+                vec![B(4), B(3)]
+            } else {
+                vec![B(4)]
+            }
+        }
+        0xc0 | 0xc8 | 0xd0 | 0xd8 | 0xe0 | 0xe8 | 0xf0 | 0xf8 => {
+            if taken {
+                vec![B(4), I(1), B(3), B(3)]
+            } else {
+                vec![B(4), I(1)]
+            }
+        }
         0xc1 | 0xd1 | 0xe1 | 0xf1 | 0xc9 => vec![B(4), B(3), B(3)],
         0xc3 => vec![B(4), B(3), B(3)],
         0xcd => vec![B(4), B(3), B(3), I(1), B(3), B(3)],
@@ -49,7 +78,13 @@ fn unprefixed(op: u8, taken: bool) -> Vec<Cycle> {
         0xe3 => vec![B(4), B(3), B(3), I(1), B(3), B(3), I(2)],
         0xf9 => vec![B(4), I(2)],
         _ if op >= 0xc0 && r == 2 => vec![B(4), B(3), B(3)],
-        _ if op >= 0xc0 && r == 4 => if taken { vec![B(4), B(3), B(3), I(1), B(3), B(3)] } else { vec![B(4), B(3), B(3)] },
+        _ if op >= 0xc0 && r == 4 => {
+            if taken {
+                vec![B(4), B(3), B(3), I(1), B(3), B(3)]
+            } else {
+                vec![B(4), B(3), B(3)]
+            }
+        }
         _ if op >= 0xc0 && r == 6 => vec![B(4), B(3)],
         _ if op >= 0xc0 && r == 7 => vec![B(4), I(1), B(3), B(3)],
         _ if op < 0x40 && r == 6 => vec![B(4), B(3)],
@@ -59,7 +94,11 @@ fn unprefixed(op: u8, taken: bool) -> Vec<Cycle> {
 
 fn cb(op: u8) -> Vec<Cycle> {
     if op & 7 == 6 {
-        if op >> 6 == 1 { vec![B(4), B(4), B(3), I(1)] } else { vec![B(4), B(4), B(3), I(1), B(3)] }
+        if op >> 6 == 1 {
+            vec![B(4), B(4), B(3), I(1)]
+        } else {
+            vec![B(4), B(4), B(3), I(1), B(3)]
+        }
     } else {
         vec![B(4), B(4)]
     }
@@ -79,24 +118,32 @@ fn ed(op: u8, repeat: bool) -> Vec<Cycle> {
         },
         0xa0 | 0xa8 | 0xb0 | 0xb8 => {
             let mut v = vec![B(4), B(4), B(3), B(3), I(2)];
-            if repeat { v.push(I(5)); }
+            if repeat {
+                v.push(I(5));
+            }
             v
         }
         0xa1 | 0xa9 | 0xb1 | 0xb9 => {
             let mut v = vec![B(4), B(4), B(3), I(5)];
-            if repeat { v.push(I(5)); }
+            if repeat {
+                v.push(I(5));
+            }
             v
         }
         // INI/IND: the port is read, then the byte written to (HL)
         0xa2 | 0xaa | 0xb2 | 0xba => {
             let mut v = vec![B(4), B(4), I(1), IO, B(3)];
-            if repeat { v.push(I(5)); }
+            if repeat {
+                v.push(I(5));
+            }
             v
         }
         // OUTI/OUTD: (HL) is read, then written to the port
         0xa3 | 0xab | 0xb3 | 0xbb => {
             let mut v = vec![B(4), B(4), I(1), B(3), IO];
-            if repeat { v.push(I(5)); }
+            if repeat {
+                v.push(I(5));
+            }
             v
         }
         _ => vec![B(4), B(4)],
@@ -157,7 +204,11 @@ fn cycles(prefix: OpcodePrefix, op: u8, taken: bool, repeat: bool) -> Vec<Cycle>
 /// instructions that go round again.
 pub(crate) fn idle_tail(prefix: OpcodePrefix, op: u8, taken: bool, repeat: bool) -> u8 {
     // (INI/IND as OUTI/OUTD here, as this was calibrated with)
-    let op = if matches!(prefix, OpcodePrefix::Ed) && matches!(op, 0xa2 | 0xaa | 0xb2 | 0xba) { op | 1 } else { op };
+    let op = if matches!(prefix, OpcodePrefix::Ed) && matches!(op, 0xa2 | 0xaa | 0xb2 | 0xba) {
+        op | 1
+    } else {
+        op
+    };
     let mut offset = 0u32;
     for c in cycles(prefix, op, taken, repeat) {
         match c {
@@ -219,7 +270,11 @@ fn run_cycles(cycles: &[Cycle]) -> BusTiming {
             I(n) => t += u32::from(n),
         }
     }
-    BusTiming { t_states: t, iorq_t, iorq_end_t }
+    BusTiming {
+        t_states: t,
+        iorq_t,
+        iorq_end_t,
+    }
 }
 
 /// The CPC timing of an instruction (`prefix` as the first byte: 0, CB, ED, DD, FD; 0xDC/0xFC

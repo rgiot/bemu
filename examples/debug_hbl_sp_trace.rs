@@ -10,7 +10,10 @@ use std::collections::VecDeque;
 fn main() {
     let mut args = std::env::args().skip(1);
     let dsk = args.next().expect("usage: <HBL.DSK> [crash_step]");
-    let crash: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(10_992_120);
+    let crash: u64 = args
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10_992_120);
     let mut runner = CslRunner::new("/tmp/debug_hbl_sp_trace_shots");
     let boot = format!(
         "csl_version 1.0\ncrtc_select 0\nreset\ndisk_insert '{dsk}'\nwait 3000000\n\
@@ -69,7 +72,10 @@ fn main() {
     for l in &tail {
         println!("T {l}");
     }
-    println!("{} SP jumps in total; last 12 before the crash:", jumps.len());
+    println!(
+        "{} SP jumps in total; last 12 before the crash:",
+        jumps.len()
+    );
     for l in ring {
         println!("{l}");
     }

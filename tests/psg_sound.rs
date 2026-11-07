@@ -59,7 +59,7 @@ fn a_tone_programmed_through_the_ppi_plays_at_fclock_over_16_tp() {
     // TP = 0x11c = 284: 1MHz / (16 * 284) = 220.07Hz.
     let mut motherboard = machine_playing(
         &[(0, 0x1c), (1, 0x01), (7, 0b0011_1110), (8, 15)],
-        AudioConfig::mono(48_000)
+        AudioConfig::mono(48_000),
     );
     record(&mut motherboard, 0.1); // let the program run
     assert_eq!(motherboard.psg().register(0), 0x1c);

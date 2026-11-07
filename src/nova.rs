@@ -28,7 +28,7 @@ const CLOCK: usize = SIZE - 8;
 struct Clock {
     control: u8,
     registers: [u8; 7],
-    offset_seconds: i64
+    offset_seconds: i64,
 }
 
 pub struct Nova {
@@ -38,7 +38,7 @@ pub struct Nova {
     clock: Clock,
     /// Where the NVRAM is kept.
     file: Option<PathBuf>,
-    dirty: bool
+    dirty: bool,
 }
 
 impl Nova {
@@ -50,12 +50,18 @@ impl Nova {
                 Ok(data) => {
                     let length = data.len().min(SIZE);
                     ram[..length].copy_from_slice(&data[..length]);
-                },
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
-                Err(e) => return Err(format!("{}: {e}", path.display()))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", path.display())),
             }
         }
-        Ok(Self { ram, mapping: 0, clock: Clock::default(), file, dirty: false })
+        Ok(Self {
+            ram,
+            mapping: 0,
+            clock: Clock::default(),
+            file,
+            dirty: false,
+        })
     }
 
     /// The NVRAM, the clock's registers as they read now.
@@ -88,7 +94,11 @@ impl Nova {
         if offset == CLOCK {
             return self.clock.control;
         }
-        let registers = if self.clock.control & 0xc0 != 0 { self.clock.registers } else { self.now() };
+        let registers = if self.clock.control & 0xc0 != 0 {
+            self.clock.registers
+        } else {
+            self.now()
+        };
         registers[offset - CLOCK - 1]
     }
 
@@ -133,7 +143,7 @@ impl Nova {
             bcd(weekday as u8),
             bcd(day as u8),
             bcd(month as u8),
-            bcd(year.rem_euclid(100) as u8)
+            bcd(year.rem_euclid(100) as u8),
         ]
     }
 }
@@ -161,7 +171,11 @@ impl ExpansionDevice for Nova {
         if let Some(offset) = port.memory_read().and_then(|address| self.mapped(address)) {
             // in place of the ROM or the RAM there
             let rom = !port.get_pin(ExpansionPin::Neg_ROMEN);
-            port.assert(if rom { ExpansionPin::ROMDIS } else { ExpansionPin::RAMDIS });
+            port.assert(if rom {
+                ExpansionPin::ROMDIS
+            } else {
+                ExpansionPin::RAMDIS
+            });
             port.drive_data(self.read(offset));
         }
     }
@@ -181,7 +195,9 @@ impl ExpansionDevice for Nova {
 }
 
 fn host_seconds() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 fn bcd(value: u8) -> u8 {
@@ -204,7 +220,11 @@ fn seconds_of(registers: &[u8; 7]) -> Option<i64> {
         return None;
     }
     // days from the civil date (Howard Hinnant's algorithm)
-    let (y, m) = if month <= 2 { (year - 1, month + 9) } else { (year, month - 3) };
+    let (y, m) = if month <= 2 {
+        (year - 1, month + 9)
+    } else {
+        (year, month - 3)
+    };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
     let doy = (153 * m + 2) / 5 + day - 1;
@@ -239,7 +259,14 @@ mod test {
         nova.write(CLOCK, 0x00);
         // set 2021-02-03 04:05:06
         nova.write(CLOCK, 0x80);
-        for (register, value) in [(1, 0x06), (2, 0x05), (3, 0x04), (5, 0x03), (6, 0x02), (7, 0x21)] {
+        for (register, value) in [
+            (1, 0x06),
+            (2, 0x05),
+            (3, 0x04),
+            (5, 0x03),
+            (6, 0x02),
+            (7, 0x21),
+        ] {
             nova.write(CLOCK + register, value);
         }
         nova.write(CLOCK, 0x00);

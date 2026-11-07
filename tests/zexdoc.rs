@@ -1,7 +1,7 @@
-use amsrust::motherboard::{MotherboardBuilder, Motherboard};
-use amsrust::z80::{HasValue, Reg16, Reg8};
-use amsrust::memory::*;
 use amsrust::debug::*;
+use amsrust::memory::*;
+use amsrust::motherboard::{Motherboard, MotherboardBuilder};
+use amsrust::z80::{HasValue, Reg16, Reg8};
 use std::fs::File;
 use std::io;
 use std::io::{BufWriter, Write};
@@ -23,51 +23,41 @@ fn zexdoc() {
     let trace_file = std::env::var("ZEXDOC_TRACE_FILE").ok();
 
     let mut motherboard = MotherboardBuilder::default().build();
-    motherboard.force_rom_config(
-        RomConfig{
-            lower_rom: Flag::Disable,
-            upper_rom: Flag::Disable,
-            rom_number: 0,
-            lower_rom_page: 0,
-            lower_rom_quarter: 0
-        }
-    );
-    
-    
-  // let prg = include_bytes!("CPUTEST.COM");
-   let prg = include_bytes!("zexdoc.com");
-   //let prg = include_bytes!("zexall.com");
+    motherboard.force_rom_config(RomConfig {
+        lower_rom: Flag::Disable,
+        upper_rom: Flag::Disable,
+        rom_number: 0,
+        lower_rom_page: 0,
+        lower_rom_quarter: 0,
+    });
 
+    // let prg = include_bytes!("CPUTEST.COM");
+    let prg = include_bytes!("zexdoc.com");
+    //let prg = include_bytes!("zexall.com");
 
     motherboard.write_buffer(0x100, prg);
     // ZEXDOC harness expects interrupts to be re-enabled from the IM1 handler.
     motherboard.write_buffer(0x38, cpclib_macros::assemble!(" ei : ret"));
     motherboard.write_byte(5, 0xc9); // need to return from cpm call
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
-   // motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(0xF000);
+    // motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(0xF000);
     motherboard.write_word(6, 0xF606); //value on cpc - correspond to the adress jumped from 05
 
-
-    assert_eq!(
-        0xc9,
-        motherboard.read_byte(0x5)
-    );
-
+    assert_eq!(0xc9, motherboard.read_byte(0x5));
 
     // Handle the specificities of the test
     let mut handle = |motherboard: &mut Motherboard| {
-
         let cpu = motherboard.cpu();
 
-         match cpu.reg16(Reg16::Pc).value() {
-            0x0005 => { 
-                cpm_bdos(motherboard); 
+        match cpu.reg16(Reg16::Pc).value() {
+            0x0005 => {
+                cpm_bdos(motherboard);
                 false
-            },
-            0x0000 => { 
+            }
+            0x0000 => {
                 println!("leave test");
                 true
-            },
+            }
             _ => false,
         }
     };
@@ -76,8 +66,7 @@ fn zexdoc() {
     if interactive {
         eprintln!("[zexdoc] interactive mode enabled");
         Monitor::cli_monitoring(&mut motherboard, &mut ctx);
-    }
-    else {
+    } else {
         let start = Instant::now();
         let mut operations = 0u64;
         let mut iut_executions = 0u64;
@@ -97,11 +86,8 @@ fn zexdoc() {
             let file = File::create(path)
                 .unwrap_or_else(|e| panic!("[zexdoc] cannot create trace file '{}': {}", path, e));
             let mut writer = BufWriter::new(file);
-            writeln!(
-                writer,
-                "ops\tpc\tbytes\tinst\taf\tbc\tde\thl\tix\tiy\tsp"
-            )
-            .expect("[zexdoc] cannot write trace header");
+            writeln!(writer, "ops\tpc\tbytes\tinst\taf\tbc\tde\thl\tix\tiy\tsp")
+                .expect("[zexdoc] cannot write trace header");
             writer
         });
 
@@ -118,24 +104,26 @@ fn zexdoc() {
                 let sp = cpu.reg16(Reg16::Sp).value();
                 let next = motherboard.disassemble_next_instruction();
                 let inst = next.token.to_string();
-                let suppress_repeated = matches!(
-                    inst.as_str(),
-                    "LDIR" | "LDDR" | "HALT" | "OTDR" | "OTIR"
-                ) && last_traced_pc == Some(pc)
-                    && last_traced_inst.as_deref() == Some(inst.as_str());
+                let suppress_repeated =
+                    matches!(inst.as_str(), "LDIR" | "LDDR" | "HALT" | "OTDR" | "OTIR")
+                        && last_traced_pc == Some(pc)
+                        && last_traced_inst.as_deref() == Some(inst.as_str());
 
                 if !suppress_repeated {
-                let b0 = next.memory.first().copied();
-                let b1 = next.memory.get(1).copied();
-                let b2 = next.memory.get(2).copied();
-                let bytes = format!(
-                    "{} {} {}",
-                    b0.map(|b| format!("{:02x}", b)).unwrap_or_else(|| "--".to_string()),
-                    b1.map(|b| format!("{:02x}", b)).unwrap_or_else(|| "--".to_string()),
-                    b2.map(|b| format!("{:02x}", b)).unwrap_or_else(|| "--".to_string())
-                );
+                    let b0 = next.memory.first().copied();
+                    let b1 = next.memory.get(1).copied();
+                    let b2 = next.memory.get(2).copied();
+                    let bytes = format!(
+                        "{} {} {}",
+                        b0.map(|b| format!("{:02x}", b))
+                            .unwrap_or_else(|| "--".to_string()),
+                        b1.map(|b| format!("{:02x}", b))
+                            .unwrap_or_else(|| "--".to_string()),
+                        b2.map(|b| format!("{:02x}", b))
+                            .unwrap_or_else(|| "--".to_string())
+                    );
 
-                writeln!(
+                    writeln!(
                     writer,
                     "{}\t0x{:04x}\t{}\t{}\t0x{:04x}\t0x{:04x}\t0x{:04x}\t0x{:04x}\t0x{:04x}\t0x{:04x}\t0x{:04x}",
                     operations,
@@ -165,13 +153,13 @@ fn zexdoc() {
             if stop {
                 let elapsed = start.elapsed();
                 if let Some(writer) = trace_writer.as_mut() {
-                    writer.flush().expect("[zexdoc] cannot flush instruction trace file");
+                    writer
+                        .flush()
+                        .expect("[zexdoc] cannot flush instruction trace file");
                 }
                 eprintln!(
                     "[zexdoc] finished after {} operations (iut_executions={}) in {:.2?}",
-                    operations,
-                    iut_executions,
-                    elapsed
+                    operations, iut_executions, elapsed
                 );
                 break;
             }
@@ -182,8 +170,10 @@ fn zexdoc() {
                 let bc = motherboard.cpu().reg16(Reg16::Bc).value();
                 let de = motherboard.cpu().reg16(Reg16::De).value();
                 let hl = motherboard.cpu().reg16(Reg16::Hl).value();
-                let first_test_equivalent = (iut_executions as f64 / FIRST_TEST_IUT_TARGET as f64) * 100.0;
-                let global_progress_estimate = (iut_executions as f64 / TOTAL_TEST_IUT_TARGET_ESTIMATE as f64) * 100.0;
+                let first_test_equivalent =
+                    (iut_executions as f64 / FIRST_TEST_IUT_TARGET as f64) * 100.0;
+                let global_progress_estimate =
+                    (iut_executions as f64 / TOTAL_TEST_IUT_TARGET_ESTIMATE as f64) * 100.0;
                 let delta_ops = operations - last_debug_ops;
                 let delta_iut = iut_executions - last_debug_iut;
                 let iut_per_mop = if delta_ops > 0 {
@@ -227,15 +217,15 @@ fn zexdoc() {
 }
 
 // Code to execute when a call is made to CPM
-fn cpm_bdos(motherboard: & Motherboard) {
+fn cpm_bdos(motherboard: &Motherboard) {
     let cpu = motherboard.cpu();
     let c_value = cpu.reg8(Reg8::C).value();
-    match  c_value {
+    match c_value {
         2 => {
             // output character in register E
             print!("{}", cpu.reg8(Reg8::E).value() as char);
             io::stdout().flush().unwrap();
-        },
+        }
         9 => {
             // output a string at register DE until '$'
             let mut addr = cpu.reg16(Reg16::De).value();
@@ -244,13 +234,12 @@ fn cpm_bdos(motherboard: & Motherboard) {
                 addr = addr.wrapping_add(1);
                 if c != '$' {
                     print!("{}", c);
-                }
-                else {
+                } else {
                     break;
                 }
                 io::stdout().flush().unwrap();
             }
-        },
+        }
         _ => {
             panic!("Unknown CP/M call {}!", c_value);
         }

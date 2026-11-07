@@ -2,7 +2,6 @@ use crate::chip::*;
 use crate::memory::*;
 use delegate::delegate;
 
-
 /// The real CPC pal does not have access to D3-D5.
 /// Extra memory selection is done elsewhere and I while not code the extra logic elswhere. Thus, there are more pins there
 #[allow(non_camel_case_types)]

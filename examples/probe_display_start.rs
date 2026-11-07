@@ -33,17 +33,36 @@ fn main() {
             let px = x as isize - crop_x;
             if y == line && !printed_palette && px >= from {
                 printed_palette = true;
-                let pal: Vec<String> = mb.ga().palette().iter().enumerate().map(|(i, ink)| { let c: amsrust::ga::RgbLevels = (*ink).into(); format!("{i}:({:.0},{:.0},{:.0})", c.r() * 2.55, c.g() * 2.55, c.b() * 2.55) }).collect();
+                let pal: Vec<String> = mb
+                    .ga()
+                    .palette()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ink)| {
+                        let c: amsrust::ga::RgbLevels = (*ink).into();
+                        format!(
+                            "{i}:({:.0},{:.0},{:.0})",
+                            c.r() * 2.55,
+                            c.g() * 2.55,
+                            c.b() * 2.55
+                        )
+                    })
+                    .collect();
                 println!("palette: {}", pal.join(" "));
             }
             let writes = mb.crtc_mut().take_write_log();
             if y == line || y + 1 == line {
                 for (c0, c4, c9, r, v) in writes {
-                    println!("CRTC write at picture line {y} x={px}: R{r}={v} (C0={c0} C4={c4} C9={c9})");
+                    println!(
+                        "CRTC write at picture line {y} x={px}: R{r}={v} (C0={c0} C4={c4} C9={c9})"
+                    );
                 }
                 if !writes_shown && y == line {
                     writes_shown = true;
-                    println!("R0..R3 at line start: {:?}", (0..4).map(|r| mb.crtc().regs_r(r)).collect::<Vec<_>>());
+                    println!(
+                        "R0..R3 at line start: {:?}",
+                        (0..4).map(|r| mb.crtc().regs_r(r)).collect::<Vec<_>>()
+                    );
                 }
             }
             if y == line && (from..to).contains(&px) {

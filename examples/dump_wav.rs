@@ -36,7 +36,7 @@ struct Args {
     seconds: f64,
     rate: u32,
     stereo: bool,
-    output: String
+    output: String,
 }
 
 fn usage() -> ! {
@@ -57,7 +57,7 @@ fn parse_args() -> Args {
         seconds: 10.0,
         rate: 44_100,
         stereo: false,
-        output: String::new()
+        output: String::new(),
     };
     let mut output = None;
     let mut it = std::env::args().skip(1);
@@ -74,7 +74,7 @@ fn parse_args() -> Args {
             "--stereo" => args.stereo = true,
             "-h" | "--help" => usage(),
             _ if output.is_none() && !arg.starts_with("--") => output = Some(arg),
-            _ => usage()
+            _ => usage(),
         }
     }
     args.output = output.unwrap_or_else(|| usage());
@@ -83,11 +83,15 @@ fn parse_args() -> Args {
 
 fn main() {
     let args = parse_args();
-    let config = if args.stereo { AudioConfig::stereo(args.rate) } else { AudioConfig::mono(args.rate) };
+    let config = if args.stereo {
+        AudioConfig::stereo(args.rate)
+    } else {
+        AudioConfig::mono(args.rate)
+    };
 
     let samples = match &args.csl {
         Some(script) => record_csl(script, config),
-        None => record_machine(&args, config)
+        None => record_machine(&args, config),
     };
 
     write_wav(&args.output, config, &samples).unwrap_or_else(|e| panic!("{}: {e}", args.output));
@@ -132,8 +136,7 @@ fn record_machine(args: &Args, config: AudioConfig) -> Vec<i16> {
     if let Some(text) = &args.text {
         run_until(&mut motherboard, at(args.type_at).min(end), &mut pcm);
         for c in text.chars() {
-            let Some(keys) = keys_of_char(c)
-            else {
+            let Some(keys) = keys_of_char(c) else {
                 eprintln!("cannot type {c:?}, skipped");
                 continue;
             };

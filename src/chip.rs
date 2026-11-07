@@ -94,7 +94,7 @@ pub trait Chip {
     /// panic if the pin does not exists
     fn get_pin(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
-        
+
         // See `set_pin`'s comment just above - same reasoning.
         debug_assert_eq!(pin.count_ones(), 1);
 
@@ -105,7 +105,7 @@ pub trait Chip {
     /// Check if the pin is in a up front state
     fn is_upfront(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
-        
+
         // See `set_pin`'s comment - same reasoning. `GateArray::
         // must_execute_tick()` calls this every GA tick (every
         // `Motherboard::tick()`), so this was on the hottest path too.
@@ -122,7 +122,7 @@ pub trait Chip {
     /// Check if the pin is in a down front state
     fn is_downfront(&self, pin: Self::PinType) -> bool {
         let pin: u64 = pin.into();
-        
+
         debug_assert_eq!(pin.count_ones(), 1);
 
         let PinsBuffer(previous, current) = self.pins_buffer();
@@ -274,7 +274,11 @@ pub fn sync_pins<C1: Chip, C2: Chip, const COUNT: usize>(
     // arrays the grouping is resolved at compile time.
     #[inline(always)]
     fn shifted(bits: u64, delta: i32) -> u64 {
-        if delta >= 0 { bits << delta } else { bits >> -delta }
+        if delta >= 0 {
+            bits << delta
+        } else {
+            bits >> -delta
+        }
     }
 
     let source = chip1.pins_buffer().1;

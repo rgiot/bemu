@@ -12,7 +12,7 @@ pub enum FrontendKind {
     Minifb,
     /// winit + wgpu: the CRT is drawn by the GPU, with no read-back
     /// (`--features gpu-window`).
-    Winit
+    Winit,
 }
 
 /// The window backend without `--frontend`: the GPU window when the build has it (the default
@@ -381,7 +381,7 @@ pub struct Args {
 
     /// What the CPC programs into the Dandanator's flash goes back to the file.
     #[arg(long, requires = "dandanator", help_heading = EXPANSIONS)]
-    pub dandanator_writable: bool
+    pub dandanator_writable: bool,
 }
 
 const AFTER_HELP: &str = "\
@@ -399,7 +399,7 @@ mapping, F4 closes it.";
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Every {
     Seconds(f64),
-    Frames(u64)
+    Frames(u64),
 }
 
 impl Args {
@@ -412,11 +412,9 @@ impl Args {
     pub fn booster(&self) -> Option<&'static str> {
         if self.booster {
             Some("booster")
-        }
-        else if self.miniboster {
+        } else if self.miniboster {
             Some("miniboster")
-        }
-        else {
+        } else {
             None
         }
     }
@@ -425,7 +423,7 @@ impl Args {
     pub fn willy_opl3(&self) -> Option<String> {
         match &self.willy_opl3_at {
             Some(base) => Some(base.clone()),
-            None => self.willy_opl3.then(|| "&FEBC".to_owned())
+            None => self.willy_opl3.then(|| "&FEBC".to_owned()),
         }
     }
 
@@ -440,7 +438,7 @@ impl Args {
             (11, "inner://orgext"),
             (12, "inner://monogams"),
             (13, "inner://bricbrac"),
-            (14, "inner://orgass")
+            (14, "inner://orgass"),
         ];
         for (slot, rom) in ORGAMS_ROMS {
             if !self.roms.iter().any(|(fitted, _)| *fitted == slot) {
@@ -451,7 +449,8 @@ impl Args {
     }
 
     pub fn debug_port(&self) -> u16 {
-        self.debug_port.unwrap_or(amsrust::debug_server::DEFAULT_PORT)
+        self.debug_port
+            .unwrap_or(amsrust::debug_server::DEFAULT_PORT)
     }
 }
 
@@ -475,14 +474,15 @@ fn parse_ram(value: &str) -> Result<usize, String> {
     let kb: usize = value.parse().map_err(|_| "a size in KB".to_owned())?;
     if kb >= 64 && kb.is_multiple_of(64) && kb <= 576 {
         Ok(kb)
-    }
-    else {
+    } else {
         Err("64, 128, ... 576 (KB)".to_owned())
     }
 }
 
 fn parse_charset(value: &str) -> Result<u8, String> {
-    const NAMES: [&str; 9] = ["usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan"];
+    const NAMES: [&str; 9] = [
+        "usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan",
+    ];
     NAMES
         .iter()
         .position(|name| name.eq_ignore_ascii_case(value))
@@ -491,14 +491,17 @@ fn parse_charset(value: &str) -> Result<u8, String> {
 }
 
 fn parse_crtc(value: &str) -> Result<CrtcType, String> {
-    value.parse::<u8>().map_err(|_| "0-4".to_owned()).and_then(CrtcType::try_from)
+    value
+        .parse::<u8>()
+        .map_err(|_| "0-4".to_owned())
+        .and_then(CrtcType::try_from)
 }
 
 fn parse_gate_array(value: &str) -> Result<amsrust::ga::GateArrayType, String> {
     match value {
         "40010" => Ok(amsrust::ga::GateArrayType::Ga40010),
         "40007" | "40008" => Ok(amsrust::ga::GateArrayType::Ga40007_8),
-        _ => Err("40007, 40008 or 40010".to_owned())
+        _ => Err("40007, 40008 or 40010".to_owned()),
     }
 }
 
@@ -517,12 +520,20 @@ fn parse_every(value: &str) -> Result<Every, String> {
             .filter(|n| *n > 0)
             .map(Every::Frames)
             .ok_or_else(|| "Nf: N a whole number of frames, from 1".to_owned()),
-        None => parse_seconds(value).ok().filter(|s| *s > 0.0).map(Every::Seconds).ok_or_else(|| "seconds, or frames as Nf".to_owned())
+        None => parse_seconds(value)
+            .ok()
+            .filter(|s| *s > 0.0)
+            .map(Every::Seconds)
+            .ok_or_else(|| "seconds, or frames as Nf".to_owned()),
     }
 }
 
 fn parse_seconds(value: &str) -> Result<f64, String> {
-    value.parse().ok().filter(|s: &f64| *s >= 0.0).ok_or_else(|| "seconds".to_owned())
+    value
+        .parse()
+        .ok()
+        .filter(|s: &f64| *s >= 0.0)
+        .ok_or_else(|| "seconds".to_owned())
 }
 
 fn parse_curvature(value: &str) -> Result<f32, String> {
@@ -551,7 +562,20 @@ mod tests {
 
     #[test]
     fn options_parse_as_before() {
-        let args = Args::try_parse_from(["amsrust", "--every", "3f", "--rom", "7=inner://unidos", "--no-disc", "--debug-port", "7000", "--type", "run\"a\\n", "--willy-opl3"]).unwrap();
+        let args = Args::try_parse_from([
+            "amsrust",
+            "--every",
+            "3f",
+            "--rom",
+            "7=inner://unidos",
+            "--no-disc",
+            "--debug-port",
+            "7000",
+            "--type",
+            "run\"a\\n",
+            "--willy-opl3",
+        ])
+        .unwrap();
         assert_eq!(args.every, Every::Frames(3));
         assert_eq!(args.roms, [(7, "inner://unidos".to_owned())]);
         assert_eq!(args.disc_interface(), Some(false));

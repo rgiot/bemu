@@ -32,7 +32,9 @@ fn main() {
          key_output 'RUN\"HBL\\(RET)'\n\
          wait 3000000\n"
     );
-    runner.run_text(&boot, ".").unwrap_or_else(|e| panic!("boot failed: {e}"));
+    runner
+        .run_text(&boot, ".")
+        .unwrap_or_else(|e| panic!("boot failed: {e}"));
 
     eprintln!("boot script done (PC={:04X})", runner.motherboard().pc());
 

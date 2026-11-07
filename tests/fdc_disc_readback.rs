@@ -16,7 +16,7 @@ const DISCS: &[&str] = &[
     "validation/AmstradDiag/AmstradDiag.dsk",
     "validation/Shaker_CSL/shaker27.dsk",
     "validation/RHINO.DSK",
-    "validation/TESTCRTC.DSK"
+    "validation/TESTCRTC.DSK",
 ];
 
 fn send(fdc: &mut Fdc, bytes: &[u8]) {
@@ -48,7 +48,10 @@ fn readable(sector: &Sector, track: &[Sector]) -> bool {
         .filter(|o| (o.c, o.h, o.r, o.n) == (sector.c, sector.h, sector.r, sector.n))
         .count()
         == 1;
-    unique && sector.copies() == 1 && sector.data.len() == sector.nominal_len() && sector.nominal_len() > 0
+    unique
+        && sector.copies() == 1
+        && sector.data.len() == sector.nominal_len()
+        && sector.nominal_len() > 0
 }
 
 fn check_disc(path: &str, image: DiscImage) -> (usize, usize) {
@@ -66,8 +69,7 @@ fn check_disc(path: &str, image: DiscImage) -> (usize, usize) {
 
     for head in 0..image.nb_heads() {
         for cyl in 0..image.nb_tracks() {
-            let Some(track) = image.track(head, cyl)
-            else {
+            let Some(track) = image.track(head, cyl) else {
                 continue;
             };
             seek(&mut fdc, cyl);
@@ -79,12 +81,19 @@ fn check_disc(path: &str, image: DiscImage) -> (usize, usize) {
                 let unit_head = head << 2;
                 send(
                     &mut fdc,
-                    &[0x46, unit_head, sector.c, sector.h, sector.r, sector.n, sector.r, 0x2a, 0xff]
+                    &[
+                        0x46, unit_head, sector.c, sector.h, sector.r, sector.n, sector.r, 0x2a,
+                        0xff,
+                    ],
                 );
                 let data = receive(&mut fdc, sector.nominal_len());
                 let result = receive(&mut fdc, 7);
                 let ctx = format!("{path} head {head} track {cyl} R={:#04x}", sector.r);
-                assert_eq!((result[0] & 0xc0, result[1]), (0x40, 0x80), "{ctx}: not a clean End of Cylinder {result:02x?}");
+                assert_eq!(
+                    (result[0] & 0xc0, result[1]),
+                    (0x40, 0x80),
+                    "{ctx}: not a clean End of Cylinder {result:02x?}"
+                );
                 assert_eq!(data, sector.data, "{ctx}: data differs from the image");
                 checked += 1;
             }
@@ -97,14 +106,15 @@ fn check_disc(path: &str, image: DiscImage) -> (usize, usize) {
 fn every_readable_sector_of_the_validation_discs_reads_back_verbatim() {
     let mut total = 0;
     for path in DISCS {
-        let Ok(bytes) = std::fs::read(path)
-        else {
+        let Ok(bytes) = std::fs::read(path) else {
             eprintln!("{path}: not present, skipped");
             continue;
         };
         let image = load_dsk(&bytes).unwrap_or_else(|e| panic!("{path}: {e}"));
         let (checked, skipped) = check_disc(path, image);
-        eprintln!("{path}: {checked} sectors verified, {skipped} skipped (weak/duplicate/odd size)");
+        eprintln!(
+            "{path}: {checked} sectors verified, {skipped} skipped (weak/duplicate/odd size)"
+        );
         total += checked;
     }
     assert!(total > 0, "no disc found to check");

@@ -49,9 +49,17 @@ fn main() {
     // Idle loop from here: JP $ (infinite loop at current PC), so the
     // only thing that ever happens is interrupts firing and returning.
     let idle_at = mb.cpu().reg16(Reg16::Pc).value();
-    mb.write_buffer(idle_at, &[0xc3, (idle_at & 0xff) as u8, (idle_at >> 8) as u8]); // JP idle_at
+    mb.write_buffer(
+        idle_at,
+        &[0xc3, (idle_at & 0xff) as u8, (idle_at >> 8) as u8],
+    ); // JP idle_at
 
-    eprintln!("R2={} R3={} - idle loop at {:04X}", mb.crtc().r2(), mb.crtc().r3(), idle_at);
+    eprintln!(
+        "R2={} R3={} - idle loop at {:04X}",
+        mb.crtc().r2(),
+        mb.crtc().r3(),
+        idle_at
+    );
 
     let mut last_pc = mb.pc();
     let mut last_r52 = mb.ga().r52();
@@ -74,7 +82,9 @@ fn main() {
             resets += 1;
             eprintln!(
                 "[step {steps}] R52 reset: was {:#04x} ({}) just before, bit5={}",
-                last_r52, last_r52, last_r52 & 0x20 != 0,
+                last_r52,
+                last_r52,
+                last_r52 & 0x20 != 0,
             );
             if resets >= MAX_RESETS {
                 break;

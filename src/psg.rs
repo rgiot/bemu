@@ -65,7 +65,9 @@ use ym2149::{Ym2149, Ym2149Backend};
 /// The bits of each register the AY-3-8912 keeps (the others read back 0): 12-bit tone periods,
 /// 5-bit noise period and volumes, 4-bit envelope shape (Kevin Thacker's acid test "reg
 /// write/read mask test", on a CPC).
-const REGISTER_MASKS: [u8; 16] = [0xff, 0x0f, 0xff, 0x0f, 0xff, 0x0f, 0x1f, 0xff, 0x1f, 0x1f, 0x1f, 0xff, 0xff, 0x0f, 0xff, 0xff];
+const REGISTER_MASKS: [u8; 16] = [
+    0xff, 0x0f, 0xff, 0x0f, 0xff, 0x0f, 0x1f, 0xff, 0x1f, 0x1f, 0x1f, 0xff, 0xff, 0x0f, 0xff, 0xff,
+];
 
 /// BDIR/BC1 bus state, decoded from PPI port C bits 7 and 6 - see the
 /// module doc comment for the truth table this collapses from.
@@ -74,7 +76,7 @@ pub enum BusControl {
     Inactive,
     Read,
     Write,
-    LatchAddress
+    LatchAddress,
 }
 
 impl BusControl {
@@ -83,7 +85,7 @@ impl BusControl {
             (false, false) => BusControl::Inactive,
             (false, true) => BusControl::Read,
             (true, false) => BusControl::Write,
-            (true, true) => BusControl::LatchAddress
+            (true, true) => BusControl::LatchAddress,
         }
     }
 }
@@ -128,20 +130,32 @@ const STEP_RATE_HZ: u32 = PSG_CLOCK_HZ / CLOCKS_PER_STEP as u32;
 pub struct AudioConfig {
     pub sample_rate: u32,
     pub stereo: bool,
-    pub dc_filter: bool
+    pub dc_filter: bool,
 }
 
 impl AudioConfig {
     pub fn mono(sample_rate: u32) -> Self {
-        Self { sample_rate, stereo: false, dc_filter: true }
+        Self {
+            sample_rate,
+            stereo: false,
+            dc_filter: true,
+        }
     }
 
     pub fn stereo(sample_rate: u32) -> Self {
-        Self { sample_rate, stereo: true, dc_filter: true }
+        Self {
+            sample_rate,
+            stereo: true,
+            dc_filter: true,
+        }
     }
 
     pub fn nb_channels(&self) -> usize {
-        if self.stereo { 2 } else { 1 }
+        if self.stereo {
+            2
+        } else {
+            1
+        }
     }
 }
 
@@ -152,7 +166,7 @@ pub const DC_FILTER_CUTOFF_HZ: f64 = 10.0;
 #[derive(Debug, Clone, Default)]
 struct DcBlocker {
     previous_input: f64,
-    previous_output: f64
+    previous_output: f64,
 }
 
 impl DcBlocker {
@@ -178,7 +192,7 @@ const RING_SIZE: usize = 64;
 /// that settles exactly on the new level.
 #[derive(Debug, Clone)]
 struct StepKernel {
-    taps: Vec<f32>
+    taps: Vec<f32>,
 }
 
 impl StepKernel {
@@ -191,7 +205,11 @@ impl StepKernel {
             for (tap, value) in row.iter_mut().enumerate() {
                 let x = tap as f64 - half + 1.0 - fraction;
                 let arg = 2.0 * KERNEL_CUTOFF * x;
-                let sinc = if arg.abs() < 1e-12 { 1.0 } else { (std::f64::consts::PI * arg).sin() / (std::f64::consts::PI * arg) };
+                let sinc = if arg.abs() < 1e-12 {
+                    1.0
+                } else {
+                    (std::f64::consts::PI * arg).sin() / (std::f64::consts::PI * arg)
+                };
                 let angle = std::f64::consts::PI * x / half;
                 let window = 0.42 + 0.5 * angle.cos() + 0.08 * (2.0 * angle).cos();
                 *value = sinc * window;
@@ -225,7 +243,7 @@ struct AudioOutput {
     last_frame: [f64; 2],
     dc_filter_r: f64,
     dc_blockers: [DcBlocker; 2],
-    samples: Vec<f32>
+    samples: Vec<f32>,
 }
 
 impl AudioOutput {
@@ -249,7 +267,7 @@ impl AudioOutput {
             last_frame: [0.0; 2],
             dc_filter_r,
             dc_blockers: Default::default(),
-            samples: Vec::new()
+            samples: Vec::new(),
         }
     }
 
@@ -288,8 +306,7 @@ impl AudioOutput {
         let (a, b, c) = (a as f64, b as f64, c as f64);
         if self.config.stereo {
             [(a + b / 2.0) / 1.5, (c + b / 2.0) / 1.5]
-        }
-        else {
+        } else {
             let mono = (a + b + c) / 3.0;
             [mono, mono]
         }
@@ -302,9 +319,11 @@ impl AudioOutput {
         if gain != 1.0 || extra != [0.0; 2] {
             let gain = f64::from(gain);
             if self.config.stereo {
-                frame = [frame[0] * gain + f64::from(extra[0]), frame[1] * gain + f64::from(extra[1])];
-            }
-            else {
+                frame = [
+                    frame[0] * gain + f64::from(extra[0]),
+                    frame[1] * gain + f64::from(extra[1]),
+                ];
+            } else {
                 let extra = f64::from(extra[0] + extra[1]) / 2.0;
                 frame = [frame[0] * gain + extra, frame[1] * gain + extra];
             }
@@ -343,7 +362,7 @@ pub struct Psg {
     /// The sound cards' sound for the coming microsecond (left, right), mixed with the AY's.
     extra: [f32; 2],
     /// The AY's share of the mix: 1 alone, less when sound cards add theirs.
-    gain: f32
+    gain: f32,
 }
 
 /// The registers frame by frame, as a YM file keeps them.
@@ -352,7 +371,7 @@ struct FrameLog {
     frames: Vec<[u8; 16]>,
     /// R13 written since the last frame: the envelope restarts (a YM file marks "not written"
     /// with &FF).
-    r13_written: bool
+    r13_written: bool,
 }
 
 impl Default for Psg {
@@ -369,7 +388,7 @@ impl Default for Psg {
             audio: None,
             frame_log: None,
             extra: [0.0; 2],
-            gain: 1.0
+            gain: 1.0,
         };
         // The datasheet's reset clears every register; the crate's own
         // reset sets R7 to 0x3F instead. Keep the chip in line with
@@ -425,7 +444,10 @@ impl Psg {
 
     /// The frames noted since the last call.
     pub fn take_logged_frames(&mut self) -> Vec<[u8; 16]> {
-        self.frame_log.as_mut().map(|log| std::mem::take(&mut log.frames)).unwrap_or_default()
+        self.frame_log
+            .as_mut()
+            .map(|log| std::mem::take(&mut log.frames))
+            .unwrap_or_default()
     }
 
     /// The register as the CPU reads it back.
@@ -488,7 +510,7 @@ impl Psg {
                 // `address & 0x0f`.
                 self.selected_register = (data_bus & 0xf0 == 0).then_some(data_bus & 0x0f);
                 None
-            },
+            }
             BusControl::Write => {
                 if let Some(reg) = self.selected_register {
                     // Same pulse, same write: already done.
@@ -498,8 +520,8 @@ impl Psg {
                     }
                 }
                 None
-            },
-            BusControl::Read => self.selected_register.map(|reg| self.register(reg))
+            }
+            BusControl::Read => self.selected_register.map(|reg| self.register(reg)),
         }
     }
 
@@ -622,7 +644,10 @@ mod test {
         // the noise period keeps 5 bits
         assert_eq!(psg.register(6), 0x19);
 
-        assert_eq!(psg.bus_cycle(BusControl::Read, 0xAA /* ignored */), Some(0x19));
+        assert_eq!(
+            psg.bus_cycle(BusControl::Read, 0xAA /* ignored */),
+            Some(0x19)
+        );
     }
 
     #[test]
@@ -673,10 +698,16 @@ mod test {
 
     #[test]
     fn bus_control_decode_matches_cpc_bdir_bc1_convention() {
-        assert_eq!(BusControl::from_bdir_bc1(false, false), BusControl::Inactive);
+        assert_eq!(
+            BusControl::from_bdir_bc1(false, false),
+            BusControl::Inactive
+        );
         assert_eq!(BusControl::from_bdir_bc1(false, true), BusControl::Read);
         assert_eq!(BusControl::from_bdir_bc1(true, false), BusControl::Write);
-        assert_eq!(BusControl::from_bdir_bc1(true, true), BusControl::LatchAddress);
+        assert_eq!(
+            BusControl::from_bdir_bc1(true, true),
+            BusControl::LatchAddress
+        );
     }
 
     // ------------------------------------------------------------ sound
@@ -689,7 +720,7 @@ mod test {
             (BusControl::LatchAddress, reg),
             (BusControl::Inactive, reg),
             (BusControl::Write, value),
-            (BusControl::Inactive, value)
+            (BusControl::Inactive, value),
         ] {
             for _ in 0..4 {
                 psg.bus_cycle(control, data);
@@ -760,12 +791,15 @@ mod test {
         // f = fclock / (16 * TP), fclock = 1MHz: one period lasts 16*TP us.
         for tp in [2u16, 3, 100, 0x11c, 0xfff] {
             let mut psg = Psg::default();
-            write_all(&mut psg, &[
-                (7, mixer(0b001, 0)),
-                (0, (tp & 0xff) as u8),
-                (1, (tp >> 8) as u8),
-                (8, 15)
-            ]);
+            write_all(
+                &mut psg,
+                &[
+                    (7, mixer(0b001, 0)),
+                    (0, (tp & 0xff) as u8),
+                    (1, (tp >> 8) as u8),
+                    (8, 15),
+                ],
+            );
             let levels = run(&mut psg, 16 * tp as usize * 6 + 64);
             let a = channel(&levels, 0);
             let edges = rising_edges(&a);
@@ -784,7 +818,10 @@ mod test {
     #[test]
     fn tone_period_uses_only_the_low_nibble_of_the_coarse_register() {
         let mut psg = Psg::default();
-        write_all(&mut psg, &[(7, mixer(0b010, 0)), (2, 0x00), (3, 0xf1), (9, 15)]);
+        write_all(
+            &mut psg,
+            &[(7, mixer(0b010, 0)), (2, 0x00), (3, 0xf1), (9, 15)],
+        );
         let edges = rising_edges(&channel(&run(&mut psg, 16 * 0x100 * 4), 1));
         assert_eq!(edges[1] - edges[0], 16 * 0x100);
     }
@@ -795,15 +832,18 @@ mod test {
     /// not the half-amplitude workaround of `step`.
     fn dac_level(volume_register: u8) -> [f32; 3] {
         let mut psg = Psg::default();
-        write_all(&mut psg, &[
-            (0, 0xff),
-            (2, 0xff),
-            (4, 0xff),
-            (7, mixer(0, 0)),
-            (8, volume_register),
-            (9, volume_register),
-            (10, volume_register)
-        ]);
+        write_all(
+            &mut psg,
+            &[
+                (0, 0xff),
+                (2, 0xff),
+                (4, 0xff),
+                (7, mixer(0, 0)),
+                (8, volume_register),
+                (9, volume_register),
+                (10, volume_register),
+            ],
+        );
         *run(&mut psg, 16).last().unwrap()
     }
 
@@ -845,7 +885,10 @@ mod test {
     fn noise_shifts_every_16_np_clocks() {
         for np in [1u8, 7, 31] {
             let mut psg = Psg::default();
-            write_all(&mut psg, &[(7, mixer(0, 0b001)), (6, np | 0xe0 /* 5 bits */), (8, 15)]);
+            write_all(
+                &mut psg,
+                &[(7, mixer(0, 0b001)), (6, np | 0xe0 /* 5 bits */), (8, 15)],
+            );
             let shifts = 4000;
             let a = channel(&run(&mut psg, 16 * np as usize * shifts), 0);
             let transitions: Vec<usize> = (1..a.len()).filter(|&i| a[i] != a[i - 1]).collect();
@@ -867,7 +910,10 @@ mod test {
     #[test]
     fn noise_and_tone_are_anded_by_the_mixer() {
         let mut psg = Psg::default();
-        write_all(&mut psg, &[(7, mixer(0b001, 0b001)), (0, 50), (6, 3), (8, 15)]);
+        write_all(
+            &mut psg,
+            &[(7, mixer(0b001, 0b001)), (0, 50), (6, 3), (8, 15)],
+        );
         let mut tone_only = Psg::default();
         write_all(&mut tone_only, &[(7, mixer(0b001, 0)), (0, 50), (8, 15)]);
         let both = channel(&run(&mut psg, 20_000), 0);
@@ -884,8 +930,7 @@ mod test {
     fn envelope_step(level: f32) -> u8 {
         if level <= 0.0 {
             0
-        }
-        else {
+        } else {
             (31.0 + 4.0 * level.log2()).round() as u8
         }
     }
@@ -894,22 +939,27 @@ mod test {
     /// R13 (CONTinue, ATTack, ALTernate, HOLD), at step `step` (32 steps per
     /// ramp) after R13 was written.
     fn reference_envelope(shape: u8, step: usize) -> u8 {
-        let (cont, att, alt, hold) =
-            (shape & 8 != 0, shape & 4 != 0, shape & 2 != 0, shape & 1 != 0);
+        let (cont, att, alt, hold) = (
+            shape & 8 != 0,
+            shape & 4 != 0,
+            shape & 2 != 0,
+            shape & 1 != 0,
+        );
         let cycle = step / 32;
         let position = (step % 32) as u8;
         let ramp = |up: bool| if up { position } else { 31 - position };
         if cycle == 0 {
             ramp(att)
-        }
-        else if !cont {
+        } else if !cont {
             0
-        }
-        else if hold {
+        } else if hold {
             // Holds the end of the first ramp, inverted when alternating.
-            if att ^ alt { 31 } else { 0 }
-        }
-        else {
+            if att ^ alt {
+                31
+            } else {
+                0
+            }
+        } else {
             ramp(att ^ (alt && cycle % 2 == 1))
         }
     }
@@ -918,13 +968,18 @@ mod test {
     fn envelope_shapes_follow_the_datasheet() {
         for shape in 0..16u8 {
             let mut psg = Psg::default();
-            write_all(&mut psg, &[(7, mixer(0, 0)), (8, 0x10), (11, 1), (12, 0), (13, shape)]);
+            write_all(
+                &mut psg,
+                &[(7, mixer(0, 0)), (8, 0x10), (11, 1), (12, 0), (13, shape)],
+            );
             // EP = 1: one step every 8 clocks. Sample once per step.
             let steps: Vec<u8> = (0..4 * 32)
                 .map(|_| envelope_step(run(&mut psg, 8)[7][0]))
                 .collect();
             // The first step is taken during the first sampled period.
-            let expected: Vec<u8> = (1..=steps.len()).map(|s| reference_envelope(shape, s)).collect();
+            let expected: Vec<u8> = (1..=steps.len())
+                .map(|s| reference_envelope(shape, s))
+                .collect();
             assert_eq!(steps, expected, "shape {shape:#x}");
         }
     }
@@ -933,20 +988,24 @@ mod test {
     fn envelope_ramp_lasts_256_ep_clocks() {
         for ep in [1u16, 3, 0x123] {
             let mut psg = Psg::default();
-            write_all(&mut psg, &[
-                (7, mixer(0, 0)),
-                (8, 0x10),
-                (11, (ep & 0xff) as u8),
-                (12, (ep >> 8) as u8),
-                (13, 0x08) // repeated falling sawtooth
-            ]);
+            write_all(
+                &mut psg,
+                &[
+                    (7, mixer(0, 0)),
+                    (8, 0x10),
+                    (11, (ep & 0xff) as u8),
+                    (12, (ep >> 8) as u8),
+                    (13, 0x08), // repeated falling sawtooth
+                ],
+            );
             let steps: Vec<u8> = channel(&run(&mut psg, 256 * ep as usize * 4 + 16), 0)
                 .into_iter()
                 .map(envelope_step)
                 .collect();
             // Jumps from the bottom of a ramp back to the top.
-            let restarts: Vec<usize> =
-                (FIRST_STEP + 1..steps.len()).filter(|&i| steps[i] == 31 && steps[i - 1] == 0).collect();
+            let restarts: Vec<usize> = (FIRST_STEP + 1..steps.len())
+                .filter(|&i| steps[i] == 31 && steps[i - 1] == 0)
+                .collect();
             assert_eq!(restarts.len(), 4, "EP={ep}");
             for pair in restarts.windows(2) {
                 assert_eq!(pair[1] - pair[0], 256 * ep as usize, "EP={ep}");
@@ -996,7 +1055,11 @@ mod test {
         for (register, mask) in REGISTER_MASKS.iter().enumerate() {
             write(&mut psg, register as u8, 0xff);
             psg.bus_cycle(BusControl::LatchAddress, register as u8);
-            assert_eq!(psg.bus_cycle(BusControl::Read, 0), Some(*mask), "register {register}");
+            assert_eq!(
+                psg.bus_cycle(BusControl::Read, 0),
+                Some(*mask),
+                "register {register}"
+            );
         }
     }
 
@@ -1019,10 +1082,18 @@ mod test {
         for rate in [44_100, 48_000, 22_050] {
             for stereo in [false, true] {
                 let mut psg = Psg::default();
-                psg.set_audio_output(Some(AudioConfig { sample_rate: rate, stereo, dc_filter: true }));
+                psg.set_audio_output(Some(AudioConfig {
+                    sample_rate: rate,
+                    stereo,
+                    dc_filter: true,
+                }));
                 let samples = run_audio(&mut psg, 1_000_000);
                 let channels = if stereo { 2 } else { 1 };
-                assert_eq!(samples.len(), rate as usize * channels, "{rate}Hz stereo={stereo}");
+                assert_eq!(
+                    samples.len(),
+                    rate as usize * channels,
+                    "{rate}Hz stereo={stereo}"
+                );
                 assert_eq!(psg.pending_samples(), 0);
             }
         }
@@ -1061,7 +1132,9 @@ mod test {
             .count();
         assert!((499..=501).contains(&crossings), "{crossings}");
         // band-limiting overshoots the square wave a little (Gibbs)
-        assert!(samples.iter().all(|s| (-0.15 * level..=1.15 * level).contains(s)));
+        assert!(samples
+            .iter()
+            .all(|s| (-0.15 * level..=1.15 * level).contains(s)));
     }
 
     #[test]
@@ -1086,7 +1159,10 @@ mod test {
         write_all(&mut psg, &[(7, mixer(0b001, 0)), (0, 10), (8, 15)]);
         let samples = run_audio(&mut psg, 100_000);
         let level = dac_level(15)[0] / 3.0;
-        let peak = samples[KERNEL_TAPS + 2..].iter().cloned().fold(0.0f32, f32::max);
+        let peak = samples[KERNEL_TAPS + 2..]
+            .iter()
+            .cloned()
+            .fold(0.0f32, f32::max);
         assert!(peak > 0.9 * level, "{peak}");
     }
 
@@ -1096,11 +1172,19 @@ mod test {
         for (volumes, left, right) in [
             ([15, 0, 0], level / 1.5, 0.0),
             ([0, 0, 15], 0.0, level / 1.5),
-            ([0, 15, 0], level / 3.0, level / 3.0)
+            ([0, 15, 0], level / 3.0, level / 3.0),
         ] {
             let mut psg = Psg::default();
             psg.set_audio_output(undc(AudioConfig::stereo(44_100)));
-            write_all(&mut psg, &[(7, mixer(0, 0)), (8, volumes[0]), (9, volumes[1]), (10, volumes[2])]);
+            write_all(
+                &mut psg,
+                &[
+                    (7, mixer(0, 0)),
+                    (8, volumes[0]),
+                    (9, volumes[1]),
+                    (10, volumes[2]),
+                ],
+            );
             let samples = run_audio(&mut psg, 10_000);
             let last = &samples[samples.len() - 2..];
             assert!((last[0] - left).abs() < 1e-5, "{volumes:?}: {last:?}");

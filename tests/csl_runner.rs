@@ -22,13 +22,13 @@ fn csl_load_chains_scripts_and_the_last_crtc_select_wins() {
     let dir = scratch_dir("chain");
     std::fs::write(
         dir.join("first.csl"),
-        "csl_version 1.0\ncrtc_select 3\nreset\nwait 1000\ncsl_load 'SECOND'\n"
+        "csl_version 1.0\ncrtc_select 3\nreset\nwait 1000\ncsl_load 'SECOND'\n",
     )
     .unwrap();
     // the chained name has another case and no extension, as in the Shaker files
     std::fs::write(
         dir.join("second.CSL"),
-        "csl_version 1.0\ncrtc_select 4\nreset\ntape_play\nwait 500\n"
+        "csl_version 1.0\ncrtc_select 4\nreset\ntape_play\nwait 500\n",
     )
     .unwrap();
 
@@ -36,9 +36,16 @@ fn csl_load_chains_scripts_and_the_last_crtc_select_wins() {
     let report = runner.run_file(dir.join("first.csl")).unwrap();
 
     assert_eq!(runner.motherboard().crtc().crtc_type(), CrtcType::Crtc4);
-    assert_eq!(report.ignored, vec!["tape_play: no tape inserted".to_owned()]);
+    assert_eq!(
+        report.ignored,
+        vec!["tape_play: no tape inserted".to_owned()]
+    );
     // the time is the script's: 1000 + 500 microseconds, to an instruction
-    assert!((1500..1520).contains(&report.elapsed_us), "{} µs", report.elapsed_us);
+    assert!(
+        (1500..1520).contains(&report.elapsed_us),
+        "{} µs",
+        report.elapsed_us
+    );
 }
 
 #[test]
@@ -68,7 +75,7 @@ fn typing_reaches_basic_and_screenshot_saves_the_frame() {
         .run_text(
             "crtc_select 2\nreset\nwait 3000000\nkey_delay 70000 70000 400000\n\
              key_output 'PRINT 6*7\\(RET)'\nwait 2000000\nscreenshot\n",
-            "."
+            ".",
         )
         .unwrap();
 
@@ -112,7 +119,9 @@ fn wait_ssm_returns_as_soon_as_its_own_code_is_raised() {
     let mut runner = CslRunner::new(scratch_dir("wait_ssm"));
     // the SSM standard's own worked example: ED 3E ED 3D -> code 0x3D3E
     load_one_ssm_pair(&mut runner, 0x3d3e);
-    let report = runner.run_text("csl_version 1.5\nwait_ssm 0x3D3E\n", ".").unwrap();
+    let report = runner
+        .run_text("csl_version 1.5\nwait_ssm 0x3D3E\n", ".")
+        .unwrap();
     assert_eq!(report.ssm_codes, vec![0x3d3e]);
     assert!(report.ignored.is_empty(), "{:?}", report.ignored);
 }
@@ -122,10 +131,20 @@ fn wait_ssm_gives_up_on_a_code_that_never_comes() {
     let mut runner = CslRunner::new(scratch_dir("wait_ssm_miss"));
     runner.set_wait_timeout_us(10_000); // keep this test fast; the JR $ it parks on never raises anything more
     load_one_ssm_pair(&mut runner, 0x3d3e); // raises 0x3d3e, not the 0x0102 we wait for
-    let report = runner.run_text("csl_version 1.5\nwait_ssm 0x0102\n", ".").unwrap();
-    assert_eq!(report.ssm_codes, vec![0x3d3e], "the other code was still seen and recorded");
+    let report = runner
+        .run_text("csl_version 1.5\nwait_ssm 0x0102\n", ".")
+        .unwrap();
+    assert_eq!(
+        report.ssm_codes,
+        vec![0x3d3e],
+        "the other code was still seen and recorded"
+    );
     assert_eq!(report.ignored.len(), 1, "{:?}", report.ignored);
-    assert!(report.ignored[0].contains("wait_ssm"), "{:?}", report.ignored);
+    assert!(
+        report.ignored[0].contains("wait_ssm"),
+        "{:?}",
+        report.ignored
+    );
 }
 
 #[test]
@@ -138,13 +157,24 @@ fn wait_driveonoff_returns_once_the_motor_has_cycled() {
     // delay / LD BC,&FA00 / OUT (C),C / JR $.
     motherboard.write_buffer(
         0x4000,
-        &[0x01, 0x01, 0xfa, 0xed, 0x49, 0x06, 0x10, 0x10, 0xfe, 0x01, 0x00, 0xfa, 0xed, 0x49, 0x18, 0xfe]
+        &[
+            0x01, 0x01, 0xfa, 0xed, 0x49, 0x06, 0x10, 0x10, 0xfe, 0x01, 0x00, 0xfa, 0xed, 0x49,
+            0x18, 0xfe,
+        ],
     );
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x4000);
     motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(0x8000);
-    assert!(!motherboard.fdc().motor(), "starts off, as the program assumes");
+    assert!(
+        !motherboard.fdc().motor(),
+        "starts off, as the program assumes"
+    );
 
-    let report = runner.run_text("csl_version 1.0\nwait_driveonoff\n", ".").unwrap();
+    let report = runner
+        .run_text("csl_version 1.0\nwait_driveonoff\n", ".")
+        .unwrap();
     assert!(report.ignored.is_empty(), "{:?}", report.ignored);
-    assert!(!runner.motherboard().fdc().motor(), "off again once wait_driveonoff returns");
+    assert!(
+        !runner.motherboard().fdc().motor(),
+        "off again once wait_driveonoff returns"
+    );
 }

@@ -9,27 +9,35 @@ use amsrust::display::{CpuCrt, CrtParams, Curved, DisplayFilter, DisplayMode, Ra
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let [input, output, mode, rest @ ..] = &args[..]
-    else {
-        eprintln!("usage: crt_render in.png out.png raw|ctm|trinitron|gt65|atari [triad_px] [bench]");
+    let [input, output, mode, rest @ ..] = &args[..] else {
+        eprintln!(
+            "usage: crt_render in.png out.png raw|ctm|trinitron|gt65|atari [triad_px] [bench]"
+        );
         std::process::exit(2);
     };
     let frame = image::open(input).expect("cannot read the input").to_rgb8();
     let mode: DisplayMode = mode.parse().unwrap_or_else(|e| panic!("{e}"));
-    let mut filter: Box<dyn DisplayFilter> = match (mode, rest.first().and_then(|s| s.parse::<usize>().ok())) {
-        (DisplayMode::Crt(profile), Some(triad_px)) => {
-            let params = CrtParams { triad_px, rows_per_line: triad_px * 4 / 3, ..profile.params() };
-            Box::new(CpuCrt::new(params))
-        },
-        (DisplayMode::Crt(_), None) => mode.filter(),
-        (DisplayMode::Raw, _) => Box::new(RawFilter)
-    };
+    let mut filter: Box<dyn DisplayFilter> =
+        match (mode, rest.first().and_then(|s| s.parse::<usize>().ok())) {
+            (DisplayMode::Crt(profile), Some(triad_px)) => {
+                let params = CrtParams {
+                    triad_px,
+                    rows_per_line: triad_px * 4 / 3,
+                    ..profile.params()
+                };
+                Box::new(CpuCrt::new(params))
+            }
+            (DisplayMode::Crt(_), None) => mode.filter(),
+            (DisplayMode::Raw, _) => Box::new(RawFilter),
+        };
     // curve=F: the glass bends the beam under the mask; oldcurve=F: the finished picture warped
-    let curve = |key: &str| rest.iter().find_map(|a| a.strip_prefix(key).and_then(|v| v.parse::<f32>().ok()));
+    let curve = |key: &str| {
+        rest.iter()
+            .find_map(|a| a.strip_prefix(key).and_then(|v| v.parse::<f32>().ok()))
+    };
     if let Some(curvature) = curve("curve=") {
         filter = mode.filter_on(false, curvature);
-    }
-    else if let Some(curvature) = curve("oldcurve=") {
+    } else if let Some(curvature) = curve("oldcurve=") {
         filter = Box::new(Curved::new(filter, mode.warp(curvature)));
     }
     if rest.iter().any(|a| a == "bench") {
@@ -40,7 +48,13 @@ fn main() {
         for _ in 0..n {
             filter.render(&frame, &mut buffer);
         }
-        eprintln!("{w}x{h}: {:.2} ms per frame", start.elapsed().as_secs_f64() * 1000.0 / n as f64);
+        eprintln!(
+            "{w}x{h}: {:.2} ms per frame",
+            start.elapsed().as_secs_f64() * 1000.0 / n as f64
+        );
     }
-    filter.render_to_image(&frame).save(output).expect("cannot save");
+    filter
+        .render_to_image(&frame)
+        .save(output)
+        .expect("cannot save");
 }

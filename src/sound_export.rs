@@ -35,7 +35,7 @@ pub fn ym6(frames: &[[u8; 16]], frame_rate: u16, song: &str) -> Vec<u8> {
 pub struct WavWriter<W: Write + Seek> {
     out: W,
     channels: u16,
-    data_bytes: u32
+    data_bytes: u32,
 }
 
 impl<W: Write + Seek> WavWriter<W> {
@@ -53,7 +53,11 @@ impl<W: Write + Seek> WavWriter<W> {
         out.write_all(&16u16.to_le_bytes())?;
         out.write_all(b"data")?;
         out.write_all(&0u32.to_le_bytes())?;
-        Ok(Self { out, channels, data_bytes: 0 })
+        Ok(Self {
+            out,
+            channels,
+            data_bytes: 0,
+        })
     }
 
     pub fn channels(&self) -> u16 {
@@ -97,10 +101,17 @@ mod test {
         let ym = ym6(&[first, second], 50, "tune");
         assert_eq!(&ym[..12], b"YM6!LeOnArD!");
         assert_eq!(u32::from_be_bytes(ym[12..16].try_into().unwrap()), 2);
-        assert_eq!(u32::from_be_bytes(ym[22..26].try_into().unwrap()), 1_000_000);
+        assert_eq!(
+            u32::from_be_bytes(ym[22..26].try_into().unwrap()),
+            1_000_000
+        );
         assert_eq!(u16::from_be_bytes(ym[26..28].try_into().unwrap()), 50);
         let data = ym.len() - 4 - 32;
-        assert_eq!(&ym[data..data + 2], &[0x12, 0x34], "register 0 of both frames");
+        assert_eq!(
+            &ym[data..data + 2],
+            &[0x12, 0x34],
+            "register 0 of both frames"
+        );
         assert_eq!(&ym[data + 26..data + 28], &[0xff, 0x0e], "register 13");
         assert!(ym.ends_with(b"End!"));
     }

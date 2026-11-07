@@ -78,15 +78,22 @@ pub struct LargeRamExpansion {
     /// Latched high bits (A8-A10, inverted) from the last RAM-select write
     /// this card saw - persists between writes exactly like `Pal`'s own
     /// `MMR` register does.
-    high_bits: u8
+    high_bits: u8,
 }
 
 impl LargeRamExpansion {
     /// `bank_count` 64kb banks actually fitted (1-64: e.g. 8 for a 512K
     /// card, 64 for a full 4MB one).
     pub fn new(bank_count: usize) -> Self {
-        assert!((1..=64).contains(&bank_count), "a real card has 1 to 64 banks (64kb-4MB), got {bank_count}");
-        LargeRamExpansion { pins: (0, 0).into(), banks: vec![Page::default(); bank_count], high_bits: 0 }
+        assert!(
+            (1..=64).contains(&bank_count),
+            "a real card has 1 to 64 banks (64kb-4MB), got {bank_count}"
+        );
+        LargeRamExpansion {
+            pins: (0, 0).into(),
+            banks: vec![Page::default(); bank_count],
+            high_bits: 0,
+        }
     }
 }
 
@@ -130,7 +137,7 @@ pub enum LargeRamExpansionPin {
     D4 = 1 << 12,
     D5 = 1 << 13,
     D6 = 1 << 14,
-    D7 = 1 << 15
+    D7 = 1 << 15,
 }
 
 impl From<LargeRamExpansionPin> for u64 {
@@ -183,7 +190,9 @@ impl Chip for LargeRamExpansion {
         if data & 0b1100_0000 != 0b1100_0000 {
             return;
         }
-        let raw = (self.get_pin(A10) as u8) << 2 | (self.get_pin(A9) as u8) << 1 | (self.get_pin(A8) as u8);
+        let raw = (self.get_pin(A10) as u8) << 2
+            | (self.get_pin(A9) as u8) << 1
+            | (self.get_pin(A8) as u8);
         self.high_bits = (!raw) & 0b111;
     }
 
@@ -236,10 +245,14 @@ mod test {
             (0x7bff, 4),
             (0x7aff, 5),
             (0x79ff, 6),
-            (0x78ff, 7)
+            (0x78ff, 7),
         ] {
             select(&mut card, port, 0b1100_0000);
-            assert_eq!(card.ram_bank_high_bits(), expected_high_bits, "port {port:04x}");
+            assert_eq!(
+                card.ram_bank_high_bits(),
+                expected_high_bits,
+                "port {port:04x}"
+            );
         }
     }
 
@@ -250,6 +263,10 @@ mod test {
         let mut card = LargeRamExpansion::new(64);
         select(&mut card, 0x7fff, 0b1101_1000); // establishes high_bits=0
         select(&mut card, 0x78ff, 0b0000_0000); // NOT a RAM-select write (bits 7-6 aren't 11)
-        assert_eq!(card.ram_bank_high_bits(), 0, "a non-RAM-select write must not change the latch");
+        assert_eq!(
+            card.ram_bank_high_bits(),
+            0,
+            "a non-RAM-select write must not change the latch"
+        );
     }
 }

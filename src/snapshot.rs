@@ -34,7 +34,10 @@ pub fn load_sna(motherboard: &mut Motherboard, path: &str) -> Result<(), String>
 
 /// [`load_sna`] from the bytes of a `.SNA` file; also returns the
 /// breakpoints it carries (see [`load_breakpoints`]).
-pub fn load_sna_bytes(motherboard: &mut Motherboard, bytes: &[u8]) -> Result<SnapshotBreakpoints, String> {
+pub fn load_sna_bytes(
+    motherboard: &mut Motherboard,
+    bytes: &[u8],
+) -> Result<SnapshotBreakpoints, String> {
     let snapshot = Snapshot::from_buffer(bytes.to_vec())?;
     load_snapshot(motherboard, &snapshot)?;
     Ok(breakpoints_of_snapshot(&snapshot))
@@ -78,7 +81,7 @@ fn snapshot_of(motherboard: &Motherboard) -> Result<Snapshot, String> {
         (Z80_IX, Reg16::Ix),
         (Z80_IY, Reg16::Iy),
         (Z80_SP, Reg16::Sp),
-        (Z80_PC, Reg16::Pc)
+        (Z80_PC, Reg16::Pc),
     ] {
         set(flag, cpu.reg16(register).value());
     }
@@ -86,11 +89,14 @@ fn snapshot_of(motherboard: &Motherboard) -> Result<Snapshot, String> {
     set(Z80_R, cpu.reg8(Reg8::R).value().into());
     set(Z80_IFF0, cpu.iff1().into());
     set(Z80_IFF1, cpu.iff2().into());
-    set(Z80_IM, match cpu.im() {
-        InterruptMode::Mode0 => 0,
-        InterruptMode::Mode1 => 1,
-        InterruptMode::Mode2 => 2
-    });
+    set(
+        Z80_IM,
+        match cpu.im() {
+            InterruptMode::Mode0 => 0,
+            InterruptMode::Mode1 => 1,
+            InterruptMode::Mode2 => 2,
+        },
+    );
 
     let ga = motherboard.ga();
     for (pen, ink) in ga.palette().iter().enumerate() {
@@ -111,17 +117,23 @@ fn snapshot_of(motherboard: &Motherboard) -> Result<Snapshot, String> {
     let psg = motherboard.psg();
     set(PSG_SEL, psg.selected_register().unwrap_or(0).into());
     for register in 0..=15u8 {
-        set(PSG_REG(Some(register as usize)), psg.register(register).into());
+        set(
+            PSG_REG(Some(register as usize)),
+            psg.register(register).into(),
+        );
     }
 
-    set(CPC_TYPE, match motherboard.model() {
-        CpcModel::Cpc464 => 0,
-        CpcModel::Cpc664 => 1,
-        CpcModel::Cpc6128 => 2,
-        CpcModel::Cpc6128Plus => 4,
-        CpcModel::Cpc464Plus => 5,
-        CpcModel::Gx4000 => 6
-    });
+    set(
+        CPC_TYPE,
+        match motherboard.model() {
+            CpcModel::Cpc464 => 0,
+            CpcModel::Cpc664 => 1,
+            CpcModel::Cpc6128 => 2,
+            CpcModel::Cpc6128Plus => 4,
+            CpcModel::Cpc464Plus => 5,
+            CpcModel::Gx4000 => 6,
+        },
+    );
 
     // the CRTC as `load_crtc` reads it back
     let crtc = motherboard.crtc();
@@ -137,13 +149,18 @@ fn snapshot_of(motherboard: &Motherboard) -> Result<Snapshot, String> {
     set(CRTC_VAC, c.vtac.into());
     set(CRTC_VSWC, c.hsc.into());
     set(CRTC_HSWC, c.vsc.into());
-    set(CRTC_STATE, u16::from(c.vsync) | u16::from(c.hsync) << 1 | u16::from(c.in_vertical_adjust) << 7);
+    set(
+        CRTC_STATE,
+        u16::from(c.vsync) | u16::from(c.hsync) << 1 | u16::from(c.in_vertical_adjust) << 7,
+    );
 
     set(FDD_MOTOR, motherboard.fdc().motor().into());
     set(FDD_TRACK, motherboard.fdc().track(0).into());
 
     for (flag, value) in values {
-        snapshot.set_value(flag, value).map_err(|e| format!("{flag:?}: {e:?}"))?;
+        snapshot
+            .set_value(flag, value)
+            .map_err(|e| format!("{flag:?}: {e:?}"))?;
     }
 
     if let Some(chunk) = motherboard.asic_snapshot_chunk() {
@@ -160,7 +177,10 @@ fn snapshot_of(motherboard: &Motherboard) -> Result<Snapshot, String> {
 
 fn load_snapshot(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(), String> {
     let word = |flag: SnapshotFlag| -> u16 {
-        snapshot.get_value(&flag).as_u16().unwrap_or_else(|| panic!("{flag:?} is not a plain value"))
+        snapshot
+            .get_value(&flag)
+            .as_u16()
+            .unwrap_or_else(|| panic!("{flag:?} is not a plain value"))
     };
     let byte = |flag: SnapshotFlag| -> u8 { word(flag) as u8 };
 
@@ -170,16 +190,28 @@ fn load_snapshot(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(
     load_crtc(motherboard, snapshot, &byte);
     load_gate_array(motherboard, &byte);
     load_psg(motherboard, &byte);
-    motherboard.ppi_mut().restore(byte(SnapshotFlag::PPI_CTL), byte(SnapshotFlag::PPI_A), byte(SnapshotFlag::PPI_C));
+    motherboard.ppi_mut().restore(
+        byte(SnapshotFlag::PPI_CTL),
+        byte(SnapshotFlag::PPI_A),
+        byte(SnapshotFlag::PPI_C),
+    );
     // the CPC+'s ASIC, after the Gate Array whose inks also reach its palette
-    if let Some(chunk) = snapshot.chunks().iter().find(|chunk| chunk.code().as_str() == "CPC+") {
+    if let Some(chunk) = snapshot
+        .chunks()
+        .iter()
+        .find(|chunk| chunk.code().as_str() == "CPC+")
+    {
         motherboard.restore_asic_snapshot_chunk(chunk.data())?;
     }
 
     Ok(())
 }
 
-fn load_registers(motherboard: &mut Motherboard, word: &impl Fn(SnapshotFlag) -> u16, byte: &impl Fn(SnapshotFlag) -> u8) {
+fn load_registers(
+    motherboard: &mut Motherboard,
+    word: &impl Fn(SnapshotFlag) -> u16,
+    byte: &impl Fn(SnapshotFlag) -> u8,
+) {
     use crate::z80::{HasValue, InterruptMode, Reg16};
     use SnapshotFlag::*;
 
@@ -201,7 +233,7 @@ fn load_registers(motherboard: &mut Motherboard, word: &impl Fn(SnapshotFlag) ->
     cpu.set_im(match byte(Z80_IM) {
         0 => InterruptMode::Mode0,
         2 => InterruptMode::Mode2,
-        _ => InterruptMode::Mode1
+        _ => InterruptMode::Mode1,
     });
 }
 
@@ -221,7 +253,7 @@ pub fn model_of_snapshot(snapshot: &Snapshot) -> Option<CpcModel> {
         4 => Some(CpcModel::Cpc6128Plus),
         5 => Some(CpcModel::Cpc464Plus),
         6 => Some(CpcModel::Gx4000),
-        _ => None
+        _ => None,
     }
 }
 
@@ -243,13 +275,25 @@ fn load_memory(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(),
     // the 128K (and more) snapshots: the following 64K pages go to the
     // extra RAM - an expansion on a 464/664, banked through the MMR.
     let extra_pages = memory.len().saturating_sub(0x10000).div_ceil(0x10000);
-    if extra_pages > 0 && (!motherboard.has_ram_banking() || motherboard.extra_ram_pages() < extra_pages) {
+    if extra_pages > 0
+        && (!motherboard.has_ram_banking() || motherboard.extra_ram_pages() < extra_pages)
+    {
         motherboard.set_extra_ram_pages(extra_pages.max(motherboard.extra_ram_pages()));
     }
-    for (page, data) in memory.get(0x10000..).unwrap_or(&[]).chunks(0x10000).enumerate() {
+    for (page, data) in memory
+        .get(0x10000..)
+        .unwrap_or(&[])
+        .chunks(0x10000)
+        .enumerate()
+    {
         motherboard.load_extra_ram_page(page, data);
     }
-    motherboard.force_mmr(snapshot.get_value(&SnapshotFlag::GA_RAMCFG).as_u16().unwrap_or(0) as u8);
+    motherboard.force_mmr(
+        snapshot
+            .get_value(&SnapshotFlag::GA_RAMCFG)
+            .as_u16()
+            .unwrap_or(0) as u8,
+    );
     Ok(())
 }
 
@@ -257,7 +301,11 @@ fn load_memory(motherboard: &mut Motherboard, snapshot: &Snapshot) -> Result<(),
 /// (&A9 C0, &AB C4, &AC C9, &AD adjust, &AE HSYNC width counter, &AF VSYNC width
 /// counter, &B0 flags: bit 0 VSYNC, bit 1 HSYNC, bit 7 vertical adjust). cpclib
 /// names &AE VSWC and &AF HSWC: the format has them the other way round.
-fn load_crtc(motherboard: &mut Motherboard, snapshot: &Snapshot, byte: &impl Fn(SnapshotFlag) -> u8) {
+fn load_crtc(
+    motherboard: &mut Motherboard,
+    snapshot: &Snapshot,
+    byte: &impl Fn(SnapshotFlag) -> u8,
+) {
     use SnapshotFlag::*;
 
     let mut regs = [0u8; 18];
@@ -275,10 +323,12 @@ fn load_crtc(motherboard: &mut Motherboard, snapshot: &Snapshot, byte: &impl Fn(
             vsc: byte(CRTC_HSWC),
             vsync: flags & 1 != 0,
             hsync: flags & 2 != 0,
-            in_vertical_adjust: flags & 0x80 != 0
+            in_vertical_adjust: flags & 0x80 != 0,
         }
     });
-    motherboard.crtc_mut().restore(&regs, byte(CRTC_SEL), counters);
+    motherboard
+        .crtc_mut()
+        .restore(&regs, byte(CRTC_SEL), counters);
 }
 
 fn load_gate_array(motherboard: &mut Motherboard, byte: &impl Fn(SnapshotFlag) -> u8) {
@@ -315,7 +365,10 @@ fn load_gate_array(motherboard: &mut Motherboard, byte: &impl Fn(SnapshotFlag) -
 fn load_psg(motherboard: &mut Motherboard, byte: &impl Fn(SnapshotFlag) -> u8) {
     let psg = motherboard.psg_mut();
     for register in 0..=15u8 {
-        psg.set_register(register, byte(SnapshotFlag::PSG_REG(Some(register as usize))));
+        psg.set_register(
+            register,
+            byte(SnapshotFlag::PSG_REG(Some(register as usize))),
+        );
     }
     psg.select_register(byte(SnapshotFlag::PSG_SEL));
 }
@@ -327,7 +380,7 @@ pub struct SnapshotBreakpoint {
     pub address: u16,
     /// The chunk it comes from: "REMU", "BRKC" (ACE), "BRKS" (rasm/basm for
     /// WinAPE) or "WABP" (WinAPE).
-    pub chunk: &'static str
+    pub chunk: &'static str,
 }
 
 /// The breakpoints a snapshot carries, and its symbols.
@@ -341,7 +394,7 @@ pub struct SnapshotBreakpoints {
     /// What was found but is not supported, described.
     pub ignored: Vec<String>,
     /// The labels of the `SYMB` chunk and of the REMU chunk's `label`/`alias` entries.
-    pub symbols: crate::symbols::SymbolTable
+    pub symbols: crate::symbols::SymbolTable,
 }
 
 impl SnapshotBreakpoints {
@@ -374,7 +427,12 @@ fn breakpoints_of_snapshot(snapshot: &Snapshot) -> SnapshotBreakpoints {
 
 fn breakpoints_of_chunk(code: &str, data: &[u8], breakpoints: &mut SnapshotBreakpoints) {
     breakpoints.symbols.add_snapshot_chunk(code, data);
-    let SnapshotBreakpoints { exec, advanced, ignored, .. } = breakpoints;
+    let SnapshotBreakpoints {
+        exec,
+        advanced,
+        ignored,
+        ..
+    } = breakpoints;
     match code {
         "REMU" => remu_breakpoints(data, exec, advanced, ignored),
         "BRKC" => ace_breakpoints(data, exec, ignored),
@@ -394,7 +452,7 @@ fn parse_number(text: &str) -> Option<u16> {
         .or_else(|| text.strip_prefix('&'));
     match hex {
         Some(digits) => u16::from_str_radix(digits, 16).ok(),
-        None => text.parse().ok()
+        None => text.parse().ok(),
     }
 }
 
@@ -405,24 +463,25 @@ fn remu_breakpoints(
     data: &[u8],
     breakpoints: &mut Vec<SnapshotBreakpoint>,
     advanced: &mut Vec<AdvancedBreakpoint>,
-    ignored: &mut Vec<String>
+    ignored: &mut Vec<String>,
 ) {
     for entry in String::from_utf8_lossy(data).split(';') {
         let entry = entry.trim();
         if let Some(description) = entry.strip_prefix("acebreak ") {
             match AdvancedBreakpoint::parse_remu(description) {
                 Ok(brk) => advanced.push(brk),
-                Err(e) => ignored.push(format!("REMU: {entry}: {e}"))
+                Err(e) => ignored.push(format!("REMU: {entry}: {e}")),
             }
             continue;
         }
         let mut words = entry.split_whitespace();
         match (words.next(), words.next().and_then(parse_number)) {
-            (Some("brk" | "rombrk"), Some(address)) => {
-                breakpoints.push(SnapshotBreakpoint { address, chunk: "REMU" })
-            },
-            (Some("label" | "alias") | None, _) => {},
-            _ => ignored.push(format!("REMU: {entry}"))
+            (Some("brk" | "rombrk"), Some(address)) => breakpoints.push(SnapshotBreakpoint {
+                address,
+                chunk: "REMU",
+            }),
+            (Some("label" | "alias") | None, _) => {}
+            _ => ignored.push(format!("REMU: {entry}")),
         }
     }
 }
@@ -431,21 +490,29 @@ fn remu_breakpoints(
 /// 4-5 the address, high byte first (cpcwiki "Snapshot#BRKC", as cpclib and
 /// basm write it), the name at 144. rasm writes the address low byte first
 /// and names its records "breakpoint<index>": read that way when so named.
-fn ace_breakpoints(data: &[u8], breakpoints: &mut Vec<SnapshotBreakpoint>, ignored: &mut Vec<String>) {
+fn ace_breakpoints(
+    data: &[u8],
+    breakpoints: &mut Vec<SnapshotBreakpoint>,
+    ignored: &mut Vec<String>,
+) {
     for (index, record) in data.chunks_exact(216).enumerate() {
         if record[0] == 0 {
             let name = &record[144..208];
             let name = &name[..name.iter().position(|&b| b == 0).unwrap_or(name.len())];
             let address = if name == format!("breakpoint{index}").as_bytes() {
                 u16::from_le_bytes([record[4], record[5]])
-            }
-            else {
+            } else {
                 u16::from_be_bytes([record[4], record[5]])
             };
-            breakpoints.push(SnapshotBreakpoint { address, chunk: "BRKC" });
-        }
-        else {
-            ignored.push(format!("BRKC: breakpoint of type {} (memory/port)", record[0]));
+            breakpoints.push(SnapshotBreakpoint {
+                address,
+                chunk: "BRKC",
+            });
+        } else {
+            ignored.push(format!(
+                "BRKC: breakpoint of type {} (memory/port)",
+                record[0]
+            ));
         }
     }
 }
@@ -455,7 +522,10 @@ fn ace_breakpoints(data: &[u8], breakpoints: &mut Vec<SnapshotBreakpoint>, ignor
 /// RAM (ignored), a zeroed condition.
 fn brks_breakpoints(data: &[u8], breakpoints: &mut Vec<SnapshotBreakpoint>) {
     for record in data.chunks_exact(5) {
-        breakpoints.push(SnapshotBreakpoint { address: u16::from_le_bytes([record[0], record[1]]), chunk: "BRKS" });
+        breakpoints.push(SnapshotBreakpoint {
+            address: u16::from_le_bytes([record[0], record[1]]),
+            chunk: "BRKS",
+        });
     }
 }
 
@@ -463,15 +533,20 @@ fn brks_breakpoints(data: &[u8], breakpoints: &mut Vec<SnapshotBreakpoint>) {
 /// origin byte and a u32 whose low 16 bits are the address, bits 31/30
 /// announcing pass counts/a condition that follow (variable size: parsing
 /// stops there). Memory and IO breakpoints come after and are not read.
-fn winape_breakpoints(data: &[u8], breakpoints: &mut Vec<SnapshotBreakpoint>, ignored: &mut Vec<String>) {
-    let u32_at = |at: usize| data.get(at..at + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
-    let Some(count) = u32_at(0)
-    else {
+fn winape_breakpoints(
+    data: &[u8],
+    breakpoints: &mut Vec<SnapshotBreakpoint>,
+    ignored: &mut Vec<String>,
+) {
+    let u32_at = |at: usize| {
+        data.get(at..at + 4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+    };
+    let Some(count) = u32_at(0) else {
         return;
     };
     for index in 0..count as usize {
-        let Some(word) = u32_at(4 + index * 5 + 1)
-        else {
+        let Some(word) = u32_at(4 + index * 5 + 1) else {
             break;
         };
         if word & (3 << 30) != 0 {
@@ -481,7 +556,10 @@ fn winape_breakpoints(data: &[u8], breakpoints: &mut Vec<SnapshotBreakpoint>, ig
             ));
             return;
         }
-        breakpoints.push(SnapshotBreakpoint { address: (word & 0xffff) as u16, chunk: "WABP" });
+        breakpoints.push(SnapshotBreakpoint {
+            address: (word & 0xffff) as u16,
+            chunk: "WABP",
+        });
     }
 }
 
@@ -493,7 +571,10 @@ mod breakpoint_test {
     fn parse(code: &str, data: &[u8]) -> (Vec<u16>, usize) {
         let mut breakpoints = SnapshotBreakpoints::default();
         breakpoints_of_chunk(code, data, &mut breakpoints);
-        (breakpoints.exec.iter().map(|b| b.address).collect(), breakpoints.ignored.len())
+        (
+            breakpoints.exec.iter().map(|b| b.address).collect(),
+            breakpoints.ignored.len(),
+        )
     }
 
     #[test]
@@ -512,19 +593,31 @@ mod breakpoint_test {
         remu.add_entry(&RemuEntry::new_remu_breakpoint(io));
         snapshot.add_chunk(remu);
         let mut ace = AceBreakPointChunk::empty();
-        ace.add_breakpoint(AceBreakPoint::new_execution(0x8000, AceBrkRuntimeMode::Break, AceMemMapType::Undefined));
+        ace.add_breakpoint(AceBreakPoint::new_execution(
+            0x8000,
+            AceBrkRuntimeMode::Break,
+            AceMemMapType::Undefined,
+        ));
         snapshot.add_chunk(ace);
 
-        let path = std::env::temp_dir().join(format!("amsrust_breakpoints_{}.sna", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("amsrust_breakpoints_{}.sna", std::process::id()));
         let path = path.to_str().unwrap().to_owned();
         snapshot.save(&path, SnapshotVersion::V3).unwrap();
         let breakpoints = load_breakpoints(&path).unwrap();
         let _ = std::fs::remove_file(&path);
 
-        let exec: Vec<_> = breakpoints.exec.iter().map(|b| (b.address, b.chunk)).collect();
+        let exec: Vec<_> = breakpoints
+            .exec
+            .iter()
+            .map(|b| (b.address, b.chunk))
+            .collect();
         assert_eq!(exec, vec![(0x4000, "REMU"), (0x8000, "BRKC")]);
         assert_eq!(breakpoints.advanced.len(), 1);
-        assert_eq!(breakpoints.advanced[0].run, crate::breakpoints::RunMode::Watch);
+        assert_eq!(
+            breakpoints.advanced[0].run,
+            crate::breakpoints::RunMode::Watch
+        );
         assert!(breakpoints.ignored.is_empty(), "{:?}", breakpoints.ignored);
     }
 
@@ -533,7 +626,10 @@ mod breakpoint_test {
         for (flag, value) in values {
             snapshot.set_value(*flag, *value).unwrap();
         }
-        let path = std::env::temp_dir().join(format!("amsrust_crtc_{}_{version:?}.sna", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "amsrust_crtc_{}_{version:?}.sna",
+            std::process::id()
+        ));
         let path = path.to_str().unwrap().to_owned();
         snapshot.save(&path, version).unwrap();
         let bytes = std::fs::read(&path).unwrap();
@@ -549,12 +645,25 @@ mod breakpoint_test {
     #[test]
     fn the_crtc_is_restored_as_saved() {
         use SnapshotFlag::*;
-        let regs = [(0, 0), (4, 20), (5, 3), (9, 5), (1, 32), (12, 0x10), (7, 12)];
+        let regs = [
+            (0, 0),
+            (4, 20),
+            (5, 3),
+            (9, 5),
+            (1, 32),
+            (12, 0x10),
+            (7, 12),
+        ];
         let mut values: Vec<_> = regs.iter().map(|&(r, v)| (CRTC_REG(Some(r)), v)).collect();
         values.push((CRTC_SEL, 12));
         values.extend([
-            (CRTC_HCC, 10), (CRTC_CLC, 7), (CRTC_RLC, 2), (CRTC_VAC, 0),
-            (CRTC_VSWC, 0), (CRTC_HSWC, 3), (CRTC_STATE, 1)
+            (CRTC_HCC, 10),
+            (CRTC_CLC, 7),
+            (CRTC_RLC, 2),
+            (CRTC_VAC, 0),
+            (CRTC_VSWC, 0),
+            (CRTC_HSWC, 3),
+            (CRTC_STATE, 1),
         ]);
         let motherboard = load_crtc_snapshot(SnapshotVersion::V3, &values);
         let crtc = motherboard.crtc();
@@ -563,7 +672,10 @@ mod breakpoint_test {
         }
         assert_eq!(crtc.selected_register(), 12);
         let counters = crtc.counters();
-        assert_eq!((counters.hcc, counters.vcc, counters.vlc, counters.vsc), (10, 7, 2, 3));
+        assert_eq!(
+            (counters.hcc, counters.vcc, counters.vlc, counters.vsc),
+            (10, 7, 2, 3)
+        );
         assert!(counters.vsync && !counters.hsync && !counters.in_vertical_adjust);
 
         // version 2 has no counters: the top of a frame
@@ -577,9 +689,14 @@ mod breakpoint_test {
     /// into a 6128.
     fn load_typed(cpc_type: u16, mmr: u16, version: SnapshotVersion) -> (Motherboard, Snapshot) {
         let mut snapshot = Snapshot::default();
-        snapshot.set_value(SnapshotFlag::CPC_TYPE, cpc_type).unwrap();
+        snapshot
+            .set_value(SnapshotFlag::CPC_TYPE, cpc_type)
+            .unwrap();
         snapshot.set_value(SnapshotFlag::GA_RAMCFG, mmr).unwrap();
-        let path = std::env::temp_dir().join(format!("amsrust_model_{}_{cpc_type}_{mmr}.sna", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "amsrust_model_{}_{cpc_type}_{mmr}.sna",
+            std::process::id()
+        ));
         let path = path.to_str().unwrap().to_owned();
         snapshot.save(&path, version).unwrap();
         let bytes = std::fs::read(&path).unwrap();
@@ -594,15 +711,28 @@ mod breakpoint_test {
         let (motherboard, snapshot) = load_typed(0, 0xc0, SnapshotVersion::V2);
         assert_eq!(model_of_snapshot(&snapshot), Some(CpcModel::Cpc464));
         assert_eq!(motherboard.model(), CpcModel::Cpc464);
-        assert!(motherboard.has_disc_interface(), "the disc interface is kept, as a DDI-1");
+        assert!(
+            motherboard.has_disc_interface(),
+            "the disc interface is kept, as a DDI-1"
+        );
         let extra = snapshot.memory_size_header() > 64;
-        assert_eq!(motherboard.has_ram_banking(), extra, "banked only with the snapshot's extra RAM");
+        assert_eq!(
+            motherboard.has_ram_banking(),
+            extra,
+            "banked only with the snapshot's extra RAM"
+        );
 
         let (motherboard, _) = load_typed(1, 0xc0, SnapshotVersion::V2);
         assert_eq!(motherboard.model(), CpcModel::Cpc664);
         // Version 1 has no CPC type, it leaves the model; the CPC+ types give a CPC+.
-        assert_eq!(load_typed(0, 0xc0, SnapshotVersion::V1).0.model(), CpcModel::Cpc6128);
-        assert_eq!(load_typed(4, 0xc0, SnapshotVersion::V2).0.model(), CpcModel::Cpc6128Plus);
+        assert_eq!(
+            load_typed(0, 0xc0, SnapshotVersion::V1).0.model(),
+            CpcModel::Cpc6128
+        );
+        assert_eq!(
+            load_typed(4, 0xc0, SnapshotVersion::V2).0.model(),
+            CpcModel::Cpc6128Plus
+        );
     }
 
     #[test]
@@ -642,7 +772,10 @@ mod breakpoint_test {
         chunk.add_entry(&RemuEntry::new_label("start".to_owned(), 0x4000, 0));
         chunk.add_entry(&RemuEntry::new_rom_breakpoint(0xc006, 7));
         assert_eq!(parse("REMU", chunk.data()), (vec![0x4000, 0xc006], 0));
-        assert_eq!(parse("REMU", b"brk #8000 0;brk &10 0;watch 1;"), (vec![0x8000, 0x10], 1));
+        assert_eq!(
+            parse("REMU", b"brk #8000 0;brk &10 0;watch 1;"),
+            (vec![0x8000, 0x10], 1)
+        );
     }
 
     #[test]
@@ -651,8 +784,18 @@ mod breakpoint_test {
         remu.add_entry(&RemuEntry::new_label("start".to_owned(), 0x4000, 0));
         remu.add_entry(&RemuEntry::new_alias("SCREEN".to_owned(), 0xc000));
         let mut symb = AceSymbolChunk::empty();
-        symb.add_symbol(AceSymbol::new("loop", 0x4010, AceMemMapType::Undefined, AceSymbolType::Absolute));
-        symb.add_symbol(AceSymbol::new("data", 0x8000, AceMemMapType::Undefined, AceSymbolType::Absolute));
+        symb.add_symbol(AceSymbol::new(
+            "loop",
+            0x4010,
+            AceMemMapType::Undefined,
+            AceSymbolType::Absolute,
+        ));
+        symb.add_symbol(AceSymbol::new(
+            "data",
+            0x8000,
+            AceMemMapType::Undefined,
+            AceSymbolType::Absolute,
+        ));
         let mut breakpoints = SnapshotBreakpoints::default();
         breakpoints_of_chunk("REMU", remu.data(), &mut breakpoints);
         breakpoints_of_chunk("SYMB", symb.data(), &mut breakpoints);
@@ -661,14 +804,25 @@ mod breakpoint_test {
         assert_eq!(symbols.address_of("SCREEN"), Some(0xc000));
         assert_eq!(symbols.address_of("loop"), Some(0x4010));
         assert_eq!(symbols.address_of("data"), Some(0x8000));
-        assert!(breakpoints.ignored.is_empty() && breakpoints.is_empty(), "labels are not breakpoints");
+        assert!(
+            breakpoints.ignored.is_empty() && breakpoints.is_empty(),
+            "labels are not breakpoints"
+        );
     }
 
     #[test]
     fn ace_execution_breakpoints_written_by_cpclib() {
         let mut chunk = AceBreakPointChunk::empty();
-        chunk.add_breakpoint(AceBreakPoint::new_execution(0x1234, AceBrkRuntimeMode::Break, AceMemMapType::Undefined));
-        chunk.add_breakpoint(AceBreakPoint::new_execution(0xbeef, AceBrkRuntimeMode::Break, AceMemMapType::Undefined));
+        chunk.add_breakpoint(AceBreakPoint::new_execution(
+            0x1234,
+            AceBrkRuntimeMode::Break,
+            AceMemMapType::Undefined,
+        ));
+        chunk.add_breakpoint(AceBreakPoint::new_execution(
+            0xbeef,
+            AceBrkRuntimeMode::Break,
+            AceMemMapType::Undefined,
+        ));
         assert_eq!(parse("BRKC", chunk.data()), (vec![0x1234, 0xbeef], 0));
     }
 
@@ -691,7 +845,10 @@ mod breakpoint_test {
 
     #[test]
     fn brks_breakpoints_written_by_rasm_and_basm() {
-        assert_eq!(parse("BRKS", &[0x00, 0x40, 0, 0, 0, 0x38, 0x00, 1, 0, 0]), (vec![0x4000, 0x0038], 0));
+        assert_eq!(
+            parse("BRKS", &[0x00, 0x40, 0, 0, 0, 0x38, 0x00, 1, 0, 0]),
+            (vec![0x4000, 0x0038], 0)
+        );
     }
 
     /// `tests/fixtures/basm_breakpoints.asm` assembled by basm (cpclib):
@@ -699,7 +856,10 @@ mod breakpoint_test {
     /// an IO breakpoint with a condition as REMU `acebreak` entries.
     #[test]
     fn breakpoints_of_a_basm_snapshot() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/basm_breakpoints.sna");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/basm_breakpoints.sna"
+        );
         let breakpoints = load_breakpoints(path).unwrap();
         assert!(breakpoints.ignored.is_empty(), "{:?}", breakpoints.ignored);
         let exec: Vec<_> = breakpoints.exec.iter().map(|b| b.address).collect();
@@ -707,13 +867,39 @@ mod breakpoint_test {
         let advanced: Vec<_> = breakpoints
             .advanced
             .iter()
-            .map(|b| (b.kind, b.address, b.size, b.run, b.name.as_deref(), b.condition.is_some()))
+            .map(|b| {
+                (
+                    b.kind,
+                    b.address,
+                    b.size,
+                    b.run,
+                    b.name.as_deref(),
+                    b.condition.is_some(),
+                )
+            })
             .collect();
         use crate::breakpoints::{BreakpointKind, RunMode};
-        assert_eq!(advanced, vec![
-            (BreakpointKind::Memory, 0xc000, 16, RunMode::Watch, Some("screen"), false),
-            (BreakpointKind::Io, 0x7f00, 1, RunMode::Stop, Some("ink"), true),
-        ]);
+        assert_eq!(
+            advanced,
+            vec![
+                (
+                    BreakpointKind::Memory,
+                    0xc000,
+                    16,
+                    RunMode::Watch,
+                    Some("screen"),
+                    false
+                ),
+                (
+                    BreakpointKind::Io,
+                    0x7f00,
+                    1,
+                    RunMode::Stop,
+                    Some("ink"),
+                    true
+                ),
+            ]
+        );
     }
 
     #[test]
@@ -743,12 +929,31 @@ mod breakpoint_test {
         }
         machine.psg_mut().set_register(8, 13);
         let bytes = save_sna_bytes(&machine).unwrap();
-        assert_eq!(Snapshot::from_buffer(bytes.clone()).unwrap().version_header(), 3);
+        assert_eq!(
+            Snapshot::from_buffer(bytes.clone())
+                .unwrap()
+                .version_header(),
+            3
+        );
 
         let mut copy = booted();
         load_sna_bytes(&mut copy, &bytes).unwrap();
-        for register in [Reg16::Af, Reg16::Bc, Reg16::De, Reg16::Hl, Reg16::Ix, Reg16::Iy, Reg16::Sp, Reg16::Pc, Reg16::Af2] {
-            assert_eq!(copy.cpu().reg16(register).value(), machine.cpu().reg16(register).value(), "{register:?}");
+        for register in [
+            Reg16::Af,
+            Reg16::Bc,
+            Reg16::De,
+            Reg16::Hl,
+            Reg16::Ix,
+            Reg16::Iy,
+            Reg16::Sp,
+            Reg16::Pc,
+            Reg16::Af2,
+        ] {
+            assert_eq!(
+                copy.cpu().reg16(register).value(),
+                machine.cpu().reg16(register).value(),
+                "{register:?}"
+            );
         }
         assert_eq!(copy.ram_dump(), machine.ram_dump());
         assert_eq!(copy.mmr(), machine.mmr());
@@ -758,11 +963,24 @@ mod breakpoint_test {
         assert_eq!(copy.crtc().counters(), machine.crtc().counters());
         assert_eq!(copy.psg().register(8), 13);
         assert_eq!(copy.ppi().control_word(), machine.ppi().control_word());
-        assert_eq!(copy.ppi().get_data_c_from_pins(), machine.ppi().get_data_c_from_pins());
+        assert_eq!(
+            copy.ppi().get_data_c_from_pins(),
+            machine.ppi().get_data_c_from_pins()
+        );
         // and a saved copy saves the same
         let again = save_sna_bytes(&copy).unwrap();
-        let differ: Vec<_> = again.iter().zip(&bytes).enumerate().filter(|(_, (a, b))| a != b).map(|(i, (a, b))| (i, *a, *b)).take(10).collect();
-        assert!(differ.is_empty() && again.len() == bytes.len(), "{differ:x?}");
+        let differ: Vec<_> = again
+            .iter()
+            .zip(&bytes)
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(i, (a, b))| (i, *a, *b))
+            .take(10)
+            .collect();
+        assert!(
+            differ.is_empty() && again.len() == bytes.len(),
+            "{differ:x?}"
+        );
 
         // the firmware goes on the same way on both
         let start = t_states(&copy);

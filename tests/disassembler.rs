@@ -20,29 +20,69 @@ fn reg8(register: Register8) -> Option<DataAccess> {
 }
 
 fn ix_plus(d: i32) -> Option<DataAccess> {
-    Some(DataAccess::IndexRegister16WithIndex(IndexRegister16::Ix, BinaryOperation::Add, Expr::Value(d)))
+    Some(DataAccess::IndexRegister16WithIndex(
+        IndexRegister16::Ix,
+        BinaryOperation::Add,
+        Expr::Value(d),
+    ))
 }
 
 #[test]
 fn disassembles_every_prefix_page_with_its_operands() {
     let program: &[(&[u8], Token)] = &[
-        (&[0x3e, 0x12], op(Mnemonic::Ld, reg8(Register8::A), value(0x12))),
-        (&[0x21, 0x34, 0x12], op(Mnemonic::Ld, Some(DataAccess::Register16(Register16::Hl)), value(0x1234))),
+        (
+            &[0x3e, 0x12],
+            op(Mnemonic::Ld, reg8(Register8::A), value(0x12)),
+        ),
+        (
+            &[0x21, 0x34, 0x12],
+            op(
+                Mnemonic::Ld,
+                Some(DataAccess::Register16(Register16::Hl)),
+                value(0x1234),
+            ),
+        ),
         (&[0x18, 0x05], op(Mnemonic::Jr, None, value(7))),
-        (&[0xcb, 0x7e], op(Mnemonic::Bit, value(7), Some(DataAccess::MemoryRegister16(Register16::Hl)))),
+        (
+            &[0xcb, 0x7e],
+            op(
+                Mnemonic::Bit,
+                value(7),
+                Some(DataAccess::MemoryRegister16(Register16::Hl)),
+            ),
+        ),
         (&[0xed, 0xb0], op(Mnemonic::Ldir, None, None)),
-        (&[0xed, 0x43, 0x00, 0xc0], op(Mnemonic::Ld, Some(DataAccess::Memory(Expr::Value(0xc000))), Some(DataAccess::Register16(Register16::Bc)))),
-        (&[0xdd, 0x36, 0x05, 0x99], op(Mnemonic::Ld, ix_plus(5), value(0x99))),
-        (&[0xdd, 0x41], op(Mnemonic::Ld, reg8(Register8::B), reg8(Register8::C))),
-        (&[0xdd, 0xcb, 0x03, 0xc6], Token::OpCode(Mnemonic::Set, value(0), ix_plus(3), None)),
-        (&[0xd7], op(Mnemonic::Rst, value(0x10), None))
+        (
+            &[0xed, 0x43, 0x00, 0xc0],
+            op(
+                Mnemonic::Ld,
+                Some(DataAccess::Memory(Expr::Value(0xc000))),
+                Some(DataAccess::Register16(Register16::Bc)),
+            ),
+        ),
+        (
+            &[0xdd, 0x36, 0x05, 0x99],
+            op(Mnemonic::Ld, ix_plus(5), value(0x99)),
+        ),
+        (
+            &[0xdd, 0x41],
+            op(Mnemonic::Ld, reg8(Register8::B), reg8(Register8::C)),
+        ),
+        (
+            &[0xdd, 0xcb, 0x03, 0xc6],
+            Token::OpCode(Mnemonic::Set, value(0), ix_plus(3), None),
+        ),
+        (&[0xd7], op(Mnemonic::Rst, value(0x10), None)),
     ];
 
     let mut motherboard = MotherboardBuilder::default()
         .disable_lower_rom()
         .disable_upper_rom()
         .build();
-    let bytes: Vec<u8> = program.iter().flat_map(|(bytes, _)| bytes.iter().copied()).collect();
+    let bytes: Vec<u8> = program
+        .iter()
+        .flat_map(|(bytes, _)| bytes.iter().copied())
+        .collect();
     motherboard.write_buffer(0x4000, &bytes);
 
     let disassembled = motherboard.disassemble_instructions_from(0x4000, program.len());

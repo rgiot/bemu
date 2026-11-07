@@ -21,15 +21,21 @@ fn unidos_boots_on_its_nodes() {
         (7, "inner://unidos"),
         (14, "inner://unitools"),
         (15, "inner://amsdos"),
-        (27, "inner://unidos-albireo")
+        (27, "inner://unidos-albireo"),
     ] {
-        motherboard.set_upper_rom(slot, Some(&load_rom(rom).unwrap())).unwrap();
+        motherboard
+            .set_upper_rom(slot, Some(&load_rom(rom).unwrap()))
+            .unwrap();
     }
     // two seconds: the firmware, UniDOS and its nodes initialised
     while motherboard.t_state_counter().value() < 8_000_000 {
         motherboard.execute_next_opcode_no_video();
     }
-    let nova = motherboard.expansion_port().unwrap().device::<Nova>().unwrap();
+    let nova = motherboard
+        .expansion_port()
+        .unwrap()
+        .device::<Nova>()
+        .unwrap();
     let written = nova.ram().iter().filter(|&&b| b != 0).count();
     assert!(written > 0, "UniDOS found its NVRAM and wrote its context");
     let _ = std::fs::remove_dir_all(&usb);

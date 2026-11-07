@@ -18,7 +18,9 @@ fn main() {
     loop {
         mb.tick();
         let vs = mb.crtc().vsync();
-        if vs && !prev_vs { break; }
+        if vs && !prev_vs {
+            break;
+        }
         prev_vs = vs;
     }
     let (mut tick, mut us) = (0u64, 0u64);
@@ -32,11 +34,36 @@ fn main() {
         if (every_us && tick % 16 == 0) || (!every_us && c.hcc != last_c0) {
             last_c0 = c.hcc;
             us += 1;
-            let regs = [c.regs_r(0), c.regs_r(1), c.regs_r(2), c.regs_r(4), c.regs_r(9), c.regs_r(5), c.regs_r(6), c.regs_r(7)];
-            let r = if regs != last_regs { format!(" R0={} R1={} R2={} R4={} R9={} R5={} R6={} R7={}", regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6], regs[7]) } else { String::new() };
+            let regs = [
+                c.regs_r(0),
+                c.regs_r(1),
+                c.regs_r(2),
+                c.regs_r(4),
+                c.regs_r(9),
+                c.regs_r(5),
+                c.regs_r(6),
+                c.regs_r(7),
+            ];
+            let r = if regs != last_regs {
+                format!(
+                    " R0={} R1={} R2={} R4={} R9={} R5={} R6={} R7={}",
+                    regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6], regs[7]
+                )
+            } else {
+                String::new()
+            };
             last_regs = regs;
-            println!("{:7.2} C0={:2} C4={:2} C9={:2} MA={:04X} DE={} HS={} VS={}{r}", tick as f64 / 16.0, c.hcc, c.vcc.value(), c.vlc.value(), c.vma(),
-                c.get_pin(CrtcPin::DE) as u8, c.get_pin(CrtcPin::HS) as u8, c.vsync() as u8);
+            println!(
+                "{:7.2} C0={:2} C4={:2} C9={:2} MA={:04X} DE={} HS={} VS={}{r}",
+                tick as f64 / 16.0,
+                c.hcc,
+                c.vcc.value(),
+                c.vlc.value(),
+                c.vma(),
+                c.get_pin(CrtcPin::DE) as u8,
+                c.get_pin(CrtcPin::HS) as u8,
+                c.vsync() as u8
+            );
         }
     }
 }

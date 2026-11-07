@@ -25,13 +25,21 @@ fn main() {
         count += 1;
         if let Some((from, to)) = trace {
             let us = mb.t_state_counter().value() / 4;
-            if us >= to { break; }
+            if us >= to {
+                break;
+            }
             if (from..to).contains(&us) {
                 let chunk = mb.asic_snapshot_chunk().unwrap_or_default();
                 let c = mb.crtc().counters();
                 println!(
                     "us={us} pc={:04X} PRI={:02X} R52={} C4={} C9={} vsync={} IFF1={}",
-                    mb.pc(), chunk.get(0x8c0).copied().unwrap_or(0), mb.ga().r52(), c.vcc, c.vlc, c.vsync, mb.cpu().iff1()
+                    mb.pc(),
+                    chunk.get(0x8c0).copied().unwrap_or(0),
+                    mb.ga().r52(),
+                    c.vcc,
+                    c.vlc,
+                    c.vsync,
+                    mb.cpu().iff1()
                 );
             }
         }

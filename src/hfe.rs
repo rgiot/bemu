@@ -16,7 +16,7 @@ pub struct BitTrack {
     /// Cells that read as random each time (weak bits), same layout as `cells`.
     pub weak: Vec<u8>,
     /// Number of valid cells.
-    pub len: usize
+    pub len: usize,
 }
 
 impl fmt::Debug for BitTrack {
@@ -27,7 +27,11 @@ impl fmt::Debug for BitTrack {
 
 impl BitTrack {
     pub fn new(len: usize) -> Self {
-        Self { cells: vec![0; len.div_ceil(8)], weak: vec![0; len.div_ceil(8)], len }
+        Self {
+            cells: vec![0; len.div_ceil(8)],
+            weak: vec![0; len.div_ceil(8)],
+            len,
+        }
     }
 
     pub fn cell(&self, i: usize) -> bool {
@@ -44,8 +48,7 @@ impl BitTrack {
         let i = i % self.len.max(1);
         if value {
             self.cells[i / 8] |= 1 << (i % 8);
-        }
-        else {
+        } else {
             self.cells[i / 8] &= !(1 << (i % 8));
         }
         self.weak[i / 8] &= !(1 << (i % 8));
@@ -57,7 +60,11 @@ impl BitTrack {
     fn byte(&self, at: usize, noise: &mut impl FnMut() -> bool) -> u8 {
         (0..8).fold(0, |b, k| {
             let i = at + 2 * k + 1;
-            let bit = if self.is_weak(i) { noise() } else { self.cell(i) };
+            let bit = if self.is_weak(i) {
+                noise()
+            } else {
+                self.cell(i)
+            };
             (b << 1) | u8::from(bit)
         })
     }
@@ -105,20 +112,26 @@ impl BitTrack {
     pub fn formatted(len: usize, ids: &[[u8; 4]], n: u8, gap3: u8, filler: u8) -> Self {
         let mut bytes = Vec::new();
         let mut marks = Vec::new(); // (byte index, 16-bit mark word)
-        let gap = |bytes: &mut Vec<u8>, count: usize, value: u8| bytes.extend(std::iter::repeat_n(value, count));
-        let sync_and_mark = |bytes: &mut Vec<u8>, marks: &mut Vec<(usize, u16)>, sync: u8, word: u16| {
-            for _ in 0..3 {
-                marks.push((bytes.len(), word));
-                bytes.push(sync);
-            }
+        let gap = |bytes: &mut Vec<u8>, count: usize, value: u8| {
+            bytes.extend(std::iter::repeat_n(value, count))
         };
+        let sync_and_mark =
+            |bytes: &mut Vec<u8>, marks: &mut Vec<(usize, u16)>, sync: u8, word: u16| {
+                for _ in 0..3 {
+                    marks.push((bytes.len(), word));
+                    bytes.push(sync);
+                }
+            };
         gap(&mut bytes, 80, 0x4e);
         gap(&mut bytes, 12, 0x00);
         sync_and_mark(&mut bytes, &mut marks, 0xc2, 0x5224);
         bytes.push(0xfc);
         gap(&mut bytes, 50, 0x4e);
         for id in ids {
-            for (mark, payload) in [(0xfe, id.to_vec()), (0xfb, vec![filler; crate::disc_image::size_from_code(n)])] {
+            for (mark, payload) in [
+                (0xfe, id.to_vec()),
+                (0xfb, vec![filler; crate::disc_image::size_from_code(n)]),
+            ] {
                 gap(&mut bytes, 12, 0x00);
                 sync_and_mark(&mut bytes, &mut marks, 0xa1, 0x4489);
                 let mut field = vec![mark];
@@ -126,7 +139,11 @@ impl BitTrack {
                 let crc = crc16(&[[0xa1, 0xa1, 0xa1].as_slice(), &field].concat());
                 field.extend_from_slice(&crc.to_be_bytes());
                 bytes.extend(field);
-                gap(&mut bytes, if mark == 0xfe { 22 } else { usize::from(gap3) }, 0x4e);
+                gap(
+                    &mut bytes,
+                    if mark == 0xfe { 22 } else { usize::from(gap3) },
+                    0x4e,
+                );
             }
         }
         let missing = (len / 16).saturating_sub(bytes.len());
@@ -145,7 +162,10 @@ impl BitTrack {
     /// The cells as the library stores them (MSB first).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn to_library(&self) -> (Vec<u8>, Vec<u8>) {
-        (self.cells.iter().map(|b| b.reverse_bits()).collect(), self.weak.iter().map(|b| b.reverse_bits()).collect())
+        (
+            self.cells.iter().map(|b| b.reverse_bits()).collect(),
+            self.weak.iter().map(|b| b.reverse_bits()).collect(),
+        )
     }
 
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -164,7 +184,11 @@ pub fn crc16(bytes: &[u8]) -> u16 {
     bytes.iter().fold(0xffff, |mut crc: u16, &byte| {
         crc ^= u16::from(byte) << 8;
         for _ in 0..8 {
-            crc = if crc & 0x8000 != 0 { (crc << 1) ^ 0x1021 } else { crc << 1 };
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
         }
         crc
     })
@@ -181,7 +205,7 @@ pub struct FoundSector {
     pub deleted: bool,
     /// The data, as many copies as weak cells make different (1 otherwise).
     pub copies: Vec<Vec<u8>>,
-    pub data_crc_ok: bool
+    pub data_crc_ok: bool,
 }
 
 /// A sector write waiting to go to the image through the library (see [`Bitstream::save`]).
@@ -190,7 +214,7 @@ struct PendingWrite {
     track: usize,
     side: usize,
     r: u8,
-    data: Vec<u8>
+    data: Vec<u8>,
 }
 
 /// The medium of a disc loaded from an HFE image: its cells, and what changed since it was loaded
@@ -205,7 +229,7 @@ pub struct Bitstream {
     /// Tracks whose cells the emulator wrote itself (formatted, deleted marks): they replace the
     /// source's when saving.
     rebuilt: Vec<(usize, usize)>,
-    writes: Vec<PendingWrite>
+    writes: Vec<PendingWrite>,
 }
 
 impl Bitstream {
@@ -220,14 +244,27 @@ impl Bitstream {
 
     /// Record that the FDC wrote sector `r` (its ID's R) of a track: the library writes it when
     /// saving. A deleted data mark is encoded here, in the cells (`mark_at`: its first cell).
-    pub fn sector_written(&mut self, track: usize, side: usize, r: u8, mark_at: usize, deleted: bool, data: &[u8]) {
+    pub fn sector_written(
+        &mut self,
+        track: usize,
+        side: usize,
+        r: u8,
+        mark_at: usize,
+        deleted: bool,
+        data: &[u8],
+    ) {
         if deleted {
             self.tracks[track][side].write_data_field(mark_at, true, data);
             self.rebuild(track, side);
-        }
-        else {
-            self.writes.retain(|w| !(w.track == track && w.side == side && w.r == r));
-            self.writes.push(PendingWrite { track, side, r, data: data.to_vec() });
+        } else {
+            self.writes
+                .retain(|w| !(w.track == track && w.side == side && w.r == r));
+            self.writes.push(PendingWrite {
+                track,
+                side,
+                r,
+                data: data.to_vec(),
+            });
         }
     }
 
@@ -236,7 +273,8 @@ impl Bitstream {
         if !self.rebuilt.contains(&(track, side)) {
             self.rebuilt.push((track, side));
         }
-        self.writes.retain(|w| !(w.track == track && w.side == side));
+        self.writes
+            .retain(|w| !(w.track == track && w.side == side));
     }
 }
 
@@ -262,16 +300,27 @@ mod library {
     fn load(bytes: &[u8]) -> Result<Img, String> {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static COUNT: AtomicUsize = AtomicUsize::new(0);
-        let name = format!("amsrust_{}_{}.hfe", std::process::id(), COUNT.fetch_add(1, Ordering::Relaxed));
-        Hxcfe::get().load_from_buffer(bytes, &name).map_err(|e| format!("HFE: {e}"))
+        let name = format!(
+            "amsrust_{}_{}.hfe",
+            std::process::id(),
+            COUNT.fetch_add(1, Ordering::Relaxed)
+        );
+        Hxcfe::get()
+            .load_from_buffer(bytes, &name)
+            .map_err(|e| format!("HFE: {e}"))
     }
 
     /// The sectors the library finds on a side of a track (`cells`: the same track, for the
     /// copies of the weak ones), in the order they pass under the head.
     fn sectors(img: &Img, track: usize, side: usize, cells: &BitTrack) -> Vec<FoundSector> {
-        let Some(access) = SectorAccess::new(img) else { return Vec::new() };
-        let Some(all) = access.all_track_sectors(HeadId::new(side as i32), TrackId::new(track as i32), TrackEncoding::IsoibmMfm)
-        else {
+        let Some(access) = SectorAccess::new(img) else {
+            return Vec::new();
+        };
+        let Some(all) = access.all_track_sectors(
+            HeadId::new(side as i32),
+            TrackId::new(track as i32),
+            TrackEncoding::IsoibmMfm,
+        ) else {
             return Vec::new();
         };
         let mut rng = 0x9e37_79b9u32;
@@ -287,24 +336,34 @@ mod library {
             // the indexes are the first cell of the A1 syncs: the field's bytes start 4 bytes on
             let id_at = (s.start_sector_index().max(0) as usize + 64) % cells.len.max(1);
             let mark = s.data_mark();
-            let data_at = mark.map(|_| (s.start_data_index().max(0) as usize + 64) % cells.len.max(1));
+            let data_at =
+                mark.map(|_| (s.start_data_index().max(0) as usize + 64) % cells.len.max(1));
             let mut copies = vec![s.read().to_vec()];
             if let Some(at) = data_at {
                 let size = copies[0].len();
                 if cells.any_weak(at, size * 16) {
                     for _ in 0..2 {
-                        copies.push((0..size).map(|j| cells.byte(at + 16 * j, &mut noise)).collect());
+                        copies.push(
+                            (0..size)
+                                .map(|j| cells.byte(at + 16 * j, &mut noise))
+                                .collect(),
+                        );
                     }
                 }
             }
             found.push(FoundSector {
-                id: [s.cylinder() as u8, s.head().get() as u8, s.sector_id().get() as u8, s.size_id()],
+                id: [
+                    s.cylinder() as u8,
+                    s.head().get() as u8,
+                    s.sector_id().get() as u8,
+                    s.size_id(),
+                ],
                 id_crc_ok: s.header_crc_ok(),
                 id_at,
                 data_at,
                 deleted: mark == Some(0xf8),
                 copies,
-                data_crc_ok: mark.is_some() && s.data_crc_ok()
+                data_crc_ok: mark.is_some() && s.data_crc_ok(),
             });
         }
         found.sort_by_key(|f| f.id_at);
@@ -353,7 +412,7 @@ mod library {
                 sides,
                 bitrate: bitrate as u32,
                 rebuilt: Vec::new(),
-                writes: Vec::new()
+                writes: Vec::new(),
             };
             Ok((bitstream, found))
         }
@@ -374,8 +433,18 @@ mod library {
                 let access = SectorAccess::new(&img).ok_or("the library's sector access")?;
                 for w in &self.writes {
                     let mut sector = access
-                        .search_sector(HeadId::new(w.side as i32), TrackId::new(w.track as i32), SectorId::new(i32::from(w.r)), TrackEncoding::IsoibmMfm)
-                        .ok_or_else(|| format!("sector {:02X} of track {} side {} not found to write it", w.r, w.track, w.side))?;
+                        .search_sector(
+                            HeadId::new(w.side as i32),
+                            TrackId::new(w.track as i32),
+                            SectorId::new(i32::from(w.r)),
+                            TrackEncoding::IsoibmMfm,
+                        )
+                        .ok_or_else(|| {
+                            format!(
+                                "sector {:02X} of track {} side {} not found to write it",
+                                w.r, w.track, w.side
+                            )
+                        })?;
                     let mut data = w.data.clone();
                     data.resize(sector.len().max(0) as usize, 0);
                     sector.write(TrackEncoding::IsoibmMfm, &data);

@@ -10,7 +10,12 @@ const RATE: u32 = 48_000;
 
 fn machine(program: &[u8]) -> Motherboard {
     let mut builder = MotherboardBuilder::default();
-    builder.disable_lower_rom().disable_upper_rom().enable_interruptions().plug_playcity().plug_digiblaster();
+    builder
+        .disable_lower_rom()
+        .disable_upper_rom()
+        .enable_interruptions()
+        .plug_playcity()
+        .plug_digiblaster();
     let mut motherboard = builder.build();
     motherboard.write_buffer(0x100, program);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x100);
@@ -33,7 +38,10 @@ fn listen(motherboard: &mut Motherboard, seconds: f64) -> (Vec<f32>, Vec<f32>) {
 /// The frequency of a square-ish wave, from its rising zero crossings (the DC filter centres it).
 fn frequency(samples: &[f32]) -> f64 {
     let settled = &samples[samples.len() / 4..];
-    let crossings = settled.windows(2).filter(|w| w[0] < 0.0 && w[1] >= 0.0).count();
+    let crossings = settled
+        .windows(2)
+        .filter(|w| w[0] < 0.0 && w[1] >= 0.0)
+        .count();
     crossings as f64 * f64::from(RATE) / settled.len() as f64
 }
 
@@ -59,8 +67,14 @@ fn the_left_ay_plays_a_tone_at_2_mhz() {
     // 2 MHz / 16 / 256
     let expected = 2_000_000.0 / 16.0 / 256.0;
     let measured = frequency(&left);
-    assert!((measured - expected).abs() < expected * 0.03, "{measured} Hz, not {expected}");
-    assert!(energy(&left) > 100.0 * energy(&right), "the left AY is on the left");
+    assert!(
+        (measured - expected).abs() < expected * 0.03,
+        "{measured} Hz, not {expected}"
+    );
+    assert!(
+        energy(&left) > 100.0 * energy(&right),
+        "the left AY is on the left"
+    );
 }
 
 #[test]
@@ -79,8 +93,14 @@ fn ctc_channel_0_changes_the_ay_clock() {
     let (left, right) = listen(&mut motherboard, 0.5);
     let expected = 500_000.0 / 16.0 / 64.0;
     let measured = frequency(&right);
-    assert!((measured - expected).abs() < expected * 0.03, "{measured} Hz, not {expected}");
-    assert!(energy(&right) > 100.0 * energy(&left), "the right AY is on the right");
+    assert!(
+        (measured - expected).abs() < expected * 0.03,
+        "{measured} Hz, not {expected}"
+    );
+    assert!(
+        energy(&right) > 100.0 * energy(&left),
+        "the right AY is on the right"
+    );
 }
 
 #[test]
@@ -120,13 +140,18 @@ fn ctc_channel_1_counts_the_crtc_cursor_to_nmis() {
     let mut motherboard = machine(program);
     motherboard.write_buffer(
         0x66,
-        cpclib_macros::assemble!(" push hl : ld hl,(0x8000) : inc hl : ld (0x8000),hl : pop hl : retn")
+        cpclib_macros::assemble!(
+            " push hl : ld hl,(0x8000) : inc hl : ld (0x8000),hl : pop hl : retn"
+        ),
     );
     // one second: 50 frames, 8 cursor lines each
     listen(&mut motherboard, 1.0);
     let nmis = motherboard.read_word(0x8000);
     let expected = 50 * 8 / 4;
-    assert!((i32::from(nmis) - expected).abs() <= 2, "{nmis} NMIs, not {expected}");
+    assert!(
+        (i32::from(nmis) - expected).abs() <= 2,
+        "{nmis} NMIs, not {expected}"
+    );
 }
 
 #[test]
@@ -148,10 +173,14 @@ fn ctc_timer_interrupts_through_its_im2_vector() {
     motherboard.write_buffer(0x6000, cpclib_macros::assemble!(" ei : reti"));
     motherboard.write_buffer(
         0x5000,
-        cpclib_macros::assemble!(" push hl : ld hl,(0x8000) : inc hl : ld (0x8000),hl : pop hl : ei : reti")
+        cpclib_macros::assemble!(
+            " push hl : ld hl,(0x8000) : inc hl : ld (0x8000),hl : pop hl : ei : reti"
+        ),
     );
     listen(&mut motherboard, 1.0);
     let interrupts = motherboard.read_word(0x8000);
-    assert!((i32::from(interrupts) - 62).abs() <= 2, "{interrupts} interrupts, not 62");
+    assert!(
+        (i32::from(interrupts) - 62).abs() <= 2,
+        "{interrupts} interrupts, not 62"
+    );
 }
-

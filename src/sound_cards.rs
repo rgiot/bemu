@@ -23,7 +23,9 @@
 use std::any::Any;
 
 use crate::chip::Chip;
-use crate::expansion_port::{ExpansionDevice, ExpansionPin, ExpansionPort, PrinterDevice, PrinterPin, PrinterPort};
+use crate::expansion_port::{
+    ExpansionDevice, ExpansionPin, ExpansionPort, PrinterDevice, PrinterPin, PrinterPort,
+};
 use crate::psg::Psg;
 
 #[cfg(feature = "playcity")]
@@ -42,7 +44,7 @@ struct CtcChannel {
     interrupt_pending: bool,
     in_service: bool,
     /// The trigger input's level, for its edges.
-    trigger: bool
+    trigger: bool,
 }
 
 #[cfg(feature = "playcity")]
@@ -56,7 +58,11 @@ impl CtcChannel {
     }
 
     fn prescale(&self) -> u16 {
-        if self.control & 0x20 != 0 { 256 } else { 16 }
+        if self.control & 0x20 != 0 {
+            256
+        } else {
+            16
+        }
     }
 
     fn rising_edge(&self) -> bool {
@@ -84,7 +90,7 @@ struct BusWatch {
     in_acknowledge: bool,
     /// The vector given during this acknowledge.
     vector: Option<u8>,
-    last_opcode: u8
+    last_opcode: u8,
 }
 
 #[cfg(feature = "playcity")]
@@ -94,7 +100,7 @@ pub struct Ctc {
     channels: [CtcChannel; 4],
     vector: u8,
     zc_to: [bool; 4],
-    bus: BusWatch
+    bus: BusWatch,
 }
 
 #[cfg(feature = "playcity")]
@@ -108,8 +114,7 @@ impl Ctc {
                 ch.counter = ch.time_constant;
                 ch.prescaler = ch.prescale();
                 ch.running = true;
-            }
-            else if !ch.running {
+            } else if !ch.running {
                 // a timer started by its trigger: the constant waits
                 ch.counter = ch.time_constant;
             }
@@ -173,14 +178,21 @@ impl Ctc {
     pub fn trigger(&mut self, channel: usize, level: bool) {
         let ch = &mut self.channels[channel];
         let previous = std::mem::replace(&mut ch.trigger, level);
-        let edge = if ch.rising_edge() { level && !previous } else { !level && previous };
+        let edge = if ch.rising_edge() {
+            level && !previous
+        } else {
+            !level && previous
+        };
         if !edge {
             return;
         }
         if ch.counter_mode() && ch.running {
             self.zc_to[channel] |= ch.count();
-        }
-        else if !ch.counter_mode() && !ch.running && ch.control & 0x08 != 0 && ch.time_constant != 0 {
+        } else if !ch.counter_mode()
+            && !ch.running
+            && ch.control & 0x08 != 0
+            && ch.time_constant != 0
+        {
             ch.running = true;
             ch.prescaler = ch.prescale();
         }
@@ -232,8 +244,7 @@ impl Ctc {
         if port.m1_ends() {
             if std::mem::take(&mut self.bus.in_acknowledge) {
                 self.bus.vector = None;
-            }
-            else {
+            } else {
                 let opcode = port.data();
                 if self.bus.last_opcode == 0xed && opcode == 0x4d {
                     self.return_from_interrupt();
@@ -258,7 +269,7 @@ pub struct PlayCity {
     /// The flip-flop halving the AYs' clock.
     ay_clock: bool,
     /// The level of the source of [`Self::ay_clock`], for its edges.
-    ay_clock_source: bool
+    ay_clock_source: bool,
 }
 
 #[cfg(feature = "playcity")]
@@ -270,19 +281,19 @@ impl PlayCity {
             0xf884 => {
                 self.ays[0].bus_cycle(crate::psg::BusControl::Write, value);
                 self.ays[0].bus_cycle(crate::psg::BusControl::Inactive, 0);
-            },
+            }
             0xf888 => {
                 self.ays[1].bus_cycle(crate::psg::BusControl::Write, value);
                 self.ays[1].bus_cycle(crate::psg::BusControl::Inactive, 0);
-            },
+            }
             0xf984 => {
                 self.ays[0].bus_cycle(crate::psg::BusControl::LatchAddress, value);
-            },
+            }
             0xf988 => {
                 self.ays[1].bus_cycle(crate::psg::BusControl::LatchAddress, value);
-            },
+            }
             0xf8ff => self.reset_card(),
-            _ => return false
+            _ => return false,
         }
         true
     }
@@ -290,7 +301,7 @@ impl PlayCity {
     pub fn read(&self, port: u16) -> Option<u8> {
         match port {
             0xf880..=0xf883 => Some(self.ctc.read(usize::from(port & 3))),
-            _ => None
+            _ => None,
         }
     }
 
@@ -334,7 +345,11 @@ impl ExpansionDevice for PlayCity {
         self.ctc.trigger(3, self.ctc.zc_to(2));
 
         // the AYs' clock: channel 0's ZC/TO (CLK4 while it does not count), halved
-        let source = if self.ctc.is_running(0) { self.ctc.zc_to(0) } else { clk4 };
+        let source = if self.ctc.is_running(0) {
+            self.ctc.zc_to(0)
+        } else {
+            clk4
+        };
         if source && !self.ay_clock_source {
             self.ay_clock = !self.ay_clock;
             if self.ay_clock {
@@ -381,7 +396,7 @@ impl ExpansionDevice for PlayCity {
 #[derive(Clone, Debug, Default)]
 pub struct Digiblaster {
     /// -1..1.
-    sample: f32
+    sample: f32,
 }
 
 #[cfg(feature = "digiblaster")]
@@ -443,7 +458,13 @@ mod test {
     #[cfg(feature = "playcity")]
     fn out(port: &mut ExpansionPort, address: u16, value: u8) {
         for tick in 0..4 {
-            port.tick_with(CpcSide { address, data: value, iorq: false, wr: false, ..idle(tick & 2 != 0) });
+            port.tick_with(CpcSide {
+                address,
+                data: value,
+                iorq: false,
+                wr: false,
+                ..idle(tick & 2 != 0)
+            });
         }
         port.tick_with(idle(false));
     }
@@ -453,7 +474,7 @@ mod test {
     fn a_ctc_timer_interrupts_with_its_vector() {
         let mut ctc = Ctc::default();
         ctc.write(0, 0x40); // vector &40
-        // channel 2: timer, prescaler 16, interrupts, a constant follows
+                            // channel 2: timer, prescaler 16, interrupts, a constant follows
         ctc.write(2, 0x85);
         ctc.write(2, 10);
         assert_eq!(ctc.interrupt(), None);
@@ -486,17 +507,36 @@ mod test {
             assert!(tick < 1000, "no interrupt");
         }
         // the acknowledge: /M1 and /IORQ low, the vector on the bus
-        port.tick_with(CpcSide { m1: false, iorq: false, rd: false, ..idle(false) });
+        port.tick_with(CpcSide {
+            m1: false,
+            iorq: false,
+            rd: false,
+            ..idle(false)
+        });
         assert_eq!(port.driven_data(), Some(0x20));
         port.tick_with(idle(false));
-        assert!(port.get_pin(ExpansionPin::Neg_INT), "in service: /INT released");
+        assert!(
+            port.get_pin(ExpansionPin::Neg_INT),
+            "in service: /INT released"
+        );
         assert!(port.device::<PlayCity>().unwrap().ctc.channels[0].in_service);
         // ED 4D fetched: RETI
         for opcode in [0xed, 0x4d] {
-            port.tick_with(CpcSide { m1: false, mreq: false, rd: false, ..idle(false) });
-            port.tick_with(CpcSide { data: opcode, ..idle(false) });
+            port.tick_with(CpcSide {
+                m1: false,
+                mreq: false,
+                rd: false,
+                ..idle(false)
+            });
+            port.tick_with(CpcSide {
+                data: opcode,
+                ..idle(false)
+            });
         }
-        assert!(!port.device::<PlayCity>().unwrap().ctc.channels[0].in_service, "RETI ends it");
+        assert!(
+            !port.device::<PlayCity>().unwrap().ctc.channels[0].in_service,
+            "RETI ends it"
+        );
     }
 
     #[cfg(feature = "playcity")]
@@ -509,7 +549,10 @@ mod test {
         let mut nmis = 0;
         for tick in 0..16 * 64 * 16 {
             let cursor = tick % (64 * 16) < 16;
-            port.tick_with(CpcSide { cursor, ..idle(tick & 2 != 0) });
+            port.tick_with(CpcSide {
+                cursor,
+                ..idle(tick & 2 != 0)
+            });
             nmis += usize::from(port.is_downfront(ExpansionPin::Neg_NMI));
         }
         assert_eq!(nmis, 4);

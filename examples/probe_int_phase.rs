@@ -25,8 +25,16 @@ fn main() {
         mb.tick();
         t += 1;
         let now = mb.fdc().time_us();
-        if now != us { us = now; phase = 0; } else { phase += 1; }
-        if mb.pc() != last_pc { last_pc = mb.pc(); pc_since = t; }
+        if now != us {
+            us = now;
+            phase = 0;
+        } else {
+            phase += 1;
+        }
+        if mb.pc() != last_pc {
+            last_pc = mb.pc();
+            pc_since = t;
+        }
         let int = mb.cpu().get_pin(Z80Pin::Neg_INT);
         if prev_int && !int {
             asserted = Some((t, phase, mb.pc(), (t - pc_since) / 16));

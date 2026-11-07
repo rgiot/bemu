@@ -11,7 +11,8 @@ fn main() {
     runner.run_text(&text, &base).expect("csl");
     let mb = runner.motherboard_mut();
     mb.crtc_mut().start_write_log();
-    let (mut t, mut prev_vs, mut last_vs, mut last_r0, mut seen) = (0u64, mb.crtc().vsync(), 0u64, 0u64, 0);
+    let (mut t, mut prev_vs, mut last_vs, mut last_r0, mut seen) =
+        (0u64, mb.crtc().vsync(), 0u64, 0u64, 0);
     while seen < n {
         mb.tick();
         t += 1;

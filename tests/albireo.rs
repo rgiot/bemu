@@ -30,7 +30,19 @@ fn the_cpu_talks_to_the_ch376() {
     for _ in 0..200 {
         motherboard.execute_next_opcode_no_video();
     }
-    assert_eq!(motherboard.read_byte(0x8000), 0xa8, "CHECK_EXIST: the complement");
-    assert_eq!(motherboard.read_byte(0x8001) & 0xc0, 0x40, "a CH376's version");
-    assert_eq!(motherboard.read_byte(0x8002) & 0x80, 0x80, "no interrupt pending");
+    assert_eq!(
+        motherboard.read_byte(0x8000),
+        0xa8,
+        "CHECK_EXIST: the complement"
+    );
+    assert_eq!(
+        motherboard.read_byte(0x8001) & 0xc0,
+        0x40,
+        "a CH376's version"
+    );
+    assert_eq!(
+        motherboard.read_byte(0x8002) & 0x80,
+        0x80,
+        "no interrupt pending"
+    );
 }

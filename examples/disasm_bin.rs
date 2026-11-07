@@ -7,5 +7,7 @@ fn main() {
     let len = usize::from_str_radix(&a.next().expect("len"), 16).unwrap();
     let data = std::fs::read(path).unwrap();
     let listing = cpclib_asm::disass::disassemble(&data[start..start + len]);
-    for t in listing.listing() { println!("{}", t); }
+    for t in listing.listing() {
+        println!("{}", t);
+    }
 }

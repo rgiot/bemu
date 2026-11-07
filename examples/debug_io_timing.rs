@@ -19,7 +19,10 @@ fn main() {
         ("INI         ED A2", &[0xed, 0xa2]),
     ];
     for (name, bytes) in programs {
-        let mut mb = MotherboardBuilder::default().disable_lower_rom().disable_upper_rom().build();
+        let mut mb = MotherboardBuilder::default()
+            .disable_lower_rom()
+            .disable_upper_rom()
+            .build();
         mb.write_buffer(0x4000, bytes);
         mb.write_buffer(0x4004, &[0, 0, 0, 0, 0, 0, 0, 0]);
         mb.cpu_mut().reg16_mut(amsrust::z80::Reg16::Pc).set(0x4000);
@@ -33,7 +36,8 @@ fn main() {
         loop {
             mb.tick();
             t += 1;
-            if t > 400 || (t > 4 && mb.cpu().is_activated() && mb.is_aligned_with_new_instruction()) {
+            if t > 400 || (t > 4 && mb.cpu().is_activated() && mb.is_aligned_with_new_instruction())
+            {
                 break;
             }
             let iorq = !mb.cpu().get_pin(Z80Pin::Neg_IORQ);
@@ -46,6 +50,13 @@ fn main() {
         }
         let first = events.first().map(|e| e.0);
         let last = events.last().map(|e| e.0);
-        println!("{name:28} total {t:3} ticks ({:.2} us); IO {}: first tick {:?} ({:.2} us) last {:?}", t as f32 / 16.0, events.first().map(|e| e.1).unwrap_or("-"), first, first.unwrap_or(0) as f32 / 16.0, last);
+        println!(
+            "{name:28} total {t:3} ticks ({:.2} us); IO {}: first tick {:?} ({:.2} us) last {:?}",
+            t as f32 / 16.0,
+            events.first().map(|e| e.1).unwrap_or("-"),
+            first,
+            first.unwrap_or(0) as f32 / 16.0,
+            last
+        );
     }
 }

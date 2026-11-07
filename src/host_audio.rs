@@ -33,7 +33,7 @@ pub struct FrameQueue {
     last_frame: Vec<f32>,
     max_frames: usize,
     /// Device frames that had to be filled with `last_frame`.
-    missing_frames: u64
+    missing_frames: u64,
 }
 
 impl FrameQueue {
@@ -44,7 +44,7 @@ impl FrameQueue {
             samples: VecDeque::with_capacity(max_frames * channels),
             last_frame: vec![0.0; channels],
             max_frames,
-            missing_frames: 0
+            missing_frames: 0,
         }
     }
 
@@ -73,8 +73,7 @@ impl FrameQueue {
                 for sample in self.last_frame.iter_mut() {
                     *sample = self.samples.pop_front().unwrap();
                 }
-            }
-            else {
+            } else {
                 self.missing_frames += 1;
             }
             match self.last_frame[..] {
@@ -84,11 +83,11 @@ impl FrameQueue {
                         *sample = match channel {
                             0 => left,
                             1 => right,
-                            _ => (left + right) / 2.0
+                            _ => (left + right) / 2.0,
                         };
                     }
-                },
-                [] => unreachable!()
+                }
+                [] => unreachable!(),
             }
         }
     }
@@ -111,7 +110,7 @@ mod device {
         config: AudioConfig,
         queue: Arc<Mutex<FrameQueue>>,
         // Playback stops when the stream is dropped.
-        _stream: cpal::Stream
+        _stream: cpal::Stream,
     }
 
     impl AudioOut {
@@ -125,12 +124,14 @@ mod device {
             // Match the device's own rate: no second resampling stage.
             let config = if stream_config.channels >= 2 {
                 AudioConfig::stereo(rate)
-            }
-            else {
+            } else {
                 AudioConfig::mono(rate)
             };
             let max_frames = (rate as f64 * MAX_LATENCY.as_secs_f64()) as usize;
-            let queue = Arc::new(Mutex::new(FrameQueue::new(config.nb_channels(), max_frames)));
+            let queue = Arc::new(Mutex::new(FrameQueue::new(
+                config.nb_channels(),
+                max_frames,
+            )));
 
             let stream = match supported.sample_format() {
                 SampleFormat::F32 => build::<f32>(&device, &stream_config, &queue),
@@ -140,11 +141,15 @@ mod device {
                 SampleFormat::U16 => build::<u16>(&device, &stream_config, &queue),
                 SampleFormat::U8 => build::<u8>(&device, &stream_config, &queue),
                 SampleFormat::I8 => build::<i8>(&device, &stream_config, &queue),
-                other => Err(format!("unsupported sample format {other}"))
+                other => Err(format!("unsupported sample format {other}")),
             }?;
             stream.play().map_err(|e| e.to_string())?;
 
-            Ok(Self { config, queue, _stream: stream })
+            Ok(Self {
+                config,
+                queue,
+                _stream: stream,
+            })
         }
 
         /// What the PSG must produce for this device.
@@ -172,7 +177,7 @@ mod device {
     fn build<T: SizedSample + FromSample<f32>>(
         device: &cpal::Device,
         config: &cpal::StreamConfig,
-        queue: &Arc<Mutex<FrameQueue>>
+        queue: &Arc<Mutex<FrameQueue>>,
     ) -> Result<cpal::Stream, String> {
         let queue = Arc::clone(queue);
         let device_channels = config.channels as usize;
@@ -186,14 +191,14 @@ mod device {
                     scratch.resize(data.len(), 0.0f32);
                     match queue.lock() {
                         Ok(mut queue) => queue.pop_into(&mut scratch, device_channels),
-                        Err(_) => scratch.fill(0.0)
+                        Err(_) => scratch.fill(0.0),
                     }
                     for (out, &sample) in data.iter_mut().zip(scratch.iter()) {
                         *out = T::from_sample(sample);
                     }
                 },
                 |error| eprintln!("audio: {error}"),
-                None
+                None,
             )
             .map_err(|e| e.to_string())
     }

@@ -12,7 +12,7 @@ const NEAREST_RANGE: u16 = 0x100;
 pub struct SymbolTable {
     by_name: BTreeMap<String, u16>,
     /// The first name given to each address.
-    by_address: BTreeMap<u16, String>
+    by_address: BTreeMap<u16, String>,
 }
 
 impl SymbolTable {
@@ -34,7 +34,9 @@ impl SymbolTable {
                 self.by_address.remove(&previous);
             }
         }
-        self.by_address.entry(address).or_insert_with(|| name.to_owned());
+        self.by_address
+            .entry(address)
+            .or_insert_with(|| name.to_owned());
     }
 
     pub fn extend(&mut self, other: &SymbolTable) {
@@ -45,7 +47,11 @@ impl SymbolTable {
 
     /// The symbols, by address.
     pub fn iter(&self) -> impl Iterator<Item = (&str, u16)> {
-        let mut all: Vec<_> = self.by_name.iter().map(|(name, &address)| (name.as_str(), address)).collect();
+        let mut all: Vec<_> = self
+            .by_name
+            .iter()
+            .map(|(name, &address)| (name.as_str(), address))
+            .collect();
         all.sort_by_key(|&(name, address)| (address, name));
         all.into_iter()
     }
@@ -53,7 +59,10 @@ impl SymbolTable {
     /// The address of `name` (exact, then ignoring case).
     pub fn address_of(&self, name: &str) -> Option<u16> {
         self.by_name.get(name).copied().or_else(|| {
-            self.by_name.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, &address)| address)
+            self.by_name
+                .iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                .map(|(_, &address)| address)
         })
     }
 
@@ -68,7 +77,7 @@ impl SymbolTable {
         match address - at {
             0 => Some(name.clone()),
             offset if offset < NEAREST_RANGE => Some(format!("{name}+{offset}")),
-            _ => None
+            _ => None,
         }
     }
 
@@ -85,7 +94,11 @@ impl SymbolTable {
         let split = text.rfind(['+', '-'])?;
         let base = self.address_of(text[..split].trim())?;
         let offset = parse_number(text[split + 1..].trim())?;
-        Some(if text.as_bytes()[split] == b'+' { base.wrapping_add(offset) } else { base.wrapping_sub(offset) })
+        Some(if text.as_bytes()[split] == b'+' {
+            base.wrapping_add(offset)
+        } else {
+            base.wrapping_sub(offset)
+        })
     }
 
     /// The symbols of a snapshot chunk (`SYMB`, `REMU`); other chunks have none.
@@ -103,9 +116,14 @@ impl SymbolTable {
         let mut index = 0;
         while let Some(&length) = data.get(index) {
             let length = usize::from(length);
-            let Some(record) = data.get(index..index + length + 9) else { break };
+            let Some(record) = data.get(index..index + length + 9) else {
+                break;
+            };
             if let Ok(name) = std::str::from_utf8(&record[1..=length]) {
-                self.insert(name, u16::from_be_bytes([record[length + 7], record[length + 8]]));
+                self.insert(
+                    name,
+                    u16::from_be_bytes([record[length + 7], record[length + 8]]),
+                );
             }
             index += length + 9;
         }
@@ -115,7 +133,9 @@ impl SymbolTable {
     fn add_remu_labels(&mut self, data: &[u8]) {
         for entry in String::from_utf8_lossy(data).split(';') {
             let mut words = entry.split_whitespace();
-            if let (Some("label" | "alias"), Some(name), Some(value)) = (words.next(), words.next(), words.next()) {
+            if let (Some("label" | "alias"), Some(name), Some(value)) =
+                (words.next(), words.next(), words.next())
+            {
                 if let Some(address) = parse_number(value) {
                     self.insert(name, address);
                 }
@@ -136,7 +156,7 @@ impl SymbolTable {
             }
             match parse_symbol_line(content) {
                 Some((name, address)) => table.insert(name, address),
-                None => ignored.push(line.to_owned())
+                None => ignored.push(line.to_owned()),
             }
         }
         (table, ignored)
@@ -145,7 +165,9 @@ impl SymbolTable {
 
 fn is_identifier(word: &str) -> bool {
     let mut chars = word.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '.' || c == '@')
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '.' || c == '@')
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '@' | '$'))
 }
 
@@ -160,16 +182,18 @@ fn parse_symbol_line(line: &str) -> Option<(&str, u16)> {
     match words.as_slice() {
         [name, keyword, value, ..] if keyword.eq_ignore_ascii_case("equ") || *keyword == "=" => {
             Some((name_of(name)?, parse_number(value)?))
-        },
+        }
         [name, value, ..] if name_of(name).is_some() && parse_number(value).is_some() => {
             Some((name_of(name)?, parse_number(value)?))
-        },
+        }
         // `hhhh name`: the address first, hexadecimal even without a prefix
         [value, name, ..] => {
-            let address = u16::from_str_radix(value, 16).ok().or_else(|| parse_number(value))?;
+            let address = u16::from_str_radix(value, 16)
+                .ok()
+                .or_else(|| parse_number(value))?;
             Some((name_of(name)?, address))
-        },
-        _ => None
+        }
+        _ => None,
     }
 }
 
@@ -183,10 +207,13 @@ pub fn parse_number(text: &str) -> Option<u16> {
         .or_else(|| text.strip_prefix('#'))
         .or_else(|| text.strip_prefix('&'))
         .or_else(|| text.strip_prefix('$'))
-        .or_else(|| text.strip_suffix(['h', 'H']).filter(|t| t.starts_with(|c: char| c.is_ascii_digit())));
+        .or_else(|| {
+            text.strip_suffix(['h', 'H'])
+                .filter(|t| t.starts_with(|c: char| c.is_ascii_digit()))
+        });
     let value = match hex {
         Some(digits) => u32::from_str_radix(digits, 16).ok()?,
-        None => text.parse::<u32>().ok()?
+        None => text.parse::<u32>().ok()?,
     };
     u16::try_from(value).ok()
 }
@@ -226,7 +253,7 @@ mod test {
              screen #C000\n\
              data $8000 B0\n\
              9000 buffer\n\
-             what is this\n"
+             what is this\n",
         );
         assert_eq!(table.address_of("start"), Some(0x4000));
         assert_eq!(table.address_of("loop"), Some(0x4010));
@@ -240,7 +267,10 @@ mod test {
     #[test]
     fn snapshot_chunks() {
         let mut table = SymbolTable::default();
-        table.add_snapshot_chunk("REMU", b"brk 4000 0;label main 16384 0;alias SCREEN 0xc000;");
+        table.add_snapshot_chunk(
+            "REMU",
+            b"brk 4000 0;label main 16384 0;alias SCREEN 0xc000;",
+        );
         // an ACE record: length, name, map type/bank/page, 2 bytes, symbol type, address (big endian)
         let mut symb = vec![4];
         symb.extend_from_slice(b"loop");

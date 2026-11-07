@@ -17,13 +17,13 @@ const SLOT0: [u8; 23] = [
     0x11, 0x00, 0x40, // LD DE,&4000
     0x01, 0x0e, 0x00, // LD BC,14
     0xed, 0xb0, // LDIR
-    0xc3, 0x00, 0x40 // JP &4000
+    0xc3, 0x00, 0x40, // JP &4000
 ];
 const STUB0: [u8; 14] = [
     0xfd, 0x21, 0x00, 0x81, // LD IY,&8100
     0x06, 0x03, // LD B,3
     0xfd, 0xfd, 0xfd, 0x70, 0x00, // the trigger, LD (IY+0),B: zone 0 = slot 3
-    0xc3, 0x00, 0x00 // JP &0000
+    0xc3, 0x00, 0x00, // JP &0000
 ];
 
 /// Slot 3: marks &8001, then from RAM (&4100): the configuration "zone 0's flash off, at the next
@@ -35,7 +35,7 @@ const SLOT3: [u8; 19] = [
     0x11, 0x00, 0x41, // LD DE,&4100
     0x01, 0x1e, 0x00, // LD BC,30
     0xed, 0xb0, // LDIR
-    0xc3, 0x00, 0x41 // JP &4100
+    0xc3, 0x00, 0x41, // JP &4100
 ];
 const STUB3: [u8; 30] = [
     0xfd, 0x21, 0x00, 0x81, // LD IY,&8100
@@ -48,7 +48,7 @@ const STUB3: [u8; 30] = [
     0x32, 0x03, 0x80, // LD (&8003),A
     0x18, 0xfe, // JR $
     0x00, // NOP
-    0xc9 // RET
+    0xc9, // RET
 ];
 
 fn romset() -> Vec<u8> {
@@ -74,10 +74,26 @@ fn a_romset_boots_switches_slots_and_waits_for_a_ret() {
     motherboard.plug_expansion(Box::new(Dandanator::new(&romset())));
     run(&mut motherboard, 2000);
     assert_eq!(motherboard.read_byte(0x8000), 0xa5, "slot 0 booted");
-    assert_eq!(motherboard.read_byte(0x8001), 0x5a, "slot 3 runs after the trigger");
-    assert_eq!(motherboard.read_byte(0x8002), 0x3e, "before the RET: slot 3's first byte");
-    assert_eq!(motherboard.read_byte(0x8003), 0x01, "after it: the firmware's (LD BC,&7F89)");
-    let card = motherboard.expansion_port().unwrap().device::<Dandanator>().unwrap();
+    assert_eq!(
+        motherboard.read_byte(0x8001),
+        0x5a,
+        "slot 3 runs after the trigger"
+    );
+    assert_eq!(
+        motherboard.read_byte(0x8002),
+        0x3e,
+        "before the RET: slot 3's first byte"
+    );
+    assert_eq!(
+        motherboard.read_byte(0x8003),
+        0x01,
+        "after it: the firmware's (LD BC,&7F89)"
+    );
+    let card = motherboard
+        .expansion_port()
+        .unwrap()
+        .device::<Dandanator>()
+        .unwrap();
     assert_eq!(card.configuration()[1], 0x81, "function 1, the wait over");
 }
 
@@ -89,14 +105,23 @@ fn what_is_programmed_goes_back_to_a_writable_file_only() {
         let mut card = Dandanator::open(&path, writable).unwrap();
         // writes allowed, then a byte programmed in slot 31 (5555 in slot 1, 2AAA in slot 0)
         card.command(0, 0x02);
-        for (slot, address, value) in [(1, 0x1555, 0xaa), (0, 0x2aaa, 0x55), (1, 0x1555, 0xa0), (31, 0x0010, 0x12)] {
+        for (slot, address, value) in [
+            (1, 0x1555, 0xaa),
+            (0, 0x2aaa, 0x55),
+            (1, 0x1555, 0xa0),
+            (31, 0x0010, 0x12),
+        ] {
             card.command(2, slot);
             card.write(address, value);
         }
         assert_eq!(card.flash()[31 * 0x4000 + 0x10], 0x12);
         drop(card);
         let saved = std::fs::read(&path).unwrap();
-        assert_eq!(saved[31 * 0x4000 + 0x10], if writable { 0x12 } else { 0xff }, "writable: {writable}");
+        assert_eq!(
+            saved[31 * 0x4000 + 0x10],
+            if writable { 0x12 } else { 0xff },
+            "writable: {writable}"
+        );
     }
     let _ = std::fs::remove_file(&path);
 }

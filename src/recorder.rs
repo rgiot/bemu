@@ -43,7 +43,7 @@ pub struct Recorder {
     plus: bool,
     frames: usize,
     /// Reused for the RGB bytes of each frame.
-    rgb: Vec<u8>
+    rgb: Vec<u8>,
 }
 
 impl Recorder {
@@ -54,14 +54,22 @@ impl Recorder {
         width: usize,
         height: usize,
         audio: Option<AudioConfig>,
-        plus: bool
+        plus: bool,
     ) -> Result<Self, String> {
         check_ffmpeg()?;
         let video_only = temporary(output, "video.mkv");
         let size = format!("{width}x{height}");
         let mut command = Command::new("ffmpeg");
         command
-            .args(["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24"])
+            .args([
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+            ])
             .args(["-s", &size, "-framerate", FRAME_RATE, "-i", "-"])
             // Lossless intermediate: the final pass picks the real codec.
             .args(["-c:v", "ffv1"])
@@ -77,10 +85,11 @@ impl Recorder {
         let audio = match audio {
             Some(config) => {
                 let path = temporary(output, "audio.raw");
-                let file = std::fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+                let file =
+                    std::fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
                 Some((config, path, BufWriter::new(file)))
-            },
-            None => None
+            }
+            None => None,
         };
 
         Ok(Self {
@@ -93,16 +102,21 @@ impl Recorder {
             audio,
             plus,
             frames: 0,
-            rgb: Vec::with_capacity(width * height * 3)
+            rgb: Vec::with_capacity(width * height * 3),
         })
     }
 
     /// Add one frame of 0RGB pixels, `width * height` of them.
     pub fn frame(&mut self, pixels: &[u32]) -> Result<(), String> {
-        assert_eq!(pixels.len(), self.width * self.height, "the frame is not the recording's size");
+        assert_eq!(
+            pixels.len(),
+            self.width * self.height,
+            "the frame is not the recording's size"
+        );
         self.rgb.clear();
         for &pixel in pixels {
-            self.rgb.extend_from_slice(&[(pixel >> 16) as u8, (pixel >> 8) as u8, pixel as u8]);
+            self.rgb
+                .extend_from_slice(&[(pixel >> 16) as u8, (pixel >> 8) as u8, pixel as u8]);
         }
         self.frames_in
             .write_all(&self.rgb)
@@ -113,8 +127,7 @@ impl Recorder {
 
     /// Add PSG samples (interleaved as in the recording's `AudioConfig`).
     pub fn samples(&mut self, samples: &[f32]) -> Result<(), String> {
-        let Some((_, path, out)) = &mut self.audio
-        else {
+        let Some((_, path, out)) = &mut self.audio else {
             return Ok(());
         };
         for &sample in samples {
@@ -128,7 +141,9 @@ impl Recorder {
     /// Close the encoder and write the final file. Returns the number of
     /// frames recorded.
     pub fn finish(mut self) -> Result<usize, String> {
-        self.frames_in.flush().map_err(|e| format!("ffmpeg stopped: {e}"))?;
+        self.frames_in
+            .flush()
+            .map_err(|e| format!("ffmpeg stopped: {e}"))?;
         drop(self.frames_in);
         let status = self.encoder.wait().map_err(|e| e.to_string())?;
         if !status.success() {
@@ -141,9 +156,11 @@ impl Recorder {
         }
 
         let mut mux = Command::new("ffmpeg");
-        mux.args(["-y", "-loglevel", "error", "-i"]).arg(&self.video_only);
+        mux.args(["-y", "-loglevel", "error", "-i"])
+            .arg(&self.video_only);
         if let Some((config, path, mut out)) = self.audio.take() {
-            out.flush().map_err(|e| format!("{}: {e}", path.display()))?;
+            out.flush()
+                .map_err(|e| format!("{}: {e}", path.display()))?;
             mux.args(["-f", "s16le", "-ar", &config.sample_rate.to_string()])
                 .args(["-ac", &config.nb_channels().to_string(), "-i"])
                 .arg(&path);
@@ -157,7 +174,14 @@ impl Recorder {
                 "colorspace=all=bt709:iall=bt601-6-625:fast=1,scale={video_width}:{VIDEO_HEIGHT},setsar=1:1"
             );
             mux.args(["-vf", &filter])
-                .args(["-colorspace", "1", "-color_primaries", "1", "-color_trc", "1"])
+                .args([
+                    "-colorspace",
+                    "1",
+                    "-color_primaries",
+                    "1",
+                    "-color_trc",
+                    "1",
+                ])
                 .args(["-vcodec", "libx264", "-crf", "25"]);
             if self.audio.is_some() {
                 mux.args(["-codec:a", "libmp3lame", "-qscale:a", "0"]);
@@ -165,7 +189,9 @@ impl Recorder {
         }
         // yuv420p: the pixel format every player can read.
         mux.args(["-pix_fmt", "yuv420p"]).arg(&self.output);
-        let status = mux.status().map_err(|e| format!("cannot start ffmpeg: {e}"))?;
+        let status = mux
+            .status()
+            .map_err(|e| format!("cannot start ffmpeg: {e}"))?;
 
         let _ = std::fs::remove_file(&self.video_only);
         if let Some((_, path, _)) = &self.audio {
@@ -203,13 +229,21 @@ fn uses_ace_settings(output: &Path) -> bool {
     output
         .extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| ["mp4", "mkv", "mov"].iter().any(|known| extension.eq_ignore_ascii_case(known)))
+        .is_some_and(|extension| {
+            ["mp4", "mkv", "mov"]
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        })
 }
 
 fn check_ffmpeg() -> Result<(), String> {
-    match Command::new("ffmpeg").arg("-version").stdout(Stdio::null()).status() {
+    match Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(Stdio::null())
+        .status()
+    {
         Ok(status) if status.success() => Ok(()),
-        _ => Err("--record needs ffmpeg in the PATH (https://ffmpeg.org)".to_owned())
+        _ => Err("--record needs ffmpeg in the PATH (https://ffmpeg.org)".to_owned()),
     }
 }
 

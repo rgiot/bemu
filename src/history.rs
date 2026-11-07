@@ -10,7 +10,7 @@ const SLOTS: usize = 32;
 pub struct History<T, const N: usize> {
     values: [T; SLOTS],
     /// Index of the newest value.
-    newest: usize
+    newest: usize,
 }
 
 impl<T: Copy, const N: usize> History<T, N> {
@@ -19,7 +19,10 @@ impl<T: Copy, const N: usize> History<T, N> {
     /// A history of `N` times `value`.
     pub fn new(value: T) -> Self {
         let () = Self::FITS;
-        Self { values: [value; SLOTS], newest: 0 }
+        Self {
+            values: [value; SLOTS],
+            newest: 0,
+        }
     }
 
     /// `value` is the newest; the oldest goes.

@@ -16,7 +16,7 @@ fn write_then_read_r12(crtc: CrtcType, value: u8) -> Motherboard {
         0xed, 0x49, // OUT (C),C   write it
         0x06, 0xbf, // LD B,&BF
         0xed, 0x78, // IN A,(C)   read the selected register
-        0x32, 0x00, 0x80 // LD (&8000),A
+        0x32, 0x00, 0x80, // LD (&8000),A
     ];
     let mut motherboard = MotherboardBuilder::default()
         .disable_lower_rom()
@@ -50,7 +50,8 @@ fn register_read_is_stable_across_clock_phases() {
     for padding in 0..16 {
         let mut program = vec![0x00; padding];
         program.extend_from_slice(&[
-            0x01, 0x0c, 0xbc, 0xed, 0x49, 0x01, 0x2a, 0xbd, 0xed, 0x49, 0x06, 0xbf, 0xed, 0x78, 0x32, 0x00, 0x80
+            0x01, 0x0c, 0xbc, 0xed, 0x49, 0x01, 0x2a, 0xbd, 0xed, 0x49, 0x06, 0xbf, 0xed, 0x78,
+            0x32, 0x00, 0x80,
         ]);
         let mut motherboard = MotherboardBuilder::default()
             .disable_lower_rom()
@@ -62,6 +63,10 @@ fn register_read_is_stable_across_clock_phases() {
         for _ in 0..padding + 8 {
             motherboard.execute_next_opcode_no_video();
         }
-        assert_eq!(motherboard.read_byte(0x8000), 0x2a, "with {padding} NOPs before the access");
+        assert_eq!(
+            motherboard.read_byte(0x8000),
+            0x2a,
+            "with {padding} NOPs before the access"
+        );
     }
 }

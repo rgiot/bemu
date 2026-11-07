@@ -1,289 +1,302 @@
-
-use amsrust::{chip::{Chip, ReadAddressChip, ReadDataChip}, crtc::CrtcPin, debug::Monitor, ga::GateArrayPin, motherboard::*, z80::Z80Pin};
+use amsrust::{
+    chip::{Chip, ReadAddressChip, ReadDataChip},
+    crtc::CrtcPin,
+    debug::Monitor,
+    ga::GateArrayPin,
+    motherboard::*,
+    z80::Z80Pin,
+};
 use cpclib_macros::*;
 use itertools::Itertools;
 
 enum PinEnum {
-	Cpu(Z80Pin),
-	Ga(GateArrayPin),
-	Crtc(CrtcPin),
+    Cpu(Z80Pin),
+    Ga(GateArrayPin),
+    Crtc(CrtcPin),
 
-	CpuAddr,
-	CpuData,
-	CrtcAddr,
+    CpuAddr,
+    CpuData,
+    CrtcAddr,
 
-	CpuState,
+    CpuState,
 }
 
 enum PinData {
-	Bool(bool),
-	Value(u16),
-	String(String)
+    Bool(bool),
+    Value(u16),
+    String(String),
 }
 
 impl From<bool> for PinData {
-	fn from(d: bool) -> Self {
-		Self::Bool(d)
-	}
+    fn from(d: bool) -> Self {
+        Self::Bool(d)
+    }
 }
 impl From<u16> for PinData {
-	fn from(d: u16) -> Self {
-		Self::Value(d)
-	}
+    fn from(d: u16) -> Self {
+        Self::Value(d)
+    }
 }
 
 impl From<String> for PinData {
-	fn from(s: String) -> Self {
-		Self::String(s)
-	}
+    fn from(s: String) -> Self {
+        Self::String(s)
+    }
 }
 
 impl std::fmt::Display for PinData {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			Self::Bool(b) => f.write_str(if *b { "1" } else { "0" }),
-			Self::Value(v) => write!(f, "{v}"),
-			Self::String(s) => f.write_str(s)
-		}
-	}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bool(b) => f.write_str(if *b { "1" } else { "0" }),
+            Self::Value(v) => write!(f, "{v}"),
+            Self::String(s) => f.write_str(s),
+        }
+    }
 }
 
-
-struct  TickCollector {
-	/// List of collected bits
-	collected: Vec<Vec<PinData>>,
-	/// List of pins to collect
-	pins: Vec<(PinEnum, &'static str)>
+struct TickCollector {
+    /// List of collected bits
+    collected: Vec<Vec<PinData>>,
+    /// List of pins to collect
+    pins: Vec<(PinEnum, &'static str)>,
 }
 
 impl Default for TickCollector {
-	fn default() -> Self {
-		let pins = vec![
-			(PinEnum::Ga(GateArrayPin::CCLK), "CCLK"),
-			(PinEnum::Ga(GateArrayPin::NCPU), "NCPU"),
+    fn default() -> Self {
+        let pins = vec![
+            (PinEnum::Ga(GateArrayPin::CCLK), "CCLK"),
+            (PinEnum::Ga(GateArrayPin::NCPU), "NCPU"),
+            (PinEnum::CpuState, "STATE"),
+            (PinEnum::Cpu(Z80Pin::Neg_M1), "/M1"),
+            (PinEnum::Cpu(Z80Pin::Neg_WAIT), "/WAIT"),
+            (PinEnum::Cpu(Z80Pin::Neg_RFSH), "/RFSH"),
+            (PinEnum::Cpu(Z80Pin::Neg_RD), "/RD"),
+            (PinEnum::Cpu(Z80Pin::Neg_WR), "/WR"),
+            (PinEnum::Cpu(Z80Pin::Neg_IORQ), "/IORQ"),
+            (PinEnum::Cpu(Z80Pin::Neg_MREQ), "/MREQ"),
+            (PinEnum::CpuAddr, "CPU ADDR"),
+            (PinEnum::CpuData, "CPU DATA"),
+            (PinEnum::Crtc(CrtcPin::CS), "CS"),
+            (PinEnum::Crtc(CrtcPin::EN), "EN"),
+            (PinEnum::CrtcAddr, "SCREEN"),
+        ];
 
-			(PinEnum::CpuState, "STATE"),
-			(PinEnum::Cpu(Z80Pin::Neg_M1), "/M1"),
-			(PinEnum::Cpu(Z80Pin::Neg_WAIT), "/WAIT"),
-			(PinEnum::Cpu(Z80Pin::Neg_RFSH), "/RFSH"),
-			(PinEnum::Cpu(Z80Pin::Neg_RD), "/RD"),
-			(PinEnum::Cpu(Z80Pin::Neg_WR), "/WR"),
-			(PinEnum::Cpu(Z80Pin::Neg_IORQ), "/IORQ"),
-			(PinEnum::Cpu(Z80Pin::Neg_MREQ), "/MREQ"),
+        let collected = pins.iter().map(|_| Vec::new()).collect_vec();
 
-			(PinEnum::CpuAddr, "CPU ADDR"),
-			(PinEnum::CpuData, "CPU DATA"),
-
-			(PinEnum::Crtc(CrtcPin::CS), "CS"),
-			(PinEnum::Crtc(CrtcPin::EN), "EN"),
-
-			(PinEnum::CrtcAddr, "SCREEN"),
-		];
-
-		let collected = pins.iter()
-							.map(|_| Vec::new())
-							.collect_vec();
-		
-		TickCollector{
-			collected,
-			pins
-		}
-	}
+        TickCollector { collected, pins }
+    }
 }
 
 impl TickCollector {
-	fn collect(&mut self, motherboard: &Motherboard) {
+    fn collect(&mut self, motherboard: &Motherboard) {
+        for (idx, pin_data) in self.pins.iter().enumerate() {
+            let data: PinData = match pin_data.0 {
+                PinEnum::Ga(pin) => motherboard.ga().get_pin(pin).into(),
+                PinEnum::Cpu(pin) => motherboard.cpu().get_pin(pin).into(),
+                PinEnum::Crtc(pin) => motherboard.crtc().get_pin(pin).into(),
 
-		for (idx, pin_data) in self.pins.iter().enumerate() {
+                PinEnum::CpuAddr => motherboard.cpu().get_address_from_pins().into(),
+                PinEnum::CpuData => (motherboard.cpu().get_data_from_pins() as u16).into(),
 
-			let data: PinData = match pin_data.0 {
-				PinEnum::Ga(pin) => motherboard.ga().get_pin(pin).into(),
-				PinEnum::Cpu(pin) => motherboard.cpu().get_pin(pin).into(),
-				PinEnum::Crtc(pin) => motherboard.crtc().get_pin(pin).into(),
+                PinEnum::CrtcAddr => motherboard.crtc().get_address_from_pins().into(),
 
-				PinEnum::CpuAddr => motherboard.cpu().get_address_from_pins().into(),
-				PinEnum::CpuData => (motherboard.cpu().get_data_from_pins() as u16).into(),
+                PinEnum::CpuState => motherboard.cpu().next_state().to_string().into(),
+            };
+            self.collected[idx].push(data);
+        }
+    }
 
-				PinEnum::CrtcAddr => {motherboard.crtc().get_address_from_pins().into()}
+    fn render(&self) {
+        let header = self.pins.iter().map(|d| d.1).join(",");
 
-				PinEnum::CpuState => {
-					motherboard.cpu().next_state().to_string().into()
-				}
-			};
-			self.collected[idx].push(data);
-		}
-	}
+        println!("16MHz,{}", header);
 
-	fn render(&self) {
-		let header = self.pins.iter()
-			.map(|d| d.1)
-			.join(",");
+        for row in 0..self.len() {
+            let line = self
+                .collected
+                .iter()
+                .map(|d| &d[row])
+                .map(|b| b.to_string())
+                .join(",");
+            println!("0,{}\n1,{}", line, line)
+        }
+    }
 
-		println!("16MHz,{}", header);
-
-		for row in 0..self.len() {
-			let line = self.collected.iter()
-				.map(|d| &d[row])
-				.map(|b| b.to_string())
-				.join(",");
-			println!("0,{}\n1,{}", line,line)
-		}
-	}
-
-	fn len(&self) -> usize {
-		self.collected[0].len()
-	}
+    fn len(&self) -> usize {
+        self.collected[0].len()
+    }
 }
 
-
-fn follow_nticks(motherboard: &mut Motherboard, mut count: usize ) {
-	let mut collector = TickCollector::default();
-	loop {
-		motherboard.tick();
-		collector.collect(motherboard);
-		count -= 1;
-		if count == 0 {
-			break;
-		}
-	}
-	collector.render();
+fn follow_nticks(motherboard: &mut Motherboard, mut count: usize) {
+    let mut collector = TickCollector::default();
+    loop {
+        motherboard.tick();
+        collector.collect(motherboard);
+        count -= 1;
+        if count == 0 {
+            break;
+        }
+    }
+    collector.render();
 }
 
 fn thirty_two_nops(motherboard: &mut Motherboard) {
-	// no need to fill memory of a prog as there is only nops there
-	follow_nticks(motherboard, 32);
+    // no need to fill memory of a prog as there is only nops there
+    follow_nticks(motherboard, 32);
 }
 
 fn execute_code(motherboard: &mut Motherboard, init: &[u8], code: &[u8]) {
-	let mut collector = TickCollector::default();
+    let mut collector = TickCollector::default();
 
-	motherboard.write_buffer(0x4000, init);
-	motherboard.set_pc(0x4000);
-	motherboard.tick_until_next_instruction();
-	while motherboard.pc() != 0x4000 + init.len() as u16 {
-		motherboard.execute_next_opcode();
-		Monitor::monitor(motherboard);
-	}
+    motherboard.write_buffer(0x4000, init);
+    motherboard.set_pc(0x4000);
+    motherboard.tick_until_next_instruction();
+    while motherboard.pc() != 0x4000 + init.len() as u16 {
+        motherboard.execute_next_opcode();
+        Monitor::monitor(motherboard);
+    }
 
+    motherboard.write_buffer(0x4000, dbg!(code));
+    motherboard.set_pc(0x4000);
 
-	motherboard.write_buffer(0x4000, dbg!(code));
-	motherboard.set_pc(0x4000);
+    //	Monitor::monitor(motherboard);
 
+    while motherboard.pc() != 0x4000 + code.len() as u16
+        || !motherboard.is_aligned_with_new_instruction()
+    {
+        //	Monitor::monitor(motherboard);
+        collector.collect(motherboard);
+        motherboard.tick();
+    }
 
-//	Monitor::monitor(motherboard);
-
-	while  motherboard.pc() != 0x4000 + code.len() as u16 || !motherboard.is_aligned_with_new_instruction() {
-//	Monitor::monitor(motherboard);
-		collector.collect(motherboard);
-		motherboard.tick();
-	}
-
-	collector.render();
+    collector.render();
 }
 
 fn test_out(motherboard: &mut Motherboard) {
-	execute_code(
-			motherboard,
-		assemble!("
+    execute_code(
+        motherboard,
+        assemble!(
+            "
 		org 0x4000
 		ld bc, 0xbc00 + 6
-		"),
-		assemble!("
+		"
+        ),
+        assemble!(
+            "
 		org 0x4000
 		out (c), c
 		nop
-		")
-	)
+		"
+        ),
+    )
 }
 
 fn test_outd(motherboard: &mut Motherboard) {
-	motherboard.write_byte(0x5000, 0x0f);
-	execute_code(
-		 motherboard,
-		assemble!("
+    motherboard.write_byte(0x5000, 0x0f);
+    execute_code(
+        motherboard,
+        assemble!(
+            "
 		org 0x4000
 		ld b, 0x80
 		ld hl, 0x5000
-		"),
-		assemble!("
+		"
+        ),
+        assemble!(
+            "
 		org 0x4000
 		outd
-		")
-	)
+		"
+        ),
+    )
 }
 
-
 fn test_ldd(motherboard: &mut Motherboard) {
-	motherboard.write_byte(0x4010, 1);
-	motherboard.write_byte(0x4020, 2);
-	execute_code(
-		motherboard,
-	   assemble!("
+    motherboard.write_byte(0x4010, 1);
+    motherboard.write_byte(0x4020, 2);
+    execute_code(
+        motherboard,
+        assemble!(
+            "
 	   org 0x4000
 	   ld bc, 0
 	   ld hl, 0x4020
 	   ld de, 0x4010
-	   "),
-	   assemble!("
+	   "
+        ),
+        assemble!(
+            "
 	   org 0x4000
 	   ldd
-	   ")
-   )
+	   "
+        ),
+    )
 }
 
-
 fn test_ex_mem_sp(motherboard: &mut Motherboard) {
-	motherboard.write_word(0x4010, 0xdead);
-	execute_code(
-		motherboard,
-	   assemble!("
+    motherboard.write_word(0x4010, 0xdead);
+    execute_code(
+        motherboard,
+        assemble!(
+            "
 	   org 0x4000
 	   ld sp, 0x4010
 	   ld hl, 0xbeef
-	   "),
-	   assemble!("
+	   "
+        ),
+        assemble!(
+            "
 	   org 0x4000
 	   ex (sp), hl
-	   ")
-   )
+	   "
+        ),
+    )
 }
 
 fn test_srl_mem_hl(motherboard: &mut Motherboard) {
-	motherboard.write_word(0x4010, 1);
-	execute_code(
-		motherboard,
-	   assemble!("
+    motherboard.write_word(0x4010, 1);
+    execute_code(
+        motherboard,
+        assemble!(
+            "
 	   org 0x4000
 	   ld hl, 0x4010
-	   "),
-	   assemble!("
+	   "
+        ),
+        assemble!(
+            "
 	   org 0x4000
 	   srl (hl)
-	   ")
-   )
+	   "
+        ),
+    )
 }
 fn main() {
-	let mut motherboard = MotherboardBuilder::default()
-										.disable_lower_rom()					.disable_upper_rom()
-										.build();
+    let mut motherboard = MotherboardBuilder::default()
+        .disable_lower_rom()
+        .disable_upper_rom()
+        .build();
 
-	motherboard.set_sp(0x8000);
-	motherboard.set_pc(0x1000);
-	motherboard.write_buffer(0x38, assemble!("
+    motherboard.set_sp(0x8000);
+    motherboard.set_pc(0x1000);
+    motherboard.write_buffer(
+        0x38,
+        assemble!(
+            "
 		ei
 		ret
-	"));
+	"
+        ),
+    );
 
-
-	// `signal_generation [which]`: the signals of one sequence (test_srl_mem_hl by default)
-	match std::env::args().nth(1).as_deref().unwrap_or("srl_mem_hl") {
-		"nops" => thirty_two_nops(&mut motherboard),
-		"out" => test_out(&mut motherboard),
-		"outd" => test_outd(&mut motherboard),
-		"ldd" => test_ldd(&mut motherboard),
-		"ex_mem_sp" => test_ex_mem_sp(&mut motherboard),
-		"srl_mem_hl" => test_srl_mem_hl(&mut motherboard),
-		other => eprintln!("{other}: nops, out, outd, ldd, ex_mem_sp or srl_mem_hl")
-	}
-
-}	
+    // `signal_generation [which]`: the signals of one sequence (test_srl_mem_hl by default)
+    match std::env::args().nth(1).as_deref().unwrap_or("srl_mem_hl") {
+        "nops" => thirty_two_nops(&mut motherboard),
+        "out" => test_out(&mut motherboard),
+        "outd" => test_outd(&mut motherboard),
+        "ldd" => test_ldd(&mut motherboard),
+        "ex_mem_sp" => test_ex_mem_sp(&mut motherboard),
+        "srl_mem_hl" => test_srl_mem_hl(&mut motherboard),
+        other => eprintln!("{other}: nops, out, outd, ldd, ex_mem_sp or srl_mem_hl"),
+    }
+}

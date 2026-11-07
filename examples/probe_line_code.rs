@@ -32,7 +32,13 @@ fn main() {
         if tick / (64 * 16) < from {
             continue;
         }
-        let at = format!("{:5}.{:02} C0={:3} hs={}", tick / 16, tick % 16, mb.crtc().hcc, u8::from(mb.crtc().hsync()));
+        let at = format!(
+            "{:5}.{:02} C0={:3} hs={}",
+            tick / 16,
+            tick % 16,
+            mb.crtc().hcc,
+            u8::from(mb.crtc().hsync())
+        );
         for (port, value) in writes {
             println!("{at}   OUT {port:04X},{value:02X}");
         }

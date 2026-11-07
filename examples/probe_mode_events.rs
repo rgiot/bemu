@@ -33,7 +33,13 @@ fn main() {
         if line < from || line >= to {
             continue;
         }
-        let at = format!("{:5}.{:02} L{:3} C0={:2}", tick / 16, tick % 16, line, mb.crtc().hcc);
+        let at = format!(
+            "{:5}.{:02} L{:3} C0={:2}",
+            tick / 16,
+            tick % 16,
+            line,
+            mb.crtc().hcc
+        );
         if mb.ga().next_video_mode() != next {
             next = mb.ga().next_video_mode();
             println!("{at} next   {next:?}");

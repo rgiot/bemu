@@ -32,7 +32,10 @@ fn run_rhino_loads_and_prints_the_crtc_type() {
     let screen = screen_lines(&motherboard);
     let text = screen.join("\n");
     eprintln!("{text}");
-    assert!(!text.contains("File already open"), "AMSDOS refused to open the file:\n{text}");
+    assert!(
+        !text.contains("File already open"),
+        "AMSDOS refused to open the file:\n{text}"
+    );
 
     // the file data really was read from the disc (sector &C5 = block 2)
     assert!(
@@ -40,7 +43,8 @@ fn run_rhino_loads_and_prints_the_crtc_type() {
             .fdc()
             .command_log()
             .iter()
-            .any(|record| record.command.first() == Some(&0x66) && record.command.get(4) == Some(&0xc5)),
+            .any(|record| record.command.first() == Some(&0x66)
+                && record.command.get(4) == Some(&0xc5)),
         "the FDC never read the file's data sector: {:02x?}",
         motherboard.fdc().command_log()
     );

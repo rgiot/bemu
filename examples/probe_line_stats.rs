@@ -20,7 +20,9 @@ fn main() {
     loop {
         mb.tick();
         let vs = mb.crtc().vsync();
-        if vs && !prev_vs { break; }
+        if vs && !prev_vs {
+            break;
+        }
         prev_vs = vs;
     }
     let mut n = 0usize;
@@ -41,12 +43,21 @@ fn main() {
             for i in 1..cols.len() {
                 if cols[i] != cols[i - 1] {
                     changes += 1;
-                    if run <= 2 { fast += 1; }
+                    if run <= 2 {
+                        fast += 1;
+                    }
                     run = 1;
-                } else { run += 1; }
+                } else {
+                    run += 1;
+                }
             }
-            let mut d = cols.clone(); d.sort(); d.dedup();
-            println!("line {n:3} changes={changes:3} fast={fast:3} distinct={}", d.len());
+            let mut d = cols.clone();
+            d.sort();
+            d.dedup();
+            println!(
+                "line {n:3} changes={changes:3} fast={fast:3} distinct={}",
+                d.len()
+            );
             cols.clear();
             n += 1;
             tick = 0;

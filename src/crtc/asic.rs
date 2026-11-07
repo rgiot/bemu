@@ -15,7 +15,7 @@ use super::type0::skew_from_r8;
 /// ACCC §4.3: as CRTC 0 (R10/R11 are read-only status registers here but
 /// their cursor bits are still stored).
 const WRITE_MASK: [u8; 16] = [
-    0xff, 0xff, 0xff, 0xff, 0x7f, 0x1f, 0x7f, 0x7f, 0xf3, 0x1f, 0x7f, 0x1f, 0x3f, 0xff, 0x3f, 0xff
+    0xff, 0xff, 0xff, 0xff, 0x7f, 0x1f, 0x7f, 0x7f, 0xf3, 0x1f, 0x7f, 0x1f, 0x3f, 0xff, 0x3f, 0xff,
 ];
 
 /// Ticks of a character (1 us).
@@ -54,7 +54,13 @@ impl Asic {
     fn status_1(&self, context: &ReadContext) -> u8 {
         let register = |number| context.register(number);
         let (c0, r0, r1, r2) = (context.c0, register(0), register(1), register(2));
-        let event = |bit: u8, happens: bool, value: bool| -> u8 { if happens == value { 1 << bit } else { 0 } };
+        let event = |bit: u8, happens: bool, value: bool| -> u8 {
+            if happens == value {
+                1 << bit
+            } else {
+                0
+            }
+        };
         let hsync_end = r2.wrapping_add(self.hsync_width(register(3)).unwrap_or(16));
         // bit 5: the VSYNC's last line (R3h > 0), else 15 lines from the VSYNC (OffseT's
         // TestCRTC finds the end of the VBL with it)
@@ -62,9 +68,13 @@ impl Asic {
         let bit5 = match (width, context.vsync_line) {
             (0, Some(line)) => line < 15,
             (0, None) => false,
-            (_, line) => line != Some(width - 1)
+            (_, line) => line != Some(width - 1),
         };
-        let low = if c0 == r0 { context.vma_prime & 0xff == 0 } else { context.vma & 0xff == 0xff };
+        let low = if c0 == r0 {
+            context.vma_prime & 0xff == 0
+        } else {
+            context.vma & 0xff == 0xff
+        };
         event(0, c0 == r0, true)
             | event(1, c0 == r0 / 2, false)
             | event(2, r0 >= r1 && c0 == r1.wrapping_sub(1), false)
@@ -80,7 +90,13 @@ impl Asic {
 fn status_2(context: &ReadContext) -> u8 {
     let register = |number| context.register(number);
     let (c0, c4, c9, r0, r9) = (context.c0, context.c4, context.c9, register(0), register(9));
-    let event = |bit: u8, happens: bool, value: bool| -> u8 { if happens == value { 1 << bit } else { 0 } };
+    let event = |bit: u8, happens: bool, value: bool| -> u8 {
+        if happens == value {
+            1 << bit
+        } else {
+            0
+        }
+    };
     let row_end = c9 == r9 && c0 == r0;
     event(0, row_end && c4 == register(4), false)
         | event(1, row_end && c4 == register(6).wrapping_sub(1), false)
@@ -100,7 +116,7 @@ impl CrtcChip for Asic {
     fn name(&self) -> &'static str {
         match self.crtc_type {
             CrtcType::Crtc3 => "ASIC 40489",
-            _ => "ASIC 40226"
+            _ => "ASIC 40226",
         }
     }
 
@@ -134,7 +150,7 @@ impl CrtcChip for Asic {
     fn hsync_width(&self, r3: u8) -> Option<u8> {
         Some(match r3 & 0x0f {
             0 => 16,
-            width => width
+            width => width,
         })
     }
 
@@ -142,7 +158,7 @@ impl CrtcChip for Asic {
     fn vsync_width(&self, r3: u8) -> u8 {
         match r3 >> 4 {
             0 => 16,
-            width => width
+            width => width,
         }
     }
 
@@ -182,7 +198,12 @@ impl CrtcChip for Asic {
         for w in self.pending.iter_mut() {
             w.0 -= 1;
         }
-        let due = self.pending.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2)).collect();
+        let due = self
+            .pending
+            .iter()
+            .filter(|w| w.0 == 0)
+            .map(|w| (w.1, w.2))
+            .collect();
         self.pending.retain(|w| w.0 != 0);
         Some(due)
     }
@@ -321,6 +342,11 @@ impl CrtcChip for Asic {
     /// the MID-VSYNC): an R7 set to C4 later in the row does nothing.
     fn vsync_may_start_here(&self, core: &Core) -> bool {
         core.vlc.value() == u8::from(core.ivm_lines && core.parity_c9)
-            && core.hcc == if core.interlaced() && !core.parity_frame { core.regs[0] / 2 } else { 0 }
+            && core.hcc
+                == if core.interlaced() && !core.parity_frame {
+                    core.regs[0] / 2
+                } else {
+                    0
+                }
     }
 }

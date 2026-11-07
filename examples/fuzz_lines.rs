@@ -9,7 +9,12 @@ fn main() {
     let us: usize = a.next().and_then(|s| s.parse().ok()).unwrap_or(80_000);
     let crtc: u8 = a.next().and_then(|s| s.parse().ok()).unwrap_or(0);
     let mut runner = CslRunner::new("/tmp/fuzz_lines_shots");
-    runner.run_text(&format!("csl_version 1.0\ncrtc_select {crtc}\nreset\nwait 1000000\n"), ".").unwrap();
+    runner
+        .run_text(
+            &format!("csl_version 1.0\ncrtc_select {crtc}\nreset\nwait 1000000\n"),
+            ".",
+        )
+        .unwrap();
     amsrust::snapshot::load_sna(runner.motherboard_mut(), &sna).expect("load sna");
     let mb = runner.motherboard_mut();
     mb.crtc_mut().start_write_log();

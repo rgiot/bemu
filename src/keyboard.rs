@@ -20,10 +20,42 @@
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CpcKey {
-    A, B, C, D, E, F, G, H, I, J, K, L, M,
-    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
-    Digit0, Digit1, Digit2, Digit3, Digit4,
-    Digit5, Digit6, Digit7, Digit8, Digit9,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    Digit0,
+    Digit1,
+    Digit2,
+    Digit3,
+    Digit4,
+    Digit5,
+    Digit6,
+    Digit7,
+    Digit8,
+    Digit9,
     Space,
     Return,
     Shift,
@@ -51,8 +83,16 @@ pub enum CpcKey {
     CloseBracket,
     Backslash,
     /// Numeric keypad `0`-`9` (the firmware's "f0"-"f9" function keys)
-    Keypad0, Keypad1, Keypad2, Keypad3, Keypad4,
-    Keypad5, Keypad6, Keypad7, Keypad8, Keypad9,
+    Keypad0,
+    Keypad1,
+    Keypad2,
+    Keypad3,
+    Keypad4,
+    Keypad5,
+    Keypad6,
+    Keypad7,
+    Keypad8,
+    Keypad9,
     KeypadDot,
     KeypadEnter,
     /// Joystick 0 shares matrix line 9 with no keyboard key.
@@ -61,7 +101,7 @@ pub enum CpcKey {
     Joy0Left,
     Joy0Right,
     Joy0Fire2,
-    Joy0Fire1
+    Joy0Fire1,
 }
 
 impl CpcKey {
@@ -158,7 +198,7 @@ impl CpcKey {
             Joy0Right => (9, 3),
             Joy0Fire2 => (9, 4),
             Joy0Fire1 => (9, 5),
-            Del => (9, 7)
+            Del => (9, 7),
         }
     }
 }
@@ -173,14 +213,14 @@ pub const NB_LINES: usize = 10;
 /// uses: each line is active-low (bit = 0 means that key **is** pressed).
 #[derive(Debug, Clone, Copy)]
 pub struct KeyboardMatrix {
-    lines: [u8; NB_LINES]
+    lines: [u8; NB_LINES],
 }
 
 impl Default for KeyboardMatrix {
     fn default() -> Self {
         // Active-low: 0xff means nothing on that line is pressed.
         Self {
-            lines: [0xff; NB_LINES]
+            lines: [0xff; NB_LINES],
         }
     }
 }
@@ -190,8 +230,7 @@ impl KeyboardMatrix {
         let (line, bit) = key.matrix_position();
         if pressed {
             self.lines[line as usize] &= !(1 << bit);
-        }
-        else {
+        } else {
             self.lines[line as usize] |= 1 << bit;
         }
     }
@@ -285,12 +324,85 @@ mod test {
 pub const ALL_KEYS: &[CpcKey] = {
     use CpcKey::*;
     &[
-        A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, Digit0, Digit1, Digit2,
-        Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Space, Return, Shift, Control, CapsLock, Tab, Esc,
-        Del, Clr, Copy, CursorUp, CursorDown, CursorLeft, CursorRight, Caret, Minus, At, Colon, Semicolon, Slash,
-        Dot, Comma, OpenBracket, CloseBracket, Backslash, Keypad0, Keypad1, Keypad2, Keypad3, Keypad4, Keypad5,
-        Keypad6, Keypad7, Keypad8, Keypad9, KeypadDot, KeypadEnter, Joy0Up, Joy0Down, Joy0Left, Joy0Right,
-        Joy0Fire2, Joy0Fire1
+        A,
+        B,
+        C,
+        D,
+        E,
+        F,
+        G,
+        H,
+        I,
+        J,
+        K,
+        L,
+        M,
+        N,
+        O,
+        P,
+        Q,
+        R,
+        S,
+        T,
+        U,
+        V,
+        W,
+        X,
+        Y,
+        Z,
+        Digit0,
+        Digit1,
+        Digit2,
+        Digit3,
+        Digit4,
+        Digit5,
+        Digit6,
+        Digit7,
+        Digit8,
+        Digit9,
+        Space,
+        Return,
+        Shift,
+        Control,
+        CapsLock,
+        Tab,
+        Esc,
+        Del,
+        Clr,
+        Copy,
+        CursorUp,
+        CursorDown,
+        CursorLeft,
+        CursorRight,
+        Caret,
+        Minus,
+        At,
+        Colon,
+        Semicolon,
+        Slash,
+        Dot,
+        Comma,
+        OpenBracket,
+        CloseBracket,
+        Backslash,
+        Keypad0,
+        Keypad1,
+        Keypad2,
+        Keypad3,
+        Keypad4,
+        Keypad5,
+        Keypad6,
+        Keypad7,
+        Keypad8,
+        Keypad9,
+        KeypadDot,
+        KeypadEnter,
+        Joy0Up,
+        Joy0Down,
+        Joy0Left,
+        Joy0Right,
+        Joy0Fire2,
+        Joy0Fire1,
     ]
 };
 
@@ -308,7 +420,7 @@ pub fn key_at(index: usize) -> Option<CpcKey> {
 pub enum KeyboardLayout {
     #[default]
     Uk,
-    French
+    French,
 }
 
 /// Where the 6128's (and 664's) firmware keeps its key translation tables: 80 bytes without a
@@ -320,7 +432,7 @@ impl KeyboardLayout {
     fn tables(self) -> &'static [u8] {
         let rom: &'static [u8] = match self {
             Self::Uk => crate::roms::OS6128,
-            Self::French => crate::roms::OS6128_AZERTY
+            Self::French => crate::roms::OS6128_AZERTY,
         };
         &rom[KEY_TABLES..KEY_TABLES + 160]
     }
@@ -337,7 +449,7 @@ impl KeyboardLayout {
             (Self::French, 'ù') => '|',
             (Self::French, '§') => ']',
             (Self::French, '°') => '[',
-            (_, c) => c
+            (_, c) => c,
         };
         u8::try_from(c).ok().filter(|code| code.is_ascii())
     }
@@ -351,10 +463,15 @@ impl KeyboardLayout {
         let (normal, shifted) = self.tables().split_at(80);
         // the keyboard's keys only: the joystick's line has letters too
         let keyboard = |index: &usize| *index < 72 || *index == 79;
-        if let Some(index) = (0..80).filter(keyboard).find(|&index| normal[index] == code) {
+        if let Some(index) = (0..80)
+            .filter(keyboard)
+            .find(|&index| normal[index] == code)
+        {
             return key_at(index).map(|key| vec![key]);
         }
-        let index = (0..80).filter(keyboard).find(|&index| shifted[index] == code)?;
+        let index = (0..80)
+            .filter(keyboard)
+            .find(|&index| shifted[index] == code)?;
         key_at(index).map(|key| vec![CpcKey::Shift, key])
     }
 
@@ -369,7 +486,11 @@ impl KeyboardLayout {
         if !uk.is_ascii_lowercase() {
             return key;
         }
-        self.tables()[..80].iter().position(|&k| k == uk).and_then(key_at).unwrap_or(key)
+        self.tables()[..80]
+            .iter()
+            .position(|&k| k == uk)
+            .and_then(key_at)
+            .unwrap_or(key)
     }
 }
 

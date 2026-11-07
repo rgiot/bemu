@@ -1,7 +1,10 @@
 //! The duration (in microseconds) of every opcode matches ACCC chapter 26's
 //! table ("duration of instructions on the CPC").
 
-use amsrust::{motherboard::MotherboardBuilder, z80::{cpc_bus_timing, HasValue, Reg16}};
+use amsrust::{
+    motherboard::MotherboardBuilder,
+    z80::{cpc_bus_timing, HasValue, Reg16},
+};
 
 /// (min, max) expected durations; None when not covered by the checks
 fn expected(prefix: u8, op: u8) -> Option<(u8, u8)> {
@@ -11,12 +14,14 @@ fn expected(prefix: u8, op: u8) -> Option<(u8, u8)> {
     let same = |a: u8| Some((a, a));
     match prefix {
         0x00 => match op {
-            0x76 | 0x00 | 0xf3 | 0xfb | 0xd9 | 0xeb | 0x08 | 0x3f | 0x37 | 0x2f | 0x27 | 0x07 | 0x0f | 0x17 | 0x1f | 0xe9 => same(1),
+            0x76 | 0x00 | 0xf3 | 0xfb | 0xd9 | 0xeb | 0x08 | 0x3f | 0x37 | 0x2f | 0x27 | 0x07
+            | 0x0f | 0x17 | 0x1f | 0xe9 => same(1),
             0x01 | 0x11 | 0x21 | 0x31 => same(3),
             0x02 | 0x12 | 0x0a | 0x1a => same(2),
             0x03 | 0x13 | 0x23 | 0x33 | 0x0b | 0x1b | 0x2b | 0x3b => same(2),
             0x09 | 0x19 | 0x29 | 0x39 => same(3),
-            0x04 | 0x0c | 0x14 | 0x1c | 0x24 | 0x2c | 0x3c | 0x05 | 0x0d | 0x15 | 0x1d | 0x25 | 0x2d | 0x3d => same(1),
+            0x04 | 0x0c | 0x14 | 0x1c | 0x24 | 0x2c | 0x3c | 0x05 | 0x0d | 0x15 | 0x1d | 0x25
+            | 0x2d | 0x3d => same(1),
             0x34 | 0x35 => same(3),
             0x06 | 0x0e | 0x16 | 0x1e | 0x26 | 0x2e | 0x3e => same(2),
             0x36 => same(3),
@@ -25,8 +30,20 @@ fn expected(prefix: u8, op: u8) -> Option<(u8, u8)> {
             0x20 | 0x28 | 0x30 | 0x38 => Some((2, 3)),
             0x22 | 0x2a => same(5),
             0x32 | 0x3a => same(4),
-            0x40..=0x7f => if r == 6 || y == 6 { same(2) } else { same(1) },
-            0x80..=0xbf => if r == 6 { same(2) } else { same(1) },
+            0x40..=0x7f => {
+                if r == 6 || y == 6 {
+                    same(2)
+                } else {
+                    same(1)
+                }
+            }
+            0x80..=0xbf => {
+                if r == 6 {
+                    same(2)
+                } else {
+                    same(1)
+                }
+            }
             0xc0 | 0xc8 | 0xd0 | 0xd8 | 0xe0 | 0xe8 | 0xf0 | 0xf8 => Some((2, 4)),
             0xc1 | 0xd1 | 0xe1 | 0xf1 => same(3),
             0xc5 | 0xd5 | 0xe5 | 0xf5 => same(4),
@@ -42,7 +59,17 @@ fn expected(prefix: u8, op: u8) -> Option<(u8, u8)> {
             0xd3 | 0xdb => same(3),
             _ => None,
         },
-        0xcb => if r == 6 { if x == 1 { same(3) } else { same(4) } } else { same(2) },
+        0xcb => {
+            if r == 6 {
+                if x == 1 {
+                    same(3)
+                } else {
+                    same(4)
+                }
+            } else {
+                same(2)
+            }
+        }
         0xed => match op {
             0x40..=0x7f => match r {
                 0 | 1 => same(4),
@@ -51,7 +78,15 @@ fn expected(prefix: u8, op: u8) -> Option<(u8, u8)> {
                 4 => same(2),
                 5 => same(4),
                 6 => same(2),
-                7 => if y == 4 || y == 5 { same(5) } else if y < 4 { same(3) } else { same(2) },
+                7 => {
+                    if y == 4 || y == 5 {
+                        same(5)
+                    } else if y < 4 {
+                        same(3)
+                    } else {
+                        same(2)
+                    }
+                }
                 _ => None,
             },
             0xa0 | 0xa8 => same(5),
@@ -77,15 +112,24 @@ fn expected(prefix: u8, op: u8) -> Option<(u8, u8)> {
             0xe3 => same(7),
             0xe9 => same(2),
             0x40..=0x7f if op != 0x76 => {
-                if r == 6 || y == 6 { same(5) } else { same(2) }
+                if r == 6 || y == 6 {
+                    same(5)
+                } else {
+                    same(2)
+                }
             }
-            0x80..=0xbf => if r == 6 { same(5) } else { same(2) },
+            0x80..=0xbf => {
+                if r == 6 {
+                    same(5)
+                } else {
+                    same(2)
+                }
+            }
             _ => None,
         },
         _ => None,
     }
 }
-
 
 #[test]
 fn every_opcode_lasts_what_the_accc_table_says() {
@@ -100,7 +144,10 @@ fn every_opcode_lasts_what_the_accc_table_says() {
             }
             let mut durs = vec![];
             for f in [0x00u8, 0xff] {
-                let mut mb = MotherboardBuilder::default().disable_lower_rom().disable_upper_rom().build();
+                let mut mb = MotherboardBuilder::default()
+                    .disable_lower_rom()
+                    .disable_upper_rom()
+                    .build();
                 let bytes: Vec<u8> = match prefix {
                     0xdc => vec![0xdd, 0xcb, 0x00, op, 0, 0],
                     0xfc => vec![0xfd, 0xcb, 0x00, op, 0, 0],
@@ -125,7 +172,9 @@ fn every_opcode_lasts_what_the_accc_table_says() {
             };
             if let Some((lo, hi)) = exp {
                 if durs.iter().any(|d| *d < lo || *d > hi) {
-                    bad.push(format!("prefix {prefix:02X} op {op:02X}: {durs:?}, expected {lo}..{hi}"));
+                    bad.push(format!(
+                        "prefix {prefix:02X} op {op:02X}: {durs:?}, expected {lo}..{hi}"
+                    ));
                 }
             }
         }
@@ -152,7 +201,9 @@ fn the_wait_model_gives_the_accc_durations() {
                 let repeats = prefix == 0xed && (0xb0..=0xbb).contains(&op);
                 let long = cpc_bus_timing(prefix, op, true, repeats).microseconds() as u8;
                 if short < lo || short > hi || long < lo || long > hi {
-                    bad.push(format!("prefix {prefix:02X} op {op:02X}: {short}/{long}, expected {lo}..{hi}"));
+                    bad.push(format!(
+                        "prefix {prefix:02X} op {op:02X}: {short}/{long}, expected {lo}..{hi}"
+                    ));
                 }
             }
         }

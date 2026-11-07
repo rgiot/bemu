@@ -23,7 +23,11 @@ const fn szxy(result: u8) -> u8 {
 
 #[inline]
 const fn parity(value: u8) -> u8 {
-    if value.count_ones().is_multiple_of(2) { PV } else { 0 }
+    if value.count_ones().is_multiple_of(2) {
+        PV
+    } else {
+        0
+    }
 }
 
 /// Flags of the logical operation `result` (AND sets H, OR/XOR clear it).
@@ -146,7 +150,9 @@ pub const fn adc16(left: u16, right: u16, carry: bool) -> (u16, u8) {
 /// SBC HL,rr.
 #[inline]
 pub const fn sbc16(left: u16, right: u16, carry: bool) -> (u16, u8) {
-    let difference = (left as u32).wrapping_sub(right as u32).wrapping_sub(carry as u32);
+    let difference = (left as u32)
+        .wrapping_sub(right as u32)
+        .wrapping_sub(carry as u32);
     let result = difference as u16;
     let mut flags = (((result >> 8) as u8) & (S | Y | X)) | N;
     if result == 0 {
@@ -168,7 +174,10 @@ pub const fn sbc16(left: u16, right: u16, carry: bool) -> (u16, u8) {
 #[inline]
 pub const fn cpl(a: u8, flags: u8) -> (u8, u8) {
     let result = !a;
-    (result, (flags & (S | Z | PV | C)) | H | N | (result & (Y | X)))
+    (
+        result,
+        (flags & (S | Z | PV | C)) | H | N | (result & (Y | X)),
+    )
 }
 
 /// SCF.
@@ -199,13 +208,21 @@ pub const fn daa(a: u8, flags: u8) -> (u8, u8) {
     if carry || a > 0x99 {
         correction |= 0x60;
     }
-    let result = if subtraction { a.wrapping_sub(correction) } else { a.wrapping_add(correction) };
+    let result = if subtraction {
+        a.wrapping_sub(correction)
+    } else {
+        a.wrapping_add(correction)
+    };
 
     let mut new = szxy(result) | parity(result) | (flags & N);
     if carry || a > 0x99 {
         new |= C;
     }
-    let half_carry = if subtraction { half && a & 0x0f < 6 } else { a & 0x0f > 9 };
+    let half_carry = if subtraction {
+        half && a & 0x0f < 6
+    } else {
+        a & 0x0f > 9
+    };
     if half_carry {
         new |= H;
     }

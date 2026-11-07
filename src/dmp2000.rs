@@ -71,25 +71,37 @@ pub struct Page {
     /// A row of pixels once a needle has struck it.
     ink: Vec<Option<Box<[u8]>>>,
     height: i32,
-    inked: bool
+    inked: bool,
 }
 
 impl Page {
     fn new(height_units: i32) -> Self {
         let height = feed_px(height_units).round() as i32;
-        Self { ink: vec![None; height as usize], height, inked: false }
+        Self {
+            ink: vec![None; height as usize],
+            height,
+            inked: false,
+        }
     }
 
     /// A needle's dot.
     fn dot(&mut self, cx: f32, cy: f32, radius: f32, strength: f32) {
-        let (x0, x1) = ((cx - radius - 1.0).floor() as i32, (cx + radius + 1.0).ceil() as i32);
-        let (y0, y1) = ((cy - radius - 1.0).floor() as i32, (cy + radius + 1.0).ceil() as i32);
+        let (x0, x1) = (
+            (cx - radius - 1.0).floor() as i32,
+            (cx + radius + 1.0).ceil() as i32,
+        );
+        let (y0, y1) = (
+            (cy - radius - 1.0).floor() as i32,
+            (cy + radius + 1.0).ceil() as i32,
+        );
         for y in y0.max(0)..=y1.min(self.height - 1) {
             for x in x0.max(0)..=x1.min(PAPER_WIDTH_PX - 1) {
-                let distance = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+                let distance =
+                    ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
                 let coverage = (radius + 0.5 - distance).clamp(0.0, 1.0);
                 if coverage > 0.0 {
-                    let row = self.ink[y as usize].get_or_insert_with(|| vec![0; PAPER_WIDTH_PX as usize].into_boxed_slice());
+                    let row = self.ink[y as usize]
+                        .get_or_insert_with(|| vec![0; PAPER_WIDTH_PX as usize].into_boxed_slice());
                     let pixel = &mut row[x as usize];
                     *pixel = (f32::from(*pixel) + coverage * strength * 255.0).min(255.0) as u8;
                     self.inked = true;
@@ -144,8 +156,7 @@ impl Page {
                         for (value, table) in colour.iter_mut().zip(TABLE) {
                             *value = *value * (1.0 - hole) + table * hole;
                         }
-                    }
-                    else if distance < hole_radius + 2.0 {
+                    } else if distance < hole_radius + 2.0 {
                         // the hole's rim
                         for value in &mut colour {
                             *value *= 0.93;
@@ -153,7 +164,12 @@ impl Page {
                     }
                 }
 
-                let ink = f32::from(self.ink[y as usize].as_ref().map_or(0, |row| row[x as usize])) / 255.0 * 0.93;
+                let ink = f32::from(
+                    self.ink[y as usize]
+                        .as_ref()
+                        .map_or(0, |row| row[x as usize]),
+                ) / 255.0
+                    * 0.93;
                 for (value, inked) in colour.iter().zip(INK) {
                     rgb.push((value * (1.0 - ink) + inked * ink).round() as u8);
                 }
@@ -166,7 +182,9 @@ impl Page {
     pub fn save_png(&self, path: &std::path::Path) -> std::io::Result<()> {
         let image = image::RgbImage::from_raw(self.width(), self.height(), self.to_rgb())
             .expect("an image as big as its pixels");
-        image.save(path).map_err(|e| std::io::Error::other(e.to_string()))
+        image
+            .save(path)
+            .map_err(|e| std::io::Error::other(e.to_string()))
     }
 }
 
@@ -177,33 +195,51 @@ enum Parse {
     /// After ESC.
     Esc,
     /// ESC `command`, and the `want` parameters it takes.
-    Params { command: u8, want: usize, got: Vec<u8> },
+    Params {
+        command: u8,
+        want: usize,
+        got: Vec<u8>,
+    },
     /// ESC D, B or b: a list of numbers ended by 0 (the channel first for b).
-    List { command: u8, channel: Option<u8>, wants_channel: bool, items: Vec<u8> },
+    List {
+        command: u8,
+        channel: Option<u8>,
+        wants_channel: bool,
+        items: Vec<u8>,
+    },
     /// Bit image data, `remaining` bytes of it.
-    Graphics { mode: u8, nine_pin: bool, remaining: usize, column: Vec<u8>, dots: i32 },
+    Graphics {
+        mode: u8,
+        nine_pin: bool,
+        remaining: usize,
+        column: Vec<u8>,
+        dots: i32,
+    },
     /// ESC & 0 first last, then 12 bytes (attribute, 11 columns) a character.
-    Download { header: Vec<u8>, data: Vec<u8> }
+    Download {
+        header: Vec<u8>,
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EighthBit {
     Accept,
     Set,
-    Unset
+    Unset,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Script {
     Super,
-    Sub
+    Sub,
 }
 
 /// A user defined character: 11 columns of needles, the first of them.
 #[derive(Clone, Debug)]
 struct Download {
     start: u8,
-    columns: [u8; 11]
+    columns: [u8; 11],
 }
 
 /// A character of the printer's EPROM: the attribute (as a download character's: bit 7 clear
@@ -212,12 +248,15 @@ struct Download {
 #[derive(Clone, Debug)]
 struct RealGlyph {
     attribute: u8,
-    pass: [[u8; 11]; 2]
+    pass: [[u8; 11]; 2],
 }
 
 /// The needles a column byte strikes: the top bit is the first needle.
 fn pins_of(column: u8) -> u16 {
-    (0..8).filter(|pin| column & (0x80 >> pin) != 0).map(|pin| 1u16 << pin).sum::<u16>()
+    (0..8)
+        .filter(|pin| column & (0x80 >> pin) != 0)
+        .map(|pin| 1u16 << pin)
+        .sum::<u16>()
 }
 
 /// A glyph, seen by the needles: the pins (bit n: the needle n) struck in each column.
@@ -230,7 +269,7 @@ struct Glyph {
     descent: i32,
     /// Columns before the first and after the last the proportional spacing drops.
     first: usize,
-    last: usize
+    last: usize,
 }
 
 pub struct Dmp2000 {
@@ -292,7 +331,7 @@ pub struct Dmp2000 {
     pages: Vec<Page>,
     /// The line being printed: (x, character).
     line: Vec<(i32, char)>,
-    text: String
+    text: String,
 }
 
 impl Dmp2000 {
@@ -351,7 +390,7 @@ impl Dmp2000 {
             channel: 0,
             pages: Vec::new(),
             line: Vec::new(),
-            text: String::new()
+            text: String::new(),
         };
         printer.reset_settings();
         printer
@@ -414,11 +453,19 @@ impl Dmp2000 {
                 for (which, base) in [FIRST_PASS, SECOND_PASS].into_iter().enumerate() {
                     pass[which].copy_from_slice(&rom[base + code * 12 + 1..base + code * 12 + 12]);
                 }
-                RealGlyph { attribute: rom[FIRST_PASS + code * 12], pass }
+                RealGlyph {
+                    attribute: rom[FIRST_PASS + code * 12],
+                    pass,
+                }
             })
             .collect();
-        if font[usize::from(b'A')].pass[0].iter().all(|&column| column == 0) {
-            return Err("no A where the near letter quality font should be: not a DMP2000 EPROM".to_owned());
+        if font[usize::from(b'A')].pass[0]
+            .iter()
+            .all(|&column| column == 0)
+        {
+            return Err(
+                "no A where the near letter quality font should be: not a DMP2000 EPROM".to_owned(),
+            );
         }
         self.real_font = Some(font);
         Ok(())
@@ -464,7 +511,10 @@ impl Dmp2000 {
 
     /// The sheets with something printed on them.
     pub fn inked_pages(&self) -> impl Iterator<Item = (usize, &Page)> {
-        self.pages.iter().enumerate().filter(|(_, page)| page.has_ink())
+        self.pages
+            .iter()
+            .enumerate()
+            .filter(|(_, page)| page.has_ink())
     }
 
     /// `prefix.txt` (the text), `prefix.prn` (the bytes), `prefix_001.png`... (the sheets).
@@ -505,11 +555,15 @@ impl Dmp2000 {
             _ if !matches!(self.parse, Parse::Idle) => byte,
             EighthBit::Set if byte < 0x20 || byte == 0x7f => byte,
             EighthBit::Set => byte | 0x80,
-            EighthBit::Unset => byte & 0x7f
+            EighthBit::Unset => byte & 0x7f,
         };
         self.work_us = 0;
         self.handle_byte(byte);
-        self.busy_us = if self.realtime { BUSY_BYTE_US.max(self.work_us) } else { BUSY_BYTE_US };
+        self.busy_us = if self.realtime {
+            BUSY_BYTE_US.max(self.work_us)
+        } else {
+            BUSY_BYTE_US
+        };
     }
 
     /// The head or the paper moves: the time it takes (when the printer runs in real time).
@@ -522,32 +576,57 @@ impl Dmp2000 {
         match parse {
             Parse::Idle => self.idle_byte(byte),
             Parse::Esc => self.escape(byte),
-            Parse::Params { command, want, mut got } => {
+            Parse::Params {
+                command,
+                want,
+                mut got,
+            } => {
                 got.push(byte);
                 if command == b'C' && got.len() == 1 && got[0] == 0 {
                     // by inches: one more
-                    self.parse = Parse::Params { command, want: 2, got };
-                }
-                else if got.len() < want {
+                    self.parse = Parse::Params {
+                        command,
+                        want: 2,
+                        got,
+                    };
+                } else if got.len() < want {
                     self.parse = Parse::Params { command, want, got };
-                }
-                else {
+                } else {
                     self.command(command, &got);
                 }
-            },
-            Parse::List { command, channel, wants_channel, mut items } => {
+            }
+            Parse::List {
+                command,
+                channel,
+                wants_channel,
+                mut items,
+            } => {
                 if wants_channel && channel.is_none() {
-                    self.parse = Parse::List { command, channel: Some(byte), wants_channel, items };
-                }
-                else if byte == 0 || items.len() >= 32 {
+                    self.parse = Parse::List {
+                        command,
+                        channel: Some(byte),
+                        wants_channel,
+                        items,
+                    };
+                } else if byte == 0 || items.len() >= 32 {
                     self.list(command, channel, &items);
-                }
-                else {
+                } else {
                     items.push(byte);
-                    self.parse = Parse::List { command, channel, wants_channel, items };
+                    self.parse = Parse::List {
+                        command,
+                        channel,
+                        wants_channel,
+                        items,
+                    };
                 }
-            },
-            Parse::Graphics { mode, nine_pin, remaining, mut column, dots } => {
+            }
+            Parse::Graphics {
+                mode,
+                nine_pin,
+                remaining,
+                mut column,
+                dots,
+            } => {
                 column.push(byte);
                 let bytes_per_column = if nine_pin { 2 } else { 1 };
                 let mut dots = dots;
@@ -557,33 +636,42 @@ impl Dmp2000 {
                     dots += 1;
                 }
                 if remaining > 1 {
-                    self.parse = Parse::Graphics { mode, nine_pin, remaining: remaining - 1, column, dots };
-                }
-                else {
+                    self.parse = Parse::Graphics {
+                        mode,
+                        nine_pin,
+                        remaining: remaining - 1,
+                        column,
+                        dots,
+                    };
+                } else {
                     // the head stays at the end of the dots
                     self.x += (dots as f32 * Self::dot_pitch(mode)).round() as i32;
                 }
-            },
-            Parse::Download { mut header, mut data } => {
+            }
+            Parse::Download {
+                mut header,
+                mut data,
+            } => {
                 if header.len() < 3 {
                     header.push(byte);
                     if header.len() == 3 && header[2] < header[1] {
                         return;
                     }
                     self.parse = Parse::Download { header, data };
-                }
-                else {
+                } else {
                     data.push(byte);
                     let count = usize::from(header[2] - header[1]) + 1;
                     if data.len() < count * 12 {
                         self.parse = Parse::Download { header, data };
-                    }
-                    else {
+                    } else {
                         for (index, character) in data.chunks(12).enumerate() {
                             let code = usize::from(header[1]) + index;
                             let mut columns = [0u8; 11];
                             columns.copy_from_slice(&character[1..12]);
-                            self.downloads[code] = Some(Download { start: character[0] >> 4 & 7, columns });
+                            self.downloads[code] = Some(Download {
+                                start: character[0] >> 4 & 7,
+                                columns,
+                            });
                         }
                     }
                 }
@@ -605,14 +693,16 @@ impl Dmp2000 {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn export_now(&self) {
-        let Some(prefix) = &self.export_prefix else { return };
+        let Some(prefix) = &self.export_prefix else {
+            return;
+        };
         match self.write_files(prefix) {
             Ok(files) => {
                 for file in files {
                     eprintln!("printed: {}", file.display());
                 }
-            },
-            Err(e) => eprintln!("{prefix}: {e}")
+            }
+            Err(e) => eprintln!("{prefix}: {e}"),
         }
     }
 
@@ -622,7 +712,7 @@ impl Dmp2000 {
     fn idle_byte(&mut self, byte: u8) {
         match byte {
             ESC => self.parse = Parse::Esc,
-            0x07 | 0x00 | 0x11 | 0x13 | 0x18 | 0x7f => {}, // BEL, NUL, DC1, DC3, CAN, DEL
+            0x07 | 0x00 | 0x11 | 0x13 | 0x18 | 0x7f => {} // BEL, NUL, DC1, DC3, CAN, DEL
             0x08 => self.x = (self.x - self.cell_width()).max(self.left),
             0x09 => self.horizontal_tab(),
             0x0a => self.line_feed(),
@@ -631,13 +721,13 @@ impl Dmp2000 {
             0x0d => {
                 self.work((self.x - self.left).max(0) as u32 * HEAD_RETURN_US_PER_PIXEL);
                 self.x = self.left;
-            },
+            }
             0x0e => self.double_width = true,
             0x0f => self.condensed = true,
             0x12 => self.condensed = false,
             0x14 => self.double_width = false,
-            0..=0x1f if !self.control_code_printing => {},
-            _ => self.print_character(byte)
+            0..=0x1f if !self.control_code_printing => {}
+            _ => self.print_character(byte),
         }
     }
 
@@ -646,7 +736,7 @@ impl Dmp2000 {
             // no parameters
             b'@' => {
                 self.reset_settings();
-            },
+            }
             b'<' => self.x = self.left,
             b'=' => self.eighth_bit = EighthBit::Unset,
             b'>' => self.eighth_bit = EighthBit::Set,
@@ -658,7 +748,7 @@ impl Dmp2000 {
             b'5' => self.italic = false,
             b'6' => self.extended_codes = true,
             b'7' => self.extended_codes = false,
-            b'8' | b'9' => {},
+            b'8' | b'9' => {}
             b'E' => self.bold = true,
             b'F' => self.bold = false,
             b'G' => self.double_strike = true,
@@ -669,13 +759,43 @@ impl Dmp2000 {
             b'T' => self.script = None,
             0x0e => self.double_width = true,
             0x0f => self.condensed = true,
-            b'D' => self.parse = Parse::List { command: byte, channel: None, wants_channel: false, items: Vec::new() },
-            b'B' => self.parse = Parse::List { command: byte, channel: None, wants_channel: false, items: Vec::new() },
-            b'b' => self.parse = Parse::List { command: byte, channel: None, wants_channel: true, items: Vec::new() },
-            b'&' => self.parse = Parse::Download { header: Vec::new(), data: Vec::new() },
+            b'D' => {
+                self.parse = Parse::List {
+                    command: byte,
+                    channel: None,
+                    wants_channel: false,
+                    items: Vec::new(),
+                }
+            }
+            b'B' => {
+                self.parse = Parse::List {
+                    command: byte,
+                    channel: None,
+                    wants_channel: false,
+                    items: Vec::new(),
+                }
+            }
+            b'b' => {
+                self.parse = Parse::List {
+                    command: byte,
+                    channel: None,
+                    wants_channel: true,
+                    items: Vec::new(),
+                }
+            }
+            b'&' => {
+                self.parse = Parse::Download {
+                    header: Vec::new(),
+                    data: Vec::new(),
+                }
+            }
             _ => {
                 if let Some(want) = Self::parameter_count(byte) {
-                    self.parse = Parse::Params { command: byte, want, got: Vec::new() };
+                    self.parse = Parse::Params {
+                        command: byte,
+                        want,
+                        got: Vec::new(),
+                    };
                 }
                 // an unknown code is ignored
             }
@@ -684,11 +804,11 @@ impl Dmp2000 {
 
     fn parameter_count(command: u8) -> Option<usize> {
         Some(match command {
-            b'!' | b'-' | b'/' | b'3' | b'A' | b'C' | b'I' | b'J' | b'N' | b'Q' | b'R' | b'S' | b'U' | b'W'
-            | b'i' | b'j' | b'l' | b'p' | b's' | b'x' => 1,
+            b'!' | b'-' | b'/' | b'3' | b'A' | b'C' | b'I' | b'J' | b'N' | b'Q' | b'R' | b'S'
+            | b'U' | b'W' | b'i' | b'j' | b'l' | b'p' | b's' | b'x' => 1,
             b'?' | b'%' | b'K' | b'L' | b'Y' | b'Z' => 2,
             b'*' | b'^' | b'{' | b':' => 3,
-            _ => return None
+            _ => return None,
         })
     }
 
@@ -703,7 +823,7 @@ impl Dmp2000 {
                 self.double_width = n & 32 != 0;
                 self.italic = n & 64 != 0;
                 self.underline = n & 128 != 0;
-            },
+            }
             b'-' => self.underline = n & 1 != 0,
             b'/' => self.channel = usize::from(n & 7),
             b'3' => self.feed = i32::from(n),
@@ -711,11 +831,10 @@ impl Dmp2000 {
             b'C' => {
                 if params.len() == 2 {
                     self.page_length = i32::from(params[1]).clamp(1, 22) * FEED_UNITS_PER_INCH;
-                }
-                else {
+                } else {
                     self.page_length = i32::from(n).clamp(1, 127) * self.feed;
                 }
-            },
+            }
             b'I' => self.control_code_printing = n & 1 != 0,
             b'J' => self.advance_paper(i32::from(n)),
             b'j' => self.advance_paper(-i32::from(n)),
@@ -723,44 +842,50 @@ impl Dmp2000 {
             b'Q' => self.right = (i32::from(n) * self.plain_cell_width()).clamp(1, LINE_PX),
             b'l' => self.left = (i32::from(n) * self.plain_cell_width()).min(LINE_PX),
             b'R' => self.international_set = n.min(8),
-            b'S' => self.script = Some(if n & 1 != 0 { Script::Sub } else { Script::Super }),
-            b'U' | b's' | b'i' => {},
+            b'S' => {
+                self.script = Some(if n & 1 != 0 {
+                    Script::Sub
+                } else {
+                    Script::Super
+                })
+            }
+            b'U' | b's' | b'i' => {}
             b'W' => self.double_width = n & 1 != 0,
             b'p' => self.proportional = n & 1 != 0,
             b'x' => self.nlq = n & 1 != 0,
             b'%' => self.download_selected = n & 1 != 0,
-            b':' => {}, // the internal set is what the download set falls back to
+            b':' => {} // the internal set is what the download set falls back to
             b'?' => {
                 let which = match n {
                     b'K' => Some(0),
                     b'L' => Some(1),
                     b'Y' => Some(2),
                     b'Z' => Some(3),
-                    _ => None
+                    _ => None,
                 };
                 if let Some(which) = which {
                     self.density_modes[which] = params[1];
                 }
-            },
+            }
             b'K' | b'L' | b'Y' | b'Z' => {
                 let which = match command {
                     b'K' => 0,
                     b'L' => 1,
                     b'Y' => 2,
-                    _ => 3
+                    _ => 3,
                 };
                 let count = usize::from(params[0]) + 256 * usize::from(params[1]);
                 self.start_graphics(self.density_modes[which], false, count);
-            },
+            }
             b'*' => {
                 let count = usize::from(params[1]) + 256 * usize::from(params[2]);
                 self.start_graphics(n, false, count);
-            },
+            }
             b'^' | b'{' => {
                 let count = usize::from(params[1]) + 256 * usize::from(params[2]);
                 // 0: 480 dots, 4: 960 dots
                 self.start_graphics(if n == 4 { 1 } else { 0 }, true, count);
-            },
+            }
             _ => {}
         }
     }
@@ -769,16 +894,17 @@ impl Dmp2000 {
         match command {
             b'D' => {
                 self.horizontal_tabs = items.iter().map(|&column| i32::from(column)).collect();
-            },
+            }
             b'B' => {
                 let feed = self.feed;
                 self.vertical_tabs[0] = items.iter().map(|&line| i32::from(line) * feed).collect();
-            },
+            }
             b'b' => {
                 let feed = self.feed;
                 let channel = usize::from(channel.unwrap_or(0) & 7);
-                self.vertical_tabs[channel] = items.iter().map(|&line| i32::from(line) * feed).collect();
-            },
+                self.vertical_tabs[channel] =
+                    items.iter().map(|&line| i32::from(line) * feed).collect();
+            }
             _ => {}
         }
     }
@@ -810,7 +936,11 @@ impl Dmp2000 {
 
     /// The right margin, unless it is not past the left one (then it is ignored).
     fn right_limit(&self) -> i32 {
-        if self.right > self.left { self.right } else { LINE_PX }
+        if self.right > self.left {
+            self.right
+        } else {
+            LINE_PX
+        }
     }
 
     fn next_page(&mut self) {
@@ -829,10 +959,13 @@ impl Dmp2000 {
     fn vertical_tab(&mut self) {
         self.flush_line();
         let top = TOP_OF_FORM;
-        let next = self.vertical_tabs[self.channel].iter().map(|&tab| top + tab).find(|&tab| tab > self.y);
+        let next = self.vertical_tabs[self.channel]
+            .iter()
+            .map(|&tab| top + tab)
+            .find(|&tab| tab > self.y);
         match next {
             Some(tab) => self.y = tab,
-            None => self.advance_paper(self.feed)
+            None => self.advance_paper(self.feed),
         }
     }
 
@@ -841,9 +974,11 @@ impl Dmp2000 {
         let column = self.x / cell.max(1);
         let target = if self.horizontal_tabs.is_empty() {
             Some((column / 8 + 1) * 8)
-        }
-        else {
-            self.horizontal_tabs.iter().copied().find(|&tab| tab > column)
+        } else {
+            self.horizontal_tabs
+                .iter()
+                .copied()
+                .find(|&tab| tab > column)
         };
         if let Some(target) = target {
             self.x = (target * cell).min(self.right_limit());
@@ -896,8 +1031,7 @@ impl Dmp2000 {
         let plain = self.plain_cell_width();
         if self.double_width {
             plain * 2
-        }
-        else {
+        } else {
             plain
         }
     }
@@ -908,45 +1042,72 @@ impl Dmp2000 {
             (false, false) => 24, // 10 cpi
             (true, false) => 20,  // 12 cpi
             (false, true) => 14,  // 17 cpi
-            (true, true) => 12    // 20 cpi
+            (true, true) => 12,   // 20 cpi
         }
     }
 
     fn glyph(&self, code: u8) -> Glyph {
         if self.download_selected {
             if let Some(download) = &self.downloads[usize::from(code)] {
-                let columns: Vec<u16> = download.columns.iter().map(|&data| pins_of(data)).collect();
+                let columns: Vec<u16> =
+                    download.columns.iter().map(|&data| pins_of(data)).collect();
                 let first = usize::from(download.start).min(columns.len());
-                return Glyph { columns, second: None, descent: 0, first, last: 10 };
+                return Glyph {
+                    columns,
+                    second: None,
+                    descent: 0,
+                    first,
+                    last: 10,
+                };
             }
         }
         if let Some(font) = &self.real_font {
             // the country's character is in the codes below 32 of the EPROM
             let code = match self.national_char(code) {
                 Some(character) => dmp2000_charsets::eprom_code(character),
-                None => Some(code)
+                None => Some(code),
             };
             if let Some(real) = code.and_then(|code| font.get(usize::from(code))) {
                 let first = usize::from(real.attribute >> 4 & 7);
                 let last = usize::from(real.attribute & 15).saturating_sub(1).min(10);
-                let pass = |which: usize| -> Vec<u16> { real.pass[which].iter().map(|&data| pins_of(data)).collect() };
+                let pass = |which: usize| -> Vec<u16> {
+                    real.pass[which].iter().map(|&data| pins_of(data)).collect()
+                };
                 // the draft is one pass: the two of the letter quality together
                 return Glyph {
-                    columns: if self.nlq { pass(0) } else { pass(0).iter().zip(pass(1)).map(|(a, b)| a | b).collect() },
+                    columns: if self.nlq {
+                        pass(0)
+                    } else {
+                        pass(0).iter().zip(pass(1)).map(|(a, b)| a | b).collect()
+                    },
                     second: self.nlq.then(|| pass(1)),
                     descent: i32::from(real.attribute & 0x80 == 0),
                     first,
-                    last
+                    last,
                 };
             }
         }
         let rows = &self.rom_glyph(code);
         let columns: Vec<u16> = (0..8)
-            .map(|column| (0..8).filter(|row| rows[*row] & (0x80 >> column) != 0).map(|row| 1u16 << row).sum::<u16>())
+            .map(|column| {
+                (0..8)
+                    .filter(|row| rows[*row] & (0x80 >> column) != 0)
+                    .map(|row| 1u16 << row)
+                    .sum::<u16>()
+            })
             .collect();
         let used: Vec<usize> = (0..8).filter(|&column| columns[column] != 0).collect();
-        let (first, last) = (used.first().copied().unwrap_or(0), used.last().copied().unwrap_or(0));
-        Glyph { columns, second: None, descent: 0, first, last }
+        let (first, last) = (
+            used.first().copied().unwrap_or(0),
+            used.last().copied().unwrap_or(0),
+        );
+        Glyph {
+            columns,
+            second: None,
+            descent: 0,
+            first,
+            last,
+        }
     }
 
     /// The country's own character at `code`, when it has one.
@@ -966,11 +1127,15 @@ impl Dmp2000 {
         let glyph = self.glyph(code);
         let cell = self.cell_width();
         let advance = if self.proportional && !self.download_selected {
-            let columns = if code == b' ' { 5 } else { glyph.last.saturating_sub(glyph.first) + 1 + 2 };
-            let column_width = self.plain_cell_width() as f32 / 12.0 * if self.double_width { 2.0 } else { 1.0 };
+            let columns = if code == b' ' {
+                5
+            } else {
+                glyph.last.saturating_sub(glyph.first) + 1 + 2
+            };
+            let column_width =
+                self.plain_cell_width() as f32 / 12.0 * if self.double_width { 2.0 } else { 1.0 };
             (columns as f32 * column_width).round() as i32
-        }
-        else {
+        } else {
             cell
         };
 
@@ -983,11 +1148,9 @@ impl Dmp2000 {
 
         let printable = if let Some(character) = self.national_char(code) {
             Some(character)
-        }
-        else if (0x20..0x7f).contains(&code) || code >= 0xa0 {
+        } else if (0x20..0x7f).contains(&code) || code >= 0xa0 {
             Some(char::from(code))
-        }
-        else {
+        } else {
             None
         };
         if let Some(character) = printable {
@@ -1007,20 +1170,20 @@ impl Dmp2000 {
         let column_pitch = self.plain_cell_width() as f32 / 12.0 * double;
         let shift = if self.proportional && !self.download_selected {
             glyph.first as f32 * column_pitch - column_pitch
-        }
-        else {
+        } else {
             0.0
         };
         let passes: &[(f32, f32)] = match (self.bold || self.nlq, self.double_strike || self.nlq) {
             (false, false) => &[(0.0, 0.0)],
             (true, false) => &[(0.0, 0.0), (1.0, 0.0)],
             (false, true) => &[(0.0, 0.0), (0.0, 1.0)],
-            (true, true) => &[(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
+            (true, true) => &[(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)],
         };
         let strength = if passes.len() == 1 { 0.85 } else { 0.6 };
         let radius = if self.nlq { 1.2 } else { 1.5 } * if self.condensed { 0.9 } else { 1.0 };
 
-        let layers = std::iter::once((&glyph.columns, 0.0, 0.0)).chain(glyph.second.as_ref().map(|second| (second, 1.0, 1.0)));
+        let layers = std::iter::once((&glyph.columns, 0.0, 0.0))
+            .chain(glyph.second.as_ref().map(|second| (second, 1.0, 1.0)));
         for (columns, layer_dx, layer_dy) in layers {
             for (column, &pins) in columns.iter().enumerate() {
                 for pin in 0..8 {
@@ -1032,13 +1195,32 @@ impl Dmp2000 {
                     let row = match self.script {
                         None => needle as f32,
                         Some(Script::Super) => needle as f32 / 2.0,
-                        Some(Script::Sub) => needle as f32 / 2.0 + 5.0
+                        Some(Script::Sub) => needle as f32 / 2.0 + 5.0,
                     };
-                    let slant = if self.italic { (7.0 - pin as f32) * column_pitch / 4.0 } else { 0.0 };
+                    let slant = if self.italic {
+                        (7.0 - pin as f32) * column_pitch / 4.0
+                    } else {
+                        0.0
+                    };
                     // a double width dot is struck twice, side by side
-                    let sides: &[f32] = if self.double_width { &[0.0, 0.5] } else { &[0.0] };
-                    for (&(dx, dy), &side) in passes.iter().flat_map(|pass| sides.iter().map(move |side| (pass, side))) {
-                        let x = side * column_pitch + LEFT_PX as f32 + self.x as f32 + column as f32 * column_pitch + 1.0 - shift + slant + dx + layer_dx;
+                    let sides: &[f32] = if self.double_width {
+                        &[0.0, 0.5]
+                    } else {
+                        &[0.0]
+                    };
+                    for (&(dx, dy), &side) in passes
+                        .iter()
+                        .flat_map(|pass| sides.iter().map(move |side| (pass, side)))
+                    {
+                        let x = side * column_pitch
+                            + LEFT_PX as f32
+                            + self.x as f32
+                            + column as f32 * column_pitch
+                            + 1.0
+                            - shift
+                            + slant
+                            + dx
+                            + layer_dx;
                         let y = self.head_px() + feed_px(PIN_PITCH) * row + dy + layer_dy;
                         self.strike(x, y, radius, strength);
                     }
@@ -1050,7 +1232,12 @@ impl Dmp2000 {
             let mut x = 0.0;
             let cell = self.cell_width() as f32;
             while x < cell {
-                self.strike(LEFT_PX as f32 + self.x as f32 + x + 1.0, self.head_px() + feed_px(PIN_PITCH) * 8.0, 1.2, 0.85);
+                self.strike(
+                    LEFT_PX as f32 + self.x as f32 + x + 1.0,
+                    self.head_px() + feed_px(PIN_PITCH) * 8.0,
+                    1.2,
+                    0.85,
+                );
                 x += pitch;
             }
         }
@@ -1070,13 +1257,13 @@ impl Dmp2000 {
     /// Pixels between two dots of the bit image mode.
     fn dot_pitch(mode: u8) -> f32 {
         match mode {
-            0 => 4.0,      // 480 dots in 8 inch
-            1 | 2 => 2.0,  // 960
-            3 => 1.0,      // 1920
-            4 => 3.75,     // 640
+            0 => 4.0,     // 480 dots in 8 inch
+            1 | 2 => 2.0, // 960
+            3 => 1.0,     // 1920
+            4 => 3.75,    // 640
             5 => 8.0 * DPI as f32 / 576.0,
             6 => 8.0 * DPI as f32 / 720.0,
-            _ => 4.0
+            _ => 4.0,
         }
     }
 
@@ -1085,7 +1272,13 @@ impl Dmp2000 {
             return;
         }
         let bytes = count * if nine_pin { 2 } else { 1 };
-        self.parse = Parse::Graphics { mode, nine_pin, remaining: bytes, column: Vec::new(), dots: 0 };
+        self.parse = Parse::Graphics {
+            mode,
+            nine_pin,
+            remaining: bytes,
+            column: Vec::new(),
+            dots: 0,
+        };
     }
 
     fn graphics_column(&mut self, mode: u8, column: &[u8], dots: i32) {
@@ -1151,7 +1344,12 @@ mod test {
     }
 
     fn ink(printer: &Dmp2000) -> u64 {
-        printer.pages().iter().flat_map(|page| page.ink.iter().flatten().flat_map(|row| row.iter())).map(|&ink| u64::from(ink)).sum()
+        printer
+            .pages()
+            .iter()
+            .flat_map(|page| page.ink.iter().flatten().flat_map(|row| row.iter()))
+            .map(|&ink| u64::from(ink))
+            .sum()
     }
 
     #[test]
@@ -1166,7 +1364,13 @@ mod test {
     fn a_new_page_after_a_form_feed() {
         let mut printer = printer();
         send(&mut printer, b"one\x0ctwo");
-        assert_eq!(printer.inked_pages().map(|(index, _)| index).collect::<Vec<_>>(), vec![0, 1]);
+        assert_eq!(
+            printer
+                .inked_pages()
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
     }
 
     #[test]
@@ -1181,7 +1385,12 @@ mod test {
     #[test]
     fn escape_sequences_are_not_printed() {
         let mut printer = printer();
-        send(&mut printer, &[ESC, b'E', b'A', ESC, b'F', ESC, b'-', 1, b'B', ESC, b'3', 20, b'C']);
+        send(
+            &mut printer,
+            &[
+                ESC, b'E', b'A', ESC, b'F', ESC, b'-', 1, b'B', ESC, b'3', 20, b'C',
+            ],
+        );
         assert_eq!(printer.text(), "ABC\n");
     }
 
@@ -1208,7 +1417,13 @@ mod test {
         assert!(top.abs_diff(ink(&other)) * 50 < top);
         let rows = |printer: &Dmp2000| -> Vec<i32> {
             let page = &printer.pages()[0];
-            (0..page.height).filter(|&y| page.ink[y as usize].as_ref().is_some_and(|row| row.iter().any(|&ink| ink > 0))).collect()
+            (0..page.height)
+                .filter(|&y| {
+                    page.ink[y as usize]
+                        .as_ref()
+                        .is_some_and(|row| row.iter().any(|&ink| ink > 0))
+                })
+                .collect()
         };
         assert!(rows(&other)[0] > rows(&printer)[0] + 15);
     }
@@ -1216,7 +1431,10 @@ mod test {
     #[test]
     fn a_nine_pin_column_takes_two_bytes() {
         let mut printer = printer();
-        send(&mut printer, &[ESC, b'^', 0, 2, 0, 0xff, 0x00, 0x80, 0x00, b'A']);
+        send(
+            &mut printer,
+            &[ESC, b'^', 0, 2, 0, 0xff, 0x00, 0x80, 0x00, b'A'],
+        );
         assert_eq!(printer.text(), "A\n");
     }
 
@@ -1243,7 +1461,12 @@ mod test {
         for value in [b'H', b'H' | 0x80, b'H', b'i', b'i' | 0x80, b'i'] {
             port.latch(value);
         }
-        let device = port.device().unwrap().as_any().downcast_ref::<Dmp2000>().unwrap();
+        let device = port
+            .device()
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Dmp2000>()
+            .unwrap();
         assert_eq!(device.raw(), b"Hi");
     }
 
@@ -1271,7 +1494,10 @@ mod test {
         }
         assert!(!std::path::Path::new(&format!("{prefix}.txt")).exists());
         printer.advance_us();
-        assert_eq!(std::fs::read_to_string(format!("{prefix}.txt")).unwrap(), "Hi\n");
+        assert_eq!(
+            std::fs::read_to_string(format!("{prefix}.txt")).unwrap(),
+            "Hi\n"
+        );
         assert_eq!(std::fs::read(format!("{prefix}.prn")).unwrap(), b"Hi\r\n");
         assert!(std::path::Path::new(&format!("{prefix}_001.png")).exists());
         for extension in ["txt", "prn"] {
@@ -1346,7 +1572,11 @@ mod test {
             assert_eq!(printer.inked_pages().count(), page + 1);
         }
         // the first line of each is at the top, not one line further each time
-        let rows = |page: &Page| (0..page.height).find(|&y| page.ink[y as usize].is_some()).unwrap();
+        let rows = |page: &Page| {
+            (0..page.height)
+                .find(|&y| page.ink[y as usize].is_some())
+                .unwrap()
+        };
         let first = rows(&printer.pages()[0]);
         assert_eq!(rows(&printer.pages()[2]), first);
         assert!(first < DPI / 4);
@@ -1400,7 +1630,10 @@ mod test {
     fn the_printers_own_characters_come_from_its_eprom() {
         let mut printer = printer();
         assert!(printer.load_font_rom(&[0; 100]).is_err());
-        assert!(printer.load_font_rom(&vec![0; 0x4000]).is_err(), "no A in it");
+        assert!(
+            printer.load_font_rom(&vec![0; 0x4000]).is_err(),
+            "no A in it"
+        );
         printer.load_font_rom(&eprom()).unwrap();
         let glyph = printer.glyph(b'A');
         // 11 columns; the draft is the two passes together
@@ -1440,7 +1673,9 @@ mod test {
         send(&mut low, b"g");
         let first_row = |printer: &Dmp2000| {
             let page = &printer.pages()[0];
-            (0..page.height).find(|&y| page.ink[y as usize].is_some()).unwrap()
+            (0..page.height)
+                .find(|&y| page.ink[y as usize].is_some())
+                .unwrap()
         };
         // 'A' has all its needles, 'g' only the top one: that one is a needle (1/72 inch) lower
         assert!(first_row(&low) > first_row(&high));

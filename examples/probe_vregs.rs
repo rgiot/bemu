@@ -17,10 +17,25 @@ fn main() {
     for t in 0..ticks {
         mb.tick();
         let c = mb.crtc();
-        let r9 = if std::env::var("WITH_R9").is_ok() { c.r9() } else { 0 };
+        let r9 = if std::env::var("WITH_R9").is_ok() {
+            c.r9()
+        } else {
+            0
+        };
         let now = (c.r4(), c.r7(), r9, c.vsync());
         if now != last && shown < max {
-            println!("t={t:8} R4={} R7={} R9={} VS={} R5={} R6={} | C4={:?} C9={} C0={}", now.0, now.1, now.2, now.3, c.r5(), c.r6(), c.vcc, c.vlc.value(), c.hcc);
+            println!(
+                "t={t:8} R4={} R7={} R9={} VS={} R5={} R6={} | C4={:?} C9={} C0={}",
+                now.0,
+                now.1,
+                now.2,
+                now.3,
+                c.r5(),
+                c.r6(),
+                c.vcc,
+                c.vlc.value(),
+                c.hcc
+            );
             shown += 1;
         }
         last = now;

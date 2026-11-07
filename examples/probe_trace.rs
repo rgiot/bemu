@@ -23,7 +23,9 @@ fn main() {
     }
     for i in 0..(n + skip) {
         let p = mb.pc();
-        let bytes: Vec<String> = (0..4).map(|k| format!("{:02X}", mb.read_byte(p.wrapping_add(k)))).collect();
+        let bytes: Vec<String> = (0..4)
+            .map(|k| format!("{:02X}", mb.read_byte(p.wrapping_add(k))))
+            .collect();
         if i >= skip {
             let c = mb.cpu();
             println!("{p:04X}: {} | A={:02X} F={:02X} B={:02X} C={:02X} D={:02X} E={:02X} H={:02X} L={:02X} SP={:04X}", bytes.join(" "),

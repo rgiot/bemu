@@ -13,7 +13,7 @@ const POLL: Duration = Duration::from_millis(250);
 pub enum Kind {
     Sna,
     Dsk(FdcDrive),
-    Cdt
+    Cdt,
 }
 
 /// A file's modification time and size: a change of either is a new file.
@@ -26,7 +26,7 @@ struct Watched {
     taken: Stamp,
     /// A change seen at the last look, taken once it stays as it is for a look more (the writer
     /// may not be done).
-    seen: Stamp
+    seen: Stamp,
 }
 
 fn stamp(path: &str) -> Stamp {
@@ -38,7 +38,7 @@ fn stamp(path: &str) -> Stamp {
 
 pub struct Watcher {
     files: Vec<Watched>,
-    next_poll: Instant
+    next_poll: Instant,
 }
 
 impl Watcher {
@@ -48,10 +48,18 @@ impl Watcher {
             .into_iter()
             .map(|(path, kind)| {
                 let taken = stamp(&path);
-                Watched { path, kind, taken, seen: taken }
+                Watched {
+                    path,
+                    kind,
+                    taken,
+                    seen: taken,
+                }
             })
             .collect();
-        Self { files, next_poll: Instant::now() + POLL }
+        Self {
+            files,
+            next_poll: Instant::now() + POLL,
+        }
     }
 
     /// `path` changed because the emulator wrote it: take it as it is now.

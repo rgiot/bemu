@@ -18,7 +18,9 @@ fn main() {
     loop {
         mb.tick();
         let vs = mb.crtc().vsync();
-        if vs && !prev_vs { break; }
+        if vs && !prev_vs {
+            break;
+        }
         prev_vs = vs;
     }
     let mut n = 0usize;
@@ -32,12 +34,19 @@ fn main() {
         let c = mb.crtc();
         if c.hcc != last_hcc {
             if c.hcc == 0 {
-                if !head.is_empty() { println!("{head} de={de:3} ma0={first_ma:04X} chars={seen_chars}"); n += 1; }
+                if !head.is_empty() {
+                    println!("{head} de={de:3} ma0={first_ma:04X} chars={seen_chars}");
+                    n += 1;
+                }
                 head = format!("line {n:3} C4={:3} C9={:2} R0={:2} R1={:2} R4={:3} R9={:2} R12={:02X} R13={:02X} vs={} r52={}", c.vcc.value(), c.vlc.value(), c.r0(), c.r1(), c.r4(), c.r9(), c.r12(), c.r13(), u8::from(c.vsync()), mb.ga().r52());
-                de = 0; seen_chars = 0; first_ma = c.vma();
+                de = 0;
+                seen_chars = 0;
+                first_ma = c.vma();
             }
             seen_chars += 1;
-            if c.get_pin(CrtcPin::DE) { de += 1; }
+            if c.get_pin(CrtcPin::DE) {
+                de += 1;
+            }
             last_hcc = c.hcc;
         }
     }

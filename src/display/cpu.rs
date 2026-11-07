@@ -39,14 +39,14 @@ struct Column {
     /// Index (before padding) of the first tap, in monitor pixels.
     first: i32,
     weights: [f32; TAPS],
-    channel: usize
+    channel: usize,
 }
 
 struct RowMix {
     /// The scanline of weight `a`; `b` is the next one. May be out of range.
     line: i32,
     a: f32,
-    b: f32
+    b: f32,
 }
 
 struct Tables {
@@ -63,7 +63,7 @@ struct Tables {
     channel_masks: [Vec<f32>; 3],
     /// `gain` and the calibration of the mask's losses.
     scale: f32,
-    linear: [f32; 256]
+    linear: [f32; 256],
 }
 
 impl Tables {
@@ -82,10 +82,16 @@ impl Tables {
             }
             let sum: f32 = weights.iter().sum();
             weights.iter_mut().for_each(|w| *w /= sum);
-            Column { first, weights, channel }
+            Column {
+                first,
+                weights,
+                channel,
+            }
         };
         // the beam is read at the slot's centre
-        let columns = (0..out_w).map(|x| column(((x / slot) as f32 + 0.5) * slot as f32, p.channel(x))).collect();
+        let columns = (0..out_w)
+            .map(|x| column(((x / slot) as f32 + 0.5) * slot as f32, p.channel(x)))
+            .collect();
         // the taps of a beam at `u` (in monitor pixels) only depend on frac(u - 1/2): see `column`
         let phase_columns = (0..PHASES)
             .map(|phase| column((phase as f32 / PHASES as f32 + 0.5) * ratio, 0).weights)
@@ -103,7 +109,11 @@ impl Tables {
                 let f = (y as f32 + 0.5) / p.rows_per_line as f32 - 0.5;
                 let line = f.floor() as i32;
                 let gauss = |d: f32| (-d * d / (2.0 * p.beam_sigma_v * p.beam_sigma_v)).exp();
-                RowMix { line, a: gauss(f - line as f32), b: gauss(line as f32 + 1.0 - f) }
+                RowMix {
+                    line,
+                    a: gauss(f - line as f32),
+                    b: gauss(line as f32 + 1.0 - f),
+                }
             })
             .collect();
 
@@ -111,7 +121,11 @@ impl Tables {
             .map(|y| (0..out_w).map(|x| p.slot_distance(x, y)).collect())
             .collect();
 
-        let mut channel_masks = [vec![0.0; out_w + 2 * slot], vec![0.0; out_w + 2 * slot], vec![0.0; out_w + 2 * slot]];
+        let mut channel_masks = [
+            vec![0.0; out_w + 2 * slot],
+            vec![0.0; out_w + 2 * slot],
+            vec![0.0; out_w + 2 * slot],
+        ];
         for x in 0..out_w {
             channel_masks[p.channel(x)][x + slot] = 1.0;
         }
@@ -121,7 +135,16 @@ impl Tables {
             *l = (level as f32 / 255.0).powi(2);
         }
 
-        Self { columns, phase_columns, phase_rows, rows, mask, channel_masks, scale: p.gain * p.white_norm(), linear }
+        Self {
+            columns,
+            phase_columns,
+            phase_rows,
+            rows,
+            mask,
+            channel_masks,
+            scale: p.gain * p.white_norm(),
+            linear,
+        }
     }
 }
 
@@ -136,20 +159,34 @@ pub struct CpuCrt {
     /// The glass the picture is seen through.
     warp: Warp,
     /// With curved glass: every scanline in linear light.
-    planes: Vec<Planes>
+    planes: Vec<Planes>,
 }
 
 impl CpuCrt {
     pub fn new(params: CrtParams) -> Self {
         let (out_w, _) = params.output_size();
         let tables = Tables::new(&params);
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
-        Self { params, tables, lines: vec![0.0; SRC_HEIGHT * out_w], zeros: vec![0.0; out_w], threads, warp: Warp::FLAT, planes: Vec::new() }
+        let threads = std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .min(16);
+        Self {
+            params,
+            tables,
+            lines: vec![0.0; SRC_HEIGHT * out_w],
+            zeros: vec![0.0; out_w],
+            threads,
+            warp: Warp::FLAT,
+            planes: Vec::new(),
+        }
     }
 
     /// The same tube seen through the glass `warp`.
     pub fn curved(mut self, warp: Warp) -> Self {
-        self.planes = if warp.is_flat() { Vec::new() } else { vec![[[0.0; SRC_WIDTH + 2 * PAD]; 3]; SRC_HEIGHT] };
+        self.planes = if warp.is_flat() {
+            Vec::new()
+        } else {
+            vec![[[0.0; SRC_WIDTH + 2 * PAD]; 3]; SRC_HEIGHT]
+        };
         self.warp = warp;
         self
     }
@@ -181,7 +218,13 @@ impl CpuCrt {
     }
 
     /// Pass 1 for the scanlines `first..first + lines.len() / out_w`.
-    fn horizontal(params: &CrtParams, tables: &Tables, src: &RgbImage, first: usize, lines: &mut [f32]) {
+    fn horizontal(
+        params: &CrtParams,
+        tables: &Tables,
+        src: &RgbImage,
+        first: usize,
+        lines: &mut [f32],
+    ) {
         let out_w = params.output_size().0;
         let mut planes: Planes = [[0.0f32; SRC_WIDTH + 2 * PAD]; 3];
         for (n, out) in lines.chunks_exact_mut(out_w).enumerate() {
@@ -202,16 +245,24 @@ impl CpuCrt {
         lines: &[f32],
         zeros: &[f32],
         first: usize,
-        dst: &mut [u32]
+        dst: &mut [u32],
     ) {
         let out_w = params.output_size().0;
         let slot = params.slot_px();
         let pitch = params.pitch_rows();
         let line_of = |j: i32| -> &[f32] {
-            if (0..SRC_HEIGHT as i32).contains(&j) { &lines[j as usize * out_w..][..out_w] } else { zeros }
+            if (0..SRC_HEIGHT as i32).contains(&j) {
+                &lines[j as usize * out_w..][..out_w]
+            } else {
+                zeros
+            }
         };
         // light of each gun, with `slot` zeros on each side for the halation
-        let mut lit = [vec![0.0f32; out_w + 2 * slot], vec![0.0f32; out_w + 2 * slot], vec![0.0f32; out_w + 2 * slot]];
+        let mut lit = [
+            vec![0.0f32; out_w + 2 * slot],
+            vec![0.0f32; out_w + 2 * slot],
+            vec![0.0f32; out_w + 2 * slot],
+        ];
 
         for (n, out) in dst.chunks_exact_mut(out_w).enumerate() {
             let y = first + n;
@@ -224,8 +275,16 @@ impl CpuCrt {
             // Equal-length slices, so the loops below have no bounds checks
             // and vectorise.
             let (la, lb, distance) = (&la[..n], &lb[..n], &distance[..n]);
-            let (m0, m1, m2) = (&masks[0][slot..][..n], &masks[1][slot..][..n], &masks[2][slot..][..n]);
-            let (rc, gc, bc) = (&mut r[slot..][..n], &mut g[slot..][..n], &mut b[slot..][..n]);
+            let (m0, m1, m2) = (
+                &masks[0][slot..][..n],
+                &masks[1][slot..][..n],
+                &masks[2][slot..][..n],
+            );
+            let (rc, gc, bc) = (
+                &mut r[slot..][..n],
+                &mut g[slot..][..n],
+                &mut b[slot..][..n],
+            );
             for x in 0..n {
                 let level = mix.a * la[x] + mix.b * lb[x];
                 let light = level * coverage(distance[x], params.spill, level) * tables.scale;
@@ -260,7 +319,14 @@ impl CpuCrt {
 impl CpuCrt {
     /// Pass 2 with curved glass, for the output rows `first..`: each slot reads the beam at its
     /// centre's place on the bent raster; the mask itself does not move.
-    fn vertical_curved(params: &CrtParams, tables: &Tables, warp: Warp, planes: &[Planes], first: usize, dst: &mut [u32]) {
+    fn vertical_curved(
+        params: &CrtParams,
+        tables: &Tables,
+        warp: Warp,
+        planes: &[Planes],
+        first: usize,
+        dst: &mut [u32],
+    ) {
         let (out_w, out_h) = params.output_size();
         let slot = params.slot_px();
         let pitch = params.pitch_rows();
@@ -269,7 +335,10 @@ impl CpuCrt {
         // the beam of gun `c` on scanline `j` at `u` - 1/2 = `i` + `weights`' phase (monitor pixels)
         let beam = |j: i32, c: usize, i: i32, weights: &[f32; TAPS]| -> f32 {
             let base = i - 1 + PAD as i32;
-            if !(0..SRC_HEIGHT as i32).contains(&j) || base < 0 || base as usize + TAPS > SRC_WIDTH + 2 * PAD {
+            if !(0..SRC_HEIGHT as i32).contains(&j)
+                || base < 0
+                || base as usize + TAPS > SRC_WIDTH + 2 * PAD
+            {
                 return 0.0;
             }
             let plane = &planes[j as usize][c][base as usize..][..TAPS];
@@ -277,9 +346,16 @@ impl CpuCrt {
         };
         let phase = |v: f32| -> (i32, usize) {
             let whole = v.floor();
-            (whole as i32, (((v - whole) * PHASES as f32) as usize).min(PHASES - 1))
+            (
+                whole as i32,
+                (((v - whole) * PHASES as f32) as usize).min(PHASES - 1),
+            )
         };
-        let mut lit = [vec![0.0f32; out_w + 2 * slot], vec![0.0f32; out_w + 2 * slot], vec![0.0f32; out_w + 2 * slot]];
+        let mut lit = [
+            vec![0.0f32; out_w + 2 * slot],
+            vec![0.0f32; out_w + 2 * slot],
+            vec![0.0f32; out_w + 2 * slot],
+        ];
         for (n, out) in dst.chunks_exact_mut(out_w).enumerate() {
             let y = first + n;
             let v = (y as f32 + 0.5) * pixel.1;
@@ -290,20 +366,24 @@ impl CpuCrt {
             for x in 0..out_w {
                 let centre = ((x / slot) as f32 + 0.5) * slot as f32;
                 let (su, sv, _) = warp.source(centre * pixel.0, v, pixel);
-                let (line, row_phase) = phase(sv * out_h as f32 / params.rows_per_line as f32 - 0.5);
+                let (line, row_phase) =
+                    phase(sv * out_h as f32 / params.rows_per_line as f32 - 0.5);
                 let (a, b) = tables.phase_rows[row_phase];
                 let (i, column_phase) = phase(su * out_w as f32 / ratio - 0.5);
                 let weights = &tables.phase_columns[column_phase];
                 let c = params.channel(x);
                 let level = a * beam(line, c, i, weights) + b * beam(line + 1, c, i, weights);
-                lit[c][x + slot] = level * coverage(distance[x], params.spill, level) * tables.scale;
+                lit[c][x + slot] =
+                    level * coverage(distance[x], params.spill, level) * tables.scale;
             }
             Self::finish_row(params, &lit, out);
             // the glass's rounded edge fades the pixels themselves (as `crt.wgsl`)
             for (x, pixel_out) in out.iter_mut().enumerate() {
                 let (_, _, alpha) = warp.source((x as f32 + 0.5) * pixel.0, v, pixel);
                 if alpha < 1.0 {
-                    let fade = |shift: u32| ((((*pixel_out >> shift) & 0xff) as f32 * alpha) as u32) << shift;
+                    let fade = |shift: u32| {
+                        ((((*pixel_out >> shift) & 0xff) as f32 * alpha) as u32) << shift
+                    };
                     *pixel_out = fade(16) | fade(8) | fade(0);
                 }
             }
@@ -319,7 +399,15 @@ impl DisplayFilter for CpuCrt {
     fn render(&mut self, src: &RgbImage, dst: &mut [u32]) {
         let (out_w, out_h) = self.params.output_size();
         assert_eq!(dst.len(), out_w * out_h);
-        let Self { params, tables, lines, zeros, threads, warp, planes } = self;
+        let Self {
+            params,
+            tables,
+            lines,
+            zeros,
+            threads,
+            warp,
+            planes,
+        } = self;
         let (params, tables, threads, warp) = (&*params, &*tables, *threads, *warp);
 
         let band = |total: usize| total.div_ceil(threads).max(1);
@@ -330,7 +418,9 @@ impl DisplayFilter for CpuCrt {
             let planes: &[Planes] = planes;
             std::thread::scope(|scope| {
                 for (i, chunk) in dst.chunks_mut(band(out_h) * out_w).enumerate() {
-                    scope.spawn(move || Self::vertical_curved(params, tables, warp, planes, i * band(out_h), chunk));
+                    scope.spawn(move || {
+                        Self::vertical_curved(params, tables, warp, planes, i * band(out_h), chunk)
+                    });
                 }
             });
             return;
@@ -340,8 +430,7 @@ impl DisplayFilter for CpuCrt {
                 let first = i * band(SRC_HEIGHT);
                 if threads == 1 {
                     Self::horizontal(params, tables, src, first, chunk);
-                }
-                else {
+                } else {
                     scope.spawn(move || Self::horizontal(params, tables, src, first, chunk));
                 }
             }
@@ -352,8 +441,7 @@ impl DisplayFilter for CpuCrt {
                 let first = i * band(out_h);
                 if threads == 1 {
                     Self::vertical(params, tables, lines, zeros, first, chunk);
-                }
-                else {
+                } else {
                     scope.spawn(move || Self::vertical(params, tables, lines, zeros, first, chunk));
                 }
             }
@@ -409,7 +497,13 @@ mod test {
             let f = v - 0.5;
             let j = f.floor() as i32;
             let gauss = |d: f32| (-d * d / (2.0 * p.beam_sigma_v * p.beam_sigma_v)).exp();
-            let at = |j: i32| if (0..SRC_HEIGHT as i32).contains(&j) { horizontal[j as usize] } else { 0.0 };
+            let at = |j: i32| {
+                if (0..SRC_HEIGHT as i32).contains(&j) {
+                    horizontal[j as usize]
+                } else {
+                    0.0
+                }
+            };
             gauss(f - j as f32) * at(j) + gauss(j as f32 + 1.0 - f) * at(j + 1)
         };
         let light = |x: isize, channel: usize| -> f32 {
@@ -418,13 +512,19 @@ mod test {
                 return 0.0;
             }
             let level = level_at(x as usize, y);
-            level * coverage(p.slot_distance(x as usize, y), p.spill, level) * p.gain * p.white_norm()
+            level
+                * coverage(p.slot_distance(x as usize, y), p.spill, level)
+                * p.gain
+                * p.white_norm()
         };
         let slot = p.slot_px() as isize;
         let encode = |l: f32| (255.0 * l.clamp(0.0, 1.0).sqrt()).round() as u32;
         let channel = |c: usize| {
             let x = x as isize;
-            encode((1.0 - 2.0 * p.halation) * light(x, c) + p.halation * (light(x - slot, c) + light(x + slot, c)))
+            encode(
+                (1.0 - 2.0 * p.halation) * light(x, c)
+                    + p.halation * (light(x - slot, c) + light(x + slot, c)),
+            )
         };
         channel(0) << 16 | channel(1) << 8 | channel(2)
     }
@@ -433,12 +533,24 @@ mod test {
     fn matches_the_reference_model() {
         let mut src = RgbImage::new(SRC_WIDTH as u32, SRC_HEIGHT as u32);
         for (x, y, pixel) in src.enumerate_pixels_mut() {
-            *pixel = Rgb([(x * 7 % 256) as u8, (y * 5 % 256) as u8, ((x / 3 + y) * 11 % 256) as u8]);
+            *pixel = Rgb([
+                (x * 7 % 256) as u8,
+                (y * 5 % 256) as u8,
+                ((x / 3 + y) * 11 % 256) as u8,
+            ]);
         }
         let profile = CrtProfile::Ctm644;
         let (dst, w, _) = render(profile, &src);
         let p = profile.params();
-        for &(x, y) in &[(0usize, 0usize), (1, 1), (700, 400), (1439, 1087), (333, 2), (900, 903), (12, 640)] {
+        for &(x, y) in &[
+            (0usize, 0usize),
+            (1, 1),
+            (700, 400),
+            (1439, 1087),
+            (333, 2),
+            (900, 903),
+            (12, 640),
+        ] {
             let (a, b) = (dst[y * w + x], reference(&p, &src, x, y));
             for shift in [0, 8, 16] {
                 let d = ((a >> shift) & 255) as i32 - ((b >> shift) & 255) as i32;
@@ -483,7 +595,10 @@ mod test {
         assert!(mean > 100.0 && mean < 255.0, "mean green {mean}");
         // mid-picture, the mask's gaps make the rows differ
         let row = |y: usize| dst[y * w + w / 3..y * w + w / 3 + 30].to_vec();
-        assert!((0..4).any(|y| row(400 + y) != row(400)), "all rows alike in {h} rows");
+        assert!(
+            (0..4).any(|y| row(400 + y) != row(400)),
+            "all rows alike in {h} rows"
+        );
     }
 
     #[test]
@@ -499,15 +614,27 @@ mod test {
         let src = RgbImage::from_pixel(100, 50, Rgb([255, 255, 255]));
         let (dst, w, h) = render(CrtProfile::Ctm644, &src);
         assert!(dst[(h - 4) * w + w - 8] == 0);
-        assert!(dst[40 * w..41 * w][..200].iter().any(|&p| p != 0), "the picture itself must show");
+        assert!(
+            dst[40 * w..41 * w][..200].iter().any(|&p| p != 0),
+            "the picture itself must show"
+        );
     }
 
     #[test]
     fn unbent_glass_reads_the_beam_as_the_flat_model() {
-        let src = RgbImage::from_fn(SRC_WIDTH as u32, SRC_HEIGHT as u32, |x, y| Rgb([(x * 7 % 256) as u8, (y * 13 % 256) as u8, ((x + y) % 256) as u8]));
+        let src = RgbImage::from_fn(SRC_WIDTH as u32, SRC_HEIGHT as u32, |x, y| {
+            Rgb([
+                (x * 7 % 256) as u8,
+                (y * 13 % 256) as u8,
+                ((x + y) % 256) as u8,
+            ])
+        });
         let (flat, w, h) = render(CrtProfile::Ctm644, &src);
         // the curved passes, with no bulge and corners too small to cut a pixel
-        let mut curved = CpuCrt::new(CrtProfile::Ctm644.params()).curved(Warp { k: (0.0, 0.0), corner: 1e-6 });
+        let mut curved = CpuCrt::new(CrtProfile::Ctm644.params()).curved(Warp {
+            k: (0.0, 0.0),
+            corner: 1e-6,
+        });
         let mut dst = vec![0; w * h];
         curved.render(&src, &mut dst);
         for (i, (a, b)) in flat.iter().zip(&dst).enumerate() {
@@ -517,7 +644,12 @@ mod test {
             }
             for shift in [0, 8, 16] {
                 let (a, b) = ((a >> shift & 0xff) as i32, (b >> shift & 0xff) as i32);
-                assert!((a - b).abs() <= 1, "pixel ({}, {}): {a} / {b}", i % w, i / w);
+                assert!(
+                    (a - b).abs() <= 1,
+                    "pixel ({}, {}): {a} / {b}",
+                    i % w,
+                    i / w
+                );
             }
         }
     }
@@ -528,7 +660,8 @@ mod test {
         // gives the same light (warping the finished picture instead beats the R, G, B slots
         // against the pixel grid: 0.6 of 255 apart)
         let src = RgbImage::from_pixel(SRC_WIDTH as u32, SRC_HEIGHT as u32, Rgb([160, 160, 160]));
-        let mut filter = CpuCrt::new(CrtProfile::Ctm644.params()).curved(Warp::of(CrtProfile::Ctm644, 1.0));
+        let mut filter =
+            CpuCrt::new(CrtProfile::Ctm644.params()).curved(Warp::of(CrtProfile::Ctm644, 1.0));
         let (w, h) = filter.output_size();
         let mut dst = vec![0; w * h];
         filter.render(&src, &mut dst);
@@ -544,7 +677,10 @@ mod test {
                     }
                 }
                 let mean = sum.iter().sum::<f32>() / 3.0;
-                assert!(sum.iter().all(|s| (s - mean).abs() < 0.25), "block ({bx}, {by}): {sum:?}");
+                assert!(
+                    sum.iter().all(|s| (s - mean).abs() < 0.25),
+                    "block ({bx}, {by}): {sum:?}"
+                );
             }
         }
     }

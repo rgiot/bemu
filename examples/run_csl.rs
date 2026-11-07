@@ -9,7 +9,9 @@ use amsrust::csl_runner::CslRunner;
 fn main() {
     let mut args = std::env::args().skip(1);
     let (Some(script), Some(output)) = (args.next(), args.next()) else {
-        eprintln!("usage: run_csl <script.csl> <screenshot dir> [--drive-a 3|3.5] [--drive-b 3|3.5]");
+        eprintln!(
+            "usage: run_csl <script.csl> <screenshot dir> [--drive-a 3|3.5] [--drive-b 3|3.5]"
+        );
         std::process::exit(2);
     };
 
@@ -23,10 +25,14 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        let kind = args.next().unwrap_or_default().parse().unwrap_or_else(|e: String| {
-            eprintln!("{option}: {e}");
-            std::process::exit(2);
-        });
+        let kind = args
+            .next()
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or_else(|e: String| {
+                eprintln!("{option}: {e}");
+                std::process::exit(2);
+            });
         runner.set_drive_kind(unit, kind);
     }
     runner.set_verbose(true);
@@ -41,7 +47,7 @@ fn main() {
             for ignored in report.ignored {
                 eprintln!("ignored: {ignored}");
             }
-        },
+        }
         Err(error) => {
             eprintln!("{error}");
             std::process::exit(1);

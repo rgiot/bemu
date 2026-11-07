@@ -1,4 +1,3 @@
-
 use crate::chip::*;
 
 #[allow(non_camel_case_types)]
@@ -113,8 +112,7 @@ const PPI_PIN_DATA_C_BUS: [PpiPin; 8] = [
 /// the cassette write line on bit 5; the motor relay (bit 4) and the AY's BDIR/BC1 stay low.
 const PORT_C_FLOATING: u8 = 0x2f;
 
-#[derive(PartialEq, Clone, Copy)]
-#[derive(Default)]
+#[derive(PartialEq, Clone, Copy, Default)]
 pub enum PpiMode {
     #[default]
     Mode0,
@@ -122,9 +120,7 @@ pub enum PpiMode {
     Mode2,
 }
 
-
-#[derive(PartialEq)]
-#[derive(Default)]
+#[derive(PartialEq, Default)]
 pub enum PpiDirection {
     Input,
     #[default]
@@ -133,8 +129,7 @@ pub enum PpiDirection {
 
 /// The brand displayed by firmware
 #[repr(u8)]
-#[derive(Copy, Clone)]
-#[derive(Default)]
+#[derive(Copy, Clone, Default)]
 pub enum Brand {
     Lsp = 0,
     Triumph = 1,
@@ -155,7 +150,6 @@ pub enum ScreenRefresh {
     FiftyHz = 1,
     SixtyHz = 0,
 }
-
 
 pub struct Ppi {
     pins: PinsBuffer,
@@ -275,7 +269,7 @@ impl Ppi {
         let mode_a = match self.mode_a {
             PpiMode::Mode0 => 0,
             PpiMode::Mode1 => 1,
-            PpiMode::Mode2 => 2
+            PpiMode::Mode2 => 2,
         };
         0x80 | mode_a << 5
             | input(&self.direction_a) << 4
@@ -303,8 +297,16 @@ impl Ppi {
         if !self.clears_ports_on_mode_set {
             return 0xff;
         }
-        let upper = if self.direction_c_upper == PpiDirection::Output { 0xf0 } else { 0 };
-        let lower = if self.direction_c_lower == PpiDirection::Output { 0x0f } else { 0 };
+        let upper = if self.direction_c_upper == PpiDirection::Output {
+            0xf0
+        } else {
+            0
+        };
+        let lower = if self.direction_c_lower == PpiDirection::Output {
+            0x0f
+        } else {
+            0
+        };
         upper | lower
     }
 
@@ -315,8 +317,16 @@ impl Ppi {
         if !self.clears_ports_on_mode_set {
             return 0xff;
         }
-        let upper = if self.mode_a == PpiMode::Mode0 { 0xf8 } else { 0 };
-        let lower = if self.mode_b == PpiMode::Mode0 { 0x07 } else { 0 };
+        let upper = if self.mode_a == PpiMode::Mode0 {
+            0xf8
+        } else {
+            0
+        };
+        let lower = if self.mode_b == PpiMode::Mode0 {
+            0x07
+        } else {
+            0
+        };
         upper | lower
     }
 
@@ -341,18 +351,18 @@ impl Ppi {
     fn set_data_a_on_pins(&mut self, value: u8) {
         self.set_value_in_pins(value, &PPI_PIN_DATA_A_BUS)
     }
-    pub fn get_data_a_from_pins(& self) -> u8 {
+    pub fn get_data_a_from_pins(&self) -> u8 {
         self.get_8bit_value_from_pins(&PPI_PIN_DATA_A_BUS)
     }
 
-    pub fn get_data_b_from_pins(& self) -> u8 {
+    pub fn get_data_b_from_pins(&self) -> u8 {
         self.get_8bit_value_from_pins(&PPI_PIN_DATA_B_BUS)
     }
 
     fn set_data_c_on_pins(&mut self, value: u8) {
         self.set_value_in_pins(value, &PPI_PIN_DATA_C_BUS)
     }
-    pub fn get_data_c_from_pins(& self) -> u8 {
+    pub fn get_data_c_from_pins(&self) -> u8 {
         self.get_8bit_value_from_pins(&PPI_PIN_DATA_C_BUS)
     }
 }
@@ -406,12 +416,12 @@ impl Chip for Ppi {
     type PinType = PpiPin;
 
     fn must_execute_tick(&self) -> bool {
-        !self.get_pin(PpiPin::Neg_CS) &
-        (!self.get_pin(PpiPin::Neg_RD) | !self.get_pin(PpiPin::Neg_WR))
+        !self.get_pin(PpiPin::Neg_CS)
+            & (!self.get_pin(PpiPin::Neg_RD) | !self.get_pin(PpiPin::Neg_WR))
     }
 
     fn execute_tick(&mut self) {
-      //  dbg!(self.is_port_a_addressed() , self.is_port_b_addressed() , self.is_port_c_addressed());
+        //  dbg!(self.is_port_a_addressed() , self.is_port_b_addressed() , self.is_port_c_addressed());
         if self.is_port_a_addressed() {
             // Same reasoning as Port C below: a plain write/read of Port
             // A's *own* address always hits its output latch/pins
@@ -463,7 +473,10 @@ impl Chip for Ppi {
                 // brand/refresh with whatever the CPU happened to write.
                 // Only the 8255's latch takes it (read back below).
                 self.port_b_latch = self.get_data_from_pins();
-            } else if !self.get_pin(PpiPin::Neg_RD) && self.direction_b == PpiDirection::Output && self.clears_ports_on_mode_set {
+            } else if !self.get_pin(PpiPin::Neg_RD)
+                && self.direction_b == PpiDirection::Output
+                && self.clears_ports_on_mode_set
+            {
                 // A real 8255 reads an output port's latch: TestCRTC writes a value to port B set
                 // as an output and reads it back; the CPC+'s ASIC (below) reads its inputs.
                 self.set_data_on_pins(self.port_b_latch);
@@ -533,7 +546,11 @@ impl Chip for Ppi {
             // PPI of the CPC+'s ASIC answers &00 after a mode set whose bit 4 is clear, &FF after
             // anything else ("Extra CPC Plus Hardware Information").
             if !self.clears_ports_on_mode_set {
-                self.set_data_on_pins(if self.last_control & 0x90 == 0x80 { 0x00 } else { 0xff });
+                self.set_data_on_pins(if self.last_control & 0x90 == 0x80 {
+                    0x00
+                } else {
+                    0xff
+                });
             }
         } else if self.is_control_addressed() {
             // Per the datasheet's "Bit Set/Reset Function" section (e.g.
@@ -575,7 +592,11 @@ impl Chip for Ppi {
                     PpiPin::C7,
                 ][((byte & 0b1110) >> 1) as usize];
                 let mask = 1 << ((byte & 0b1110) >> 1);
-                self.port_c_latch = if bit { self.port_c_latch | mask } else { self.port_c_latch & !mask };
+                self.port_c_latch = if bit {
+                    self.port_c_latch | mask
+                } else {
+                    self.port_c_latch & !mask
+                };
                 if self.port_c_output_mask() & mask != 0 {
                     self.set_pin(pin, bit)
                 }

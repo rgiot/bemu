@@ -43,7 +43,7 @@ enum Flash {
     EraseUnlock1,
     EraseUnlock2,
     /// 90: the ID read at 0 (&BF, SST) and 1 (&B7, the 39SF040).
-    Id
+    Id,
 }
 
 pub struct Dandanator {
@@ -61,7 +61,7 @@ pub struct Dandanator {
     fetched: [u8; 2],
     fetching: Option<u8>,
     command: Option<u8>,
-    state: Flash
+    state: Flash,
 }
 
 impl Dandanator {
@@ -79,7 +79,7 @@ impl Dandanator {
             fetched: [0; 2],
             fetching: None,
             command: None,
-            state: Flash::Read
+            state: Flash::Read,
         };
         card.power_on();
         card
@@ -90,7 +90,11 @@ impl Dandanator {
         let path = path.into();
         let romset = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         if romset.len() > SIZE {
-            return Err(format!("{}: {} bytes, more than the 512K of the flash", path.display(), romset.len()));
+            return Err(format!(
+                "{}: {} bytes, more than the 512K of the flash",
+                path.display(),
+                romset.len()
+            ));
         }
         let mut card = Self::new(&romset);
         card.file = Some(path);
@@ -133,7 +137,7 @@ impl Dandanator {
         match register {
             2 | 3 => self.pending[usize::from(register)] = value,
             _ if value & 0x80 != 0 => self.pending[1] = value,
-            _ => self.pending[0] = value
+            _ => self.pending[0] = value,
         }
         if self.pending[1] & 0x40 == 0 {
             self.apply();
@@ -157,31 +161,42 @@ impl Dandanator {
         let window = usize::from(address >> 14);
         let slot = if function1 & 0x20 == 0 {
             // the zones (zone 0 at &8000 is not gated by its /CE; zone 1 never is: CPCEC)
-            let zone0 = (zone0 & 0x20 == 0)
-                .then_some(())
-                .and_then(|()| if function1 & 0x04 != 0 { (window == 2).then_some(zone0) } else { (window == 0 && function1 & 0x01 == 0).then_some(zone0) });
-            let zone1 = (zone1 & 0x20 == 0).then_some(()).and_then(|()| (window == if function1 & 0x08 != 0 { 3 } else { 1 }).then_some(zone1));
+            let zone0 = (zone0 & 0x20 == 0).then_some(()).and_then(|()| {
+                if function1 & 0x04 != 0 {
+                    (window == 2).then_some(zone0)
+                } else {
+                    (window == 0 && function1 & 0x01 == 0).then_some(zone0)
+                }
+            });
+            let zone1 = (zone1 & 0x20 == 0).then_some(()).and_then(|()| {
+                (window == if function1 & 0x08 != 0 { 3 } else { 1 }).then_some(zone1)
+            });
             zone0.or(zone1)
-        }
-        else if function1 & 0x10 != 0 && rom {
+        } else if function1 & 0x10 != 0 && rom {
             // FollowRomEn: the CPC's ROMs as they are paged, the lower one slot 28-31
             match window {
                 0 => Some(28 + ((function0 >> 3) & 3)),
                 3 => Some(zone1),
-                _ => None
+                _ => None,
             }
-        }
-        else {
+        } else {
             None
         };
         slot.map(|slot| self.flash[usize::from(slot & 0x1f) * SLOT + usize::from(address & 0x3fff)])
-            .map(|byte| if self.state == Flash::Id { [0xbf, 0xb7][usize::from(address & 1)] } else { byte })
+            .map(|byte| {
+                if self.state == Flash::Id {
+                    [0xbf, 0xb7][usize::from(address & 1)]
+                } else {
+                    byte
+                }
+            })
     }
 
     /// A CPU write: to the flash's decoder when it is writable and zone 0 is at &0000.
     pub fn write(&mut self, address: u16, value: u8) {
         let [function0, function1, zone0, _] = self.current;
-        let mapped = function1 & 0x20 == 0 && zone0 & 0x20 == 0 && function1 & 0x05 == 0 && address < 0x4000;
+        let mapped =
+            function1 & 0x20 == 0 && zone0 & 0x20 == 0 && function1 & 0x05 == 0 && address < 0x4000;
         if !(mapped && function0 & 0x02 != 0) {
             return;
         }
@@ -201,20 +216,20 @@ impl Dandanator {
                 self.flash[sector..sector + 0x1000].fill(0xff);
                 self.dirty = true;
                 Flash::Read
-            },
+            }
             (Flash::EraseUnlock2, 0x5555, 0x10) => {
                 self.flash.fill(0xff);
                 self.dirty = true;
                 Flash::Read
-            },
+            }
             (Flash::Program, _, _) => {
                 // programming only clears bits
                 self.flash[offset] &= value;
                 self.dirty = true;
                 Flash::Read
-            },
+            }
             (Flash::Id, _, _) => Flash::Id,
-            _ => Flash::Read
+            _ => Flash::Read,
         };
     }
 
@@ -236,7 +251,11 @@ impl ExpansionDevice for Dandanator {
         if let Some(address) = port.memory_read() {
             let rom = !port.get_pin(ExpansionPin::Neg_ROMEN);
             if let Some(byte) = self.read(address, rom) {
-                port.assert(if rom { ExpansionPin::ROMDIS } else { ExpansionPin::RAMDIS });
+                port.assert(if rom {
+                    ExpansionPin::ROMDIS
+                } else {
+                    ExpansionPin::RAMDIS
+                });
                 port.drive_data(byte);
             }
         }
@@ -252,10 +271,9 @@ impl ExpansionDevice for Dandanator {
                         0x70 => Some(2),
                         0x71 => Some(3),
                         0x77 => Some(0),
-                        _ => None
+                        _ => None,
                     };
-                }
-                else if opcode == 0xc9 {
+                } else if opcode == 0xc9 {
                     self.ret();
                 }
                 self.fetched = [self.fetched[1], opcode];
@@ -264,7 +282,7 @@ impl ExpansionDevice for Dandanator {
         if let Some((address, value)) = port.memory_write_started() {
             match self.command.take() {
                 Some(register) => self.command(register, value),
-                None => self.write(address, value)
+                None => self.write(address, value),
             }
         }
     }
@@ -359,7 +377,11 @@ mod test {
         card.command(0, 0x10); // function 0: FollowRomEn's lower ROM 28 + 2
         card.command(0, 0x80 | 0x20 | 0x10);
         assert_eq!(card.read(0x0100, true), Some(30), "the lower ROM");
-        assert_eq!(card.read(0xc100, true), Some(12), "the upper ROM: zone 1's slot");
+        assert_eq!(
+            card.read(0xc100, true),
+            Some(12),
+            "the upper ROM: zone 1's slot"
+        );
         assert_eq!(card.read(0x0100, false), None, "the RAM is the CPC's");
         assert_eq!(card.read(0x4100, false), None);
     }
@@ -378,14 +400,16 @@ mod test {
     fn the_flash_is_erased_and_programmed() {
         let mut card = card();
         card.command(0, 0x02); // writable
-        // sector 5 (slot 1, its second 4K)
+                               // sector 5 (slot 1, its second 4K)
         unlock(&mut card, 0x80);
         card.write(0x1555, 0xaa);
         card.command(2, 0);
         card.write(0x2aaa, 0x55);
         card.command(2, 1);
         card.write(0x1000, 0x30);
-        assert!(card.flash()[SLOT + 0x1000..SLOT + 0x2000].iter().all(|&b| b == 0xff));
+        assert!(card.flash()[SLOT + 0x1000..SLOT + 0x2000]
+            .iter()
+            .all(|&b| b == 0xff));
         assert_eq!(card.flash()[SLOT + 0x0fff], 1, "the sector before kept");
         // a byte
         unlock(&mut card, 0xa0);
@@ -394,7 +418,10 @@ mod test {
         assert_eq!(card.flash()[SLOT + 0x1234], 0x42);
         // the ID
         unlock(&mut card, 0x90);
-        assert_eq!((card.read(0x0000, true), card.read(0x0001, true)), (Some(0xbf), Some(0xb7)));
+        assert_eq!(
+            (card.read(0x0000, true), card.read(0x0001, true)),
+            (Some(0xbf), Some(0xb7))
+        );
         card.write(0x0000, 0xf0);
         assert_eq!(card.read(0x0000, true), Some(1));
         // not writable: nothing changes

@@ -23,7 +23,7 @@ pub enum MarkKind {
     PenSelect,
     Ink,
     Rmr,
-    Mmr
+    Mmr,
 }
 
 impl MarkKind {
@@ -36,7 +36,7 @@ impl MarkKind {
             Self::PenSelect => [160, 160, 0],
             Self::Ink => [255, 255, 0],
             Self::Rmr => [255, 0, 255],
-            Self::Mmr => [0, 255, 0]
+            Self::Mmr => [0, 255, 0],
         }
     }
 }
@@ -46,7 +46,7 @@ impl MarkKind {
 pub struct Mark {
     pub x: isize,
     pub y: isize,
-    pub kind: MarkKind
+    pub kind: MarkKind,
 }
 
 /// Length of a mark, in pixels (a CRTC character is 16).
@@ -57,7 +57,7 @@ const MARK_WIDTH: isize = 8;
 pub struct Overlay {
     marks: Vec<Mark>,
     /// The CRTC register selected, for the writes that follow.
-    crtc_register: u8
+    crtc_register: u8,
 }
 
 impl Overlay {
@@ -70,31 +70,29 @@ impl Overlay {
                 0 => {
                     self.crtc_register = value & 0x1f;
                     MarkKind::CrtcSelect
-                },
+                }
                 1 => match self.crtc_register {
                     0..=9 => MarkKind::CrtcGeometry,
                     12 | 13 => MarkKind::CrtcAddress,
-                    _ => MarkKind::CrtcOther
+                    _ => MarkKind::CrtcOther,
                 },
-                _ => return
+                _ => return,
             }
-        }
-        else if port & 0x8000 == 0 {
+        } else if port & 0x8000 == 0 {
             // Gate Array: A15 low, A14 high; the function in the value's top bits
             match value >> 6 {
                 0 => MarkKind::PenSelect,
                 1 => MarkKind::Ink,
                 2 => MarkKind::Rmr,
-                _ => MarkKind::Mmr
+                _ => MarkKind::Mmr,
             }
-        }
-        else {
+        } else {
             return;
         };
         self.marks.push(Mark {
             x: beam.0 as isize - origin.0,
             y: beam.1 as isize - origin.1 as isize,
-            kind
+            kind,
         });
     }
 
@@ -134,14 +132,24 @@ mod test {
         let kinds: Vec<_> = overlay.marks().iter().map(|mark| mark.kind).collect();
         assert_eq!(
             kinds,
-            vec![MarkKind::CrtcSelect, MarkKind::CrtcAddress, MarkKind::PenSelect, MarkKind::Ink, MarkKind::Rmr]
+            vec![
+                MarkKind::CrtcSelect,
+                MarkKind::CrtcAddress,
+                MarkKind::PenSelect,
+                MarkKind::Ink,
+                MarkKind::Rmr
+            ]
         );
         assert_eq!((overlay.marks()[1].x, overlay.marks()[1].y), (116, 10));
 
         let mut frame = RgbImage::new(768, 272);
         overlay.draw_and_clear(&mut frame);
         assert_eq!(frame.get_pixel(116, 10).0, MarkKind::CrtcAddress.colour());
-        assert_eq!(frame.get_pixel(116 + MARK_WIDTH as u32, 10).0, [0, 0, 0], "a short bar");
+        assert_eq!(
+            frame.get_pixel(116 + MARK_WIDTH as u32, 10).0,
+            [0, 0, 0],
+            "a short bar"
+        );
         assert!(overlay.marks().is_empty());
     }
 }

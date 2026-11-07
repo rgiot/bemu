@@ -1,181 +1,141 @@
+use amsrust::debug::Monitor;
+use amsrust::ga::{Ink, VideoMode};
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use amsrust::z80::{HasValue, Reg16, Reg8, Z80Flags};
-use amsrust::ga::{VideoMode, Ink};
-use amsrust::debug::Monitor;
 
 /// Build a standard machine and fill it with the code  and execute it until arriving to jr $
 /// Attention, do not put the code in area where ROMs are activated ...
 fn execute_program(load: u16, exec: u16, test: &[u8]) -> Motherboard {
-/*	dbg!(
-		cpclib_asm::disass::disassemble(test)
-	);*/
+    /*	dbg!(
+        cpclib_asm::disass::disassemble(test)
+    );*/
 
     let end_pattern = cpclib_macros::assemble!(" jr $");
-	const MAX_OPERATIONS: usize = 10;
-	let mut nb_operations = 0;
+    const MAX_OPERATIONS: usize = 10;
+    let mut nb_operations = 0;
 
     let mut motherboard = MotherboardBuilder::default()
-													.disable_lower_rom()
-													.disable_upper_rom()
-													.build();
+        .disable_lower_rom()
+        .disable_upper_rom()
+        .build();
 
-	assert_eq!(
-		VideoMode::Mode0,
-		motherboard.ga().active_video_mode()
-	);
-	assert_eq!(
-		VideoMode::Mode0,
-		motherboard.ga().next_video_mode()
-	);
+    assert_eq!(VideoMode::Mode0, motherboard.ga().active_video_mode());
+    assert_eq!(VideoMode::Mode0, motherboard.ga().next_video_mode());
 
     motherboard.write_buffer(load, test);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(exec);
     motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(0x8000);
 
-	// execute it until it is finished
-	loop {
-		Monitor::monitor(&motherboard);
-		motherboard.execute_next_opcode();
+    // execute it until it is finished
+    loop {
+        Monitor::monitor(&motherboard);
+        motherboard.execute_next_opcode();
 
-		let pc = motherboard.cpu().reg16(Reg16::Pc).value();
+        let pc = motherboard.cpu().reg16(Reg16::Pc).value();
 
-		// detect if it is the end
-		let current_pattern = [motherboard.read_byte(pc), motherboard.read_byte(pc + 1)];
+        // detect if it is the end
+        let current_pattern = [motherboard.read_byte(pc), motherboard.read_byte(pc + 1)];
 
-		nb_operations += 1;
+        nb_operations += 1;
 
-		// erroneous end
-		if nb_operations == MAX_OPERATIONS {
-			eprintln!("Maximum number of operations executed");
-			break;
-		}
+        // erroneous end
+        if nb_operations == MAX_OPERATIONS {
+            eprintln!("Maximum number of operations executed");
+            break;
+        }
 
-		// normal end
-		if current_pattern == *end_pattern {
-			break;
-		}
-	}
-	Monitor::monitor(&motherboard);
-	motherboard
-
+        // normal end
+        if current_pattern == *end_pattern {
+            break;
+        }
+    }
+    Monitor::monitor(&motherboard);
+    motherboard
 }
 
 /// Program is in 0x4000 stack is in 0x8000
 fn execute_single_instruction(test: &[u8]) -> Motherboard {
-	dbg!(
-		cpclib_asm::disass::disassemble(test)
-	);
-
-
+    dbg!(cpclib_asm::disass::disassemble(test));
 
     let mut motherboard = Motherboard::default();
-	Monitor::monitor(&motherboard);
+    Monitor::monitor(&motherboard);
 
     motherboard.write_buffer(0x4000, test);
     motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(0x4000);
     motherboard.cpu_mut().reg16_mut(Reg16::Sp).set(0x8000);
 
-	motherboard.execute_next_opcode();
-	Monitor::monitor(&motherboard);
+    motherboard.execute_next_opcode();
+    Monitor::monitor(&motherboard);
 
-	motherboard
-
+    motherboard
 }
-
-
-
 
 #[test]
 fn execute_and1() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld a, 0xff
 		and 0
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	let a = motherboard.cpu().reg8(Reg8::A).value();
-	let f = motherboard.cpu().reg8(Reg8::F).value();
-	assert_eq!(
-		0x0,
-		a
-	);
+    let a = motherboard.cpu().reg8(Reg8::A).value();
+    let f = motherboard.cpu().reg8(Reg8::F).value();
+    assert_eq!(0x0, a);
 
-	assert!(
-		Z80Flags::Z.is_on(f)
-	);
+    assert!(Z80Flags::Z.is_on(f));
 }
-
 
 #[test]
 fn execute_and2() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld a, 0xff
 		and 0b01
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	let a = motherboard.cpu().reg8(Reg8::A).value();
-	let f = motherboard.cpu().reg8(Reg8::F).value();
-	assert_eq!(
-		0x01,
-		a
-	);
+    let a = motherboard.cpu().reg8(Reg8::A).value();
+    let f = motherboard.cpu().reg8(Reg8::F).value();
+    assert_eq!(0x01, a);
 
-	assert!(
-		Z80Flags::Z.is_off(f)
-	);
-
+    assert!(Z80Flags::Z.is_off(f));
 }
-
-
-
 
 #[test]
 fn execute_and3() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld a, 0x0a
 		and 0xf8
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	let a = motherboard.cpu().reg8(Reg8::A).value();
-	let f = motherboard.cpu().reg8(Reg8::F).value();
-	assert_eq!(
-		8,
-		a
-	);
-	assert!(
-		Z80Flags::N.is_off(f)
-	);
-	assert!(
-		Z80Flags::C.is_off(f)
-	);
-	assert!(
-		Z80Flags::Z.is_off(f)
-	);
-	assert!(
-		Z80Flags::H.is_on(f)
-	);
+    let a = motherboard.cpu().reg8(Reg8::A).value();
+    let f = motherboard.cpu().reg8(Reg8::F).value();
+    assert_eq!(8, a);
+    assert!(Z80Flags::N.is_off(f));
+    assert!(Z80Flags::C.is_off(f));
+    assert!(Z80Flags::Z.is_off(f));
+    assert!(Z80Flags::H.is_on(f));
 }
-
-
 
 #[test]
 fn execute_call() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4012
 		call target
 		jr $ ; never reached if not buggy
@@ -183,42 +143,26 @@ fn execute_call() {
 		org 0x5000
 	target:
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4012, 0x4012, code); 
+    let motherboard = execute_program(0x4012, 0x4012, code);
 
+    assert_eq!(0x12 + 3, motherboard.read_byte(0x8000 - 2));
 
-	assert_eq!(
-		0x12+3,
-		motherboard.read_byte(0x8000-2)
-	);
+    assert_eq!(0x40, motherboard.read_byte(0x8000 - 1));
 
-	assert_eq!(
-		0x40,
-		motherboard.read_byte(0x8000-1)
-	);
+    assert_eq!(0x4012 + 3, motherboard.read_word(0x8000 - 2));
 
-	assert_eq!(
-		0x4012+3,
-		motherboard.read_word(0x8000-2)
-	);
+    assert_eq!(0x5000, motherboard.cpu().reg16(Reg16::Pc).value());
 
-	assert_eq!(
-		0x5000,
-		motherboard.cpu().reg16(Reg16::Pc).value()
-	);
-
-	assert_eq!(
-		motherboard.cpu().reg16(Reg16::Sp).value(),
-		0x8000 - 2
-	);
+    assert_eq!(motherboard.cpu().reg16(Reg16::Sp).value(), 0x8000 - 2);
 }
 
-
 #[test]
-fn execute_call_conditionnal_1(){
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+fn execute_call_conditionnal_1() {
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4012
 		xor a
 		or a
@@ -228,26 +172,20 @@ fn execute_call_conditionnal_1(){
 		org 0x5000
 	target:
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4012, 0x4012, code); 
+    let motherboard = execute_program(0x4012, 0x4012, code);
 
-	assert_eq!(
-		0x5000,
-		motherboard.cpu().reg16(Reg16::Pc).value()
-	);
+    assert_eq!(0x5000, motherboard.cpu().reg16(Reg16::Pc).value());
 
-	assert_eq!(
-		motherboard.cpu().reg16(Reg16::Sp).value(),
-		0x8000 - 2
-	);
+    assert_eq!(motherboard.cpu().reg16(Reg16::Sp).value(), 0x8000 - 2);
 }
 
-
 #[test]
-fn execute_call_conditionnal_2(){
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+fn execute_call_conditionnal_2() {
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4012
 		ld a, 0xff
 		or a 
@@ -257,59 +195,61 @@ fn execute_call_conditionnal_2(){
 		org 0x5000
 	target:
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4012, 0x4012, code); 
+    let motherboard = execute_program(0x4012, 0x4012, code);
 
-	let dest = 0x4012+2+1+3;
-	assert_eq!(
-		dest,
-		motherboard.cpu().reg16(Reg16::Pc).value(),
-		"{} != {}", dest, motherboard.cpu().reg16(Reg16::Pc).value()
-	);
+    let dest = 0x4012 + 2 + 1 + 3;
+    assert_eq!(
+        dest,
+        motherboard.cpu().reg16(Reg16::Pc).value(),
+        "{} != {}",
+        dest,
+        motherboard.cpu().reg16(Reg16::Pc).value()
+    );
 
-	assert_eq!(
-		motherboard.cpu().reg16(Reg16::Sp).value(),
-		0x8000
-	);
+    assert_eq!(motherboard.cpu().reg16(Reg16::Sp).value(), 0x8000);
 }
 
 #[test]
 fn execute_cp() {
-	// CP must not modify A, only flags.
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    // CP must not modify A, only flags.
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld a, 0x42
 		cp 0x42
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code);
-	assert_eq!(0x42, motherboard.cpu().reg8(Reg8::A).value());
-	assert!(motherboard.cpu().flag(Z80Flags::Z));
-	assert!(!motherboard.cpu().flag(Z80Flags::C));
-	assert!(!motherboard.cpu().flag(Z80Flags::S));
-	assert!(motherboard.cpu().flag(Z80Flags::N));
+    let motherboard = execute_program(0x4000, 0x4000, code);
+    assert_eq!(0x42, motherboard.cpu().reg8(Reg8::A).value());
+    assert!(motherboard.cpu().flag(Z80Flags::Z));
+    assert!(!motherboard.cpu().flag(Z80Flags::C));
+    assert!(!motherboard.cpu().flag(Z80Flags::S));
+    assert!(motherboard.cpu().flag(Z80Flags::N));
 
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld a, 0x10
 		ld b, 0x20
 		cp b
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code);
-	assert_eq!(0x10, motherboard.cpu().reg8(Reg8::A).value());
-	assert!(!motherboard.cpu().flag(Z80Flags::Z));
-	assert!(motherboard.cpu().flag(Z80Flags::C));
-	assert!(motherboard.cpu().flag(Z80Flags::S));
-	assert!(motherboard.cpu().flag(Z80Flags::N));
+    let motherboard = execute_program(0x4000, 0x4000, code);
+    assert_eq!(0x10, motherboard.cpu().reg8(Reg8::A).value());
+    assert!(!motherboard.cpu().flag(Z80Flags::Z));
+    assert!(motherboard.cpu().flag(Z80Flags::C));
+    assert!(motherboard.cpu().flag(Z80Flags::S));
+    assert!(motherboard.cpu().flag(Z80Flags::N));
 
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld a, 0x20
 		ld hl, value
@@ -319,98 +259,87 @@ fn execute_cp() {
 		org 0x4010
 	value
 		db 0x10
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code);
-	assert_eq!(0x20, motherboard.cpu().reg8(Reg8::A).value());
-	assert!(!motherboard.cpu().flag(Z80Flags::Z));
-	assert!(!motherboard.cpu().flag(Z80Flags::C));
-	assert!(!motherboard.cpu().flag(Z80Flags::S));
-	assert!(motherboard.cpu().flag(Z80Flags::N));
+    let motherboard = execute_program(0x4000, 0x4000, code);
+    assert_eq!(0x20, motherboard.cpu().reg8(Reg8::A).value());
+    assert!(!motherboard.cpu().flag(Z80Flags::Z));
+    assert!(!motherboard.cpu().flag(Z80Flags::C));
+    assert!(!motherboard.cpu().flag(Z80Flags::S));
+    assert!(motherboard.cpu().flag(Z80Flags::N));
 }
 
 #[test]
 fn execute_dec() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0x7f8d
 		dec b
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0x7e,
-		motherboard.cpu().reg8(Reg8::B).value()
-	);
+    assert_eq!(0x7e, motherboard.cpu().reg8(Reg8::B).value());
 }
-
 
 #[test]
 fn execute_dec_flags_test() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld b, 1
 		dec b
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0x0,
-		motherboard.cpu().reg8(Reg8::B).value()
-	);
-	assert!(motherboard.cpu().flag(Z80Flags::Z));
-	assert!(!motherboard.cpu().flag(Z80Flags::S));
+    assert_eq!(0x0, motherboard.cpu().reg8(Reg8::B).value());
+    assert!(motherboard.cpu().flag(Z80Flags::Z));
+    assert!(!motherboard.cpu().flag(Z80Flags::S));
 
-
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld b, 0
 		dec b
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0xff,
-		motherboard.cpu().reg8(Reg8::B).value()
-	);
-	assert!(!motherboard.cpu().flag(Z80Flags::Z));
-	assert!(motherboard.cpu().flag(Z80Flags::S));
-
+    assert_eq!(0xff, motherboard.cpu().reg8(Reg8::B).value());
+    assert!(!motherboard.cpu().flag(Z80Flags::Z));
+    assert!(motherboard.cpu().flag(Z80Flags::S));
 }
 #[test]
 fn execute_dec_mem_hl() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld hl, mem
 		dec (hl)
 		jr $ ; end of test
 		org 0x4010
 mem db 2
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		1,
-		motherboard.read_byte(0x4010)
-	);
+    assert_eq!(1, motherboard.read_byte(0x4010));
 }
-
 
 #[test]
 fn execute_ex_mem_sp_hl() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld sp, stack
 		ld hl, 0xbeef
@@ -420,107 +349,98 @@ fn execute_ex_mem_sp_hl() {
 
 stack
 		dw 0xdead
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0xdead,
-		motherboard.cpu().reg16(Reg16::Hl).value(),
-		"{:x} != {:x}", 0xdead,
-		motherboard.cpu().reg16(Reg16::Hl).value(),
-	);
-	assert_eq!(
-		0xbeef,
-		motherboard.read_word(0x4010),
-		"{:x} != {:x}",0xbeef,
-		motherboard.read_word(0x4010),
-	);
+    assert_eq!(
+        0xdead,
+        motherboard.cpu().reg16(Reg16::Hl).value(),
+        "{:x} != {:x}",
+        0xdead,
+        motherboard.cpu().reg16(Reg16::Hl).value(),
+    );
+    assert_eq!(
+        0xbeef,
+        motherboard.read_word(0x4010),
+        "{:x} != {:x}",
+        0xbeef,
+        motherboard.read_word(0x4010),
+    );
 }
-
 
 #[test]
 fn execute_inc_mem_hl() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld hl, data
 		inc (hl)
 		jr $ ; end of test
 data
 		db 3
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	let address = motherboard.cpu().reg16(Reg16::Hl).value();
-	let value = motherboard.read_byte(address);
+    let address = motherboard.cpu().reg16(Reg16::Hl).value();
+    let value = motherboard.read_byte(address);
 
-	assert_eq!(
-		value,
-		4
-	);
+    assert_eq!(value, 4);
 }
-
 
 #[test]
 fn execute_in1() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0xf5
 		in a, (c)
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	// wait (too much) to be sure screen mode changed
-	let _motherboard = execute_program(0x4000,0x4000, code);
+    // wait (too much) to be sure screen mode changed
+    let _motherboard = execute_program(0x4000, 0x4000, code);
 
-
-	// TODO add the tests to check the machinery really work
+    // TODO add the tests to check the machinery really work
 }
-
-
 
 #[test]
 fn execute_ld1() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0x7f8d
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0x7f8d,
-		motherboard.cpu().reg16(Reg16::Bc).value()
-	);
+    assert_eq!(0x7f8d, motherboard.cpu().reg16(Reg16::Bc).value());
 
-
-
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0x7f00
 		ld bc, 0x7f00
 		ld bc, 0x7f00
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0x7f00,
-		motherboard.cpu().reg16(Reg16::Bc).value()
-	);
+    assert_eq!(0x7f00, motherboard.cpu().reg16(Reg16::Bc).value());
 }
 
 #[test]
 fn ld_hl_mem() {
-let code = dbg!(cpclib_macros::assemble!(
-	"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld hl, (mem)
 	jr $ ; end of test
@@ -529,22 +449,24 @@ let code = dbg!(cpclib_macros::assemble!(
 mem
 	db 0xad
 	db 0xde
-"));
+"
+    ));
 
-let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-assert_eq!(
-	0xdead,
-	motherboard.cpu().reg16(Reg16::Hl).value(),
-	"{:x} != {:x}", 0xdead, motherboard.cpu().reg16(Reg16::Hl).value()
-);
+    assert_eq!(
+        0xdead,
+        motherboard.cpu().reg16(Reg16::Hl).value(),
+        "{:x} != {:x}",
+        0xdead,
+        motherboard.cpu().reg16(Reg16::Hl).value()
+    );
 }
-
 
 #[test]
 fn ld_sp_mem() {
-let code = dbg!(cpclib_macros::assemble!(
-	"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld sp, (mem)
 	jr $ ; end of test
@@ -552,21 +474,24 @@ let code = dbg!(cpclib_macros::assemble!(
 mem
 	db 0xad
 	db 0xde
-"));
+"
+    ));
 
-let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-assert_eq!(
-	0xdead,
-	motherboard.cpu().reg16(Reg16::Sp).value(),
-	"{:x} != {:x}", 0xdead, motherboard.cpu().reg16(Reg16::Sp).value()
-);
+    assert_eq!(
+        0xdead,
+        motherboard.cpu().reg16(Reg16::Sp).value(),
+        "{:x} != {:x}",
+        0xdead,
+        motherboard.cpu().reg16(Reg16::Sp).value()
+    );
 }
 
 #[test]
 fn ld_a_mem_hl() {
-let code = dbg!(cpclib_macros::assemble!(
-	"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld hl, mem
 	ld a, (hl)
@@ -574,22 +499,24 @@ let code = dbg!(cpclib_macros::assemble!(
 mem
 	db 0xad
 	db 0xde
-"));
+"
+    ));
 
-let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-assert_eq!(
-	0xad,
-	motherboard.cpu().reg8(Reg8::A).value(),
-	"{:x} != {:x}", 0xad, motherboard.cpu().reg8(Reg8::A).value()
-);
+    assert_eq!(
+        0xad,
+        motherboard.cpu().reg8(Reg8::A).value(),
+        "{:x} != {:x}",
+        0xad,
+        motherboard.cpu().reg8(Reg8::A).value()
+    );
 }
-
 
 #[test]
 fn ld_a_mem_ix_delta() {
-let code = dbg!(cpclib_macros::assemble!(
-	"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld ix, mem
 	ld a, (ix+1)
@@ -601,27 +528,20 @@ let code = dbg!(cpclib_macros::assemble!(
 mem
 	db 0xad
 	db 0xde
-"));
+"
+    ));
 
-let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-assert_eq!(
-	0xde,
-	motherboard.cpu().reg8(Reg8::A).value()
-);
+    assert_eq!(0xde, motherboard.cpu().reg8(Reg8::A).value());
 
-assert_eq!(
-	0xbe,
-	motherboard.cpu().reg8(Reg8::B).value()
-);
+    assert_eq!(0xbe, motherboard.cpu().reg8(Reg8::B).value());
 }
-
-
 
 #[test]
 fn ld_mem_hl_a() {
-let code = dbg!(cpclib_macros::assemble!(
-	"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld hl, mem
 	ld a, 0xff
@@ -630,136 +550,112 @@ let code = dbg!(cpclib_macros::assemble!(
 	org 0x4010
 mem
 	db 0x00
-"));
+"
+    ));
 
-let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-assert_eq!(
-	0xff,
-	motherboard.read_byte(0x4010)
-);
+    assert_eq!(0xff, motherboard.read_byte(0x4010));
 }
 
 #[test]
 fn execute_ld_sp1() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		ld sp, 0xdead
-	"));
+	"
+    ));
 
-	let motherboard = execute_single_instruction( code); 
+    let motherboard = execute_single_instruction(code);
 
-	assert_eq!(
-		0xdead,
-		motherboard.cpu().reg16(Reg16::Sp).value()
-	);
+    assert_eq!(0xdead, motherboard.cpu().reg16(Reg16::Sp).value());
 }
-
 
 #[test]
 fn execute_ld_sp2() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld sp, 0xbeef
 		ld hl, 0xdead
 		ld sp, hl
 		jr $
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0xdead,
-		motherboard.cpu().reg16(Reg16::Sp).value()
-	);
+    assert_eq!(0xdead, motherboard.cpu().reg16(Reg16::Sp).value());
 }
 #[test]
 fn execute_jr1() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		jr $ ; real jr
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code);
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0x4000,
-		motherboard.cpu().reg16(Reg16::Pc).value()
-	);
+    assert_eq!(0x4000, motherboard.cpu().reg16(Reg16::Pc).value());
 }
-
 
 #[test]
 fn execute_jr2() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		jr 0x4010 ; real jr
 		org 0x4010
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code);
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0x4010,
-		motherboard.cpu().reg16(Reg16::Pc).value()
-	);
+    assert_eq!(0x4010, motherboard.cpu().reg16(Reg16::Pc).value());
 }
 
 #[test]
 /// This test currently ... I have to find if it comes from assembler or disassembler
 /// TODO debug the assembler that compute a wrong value
 fn execute_jr3() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x3ff0
 label
 		jr $ ; end of test
 
 		org 0x4000
 		jr label ; real jr
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x3ff0, 0x4000, code);
+    let motherboard = execute_program(0x3ff0, 0x4000, code);
 
-	let instruction = dbg!(motherboard.disassemble_instruction_at(0x4000));
-	assert_eq!(
-		instruction.address,
-		0x4000
-	);
-	assert_eq!(
-		instruction.memory[1] as i8,
-		-((0x4000 + 2 - 0x3ff0) as i8)
-	);
+    let instruction = dbg!(motherboard.disassemble_instruction_at(0x4000));
+    assert_eq!(instruction.address, 0x4000);
+    assert_eq!(instruction.memory[1] as i8, -((0x4000 + 2 - 0x3ff0) as i8));
 
-	let instruction = dbg!(motherboard.disassemble_instruction_at(0x3ff0));
-	assert_eq!(
-		instruction.address,
-		0x3ff0
-	);
-	assert_eq!(
-		instruction.memory[1] as i8,
-		-2
-	);
+    let instruction = dbg!(motherboard.disassemble_instruction_at(0x3ff0));
+    assert_eq!(instruction.address, 0x3ff0);
+    assert_eq!(instruction.memory[1] as i8, -2);
 
-
-
-	assert_eq!(
-		0x3ff0,
-		motherboard.cpu().reg16(Reg16::Pc).value(),
-
-		"{:x} != {:x}", 0x3ff0,motherboard.cpu().reg16(Reg16::Pc).value()
-	);
+    assert_eq!(
+        0x3ff0,
+        motherboard.cpu().reg16(Reg16::Pc).value(),
+        "{:x} != {:x}",
+        0x3ff0,
+        motherboard.cpu().reg16(Reg16::Pc).value()
+    );
 }
 
 #[test]
 fn execute_jr3_assembler_bypassed1() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x3ff0
 label
 		jr $ ; end of test
@@ -767,33 +663,27 @@ label
 		org 0x4000
 		db 0x18 ; jr
 		db -18 
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x3ff0, 0x4000, code);
+    let motherboard = execute_program(0x3ff0, 0x4000, code);
 
+    let instruction = dbg!(motherboard.disassemble_instruction_at(0x4000));
+    assert_eq!(instruction.address, 0x4000);
+    assert_eq!(instruction.memory[1] as i8, -((0x4000 + 2 - 0x3ff0) as i8));
 
-
-	let instruction = dbg!(motherboard.disassemble_instruction_at(0x4000));
-	assert_eq!(
-		instruction.address,
-		0x4000
-	);
-	assert_eq!(
-		instruction.memory[1] as i8,
-		-((0x4000 + 2 - 0x3ff0) as i8)
-	);
-
-	assert_eq!(
-		0x3ff0,
-		motherboard.cpu().reg16(Reg16::Pc).value(),
-
-		"{:x} != {:x}", 0x3ff0,motherboard.cpu().reg16(Reg16::Pc).value()
-	);
+    assert_eq!(
+        0x3ff0,
+        motherboard.cpu().reg16(Reg16::Pc).value(),
+        "{:x} != {:x}",
+        0x3ff0,
+        motherboard.cpu().reg16(Reg16::Pc).value()
+    );
 }
 #[test]
 fn execute_jr3_assembler_bypassed2() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x3ff0
 label
 		jr $ ; end of test
@@ -803,34 +693,28 @@ label
 		db label-after
 
 after
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x3ff0, 0x4000, code);
+    let motherboard = execute_program(0x3ff0, 0x4000, code);
 
+    let instruction = dbg!(motherboard.disassemble_instruction_at(0x4000));
+    assert_eq!(instruction.address, 0x4000);
+    assert_eq!(instruction.memory[1] as i8, -((0x4000 + 2 - 0x3ff0) as i8));
 
-
-	let instruction = dbg!(motherboard.disassemble_instruction_at(0x4000));
-	assert_eq!(
-		instruction.address,
-		0x4000
-	);
-	assert_eq!(
-		instruction.memory[1] as i8,
-		-((0x4000 + 2 - 0x3ff0) as i8)
-	);
-
-	assert_eq!(
-		0x3ff0,
-		motherboard.cpu().reg16(Reg16::Pc).value(),
-
-		"{:x} != {:x}", 0x3ff0,motherboard.cpu().reg16(Reg16::Pc).value()
-	);
+    assert_eq!(
+        0x3ff0,
+        motherboard.cpu().reg16(Reg16::Pc).value(),
+        "{:x} != {:x}",
+        0x3ff0,
+        motherboard.cpu().reg16(Reg16::Pc).value()
+    );
 }
 
 #[test]
 fn execute_ldd() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0
 		ld de, 0x4010
@@ -843,40 +727,29 @@ fn execute_ldd() {
 
 		org 0x4020
 		db 2
-	"));
+	"
+    ));
 
-	// wait (too much) to be sure screen mode changed
-	let motherboard = execute_program(0x4000,0x4000, code);
+    // wait (too much) to be sure screen mode changed
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		motherboard.bc(),
-		0xffff,
-		"0x{:x} != 0x{:x}", motherboard.bc(),	0xffff
-	);
-	assert_eq!(
-		motherboard.hl(),
-		0x4020-1
-	);
-	assert_eq!(
-		motherboard.de(),
-		0x4010-1
-	);
-	assert_eq!(
-		motherboard.read_byte(0x4010),
-		motherboard.read_byte(0x4020),
-	);
-	assert_eq!(
-		motherboard.read_byte(0x4010),
-		2,
-	);
+    assert_eq!(
+        motherboard.bc(),
+        0xffff,
+        "0x{:x} != 0x{:x}",
+        motherboard.bc(),
+        0xffff
+    );
+    assert_eq!(motherboard.hl(), 0x4020 - 1);
+    assert_eq!(motherboard.de(), 0x4010 - 1);
+    assert_eq!(motherboard.read_byte(0x4010), motherboard.read_byte(0x4020),);
+    assert_eq!(motherboard.read_byte(0x4010), 2,);
 }
-
-
 
 #[test]
 fn execute_ldir() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 2
 		ld de, 0x4010
@@ -893,44 +766,30 @@ fn execute_ldir() {
 		db 1
 		db 2
 		db 3
-	"));
+	"
+    ));
 
-	// wait (too much) to be sure screen mode changed
-	let motherboard = execute_program(0x4000,0x4000, code);
+    // wait (too much) to be sure screen mode changed
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		motherboard.bc(),
-		0x00,
-		"0x{:x} != 0x{:x}", motherboard.bc(),	0xffff
-	);
-	assert_eq!(
-		motherboard.hl(),
-		0x4020+2
-	);
-	assert_eq!(
-		motherboard.de(),
-		0x4010+2
-	);
-	assert_eq!(
-		motherboard.read_byte(0x4010),
-		motherboard.read_byte(0x4020),
-	);
-	assert_eq!(
-		motherboard.read_byte(0x4011),
-		motherboard.read_byte(0x4021),
-	);
-	assert_ne!(
-		motherboard.read_byte(0x4012),
-		motherboard.read_byte(0x4022),
-	);
+    assert_eq!(
+        motherboard.bc(),
+        0x00,
+        "0x{:x} != 0x{:x}",
+        motherboard.bc(),
+        0xffff
+    );
+    assert_eq!(motherboard.hl(), 0x4020 + 2);
+    assert_eq!(motherboard.de(), 0x4010 + 2);
+    assert_eq!(motherboard.read_byte(0x4010), motherboard.read_byte(0x4020),);
+    assert_eq!(motherboard.read_byte(0x4011), motherboard.read_byte(0x4021),);
+    assert_ne!(motherboard.read_byte(0x4012), motherboard.read_byte(0x4022),);
 }
-
-
 
 #[test]
 fn execute_lddr() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 2
 		ld de, 0x4012
@@ -947,109 +806,76 @@ fn execute_lddr() {
 	 db 1
 		db 2
 		db 3
-	"));
+	"
+    ));
 
-	// wait (too much) to be sure screen mode changed
-	let motherboard = execute_program(0x4000,0x4000, code);
+    // wait (too much) to be sure screen mode changed
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		motherboard.bc(),
-		0x00,
-		"0x{:x} != 0x{:x}", motherboard.bc(),	0xffff
-	);
-	assert_eq!(
-		motherboard.hl(),
-		0x4020
-	);
-	assert_eq!(
-		motherboard.de(),
-		0x4010
-	);
-	assert_eq!(
-		motherboard.read_byte(0x4012),
-		motherboard.read_byte(0x4022),
-	);
-	assert_eq!(
-		motherboard.read_byte(0x4011),
-		motherboard.read_byte(0x4021),
-	);
-	assert_ne!(
-		motherboard.read_byte(0x4010),
-		motherboard.read_byte(0x4020),
-	);
+    assert_eq!(
+        motherboard.bc(),
+        0x00,
+        "0x{:x} != 0x{:x}",
+        motherboard.bc(),
+        0xffff
+    );
+    assert_eq!(motherboard.hl(), 0x4020);
+    assert_eq!(motherboard.de(), 0x4010);
+    assert_eq!(motherboard.read_byte(0x4012), motherboard.read_byte(0x4022),);
+    assert_eq!(motherboard.read_byte(0x4011), motherboard.read_byte(0x4021),);
+    assert_ne!(motherboard.read_byte(0x4010), motherboard.read_byte(0x4020),);
 }
-
 
 #[test]
 fn execute_out1() {
-
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	// wait (too much) to be sure screen mode changed
-	let motherboard = execute_program(0x4000,0x4000, code);
+    // wait (too much) to be sure screen mode changed
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		VideoMode::Mode0,
-		motherboard.ga().active_video_mode()
-	);
-	assert_eq!(
-		VideoMode::Mode0,
-		motherboard.ga().next_video_mode()
-	);
+    assert_eq!(VideoMode::Mode0, motherboard.ga().active_video_mode());
+    assert_eq!(VideoMode::Mode0, motherboard.ga().next_video_mode());
 
-
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0x7f8e
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	// wait (too much) to be sure screen mode changed
-	let motherboard = execute_program(0x4000,0x4000, code);
+    // wait (too much) to be sure screen mode changed
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		VideoMode::Mode0,
-		motherboard.ga().active_video_mode()
-	);
-	assert_eq!(
-		VideoMode::Mode0,
-		motherboard.ga().next_video_mode()
-	);
+    assert_eq!(VideoMode::Mode0, motherboard.ga().active_video_mode());
+    assert_eq!(VideoMode::Mode0, motherboard.ga().next_video_mode());
 
-
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0x7f8e
 		out (c), c
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	// wait (too much) to be sure screen mode changed
-	let motherboard = execute_program(0x4000,0x4000, code);
+    // wait (too much) to be sure screen mode changed
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		VideoMode::Mode0,
-		motherboard.ga().active_video_mode()
-	);
-	assert_eq!(
-		VideoMode::Mode2,
-		motherboard.ga().next_video_mode()
-	);
+    assert_eq!(VideoMode::Mode0, motherboard.ga().active_video_mode());
+    assert_eq!(VideoMode::Mode2, motherboard.ga().next_video_mode());
 }
-
 
 #[test]
 // Test a palette change
 fn execute_out2() {
-
-	let code = cpclib_macros::assemble!(
-		"
+    let code = cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0x7f00
 		out (c), c ; select pen 0
@@ -1059,44 +885,36 @@ fn execute_out2() {
 
 		nop
 		jr $
-		");
+		"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code);
-	assert_eq!(
-		Ink::from(26),
-		motherboard.ga().palette()[0]
-	);
+    let motherboard = execute_program(0x4000, 0x4000, code);
+    assert_eq!(Ink::from(26), motherboard.ga().palette()[0]);
 }
-
 
 #[test]
 // Test a palette change
 fn execute_out3() {
-
-	let code = cpclib_macros::assemble!(
-		"
+    let code = cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0xbc00 + 6
 		out (c), c ; select register 6
 
 		nop ; just to be sure it is taken into account to avoid false alarms due to wrong timings
 		jr $
-		");
+		"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code);
-	assert_eq!(
-		6,
-		motherboard.crtc().ar()
-	);
+    let motherboard = execute_program(0x4000, 0x4000, code);
+    assert_eq!(6, motherboard.crtc().ar());
 }
-
 
 #[test]
 // Test a palette change
 fn execute_out4() {
-
-	let code = cpclib_macros::assemble!(
-		"
+    let code = cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0xbc00 + 6
 		out (c), c ; select register 6
@@ -1106,21 +924,17 @@ fn execute_out4() {
 
 		nop ; just to be sure it is taken into account to avoid false alarms due to wrong timings
 		jr $
-		");
+		"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code);
-	assert_eq!(
-		10,
-		motherboard.crtc().r6()
-	);
+    let motherboard = execute_program(0x4000, 0x4000, code);
+    assert_eq!(10, motherboard.crtc().r6());
 }
-
 
 #[test]
 fn execute_outd() {
-
-	let code = cpclib_macros::assemble!(
-		"
+    let code = cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld bc, 0x7f00
 		out (c), c ; select pen 0
@@ -1133,76 +947,65 @@ fn execute_outd() {
 		org 0x5000
 table
 		db 0x4b
-	");
+	"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code);
-	assert_eq!(
-		Ink::from(26),
-		motherboard.ga().palette()[0]
-	);
-	assert_eq!(
-		motherboard.cpu().b(),
-		0x7f
-	);
+    let motherboard = execute_program(0x4000, 0x4000, code);
+    assert_eq!(Ink::from(26), motherboard.ga().palette()[0]);
+    assert_eq!(motherboard.cpu().b(), 0x7f);
 
-	assert_eq!(
-		motherboard.cpu().hl(),
-		0x5000-1
-	);
+    assert_eq!(motherboard.cpu().hl(), 0x5000 - 1);
 }
-
-
 
 #[test]
 fn execute_push1() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		push hl
-	"));
+	"
+    ));
 
-	let motherboard = execute_single_instruction( code); 
+    let motherboard = execute_single_instruction(code);
 
-	assert_eq!(
-		0x8000-2,
-		motherboard.cpu().reg16(Reg16::Sp).value(),
-		"{:x} != {:x}", 0x8000-2,
-		motherboard.cpu().reg16(Reg16::Sp).value()
-	);
-
+    assert_eq!(
+        0x8000 - 2,
+        motherboard.cpu().reg16(Reg16::Sp).value(),
+        "{:x} != {:x}",
+        0x8000 - 2,
+        motherboard.cpu().reg16(Reg16::Sp).value()
+    );
 }
-
 
 #[test]
 fn execute_pop() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld sp, 0x4006
 		pop hl
 		jr $
 	stack:
 		dw 0xdead
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000,code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0xdead,
-		motherboard.cpu().reg16(Reg16::Hl).value(),
-		"{:x} != {:x}", 0xdead, motherboard.cpu().reg16(Reg16::Hl).value()
-	);
+    assert_eq!(
+        0xdead,
+        motherboard.cpu().reg16(Reg16::Hl).value(),
+        "{:x} != {:x}",
+        0xdead,
+        motherboard.cpu().reg16(Reg16::Hl).value()
+    );
 
-
-	assert_eq!(
-		0x4000 + 6 + 2,
-		motherboard.cpu().reg16(Reg16::Sp).value()
-	);
+    assert_eq!(0x4000 + 6 + 2, motherboard.cpu().reg16(Reg16::Sp).value());
 }
 
 #[test]
 fn execute_ret1() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld sp, 0x4004
 		ret
@@ -1212,21 +1015,18 @@ fn execute_ret1() {
 	back:
 		jr $
 
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0x4000+6,
-		motherboard.cpu().reg16(Reg16::Pc).value()
-	);
+    assert_eq!(0x4000 + 6, motherboard.cpu().reg16(Reg16::Pc).value());
 }
-
 
 #[test]
 fn execute_ret2() {
-	let code = dbg!(cpclib_macros::assemble!(
-		"
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 		org 0x4000
 		call 0x4010
 	return_point:
@@ -1236,183 +1036,186 @@ fn execute_ret2() {
 	target:
 		ret
 		jr $ ; end of test
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0x4000+3,
-		motherboard.cpu().reg16(Reg16::Pc).value()
-	);
+    assert_eq!(0x4000 + 3, motherboard.cpu().reg16(Reg16::Pc).value());
 }
 #[test]
 fn execute_rlc_a() {
-	let code = cpclib_macros::assemble!("
+    let code = cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld a, 0b10000001
 	rlc a
 	jr $
-");
+"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0b11,
-		motherboard.a()
-	);
+    assert_eq!(0b11, motherboard.a());
 
-	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+    assert!(motherboard
+        .cpu()
+        .test_flag(cpclib_asm::preamble::FlagTest::C));
 }
 
 #[test]
 fn execute_rlca() {
-	let code = cpclib_macros::assemble!("
+    let code = cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld a, 0b10000001
 	rlca
 	jr $
-");
+"
+    );
 
-let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-assert_eq!(
-	0b11,
-	motherboard.a()
-);
+    assert_eq!(0b11, motherboard.a());
 
-assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+    assert!(motherboard
+        .cpu()
+        .test_flag(cpclib_asm::preamble::FlagTest::C));
 }
-
 
 #[test]
 fn execute_rlc_mem_hl() {
-	let code = cpclib_macros::assemble!("
+    let code = cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld hl, 0x4010
 	rlc (hl)
 	jr $
 	org 0x4010
 	db 0b10000001
-");
+"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0b11,
-		motherboard.read_byte(0x4010)
-	);
+    assert_eq!(0b11, motherboard.read_byte(0x4010));
 
-	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+    assert!(motherboard
+        .cpu()
+        .test_flag(cpclib_asm::preamble::FlagTest::C));
 }
 
 #[test]
 fn execute_rlc_indexed() {
-	let code = cpclib_macros::assemble!("
+    let code = cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld ix, data
 	rlc (ix+0)
 	jr $
 	org 0x4010
 data
-	db 0b10000001");
+	db 0b10000001"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0b11,
-		motherboard.read_byte(0x4010)
-	);
+    assert_eq!(0b11, motherboard.read_byte(0x4010));
 
-	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+    assert!(motherboard
+        .cpu()
+        .test_flag(cpclib_asm::preamble::FlagTest::C));
 }
 
 #[test]
 fn execute_rra1() {
-	let code = cpclib_macros::assemble!("
+    let code = cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld hl, 0x0100
 	push hl
 	pop af
 
 	rra
-	");
+	"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0,
-		motherboard.a()
-	);
+    assert_eq!(0, motherboard.a());
 
-	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+    assert!(motherboard
+        .cpu()
+        .test_flag(cpclib_asm::preamble::FlagTest::C));
 }
 
 #[test]
 fn execute_rra2() {
-	let code = cpclib_macros::assemble!("
+    let code = cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld hl, 0x0200
 	push hl
 	pop af
 
 	rra
-	");
+	"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		1,
-		motherboard.a()
-	);
+    assert_eq!(1, motherboard.a());
 
-	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::NC));
+    assert!(motherboard
+        .cpu()
+        .test_flag(cpclib_asm::preamble::FlagTest::NC));
 }
-
 
 #[test]
 fn execute_rra3() {
-	let code = cpclib_macros::assemble!("
+    let code = cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld hl, 0x0200
 	push hl
 	pop af
 	scf
 	rra
-	");
+	"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0b10000001,
-		motherboard.a()
-	);
+    assert_eq!(0b10000001, motherboard.a());
 
-	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::NC));
+    assert!(motherboard
+        .cpu()
+        .test_flag(cpclib_asm::preamble::FlagTest::NC));
 }
 #[test]
 fn execute_rrc() {
-
-	let code = cpclib_macros::assemble!("
+    let code = cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld a, 0b10000001
 	rrc a
 	jr $
-	");
+	"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0b11000000,
-		motherboard.a()
-	);
+    assert_eq!(0b11000000, motherboard.a());
 
-	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+    assert!(motherboard
+        .cpu()
+        .test_flag(cpclib_asm::preamble::FlagTest::C));
 }
-
 
 #[test]
 fn execute_rst() {
-	let code = dbg!(cpclib_macros::assemble!("
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 
 	org 0x4000
 	ld a, 0xc9
@@ -1424,223 +1227,263 @@ fn execute_rst() {
 
 
 
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0x4008,
-		motherboard.pc()
-	);
-
+    assert_eq!(0x4008, motherboard.pc());
 }
-
 
 #[test]
 fn execute_srl1() {
-	let code = dbg!(cpclib_macros::assemble!("
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld hl, data
 	srl (hl)
 	jr $
 	org 0x4010
 data db 1
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0b00000000,
-		motherboard.read_byte(0x4010)
-	);
+    assert_eq!(0b00000000, motherboard.read_byte(0x4010));
 
-	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+    assert!(motherboard
+        .cpu()
+        .test_flag(cpclib_asm::preamble::FlagTest::C));
 }
 
 #[test]
 fn execute_srl2() {
-	let code = cpclib_macros::assemble!("
+    let code = cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld a, 1
 	srl a
 	jr $
-	");
+	"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0b00000000,
-		motherboard.a()
-	);
+    assert_eq!(0b00000000, motherboard.a());
 
-	assert!(motherboard.cpu().test_flag(cpclib_asm::preamble::FlagTest::C));
+    assert!(motherboard
+        .cpu()
+        .test_flag(cpclib_asm::preamble::FlagTest::C));
 }
 
 #[test]
 fn execute_sbc1() {
-	let code = dbg!(cpclib_macros::assemble!("
+    let code = dbg!(cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld hl, 3
 	ld de, 2
 	or a
 	sbc hl, de
 	jr $
-	"));
+	"
+    ));
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		1,
-		motherboard.hl()
-	);
+    assert_eq!(1, motherboard.hl());
 }
 
-	#[test]
-	fn execute_sbc2() {
-		let code = cpclib_macros::assemble!("
+#[test]
+fn execute_sbc2() {
+    let code = cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld hl, 3
 		ld de, 2
 		scf
 		sbc hl, de
 		jr $
-		");
-	
-		let motherboard = execute_program(0x4000, 0x4000, code); 
-	
-		assert_eq!(
-			0,
-			motherboard.hl()
-		);
-	}
+		"
+    );
+
+    let motherboard = execute_program(0x4000, 0x4000, code);
+
+    assert_eq!(0, motherboard.hl());
+}
 
 #[test]
 fn execute_adc16_family_zexdoc_first_group() {
-	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+    let mb = execute_program(
+        0x4000,
+        0x4000,
+        cpclib_macros::assemble!(
+            "
 	org 0x4000
 	ld hl, 0x1234
 	ld bc, 0x1111
 	or a
 	adc hl, bc
 	jr $
-	"));
-	assert_eq!(0x2345, mb.hl());
+	"
+        ),
+    );
+    assert_eq!(0x2345, mb.hl());
 
-	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+    let mb = execute_program(
+        0x4000,
+        0x4000,
+        cpclib_macros::assemble!(
+            "
 	org 0x4000
 	ld hl, 0xffff
 	ld de, 0x0000
 	scf
 	adc hl, de
 	jr $
-	"));
-	assert_eq!(0x0000, mb.hl());
-	assert!(mb.cpu().flag(Z80Flags::C));
-	assert!(mb.cpu().flag(Z80Flags::Z));
-	assert!(!mb.cpu().flag(Z80Flags::N));
+	"
+        ),
+    );
+    assert_eq!(0x0000, mb.hl());
+    assert!(mb.cpu().flag(Z80Flags::C));
+    assert!(mb.cpu().flag(Z80Flags::Z));
+    assert!(!mb.cpu().flag(Z80Flags::N));
 
-	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+    let mb = execute_program(
+        0x4000,
+        0x4000,
+        cpclib_macros::assemble!(
+            "
 	org 0x4000
 	ld hl, 0x7fff
 	or a
 	adc hl, hl
 	jr $
-	"));
-	assert_eq!(0xfffe, mb.hl());
-	assert!(mb.cpu().flag(Z80Flags::P));
-	assert!(!mb.cpu().flag(Z80Flags::N));
+	"
+        ),
+    );
+    assert_eq!(0xfffe, mb.hl());
+    assert!(mb.cpu().flag(Z80Flags::P));
+    assert!(!mb.cpu().flag(Z80Flags::N));
 
-	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+    let mb = execute_program(
+        0x4000,
+        0x4000,
+        cpclib_macros::assemble!(
+            "
 	org 0x4000
 	ld sp, 0x0010
 	ld hl, 0x0001
 	or a
 	adc hl, sp
 	jr $
-	"));
-	assert_eq!(0x0011, mb.hl());
+	"
+        ),
+    );
+    assert_eq!(0x0011, mb.hl());
 }
 
 #[test]
 fn execute_sbc16_family_zexdoc_first_group() {
-	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+    let mb = execute_program(
+        0x4000,
+        0x4000,
+        cpclib_macros::assemble!(
+            "
 	org 0x4000
 	ld hl, 0x1234
 	ld bc, 0x1111
 	or a
 	sbc hl, bc
 	jr $
-	"));
-	assert_eq!(0x0123, mb.hl());
+	"
+        ),
+    );
+    assert_eq!(0x0123, mb.hl());
 
-	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+    let mb = execute_program(
+        0x4000,
+        0x4000,
+        cpclib_macros::assemble!(
+            "
 	org 0x4000
 	ld hl, 0x0000
 	ld de, 0x0000
 	scf
 	sbc hl, de
 	jr $
-	"));
-	assert_eq!(0xffff, mb.hl());
-	assert!(mb.cpu().flag(Z80Flags::C));
-	assert!(mb.cpu().flag(Z80Flags::N));
-	assert!(mb.cpu().flag(Z80Flags::S));
+	"
+        ),
+    );
+    assert_eq!(0xffff, mb.hl());
+    assert!(mb.cpu().flag(Z80Flags::C));
+    assert!(mb.cpu().flag(Z80Flags::N));
+    assert!(mb.cpu().flag(Z80Flags::S));
 
-	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+    let mb = execute_program(
+        0x4000,
+        0x4000,
+        cpclib_macros::assemble!(
+            "
 	org 0x4000
 	ld hl, 0x1111
 	or a
 	sbc hl, hl
 	jr $
-	"));
-	assert_eq!(0x0000, mb.hl());
-	assert!(mb.cpu().flag(Z80Flags::Z));
+	"
+        ),
+    );
+    assert_eq!(0x0000, mb.hl());
+    assert!(mb.cpu().flag(Z80Flags::Z));
 
-	let mb = execute_program(0x4000, 0x4000, cpclib_macros::assemble!("
+    let mb = execute_program(
+        0x4000,
+        0x4000,
+        cpclib_macros::assemble!(
+            "
 	org 0x4000
 	ld sp, 0x0010
 	ld hl, 0x0011
 	or a
 	sbc hl, sp
 	jr $
-	"));
-	assert_eq!(0x0001, mb.hl());
+	"
+        ),
+    );
+    assert_eq!(0x0001, mb.hl());
 }
 
-
-
-	#[test]
-	fn execute_sub1() {
-		let code = cpclib_macros::assemble!("
+#[test]
+fn execute_sub1() {
+    let code = cpclib_macros::assemble!(
+        "
 		org 0x4000
 		ld a, 0xff
 		sub 0xff
 		jr $
-		");
-	
-		let motherboard = execute_program(0x4000, 0x4000, code); 
-	
-		assert_eq!(
-			0,
-			motherboard.a()
-		);
-	}
+		"
+    );
+
+    let motherboard = execute_program(0x4000, 0x4000, code);
+
+    assert_eq!(0, motherboard.a());
+}
 
 #[test]
 fn execute_set() {
-	let code = cpclib_macros::assemble!("
+    let code = cpclib_macros::assemble!(
+        "
 	org 0x4000
 	ld hl, data
 	set 7, (hl)
 	jr $
 	org 0x4010
 data db 1
-	");
+	"
+    );
 
-	let motherboard = execute_program(0x4000, 0x4000, code); 
+    let motherboard = execute_program(0x4000, 0x4000, code);
 
-	assert_eq!(
-		0b10000001,
-		motherboard.read_byte(0x4010)
-	);
+    assert_eq!(0b10000001, motherboard.read_byte(0x4010));
 }

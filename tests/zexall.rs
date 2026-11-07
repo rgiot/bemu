@@ -1,7 +1,7 @@
-use amsrust::motherboard::{MotherboardBuilder, Motherboard};
-use amsrust::z80::{HasValue, Reg16, Reg8};
-use amsrust::memory::*;
 use amsrust::debug::*;
+use amsrust::memory::*;
+use amsrust::motherboard::{Motherboard, MotherboardBuilder};
+use amsrust::z80::{HasValue, Reg16, Reg8};
 use std::cell::RefCell;
 use std::io::Write;
 use std::time::Instant;
@@ -28,15 +28,13 @@ fn zexall() {
         .and_then(|s| s.parse::<u64>().ok());
 
     let mut motherboard = MotherboardBuilder::default().build();
-    motherboard.force_rom_config(
-        RomConfig{
-            lower_rom: Flag::Disable,
-            upper_rom: Flag::Disable,
-            rom_number: 0,
-            lower_rom_page: 0,
-            lower_rom_quarter: 0
-        }
-    );
+    motherboard.force_rom_config(RomConfig {
+        lower_rom: Flag::Disable,
+        upper_rom: Flag::Disable,
+        rom_number: 0,
+        lower_rom_page: 0,
+        lower_rom_quarter: 0,
+    });
 
     let prg = include_bytes!("zexall.com");
 
@@ -59,11 +57,11 @@ fn zexall() {
             0x0005 => {
                 cpm_bdos(motherboard, &mut output.borrow_mut());
                 false
-            },
+            }
             0x0000 => {
                 println!("leave test");
                 true
-            },
+            }
             _ => false,
         }
     };
@@ -77,7 +75,10 @@ fn zexall() {
         let stop = ctx.execute_next(&mut motherboard);
         if stop {
             let elapsed = start.elapsed();
-            eprintln!("[zexall] finished after {} operations in {:.2?}", operations, elapsed);
+            eprintln!(
+                "[zexall] finished after {} operations in {:.2?}",
+                operations, elapsed
+            );
             break;
         }
 
@@ -130,7 +131,7 @@ fn cpm_bdos(motherboard: &Motherboard, output: &mut String) {
             let c = cpu.reg8(Reg8::E).value() as char;
             output.push(c);
             print!("{c}");
-        },
+        }
         9 => {
             // output a string at register DE until '$'
             let mut addr = cpu.reg16(Reg16::De).value();
@@ -140,12 +141,11 @@ fn cpm_bdos(motherboard: &Motherboard, output: &mut String) {
                 if c != '$' {
                     output.push(c);
                     print!("{c}");
-                }
-                else {
+                } else {
                     break;
                 }
             }
-        },
+        }
         _ => {
             panic!("Unknown CP/M call {}!", c_value);
         }

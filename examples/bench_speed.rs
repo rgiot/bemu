@@ -12,7 +12,10 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let seconds: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(4);
     let options: Vec<String> = args.collect();
-    let audio = options.iter().any(|o| o == "audio").then(|| AudioConfig::stereo(48_000));
+    let audio = options
+        .iter()
+        .any(|o| o == "audio")
+        .then(|| AudioConfig::stereo(48_000));
     let video = options.iter().any(|o| o == "video");
     // `dark`: no picture at all, the Gate Array's pixels included (a fast-forward)
     let dark = options.iter().any(|o| o == "dark");
@@ -36,8 +39,7 @@ fn main() {
                         monitor.recycle(frame);
                     }
                 });
-            }
-            else {
+            } else {
                 motherboard.execute_next_opcode_no_video();
             }
             if motherboard.psg().pending_samples() > 4096 {
@@ -45,7 +47,10 @@ fn main() {
             }
         }
         let wall = start.elapsed().as_secs_f64();
-        println!("second {second}: {wall:.2}s wall ({:.2}x real time)", 1.0 / wall);
+        println!(
+            "second {second}: {wall:.2}s wall ({:.2}x real time)",
+            1.0 / wall
+        );
     }
     if video {
         println!("{frames} frames");

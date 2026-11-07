@@ -13,7 +13,10 @@ fn main() {
     runner.run_text(&text, base.clone()).expect("csl");
     runner.motherboard_mut().fdc_mut().start_command_log();
     runner
-        .run_text(&format!("csl_version 1.0\nkey_output ' '\nwait {}\n", ms * 1000), base)
+        .run_text(
+            &format!("csl_version 1.0\nkey_output ' '\nwait {}\n", ms * 1000),
+            base,
+        )
         .expect("space");
     let mb = runner.motherboard_mut();
     for (i, rec) in mb.fdc().command_log().iter().enumerate() {

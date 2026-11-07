@@ -45,7 +45,7 @@ pub enum Reg8 {
     Iyl,
 
     I,
-    R
+    R,
 }
 
 impl From<&cpclib_asm::preamble::Register8> for Reg8 {

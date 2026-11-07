@@ -40,15 +40,28 @@ fn main() {
                 let palette = *mb.ga().palette();
                 for pen in 0..17 {
                     if palette[pen] != last_palette[pen] {
-                        events.push((x as isize - crop_x, pen, format!("{:?} by the instruction at {:04X}, tick {} of it", palette[pen], instruction_pc, ticks_in)));
+                        events.push((
+                            x as isize - crop_x,
+                            pen,
+                            format!(
+                                "{:?} by the instruction at {:04X}, tick {} of it",
+                                palette[pen], instruction_pc, ticks_in
+                            ),
+                        ));
                     }
                 }
                 let px = x as isize - crop_x;
-                let color = [(rgb.r() * 2.55) as u8, (rgb.g() * 2.55) as u8, (rgb.b() * 2.55) as u8];
-                if px >= from as isize && (px as usize) < to
-                    && runs.last().is_none_or(|r| r.1 != color) {
-                        runs.push((px as usize, color));
-                    }
+                let color = [
+                    (rgb.r() * 2.55) as u8,
+                    (rgb.g() * 2.55) as u8,
+                    (rgb.b() * 2.55) as u8,
+                ];
+                if px >= from as isize
+                    && (px as usize) < to
+                    && runs.last().is_none_or(|r| r.1 != color)
+                {
+                    runs.push((px as usize, color));
+                }
             }
             last_palette = *mb.ga().palette();
         }

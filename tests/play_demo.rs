@@ -17,7 +17,10 @@ fn the_catalog_reader_tells_catart_from_the_real_files_on_both_discs() {
         let catalog = disc.amsdos_catalog();
         assert!(!catalog.is_empty(), "{path}: empty catalog");
 
-        let real: Vec<_> = catalog.iter().filter(|e| e.is_plausible_filename()).collect();
+        let real: Vec<_> = catalog
+            .iter()
+            .filter(|e| e.is_plausible_filename())
+            .collect();
         assert!(!real.is_empty(), "{path}: every entry looked like CATART");
         assert!(
             real.iter().any(|e| e.filename() == expected),
@@ -41,13 +44,21 @@ fn bnd4_package_boots_into_its_menu() {
         .run_text(
             "crtc_select 0\nreset\nwait 3000000\ndisk_insert 'bnd4_package.dsk'\n\
              key_delay 70000 70000 400000\nkey_output 'RUN\"#MENU\"\\(RET)'\nwait 8000000\n",
-            "validation/Benediction"
+            "validation/Benediction",
         )
         .unwrap();
 
     let motherboard = runner.motherboard();
     // BASIC's own boot screen is Mode 1 with the firmware running from
     // lower ROM (PC < 0x4000); the menu takes over both.
-    assert_eq!(motherboard.ga().current_mode(), VideoMode::Mode2, "the menu never took over the screen");
-    assert!(motherboard.pc() >= 0x4000, "still running firmware, PC={:04x}", motherboard.pc());
+    assert_eq!(
+        motherboard.ga().current_mode(),
+        VideoMode::Mode2,
+        "the menu never took over the screen"
+    );
+    assert!(
+        motherboard.pc() >= 0x4000,
+        "still running firmware, PC={:04x}",
+        motherboard.pc()
+    );
 }

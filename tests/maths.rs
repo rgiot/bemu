@@ -2,7 +2,8 @@ use amsrust::{debug::Monitor, motherboard::MotherboardBuilder};
 use cpclib_macros::assemble;
 
 // http://www.cpctech.cpc-live.com/docs/mult.html
-const MUL_DE_BC: &[u8] = assemble!("
+const MUL_DE_BC: &[u8] = assemble!(
+    "
 ;; multiply DE and BC
 ;; DE is equivalent to the number in the top row in our algorithm
 ;; and BC is equivalent to the number in the bottom row in our algorithm
@@ -35,49 +36,42 @@ const MUL_DE_BC: &[u8] = assemble!("
     jr nz, .mul_loop  ;; process more bits
 
 	ret
-");
-
-
+"
+);
 
 fn test_multiplication_bc_de(de: u16, bc: u16, expected: u16) {
+    let mut motherboard = MotherboardBuilder::default()
+        .disable_lower_rom()
+        .disable_upper_rom()
+        .build();
+    motherboard.write_buffer(0x4000, MUL_DE_BC);
 
-	let mut motherboard = MotherboardBuilder::default()
-					.disable_lower_rom()
-					.disable_upper_rom()
-					.build();
-	motherboard.write_buffer(0x4000, MUL_DE_BC);
-
-
-	let caller = assemble!("
+    let caller = assemble!(
+        "
 		org 0x1000
 		call 0x4000
 		jr $
-	");
-	motherboard.write_buffer(0x1000, caller);
+	"
+    );
+    motherboard.write_buffer(0x1000, caller);
 
-	motherboard.set_pc(0x1000);
-	motherboard.set_de(de);
-	motherboard.set_bc(bc);
+    motherboard.set_pc(0x1000);
+    motherboard.set_de(de);
+    motherboard.set_bc(bc);
 
-	while motherboard.pc() != 0x1000 + 3 {
-		Monitor::monitor(&motherboard);
-		motherboard.execute_next_opcode();
-	}
-	Monitor::monitor(&motherboard);
+    while motherboard.pc() != 0x1000 + 3 {
+        Monitor::monitor(&motherboard);
+        motherboard.execute_next_opcode();
+    }
+    Monitor::monitor(&motherboard);
 
-	let obtained = motherboard.hl();
-	assert_eq!(
-		obtained,
-		expected
-	);
+    let obtained = motherboard.hl();
+    assert_eq!(obtained, expected);
 }
-
 
 #[test]
 fn test_multiplication() {
-	
-	test_multiplication_bc_de(32, 48, 1536);
-	test_multiplication_bc_de(1, 1, 1);
-	test_multiplication_bc_de(1000, 0, 0);
-
+    test_multiplication_bc_de(32, 48, 1536);
+    test_multiplication_bc_de(1, 1, 1);
+    test_multiplication_bc_de(1000, 0, 0);
 }

@@ -142,7 +142,7 @@ pub struct Monitor {
     /// often than every tick.
     last_levels: Option<([u32; 3], Rgb<u8>)>,
     /// A frame given back ([`Monitor::recycle`]), drawn next instead of a new one.
-    spare: Option<RgbImage>
+    spare: Option<RgbImage>,
 }
 
 impl Default for Monitor {
@@ -180,7 +180,7 @@ impl Monitor {
             hsync_color,
             black_level: 0,
             last_levels: None,
-            spare: None
+            spare: None,
         }
     }
 
@@ -234,7 +234,10 @@ impl Monitor {
     /// Where the picture starts in beam coordinates (the first pixel of the
     /// visible area: the image's (0, 0)).
     pub fn crop_origin(&self) -> (isize, usize) {
-        (MONITOR_FIRST_PIXEL as isize - self.shift as isize, MONITOR_FIRST_LINE)
+        (
+            MONITOR_FIRST_PIXEL as isize - self.shift as isize,
+            MONITOR_FIRST_LINE,
+        )
     }
 
     /// Keep the whole frames as well: every tick of every line, sync and
@@ -245,7 +248,7 @@ impl Monitor {
         if self.full.is_none() {
             self.full = Some(FullFrames {
                 drawing: RgbImage::new(FULL_FRAME_WIDTH, FULL_FRAME_HEIGHT),
-                done: None
+                done: None,
             });
         }
     }
@@ -296,8 +299,12 @@ impl Monitor {
         // C-VSYNC begins right where a C-HSYNC ends (R3l <= 6), the two make one pulse.
         let sync = hsync != vsync;
         // The common interval between pulses changes no sync or oscillator state.
-        if FAST && !sync && self.hsync_run == 0 && self.vsync_level == 0
-            && self.x < RASTER_LINE_LENGTH && self.hold == 0
+        if FAST
+            && !sync
+            && self.hsync_run == 0
+            && self.vsync_level == 0
+            && self.x < RASTER_LINE_LENGTH
+            && self.hold == 0
         {
             self.vsync_seen = false;
             self.now += 1;
@@ -310,14 +317,12 @@ impl Monitor {
                 self.hsync_listened = !self.locked || self.x >= MONITOR_HSYNC_WINDOW_START;
             }
             self.hsync_run += 1;
-        }
-        else {
+        } else {
             self.hsync_run = 0;
         }
         if sync {
             self.vsync_level += 1;
-        }
-        else {
+        } else {
             self.vsync_level = self.vsync_level.saturating_sub(1);
             if self.vsync_level == 0 {
                 self.vsync_seen = false;
@@ -353,7 +358,9 @@ impl Monitor {
             && (self.x as i64) < MONITOR_PLL_CAPTURE_LATE;
         let line_end = pulse_end || free_run;
         // the sync pulses, dated, for the second-sync discriminator
-        if hsync_pulse > 0 && !hsync && !vsync
+        if hsync_pulse > 0
+            && !hsync
+            && !vsync
             && (MONITOR_HPULSE_MIN..=MONITOR_HPULSE_MAX).contains(&hsync_pulse)
         {
             let start = self.now - hsync_pulse as u64;
@@ -361,8 +368,7 @@ impl Monitor {
                 self.discriminate(start);
                 self.last_sync_start = Some(start);
                 self.pulses.clear();
-            }
-            else if self.pulses.len() < 8 {
+            } else if self.pulses.len() < 8 {
                 self.pulses.push((start, hsync_pulse as i32));
             }
         }
@@ -370,8 +376,7 @@ impl Monitor {
         if pulse_end {
             self.locked = true;
             self.free_lines = 0;
-        }
-        else if free_run {
+        } else if free_run {
             self.free_lines += 1;
             if self.free_lines >= MONITOR_HSYNC_LOST_LINES {
                 self.locked = false;
@@ -402,7 +407,8 @@ impl Monitor {
             }
             // the frame deflection is a ramp in time: a line is drawn where the beam is when it starts,
             // however many line flybacks the sync pulses of the VSYNC made
-            self.line = ((self.now - self.frame_t0 + MONITOR_ROW_PHASE_TICKS) / RASTER_LINE_LENGTH as u64) as usize;
+            self.line = ((self.now - self.frame_t0 + MONITOR_ROW_PHASE_TICKS)
+                / RASTER_LINE_LENGTH as u64) as usize;
             if self.line >= MONITOR_FREE_RUN_LINES {
                 // no VSYNC: the frame oscillator rolls the picture
                 self.end_frame();
@@ -422,15 +428,15 @@ impl Monitor {
         let y = self.line.wrapping_sub(MONITOR_FIRST_LINE);
         let px = (self.x as isize - MONITOR_FIRST_PIXEL as isize + self.shift as isize) as usize;
         let visible = px < MONITOR_ACTIVE_PIXELS && y < MONITOR_HEIGHT;
-        let in_full = self.full.is_some() && self.x < FULL_FRAME_WIDTH as usize && self.line < FULL_FRAME_HEIGHT as usize;
+        let in_full = self.full.is_some()
+            && self.x < FULL_FRAME_WIDTH as usize
+            && self.line < FULL_FRAME_HEIGHT as usize;
         if visible || in_full {
             let pixel = if vsync {
                 self.vsync_color
-            }
-            else if hsync && self.hsync_listened {
+            } else if hsync && self.hsync_listened {
                 self.hsync_color
-            }
-            else {
+            } else {
                 self.pixel(rgb)
             };
             if visible {
@@ -440,7 +446,8 @@ impl Monitor {
                 texture[at..at + 3].copy_from_slice(&pixel.0);
             }
             if let (true, Some(full)) = (in_full, &mut self.full) {
-                full.drawing.put_pixel(self.x as u32, self.line as u32, pixel);
+                full.drawing
+                    .put_pixel(self.x as u32, self.line as u32, pixel);
             }
         }
         self.x += 1;
@@ -453,10 +460,15 @@ impl Monitor {
     /// that range, or when the oscillator was not locked, the beam simply restarts.
     fn follow_sync(&mut self, x_before: usize, was_locked: bool) {
         let adj = std::mem::take(&mut self.sync_adj);
-        let error = if self.ran_free { x_before as i64 } else { x_before as i64 - RASTER_LINE_LENGTH as i64 };
+        let error = if self.ran_free {
+            x_before as i64
+        } else {
+            x_before as i64 - RASTER_LINE_LENGTH as i64
+        };
         let error = error - adj;
         self.ran_free = false;
-        if !was_locked || !(-MONITOR_PLL_CAPTURE_EARLY..=MONITOR_PLL_CAPTURE_LATE).contains(&error) {
+        if !was_locked || !(-MONITOR_PLL_CAPTURE_EARLY..=MONITOR_PLL_CAPTURE_LATE).contains(&error)
+        {
             return;
         }
         if error.abs() > 2 {
@@ -464,7 +476,12 @@ impl Monitor {
         } else if self.pll_active > 0 {
             self.pll_active -= 1;
         }
-        let pull = if error.abs() <= 1 { error } else { ((error * 3 + 4 * error.signum()) / 8).clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL) };
+        let pull = if error.abs() <= 1 {
+            error
+        } else {
+            ((error * 3 + 4 * error.signum()) / 8)
+                .clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL)
+        };
         let start = error - pull + adj; // ticks since the new line start, at this sync
         if start >= 0 {
             self.x = start as usize;
@@ -480,7 +497,8 @@ impl Monitor {
         let mut target = 0i32;
         if let (Some(previous), [(other, width)]) = (self.last_sync_start, self.pulses.as_slice()) {
             let after = (*other - previous) as i64; // late for the previous sync
-            let late_pull = (((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12).max(MONITOR_PULL_MIN);
+            let late_pull =
+                (((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12).max(MONITOR_PULL_MIN);
             let taper = |pull: i32, distance: i64, flat: i64, end: i64| -> i32 {
                 if distance <= flat {
                     pull
@@ -491,7 +509,12 @@ impl Monitor {
                 }
             };
             if after > MONITOR_PULL_DEADZONE && after < MONITOR_PULL_END_LATE {
-                target = -taper(late_pull, after, MONITOR_PULL_FLAT_LATE, MONITOR_PULL_END_LATE);
+                target = -taper(
+                    late_pull,
+                    after,
+                    MONITOR_PULL_FLAT_LATE,
+                    MONITOR_PULL_END_LATE,
+                );
             }
             // a second sync BEFORE the line sync pulls the picture right only when it is close: by
             // (width - 3) / 5 ticks starting 6 to 12 usec ahead (Shaker D3 B/C/D 8-11, R2=#23/#24 before
@@ -499,7 +522,11 @@ impl Monitor {
             // half a microsecond off as a whole for another reason), not at all from 12 to 28 usec
             // ahead (validation/fuzz/gen_pull_probe.py)
             let before = start as i64 - *other as i64;
-            if target == 0 && before > MONITOR_PULL_DEADZONE && before <= MONITOR_PULL_END_EARLY && *width >= 24 {
+            if target == 0
+                && before > MONITOR_PULL_DEADZONE
+                && before <= MONITOR_PULL_END_EARLY
+                && *width >= 24
+            {
                 target = (*width - 3).max(0) / 5;
             }
         }
@@ -517,8 +544,7 @@ impl Monitor {
     fn start_frame(&mut self) {
         if self.synchronised {
             self.end_frame();
-        }
-        else {
+        } else {
             self.texture = RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32);
             self.line = 0;
         }
@@ -531,8 +557,8 @@ impl Monitor {
             Some(mut spare) => {
                 spare.fill(0);
                 spare
-            },
-            None => RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32)
+            }
+            None => RgbImage::new(MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32),
         };
         self.frame = Some(std::mem::replace(&mut self.texture, next));
         if let Some(full) = &mut self.full {
@@ -558,7 +584,7 @@ pub const FULL_FRAME_HEIGHT: u32 = MONITOR_FREE_RUN_LINES as u32;
 #[derive(Debug, Clone)]
 struct FullFrames {
     drawing: RgbImage,
-    done: Option<RgbImage>
+    done: Option<RgbImage>,
 }
 
 /// RGB intensities (percent) to 8-bit pixels, 0% being drawn at `black`.
@@ -583,7 +609,12 @@ mod test {
             let x = t % RASTER_LINE_LENGTH;
             let vsync = line % 312 < 16 || (line % 83 == 0 && (300..317).contains(&x));
             let hsync = (736..800).contains(&x) || (line % 7 == 0 && (170..184).contains(&x));
-            let rgb = (((t % 101) as f32), ((t / 13 % 101) as f32), ((t / 71 % 101) as f32)).into();
+            let rgb = (
+                ((t % 101) as f32),
+                ((t / 13 % 101) as f32),
+                ((t / 71 % 101) as f32),
+            )
+                .into();
             let sync = Sync { vsync, hsync };
             fast.receive(rgb, sync);
             reference.receive_impl::<false>(rgb, sync);
@@ -591,9 +622,28 @@ mod test {
                 macro_rules! same {
                     ($($field:ident),+ $(,)?) => { $(assert_eq!(fast.$field, reference.$field, "{} at tick {t}", stringify!($field));)+ };
                 }
-                same!(x, line, hsync_run, hsync_listened, vsync_level, vsync_seen, locked,
-                    free_lines, synchronised, ran_free, pll_active, sync_adj, hold, now,
-                    pulses, last_sync_start, shift, next_shift, frame_t0, last_levels);
+                same!(
+                    x,
+                    line,
+                    hsync_run,
+                    hsync_listened,
+                    vsync_level,
+                    vsync_seen,
+                    locked,
+                    free_lines,
+                    synchronised,
+                    ran_free,
+                    pll_active,
+                    sync_adj,
+                    hold,
+                    now,
+                    pulses,
+                    last_sync_start,
+                    shift,
+                    next_shift,
+                    frame_t0,
+                    last_levels
+                );
                 assert_eq!(fast.texture, reference.texture, "texture at tick {t}");
                 assert_eq!(fast.frame, reference.frame, "frame at tick {t}");
                 let a = fast.full.as_ref().unwrap();
@@ -636,7 +686,11 @@ mod test {
             let vsync = l < 16;
             for t in 0..RASTER_LINE_LENGTH {
                 let hsync = t >= 736 && t < 736 + hsync_ticks;
-                let rgb = if hsync || vsync { (0., 0., 0.) } else { (100., 0., 0.) };
+                let rgb = if hsync || vsync {
+                    (0., 0., 0.)
+                } else {
+                    (100., 0., 0.)
+                };
                 mon.receive(rgb.into(), Sync { vsync, hsync });
             }
         }
@@ -656,7 +710,10 @@ mod test {
         frame(&mut mon, 312, 64);
         assert!(mon.is_frame_complete());
         let image = mon.take_frame().unwrap();
-        assert_eq!(image.dimensions(), (MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32));
+        assert_eq!(
+            image.dimensions(),
+            (MONITOR_ACTIVE_PIXELS as u32, MONITOR_HEIGHT as u32)
+        );
         // picture is red, with the first lines after the retrace
         assert_eq!(*image.get_pixel(10, 10), Rgb([255, 0, 0]));
     }
@@ -670,7 +727,10 @@ mod test {
         // the line restarts at the end of the HSYNC (tick 800 of the CRTC
         // line): the HSYNC itself falls beyond the 832 shown pixels
         assert_eq!(*image.get_pixel(0, 100), Rgb([255, 0, 0]));
-        assert_eq!(*image.get_pixel(MONITOR_ACTIVE_PIXELS as u32 - 1, 100), Rgb([255, 0, 0]));
+        assert_eq!(
+            *image.get_pixel(MONITOR_ACTIVE_PIXELS as u32 - 1, 100),
+            Rgb([255, 0, 0])
+        );
     }
 
     #[test]
@@ -687,7 +747,13 @@ mod test {
     fn without_vsync_the_frame_oscillator_rolls_the_picture() {
         let mut mon = Monitor::default();
         for _ in 0..(MONITOR_FREE_RUN_LINES + 1) * RASTER_LINE_LENGTH {
-            mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync: false });
+            mon.receive(
+                (100., 0., 0.).into(),
+                Sync {
+                    vsync: false,
+                    hsync: false,
+                },
+            );
         }
         assert!(mon.is_frame_complete());
     }
@@ -711,7 +777,13 @@ mod test {
                 let main = (736..800).contains(&t);
                 let other = l >= 10 && (176..240).contains(&t);
                 let hsync = main || other;
-                mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
+                mon.receive(
+                    (100., 0., 0.).into(),
+                    Sync {
+                        vsync: false,
+                        hsync,
+                    },
+                );
             }
             if l == 30 {
                 assert_eq!(mon.shift, -10, "the plateau of the pull");
@@ -720,7 +792,13 @@ mod test {
         for _ in 0..3 {
             for t in 0..RASTER_LINE_LENGTH {
                 let hsync = (736..800).contains(&t);
-                mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
+                mon.receive(
+                    (100., 0., 0.).into(),
+                    Sync {
+                        vsync: false,
+                        hsync,
+                    },
+                );
             }
         }
         assert_eq!(mon.shift, 0);
@@ -736,7 +814,13 @@ mod test {
                 let main = (736..800).contains(&t);
                 let other = l >= 30 && (400..464).contains(&t);
                 let hsync = main || other;
-                mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
+                mon.receive(
+                    (100., 0., 0.).into(),
+                    Sync {
+                        vsync: false,
+                        hsync,
+                    },
+                );
             }
         }
         // the oscillator is locked: the pulse is not listened to, nothing goes black in the lines drawn

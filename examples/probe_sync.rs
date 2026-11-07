@@ -19,16 +19,42 @@ fn main() {
     for _ in 0..ticks {
         let (_rgb, sync) = mb.tick();
         let c = mb.crtc();
-        if c.hcc > 63 { overflow_ticks += 1; }
-        if c.vsync() && !pv { vs_edges += 1; }
-        if c.hsync() && !ph { hs_edges += 1; }
-        if sync.vsync && !pcv { c_vs += 1; }
-        if sync.hsync && !pch { c_hs += 1; }
-        pv = c.vsync(); ph = c.hsync(); pcv = sync.vsync; pch = sync.hsync;
-        *sets.entry([c.r0(), c.r1(), c.r2(), c.r3(), c.r4(), c.r6(), c.r7(), c.r9()]).or_default() += 1;
+        if c.hcc > 63 {
+            overflow_ticks += 1;
+        }
+        if c.vsync() && !pv {
+            vs_edges += 1;
+        }
+        if c.hsync() && !ph {
+            hs_edges += 1;
+        }
+        if sync.vsync && !pcv {
+            c_vs += 1;
+        }
+        if sync.hsync && !pch {
+            c_hs += 1;
+        }
+        pv = c.vsync();
+        ph = c.hsync();
+        pcv = sync.vsync;
+        pch = sync.hsync;
+        *sets
+            .entry([
+                c.r0(),
+                c.r1(),
+                c.r2(),
+                c.r3(),
+                c.r4(),
+                c.r6(),
+                c.r7(),
+                c.r9(),
+            ])
+            .or_default() += 1;
     }
     println!("CRTC vsync edges {vs_edges}, hsync edges {hs_edges}; C-VSYNC {c_vs}, C-HSYNC {c_hs}");
     println!("ticks with C0>63: {overflow_ticks}");
     println!("sets [R0,R1,R2,R3,R4,R6,R7,R9] : ticks");
-    for (k, v) in sets { println!("{k:?} {v}"); }
+    for (k, v) in sets {
+        println!("{k:?} {v}");
+    }
 }

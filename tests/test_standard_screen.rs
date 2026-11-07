@@ -31,7 +31,7 @@ enum Expected {
     /// The border ink, whatever the palette is when it comes out (the ink is looked up then)
     Border,
     /// One of the four inks of mode 1
-    Mode1
+    Mode1,
 }
 
 thread_local! {
@@ -105,15 +105,17 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
     let sync_black = SYNC_PIPELINE.with(|queue| {
         let mut queue = queue.borrow_mut();
         queue.push_back(vsync || hsync);
-        if queue.len() > SYNC_BLACK_LAG_TICKS { queue.pop_front() } else { None }
+        if queue.len() > SYNC_BLACK_LAG_TICKS {
+            queue.pop_front()
+        } else {
+            None
+        }
     });
     let expected_now = if unknown {
         Expected::Unknown
-    }
-    else if is_border {
+    } else if is_border {
         Expected::Border
-    }
-    else {
+    } else {
         Expected::Mode1
     };
     let mode2 = ga.current_mode() == VideoMode::Mode2;
@@ -124,17 +126,29 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
             let (tick, borders, shown) = &mut *byte.borrow_mut();
             if *tick <= DISPEN_LATCH_TICKS {
                 borders[*tick] = is_border_now;
-                shown[*tick] = if mode2 { Some(*tick) } else { tick.checked_sub(1) };
+                shown[*tick] = if mode2 {
+                    Some(*tick)
+                } else {
+                    tick.checked_sub(1)
+                };
             }
             if *tick == DISPEN_LATCH_TICKS {
                 // the byte's first pens follow DISPEN as it is now
                 let latched = is_border_now;
                 #[allow(clippy::needless_range_loop)] // t is a tick too, not only an index
                 for t in 0..=DISPEN_LATCH_TICKS {
-                    let Some(source) = shown[t].filter(|&s| s < DISPEN_LATCH_TICKS) else { continue };
+                    let Some(source) = shown[t].filter(|&s| s < DISPEN_LATCH_TICKS) else {
+                        continue;
+                    };
                     let back = queue.len() - 1 - (DISPEN_LATCH_TICKS - t);
-                    if borders[source] != latched && matches!(queue[back], Expected::Border | Expected::Mode1) {
-                        queue[back] = if latched { Expected::Border } else { Expected::Mode1 };
+                    if borders[source] != latched
+                        && matches!(queue[back], Expected::Border | Expected::Mode1)
+                    {
+                        queue[back] = if latched {
+                            Expected::Border
+                        } else {
+                            Expected::Mode1
+                        };
                     }
                 }
             }
@@ -142,18 +156,23 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
         });
         if queue.len() > PALETTE_LOOKUP_LAG_TICKS {
             queue.pop_front()
-        }
-        else {
+        } else {
             None
         }
     });
-    let expected = if sync_black == Some(true) { Some(Expected::Black) } else { expected };
+    let expected = if sync_black == Some(true) {
+        Some(Expected::Black)
+    } else {
+        expected
+    };
     match expected {
-        None | Some(Expected::Unknown) => {},
+        None | Some(Expected::Unknown) => {}
         Some(Expected::Black) => assert_eq!(RgbLevels::from((0., 0., 0.)), rgb),
         // the palette of the tick, or of the one before (the chip may see it a tick late)
         Some(Expected::Border) => assert!(
-            [*ga.palette(), palette_before_tick].iter().any(|p| p[16].to_rgb_levels() == rgb),
+            [*ga.palette(), palette_before_tick]
+                .iter()
+                .any(|p| p[16].to_rgb_levels() == rgb),
             "{rgb:?} is not the border ink"
         ),
         Some(Expected::Mode1) => assert!(
@@ -161,7 +180,7 @@ fn end_steps(ga: &mut GateArray, crtc: &mut Crtc, monitor: &mut Monitor) {
                 .iter()
                 .any(|p| (0..4).any(|pen| p[pen].to_rgb_levels() == rgb)),
             "{rgb:?} is none of the palette's"
-        )
+        ),
     }
 
     // let rgb : RgbLevels= palette[1].to_rgb_levels();

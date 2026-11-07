@@ -12,7 +12,7 @@ use super::CrtcPin;
 /// ACCC §4.3: like CRTC 2, only R3l (HSYNC width) and R8's interlace bits
 /// exist.
 pub(super) const WRITE_MASK: [u8; 16] = [
-    0xff, 0xff, 0xff, 0x0f, 0x7f, 0x1f, 0x7f, 0x7f, 0x03, 0x1f, 0x7f, 0x1f, 0x3f, 0xff, 0x3f, 0xff
+    0xff, 0xff, 0xff, 0x0f, 0x7f, 0x1f, 0x7f, 0x7f, 0x03, 0x1f, 0x7f, 0x1f, 0x3f, 0xff, 0x3f, 0xff,
 ];
 
 #[derive(Debug, Default)]
@@ -58,8 +58,14 @@ impl CrtcChip for Crtc1 {
     fn read_register(&self, context: &ReadContext) -> u8 {
         match context.selected & 0x1f {
             number @ 14..=17 => context.register(number) & pointer_mask(number),
-            0x1f => if context.noise { 0xff } else { 0x7f },
-            _ => 0
+            0x1f => {
+                if context.noise {
+                    0xff
+                } else {
+                    0x7f
+                }
+            }
+            _ => 0,
         }
     }
 
@@ -71,7 +77,8 @@ impl CrtcChip for Crtc1 {
     /// (Amstrad Live, 05/2000) expects of a CRTC 1 (`&40` once V is masked out), until R16 or
     /// R17 is read (Kevin Thacker's acid test "type 1 status (clear lpen)").
     fn read_status(&self, context: &ReadContext) -> u8 {
-        (if context.light_pen_full { 1 << 6 } else { 0 }) | if context.vertical_border { 1 << 5 } else { 0 }
+        (if context.light_pen_full { 1 << 6 } else { 0 })
+            | if context.vertical_border { 1 << 5 } else { 0 }
     }
 
     /// ACCC §14.6: with R3l = 0, CRTC 1 does not produce an HSYNC.
@@ -121,7 +128,8 @@ impl CrtcChip for Crtc1 {
             }
         }
         // ACCC §11.6: R5 raised from 0 on C0=R0 starts a rupture for dummies
-        if r == 5 && previous.r5 & 0x1f == 0 && core.regs[5] & 0x1f != 0 && core.hcc == core.regs[0] {
+        if r == 5 && previous.r5 & 0x1f == 0 && core.regs[5] & 0x1f != 0 && core.hcc == core.regs[0]
+        {
             self.rfd_active = true;
         }
         if r == 6 {

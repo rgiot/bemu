@@ -55,7 +55,7 @@ pub struct TrackTiming {
     pub id_start: Vec<u64>,
     pub id_end: Vec<u64>,
     pub data_start: Vec<u64>,
-    pub period: u64
+    pub period: u64,
 }
 
 /// `128 << n`: the size the N field of an ID announces.
@@ -85,7 +85,7 @@ pub struct Sector {
     pub st2: u8,
     /// Raw data. Longer than the nominal size when the image stores several
     /// copies of a sector (weak/fuzzy sectors): see [`Sector::copies`].
-    pub data: Vec<u8>
+    pub data: Vec<u8>,
 }
 
 impl Sector {
@@ -98,7 +98,7 @@ impl Sector {
             n,
             st1: 0,
             st2: 0,
-            data: vec![filler; size_from_code(n)]
+            data: vec![filler; size_from_code(n)],
         }
     }
 
@@ -135,7 +135,7 @@ pub struct Track {
     pub gap3: u8,
     pub filler: u8,
     /// In the order they pass under the head after the index hole.
-    pub sectors: Vec<Sector>
+    pub sectors: Vec<Sector>,
 }
 
 /// A whole disc, indexed by (head, track).
@@ -150,7 +150,7 @@ pub struct DiscImage {
     /// `timings` where they lie, `marks` the first cell of each sector's data address mark.
     bitstream: Option<crate::hfe::Bitstream>,
     timings: Vec<Option<TrackTiming>>,
-    marks: Vec<Vec<Option<usize>>>
+    marks: Vec<Vec<Option<usize>>>,
 }
 
 impl DiscImage {
@@ -164,18 +164,26 @@ impl DiscImage {
             tracks: vec![None; slots],
             bitstream: None,
             timings: vec![None; slots],
-            marks: vec![Vec::new(); slots]
+            marks: vec![Vec::new(); slots],
         }
     }
 
     /// A disc whose medium is the bitstream of an HFE image: the FDC reads the sectors the
     /// library found on it (`found[track][side]`), where they lie.
-    pub fn from_bitstream(bitstream: crate::hfe::Bitstream, found: &[[Vec<crate::hfe::FoundSector>; 2]]) -> Self {
+    pub fn from_bitstream(
+        bitstream: crate::hfe::Bitstream,
+        found: &[[Vec<crate::hfe::FoundSector>; 2]],
+    ) -> Self {
         let nb_tracks = bitstream.tracks.len().min(255) as u8;
         let mut image = Self::new(nb_tracks, bitstream.sides);
         for track in 0..nb_tracks {
             for head in 0..image.nb_heads {
-                image.set_found(&bitstream, head, track, &found[usize::from(track)][usize::from(head)]);
+                image.set_found(
+                    &bitstream,
+                    head,
+                    track,
+                    &found[usize::from(track)][usize::from(head)],
+                );
             }
         }
         image.bitstream = Some(bitstream);
@@ -183,8 +191,16 @@ impl DiscImage {
     }
 
     /// The sectors found on a track of `bitstream` become the image's (track, timing, marks).
-    fn set_found(&mut self, bitstream: &crate::hfe::Bitstream, head: u8, track: u8, found: &[crate::hfe::FoundSector]) {
-        let Some(slot) = self.slot(head, track) else { return };
+    fn set_found(
+        &mut self,
+        bitstream: &crate::hfe::Bitstream,
+        head: u8,
+        track: u8,
+        found: &[crate::hfe::FoundSector],
+    ) {
+        let Some(slot) = self.slot(head, track) else {
+            return;
+        };
         let cells = &bitstream.tracks[usize::from(track)][usize::from(head)];
         if found.is_empty() {
             self.tracks[slot] = None;
@@ -197,7 +213,7 @@ impl DiscImage {
             id_start: Vec::new(),
             id_end: Vec::new(),
             data_start: Vec::new(),
-            period: us(cells.len)
+            period: us(cells.len),
         };
         let mut sectors = Vec::new();
         let mut marks = Vec::new();
@@ -211,7 +227,7 @@ impl DiscImage {
                 None => {
                     sector.st1 |= flag::ST1_MISSING_ADDRESS_MARK;
                     sector.st2 |= flag::ST2_MISSING_DATA_MARK;
-                },
+                }
                 Some(_) => {
                     if !f.data_crc_ok {
                         sector.st1 |= flag::ST1_DATA_ERROR;
@@ -224,11 +240,19 @@ impl DiscImage {
             }
             timing.id_start.push(us(f.id_at));
             timing.id_end.push(us(f.id_at + 6 * 16));
-            timing.data_start.push(us(f.data_at.unwrap_or(f.id_at + 60 * 16)));
+            timing
+                .data_start
+                .push(us(f.data_at.unwrap_or(f.id_at + 60 * 16)));
             marks.push(f.data_at.map(|d| (d + cells.len - 16) % cells.len.max(1)));
             sectors.push(sector);
         }
-        self.tracks[slot] = Some(Track { track, head, gap3: 0x4e, filler: 0xe5, sectors });
+        self.tracks[slot] = Some(Track {
+            track,
+            head,
+            gap3: 0x4e,
+            filler: 0xe5,
+            sectors,
+        });
         self.timings[slot] = Some(timing);
         self.marks[slot] = marks;
     }
@@ -240,24 +264,45 @@ impl DiscImage {
 
     /// Where the sectors of a track lie when the medium says it (a bitstream).
     pub fn track_timing(&self, head: u8, track: u8) -> Option<&TrackTiming> {
-        self.slot(head, track).and_then(|slot| self.timings[slot].as_ref())
+        self.slot(head, track)
+            .and_then(|slot| self.timings[slot].as_ref())
     }
 
     /// The FDC wrote sector `index` of a track: on a bitstream, the library writes it when the
     /// disc is saved (a deleted data mark is encoded at once).
     pub fn sector_written(&mut self, head: u8, track: u8, index: usize) {
-        let Some(slot) = self.slot(head, track) else { return };
-        let (Some(bitstream), Some(t)) = (self.bitstream.as_mut(), self.tracks[slot].as_ref()) else { return };
-        let (Some(sector), Some(Some(mark_at))) = (t.sectors.get(index), self.marks[slot].get(index)) else { return };
+        let Some(slot) = self.slot(head, track) else {
+            return;
+        };
+        let (Some(bitstream), Some(t)) = (self.bitstream.as_mut(), self.tracks[slot].as_ref())
+        else {
+            return;
+        };
+        let (Some(sector), Some(Some(mark_at))) =
+            (t.sectors.get(index), self.marks[slot].get(index))
+        else {
+            return;
+        };
         let data = sector.read_copy(0, t.filler);
-        bitstream.sector_written(usize::from(track), usize::from(head), sector.r, *mark_at, sector.is_deleted(), &data);
+        bitstream.sector_written(
+            usize::from(track),
+            usize::from(head),
+            sector.r,
+            *mark_at,
+            sector.is_deleted(),
+            &data,
+        );
     }
 
     /// The FDC formatted a track: on a bitstream, write its cells again (gaps, IDs, data fields of
     /// the filler) and take the sectors the library finds on them.
     pub fn track_formatted(&mut self, head: u8, track: u8) {
-        let Some(slot) = self.slot(head, track) else { return };
-        let Some(t) = self.tracks[slot].clone() else { return };
+        let Some(slot) = self.slot(head, track) else {
+            return;
+        };
+        let Some(t) = self.tracks[slot].clone() else {
+            return;
+        };
         let Some(mut bitstream) = self.bitstream.take() else {
             self.timings[slot] = None;
             return;
@@ -266,11 +311,12 @@ impl DiscImage {
         let n = t.sectors.first().map_or(2, |s| s.n);
         let (tr, side) = (usize::from(track), usize::from(head));
         let len = bitstream.tracks[tr][side].len;
-        bitstream.tracks[tr][side] = crate::hfe::BitTrack::formatted(len, &ids, n, t.gap3, t.filler);
+        bitstream.tracks[tr][side] =
+            crate::hfe::BitTrack::formatted(len, &ids, n, t.gap3, t.filler);
         bitstream.rebuild(tr, side);
         match bitstream.sectors(tr, side) {
             Ok(found) => self.set_found(&bitstream, head, track, &found),
-            Err(e) => eprintln!("formatting track {track}: {e}")
+            Err(e) => eprintln!("formatting track {track}: {e}"),
         }
         self.bitstream = Some(bitstream);
     }
@@ -338,10 +384,14 @@ impl DiscImage {
         let nb_slots = usize::from(nb_tracks) * usize::from(nb_heads);
         let mut image = Self::new(nb_tracks, nb_heads);
 
-        let standard_track_size =
-            usize::from(u16::from_le_bytes([buffer[TRACK_SIZE], buffer[TRACK_SIZE + 1]]));
+        let standard_track_size = usize::from(u16::from_le_bytes([
+            buffer[TRACK_SIZE],
+            buffer[TRACK_SIZE + 1],
+        ]));
         if !extended && (standard_track_size < TRACK_INFO_LEN || standard_track_size % 256 != 0) {
-            return Err(format!("Invalid standard DSK track size {standard_track_size}"));
+            return Err(format!(
+                "Invalid standard DSK track size {standard_track_size}"
+            ));
         }
         if extended && TRACK_SIZE_TABLE + nb_slots > DISC_INFO_LEN {
             return Err(format!(
@@ -353,8 +403,7 @@ impl DiscImage {
         for slot in 0..nb_slots {
             let size = if extended {
                 usize::from(buffer[TRACK_SIZE_TABLE + slot]) * 256
-            }
-            else {
+            } else {
                 standard_track_size
             };
             if size == 0 {
@@ -378,8 +427,7 @@ impl DiscImage {
         out[NB_HEADS] = self.nb_heads;
 
         for (slot, track) in self.tracks.iter().enumerate() {
-            let Some(track) = track
-            else {
+            let Some(track) = track else {
                 continue;
             };
             let start = out.len();
@@ -397,7 +445,9 @@ impl DiscImage {
     /// continues onto more entries) are merged into their first one, since
     /// that's what "the file exists" means to a catalog listing.
     pub fn amsdos_catalog(&self) -> Vec<AmsdosEntry> {
-        let Some(track) = self.track(0, 0) else { return Vec::new() };
+        let Some(track) = self.track(0, 0) else {
+            return Vec::new();
+        };
         let mut sectors: Vec<&Sector> = track.sectors.iter().collect();
         sectors.sort_by_key(|s| s.r);
 
@@ -425,7 +475,7 @@ impl DiscImage {
                 name: name.trim_end().to_owned(),
                 extension: extension.trim_end().to_owned(),
                 hidden,
-                records: raw[15]
+                records: raw[15],
             };
             if extent == 0 {
                 entries.push(entry);
@@ -449,7 +499,7 @@ pub struct AmsdosEntry {
     /// Records used in the entry's first extent (at most 128, one per 128
     /// bytes): not the file's real length for anything bigger than 16KB,
     /// but enough to rank entries by roughly how big they are.
-    pub records: u8
+    pub records: u8,
 }
 
 impl AmsdosEntry {
@@ -457,8 +507,7 @@ impl AmsdosEntry {
     pub fn filename(&self) -> String {
         if self.extension.is_empty() {
             self.name.clone()
-        }
-        else {
+        } else {
             format!("{}.{}", self.name, self.extension)
         }
     }
@@ -486,10 +535,10 @@ impl TryFrom<&AnyDisc> for DiscImage {
                 let mut bytes = Vec::new();
                 dsk.to_buffer(&mut bytes);
                 Self::from_bytes(&bytes)
-            },
+            }
             // cpclib-disc knows HFE images on the desktop only (its `hfe` feature wraps a C library)
             #[cfg(not(target_arch = "wasm32"))]
-            AnyDisc::Hfe(_) => Err("HFE images are not supported by the FDC yet".to_owned())
+            AnyDisc::Hfe(_) => Err("HFE images are not supported by the FDC yet".to_owned()),
         }
     }
 }
@@ -506,7 +555,11 @@ fn has_extension(name: &str, extensions: &[&str]) -> bool {
     std::path::Path::new(name)
         .extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| extensions.iter().any(|wanted| ext.eq_ignore_ascii_case(wanted)))
+        .is_some_and(|ext| {
+            extensions
+                .iter()
+                .any(|wanted| ext.eq_ignore_ascii_case(wanted))
+        })
 }
 
 /// A disc image from the bytes of a file named `name`: a DSK or extended DSK, an HFE image (kept as
@@ -516,7 +569,8 @@ fn has_extension(name: &str, extensions: &[&str]) -> bool {
 pub fn load_disc_bytes(bytes: &[u8], name: &str, entry: Option<&str>) -> Result<DiscImage, String> {
     if is_archive(bytes) {
         let (entry_name, data) = zip_entry(bytes, entry).map_err(|e| format!("{name}: {e}"))?;
-        return load_disc_bytes(&data, &entry_name, None).map_err(|e| format!("{name}#{entry_name}: {e}"));
+        return load_disc_bytes(&data, &entry_name, None)
+            .map_err(|e| format!("{name}#{entry_name}: {e}"));
     }
     if let Some(entry) = entry {
         return Err(format!("{name} is not an archive, it has no {entry}"));
@@ -535,7 +589,9 @@ fn zip_entry(bytes: &[u8], wanted: Option<&str>) -> Result<(String, Vec<u8>), St
 
 /// Whether `bytes` is a zip, a 7z or a gzip (tar.gz) archive.
 pub(crate) fn is_archive(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(SEVENZ_MAGIC) || bytes.starts_with(&[0x1f, 0x8b])
+    bytes.starts_with(b"PK\x03\x04")
+        || bytes.starts_with(SEVENZ_MAGIC)
+        || bytes.starts_with(&[0x1f, 0x8b])
 }
 
 const SEVENZ_MAGIC: &[u8] = &[b'7', b'z', 0xBC, 0xAF, 0x27, 0x1C];
@@ -545,8 +601,11 @@ fn unpack_all(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
     use std::io::Read;
     let mut files = Vec::new();
     if bytes.starts_with(SEVENZ_MAGIC) {
-        let mut reader = sevenz_rust2::ArchiveReader::new(std::io::Cursor::new(bytes), sevenz_rust2::Password::empty())
-            .map_err(|e| format!("7z: {e}"))?;
+        let mut reader = sevenz_rust2::ArchiveReader::new(
+            std::io::Cursor::new(bytes),
+            sevenz_rust2::Password::empty(),
+        )
+        .map_err(|e| format!("7z: {e}"))?;
         reader
             .for_each_entries(|entry, data| {
                 let mut content = Vec::new();
@@ -557,17 +616,22 @@ fn unpack_all(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
                 Ok(true)
             })
             .map_err(|e| format!("7z: {e}"))?;
-    }
-    else {
+    } else {
         let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
         for entry in archive.entries().map_err(|e| format!("tar.gz: {e}"))? {
             let mut entry = entry.map_err(|e| format!("tar.gz: {e}"))?;
             if !entry.header().entry_type().is_file() {
                 continue;
             }
-            let name = entry.path().map_err(|e| format!("tar.gz: {e}"))?.to_string_lossy().into_owned();
+            let name = entry
+                .path()
+                .map_err(|e| format!("tar.gz: {e}"))?
+                .to_string_lossy()
+                .into_owned();
             let mut content = Vec::new();
-            entry.read_to_end(&mut content).map_err(|e| format!("tar.gz: {e}"))?;
+            entry
+                .read_to_end(&mut content)
+                .map_err(|e| format!("tar.gz: {e}"))?;
             files.push((name, content));
         }
     }
@@ -576,17 +640,22 @@ fn unpack_all(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
 
 /// The name and content of the archive entry `wanted`, or of its first file with one of
 /// `extensions` (`what` they are, for the error). The archive is a zip, a 7z or a tar.gz.
-pub(crate) fn zip_entry_with(bytes: &[u8], wanted: Option<&str>, extensions: &[&str], what: &str) -> Result<(String, Vec<u8>), String> {
+pub(crate) fn zip_entry_with(
+    bytes: &[u8],
+    wanted: Option<&str>,
+    extensions: &[&str],
+    what: &str,
+) -> Result<(String, Vec<u8>), String> {
     use std::io::Read;
     let mut unpacked = Vec::new();
     let mut zip = None;
     let names: Vec<String> = if bytes.starts_with(b"PK\x03\x04") {
-        let archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+        let archive =
+            zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
         let names = archive.file_names().map(str::to_owned).collect();
         zip = Some(archive);
         names
-    }
-    else {
+    } else {
         unpacked = unpack_all(bytes)?;
         unpacked.iter().map(|(name, _)| name.clone()).collect()
     };
@@ -595,10 +664,20 @@ pub(crate) fn zip_entry_with(bytes: &[u8], wanted: Option<&str>, extensions: &[&
         Some(wanted) => files()
             .find(|n| n.as_str() == wanted)
             .or_else(|| files().find(|n| n.eq_ignore_ascii_case(wanted)))
-            .ok_or_else(|| format!("no {wanted} in the archive (it holds: {})", files().cloned().collect::<Vec<_>>().join(", ")))?,
+            .ok_or_else(|| {
+                format!(
+                    "no {wanted} in the archive (it holds: {})",
+                    files().cloned().collect::<Vec<_>>().join(", ")
+                )
+            })?,
         None => files()
             .find(|n| has_extension(n, extensions))
-            .ok_or_else(|| format!("no {what} in the archive (it holds: {})", files().cloned().collect::<Vec<_>>().join(", ")))?
+            .ok_or_else(|| {
+                format!(
+                    "no {what} in the archive (it holds: {})",
+                    files().cloned().collect::<Vec<_>>().join(", ")
+                )
+            })?,
     }
     .clone();
     if let Some(mut archive) = zip {
@@ -607,7 +686,11 @@ pub(crate) fn zip_entry_with(bytes: &[u8], wanted: Option<&str>, extensions: &[&
         file.read_to_end(&mut data).map_err(|e| e.to_string())?;
         return Ok((chosen, data));
     }
-    let data = unpacked.into_iter().find(|(name, _)| *name == chosen).map(|(_, data)| data).unwrap_or_default();
+    let data = unpacked
+        .into_iter()
+        .find(|(name, _)| *name == chosen)
+        .map(|(_, data)| data)
+        .unwrap_or_default();
     Ok((chosen, data))
 }
 
@@ -618,13 +701,26 @@ pub(crate) fn zip_entry_by_file_name(bytes: &[u8], name: &str) -> Option<Vec<u8>
     if !is_archive(bytes) {
         return None;
     }
-    let file_name = |path: &str| path.replace('\\', "/").rsplit('/').next().unwrap_or_default().to_lowercase();
+    let file_name = |path: &str| {
+        path.replace('\\', "/")
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_lowercase()
+    };
     let wanted = file_name(name);
     if !bytes.starts_with(b"PK\x03\x04") {
-        return unpack_all(bytes).ok()?.into_iter().find(|(path, _)| file_name(path) == wanted).map(|(_, data)| data);
+        return unpack_all(bytes)
+            .ok()?
+            .into_iter()
+            .find(|(path, _)| file_name(path) == wanted)
+            .map(|(_, data)| data);
     }
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
-    let entry = archive.file_names().find(|n| !n.ends_with('/') && file_name(n) == wanted)?.to_owned();
+    let entry = archive
+        .file_names()
+        .find(|n| !n.ends_with('/') && file_name(n) == wanted)?
+        .to_owned();
     let mut data = Vec::new();
     archive.by_name(&entry).ok()?.read_to_end(&mut data).ok()?;
     Some(data)
@@ -634,8 +730,12 @@ pub(crate) fn zip_entry_by_file_name(bytes: &[u8], name: &str) -> Option<Vec<u8>
 /// (`games.zip#side b.dsk`). A `#` in a name that is not an archive's stays in the path.
 pub fn split_disc_spec(spec: &str) -> (&str, Option<&str>) {
     match spec.rsplit_once('#') {
-        Some((path, entry)) if has_extension(path, &["zip", "7z", "gz", "tgz"]) && !entry.is_empty() => (path, Some(entry)),
-        _ => (spec, None)
+        Some((path, entry))
+            if has_extension(path, &["zip", "7z", "gz", "tgz"]) && !entry.is_empty() =>
+        {
+            (path, Some(entry))
+        }
+        _ => (spec, None),
     }
 }
 
@@ -649,10 +749,12 @@ pub fn save_disc_file(spec: &str, image: &DiscImage) -> Result<(), String> {
     let (path, entry) = split_disc_spec(spec);
     let content = match image.clone().save_hfe() {
         Some(hfe) => hfe?,
-        None => image.to_bytes()
+        None => image.to_bytes(),
     };
     if has_extension(path, &["7z", "gz", "tgz"]) {
-        return Err(format!("{path}: a 7z or tar.gz archive cannot be written back"));
+        return Err(format!(
+            "{path}: a 7z or tar.gz archive cannot be written back"
+        ));
     }
     if !has_extension(path, &["zip"]) {
         return std::fs::write(path, content).map_err(|e| format!("{path}: {e}"));
@@ -660,23 +762,26 @@ pub fn save_disc_file(spec: &str, image: &DiscImage) -> Result<(), String> {
     use std::io::{Read, Write};
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let (name, _) = zip_entry(&bytes, entry).map_err(|e| format!("{path}: {e}"))?;
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).map_err(|e| format!("{path}: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(&bytes)).map_err(|e| format!("{path}: {e}"))?;
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
         let file_name = file.name().to_owned();
         if file_name == name {
-            out.start_file(&file_name, options).map_err(|e| e.to_string())?;
+            out.start_file(&file_name, options)
+                .map_err(|e| e.to_string())?;
             out.write_all(&content).map_err(|e| e.to_string())?;
-        }
-        else if file.is_dir() {
-            out.add_directory(&file_name, options).map_err(|e| e.to_string())?;
-        }
-        else {
+        } else if file.is_dir() {
+            out.add_directory(&file_name, options)
+                .map_err(|e| e.to_string())?;
+        } else {
             let mut data = Vec::new();
             file.read_to_end(&mut data).map_err(|e| e.to_string())?;
-            out.start_file(&file_name, options).map_err(|e| e.to_string())?;
+            out.start_file(&file_name, options)
+                .map_err(|e| e.to_string())?;
             out.write_all(&data).map_err(|e| e.to_string())?;
         }
     }
@@ -691,8 +796,17 @@ pub fn save_disc_file(spec: &str, image: &DiscImage) -> Result<(), String> {
 pub fn load_disc_file(spec: &str) -> Result<DiscImage, String> {
     let (path, entry) = split_disc_spec(spec);
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-    let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
-    load_disc_bytes(&bytes, name, entry).map_err(|e| if e.starts_with(name) { e } else { format!("{name}: {e}") })
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path);
+    load_disc_bytes(&bytes, name, entry).map_err(|e| {
+        if e.starts_with(name) {
+            e
+        } else {
+            format!("{name}: {e}")
+        }
+    })
 }
 
 fn starts_with_ignore_case(buffer: &[u8], prefix: &[u8]) -> bool {
@@ -722,8 +836,7 @@ fn parse_track(block: &[u8], extended: bool) -> Result<Track, String> {
         let recorded = usize::from(u16::from_le_bytes([info[6], info[7]]));
         let len = if !extended || recorded == 0 {
             size_from_code(n)
-        }
-        else {
+        } else {
             recorded
         };
         let data = block
@@ -738,7 +851,7 @@ fn parse_track(block: &[u8], extended: bool) -> Result<Track, String> {
             n,
             st1: info[4],
             st2: info[5],
-            data
+            data,
         });
     }
 
@@ -747,7 +860,7 @@ fn parse_track(block: &[u8], extended: bool) -> Result<Track, String> {
         head: block[TRACK_HEAD],
         gap3: block[TRACK_GAP3],
         filler: block[TRACK_FILLER],
-        sectors
+        sectors,
     })
 }
 
@@ -765,7 +878,7 @@ fn write_track(track: &Track, out: &mut Vec<u8>) {
     for (index, sector) in track.sectors.iter().take(MAX_SECTORS_PER_TRACK).enumerate() {
         let info = start + TRACK_SECTOR_INFOS + index * SECTOR_INFO_LEN;
         out[info..info + 6].copy_from_slice(&[
-            sector.c, sector.h, sector.r, sector.n, sector.st1, sector.st2
+            sector.c, sector.h, sector.r, sector.n, sector.st1, sector.st2,
         ]);
         out[info + 6..info + 8].copy_from_slice(&(sector.data.len() as u16).to_le_bytes());
     }
@@ -785,7 +898,8 @@ mod test {
         use std::io::Write;
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         for (name, data) in files {
-            zip.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
             zip.write_all(data).unwrap();
         }
         zip.finish().unwrap().into_inner()
@@ -795,7 +909,12 @@ mod test {
         assert_eq!((a.nb_tracks(), a.nb_heads()), (b.nb_tracks(), b.nb_heads()));
         for track in 0..a.nb_tracks() {
             let (ta, tb) = (a.track(0, track).unwrap(), b.track(0, track).unwrap());
-            let ids = |t: &Track| t.sectors.iter().map(|s| (s.c, s.h, s.r, s.n, s.data.clone())).collect::<Vec<_>>();
+            let ids = |t: &Track| {
+                t.sectors
+                    .iter()
+                    .map(|s| (s.c, s.h, s.r, s.n, s.data.clone()))
+                    .collect::<Vec<_>>()
+            };
             assert_eq!(ids(ta), ids(tb), "track {track}");
         }
     }
@@ -804,7 +923,11 @@ mod test {
     fn a_zip_gives_its_first_disc_image_or_the_one_named() {
         let rhino = std::fs::read("validation/RHINO.DSK").unwrap();
         let other = std::fs::read("validation/demos/skoh/skoh.dsk").unwrap();
-        let zip = zip_of(&[("readme.txt", b"hello"), ("dir/Rhino.dsk", &rhino), ("S&KOH.DSK", &other)]);
+        let zip = zip_of(&[
+            ("readme.txt", b"hello"),
+            ("dir/Rhino.dsk", &rhino),
+            ("S&KOH.DSK", &other),
+        ]);
 
         let first = load_disc_bytes(&zip, "pack.zip", None).unwrap();
         same_sectors(&first, &load_dsk(&rhino).unwrap());
@@ -812,9 +935,15 @@ mod test {
         same_sectors(&named, &load_dsk(&other).unwrap());
 
         let missing = load_disc_bytes(&zip, "pack.zip", Some("nope.dsk")).unwrap_err();
-        assert!(missing.contains("nope.dsk") && missing.contains("readme.txt"), "{missing}");
+        assert!(
+            missing.contains("nope.dsk") && missing.contains("readme.txt"),
+            "{missing}"
+        );
         assert!(load_disc_bytes(&zip_of(&[("a.txt", b"x")]), "p.zip", None).is_err());
-        assert!(load_disc_bytes(&rhino, "RHINO.DSK", Some("x.dsk")).is_err(), "only an archive has entries");
+        assert!(
+            load_disc_bytes(&rhino, "RHINO.DSK", Some("x.dsk")).is_err(),
+            "only an archive has entries"
+        );
     }
 
     /// A scratch directory for one test.
@@ -846,14 +975,24 @@ mod test {
         write_first_sector(&mut image, 0x42);
         save_disc_file(&dsk, &image).unwrap();
         let back = load_disc_file(&dsk).unwrap();
-        assert_eq!(back.track(0, 0).unwrap().sectors.last().unwrap().read_copy(0, 0), vec![0x42; 512]);
+        assert_eq!(
+            back.track(0, 0)
+                .unwrap()
+                .sectors
+                .last()
+                .unwrap()
+                .read_copy(0, 0),
+            vec![0x42; 512]
+        );
         same_sectors(&back, &image);
 
         // an HFE stays an HFE, the field encoded in its bits
         let hfe = dir.join("rhino.hfe").display().to_string();
         let made = {
             let _library = crate::hfe::library_lock();
-            let img = hxcfe::Hxcfe::get().load_from_buffer(&rhino, "amsrust_test_save.dsk").unwrap();
+            let img = hxcfe::Hxcfe::get()
+                .load_from_buffer(&rhino, "amsrust_test_save.dsk")
+                .unwrap();
             img.save_to_buffer(hxcfe::ImageFormat::HxcHfe).unwrap()
         };
         std::fs::write(&hfe, made).unwrap();
@@ -870,12 +1009,24 @@ mod test {
 
         // in a zip: the entry replaced, the other files kept
         let zip = dir.join("pack.zip").display().to_string();
-        std::fs::write(&zip, zip_of(&[("readme.txt", b"hello"), ("rhino.dsk", &rhino)])).unwrap();
+        std::fs::write(
+            &zip,
+            zip_of(&[("readme.txt", b"hello"), ("rhino.dsk", &rhino)]),
+        )
+        .unwrap();
         let mut image = load_disc_file(&zip).unwrap();
         write_first_sector(&mut image, 0x44);
         save_disc_file(&zip, &image).unwrap();
         let back = load_disc_file(&format!("{zip}#rhino.dsk")).unwrap();
-        assert_eq!(back.track(0, 0).unwrap().sectors.last().unwrap().read_copy(0, 0), vec![0x44; 512]);
+        assert_eq!(
+            back.track(0, 0)
+                .unwrap()
+                .sectors
+                .last()
+                .unwrap()
+                .read_copy(0, 0),
+            vec![0x44; 512]
+        );
         let archive = zip::ZipArchive::new(std::fs::File::open(&zip).unwrap()).unwrap();
         assert_eq!(archive.file_names().count(), 2);
         let _ = std::fs::remove_dir_all(&dir);
@@ -896,13 +1047,22 @@ mod test {
         let archive = gz.finish().unwrap();
         assert!(load_disc_bytes(&archive, "pack.tar.gz", None).is_ok());
         assert!(zip_entry_by_file_name(&archive, "RHINO.DSK").is_some());
-        assert_eq!(split_disc_spec("p.tar.gz#a.dsk"), ("p.tar.gz", Some("a.dsk")));
+        assert_eq!(
+            split_disc_spec("p.tar.gz#a.dsk"),
+            ("p.tar.gz", Some("a.dsk"))
+        );
     }
 
     #[test]
     fn a_hash_names_an_entry_of_a_zip_only() {
-        assert_eq!(split_disc_spec("games.zip#side b.dsk"), ("games.zip", Some("side b.dsk")));
-        assert_eq!(split_disc_spec("GAMES.ZIP#a.dsk"), ("GAMES.ZIP", Some("a.dsk")));
+        assert_eq!(
+            split_disc_spec("games.zip#side b.dsk"),
+            ("games.zip", Some("side b.dsk"))
+        );
+        assert_eq!(
+            split_disc_spec("GAMES.ZIP#a.dsk"),
+            ("GAMES.ZIP", Some("a.dsk"))
+        );
         assert_eq!(split_disc_spec("games.zip"), ("games.zip", None));
         assert_eq!(split_disc_spec("disc #2.dsk"), ("disc #2.dsk", None));
         assert_eq!(split_disc_spec("games.zip#"), ("games.zip#", None));
@@ -913,7 +1073,9 @@ mod test {
         let rhino = std::fs::read("validation/RHINO.DSK").unwrap();
         let hfe = {
             let _library = crate::hfe::library_lock();
-            let img = hxcfe::Hxcfe::get().load_from_buffer(&rhino, "amsrust_test_rhino.dsk").unwrap();
+            let img = hxcfe::Hxcfe::get()
+                .load_from_buffer(&rhino, "amsrust_test_rhino.dsk")
+                .unwrap();
             img.save_to_buffer(hxcfe::ImageFormat::HxcHfe).unwrap()
         };
         assert!(hfe.starts_with(b"HXCPICFE"));
@@ -946,7 +1108,13 @@ mod test {
     }
 
     fn amsdos_entry(name: &str, extension: &str) -> AmsdosEntry {
-        AmsdosEntry { user: 0, name: name.into(), extension: extension.into(), hidden: false, records: 0 }
+        AmsdosEntry {
+            user: 0,
+            name: name.into(),
+            extension: extension.into(),
+            hidden: false,
+            records: 0,
+        }
     }
 
     #[test]
@@ -1018,18 +1186,25 @@ mod test {
         let mut second = Sector::new(1, 0, 0x42, 1, 0x00);
         second.data.extend_from_slice(&[0xaa; 256]); // two copies: a weak sector
         image
-            .set_track(0, 1, Track {
-                track: 1,
-                head: 0,
-                gap3: 0x4e,
-                filler: 0xe5,
-                sectors: vec![sector, second]
-            })
+            .set_track(
+                0,
+                1,
+                Track {
+                    track: 1,
+                    head: 0,
+                    gap3: 0x4e,
+                    filler: 0xe5,
+                    sectors: vec![sector, second],
+                },
+            )
             .unwrap();
 
         let reloaded = DiscImage::from_bytes(&image.to_bytes()).unwrap();
         assert_eq!(reloaded, image);
-        assert!(reloaded.track(0, 0).is_none(), "unformatted track stays unformatted");
+        assert!(
+            reloaded.track(0, 0).is_none(),
+            "unformatted track stays unformatted"
+        );
         assert_eq!(reloaded.track(0, 1).unwrap().sectors[1].copies(), 2);
     }
 
@@ -1041,7 +1216,7 @@ mod test {
             head: 0,
             gap3: 0,
             filler: 0,
-            sectors: Vec::new()
+            sectors: Vec::new(),
         };
         assert!(image.set_track(0, 5, track.clone()).is_err());
         assert!(image.set_track(1, 0, track).is_err());

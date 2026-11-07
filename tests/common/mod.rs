@@ -74,7 +74,7 @@ pub fn screen_lines(motherboard: &Motherboard) -> Vec<String> {
     let (columns, bytes_per_char) = match mode {
         VideoMode::Mode1 => (40u16, 2u16),
         VideoMode::Mode2 => (80u16, 1u16),
-        other => panic!("text decoding only implemented for modes 1 and 2, not {other:?}")
+        other => panic!("text decoding only implemented for modes 1 and 2, not {other:?}"),
     };
 
     let font: Vec<[u8; 8]> = (0..=255u16)
@@ -98,14 +98,18 @@ pub fn screen_lines(motherboard: &Motherboard) -> Vec<String> {
                     let mut glyph = [0u8; 8];
                     for (scan, line) in glyph.iter_mut().enumerate() {
                         for byte in 0..bytes_per_char {
-                            let value =
-                                motherboard.read_video_ram_byte(video_address(ma, scan as u16, (first_byte + byte) % 2));
+                            let value = motherboard.read_video_ram_byte(video_address(
+                                ma,
+                                scan as u16,
+                                (first_byte + byte) % 2,
+                            ));
                             match mode {
                                 VideoMode::Mode2 => *line = value,
                                 _ => {
                                     for pixel in 0..4 {
                                         // mode 1: pixel p is bit (7-p) (pen bit 0) and bit (3-p) (pen bit 1)
-                                        let pen = ((value >> (7 - pixel)) & 1) | (((value >> (3 - pixel)) & 1) << 1);
+                                        let pen = ((value >> (7 - pixel)) & 1)
+                                            | (((value >> (3 - pixel)) & 1) << 1);
                                         if pen != 0 {
                                             *line |= 0x80 >> (byte * 4 + pixel);
                                         }
@@ -116,8 +120,7 @@ pub fn screen_lines(motherboard: &Motherboard) -> Vec<String> {
                     }
                     if glyph == [0; 8] {
                         ' '
-                    }
-                    else {
+                    } else {
                         font.iter()
                             .position(|candidate| *candidate == glyph)
                             .filter(|code| (0x20..0x7f).contains(code))
@@ -139,7 +142,11 @@ fn beginning_steps(ga: &mut GateArray, crtc: &mut Crtc) {
         crtc,
         &[CrtcPin::VS, CrtcPin::HS, CrtcPin::DE],
         ga,
-        &[GateArrayPin::VSYNC, GateArrayPin::HSYNC, GateArrayPin::DISPEN]
+        &[
+            GateArrayPin::VSYNC,
+            GateArrayPin::HSYNC,
+            GateArrayPin::DISPEN,
+        ],
     );
 }
 

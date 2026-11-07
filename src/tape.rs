@@ -19,7 +19,7 @@ const UNITS_PER_MS: u32 = 7000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Segment {
     Level { high: bool, units: u32 },
-    Stop
+    Stop,
 }
 
 /// The signal of a tape, ready to be played.
@@ -27,14 +27,14 @@ enum Segment {
 pub struct Tape {
     segments: Vec<Segment>,
     /// What was skipped (blocks this player does not know, ...).
-    pub notes: Vec<String>
+    pub notes: Vec<String>,
 }
 
 /// Builds the signal: each pulse inverts the level.
 #[derive(Default)]
 struct Signal {
     segments: Vec<Segment>,
-    high: bool
+    high: bool,
 }
 
 impl Signal {
@@ -49,14 +49,23 @@ impl Signal {
             return;
         }
         match self.segments.last_mut() {
-            Some(Segment::Level { high, units: last }) if *high == self.high => *last = last.saturating_add(units),
-            _ => self.segments.push(Segment::Level { high: self.high, units })
+            Some(Segment::Level { high, units: last }) if *high == self.high => {
+                *last = last.saturating_add(units)
+            }
+            _ => self.segments.push(Segment::Level {
+                high: self.high,
+                units,
+            }),
         }
     }
 
     fn data(&mut self, data: &[u8], used_bits: u8, zero: u32, one: u32) {
         for (i, byte) in data.iter().enumerate() {
-            let bits = if i + 1 == data.len() { used_bits.clamp(1, 8) } else { 8 };
+            let bits = if i + 1 == data.len() {
+                used_bits.clamp(1, 8)
+            } else {
+                8
+            };
             for bit in 0..bits {
                 let length = if byte & (0x80 >> bit) != 0 { one } else { zero };
                 self.pulse(length);
@@ -79,7 +88,7 @@ impl Signal {
 /// Reads the blocks of a file.
 struct Reader<'a> {
     bytes: &'a [u8],
-    at: usize
+    at: usize,
 }
 
 impl<'a> Reader<'a> {
@@ -130,7 +139,11 @@ impl Tape {
                     let pause = reader.u16()?;
                     let length = usize::from(reader.u16()?);
                     let data = reader.take(length)?;
-                    let pilots = if data.first().is_some_and(|flag| *flag < 0x80) { 8063 } else { 3223 };
+                    let pilots = if data.first().is_some_and(|flag| *flag < 0x80) {
+                        8063
+                    } else {
+                        3223
+                    };
                     for _ in 0..pilots {
                         signal.pulse(2168);
                     }
@@ -138,7 +151,7 @@ impl Tape {
                     signal.pulse(735);
                     signal.data(data, 8, 855, 1710);
                     signal.pause(pause);
-                },
+                }
                 0x11 => {
                     let pilot = u32::from(reader.u16()?);
                     let sync = (u32::from(reader.u16()?), u32::from(reader.u16()?));
@@ -155,19 +168,19 @@ impl Tape {
                     signal.pulse(sync.1);
                     signal.data(data, used_bits, zero, one);
                     signal.pause(pause);
-                },
+                }
                 0x12 => {
                     let length = u32::from(reader.u16()?);
                     for _ in 0..reader.u16()? {
                         signal.pulse(length);
                     }
-                },
+                }
                 0x13 => {
                     for _ in 0..reader.u8()? {
                         let length = u32::from(reader.u16()?);
                         signal.pulse(length);
                     }
-                },
+                }
                 0x14 => {
                     let (zero, one) = (u32::from(reader.u16()?), u32::from(reader.u16()?));
                     let used_bits = reader.u8()?;
@@ -175,7 +188,7 @@ impl Tape {
                     let length = reader.u24()?;
                     signal.data(reader.take(length)?, used_bits, zero, one);
                     signal.pause(pause);
-                },
+                }
                 0x15 => {
                     let per_sample = u32::from(reader.u16()?) * 2;
                     let pause = reader.u16()?;
@@ -183,22 +196,26 @@ impl Tape {
                     let length = reader.u24()?;
                     let data = reader.take(length)?;
                     for (i, byte) in data.iter().enumerate() {
-                        let bits = if i + 1 == data.len() { used_bits.clamp(1, 8) } else { 8 };
+                        let bits = if i + 1 == data.len() {
+                            used_bits.clamp(1, 8)
+                        } else {
+                            8
+                        };
                         for bit in 0..bits {
                             signal.high = byte & (0x80 >> bit) != 0;
                             signal.hold(per_sample);
                         }
                     }
                     signal.pause(pause);
-                },
+                }
                 0x20 => match reader.u16()? {
                     0 => signal.segments.push(Segment::Stop),
-                    ms => signal.pause(ms)
+                    ms => signal.pause(ms),
                 },
                 0x21 => {
                     let length = usize::from(reader.u8()?);
                     reader.take(length)?;
-                },
+                }
                 0x22 | 0x25 | 0x27 => {
                     if id == 0x25 {
                         if let Some((start, count)) = loop_start.take() {
@@ -209,60 +226,60 @@ impl Tape {
                             }
                         }
                     }
-                },
+                }
                 0x24 => {
                     let count = reader.u16()?;
                     loop_start = Some((reader.at, count));
-                },
+                }
                 0x23 => {
                     reader.u16()?;
                     notes.push("a jump block (0x23) is ignored".to_owned());
-                },
+                }
                 0x26 => {
                     let calls = usize::from(reader.u16()?);
                     reader.take(calls * 2)?;
                     notes.push("a call sequence (0x26) is ignored".to_owned());
-                },
+                }
                 0x28 | 0x32 => {
                     let length = usize::from(reader.u16()?);
                     reader.take(length)?;
-                },
+                }
                 0x2a => {
                     let length = reader.u32()?;
                     reader.take(length)?;
-                },
+                }
                 0x2b => {
                     let length = reader.u32()?;
                     let data = reader.take(length)?;
                     signal.high = data.first().is_some_and(|level| *level != 0);
-                },
+                }
                 0x30 => {
                     let length = usize::from(reader.u8()?);
                     reader.take(length)?;
-                },
+                }
                 0x31 => {
                     reader.u8()?;
                     let length = usize::from(reader.u8()?);
                     reader.take(length)?;
-                },
+                }
                 0x33 => {
                     let entries = usize::from(reader.u8()?);
                     reader.take(entries * 3)?;
-                },
+                }
                 0x35 => {
                     reader.take(16)?;
                     let length = reader.u32()?;
                     reader.take(length)?;
-                },
+                }
                 0x5a => {
                     reader.take(9)?;
-                },
+                }
                 0x18 | 0x19 => {
                     // CSW recording, generalised data: skipped (rare on the CPC)
                     let length = reader.u32()?;
                     reader.take(length)?;
                     notes.push(format!("a block {id:#04x} is not played"));
-                },
+                }
                 other => {
                     // TZX 1.10+: every unknown block starts with its length
                     let length = reader.u32()?;
@@ -271,7 +288,10 @@ impl Tape {
                 }
             }
         }
-        Ok(Tape { segments: signal.segments, notes })
+        Ok(Tape {
+            segments: signal.segments,
+            notes,
+        })
     }
 
     /// How long the whole tape plays, in seconds.
@@ -281,7 +301,7 @@ impl Tape {
             .iter()
             .map(|segment| match segment {
                 Segment::Level { units, .. } => u64::from(*units),
-                Segment::Stop => 0
+                Segment::Stop => 0,
             })
             .sum();
         units as f64 / (UNITS_PER_MS as f64 * 1000.0)
@@ -307,7 +327,11 @@ pub fn cdt_of_binary(name: &str, load: u16, entry: u16, data: &[u8], baud: u32) 
             let crc = !segment.iter().fold(0xffffu16, |mut crc, byte| {
                 crc ^= u16::from(*byte) << 8;
                 for _ in 0..8 {
-                    crc = if crc & 0x8000 != 0 { crc << 1 ^ 0x1021 } else { crc << 1 };
+                    crc = if crc & 0x8000 != 0 {
+                        crc << 1 ^ 0x1021
+                    } else {
+                        crc << 1
+                    };
                 }
                 crc
             });
@@ -326,7 +350,11 @@ pub fn cdt_of_binary(name: &str, load: u16, entry: u16, data: &[u8], baud: u32) 
         cdt.extend_from_slice(&(bytes.len() as u32).to_le_bytes()[..3]);
         cdt.extend_from_slice(&bytes);
     };
-    let blocks: Vec<&[u8]> = if data.is_empty() { vec![&[]] } else { data.chunks(2048).collect() };
+    let blocks: Vec<&[u8]> = if data.is_empty() {
+        vec![&[]]
+    } else {
+        data.chunks(2048).collect()
+    };
     for (i, block) in blocks.iter().enumerate() {
         let mut header = [0u8; 64];
         for (slot, byte) in header.iter_mut().zip(name.bytes().take(16)) {
@@ -355,13 +383,17 @@ pub struct TapeDeck {
     /// What remains of it, in [`Segment`] units.
     remaining: i64,
     high: bool,
-    playing: bool
+    playing: bool,
 }
 
 impl TapeDeck {
     /// `tape` inserted, rewound, PLAY down.
     pub fn new(tape: Tape) -> Self {
-        let mut deck = Self { tape, playing: true, ..Self::default() };
+        let mut deck = Self {
+            tape,
+            playing: true,
+            ..Self::default()
+        };
         deck.rewind();
         deck
     }
@@ -393,12 +425,12 @@ impl TapeDeck {
             .iter()
             .map(|segment| match segment {
                 Segment::Level { units, .. } => u64::from(*units),
-                Segment::Stop => 0
+                Segment::Stop => 0,
             })
             .sum();
         let current = match self.tape.segments.get(self.index) {
             Some(Segment::Level { units, .. }) => i64::from(*units) - self.remaining,
-            _ => 0
+            _ => 0,
         };
         (before as i64 + current) as f64 / (f64::from(UNITS_PER_MS) * 1000.0)
     }
@@ -432,12 +464,12 @@ impl TapeDeck {
             Some(Segment::Level { high, units }) => {
                 self.high = *high;
                 self.remaining += i64::from(*units);
-            },
+            }
             Some(Segment::Stop) => {
                 // PLAY pops up; the next PLAY goes on after the stop
                 self.playing = false;
                 self.remaining = 0;
-            },
+            }
             None => {
                 self.playing = false;
                 self.remaining = 0;
@@ -472,10 +504,20 @@ mod test {
             .iter()
             .map(|s| match s {
                 Segment::Level { high, units } => (*high, *units / 2),
-                Segment::Stop => panic!()
+                Segment::Stop => panic!(),
             })
             .collect();
-        assert_eq!(levels, vec![(true, 1000), (false, 1000), (true, 300), (false, 400), (true, 1000), (false, 1000)]);
+        assert_eq!(
+            levels,
+            vec![
+                (true, 1000),
+                (false, 1000),
+                (true, 300),
+                (false, 400),
+                (true, 1000),
+                (false, 1000)
+            ]
+        );
     }
 
     #[test]
@@ -501,7 +543,11 @@ mod test {
         deck.set_playing(true);
         deck.advance_us(true);
         assert!(!deck.level(), "the second tone's level");
-        assert!((deck.position_seconds() - 0.010001).abs() < 1e-6, "{}", deck.position_seconds());
+        assert!(
+            (deck.position_seconds() - 0.010001).abs() < 1e-6,
+            "{}",
+            deck.position_seconds()
+        );
         for _ in 0..10_000 {
             deck.advance_us(true);
         }
@@ -529,13 +575,21 @@ mod test {
         // LD A,&42 : LD (&4100),A : JR $
         let code = [0x3e, 0x42, 0x32, 0x00, 0x41, 0x18, 0xfe];
         let mut files = MemFiles::default();
-        files.insert("test.cdt", cdt_of_binary("test", 0x4000, 0x4000, &code, 2000));
-        let mut runner = CslRunner::with_io(Box::new(files), Box::new(PngFiles), std::env::temp_dir());
+        files.insert(
+            "test.cdt",
+            cdt_of_binary("test", 0x4000, 0x4000, &code, 2000),
+        );
+        let mut runner =
+            CslRunner::with_io(Box::new(files), Box::new(PngFiles), std::env::temp_dir());
         let script = "csl_version 1.0\nreset\nwait 3000000\ntape_insert 'test.cdt'\n\
                       key_output '|TAPE\\(RET)RUN\"\\(RET)'\nwait 2000000\ntape_play\nkey_output ' '\nwait 16000000\n";
         let report = runner.run_text(script, ".").unwrap();
         assert!(report.ignored.is_empty(), "{:?}", report.ignored);
-        assert_eq!(runner.motherboard().read_byte(0x4100), 0x42, "the program ran");
+        assert_eq!(
+            runner.motherboard().read_byte(0x4100),
+            0x42,
+            "the program ran"
+        );
         assert_eq!(runner.motherboard().cpu().pc(), 0x4005);
     }
 }

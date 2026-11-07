@@ -24,17 +24,32 @@ fn main() {
         let vs = mb.crtc().vsync();
         if vs && !vs_prev {
             let regs: Vec<u8> = (0..10).map(|r| mb.crtc().regs_r(r)).collect();
-            println!("{:>10.1} us CRTC VSYNC   (+{:.1})  C4={:?} C9={} R0-R9={:?}", tick as f64 / 16.0, (tick - last_vs) as f64 / 16.0, mb.crtc().vcc, mb.crtc().vlc.value(), regs);
+            println!(
+                "{:>10.1} us CRTC VSYNC   (+{:.1})  C4={:?} C9={} R0-R9={:?}",
+                tick as f64 / 16.0,
+                (tick - last_vs) as f64 / 16.0,
+                mb.crtc().vcc,
+                mb.crtc().vlc.value(),
+                regs
+            );
             last_vs = tick;
         }
         if sync.vsync && !cvs_prev {
-            println!("{:>10.1} us C-VSYNC      (+{:.1})", tick as f64 / 16.0, (tick - last_cvs) as f64 / 16.0);
+            println!(
+                "{:>10.1} us C-VSYNC      (+{:.1})",
+                tick as f64 / 16.0,
+                (tick - last_cvs) as f64 / 16.0
+            );
             last_cvs = tick;
         }
         vs_prev = vs;
         cvs_prev = sync.vsync;
         if monitor.take_frame().is_some() {
-            println!("{:>10.1} us monitor frame (+{:.1})", tick as f64 / 16.0, (tick - last_frame) as f64 / 16.0);
+            println!(
+                "{:>10.1} us monitor frame (+{:.1})",
+                tick as f64 / 16.0,
+                (tick - last_frame) as f64 / 16.0
+            );
             last_frame = tick;
             seen += 1;
         }

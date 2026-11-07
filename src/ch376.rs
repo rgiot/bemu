@@ -80,11 +80,21 @@ const SECTOR: u64 = 512;
 enum Transfer {
     None,
     /// BYTE_READ: bytes left, the size of the chunk given.
-    ByteRead { left: u32, chunk: u32 },
+    ByteRead {
+        left: u32,
+        chunk: u32,
+    },
     /// BYTE_WRITE: bytes left.
-    ByteWrite { left: u32 },
+    ByteWrite {
+        left: u32,
+    },
     /// DISK_READ/DISK_WRITE: the sector, sectors left, the offset in the sector.
-    Disk { lba: u64, left: u32, offset: u64, write: bool }
+    Disk {
+        lba: u64,
+        left: u32,
+        offset: u64,
+        write: bool,
+    },
 }
 
 /// The file or directory open.
@@ -93,7 +103,7 @@ struct OpenEntry {
     /// From the root, the names as on the volume.
     path: Vec<String>,
     directory: bool,
-    position: u64
+    position: u64,
 }
 
 /// The CH376.
@@ -119,7 +129,7 @@ pub struct Ch376 {
     open: Option<OpenEntry>,
     /// FILE_OPEN with a wildcard: the entries matching, the next one.
     enumeration: Option<(Vec<[u8; 32]>, usize)>,
-    transfer: Transfer
+    transfer: Transfer,
 }
 
 impl Ch376 {
@@ -139,7 +149,7 @@ impl Ch376 {
             directory: Vec::new(),
             open: None,
             enumeration: None,
-            transfer: Transfer::None
+            transfer: Transfer::None,
         };
         chip.plug(volume);
         chip
@@ -169,7 +179,11 @@ impl Ch376 {
 
     /// The status port: bit 7 low while an interrupt is pending (INT#).
     pub fn read_status(&self) -> u8 {
-        if self.interrupt.is_some() { 0x00 } else { 0x80 }
+        if self.interrupt.is_some() {
+            0x00
+        } else {
+            0x80
+        }
     }
 
     /// The data port.
@@ -208,7 +222,10 @@ impl Ch376 {
     fn parameters_complete(&mut self) {
         let input = self.input.clone();
         if std::env::var_os("BEMU_CH376_TRACE").is_some() {
-            eprintln!("CH376 {:02X} {:02X?} name={:?} int={:?}", self.command, input, self.file_name, self.interrupt);
+            eprintln!(
+                "CH376 {:02X} {:02X?} name={:?} int={:?}",
+                self.command, input, self.file_name, self.interrupt
+            );
         }
         let needs = |n: usize| input.len() == n;
         match self.command {
@@ -216,69 +233,71 @@ impl Ch376 {
             CMD_RESET_ALL if needs(0) => self.reset(),
             CMD_READ_VAR8 if needs(1) => self.give(&[0]),
             CMD_CHECK_EXIST if needs(1) => self.give(&[!input[0]]),
-            CMD_SET_RETRY if needs(2) => {},
+            CMD_SET_RETRY if needs(2) => {}
             CMD_GET_FILE_SIZE if needs(1) => {
                 let size = self.open_size().unwrap_or(0) as u32;
                 self.give(&size.to_le_bytes());
-            },
+            }
             CMD_SET_USB_MODE if needs(1) => {
                 self.mode = input[0];
                 self.give(&[CMD_RET_SUCCESS]);
                 if matches!(input[0], 6 | 7) && self.volume.is_some() {
                     self.raise(USB_INT_CONNECT);
                 }
-            },
+            }
             CMD_GET_STATUS if needs(0) => self.give(&[self.status]),
             CMD_RD_USB_DATA0 | CMD_RD_USB_DATA if needs(0) => {
                 let buffer = std::mem::take(&mut self.buffer);
                 self.give(&[buffer.len() as u8]);
                 self.give(&buffer);
-            },
+            }
             CMD_WR_REQ_DATA if needs(0) => {
                 self.requested = self.request_size();
                 self.give(&[self.requested as u8]);
                 self.buffer.clear();
-            },
+            }
             CMD_WR_REQ_DATA => {
                 // the bytes asked for
                 self.buffer.push(*input.last().unwrap());
                 if self.buffer.len() == self.requested {
                     self.store_written();
                 }
-            },
+            }
             CMD_WR_HOST_DATA if !input.is_empty() && input.len() == 1 + usize::from(input[0]) => {
                 self.buffer = input[1..].to_vec();
                 self.store_written();
-            },
+            }
             CMD_WR_OFS_DATA if input.len() >= 2 && input.len() == 2 + usize::from(input[1]) => {
                 let offset = usize::from(input[0]);
                 if self.buffer.len() < offset + input.len() - 2 {
                     self.buffer.resize(offset + input.len() - 2, 0);
                 }
                 self.buffer[offset..offset + input.len() - 2].copy_from_slice(&input[2..]);
-            },
+            }
             CMD_SET_FILE_NAME if input.last() == Some(&0) || input.len() > 14 => {
                 let end = input.iter().position(|&b| b == 0).unwrap_or(input.len());
                 // 8.3 names may come padded, as a directory entry holds them ("NAME    .EXT")
                 self.file_name = String::from_utf8_lossy(&input[..end]).replace(' ', "");
-            },
+            }
             CMD_DISK_CONNECT | CMD_DISK_MOUNT if needs(0) => {
                 let usb = matches!(self.mode, 3 | 5..=7); // 3: the SD card slot of the board (UniDOS's "SD:" device)
                 let command = self.command;
-                let mounted = usb && self.volume.as_mut().is_some_and(|volume| command == CMD_DISK_CONNECT || volume.query().is_ok());
+                let mounted = usb
+                    && self.volume.as_mut().is_some_and(|volume| {
+                        command == CMD_DISK_CONNECT || volume.query().is_ok()
+                    });
                 if mounted {
                     if self.command == CMD_DISK_MOUNT {
                         // the key's INQUIRY data
                         let mut inquiry = vec![0, 0x80, 2, 2, 31, 0, 0, 0];
-        inquiry.extend_from_slice(b"bemu    USB key         1.00");
+                        inquiry.extend_from_slice(b"bemu    USB key         1.00");
                         self.buffer = inquiry;
                     }
                     self.raise(USB_INT_SUCCESS);
-                }
-                else {
+                } else {
                     self.raise(USB_INT_DISK_ERR);
                 }
-            },
+            }
             CMD_FILE_OPEN if needs(0) => self.file_open(),
             CMD_FILE_ENUM_GO if needs(0) => self.next_entry(),
             CMD_FILE_CREATE if needs(0) => self.file_create(),
@@ -287,13 +306,13 @@ impl Ch376 {
                 self.open = None;
                 self.transfer = Transfer::None;
                 self.raise(USB_INT_SUCCESS);
-            },
+            }
             CMD_DIR_INFO_READ if needs(1) => match self.open_entry_info() {
                 Some(entry) => {
                     self.buffer = entry.to_vec();
                     self.raise(USB_INT_SUCCESS);
-                },
-                None => self.raise(ERR_MISS_FILE)
+                }
+                None => self.raise(ERR_MISS_FILE),
             },
             CMD_DIR_INFO_SAVE if needs(0) => self.dir_info_save(),
             CMD_BYTE_LOCATE if needs(4) => {
@@ -301,22 +320,33 @@ impl Ch376 {
                 let size = self.open_size();
                 match (&mut self.open, size) {
                     (Some(open), Some(size)) if !open.directory => {
-                        open.position = if offset == u32::MAX { size } else { u64::from(offset).min(size) };
+                        open.position = if offset == u32::MAX {
+                            size
+                        } else {
+                            u64::from(offset).min(size)
+                        };
                         self.raise(USB_INT_SUCCESS);
-                    },
-                    _ => self.raise(ERR_MISS_FILE)
+                    }
+                    _ => self.raise(ERR_MISS_FILE),
                 }
-            },
+            }
             CMD_BYTE_READ if needs(2) => {
-                self.transfer = Transfer::ByteRead { left: u16::from_le_bytes([input[0], input[1]]).into(), chunk: 0 };
+                self.transfer = Transfer::ByteRead {
+                    left: u16::from_le_bytes([input[0], input[1]]).into(),
+                    chunk: 0,
+                };
                 self.byte_read_chunk();
-            },
+            }
             CMD_BYTE_RD_GO if needs(0) => self.byte_read_chunk(),
             CMD_BYTE_WRITE if needs(2) => {
                 let left = u16::from_le_bytes([input[0], input[1]]).into();
                 self.transfer = Transfer::ByteWrite { left };
-                self.raise(if left == 0 { USB_INT_SUCCESS } else { USB_INT_DISK_WRITE });
-            },
+                self.raise(if left == 0 {
+                    USB_INT_SUCCESS
+                } else {
+                    USB_INT_DISK_WRITE
+                });
+            }
             CMD_BYTE_WR_GO if needs(0) => match self.transfer {
                 Transfer::ByteWrite { left } if left > 0 => self.raise(USB_INT_DISK_WRITE),
                 _ => {
@@ -324,13 +354,15 @@ impl Ch376 {
                     self.raise(USB_INT_SUCCESS);
                 }
             },
-            CMD_DISK_CAPACITY if needs(0) => match self.volume.as_mut().map(|volume| volume.capacity()) {
-                Some(sectors) => {
-                    self.buffer = (sectors as u32).to_le_bytes().to_vec();
-                    self.raise(USB_INT_SUCCESS);
-                },
-                None => self.raise(USB_INT_DISK_ERR)
-            },
+            CMD_DISK_CAPACITY if needs(0) => {
+                match self.volume.as_mut().map(|volume| volume.capacity()) {
+                    Some(sectors) => {
+                        self.buffer = (sectors as u32).to_le_bytes().to_vec();
+                        self.raise(USB_INT_SUCCESS);
+                    }
+                    None => self.raise(USB_INT_DISK_ERR),
+                }
+            }
             CMD_DISK_QUERY if needs(0) => match self.volume.as_mut().map(|volume| volume.query()) {
                 Some(Ok((total, free, kind))) => {
                     let mut query = total.to_le_bytes().to_vec();
@@ -338,36 +370,47 @@ impl Ch376 {
                     query.push(kind);
                     self.buffer = query;
                     self.raise(USB_INT_SUCCESS);
-                },
-                _ => self.raise(USB_INT_DISK_ERR)
+                }
+                _ => self.raise(USB_INT_DISK_ERR),
             },
             CMD_DIR_CREATE if needs(0) => self.dir_create(),
             CMD_DISK_READ | CMD_DISK_WRITE if needs(5) => {
                 let lba = u32::from_le_bytes([input[0], input[1], input[2], input[3]]);
                 let write = self.command == CMD_DISK_WRITE;
-                self.transfer = Transfer::Disk { lba: lba.into(), left: input[4].into(), offset: 0, write };
+                self.transfer = Transfer::Disk {
+                    lba: lba.into(),
+                    left: input[4].into(),
+                    offset: 0,
+                    write,
+                };
                 self.disk_step(false);
-            },
+            }
             CMD_DISK_RD_GO | CMD_DISK_WR_GO if needs(0) => self.disk_step(true),
             _ => {}
         }
     }
 
     fn volume(&mut self) -> io::Result<&mut Box<dyn Volume>> {
-        self.volume.as_mut().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no USB key"))
+        self.volume
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no USB key"))
     }
 
     /// `name` (CH376: `/` from the root, else from the directory open) as a path.
     fn resolve(&self, name: &str) -> Vec<String> {
-        let mut path = if name.starts_with('/') || name.starts_with('\\') { Vec::new() } else { self.directory.clone() };
+        let mut path = if name.starts_with('/') || name.starts_with('\\') {
+            Vec::new()
+        } else {
+            self.directory.clone()
+        };
         for part in name.split(['/', '\\']).filter(|part| !part.is_empty()) {
             match part {
-                "." => {},
+                "." => {}
                 ".." => {
                     path.pop();
-                },
+                }
                 // an 8.3 name with no extension ends with its dot (UniDOS opens folders so)
-                part => path.push(part.strip_suffix('.').unwrap_or(part).to_owned())
+                part => path.push(part.strip_suffix('.').unwrap_or(part).to_owned()),
             }
         }
         path
@@ -386,11 +429,17 @@ impl Ch376 {
         let name = self.file_name.clone();
         if name.contains(['*', '?']) {
             let (directory, pattern) = match name.rsplit_once(['/', '\\']) {
-                Some((directory, pattern)) => (self.resolve(if directory.is_empty() { "/" } else { directory }), pattern.to_owned()),
-                None => (self.directory.clone(), name.clone())
+                Some((directory, pattern)) => (
+                    self.resolve(if directory.is_empty() { "/" } else { directory }),
+                    pattern.to_owned(),
+                ),
+                None => (self.directory.clone(), name.clone()),
             };
             let entries = self.entries(&directory).unwrap_or_default();
-            let matching = entries.into_iter().filter(|entry| wildcard(&pattern, &entry_name(entry))).collect();
+            let matching = entries
+                .into_iter()
+                .filter(|entry| wildcard(&pattern, &entry_name(entry)))
+                .collect();
             self.enumeration = Some((matching, 0));
             self.next_entry();
             return;
@@ -399,13 +448,21 @@ impl Ch376 {
         match self.lookup(&path) {
             Some((true, _)) => {
                 self.directory = path.clone();
-                self.open = Some(OpenEntry { path, directory: true, position: 0 });
+                self.open = Some(OpenEntry {
+                    path,
+                    directory: true,
+                    position: 0,
+                });
                 self.raise(ERR_OPEN_DIR);
-            },
+            }
             Some((false, _)) => {
-                self.open = Some(OpenEntry { path, directory: false, position: 0 });
+                self.open = Some(OpenEntry {
+                    path,
+                    directory: false,
+                    position: 0,
+                });
                 self.raise(USB_INT_SUCCESS);
-            },
+            }
             None => {
                 self.open = None;
                 self.raise(ERR_MISS_FILE);
@@ -420,7 +477,7 @@ impl Ch376 {
                 self.buffer = entries[*next].to_vec();
                 *next += 1;
                 self.raise(USB_INT_DISK_READ);
-            },
+            }
             _ => {
                 self.enumeration = None;
                 self.raise(ERR_MISS_FILE);
@@ -441,20 +498,29 @@ impl Ch376 {
     /// The directory entry of the file open.
     fn open_entry_info(&mut self) -> Option<[u8; 32]> {
         let open = self.open.clone()?;
-        let (parent, name) = open.path.split_last().map(|(name, parent)| (parent.to_vec(), name.clone()))?;
-        self.entries(&parent).ok()?.into_iter().find(|entry| {
-            entry_name(entry).eq_ignore_ascii_case(&name) || entry_name(entry).trim_end_matches('.').eq_ignore_ascii_case(&name)
-        })
-        .or_else(|| {
-            // a long name: the volume's own lookup
-            self.lookup(&open.path).map(|(directory, size)| {
-                let mut entry = [0u8; 32];
-                entry[..11].copy_from_slice(&short_bytes(&name));
-                entry[11] = if directory { 0x10 } else { 0x20 };
-                entry[28..32].copy_from_slice(&(size as u32).to_le_bytes());
-                entry
+        let (parent, name) = open
+            .path
+            .split_last()
+            .map(|(name, parent)| (parent.to_vec(), name.clone()))?;
+        self.entries(&parent)
+            .ok()?
+            .into_iter()
+            .find(|entry| {
+                entry_name(entry).eq_ignore_ascii_case(&name)
+                    || entry_name(entry)
+                        .trim_end_matches('.')
+                        .eq_ignore_ascii_case(&name)
             })
-        })
+            .or_else(|| {
+                // a long name: the volume's own lookup
+                self.lookup(&open.path).map(|(directory, size)| {
+                    let mut entry = [0u8; 32];
+                    entry[..11].copy_from_slice(&short_bytes(&name));
+                    entry[11] = if directory { 0x10 } else { 0x20 };
+                    entry[28..32].copy_from_slice(&(size as u32).to_le_bytes());
+                    entry
+                })
+            })
     }
 
     /// DIR_INFO_SAVE: the entry in the buffer written back; here, a new name renames the file.
@@ -468,7 +534,9 @@ impl Ch376 {
             let new_name = entry_name(&new_name);
             let mut to = open.path.clone();
             *to.last_mut().unwrap() = new_name.clone();
-            let renamed = self.volume().and_then(|volume| volume.rename(&open.path, &to));
+            let renamed = self
+                .volume()
+                .and_then(|volume| volume.rename(&open.path, &to));
             if renamed.is_err() {
                 return self.raise(USB_INT_DISK_ERR);
             }
@@ -484,10 +552,14 @@ impl Ch376 {
         let created = self.volume().and_then(|volume| volume.create(&path));
         match created {
             Ok(()) => {
-                self.open = Some(OpenEntry { path, directory: false, position: 0 });
+                self.open = Some(OpenEntry {
+                    path,
+                    directory: false,
+                    position: 0,
+                });
                 self.raise(USB_INT_SUCCESS);
-            },
-            Err(_) => self.raise(ERR_DISK_FULL)
+            }
+            Err(_) => self.raise(ERR_DISK_FULL),
         }
     }
 
@@ -497,14 +569,21 @@ impl Ch376 {
             if !directory {
                 return self.raise(ERR_FOUND_NAME);
             }
-        }
-        else {
-            if self.volume().and_then(|volume| volume.create_dir(&path)).is_err() {
+        } else {
+            if self
+                .volume()
+                .and_then(|volume| volume.create_dir(&path))
+                .is_err()
+            {
                 return self.raise(ERR_DISK_FULL);
             }
         }
         self.directory = path.clone();
-        self.open = Some(OpenEntry { path, directory: true, position: 0 });
+        self.open = Some(OpenEntry {
+            path,
+            directory: true,
+            position: 0,
+        });
         self.raise(USB_INT_SUCCESS);
     }
 
@@ -512,41 +591,50 @@ impl Ch376 {
         // the file open (closed first by the driver), or the name given
         let path = match &self.open {
             Some(open) => open.path.clone(),
-            None => self.resolve(&self.file_name.clone())
+            None => self.resolve(&self.file_name.clone()),
         };
         match self.volume().and_then(|volume| volume.remove(&path)) {
             Ok(()) => {
                 self.open = None;
                 self.raise(USB_INT_SUCCESS);
-            },
-            Err(_) => self.raise(ERR_MISS_FILE)
+            }
+            Err(_) => self.raise(ERR_MISS_FILE),
         }
     }
 
     /// BYTE_READ/BYTE_RD_GO: the next chunk of the file, or the end.
     fn byte_read_chunk(&mut self) {
-        let Transfer::ByteRead { left, chunk } = self.transfer else { return self.raise(USB_INT_SUCCESS) };
+        let Transfer::ByteRead { left, chunk } = self.transfer else {
+            return self.raise(USB_INT_SUCCESS);
+        };
         let left = left - chunk.min(left);
         let Some(open) = self.open.clone().filter(|open| !open.directory) else {
             self.transfer = Transfer::None;
             return self.raise(USB_INT_SUCCESS);
         };
         let size = self.open_size().unwrap_or(0);
-        let count = u64::from(left).min(CHUNK as u64).min(size.saturating_sub(open.position));
+        let count = u64::from(left)
+            .min(CHUNK as u64)
+            .min(size.saturating_sub(open.position));
         if count == 0 {
             self.transfer = Transfer::None;
             return self.raise(USB_INT_SUCCESS);
         }
-        let data = self.volume().and_then(|volume| volume.read(&open.path, open.position, count as usize));
+        let data = self
+            .volume()
+            .and_then(|volume| volume.read(&open.path, open.position, count as usize));
         match data {
             Ok(data) => {
                 if let Some(open) = &mut self.open {
                     open.position += data.len() as u64;
                 }
-                self.transfer = Transfer::ByteRead { left, chunk: data.len() as u32 };
+                self.transfer = Transfer::ByteRead {
+                    left,
+                    chunk: data.len() as u32,
+                };
                 self.buffer = data;
                 self.raise(USB_INT_DISK_READ);
-            },
+            }
             Err(_) => {
                 self.transfer = Transfer::None;
                 self.raise(USB_INT_DISK_ERR);
@@ -559,7 +647,7 @@ impl Ch376 {
         match self.transfer {
             Transfer::ByteWrite { left } => (left as usize).min(CHUNK),
             Transfer::Disk { write: true, .. } => CHUNK,
-            _ => 0
+            _ => 0,
         }
     }
 
@@ -568,16 +656,27 @@ impl Ch376 {
         let data = std::mem::take(&mut self.buffer);
         match self.transfer {
             Transfer::ByteWrite { left } => {
-                let Some(open) = self.open.clone() else { return };
-                let written = self.volume().and_then(|volume| volume.write(&open.path, open.position, &data));
+                let Some(open) = self.open.clone() else {
+                    return;
+                };
+                let written = self
+                    .volume()
+                    .and_then(|volume| volume.write(&open.path, open.position, &data));
                 if written.is_ok() {
                     if let Some(open) = &mut self.open {
                         open.position += data.len() as u64;
                     }
-                    self.transfer = Transfer::ByteWrite { left: left.saturating_sub(data.len() as u32) };
+                    self.transfer = Transfer::ByteWrite {
+                        left: left.saturating_sub(data.len() as u32),
+                    };
                 }
-            },
-            Transfer::Disk { lba, offset, write: true, .. } => {
+            }
+            Transfer::Disk {
+                lba,
+                offset,
+                write: true,
+                ..
+            } => {
                 if let Some(storage) = self.volume.as_mut().and_then(|volume| volume.sectors()) {
                     if storage.seek(SeekFrom::Start(lba * SECTOR + offset)).is_ok() {
                         let _ = storage.write_all(&data);
@@ -586,14 +685,20 @@ impl Ch376 {
                 if let Transfer::Disk { offset, .. } = &mut self.transfer {
                     *offset += data.len() as u64;
                 }
-            },
+            }
             _ => {}
         }
     }
 
     /// DISK_READ/DISK_WRITE and their GOs: the next 64 bytes, the next sector, or the end.
     fn disk_step(&mut self, go: bool) {
-        let Transfer::Disk { mut lba, mut left, mut offset, write } = self.transfer else {
+        let Transfer::Disk {
+            mut lba,
+            mut left,
+            mut offset,
+            write,
+        } = self.transfer
+        else {
             return self.raise(USB_INT_SUCCESS);
         };
         if go && !write {
@@ -611,19 +716,28 @@ impl Ch376 {
             }
             return self.raise(USB_INT_SUCCESS);
         }
-        self.transfer = Transfer::Disk { lba, left, offset, write };
+        self.transfer = Transfer::Disk {
+            lba,
+            left,
+            offset,
+            write,
+        };
         if write {
             return self.raise(USB_INT_DISK_WRITE);
         }
         let mut data = vec![0u8; CHUNK];
-        let read = self.volume.as_mut().and_then(|volume| volume.sectors()).is_some_and(|storage| {
-            storage.seek(SeekFrom::Start(lba * SECTOR + offset)).is_ok() && storage.read_exact(&mut data).is_ok()
-        });
+        let read = self
+            .volume
+            .as_mut()
+            .and_then(|volume| volume.sectors())
+            .is_some_and(|storage| {
+                storage.seek(SeekFrom::Start(lba * SECTOR + offset)).is_ok()
+                    && storage.read_exact(&mut data).is_ok()
+            });
         if read {
             self.buffer = data;
             self.raise(USB_INT_DISK_READ);
-        }
-        else {
+        } else {
             self.transfer = Transfer::None;
             self.raise(USB_INT_DISK_ERR);
         }
@@ -657,7 +771,7 @@ pub trait Volume: Send {
 pub struct FatImage {
     storage: Box<dyn Storage>,
     /// Where the FAT volume starts in the image.
-    offset: u64
+    offset: u64,
 }
 
 impl FatImage {
@@ -666,8 +780,14 @@ impl FatImage {
         Self { storage, offset }
     }
 
-    fn with_fs<R>(&mut self, f: impl FnOnce(&fatfs::FileSystem<&mut Partition>) -> io::Result<R>) -> io::Result<R> {
-        let mut partition = Partition { storage: self.storage.as_mut(), offset: self.offset };
+    fn with_fs<R>(
+        &mut self,
+        f: impl FnOnce(&fatfs::FileSystem<&mut Partition>) -> io::Result<R>,
+    ) -> io::Result<R> {
+        let mut partition = Partition {
+            storage: self.storage.as_mut(),
+            offset: self.offset,
+        };
         partition.seek(SeekFrom::Start(0))?;
         let fs = fatfs::FileSystem::new(&mut partition, fatfs::FsOptions::new())?;
         f(&fs)
@@ -681,11 +801,13 @@ impl Volume for FatImage {
             let root = fs.root_dir();
             let (parent, name) = match joined.rsplit_once('/') {
                 Some((parent, name)) => (root.open_dir(parent)?, name.to_owned()),
-                None => (root, joined.clone())
+                None => (root, joined.clone()),
             };
             for entry in parent.iter() {
                 let entry = entry?;
-                if entry.short_file_name().eq_ignore_ascii_case(&name) || entry.file_name().eq_ignore_ascii_case(&name) {
+                if entry.short_file_name().eq_ignore_ascii_case(&name)
+                    || entry.file_name().eq_ignore_ascii_case(&name)
+                {
                     return Ok(Some((entry.is_dir(), entry.len())));
                 }
             }
@@ -698,7 +820,11 @@ impl Volume for FatImage {
     fn entries(&mut self, path: &[String]) -> io::Result<Vec<[u8; 32]>> {
         let joined = path.join("/");
         self.with_fs(|fs| {
-            let directory = if joined.is_empty() { fs.root_dir() } else { fs.root_dir().open_dir(&joined)? };
+            let directory = if joined.is_empty() {
+                fs.root_dir()
+            } else {
+                fs.root_dir().open_dir(&joined)?
+            };
             let mut entries = Vec::new();
             for entry in directory.iter() {
                 entries.push(dir_entry_bytes(&entry?));
@@ -758,9 +884,13 @@ impl Volume for FatImage {
             let kind = match fs.fat_type() {
                 fatfs::FatType::Fat12 => 0x01,
                 fatfs::FatType::Fat16 => 0x06,
-                fatfs::FatType::Fat32 => 0x0c
+                fatfs::FatType::Fat32 => 0x0c,
             };
-            Ok((stats.total_clusters() * per_cluster, stats.free_clusters() * per_cluster, kind))
+            Ok((
+                stats.total_clusters() * per_cluster,
+                stats.free_clusters() * per_cluster,
+                kind,
+            ))
         })
     }
 
@@ -776,7 +906,7 @@ impl Volume for FatImage {
 /// A folder of the host as the key's FAT volume: its files and folders under 8.3 names (upper
 /// case, the name and extension cut to 8 and 3 characters), dot files left out. No raw sectors.
 pub struct HostFolder {
-    root: PathBuf
+    root: PathBuf,
 }
 
 /// What a folder reports as its size (a 2 GB key, half free).
@@ -812,12 +942,13 @@ impl HostFolder {
         let mut host = self.root.clone();
         for (index, part) in path.iter().enumerate() {
             let found = Self::listing(&host).into_iter().find(|(name, short)| {
-                short.eq_ignore_ascii_case(part) || name.to_string_lossy().eq_ignore_ascii_case(part)
+                short.eq_ignore_ascii_case(part)
+                    || name.to_string_lossy().eq_ignore_ascii_case(part)
             });
             match found {
                 Some((name, _)) => host.push(name),
                 None if index + 1 == path.len() => host.push(part),
-                None => return Err(io::Error::new(io::ErrorKind::NotFound, part.clone()))
+                None => return Err(io::Error::new(io::ErrorKind::NotFound, part.clone())),
             }
         }
         Ok(host)
@@ -834,13 +965,15 @@ impl Volume for HostFolder {
         let directory = self.host_path(path)?;
         let mut entries = Vec::new();
         for (name, short) in Self::listing(&directory) {
-            let Ok(metadata) = std::fs::metadata(directory.join(&name)) else { continue };
+            let Ok(metadata) = std::fs::metadata(directory.join(&name)) else {
+                continue;
+            };
             let mut entry = [0u8; 32];
             entry[..11].copy_from_slice(&short_bytes(&short));
             entry[11] = match (metadata.is_dir(), metadata.permissions().readonly()) {
                 (true, _) => 0x10,
                 (false, true) => 0x21,
-                (false, false) => 0x20
+                (false, false) => 0x20,
             };
             if let Ok(modified) = metadata.modified() {
                 let (date, time) = fat_date_time(modified);
@@ -862,7 +995,9 @@ impl Volume for HostFolder {
     }
 
     fn write(&mut self, path: &[String], position: u64, data: &[u8]) -> io::Result<()> {
-        let mut file = std::fs::OpenOptions::new().write(true).open(self.host_path(path)?)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(self.host_path(path)?)?;
         file.seek(SeekFrom::Start(position))?;
         file.write_all(data)
     }
@@ -877,7 +1012,11 @@ impl Volume for HostFolder {
 
     fn remove(&mut self, path: &[String]) -> io::Result<()> {
         let host = self.host_path(path)?;
-        if host.is_dir() { std::fs::remove_dir(host) } else { std::fs::remove_file(host) }
+        if host.is_dir() {
+            std::fs::remove_dir(host)
+        } else {
+            std::fs::remove_file(host)
+        }
     }
 
     fn rename(&mut self, from: &[String], to: &[String]) -> io::Result<()> {
@@ -887,8 +1026,7 @@ impl Volume for HostFolder {
     fn query(&mut self) -> io::Result<(u32, u32, u8)> {
         if self.root.is_dir() {
             Ok((FOLDER_SECTORS, FOLDER_SECTORS / 2, 0x0c))
-        }
-        else {
+        } else {
             Err(io::Error::new(io::ErrorKind::NotFound, "no folder"))
         }
     }
@@ -907,7 +1045,7 @@ impl Volume for HostFolder {
 fn short_name(name: &str) -> String {
     let (base, extension) = match name.rsplit_once('.') {
         Some((base, extension)) if !base.is_empty() => (base, extension),
-        _ => (name, "")
+        _ => (name, ""),
     };
     let clean = |text: &str, length: usize| -> String {
         text.chars()
@@ -917,24 +1055,31 @@ fn short_name(name: &str) -> String {
             .to_ascii_uppercase()
     };
     let (base, extension) = (clean(base, 8), clean(extension, 3));
-    if extension.is_empty() { base } else { format!("{base}.{extension}") }
+    if extension.is_empty() {
+        base
+    } else {
+        format!("{base}.{extension}")
+    }
 }
 
 /// A modification time as FAT's date and time (UTC).
 fn fat_date_time(time: std::time::SystemTime) -> (u16, u16) {
-    let seconds = time.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let seconds = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
     let (days, of_day) = (seconds / 86_400, seconds % 86_400);
     let (year, month, day) = crate::calendar::civil_from_days(days as i64);
     let date = ((year.clamp(1980, 2107) - 1980) as u16) << 9 | (month as u16) << 5 | day as u16;
-    let time = ((of_day / 3600) as u16) << 11 | ((of_day / 60 % 60) as u16) << 5 | (of_day % 60 / 2) as u16;
+    let time = ((of_day / 3600) as u16) << 11
+        | ((of_day / 60 % 60) as u16) << 5
+        | (of_day % 60 / 2) as u16;
     (date, time)
 }
-
 
 /// The FAT volume in an image: the whole of it, or its first FAT partition.
 struct Partition<'a> {
     storage: &'a mut dyn Storage,
-    offset: u64
+    offset: u64,
 }
 
 impl Read for Partition<'_> {
@@ -957,7 +1102,7 @@ impl Seek for Partition<'_> {
     fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
         let absolute = match position {
             SeekFrom::Start(offset) => self.storage.seek(SeekFrom::Start(self.offset + offset))?,
-            other => self.storage.seek(other)?
+            other => self.storage.seek(other)?,
         };
         Ok(absolute.saturating_sub(self.offset))
     }
@@ -979,7 +1124,11 @@ fn volume_offset(storage: &mut dyn Storage) -> u64 {
     (0..4)
         .map(|index| &sector[446 + index * 16..462 + index * 16])
         .find(|entry| matches!(entry[4], 0x01 | 0x04 | 0x06 | 0x0b | 0x0c | 0x0e))
-        .map_or(0, |entry| u64::from(u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]])) * SECTOR)
+        .map_or(0, |entry| {
+            u64::from(u32::from_le_bytes([
+                entry[8], entry[9], entry[10], entry[11],
+            ])) * SECTOR
+        })
 }
 
 /// A directory entry as FAT stores it (32 bytes), from fatfs's.
@@ -989,7 +1138,9 @@ fn dir_entry_bytes<T: fatfs::ReadWriteSeek>(entry: &fatfs::DirEntry<T>) -> [u8; 
     bytes[11] = entry.attributes().bits();
     let modified = entry.modified();
     let time = (modified.time.hour << 11) | (modified.time.min << 5) | (modified.time.sec / 2);
-    let date = ((modified.date.year.saturating_sub(1980)) << 9) | (modified.date.month << 5) | modified.date.day;
+    let date = ((modified.date.year.saturating_sub(1980)) << 9)
+        | (modified.date.month << 5)
+        | modified.date.day;
     bytes[22..24].copy_from_slice(&time.to_le_bytes());
     bytes[24..26].copy_from_slice(&date.to_le_bytes());
     bytes[28..32].copy_from_slice(&(entry.len() as u32).to_le_bytes());
@@ -1001,7 +1152,7 @@ fn short_bytes(name: &str) -> [u8; 11] {
     let mut bytes = [b' '; 11];
     let (base, extension) = match name {
         "." | ".." => (name, ""),
-        _ => name.rsplit_once('.').unwrap_or((name, ""))
+        _ => name.rsplit_once('.').unwrap_or((name, "")),
     };
     for (index, byte) in base.bytes().take(8).enumerate() {
         bytes[index] = byte.to_ascii_uppercase();
@@ -1016,7 +1167,11 @@ fn short_bytes(name: &str) -> [u8; 11] {
 fn entry_name(entry: &[u8; 32]) -> String {
     let base = String::from_utf8_lossy(&entry[..8]).trim_end().to_owned();
     let extension = String::from_utf8_lossy(&entry[8..11]).trim_end().to_owned();
-    if extension.is_empty() { base } else { format!("{base}.{extension}") }
+    if extension.is_empty() {
+        base
+    } else {
+        format!("{base}.{extension}")
+    }
 }
 
 /// `*` and `?`, ignoring case; `*` alone matches all.
@@ -1024,33 +1179,39 @@ fn wildcard(pattern: &str, name: &str) -> bool {
     fn matches(pattern: &[u8], name: &[u8]) -> bool {
         match (pattern.first(), name.first()) {
             (None, None) => true,
-            (Some(b'*'), _) => matches(&pattern[1..], name) || (!name.is_empty() && matches(pattern, &name[1..])),
+            (Some(b'*'), _) => {
+                matches(&pattern[1..], name) || (!name.is_empty() && matches(pattern, &name[1..]))
+            }
             (Some(b'?'), Some(_)) => matches(&pattern[1..], &name[1..]),
             (Some(p), Some(n)) => p.eq_ignore_ascii_case(n) && matches(&pattern[1..], &name[1..]),
-            _ => false
+            _ => false,
         }
     }
-    matches(pattern.as_bytes(), name.as_bytes()) || (pattern.ends_with(".*") && matches(&pattern.as_bytes()[..pattern.len() - 2], name.as_bytes()))
+    matches(pattern.as_bytes(), name.as_bytes())
+        || (pattern.ends_with(".*")
+            && matches(&pattern.as_bytes()[..pattern.len() - 2], name.as_bytes()))
 }
 
 /// The Albireo board: its CH376 at &FE80 (data) and &FE81 (command, status).
 pub struct Albireo {
     pub ch376: Ch376,
     /// The data byte read by the IN under way.
-    read_latch: u8
+    read_latch: u8,
 }
 
 impl Albireo {
     pub fn new(volume: Option<Box<dyn Volume>>) -> Self {
-        Self { ch376: Ch376::new(volume), read_latch: 0 }
+        Self {
+            ch376: Ch376::new(volume),
+            read_latch: 0,
+        }
     }
 
     /// The board with `path` as its USB key: a folder of the host, or a FAT image file.
     pub fn open(path: &Path) -> Result<Self, String> {
         let volume: Box<dyn Volume> = if path.is_dir() {
             Box::new(HostFolder::new(path))
-        }
-        else {
+        } else {
             let file = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -1080,7 +1241,7 @@ impl ExpansionDevice for Albireo {
                         self.read_latch = self.ch376.read_data();
                     }
                     port.drive_data(self.read_latch);
-                },
+                }
                 0xfe81 => port.drive_data(self.ch376.read_status()),
                 _ => {}
             }
@@ -1111,7 +1272,11 @@ mod test {
         {
             let fs = fatfs::FileSystem::new(&mut disk, fatfs::FsOptions::new()).unwrap();
             for (name, content) in files {
-                fs.root_dir().create_file(name).unwrap().write_all(content).unwrap();
+                fs.root_dir()
+                    .create_file(name)
+                    .unwrap()
+                    .write_all(content)
+                    .unwrap();
             }
         }
         disk.set_position(0);
@@ -1119,7 +1284,10 @@ mod test {
     }
 
     fn chip(files: &[(&str, &[u8])]) -> Ch376 {
-        Ch376::new(Some(Box::new(FatImage::new(Box::new(image(1440 * 1024, files))))))
+        Ch376::new(Some(Box::new(FatImage::new(Box::new(image(
+            1440 * 1024,
+            files,
+        ))))))
     }
 
     /// A command and its parameters; the interrupt it raised, if any (cleared, as GET_STATUS
@@ -1171,7 +1339,10 @@ mod test {
         mount(&mut chip);
 
         set_name(&mut chip, "/GAME.BIN");
-        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_FILE_OPEN, &[]),
+            Some(USB_INT_SUCCESS)
+        );
         chip.write_command(CMD_GET_FILE_SIZE);
         chip.write_data(0x68);
         let size: Vec<u8> = (0..4).map(|_| chip.read_data()).collect();
@@ -1186,11 +1357,17 @@ mod test {
         }
         assert_eq!(interrupt, Some(USB_INT_SUCCESS));
         assert_eq!(read, content, "the whole file, the request being larger");
-        assert_eq!(command(&mut chip, CMD_FILE_CLOSE, &[0]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_FILE_CLOSE, &[0]),
+            Some(USB_INT_SUCCESS)
+        );
 
         // a new file, 100 bytes through WR_REQ_DATA
         set_name(&mut chip, "/SAVE.DAT");
-        assert_eq!(command(&mut chip, CMD_FILE_CREATE, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_FILE_CREATE, &[]),
+            Some(USB_INT_SUCCESS)
+        );
         let mut interrupt = command(&mut chip, CMD_BYTE_WRITE, &100u16.to_le_bytes());
         let mut written = 0u8;
         while interrupt == Some(USB_INT_DISK_WRITE) {
@@ -1207,7 +1384,10 @@ mod test {
         set_name(&mut chip, "/SAVE.DAT");
         command(&mut chip, CMD_FILE_OPEN, &[]);
         command(&mut chip, CMD_BYTE_LOCATE, &50u32.to_le_bytes());
-        assert_eq!(command(&mut chip, CMD_BYTE_READ, &2u16.to_le_bytes()), Some(USB_INT_DISK_READ));
+        assert_eq!(
+            command(&mut chip, CMD_BYTE_READ, &2u16.to_le_bytes()),
+            Some(USB_INT_DISK_READ)
+        );
         assert_eq!(read_buffer(&mut chip), vec![50, 51]);
 
         set_name(&mut chip, "/NOWHERE.TXT");
@@ -1219,7 +1399,10 @@ mod test {
         let mut chip = chip(&[("ONE.BAS", b"10"), ("TWO.BIN", b"xx")]);
         mount(&mut chip);
         set_name(&mut chip, "/GAMES");
-        assert_eq!(command(&mut chip, CMD_DIR_CREATE, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_DIR_CREATE, &[]),
+            Some(USB_INT_SUCCESS)
+        );
         set_name(&mut chip, "/");
         assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(ERR_OPEN_DIR));
 
@@ -1228,7 +1411,11 @@ mod test {
         let mut interrupt = command(&mut chip, CMD_FILE_OPEN, &[]);
         while interrupt == Some(USB_INT_DISK_READ) {
             let entry: [u8; 32] = read_buffer(&mut chip).try_into().unwrap();
-            names.push((entry_name(&entry), entry[11] & 0x10 != 0, u32::from_le_bytes(entry[28..32].try_into().unwrap())));
+            names.push((
+                entry_name(&entry),
+                entry[11] & 0x10 != 0,
+                u32::from_le_bytes(entry[28..32].try_into().unwrap()),
+            ));
             interrupt = command(&mut chip, CMD_FILE_ENUM_GO, &[]);
         }
         assert_eq!(interrupt, Some(ERR_MISS_FILE), "the end");
@@ -1242,8 +1429,14 @@ mod test {
         command(&mut chip, CMD_FILE_CREATE, &[]);
         command(&mut chip, CMD_FILE_CLOSE, &[1]);
         set_name(&mut chip, "/GAMES/NEW.TXT");
-        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
-        assert_eq!(command(&mut chip, CMD_DIR_INFO_READ, &[0xff]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_FILE_OPEN, &[]),
+            Some(USB_INT_SUCCESS)
+        );
+        assert_eq!(
+            command(&mut chip, CMD_DIR_INFO_READ, &[0xff]),
+            Some(USB_INT_SUCCESS)
+        );
         let mut entry = read_buffer(&mut chip);
         assert_eq!(&entry[..11], b"NEW     TXT");
         // a rename through the directory entry
@@ -1252,12 +1445,21 @@ mod test {
         for byte in [0u8, 11].into_iter().chain(entry[..11].iter().copied()) {
             chip.write_data(byte);
         }
-        assert_eq!(command(&mut chip, CMD_DIR_INFO_SAVE, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_DIR_INFO_SAVE, &[]),
+            Some(USB_INT_SUCCESS)
+        );
         command(&mut chip, CMD_FILE_CLOSE, &[0]);
         set_name(&mut chip, "/GAMES/OLD.TXT");
-        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_FILE_OPEN, &[]),
+            Some(USB_INT_SUCCESS)
+        );
         command(&mut chip, CMD_FILE_CLOSE, &[0]);
-        assert_eq!(command(&mut chip, CMD_FILE_ERASE, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_FILE_ERASE, &[]),
+            Some(USB_INT_SUCCESS)
+        );
         assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(ERR_MISS_FILE));
     }
 
@@ -1326,12 +1528,21 @@ mod test {
 
         // 8.3 names reach the host's
         set_name(&mut chip, "/GAMES/DEMO.BIN");
-        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
-        assert_eq!(command(&mut chip, CMD_BYTE_READ, &3u16.to_le_bytes()), Some(USB_INT_DISK_READ));
+        assert_eq!(
+            command(&mut chip, CMD_FILE_OPEN, &[]),
+            Some(USB_INT_SUCCESS)
+        );
+        assert_eq!(
+            command(&mut chip, CMD_BYTE_READ, &3u16.to_le_bytes()),
+            Some(USB_INT_DISK_READ)
+        );
         assert_eq!(read_buffer(&mut chip), vec![7, 7, 7]);
         command(&mut chip, CMD_FILE_CLOSE, &[0]);
         set_name(&mut chip, "/ALONGNAM.TEX");
-        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_FILE_OPEN, &[]),
+            Some(USB_INT_SUCCESS)
+        );
         command(&mut chip, CMD_FILE_CLOSE, &[0]);
 
         // UniDOS's way: the root, then the folder by its 8.3 name ("GAMES.": no extension),
@@ -1339,9 +1550,16 @@ mod test {
         set_name(&mut chip, "/");
         assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(ERR_OPEN_DIR));
         set_name(&mut chip, "GAMES.");
-        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(ERR_OPEN_DIR), "the folder entered");
+        assert_eq!(
+            command(&mut chip, CMD_FILE_OPEN, &[]),
+            Some(ERR_OPEN_DIR),
+            "the folder entered"
+        );
         set_name(&mut chip, "DEMO.BIN");
-        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_FILE_OPEN, &[]),
+            Some(USB_INT_SUCCESS)
+        );
         command(&mut chip, CMD_FILE_CLOSE, &[0]);
 
         // a file written, then on the host
@@ -1352,14 +1570,20 @@ mod test {
         assert_eq!(chip.read_data(), 2);
         chip.write_data(b'O');
         chip.write_data(b'K');
-        assert_eq!(command(&mut chip, CMD_BYTE_WR_GO, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_BYTE_WR_GO, &[]),
+            Some(USB_INT_SUCCESS)
+        );
         command(&mut chip, CMD_FILE_CLOSE, &[1]);
         assert_eq!(std::fs::read(root.join("SAVE.BAS")).unwrap(), b"OK");
 
         // no raw sectors
         let mut parameters = 0u32.to_le_bytes().to_vec();
         parameters.push(1);
-        assert_eq!(command(&mut chip, CMD_DISK_READ, &parameters), Some(USB_INT_DISK_ERR));
+        assert_eq!(
+            command(&mut chip, CMD_DISK_READ, &parameters),
+            Some(USB_INT_DISK_ERR)
+        );
     }
 
     #[test]
@@ -1369,12 +1593,18 @@ mod test {
         chip.write_command(CMD_SET_USB_MODE);
         chip.write_data(3);
         assert_eq!(chip.read_data(), CMD_RET_SUCCESS);
-        assert_eq!(command(&mut chip, CMD_DISK_MOUNT, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_DISK_MOUNT, &[]),
+            Some(USB_INT_SUCCESS)
+        );
         // a mode without a device (0) still has nothing to mount
         chip.write_command(CMD_SET_USB_MODE);
         chip.write_data(0);
         assert_eq!(chip.read_data(), CMD_RET_SUCCESS);
-        assert_eq!(command(&mut chip, CMD_DISK_MOUNT, &[]), Some(USB_INT_DISK_ERR));
+        assert_eq!(
+            command(&mut chip, CMD_DISK_MOUNT, &[]),
+            Some(USB_INT_DISK_ERR)
+        );
     }
 
     #[test]
@@ -1387,9 +1617,14 @@ mod test {
         disk[510] = 0x55;
         disk[511] = 0xaa;
         disk.extend(volume);
-        let mut chip = Ch376::new(Some(Box::new(FatImage::new(Box::new(io::Cursor::new(disk))))));
+        let mut chip = Ch376::new(Some(Box::new(FatImage::new(Box::new(io::Cursor::new(
+            disk,
+        ))))));
         mount(&mut chip);
         set_name(&mut chip, "/INSIDE.TXT");
-        assert_eq!(command(&mut chip, CMD_FILE_OPEN, &[]), Some(USB_INT_SUCCESS));
+        assert_eq!(
+            command(&mut chip, CMD_FILE_OPEN, &[]),
+            Some(USB_INT_SUCCESS)
+        );
     }
 }

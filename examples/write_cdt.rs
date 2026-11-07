@@ -9,8 +9,15 @@ fn main() {
         eprintln!("usage: write_cdt <out.cdt> <name> <load hex> <entry hex> <file.bin> [baud]");
         std::process::exit(2);
     };
-    let hex = |s: &str| u16::from_str_radix(s.trim_start_matches("0x").trim_start_matches('&'), 16).expect("hex address");
+    let hex = |s: &str| {
+        u16::from_str_radix(s.trim_start_matches("0x").trim_start_matches('&'), 16)
+            .expect("hex address")
+    };
     let baud = rest.first().map_or(2000, |b| b.parse().expect("baud"));
     let data = std::fs::read(input).expect("input");
-    std::fs::write(out, amsrust::tape::cdt_of_binary(name, hex(load), hex(entry), &data, baud)).expect("output");
+    std::fs::write(
+        out,
+        amsrust::tape::cdt_of_binary(name, hex(load), hex(entry), &data, baud),
+    )
+    .expect("output");
 }

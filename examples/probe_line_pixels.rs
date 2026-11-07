@@ -23,7 +23,9 @@ fn main() {
     loop {
         mb.tick();
         let vs = mb.crtc().vsync();
-        if vs && !prev_vs { break; }
+        if vs && !prev_vs {
+            break;
+        }
         prev_vs = vs;
     }
     let mut n = 0usize;
@@ -38,8 +40,11 @@ fn main() {
             println!("tick {tick:4} C0={hcc:2} rgb=({:.0},{:.0},{:.0}) DISPEN={} chs={} hs_ga={} next={:?} active={:?}", rgb.r(), rgb.g(), rgb.b(), dispen, sync.hsync, mb.ga().hsync_ga(), mb.ga().next_video_mode(), mb.ga().active_video_mode());
         }
         if hcc == 0 && last_hcc != 0 {
-            n += 1; tick = 0;
-            if n > line { break; }
+            n += 1;
+            tick = 0;
+            if n > line {
+                break;
+            }
         }
         last_hcc = hcc;
     }

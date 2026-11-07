@@ -22,14 +22,43 @@ fn main() {
         let c = mb.crtc();
         let hcc = c.hcc;
         if hcc != last_hcc && hcc == 0 {
-            if n >= skip && !line.is_empty() { println!("{line}"); }
+            if n >= skip && !line.is_empty() {
+                println!("{line}");
+            }
             n += 1;
-            line = format!("C4={:?} C9={} R4={} R9={} LL={} VS={} |", c.vcc, c.vlc.value(), c.r4(), c.r9(), c.last_line(), c.vsync());
+            line = format!(
+                "C4={:?} C9={} R4={} R9={} LL={} VS={} |",
+                c.vcc,
+                c.vlc.value(),
+                c.r4(),
+                c.r9(),
+                c.last_line(),
+                c.vsync()
+            );
         }
         last_hcc = hcc;
-        let now = [c.r0(), c.r1(), c.r2(), c.r3(), c.r4(), c.r5(), c.r6(), c.r7(), c.r8(), c.r9(), 0, 0, 0, 0, 0, 0];
+        let now = [
+            c.r0(),
+            c.r1(),
+            c.r2(),
+            c.r3(),
+            c.r4(),
+            c.r5(),
+            c.r6(),
+            c.r7(),
+            c.r8(),
+            c.r9(),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
         for r in [4usize, 5, 6, 7, 9] {
-            if now[r] != regs[r] { line.push_str(&format!(" R{r}={}@{}", now[r], hcc)); }
+            if now[r] != regs[r] {
+                line.push_str(&format!(" R{r}={}@{}", now[r], hcc));
+            }
         }
         regs = now;
     }

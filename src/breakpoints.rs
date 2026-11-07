@@ -21,14 +21,14 @@ use crate::motherboard::{BusAccess, BusAccessKind};
 pub enum BreakpointKind {
     Exec,
     Memory,
-    Io
+    Io,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BreakpointAccess {
     Read,
     Write,
-    ReadWrite
+    ReadWrite,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,7 @@ pub enum RunMode {
     Watch,
     /// Neither stop nor report: only act on the counters (see
     /// [`AdvancedBreakpoint::counters`]) and count the hit.
-    Count
+    Count,
 }
 
 /// What a hit does to one of the debugger's named NOP counters.
@@ -50,7 +50,7 @@ pub enum CounterAction {
     /// Stop counting.
     Stop,
     /// Back to 0 (creating the counter if needed), running or not as it was.
-    Reset
+    Reset,
 }
 
 impl CounterAction {
@@ -58,7 +58,7 @@ impl CounterAction {
         match self {
             CounterAction::Start => "start",
             CounterAction::Stop => "stop",
-            CounterAction::Reset => "reset"
+            CounterAction::Reset => "reset",
         }
     }
 }
@@ -80,7 +80,7 @@ pub struct AdvancedBreakpoint {
     /// Hits ignored before it acts (a pass count): 0 acts on the first.
     pub after: u64,
     /// Hits so far (its condition holding), counted by the debugger.
-    pub hits: u64
+    pub hits: u64,
 }
 
 impl AdvancedBreakpoint {
@@ -99,7 +99,7 @@ impl AdvancedBreakpoint {
             condition: None,
             counters: Vec::new(),
             after: 0,
-            hits: 0
+            hits: 0,
         }
     }
 
@@ -118,12 +118,12 @@ impl AdvancedBreakpoint {
             BusAccessKind::MemoryRead => (BreakpointKind::Memory, false),
             BusAccessKind::MemoryWrite => (BreakpointKind::Memory, true),
             BusAccessKind::IoRead => (BreakpointKind::Io, false),
-            BusAccessKind::IoWrite => (BreakpointKind::Io, true)
+            BusAccessKind::IoWrite => (BreakpointKind::Io, true),
         };
         let direction = match self.access {
             BreakpointAccess::Read => !write,
             BreakpointAccess::Write => write,
-            BreakpointAccess::ReadWrite => true
+            BreakpointAccess::ReadWrite => true,
         };
         self.kind == kind
             && direction
@@ -143,8 +143,7 @@ impl AdvancedBreakpoint {
             if field.is_empty() {
                 continue;
             }
-            let Some((key, value)) = field.split_once('=')
-            else {
+            let Some((key, value)) = field.split_once('=') else {
                 match field.to_ascii_uppercase().as_str() {
                     "EXEC" | "EXECUTE" => brk.kind = BreakpointKind::Exec,
                     "MEM" | "MEMORY" => brk.kind = BreakpointKind::Memory,
@@ -154,7 +153,7 @@ impl AdvancedBreakpoint {
                     "RW" | "READWRITE" => brk.access = BreakpointAccess::ReadWrite,
                     "STOP" | "STOPPER" => brk.run = RunMode::Stop,
                     "WATCH" | "WATCHER" => brk.run = RunMode::Watch,
-                    other => return Err(format!("unknown breakpoint field {other:?}"))
+                    other => return Err(format!("unknown breakpoint field {other:?}")),
                 }
                 continue;
             };
@@ -173,15 +172,15 @@ impl AdvancedBreakpoint {
                 "name" => {
                     let name = value.trim_matches('"');
                     brk.name = (!name.is_empty() && name != "imported").then(|| name.to_owned());
-                },
+                }
                 "condition" if !value.trim_matches('"').is_empty() => {
                     brk.condition = Some(Condition::parse(value.trim_matches('"'))?);
-                },
+                }
                 "step" if !value.is_empty() => {
                     return Err(format!("step={value}: step counts are not supported yet"))
-                },
-                "condition" | "step" => {},
-                other => return Err(format!("unknown breakpoint field {other:?}"))
+                }
+                "condition" | "step" => {}
+                other => return Err(format!("unknown breakpoint field {other:?}")),
             }
         }
         Ok(brk)
@@ -198,9 +197,9 @@ fn split_fields(text: &str) -> Vec<String> {
             '"' => {
                 quoted = !quoted;
                 fields.last_mut().unwrap().push(c);
-            },
+            }
             ',' if !quoted => fields.push(String::new()),
-            _ => fields.last_mut().unwrap().push(c)
+            _ => fields.last_mut().unwrap().push(c),
         }
     }
     fields
@@ -217,7 +216,7 @@ pub fn parse_number(text: &str) -> Option<u32> {
         .or_else(|| text.strip_prefix('$'));
     match hex {
         Some(digits) => u32::from_str_radix(digits, 16).ok(),
-        None => text.parse().ok()
+        None => text.parse().ok(),
     }
 }
 
@@ -226,7 +225,11 @@ mod test {
     use super::*;
 
     fn access(kind: BusAccessKind, address: u16, value: u8) -> BusAccess {
-        BusAccess { kind, address, value }
+        BusAccess {
+            kind,
+            address,
+            value,
+        }
     }
 
     #[test]
@@ -239,10 +242,19 @@ mod test {
         assert_eq!(brk.kind, BreakpointKind::Memory);
         assert_eq!(brk.access, BreakpointAccess::Write);
         assert_eq!(brk.run, RunMode::Watch);
-        assert_eq!((brk.address, brk.size, brk.name.as_deref()), (0xc000, 16, Some("screen")));
-        let conditional = AdvancedBreakpoint::parse_remu(r#"EXEC,RW,STOP,addr=1,condition="A==2,B==3""#);
-        assert!(conditional.is_err(), "commas inside the quoted condition are not separators: A==2,B==3 is invalid");
-        let conditional = AdvancedBreakpoint::parse_remu(r#"EXEC,RW,STOP,addr=1,condition="A==2 && B==3""#).unwrap();
+        assert_eq!(
+            (brk.address, brk.size, brk.name.as_deref()),
+            (0xc000, 16, Some("screen"))
+        );
+        let conditional =
+            AdvancedBreakpoint::parse_remu(r#"EXEC,RW,STOP,addr=1,condition="A==2,B==3""#);
+        assert!(
+            conditional.is_err(),
+            "commas inside the quoted condition are not separators: A==2,B==3 is invalid"
+        );
+        let conditional =
+            AdvancedBreakpoint::parse_remu(r#"EXEC,RW,STOP,addr=1,condition="A==2 && B==3""#)
+                .unwrap();
         assert_eq!(conditional.condition.unwrap().source(), "A==2 && B==3");
         assert!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=3").is_err());
         assert!(AdvancedBreakpoint::parse_remu("BOGUS").is_err());
@@ -250,14 +262,17 @@ mod test {
 
     #[test]
     fn memory_accesses_through_mask_size_and_value() {
-        let brk = AdvancedBreakpoint::parse_remu("MEM,W,STOP,addr=#C000,size=0x10,value=#80,valmask=#80").unwrap();
+        let brk =
+            AdvancedBreakpoint::parse_remu("MEM,W,STOP,addr=#C000,size=0x10,value=#80,valmask=#80")
+                .unwrap();
         assert!(brk.hit_by_access(&access(BusAccessKind::MemoryWrite, 0xc00f, 0xff)));
         assert!(!brk.hit_by_access(&access(BusAccessKind::MemoryWrite, 0xc010, 0xff)));
         assert!(!brk.hit_by_access(&access(BusAccessKind::MemoryWrite, 0xc000, 0x7f)));
         assert!(!brk.hit_by_access(&access(BusAccessKind::MemoryRead, 0xc000, 0xff)));
         assert!(!brk.hit_by_access(&access(BusAccessKind::IoWrite, 0xc000, 0xff)));
         // A mask ignoring the high bits: every 16K window.
-        let mirrored = AdvancedBreakpoint::parse_remu("MEM,RW,STOP,addr=0x0100,mask=0x3fff").unwrap();
+        let mirrored =
+            AdvancedBreakpoint::parse_remu("MEM,RW,STOP,addr=0x0100,mask=0x3fff").unwrap();
         assert!(mirrored.hit_by_access(&access(BusAccessKind::MemoryRead, 0x4100, 0)));
     }
 
@@ -273,7 +288,11 @@ mod test {
     #[test]
     fn execution_ranges() {
         let brk = AdvancedBreakpoint::parse_remu("EXEC,addr=0x4000,size=3").unwrap();
-        assert!(brk.hit_by_execution(0x4002) && !brk.hit_by_execution(0x4003) && !brk.hit_by_execution(0x3fff));
+        assert!(
+            brk.hit_by_execution(0x4002)
+                && !brk.hit_by_execution(0x4003)
+                && !brk.hit_by_execution(0x3fff)
+        );
     }
 }
 
@@ -320,7 +339,7 @@ mod test {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Condition {
     source: String,
-    expr: CondExpr
+    expr: CondExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -329,7 +348,7 @@ enum CondExpr {
     Variable(&'static str),
     Unary(char, Box<CondExpr>),
     Binary(&'static str, Box<CondExpr>, Box<CondExpr>),
-    Peek(Box<CondExpr>, bool)
+    Peek(Box<CondExpr>, bool),
 }
 
 /// What a condition reads.
@@ -342,24 +361,106 @@ pub trait ConditionContext {
 
 /// The variables a condition can name.
 pub const VARIABLES: &[&str] = &[
-    "A", "F", "B", "C", "D", "E", "H", "L", "I", "R", "IXH", "IXL", "IYH", "IYL", "AF", "BC", "DE", "HL", "IX", "IY",
-    "SP", "PC", "A'", "F'", "B'", "C'", "D'", "E'", "H'", "L'", "AF'", "BC'", "DE'", "HL'", "IFF1", "IFF2", "IM",
-    "ADDRESS", "VALUE", "FLAGZ", "FLAGNZ", "FLAGC", "FLAGNC", "FLAGP", "FLAGM", "FLAGPO", "FLAGPE", "C0", "C3H", "C3V",
-    "C4", "C5", "C9", "CRTCR0", "CRTCR1", "CRTCR2", "CRTCR3", "CRTCR4", "CRTCR5", "CRTCR6", "CRTCR7", "CRTCR8",
-    "CRTCR9", "CRTCR10", "CRTCR11", "CRTCR12", "CRTCR13", "CRTCR14", "CRTCR15", "CRTCR16", "CRTCR17", "CRTCSEL",
-    "LINECOUNT", "LINECYCLE", "MEMPAGE", "MEMBANKMODE", "LOWERROMON", "UPPERROMON", "LOWERROMNUM", "UPPERROMNUM",
-    "LOWERROMADR", "ASICPAGEON", "ASICPAGEOFF"
+    "A",
+    "F",
+    "B",
+    "C",
+    "D",
+    "E",
+    "H",
+    "L",
+    "I",
+    "R",
+    "IXH",
+    "IXL",
+    "IYH",
+    "IYL",
+    "AF",
+    "BC",
+    "DE",
+    "HL",
+    "IX",
+    "IY",
+    "SP",
+    "PC",
+    "A'",
+    "F'",
+    "B'",
+    "C'",
+    "D'",
+    "E'",
+    "H'",
+    "L'",
+    "AF'",
+    "BC'",
+    "DE'",
+    "HL'",
+    "IFF1",
+    "IFF2",
+    "IM",
+    "ADDRESS",
+    "VALUE",
+    "FLAGZ",
+    "FLAGNZ",
+    "FLAGC",
+    "FLAGNC",
+    "FLAGP",
+    "FLAGM",
+    "FLAGPO",
+    "FLAGPE",
+    "C0",
+    "C3H",
+    "C3V",
+    "C4",
+    "C5",
+    "C9",
+    "CRTCR0",
+    "CRTCR1",
+    "CRTCR2",
+    "CRTCR3",
+    "CRTCR4",
+    "CRTCR5",
+    "CRTCR6",
+    "CRTCR7",
+    "CRTCR8",
+    "CRTCR9",
+    "CRTCR10",
+    "CRTCR11",
+    "CRTCR12",
+    "CRTCR13",
+    "CRTCR14",
+    "CRTCR15",
+    "CRTCR16",
+    "CRTCR17",
+    "CRTCSEL",
+    "LINECOUNT",
+    "LINECYCLE",
+    "MEMPAGE",
+    "MEMBANKMODE",
+    "LOWERROMON",
+    "UPPERROMON",
+    "LOWERROMNUM",
+    "UPPERROMNUM",
+    "LOWERROMADR",
+    "ASICPAGEON",
+    "ASICPAGEOFF",
 ];
 
 impl Condition {
     pub fn parse(source: &str) -> Result<Self, String> {
         let tokens = tokenize(source)?;
-        let mut parser = Parser { tokens, position: 0 };
+        let mut parser = Parser {
+            tokens,
+            position: 0,
+        };
         let expr = parser.expression(0)?;
         if let Some(token) = parser.tokens.get(parser.position) {
             return Err(format!("condition {source:?}: unexpected {token:?}"));
         }
-        Ok(Self { source: source.to_owned(), expr })
+        Ok(Self {
+            source: source.to_owned(),
+            expr,
+        })
     }
 
     pub fn source(&self) -> &str {
@@ -378,13 +479,13 @@ enum Token {
     Name(String),
     Operator(&'static str),
     Open,
-    Close
+    Close,
 }
 
 /// Operators, longest first so that `<=` wins over `<`.
 const OPERATORS: &[&str] = &[
-    "||", "&&", "==", "!=", "<>", "<=", ">=", "<<", ">>", "|", "^", "&", "=", "<", ">", "+", "-", "*", "/", "\\", "%",
-    "!", "~"
+    "||", "&&", "==", "!=", "<>", "<=", ">=", "<<", ">>", "|", "^", "&", "=", "<", ">", "+", "-",
+    "*", "/", "\\", "%", "!", "~",
 ];
 
 /// The operators written as words, as BASIC writes them.
@@ -397,15 +498,16 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
     let is_name_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
     while i < chars.len() {
         let c = chars[i];
-        let value_expected = !matches!(tokens.last(), Some(Token::Number(_) | Token::Name(_) | Token::Close));
+        let value_expected = !matches!(
+            tokens.last(),
+            Some(Token::Number(_) | Token::Name(_) | Token::Close)
+        );
         if c.is_whitespace() {
             i += 1;
-        }
-        else if c == '(' || c == ')' {
+        } else if c == '(' || c == ')' {
             tokens.push(if c == '(' { Token::Open } else { Token::Close });
             i += 1;
-        }
-        else if value_expected
+        } else if value_expected
             && c == '&'
             && matches!(chars.get(i + 1), Some('x' | 'X'))
             && chars.get(i + 2).is_some_and(|d| matches!(d, '0' | '1'))
@@ -416,11 +518,13 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                 i += 1;
             }
             let digits: String = chars[start..i].iter().collect();
-            tokens.push(Token::Number(
-                i64::from_str_radix(&digits, 2).map_err(|_| format!("condition {source:?}: bad number &x{digits}"))?
-            ));
-        }
-        else if value_expected && (c == '#' || c == '&' || c == '$' || c == '%') && chars.get(i + 1).is_some_and(|d| d.is_ascii_hexdigit()) {
+            tokens.push(Token::Number(i64::from_str_radix(&digits, 2).map_err(
+                |_| format!("condition {source:?}: bad number &x{digits}"),
+            )?));
+        } else if value_expected
+            && (c == '#' || c == '&' || c == '$' || c == '%')
+            && chars.get(i + 1).is_some_and(|d| d.is_ascii_hexdigit())
+        {
             let radix = if c == '%' { 2 } else { 16 };
             let start = i + 1;
             i = start;
@@ -428,28 +532,29 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                 i += 1;
             }
             let digits: String = chars[start..i].iter().collect();
-            tokens.push(Token::Number(
-                i64::from_str_radix(&digits, radix).map_err(|_| format!("condition {source:?}: bad number {c}{digits}"))?
-            ));
-        }
-        else if c.is_ascii_digit() {
+            tokens.push(Token::Number(i64::from_str_radix(&digits, radix).map_err(
+                |_| format!("condition {source:?}: bad number {c}{digits}"),
+            )?));
+        } else if c.is_ascii_digit() {
             let start = i;
             while i < chars.len() && is_name_char(chars[i]) {
                 i += 1;
             }
-            let text: String = chars[start..i].iter().collect::<String>().to_ascii_lowercase();
+            let text: String = chars[start..i]
+                .iter()
+                .collect::<String>()
+                .to_ascii_lowercase();
             let value = if let Some(hex) = text.strip_prefix("0x") {
                 i64::from_str_radix(hex, 16).ok()
-            }
-            else if let Some(hex) = text.strip_suffix('h') {
+            } else if let Some(hex) = text.strip_suffix('h') {
                 i64::from_str_radix(hex, 16).ok()
-            }
-            else {
+            } else {
                 text.parse().ok()
             };
-            tokens.push(Token::Number(value.ok_or_else(|| format!("condition {source:?}: bad number {text}"))?));
-        }
-        else if c.is_ascii_alphabetic() || c == '_' {
+            tokens.push(Token::Number(value.ok_or_else(|| {
+                format!("condition {source:?}: bad number {text}")
+            })?));
+        } else if c.is_ascii_alphabetic() || c == '_' {
             let start = i;
             while i < chars.len() && is_name_char(chars[i]) {
                 i += 1;
@@ -457,13 +562,15 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
             if chars.get(i) == Some(&'\'') {
                 i += 1;
             }
-            let name = chars[start..i].iter().collect::<String>().to_ascii_uppercase();
+            let name = chars[start..i]
+                .iter()
+                .collect::<String>()
+                .to_ascii_uppercase();
             match WORD_OPERATORS.iter().find(|word| **word == name) {
                 Some(word) => tokens.push(Token::Operator(word)),
-                None => tokens.push(Token::Name(name))
+                None => tokens.push(Token::Name(name)),
             }
-        }
-        else {
+        } else {
             let rest: String = chars[i..].iter().collect();
             let operator = OPERATORS
                 .iter()
@@ -493,7 +600,7 @@ const LEVELS: &[&[&str]] = &[
     &["+", "-"],
     &["MOD", "%"],
     &["\\"],
-    &["*", "/"]
+    &["*", "/"],
 ];
 
 /// BASIC's `NOT`: looser than the comparisons, tighter than `AND`.
@@ -501,7 +608,7 @@ const NOT_LEVEL: usize = 5;
 
 struct Parser {
     tokens: Vec<Token>,
-    position: usize
+    position: usize,
 }
 
 impl Parser {
@@ -525,8 +632,7 @@ impl Parser {
         }
         let mut left = self.expression(level + 1)?;
         while let Some(Token::Operator(op)) = self.tokens.get(self.position) {
-            let Some(op) = LEVELS[level].iter().find(|o| *o == op)
-            else {
+            let Some(op) = LEVELS[level].iter().find(|o| *o == op) else {
                 break;
             };
             self.position += 1;
@@ -539,10 +645,16 @@ impl Parser {
     /// The unary operators, then `^`: tighter than them, as in BASIC
     /// (`-2^2` is -4).
     fn unary(&mut self) -> Result<CondExpr, String> {
-        if let Some(Token::Operator(op @ ("!" | "~" | "-" | "+"))) = self.tokens.get(self.position).cloned() {
+        if let Some(Token::Operator(op @ ("!" | "~" | "-" | "+"))) =
+            self.tokens.get(self.position).cloned()
+        {
             self.position += 1;
             let operand = self.unary()?;
-            return Ok(if op == "+" { operand } else { CondExpr::Unary(op.chars().next().unwrap(), Box::new(operand)) });
+            return Ok(if op == "+" {
+                operand
+            } else {
+                CondExpr::Unary(op.chars().next().unwrap(), Box::new(operand))
+            });
         }
         let mut left = self.primary()?;
         while self.tokens.get(self.position) == Some(&Token::Operator("^")) {
@@ -560,9 +672,9 @@ impl Parser {
                 let inner = self.expression(0)?;
                 match self.next() {
                     Some(Token::Close) => Ok(inner),
-                    _ => Err("missing ')'".to_owned())
+                    _ => Err("missing ')'".to_owned()),
                 }
-            },
+            }
             Some(Token::Name(name)) if name == "PEEK" || name == "DEEK" => {
                 if self.next() != Some(Token::Open) {
                     return Err(format!("{name} needs '('"));
@@ -572,13 +684,13 @@ impl Parser {
                     return Err(format!("{name}( needs ')'"));
                 }
                 Ok(CondExpr::Peek(Box::new(address), name == "DEEK"))
-            },
+            }
             Some(Token::Name(name)) => {
                 let name = match name.as_str() {
                     "ADDR" => "ADDRESS".to_owned(),
                     // As ACE's own documentation spells it.
                     "LOWERRROMON" => "LOWERROMON".to_owned(),
-                    _ => name
+                    _ => name,
                 };
                 VARIABLES
                     .iter()
@@ -587,8 +699,8 @@ impl Parser {
                     .ok_or_else(|| {
                         format!("unknown name {name} (registers, flags, CRTC, LineCount, MemPage..., ADDRESS, VALUE, peek, deek)")
                     })
-            },
-            other => Err(format!("expected a value, found {other:?}"))
+            }
+            other => Err(format!("expected a value, found {other:?}")),
         }
     }
 }
@@ -596,16 +708,26 @@ impl Parser {
 /// BASIC's truth: -1, every bit set, so that `AND`, `OR` and `NOT` on bits
 /// are also the logical ones.
 fn truth(holds: bool) -> i64 {
-    if holds { -1 } else { 0 }
+    if holds {
+        -1
+    } else {
+        0
+    }
 }
 
 /// `l ^ r` on integers; a negative power is 0 (or 1 / -1 for a base of 1 / -1).
 fn power(l: i64, r: i64) -> i64 {
     match (l, r) {
         (1, _) => 1,
-        (-1, _) => if r % 2 == 0 { 1 } else { -1 },
+        (-1, _) => {
+            if r % 2 == 0 {
+                1
+            } else {
+                -1
+            }
+        }
         (_, r) if r < 0 => 0,
-        _ => l.wrapping_pow(r.min(u32::MAX as i64) as u32)
+        _ => l.wrapping_pow(r.min(u32::MAX as i64) as u32),
     }
 }
 
@@ -616,16 +738,20 @@ fn evaluate(expr: &CondExpr, context: &dyn ConditionContext) -> i64 {
         CondExpr::Peek(address, word) => {
             let address = evaluate(address, context) as u16;
             let low = context.peek(address) as i64;
-            if *word { low | (context.peek(address.wrapping_add(1)) as i64) << 8 } else { low }
-        },
+            if *word {
+                low | (context.peek(address.wrapping_add(1)) as i64) << 8
+            } else {
+                low
+            }
+        }
         CondExpr::Unary(op, operand) => {
             let v = evaluate(operand, context);
             match op {
                 '!' => truth(v == 0),
                 '~' | 'N' => !v,
-                _ => v.wrapping_neg()
+                _ => v.wrapping_neg(),
             }
-        },
+        }
         CondExpr::Binary(op, left, right) => {
             let (l, r) = (evaluate(left, context), evaluate(right, context));
             match *op {
@@ -646,8 +772,20 @@ fn evaluate(expr: &CondExpr, context: &dyn ConditionContext) -> i64 {
                 "+" => l.wrapping_add(r),
                 "-" => l.wrapping_sub(r),
                 "*" => l.wrapping_mul(r),
-                "/" | "\\" => if r == 0 { 0 } else { l.wrapping_div(r) },
-                _ => if r == 0 { 0 } else { l.wrapping_rem(r) }
+                "/" | "\\" => {
+                    if r == 0 {
+                        0
+                    } else {
+                        l.wrapping_div(r)
+                    }
+                }
+                _ => {
+                    if r == 0 {
+                        0
+                    } else {
+                        l.wrapping_rem(r)
+                    }
+                }
             }
         }
     }
@@ -666,7 +804,7 @@ mod condition_test {
                 "HL" => Some(0xc000),
                 "A'" => Some(7),
                 "VALUE" => Some(0x80),
-                _ => None
+                _ => None,
             }
         }
 
@@ -676,7 +814,9 @@ mod condition_test {
     }
 
     fn holds(source: &str) -> bool {
-        Condition::parse(source).unwrap_or_else(|e| panic!("{e}")).holds(&Fake)
+        Condition::parse(source)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .holds(&Fake)
     }
 
     #[test]
@@ -696,7 +836,12 @@ mod condition_test {
     }
 
     fn value(source: &str) -> i64 {
-        evaluate(&Condition::parse(source).unwrap_or_else(|e| panic!("{e}")).expr, &Fake)
+        evaluate(
+            &Condition::parse(source)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .expr,
+            &Fake,
+        )
     }
 
     /// ACE's language (roudoudou.com/ACE-DL/breakpoints.html): BASIC-like.
@@ -726,9 +871,26 @@ mod condition_test {
         // The C spellings still work, with C's ^ gone to XOR.
         assert!(holds("a == #12 && !(hl != 0xc000)"));
         // Names are case-insensitive, ACE's misspelling included.
-        for name in ["FlagZ", "flagnz", "C0", "c3h", "C3V", "CrtcR12", "CRTCSEL", "LineCount", "linecycle", "MemPage",
-            "MemBankMode", "LowerROMOn", "LowerrROMOn", "UpperROMNum", "ASICPageOn", "ASICPageOff", "IXl", "iyh"]
-        {
+        for name in [
+            "FlagZ",
+            "flagnz",
+            "C0",
+            "c3h",
+            "C3V",
+            "CrtcR12",
+            "CRTCSEL",
+            "LineCount",
+            "linecycle",
+            "MemPage",
+            "MemBankMode",
+            "LowerROMOn",
+            "LowerrROMOn",
+            "UpperROMNum",
+            "ASICPageOn",
+            "ASICPageOff",
+            "IXl",
+            "iyh",
+        ] {
             assert!(Condition::parse(&format!("{name} >= 0")).is_ok(), "{name}");
         }
     }

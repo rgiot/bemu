@@ -19,14 +19,40 @@ fn main() {
         guard += 1;
         assert!(guard < 80_000_000);
     }
-    let regs = |mb: &amsrust::motherboard::Motherboard| { let c = mb.crtc(); [c.r0(), c.r1(), c.r2(), c.r3(), c.r4(), c.r5(), c.r6(), c.r7(), c.r8(), c.r9(), 0, 0, c.r12(), c.r13()] };
+    let regs = |mb: &amsrust::motherboard::Motherboard| {
+        let c = mb.crtc();
+        [
+            c.r0(),
+            c.r1(),
+            c.r2(),
+            c.r3(),
+            c.r4(),
+            c.r5(),
+            c.r6(),
+            c.r7(),
+            c.r8(),
+            c.r9(),
+            0,
+            0,
+            c.r12(),
+            c.r13(),
+        ]
+    };
     let mut prev = regs(mb);
     for i in 0..count {
         mb.execute_next_opcode_no_video();
         let now = regs(mb);
         if now != prev {
-            let ch: Vec<String> = (0..14).filter(|r| now[*r] != prev[*r]).map(|r| format!("({r},{},{})", prev[r], now[r])).collect();
-            println!("{i} PC={:04X} sel={} {}", mb.pc(), mb.crtc().selected_register(), ch.join(" "));
+            let ch: Vec<String> = (0..14)
+                .filter(|r| now[*r] != prev[*r])
+                .map(|r| format!("({r},{},{})", prev[r], now[r]))
+                .collect();
+            println!(
+                "{i} PC={:04X} sel={} {}",
+                mb.pc(),
+                mb.crtc().selected_register(),
+                ch.join(" ")
+            );
             prev = now;
         }
     }

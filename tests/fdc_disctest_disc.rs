@@ -66,7 +66,11 @@ fn an_unformatted_track_gives_missing_address_mark_and_no_data() {
     let mut fdc = disc();
     seek(&mut fdc, 22);
     let id = read_id(&mut fdc);
-    assert_eq!((id[0] & 0xc0, id[1], id[2]), (0x40, 0x05, 0x00), "{id:02x?}");
+    assert_eq!(
+        (id[0] & 0xc0, id[1], id[2]),
+        (0x40, 0x05, 0x00),
+        "{id:02x?}"
+    );
 }
 
 #[test]
@@ -75,7 +79,11 @@ fn a_data_crc_error_arrives_after_all_the_data() {
     seek(&mut fdc, 20);
     let (data, res) = read_sector(&mut fdc, 20, 0xc3, 2);
     assert_eq!(data, 512);
-    assert_eq!((res[0] & 0xc0, res[1], res[2]), (0x40, 0x20, 0x20), "{res:02x?}");
+    assert_eq!(
+        (res[0] & 0xc0, res[1], res[2]),
+        (0x40, 0x20, 0x20),
+        "{res:02x?}"
+    );
 }
 
 #[test]
@@ -94,7 +102,10 @@ fn read_id_reports_an_id_with_a_bad_crc_with_ma_de_nd() {
     let mut fdc = disc();
     seek(&mut fdc, 20);
     let ids: Vec<_> = (0..9).map(|_| read_id(&mut fdc)).collect();
-    let bad = ids.iter().find(|id| id[5] == 0xc6).expect("the bad ID passes under the head");
+    let bad = ids
+        .iter()
+        .find(|id| id[5] == 0xc6)
+        .expect("the bad ID passes under the head");
     assert_eq!((bad[0] & 0xc0, bad[1]), (0x40, 0x25), "{bad:02x?}");
     let good = ids.iter().find(|id| id[5] == 0xc1).unwrap();
     assert_eq!(good[1], 0);
@@ -114,9 +125,17 @@ fn a_sector_not_found_or_without_data_mark_transfers_nothing() {
     let mut fdc = disc();
     seek(&mut fdc, 23);
     let (data, res) = read_sector(&mut fdc, 23, 0xc2, 2);
-    assert_eq!((data, res[0] & 0xc0, res[1] & 0x04), (0, 0x40, 0x04), "{res:02x?}");
+    assert_eq!(
+        (data, res[0] & 0xc0, res[1] & 0x04),
+        (0, 0x40, 0x04),
+        "{res:02x?}"
+    );
     let (data, res) = read_sector(&mut fdc, 23, 0xc8, 2);
-    assert_eq!((data, res[0] & 0xc0, res[1] & 0x01, res[2] & 0x01), (0, 0x40, 0x01, 0x01), "{res:02x?}");
+    assert_eq!(
+        (data, res[0] & 0xc0, res[1] & 0x01, res[2] & 0x01),
+        (0, 0x40, 0x01, 0x01),
+        "{res:02x?}"
+    );
 }
 
 #[test]
@@ -138,5 +157,9 @@ fn ids_with_a_wrong_cylinder_are_not_found_and_flag_wc() {
     let mut fdc = disc();
     seek(&mut fdc, 26);
     let (data, res) = read_sector(&mut fdc, 26, 0x41, 2);
-    assert_eq!((data, res[1] & 0x04, res[2] & 0x10), (0, 0x04, 0x10), "{res:02x?}");
+    assert_eq!(
+        (data, res[1] & 0x04, res[2] & 0x10),
+        (0, 0x04, 0x10),
+        "{res:02x?}"
+    );
 }

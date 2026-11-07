@@ -27,7 +27,9 @@
 //! see `amsrust::input` for how the two are combined.
 
 use super::Frontend;
-use amsrust::display::{wait_for, Blit, CrtParams, CrtPass, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH};
+use amsrust::display::{
+    wait_for, Blit, CrtParams, CrtPass, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH,
+};
 use amsrust::input::{HostInput, HostKey};
 use image::RgbImage;
 use std::collections::HashMap;
@@ -37,10 +39,10 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::{Key, KeyCode, KeyLocation, NamedKey, PhysicalKey};
-use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
-use winit::monitor::VideoModeHandle;
 use winit::keyboard::ModifiersState;
+use winit::keyboard::{Key, KeyCode, KeyLocation, NamedKey, PhysicalKey};
+use winit::monitor::VideoModeHandle;
+use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::window::{Fullscreen, Window, WindowId};
 
 /// The window's initial width, in logical pixels.
@@ -52,7 +54,7 @@ struct CrtState {
     pass: CrtPass,
     target: wgpu::Texture,
     bind_group: wgpu::BindGroup,
-    size: (usize, usize)
+    size: (usize, usize),
 }
 
 struct Gfx {
@@ -67,14 +69,16 @@ struct Gfx {
     curvature: f32,
     crt: Option<CrtState>,
     /// What the last frame showed, for [`Frontend::redraw`].
-    shown: Option<DisplayMode>
+    shown: Option<DisplayMode>,
 }
 
 impl Gfx {
     fn new(window: Arc<Window>, curvature: f32) -> Result<Self, String> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let surface = instance.create_surface(window).map_err(|e| format!("cannot draw in the window: {e}"))?;
+        let surface = instance
+            .create_surface(window)
+            .map_err(|e| format!("cannot draw in the window: {e}"))?;
         let adapter = wait_for(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
             ..Default::default()
@@ -99,16 +103,26 @@ impl Gfx {
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: capabilities.alpha_modes[0],
             view_formats: vec![],
-            desired_maximum_frame_latency: 2
+            desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
 
         let frame = FrameTexture::new(&device);
         let blit = Blit::new(&device, format);
         let raw_bind_group = blit.bind_group(&device, frame.view(), false, Warp::FLAT);
-        Ok(Self { surface, device, queue, config, frame, blit, raw_bind_group, curvature, crt: None, shown: None })
+        Ok(Self {
+            surface,
+            device,
+            queue,
+            config,
+            frame,
+            blit,
+            raw_bind_group,
+            curvature,
+            crt: None,
+            shown: None,
+        })
     }
-
 
     fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 && (width, height) != (self.config.width, self.config.height) {
@@ -127,12 +141,24 @@ impl Gfx {
             return;
         }
         let params: CrtParams = profile.params();
-        let pass = CrtPass::new(&self.device, &params, &self.frame, mode.warp(self.curvature));
-        let target = CrtPass::create_target(&self.device, &params, wgpu::TextureUsages::TEXTURE_BINDING);
+        let pass = CrtPass::new(
+            &self.device,
+            &params,
+            &self.frame,
+            mode.warp(self.curvature),
+        );
+        let target =
+            CrtPass::create_target(&self.device, &params, wgpu::TextureUsages::TEXTURE_BINDING);
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         // the CRT pass already bends the beam under the glass
         let bind_group = self.blit.bind_group(&self.device, &view, true, Warp::FLAT);
-        self.crt = Some(CrtState { mode, pass, target, bind_group, size: params.output_size() });
+        self.crt = Some(CrtState {
+            mode,
+            pass,
+            target,
+            bind_group,
+            size: params.output_size(),
+        });
     }
 
     /// Draw `mode`'s picture of the frame already uploaded (`again`: the same frame shown on
@@ -144,21 +170,29 @@ impl Gfx {
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(false);
-            },
+            }
             Err(wgpu::SurfaceError::Timeout) => return Ok(false),
-            Err(e) => return Err(format!("cannot draw in the window: {e}"))
+            Err(e) => return Err(format!("cannot draw in the window: {e}")),
         };
-        let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let view = surface_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
         let (bind_group, (picture_w, picture_h)) = match (mode, self.crt.as_ref()) {
             (DisplayMode::Crt(_), Some(crt)) => {
                 if !again {
-                    crt.pass.encode(&mut encoder, &crt.target.create_view(&wgpu::TextureViewDescriptor::default()));
+                    crt.pass.encode(
+                        &mut encoder,
+                        &crt.target
+                            .create_view(&wgpu::TextureViewDescriptor::default()),
+                    );
                 }
                 (&crt.bind_group, crt.size)
-            },
-            _ => (&self.raw_bind_group, (RAW_WIDTH, RAW_HEIGHT))
+            }
+            _ => (&self.raw_bind_group, (RAW_WIDTH, RAW_HEIGHT)),
         };
 
         // the picture, as large as the window allows, centred
@@ -172,11 +206,14 @@ impl Gfx {
                     view: &view,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store }
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
-                occlusion_query_set: None
+                occlusion_query_set: None,
             });
             pass.set_viewport((window_w - w) / 2.0, (window_h - h) / 2.0, w, h, 0.0, 1.0);
             self.blit.draw(&mut pass, bind_group);
@@ -203,36 +240,84 @@ fn placed_key(key: PhysicalKey) -> Option<HostKey> {
         return None;
     };
     Some(match code {
-        KeyCode::KeyA => H::A, KeyCode::KeyB => H::B, KeyCode::KeyC => H::C, KeyCode::KeyD => H::D,
-        KeyCode::KeyE => H::E, KeyCode::KeyF => H::F, KeyCode::KeyG => H::G, KeyCode::KeyH => H::H,
-        KeyCode::KeyI => H::I, KeyCode::KeyJ => H::J, KeyCode::KeyK => H::K, KeyCode::KeyL => H::L,
-        KeyCode::KeyM => H::M, KeyCode::KeyN => H::N, KeyCode::KeyO => H::O, KeyCode::KeyP => H::P,
-        KeyCode::KeyQ => H::Q, KeyCode::KeyR => H::R, KeyCode::KeyS => H::S, KeyCode::KeyT => H::T,
-        KeyCode::KeyU => H::U, KeyCode::KeyV => H::V, KeyCode::KeyW => H::W, KeyCode::KeyX => H::X,
-        KeyCode::KeyY => H::Y, KeyCode::KeyZ => H::Z,
-        KeyCode::Digit0 => H::Key0, KeyCode::Digit1 => H::Key1, KeyCode::Digit2 => H::Key2,
-        KeyCode::Digit3 => H::Key3, KeyCode::Digit4 => H::Key4, KeyCode::Digit5 => H::Key5,
-        KeyCode::Digit6 => H::Key6, KeyCode::Digit7 => H::Key7, KeyCode::Digit8 => H::Key8,
+        KeyCode::KeyA => H::A,
+        KeyCode::KeyB => H::B,
+        KeyCode::KeyC => H::C,
+        KeyCode::KeyD => H::D,
+        KeyCode::KeyE => H::E,
+        KeyCode::KeyF => H::F,
+        KeyCode::KeyG => H::G,
+        KeyCode::KeyH => H::H,
+        KeyCode::KeyI => H::I,
+        KeyCode::KeyJ => H::J,
+        KeyCode::KeyK => H::K,
+        KeyCode::KeyL => H::L,
+        KeyCode::KeyM => H::M,
+        KeyCode::KeyN => H::N,
+        KeyCode::KeyO => H::O,
+        KeyCode::KeyP => H::P,
+        KeyCode::KeyQ => H::Q,
+        KeyCode::KeyR => H::R,
+        KeyCode::KeyS => H::S,
+        KeyCode::KeyT => H::T,
+        KeyCode::KeyU => H::U,
+        KeyCode::KeyV => H::V,
+        KeyCode::KeyW => H::W,
+        KeyCode::KeyX => H::X,
+        KeyCode::KeyY => H::Y,
+        KeyCode::KeyZ => H::Z,
+        KeyCode::Digit0 => H::Key0,
+        KeyCode::Digit1 => H::Key1,
+        KeyCode::Digit2 => H::Key2,
+        KeyCode::Digit3 => H::Key3,
+        KeyCode::Digit4 => H::Key4,
+        KeyCode::Digit5 => H::Key5,
+        KeyCode::Digit6 => H::Key6,
+        KeyCode::Digit7 => H::Key7,
+        KeyCode::Digit8 => H::Key8,
         KeyCode::Digit9 => H::Key9,
-        KeyCode::Backquote => H::Backquote, KeyCode::Minus => H::Minus, KeyCode::Equal => H::Equal,
-        KeyCode::BracketLeft => H::LeftBracket, KeyCode::BracketRight => H::RightBracket,
-        KeyCode::Backslash => H::Backslash, KeyCode::Semicolon => H::Semicolon, KeyCode::Quote => H::Apostrophe,
-        KeyCode::Comma => H::Comma, KeyCode::Period => H::Period, KeyCode::Slash => H::Slash,
+        KeyCode::Backquote => H::Backquote,
+        KeyCode::Minus => H::Minus,
+        KeyCode::Equal => H::Equal,
+        KeyCode::BracketLeft => H::LeftBracket,
+        KeyCode::BracketRight => H::RightBracket,
+        KeyCode::Backslash => H::Backslash,
+        KeyCode::Semicolon => H::Semicolon,
+        KeyCode::Quote => H::Apostrophe,
+        KeyCode::Comma => H::Comma,
+        KeyCode::Period => H::Period,
+        KeyCode::Slash => H::Slash,
         KeyCode::IntlBackslash => H::IntlBackslash,
-        KeyCode::Space => H::Space, KeyCode::Enter => H::Enter, KeyCode::Tab => H::Tab,
-        KeyCode::CapsLock => H::CapsLock, KeyCode::Escape => H::Escape,
-        KeyCode::Backspace => H::Backspace, KeyCode::Delete => H::Delete,
-        KeyCode::ShiftLeft => H::LeftShift, KeyCode::ShiftRight => H::RightShift,
-        KeyCode::ControlLeft => H::LeftCtrl, KeyCode::ControlRight => H::RightCtrl,
-        KeyCode::AltLeft => H::LeftAlt, KeyCode::AltRight => H::RightAlt,
-        KeyCode::ArrowUp => H::Up, KeyCode::ArrowDown => H::Down,
-        KeyCode::ArrowLeft => H::Left, KeyCode::ArrowRight => H::Right,
-        KeyCode::Numpad0 => H::NumPad0, KeyCode::Numpad1 => H::NumPad1, KeyCode::Numpad2 => H::NumPad2,
-        KeyCode::Numpad3 => H::NumPad3, KeyCode::Numpad4 => H::NumPad4, KeyCode::Numpad5 => H::NumPad5,
-        KeyCode::Numpad6 => H::NumPad6, KeyCode::Numpad7 => H::NumPad7, KeyCode::Numpad8 => H::NumPad8,
-        KeyCode::Numpad9 => H::NumPad9, KeyCode::NumpadDecimal => H::NumPadDot,
+        KeyCode::Space => H::Space,
+        KeyCode::Enter => H::Enter,
+        KeyCode::Tab => H::Tab,
+        KeyCode::CapsLock => H::CapsLock,
+        KeyCode::Escape => H::Escape,
+        KeyCode::Backspace => H::Backspace,
+        KeyCode::Delete => H::Delete,
+        KeyCode::ShiftLeft => H::LeftShift,
+        KeyCode::ShiftRight => H::RightShift,
+        KeyCode::ControlLeft => H::LeftCtrl,
+        KeyCode::ControlRight => H::RightCtrl,
+        KeyCode::AltLeft => H::LeftAlt,
+        KeyCode::AltRight => H::RightAlt,
+        KeyCode::ArrowUp => H::Up,
+        KeyCode::ArrowDown => H::Down,
+        KeyCode::ArrowLeft => H::Left,
+        KeyCode::ArrowRight => H::Right,
+        KeyCode::Numpad0 => H::NumPad0,
+        KeyCode::Numpad1 => H::NumPad1,
+        KeyCode::Numpad2 => H::NumPad2,
+        KeyCode::Numpad3 => H::NumPad3,
+        KeyCode::Numpad4 => H::NumPad4,
+        KeyCode::Numpad5 => H::NumPad5,
+        KeyCode::Numpad6 => H::NumPad6,
+        KeyCode::Numpad7 => H::NumPad7,
+        KeyCode::Numpad8 => H::NumPad8,
+        KeyCode::Numpad9 => H::NumPad9,
+        KeyCode::NumpadDecimal => H::NumPadDot,
         KeyCode::NumpadEnter => H::NumPadEnter,
-        _ => return None
+        _ => return None,
     })
 }
 
@@ -271,22 +356,64 @@ fn host_key(event: &KeyEvent) -> Option<HostKey> {
             NamedKey::F5 => H::F5,
             NamedKey::F10 => H::F10,
             NamedKey::F12 => H::F12,
-            _ => return None
+            _ => return None,
         }),
         Key::Character(text) => {
             let mut chars = text.chars();
-            let (Some(c), None) = (chars.next(), chars.next())
-            else {
+            let (Some(c), None) = (chars.next(), chars.next()) else {
                 return None;
             };
             let numpad_digits = [
-                H::NumPad0, H::NumPad1, H::NumPad2, H::NumPad3, H::NumPad4, H::NumPad5, H::NumPad6, H::NumPad7,
-                H::NumPad8, H::NumPad9
+                H::NumPad0,
+                H::NumPad1,
+                H::NumPad2,
+                H::NumPad3,
+                H::NumPad4,
+                H::NumPad5,
+                H::NumPad6,
+                H::NumPad7,
+                H::NumPad8,
+                H::NumPad9,
             ];
-            let digits = [H::Key0, H::Key1, H::Key2, H::Key3, H::Key4, H::Key5, H::Key6, H::Key7, H::Key8, H::Key9];
+            let digits = [
+                H::Key0,
+                H::Key1,
+                H::Key2,
+                H::Key3,
+                H::Key4,
+                H::Key5,
+                H::Key6,
+                H::Key7,
+                H::Key8,
+                H::Key9,
+            ];
             let letters = [
-                H::A, H::B, H::C, H::D, H::E, H::F, H::G, H::H, H::I, H::J, H::K, H::L, H::M, H::N, H::O, H::P, H::Q,
-                H::R, H::S, H::T, H::U, H::V, H::W, H::X, H::Y, H::Z
+                H::A,
+                H::B,
+                H::C,
+                H::D,
+                H::E,
+                H::F,
+                H::G,
+                H::H,
+                H::I,
+                H::J,
+                H::K,
+                H::L,
+                H::M,
+                H::N,
+                H::O,
+                H::P,
+                H::Q,
+                H::R,
+                H::S,
+                H::T,
+                H::U,
+                H::V,
+                H::W,
+                H::X,
+                H::Y,
+                H::Z,
             ];
             let c = c.to_ascii_lowercase();
             Some(match c {
@@ -305,10 +432,10 @@ fn host_key(event: &KeyEvent) -> Option<HostKey> {
                 '/' => H::Slash,
                 '`' => H::Backquote,
                 '=' => H::Equal,
-                _ => return None
+                _ => return None,
             })
-        },
-        _ => None
+        }
+        _ => None,
     }
 }
 
@@ -334,7 +461,7 @@ struct App {
     /// In fullscreen at a multiple of 50 Hz (the CPC's rate): how many refreshes show a CPC
     /// frame (1 at 50 Hz, 2 at 100 Hz...), the vertical sync pacing the emulation. `None`: the
     /// clock paces it.
-    refreshes_per_frame: Option<u32>
+    refreshes_per_frame: Option<u32>,
 }
 
 /// How many refreshes at `millihertz` show a CPC frame, if it is a multiple of 50 Hz (within
@@ -353,7 +480,14 @@ fn paced_mode(window: &Window) -> Option<(VideoModeHandle, u32)> {
     monitor
         .video_modes()
         .filter_map(|mode| refreshes_per_frame(mode.refresh_rate_millihertz()).map(|k| (mode, k)))
-        .max_by_key(|(mode, k)| (mode.size() == size, std::cmp::Reverse(*k), mode.size().width * mode.size().height, mode.bit_depth()))
+        .max_by_key(|(mode, k)| {
+            (
+                mode.size() == size,
+                std::cmp::Reverse(*k),
+                mode.size().width * mode.size().height,
+                mode.bit_depth(),
+            )
+        })
 }
 
 impl App {
@@ -371,7 +505,11 @@ impl App {
         }
         self.fullscreen = true;
         self.refreshes_per_frame = None;
-        let exclusive = if exclusive_fullscreen_works(event_loop) { paced_mode(&window) } else { None };
+        let exclusive = if exclusive_fullscreen_works(event_loop) {
+            paced_mode(&window)
+        } else {
+            None
+        };
         if let Some((mode, k)) = exclusive {
             window.set_fullscreen(Some(Fullscreen::Exclusive(mode.clone())));
             // a mode the system turned down: borderless
@@ -399,7 +537,9 @@ impl App {
             return;
         };
         self.fullscreen = true;
-        let desktop = window.current_monitor().and_then(|monitor| monitor.refresh_rate_millihertz());
+        let desktop = window
+            .current_monitor()
+            .and_then(|monitor| monitor.refresh_rate_millihertz());
         self.refreshes_per_frame = desktop.and_then(refreshes_per_frame);
         match (desktop, self.refreshes_per_frame) {
             (Some(rate), Some(k)) => eprintln!(
@@ -430,12 +570,25 @@ fn exclusive_fullscreen_works(event_loop: &ActiveEventLoop) -> bool {
         let _ = event_loop;
         true
     }
-    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android"), not(target_os = "ios")))]
+    #[cfg(all(
+        unix,
+        not(target_os = "macos"),
+        not(target_os = "android"),
+        not(target_os = "ios")
+    ))]
     {
         use winit::platform::x11::ActiveEventLoopExtX11;
         event_loop.is_x11()
     }
-    #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos"), not(target_os = "android"), not(target_os = "ios")))))]
+    #[cfg(not(any(
+        target_os = "windows",
+        all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "android"),
+            not(target_os = "ios")
+        )
+    )))]
     {
         let _ = event_loop;
         false
@@ -455,11 +608,11 @@ impl ApplicationHandler for App {
                 let window = Arc::new(window);
                 match Gfx::new(window.clone(), self.curvature) {
                     Ok(gfx) => self.gfx = Some(gfx),
-                    Err(e) => self.error = Some(e)
+                    Err(e) => self.error = Some(e),
                 }
                 self.window = Some(window);
-            },
-            Err(e) => self.error = Some(format!("failed to open a window: {e}"))
+            }
+            Err(e) => self.error = Some(format!("failed to open a window: {e}")),
         }
     }
 
@@ -472,24 +625,28 @@ impl ApplicationHandler for App {
                 }
                 // in or out of fullscreen by the window's own control (macOS's green button, a
                 // window manager's shortcut)
-                let system = self.window.as_ref().is_some_and(|window| window.fullscreen().is_some());
+                let system = self
+                    .window
+                    .as_ref()
+                    .is_some_and(|window| window.fullscreen().is_some());
                 if self.fullscreen && !system {
                     self.left_fullscreen();
-                }
-                else if !self.fullscreen && system {
+                } else if !self.fullscreen && system {
                     self.entered_borderless();
                 }
-            },
+            }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput { event, .. } => {
                 match event.state {
                     // F4 closes the emulator
-                    ElementState::Pressed if event.logical_key == Key::Named(NamedKey::F4) => self.closed = true,
+                    ElementState::Pressed if event.logical_key == Key::Named(NamedKey::F4) => {
+                        self.closed = true
+                    }
                     ElementState::Pressed if is_fullscreen_toggle(&event, self.modifiers) => {
                         if !event.repeat {
                             self.toggle_fullscreen(event_loop);
                         }
-                    },
+                    }
                     ElementState::Pressed => {
                         if let Some(key) = host_key(&event) {
                             self.held.insert(event.physical_key, key);
@@ -501,17 +658,17 @@ impl ApplicationHandler for App {
                         if let Some(text) = &event.text {
                             self.typed.extend(text.chars().filter(|c| !c.is_control()));
                         }
-                    },
+                    }
                     ElementState::Released => {
                         self.held.remove(&event.physical_key);
                         self.placed.remove(&event.physical_key);
                     }
                 }
-            },
+            }
             WindowEvent::Focused(false) => {
                 self.held.clear();
                 self.placed.clear();
-            },
+            }
             _ => {}
         }
     }
@@ -522,7 +679,7 @@ pub struct WinitGpuFrontend {
     app: App,
     /// Time between two presents, if capped.
     frame_time: Option<Duration>,
-    deadline: Instant
+    deadline: Instant,
 }
 
 impl Drop for WinitGpuFrontend {
@@ -541,7 +698,8 @@ impl WinitGpuFrontend {
     /// A window for pictures of `picture` pixels (for its shape and size).
     /// CRTs are seen through their glass, curved `curvature` times their bulge (0: flat).
     pub fn open(picture: (usize, usize), curvature: f32) -> Result<Self, String> {
-        let event_loop = EventLoop::new().map_err(|e| format!("cannot start the event loop: {e}"))?;
+        let event_loop =
+            EventLoop::new().map_err(|e| format!("cannot start the event loop: {e}"))?;
         let width = INITIAL_WIDTH;
         let size = (width, width * picture.1 as f64 / picture.0 as f64);
         let mut frontend = Self {
@@ -558,10 +716,10 @@ impl WinitGpuFrontend {
                 error: None,
                 fullscreen: false,
                 modifiers: ModifiersState::empty(),
-                refreshes_per_frame: None
+                refreshes_per_frame: None,
             },
             frame_time: None,
-            deadline: Instant::now()
+            deadline: Instant::now(),
         };
         // the window and the GPU come up on the first events
         for _ in 0..100 {
@@ -574,12 +732,15 @@ impl WinitGpuFrontend {
         match frontend.app.error.take() {
             Some(e) => Err(e),
             None if frontend.app.gfx.is_none() => Err("the window did not open".to_owned()),
-            None => Ok(frontend)
+            None => Ok(frontend),
         }
     }
 
     fn pump(&mut self) {
-        if let PumpStatus::Exit(_) = self.event_loop.pump_app_events(Some(Duration::ZERO), &mut self.app) {
+        if let PumpStatus::Exit(_) = self
+            .event_loop
+            .pump_app_events(Some(Duration::ZERO), &mut self.app)
+        {
             self.app.closed = true;
         }
     }
@@ -603,8 +764,7 @@ impl WinitGpuFrontend {
             let now = Instant::now();
             if self.deadline > now {
                 std::thread::sleep(self.deadline - now);
-            }
-            else {
+            } else {
                 self.deadline = now;
             }
         }
@@ -634,7 +794,7 @@ impl Frontend for WinitGpuFrontend {
         HostInput {
             down: self.app.held.values().copied().collect(),
             typed: std::mem::take(&mut self.app.typed),
-            placed: self.app.placed.values().copied().collect()
+            placed: self.app.placed.values().copied().collect(),
         }
     }
 
@@ -677,8 +837,16 @@ mod test {
         assert_eq!(refreshes_per_frame(50_000), Some(1));
         assert_eq!(refreshes_per_frame(49_920), Some(1), "a monitor's 49.92 Hz");
         assert_eq!(refreshes_per_frame(100_000), Some(2));
-        assert_eq!(refreshes_per_frame(99_850), Some(2), "0.1 Hz per frame shown");
-        assert_eq!(refreshes_per_frame(99_300), None, "too far: the clock paces it");
+        assert_eq!(
+            refreshes_per_frame(99_850),
+            Some(2),
+            "0.1 Hz per frame shown"
+        );
+        assert_eq!(
+            refreshes_per_frame(99_300),
+            None,
+            "too far: the clock paces it"
+        );
         assert_eq!(refreshes_per_frame(49_500), None);
         assert_eq!(refreshes_per_frame(150_000), Some(3));
         assert_eq!(refreshes_per_frame(200_000), Some(4));
@@ -686,6 +854,10 @@ mod test {
         assert_eq!(refreshes_per_frame(59_940), None);
         assert_eq!(refreshes_per_frame(120_000), None);
         assert_eq!(refreshes_per_frame(144_000), None);
-        assert_eq!(refreshes_per_frame(250_000), None, "more than 4 refreshes a frame");
+        assert_eq!(
+            refreshes_per_frame(250_000),
+            None,
+            "more than 4 refreshes a frame"
+        );
     }
 }

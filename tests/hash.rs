@@ -1,11 +1,9 @@
 use amsrust::{debug::Monitor, motherboard::MotherboardBuilder};
 use cpclib_macros::assemble;
 
-
 // https://64nops.wordpress.com/2020/12/10/hash-algorithms/
 const FNV1_32: &[u8] = assemble!(
-
-	"
+    "
 	org 0x4000
 ;; FNV-1 32-bit hash
 ;;
@@ -115,9 +113,9 @@ _fnv1_32_loop
 	"
 );
 
-
 #[allow(dead_code)] // assembled (so it keeps assembling), not run yet
-const PEARSON_8: &[u8] = assemble!("
+const PEARSON_8: &[u8] = assemble!(
+    "
 ;; Pearson hash 8-bit
 ;;
 ;; Size : 16 bytes + 256 bytes lookup table
@@ -176,60 +174,57 @@ _pearson_lut
 );
 
 fn test_hash(hash_method: &[u8], data: &[u8], expected: u32) {
+    let mut motherboard = MotherboardBuilder::default()
+        .disable_lower_rom()
+        .disable_upper_rom()
+        .build();
+    motherboard.write_buffer(0x4000, hash_method);
+    motherboard.write_buffer(0x3000, data);
 
-	let mut motherboard = MotherboardBuilder::default()
-					.disable_lower_rom()
-					.disable_upper_rom()
-					.build();
-	motherboard.write_buffer(0x4000, hash_method);
-	motherboard.write_buffer(0x3000, data);
-
-
-	let caller = assemble!("
+    let caller = assemble!(
+        "
 		org 0x1000
 		call 0x4000
 		jr $
-	");
-	motherboard.write_buffer(0x1000, caller);
+	"
+    );
+    motherboard.write_buffer(0x1000, caller);
 
-	motherboard.set_pc(0x1000);
-	motherboard.set_ix(0x3000);
-	motherboard.set_bc(data.len() as _);
+    motherboard.set_pc(0x1000);
+    motherboard.set_ix(0x3000);
+    motherboard.set_bc(data.len() as _);
 
-	while motherboard.pc() != 0x1000 + 3 {
-		Monitor::monitor(&motherboard);
-		motherboard.execute_next_opcode();
-	}
-	Monitor::monitor(&motherboard);
+    while motherboard.pc() != 0x1000 + 3 {
+        Monitor::monitor(&motherboard);
+        motherboard.execute_next_opcode();
+    }
+    Monitor::monitor(&motherboard);
 
-	let obtained = dbg!(dbg!(motherboard.hl()) as u32)*256*256+ motherboard.iy() as u32;
-	assert_eq!(
-		obtained,
-		expected
-	);
+    let obtained = dbg!(dbg!(motherboard.hl()) as u32) * 256 * 256 + motherboard.iy() as u32;
+    assert_eq!(obtained, expected);
 }
 
 #[test]
 fn test_hash_fnv1_32_semilanceata() {
-	test_hash(FNV1_32, b"Semilanceata", 0x1E12175C);
+    test_hash(FNV1_32, b"Semilanceata", 0x1E12175C);
 }
 #[test]
 fn test_hash_fnv1_32_longueteau() {
-	test_hash(FNV1_32, b"Longueteau", 0x7F7CC956);
+    test_hash(FNV1_32, b"Longueteau", 0x7F7CC956);
 }
 #[test]
 fn test_hash_fnv1_32_severin() {
-	test_hash(FNV1_32, b"Severin", 0x9A0DA2E9);
+    test_hash(FNV1_32, b"Severin", 0x9A0DA2E9);
 }
 #[test]
 fn test_hash_fnv1_32_damoiseau() {
-	test_hash(FNV1_32, b"Damoiseau", 0x0A5D56CF);
+    test_hash(FNV1_32, b"Damoiseau", 0x0A5D56CF);
 }
-  #[test]
-  fn test_hash_fnv1_32_foobar() {
-  test_hash(FNV1_32, b"foobar", 0x31F0B262);
-  }
-  #[test]
-  fn test_hash_fnv1_32_chongo() {
-  test_hash(FNV1_32, b"chongo was here", 0x98A0BF6C);
-  }
+#[test]
+fn test_hash_fnv1_32_foobar() {
+    test_hash(FNV1_32, b"foobar", 0x31F0B262);
+}
+#[test]
+fn test_hash_fnv1_32_chongo() {
+    test_hash(FNV1_32, b"chongo was here", 0x98A0BF6C);
+}

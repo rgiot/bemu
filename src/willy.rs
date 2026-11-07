@@ -31,13 +31,17 @@ const TICKS_PER_US: u32 = 16;
 
 /// `&FEBC`, `#FEBC`, `$FEBC`, `0xFEBC` or `FEBC`: one of [`BASES`].
 pub fn parse_base(text: &str) -> Result<u16, String> {
-    let digits = text.trim_start_matches(['&', '#', '$']).trim_start_matches("0x").trim_start_matches("0X");
+    let digits = text
+        .trim_start_matches(['&', '#', '$'])
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
     let base = u16::from_str_radix(digits, 16).map_err(|_| format!("{text}: not an address"))?;
     if BASES.contains(&base) {
         Ok(base)
-    }
-    else {
-        Err(format!("{text}: Willy's jumper sets &FEBC, &FEAC, &FEA4, &FE9C, &FE94, &FE8C or &FE84"))
+    } else {
+        Err(format!(
+            "{text}: Willy's jumper sets &FEBC, &FEAC, &FEA4, &FE9C, &FE94, &FE8C or &FE84"
+        ))
     }
 }
 
@@ -50,7 +54,7 @@ pub struct Opl3Lpt {
     ticks: u32,
     sample: [f32; 2],
     /// Register writes so far (for the tests and the debugger).
-    writes: u64
+    writes: u64,
 }
 
 impl Opl3Lpt {
@@ -61,7 +65,7 @@ impl Opl3Lpt {
             selected: (0, false),
             ticks: 0,
             sample: [0.0; 2],
-            writes: 0
+            writes: 0,
         }
     }
 
@@ -81,7 +85,13 @@ impl Opl3Lpt {
             // the data goes to the register selected last, whichever bank
             _ => {
                 let (register, second) = self.selected;
-                let bank = || if second { OplRegisterFile::Secondary } else { OplRegisterFile::Primary };
+                let bank = || {
+                    if second {
+                        OplRegisterFile::Secondary
+                    } else {
+                        OplRegisterFile::Primary
+                    }
+                };
                 let _ = self.chip.write_address(register, bank());
                 let _ = self.chip.write_data(value, bank(), false);
                 self.writes += 1;
@@ -137,7 +147,7 @@ impl ExpansionDevice for Opl3Lpt {
 struct MidiParser {
     status: u8,
     data: Vec<u8>,
-    in_sysex: bool
+    in_sysex: bool,
 }
 
 impl MidiParser {
@@ -148,27 +158,35 @@ impl MidiParser {
             0xf0 => {
                 self.in_sysex = true;
                 None
-            },
+            }
             0xf7 => {
                 self.in_sysex = false;
                 None
-            },
+            }
             0xf1..=0xf6 => {
                 self.status = 0;
                 None
-            },
+            }
             0x80..=0xef => {
                 self.in_sysex = false;
                 self.status = byte;
                 self.data.clear();
                 None
-            },
+            }
             _ if self.in_sysex || self.status == 0 => None,
             _ => {
                 self.data.push(byte);
-                let length = if matches!(self.status & 0xf0, 0xc0 | 0xd0) { 1 } else { 2 };
+                let length = if matches!(self.status & 0xf0, 0xc0 | 0xd0) {
+                    1
+                } else {
+                    2
+                };
                 (self.data.len() == length).then(|| {
-                    let message = (self.status, self.data[0], self.data.get(1).copied().unwrap_or(0));
+                    let message = (
+                        self.status,
+                        self.data[0],
+                        self.data.get(1).copied().unwrap_or(0),
+                    );
                     self.data.clear();
                     message
                 })
@@ -192,15 +210,17 @@ pub struct S2p {
     ticks: u32,
     messages: u64,
     /// The byte the card puts on the bus for the IN being answered (taken when it began).
-    answering: Option<u8>
+    answering: Option<u8>,
 }
 
 impl S2p {
     /// The S2P, its instruments the SoundFont's.
     pub fn new(base: u16, soundfont: &[u8]) -> Result<Self, String> {
-        let font = SoundFont::new(&mut std::io::Cursor::new(soundfont)).map_err(|e| format!("the SoundFont: {e:?}"))?;
+        let font = SoundFont::new(&mut std::io::Cursor::new(soundfont))
+            .map_err(|e| format!("the SoundFont: {e:?}"))?;
         let settings = SynthesizerSettings::new(S2P_RATE);
-        let synth = Synthesizer::new(&Arc::new(font), &settings).map_err(|e| format!("the synthesizer: {e:?}"))?;
+        let synth = Synthesizer::new(&Arc::new(font), &settings)
+            .map_err(|e| format!("the synthesizer: {e:?}"))?;
         let block = synth.get_block_size();
         Ok(Self {
             base,
@@ -213,7 +233,7 @@ impl S2p {
             fraction: 0,
             ticks: 0,
             messages: 0,
-            answering: None
+            answering: None,
         })
     }
 
@@ -239,15 +259,20 @@ impl S2p {
         match port & 3 {
             0 => {
                 if let Some((status, data1, data2)) = self.parser.push(value) {
-                    self.synth.process_midi_message(i32::from(status & 0x0f), i32::from(status & 0xf0), i32::from(data1), i32::from(data2));
+                    self.synth.process_midi_message(
+                        i32::from(status & 0x0f),
+                        i32::from(status & 0xf0),
+                        i32::from(data1),
+                        i32::from(data2),
+                    );
                     self.messages += 1;
                 }
-            },
+            }
             1 if value == 0x3f => {
                 // UART mode, acknowledged
                 self.answers.clear();
                 self.answers.push_back(0xfe);
-            },
+            }
             _ => {}
         }
     }
@@ -258,7 +283,7 @@ impl S2p {
             0 if consume => self.answers.pop_front().unwrap_or(0xff),
             0 => self.answers.front().copied().unwrap_or(0xff),
             1 => self.status(),
-            _ => 0xff
+            _ => 0xff,
         }
     }
 
@@ -291,7 +316,7 @@ impl ExpansionDevice for S2p {
                 }
                 port.drive_data(self.answering.unwrap());
             }
-            _ => self.answering = None
+            _ => self.answering = None,
         }
         self.ticks += 1;
         if self.ticks == TICKS_PER_US {
@@ -309,7 +334,7 @@ impl ExpansionDevice for S2p {
     fn sound(&self) -> [f32; 2] {
         match (self.left.get(self.position), self.right.get(self.position)) {
             (Some(&left), Some(&right)) => [left, right],
-            _ => [0.0; 2]
+            _ => [0.0; 2],
         }
     }
 
@@ -364,7 +389,7 @@ mod test {
         (0x23, 0x01),
         (0x63, 0xf0),
         (0x83, 0x77),
-        (0xb0, 0x31)
+        (0xb0, 0x31),
     ];
 
     fn loudness(card: &mut Opl3Lpt, microseconds: usize) -> f32 {
@@ -397,7 +422,13 @@ mod test {
         let mut card = Opl3Lpt::new(OPL3_BASE);
         card.write(0xfebe, 0x05);
         card.write(0xfebd, 0x01);
-        assert_eq!(card.chip.read_register(0x05, OplRegisterFile::Secondary), 0x01);
-        assert_eq!(card.chip.read_register(0x05, OplRegisterFile::Primary), 0x00);
+        assert_eq!(
+            card.chip.read_register(0x05, OplRegisterFile::Secondary),
+            0x01
+        );
+        assert_eq!(
+            card.chip.read_register(0x05, OplRegisterFile::Primary),
+            0x00
+        );
     }
 }

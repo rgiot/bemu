@@ -13,14 +13,14 @@ struct Tap {
     /// Weights of the right column and of the bottom row, and the glass's coverage, in 256ths.
     fx: u16,
     fy: u16,
-    alpha: u16
+    alpha: u16,
 }
 
 /// `inner`'s picture seen through the glass `warp`.
 pub struct Curved {
     inner: Box<dyn DisplayFilter>,
     flat: Vec<u32>,
-    taps: Vec<Tap>
+    taps: Vec<Tap>,
 }
 
 impl Curved {
@@ -36,16 +36,23 @@ impl Curved {
                 // pixel centres, clamped to the picture
                 let sx = (su * width as f32 - 0.5).clamp(0.0, (width - 1) as f32);
                 let sy = (sv * height as f32 - 0.5).clamp(0.0, (height - 1) as f32);
-                let (left, top) = ((sx as usize).min(width.saturating_sub(2)), (sy as usize).min(height.saturating_sub(2)));
+                let (left, top) = (
+                    (sx as usize).min(width.saturating_sub(2)),
+                    (sy as usize).min(height.saturating_sub(2)),
+                );
                 Tap {
                     index: (top * width + left) as u32,
                     fx: ((sx - left as f32) * 256.0).round() as u16,
                     fy: ((sy - top as f32) * 256.0).round() as u16,
-                    alpha: (alpha * 256.0).round() as u16
+                    alpha: (alpha * 256.0).round() as u16,
                 }
             })
             .collect();
-        Self { inner, flat: vec![0; width * height], taps }
+        Self {
+            inner,
+            flat: vec![0; width * height],
+            taps,
+        }
     }
 }
 
@@ -69,7 +76,9 @@ impl DisplayFilter for Curved {
         self.inner.render(src, &mut self.flat);
         let (width, _) = self.inner.output_size();
         let (flat, taps) = (&self.flat, &self.taps);
-        let bands = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+        let bands = std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .min(8);
         let band = taps.len().div_ceil(bands).max(1);
         std::thread::scope(|scope| {
             for (dst, taps) in dst.chunks_mut(band).zip(taps.chunks(band)) {

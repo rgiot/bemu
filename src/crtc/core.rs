@@ -293,7 +293,26 @@ impl Core {
     pub(super) fn reset(&mut self) {
         self.crtc_vma = 0;
         self.crtc_vma_prime = 0;
-        self.regs[..18].copy_from_slice(&[63, 40, 46, 128 + 14, 38, 0, 25, 30, 0, 7, 0, 0, 48, 0, 0, 0, 0, 0]);
+        self.regs[..18].copy_from_slice(&[
+            63,
+            40,
+            46,
+            128 + 14,
+            38,
+            0,
+            25,
+            30,
+            0,
+            7,
+            0,
+            0,
+            48,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]);
         self.vcc = self.regs[4].into();
         self.vlc = self.regs[9].into();
         self.hcc = self.regs[0];

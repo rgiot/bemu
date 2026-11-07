@@ -29,10 +29,15 @@ fn main() {
          key_output 'RUN\"HBL\\(RET)'\n\
          wait 60000000\n"
     );
-    runner.run_text(&boot, ".").unwrap_or_else(|e| panic!("boot failed: {e}"));
+    runner
+        .run_text(&boot, ".")
+        .unwrap_or_else(|e| panic!("boot failed: {e}"));
 
     eprintln!("after boot+60s wait: PC={:04X}", runner.motherboard().pc());
-    eprintln!("space pressed? {}", runner.motherboard().keyboard().is_pressed(CpcKey::Space));
+    eprintln!(
+        "space pressed? {}",
+        runner.motherboard().keyboard().is_pressed(CpcKey::Space)
+    );
 
     // Now send the space and watch closely in small increments.
     for i in 0..10 {
@@ -41,7 +46,9 @@ fn main() {
         } else {
             "wait 100000\n".to_owned()
         };
-        runner.run_text(&step, ".").unwrap_or_else(|e| panic!("step failed: {e}"));
+        runner
+            .run_text(&step, ".")
+            .unwrap_or_else(|e| panic!("step failed: {e}"));
         eprintln!(
             "[+{}ms] PC={:04X} space_pressed={} keyboard_line5={:02X}",
             (i + 1) * 100,

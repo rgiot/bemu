@@ -82,14 +82,14 @@ const EOF_STATUS: u8 = 20;
 /// An open file: on the SD card, or a snapshot's flattened memory (C_SNAFLAT).
 enum OpenFile {
     Host(File),
-    Memory(Cursor<Vec<u8>>)
+    Memory(Cursor<Vec<u8>>),
 }
 
 impl OpenFile {
     fn io(&mut self) -> &mut dyn ReadWriteSeek {
         match self {
             Self::Host(file) => file,
-            Self::Memory(cursor) => cursor
+            Self::Memory(cursor) => cursor,
         }
     }
 
@@ -112,7 +112,7 @@ struct DirEntry {
     short: String,
     directory: bool,
     size: u64,
-    read_only: bool
+    read_only: bool,
 }
 
 /// The M4 board.
@@ -140,7 +140,7 @@ pub struct M4Board {
     net: crate::m4_net::Network,
     /// Ticks since the sockets were last polled.
     #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
-    ticks: u32
+    ticks: u32,
 }
 
 /// Where the socket table is in the ROM (&FE00).
@@ -156,7 +156,7 @@ impl M4Board {
         let rom = match rom.len() {
             0x4080 => &rom[0x80..],
             len if len > 0x4000 => return Err(format!("the M4 ROM is 16K, not {len} bytes")),
-            _ => rom
+            _ => rom,
         };
         let mut image = Box::new([0xffu8; 0x4000]);
         image[..rom.len()].copy_from_slice(rom);
@@ -184,7 +184,7 @@ impl M4Board {
             #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
             net,
             #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
-            ticks: 0
+            ticks: 0,
         })
     }
 
@@ -265,45 +265,51 @@ impl M4Board {
                     data.drain(1..3);
                 }
                 self.write(&data)
-            },
+            }
             C_CLOSE => vec![if self.close(byte(params, 0)) { 0 } else { 0xff }],
             C_SEEK => self.seek(params),
             C_EOF => self.eof(params),
             C_FSIZE => self.with_file(params, |file| file.size().to_le_bytes()[..4].to_vec()),
-            C_FTELL => {
-                self.with_file(params, |file| file.io().stream_position().unwrap_or(0).to_le_bytes()[..4].to_vec())
-            },
+            C_FTELL => self.with_file(params, |file| {
+                file.io().stream_position().unwrap_or(0).to_le_bytes()[..4].to_vec()
+            }),
             C_DIRSETARGS => {
                 self.pattern = string(params);
                 self.listing = None;
                 Vec::new()
-            },
+            }
             C_READDIR => self.read_dir(params),
             // the UniDOS node reads the number after the first two characters (a host folder
             // has no size of its own: 1 GB free)
             C_FREE => b"\r\n1048576K free\0".to_vec(),
             C_GETPATH => nul_terminated(&self.path()),
-            C_CD => vec![if self.change_dir(&string(params)) { 0 } else { 0xff }],
-            C_ERASEFILE => self.status(self.host_path(&string(params)).and_then(|path| {
-                std::fs::remove_file(path).map_err(|e| e.to_string())
-            })),
+            C_CD => vec![if self.change_dir(&string(params)) {
+                0
+            } else {
+                0xff
+            }],
+            C_ERASEFILE => self.status(
+                self.host_path(&string(params))
+                    .and_then(|path| std::fs::remove_file(path).map_err(|e| e.to_string())),
+            ),
             C_RENAME => {
                 let (from, to) = two_strings(params);
                 self.status(self.host_path(&from).and_then(|from| {
                     let to = self.host_path(&to)?;
                     std::fs::rename(from, to).map_err(|e| e.to_string())
                 }))
-            },
+            }
             C_COPYFILE => {
                 let (from, to) = two_strings(params);
                 self.status(self.host_path(&from).and_then(|from| {
                     let to = self.host_path(&to)?;
                     std::fs::copy(from, to).map(drop).map_err(|e| e.to_string())
                 }))
-            },
-            C_MAKEDIR => self.status(self.host_path(&string(params)).and_then(|path| {
-                std::fs::create_dir(path).map_err(|e| e.to_string())
-            })),
+            }
+            C_MAKEDIR => self.status(
+                self.host_path(&string(params))
+                    .and_then(|path| std::fs::create_dir(path).map_err(|e| e.to_string())),
+            ),
             C_FSTAT => self.fstat(&string(params)),
             C_SNAFLAT => self.snapshot_flat(params),
             C_READSECTOR => {
@@ -311,13 +317,13 @@ impl M4Board {
                 let mut payload = vec![0xff];
                 payload.resize(1 + 512, 0xe5);
                 payload
-            },
+            }
             C_WRITESECTOR => vec![0xff],
             C_CONFIG => {
                 let offset = usize::from(byte(params, 0));
                 self.write_rom(CONFIG + offset, params.get(1..).unwrap_or(&[]));
                 Vec::new()
-            },
+            }
             C_ROMWRITE => {
                 // destination, size, bank (&FF: the NMI ROM, not emulated), the data
                 let destination = usize::from(word(params, 0)) & 0x3fff;
@@ -327,7 +333,7 @@ impl M4Board {
                     self.write_rom(destination, &data[..size.min(data.len())]);
                 }
                 Vec::new()
-            },
+            }
             C_ROMCP => {
                 // destination, source bank, source, destination bank, size: within the M4 ROM
                 let destination = usize::from(word(params, 0)) & 0x3fff;
@@ -337,14 +343,14 @@ impl M4Board {
                 let data = self.rom[source..end].to_vec();
                 self.write_rom(destination, &data);
                 Vec::new()
-            },
+            }
             // short, as the firmware's: RulezCharge copies it into a fixed field of its help box
             // (a longer one ran over its code)
             C_VERSION => b"v2.0.8 (bemu)\0".to_vec(),
             C_TIME => nul_terminated(&now(self.time_zone())),
             // the last payload byte is the status: 5 would be "connected"
             C_NETSTAT => nul_terminated("No network in bemu."),
-            _ => nul_terminated(UNSUPPORTED)
+            _ => nul_terminated(UNSUPPORTED),
         };
         self.respond(packet[1], packet[2], &payload);
     }
@@ -387,19 +393,25 @@ impl M4Board {
     fn with_file(&mut self, params: &[u8], f: impl FnOnce(&mut OpenFile) -> Vec<u8>) -> Vec<u8> {
         match self.files.get_mut(&byte(params, 0)) {
             Some(file) => f(file),
-            None => vec![0; 4]
+            None => vec![0; 4],
         }
     }
 
     /// The host path of a name of the SD card: absolute (`/`) or from the current directory,
     /// each part matched ignoring case (FAT does), `..` not above the card.
     fn host_path(&self, name: &str) -> Result<PathBuf, String> {
-        let mut parts = if name.starts_with('/') { Vec::new() } else { self.cwd.clone() };
-        for part in name.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".") {
+        let mut parts = if name.starts_with('/') {
+            Vec::new()
+        } else {
+            self.cwd.clone()
+        };
+        for part in name
+            .split(['/', '\\'])
+            .filter(|p| !p.is_empty() && *p != ".")
+        {
             if part == ".." {
                 parts.pop();
-            }
-            else {
+            } else {
                 parts.push(part.to_owned());
             }
         }
@@ -413,18 +425,24 @@ impl M4Board {
             let found = entries
                 .iter()
                 .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case(part))
-                .or_else(|| entries.iter().find(|(_, name)| name.eq_ignore_ascii_case(short)))
+                .or_else(|| {
+                    entries
+                        .iter()
+                        .find(|(_, name)| name.eq_ignore_ascii_case(short))
+                })
                 .map(|(name, _)| name.clone());
             match found {
                 Some(found) => path.push(found),
-                None => path.push(part)
+                None => path.push(part),
             }
         }
         Ok(path)
     }
 
     fn change_dir(&mut self, name: &str) -> bool {
-        let Ok(path) = self.host_path(name) else { return false };
+        let Ok(path) = self.host_path(name) else {
+            return false;
+        };
         // a DSK image is entered as a directory, its AMSDOS files in it (read only)
         let image = matches!(dsk_parts(&path), Some((_, None)))
             && read_dsk(&path)
@@ -433,8 +451,13 @@ impl M4Board {
         if !path.is_dir() && !image {
             return false;
         }
-        let Ok(relative) = path.strip_prefix(&self.root) else { return false };
-        self.cwd = relative.iter().map(|part| part.to_string_lossy().into_owned()).collect();
+        let Ok(relative) = path.strip_prefix(&self.root) else {
+            return false;
+        };
+        self.cwd = relative
+            .iter()
+            .map(|part| part.to_string_lossy().into_owned())
+            .collect();
         self.listing = None;
         true
     }
@@ -444,16 +467,18 @@ impl M4Board {
         let mode = byte(params, 0);
         let name = open_name(params.get(1..).unwrap_or(&[]));
         let fd = if mode & FD_DYNAMIC != 0 {
-            (3..=255).find(|fd| !self.files.contains_key(fd)).unwrap_or(255)
-        }
-        else if mode & FA_WRITE != 0 {
+            (3..=255)
+                .find(|fd| !self.files.contains_key(fd))
+                .unwrap_or(255)
+        } else if mode & FA_WRITE != 0 {
             2
-        }
-        else {
+        } else {
             1
         };
         self.close(fd);
-        let Ok(mut path) = self.host_path(&name) else { return vec![fd, FR_NO_PATH] };
+        let Ok(mut path) = self.host_path(&name) else {
+            return vec![fd, FR_NO_PATH];
+        };
         let writing = mode & FA_WRITE != 0;
         if let Some((image, Some(file))) = dsk_parts(&path) {
             if writing {
@@ -463,8 +488,8 @@ impl M4Board {
                 Some(data) => {
                     self.files.insert(fd, OpenFile::Memory(Cursor::new(data)));
                     vec![fd, 0]
-                },
-                None => vec![fd, FR_NO_FILE]
+                }
+                None => vec![fd, FR_NO_FILE],
             };
         }
         if !writing && !path.is_file() && !name.contains('.') {
@@ -490,33 +515,36 @@ impl M4Board {
         match mode & 0x3c {
             FA_CREATE_ALWAYS => {
                 options.create(true).truncate(true);
-            },
+            }
             FA_CREATE_NEW => {
                 options.create_new(true);
-            },
+            }
             FA_OPEN_ALWAYS => {
                 options.create(writing);
-            },
+            }
             FA_OPEN_APPEND => {
                 options.create(true).append(true);
-            },
+            }
             _ => {}
         }
         match options.open(&path) {
             Ok(file) => {
                 self.files.insert(fd, OpenFile::Host(file));
-                let file_name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+                let file_name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 if writing && !file_name.contains('.') {
                     self.unnamed.insert(fd, path);
                 }
                 vec![fd, 0]
-            },
+            }
             Err(e) => {
                 let result = match e.kind() {
                     std::io::ErrorKind::NotFound => FR_NO_FILE,
                     std::io::ErrorKind::AlreadyExists => FR_EXIST,
                     std::io::ErrorKind::PermissionDenied => FR_DENIED,
-                    _ => FR_DISK_ERR
+                    _ => FR_DISK_ERR,
                 };
                 vec![fd, result]
             }
@@ -526,7 +554,9 @@ impl M4Board {
     /// Close `fd`; false when it was not open. A file written under a name without extension
     /// gets AMSDOS's: .BIN for a binary (its header says), .BAS otherwise.
     fn close(&mut self, fd: u8) -> bool {
-        let Some(mut file) = self.files.remove(&fd) else { return false };
+        let Some(mut file) = self.files.remove(&fd) else {
+            return false;
+        };
         if let Some(path) = self.unnamed.remove(&fd) {
             let mut header = [0u8; 128];
             let _ = file.io().seek(SeekFrom::Start(0));
@@ -534,8 +564,17 @@ impl M4Board {
             drop(file);
             let binary = read == 128 && amsdos_header_type(&header) == Some(2);
             let extension = if binary { "BIN" } else { "BAS" };
-            let lower = path.file_name().is_some_and(|name| !name.to_string_lossy().chars().any(|c| c.is_ascii_uppercase()));
-            let extension = if lower { extension.to_ascii_lowercase() } else { extension.to_owned() };
+            let lower = path.file_name().is_some_and(|name| {
+                !name
+                    .to_string_lossy()
+                    .chars()
+                    .any(|c| c.is_ascii_uppercase())
+            });
+            let extension = if lower {
+                extension.to_ascii_lowercase()
+            } else {
+                extension.to_owned()
+            };
             let _ = std::fs::rename(&path, path.with_extension(extension));
         }
         true
@@ -549,7 +588,7 @@ impl M4Board {
         while count < size {
             match file.io().read(&mut data[count..]) {
                 Ok(0) | Err(_) => break,
-                Ok(n) => count += n
+                Ok(n) => count += n,
             }
         }
         data.truncate(count);
@@ -565,16 +604,22 @@ impl M4Board {
                 let mut payload = vec![0];
                 payload.extend(data);
                 payload
-            },
-            None => vec![FR_DISK_ERR]
+            }
+            None => vec![FR_DISK_ERR],
         }
     }
 
     /// C_READ2: fd, size. Response: 20 at the end of the file, the count read, 2 bytes, the data.
     fn read2(&mut self, params: &[u8]) -> Vec<u8> {
         let size = usize::from(word(params, 1));
-        let (data, end) = self.read_bytes(byte(params, 0), size).unwrap_or((Vec::new(), true));
-        let mut payload = vec![if end || data.is_empty() { EOF_STATUS } else { 0 }];
+        let (data, end) = self
+            .read_bytes(byte(params, 0), size)
+            .unwrap_or((Vec::new(), true));
+        let mut payload = vec![if end || data.is_empty() {
+            EOF_STATUS
+        } else {
+            0
+        }];
         payload.extend_from_slice(&(data.len() as u16).to_le_bytes());
         payload.extend_from_slice(&[0, 0]);
         payload.extend(data);
@@ -584,15 +629,25 @@ impl M4Board {
     /// C_WRITE: fd, the data.
     fn write(&mut self, params: &[u8]) -> Vec<u8> {
         let data = params.get(1..).unwrap_or(&[]);
-        let written = self.files.get_mut(&byte(params, 0)).is_some_and(|file| file.io().write_all(data).is_ok());
+        let written = self
+            .files
+            .get_mut(&byte(params, 0))
+            .is_some_and(|file| file.io().write_all(data).is_ok());
         vec![if written { 0 } else { FR_DISK_ERR }]
     }
 
     /// C_SEEK: fd, a 32-bit offset.
     fn seek(&mut self, params: &[u8]) -> Vec<u8> {
-        let offset = u32::from_le_bytes([byte(params, 1), byte(params, 2), byte(params, 3), byte(params, 4)]);
-        let sought =
-            self.files.get_mut(&byte(params, 0)).is_some_and(|file| file.io().seek(SeekFrom::Start(offset.into())).is_ok());
+        let offset = u32::from_le_bytes([
+            byte(params, 1),
+            byte(params, 2),
+            byte(params, 3),
+            byte(params, 4),
+        ]);
+        let sought = self
+            .files
+            .get_mut(&byte(params, 0))
+            .is_some_and(|file| file.io().seek(SeekFrom::Start(offset.into())).is_ok());
         vec![if sought { 0 } else { FR_DISK_ERR }]
     }
 
@@ -606,14 +661,25 @@ impl M4Board {
     /// C_FSTAT: 0, then FatFs's FILINFO (size, date, time, attributes, 8.3 name), the long
     /// name at +23.
     fn fstat(&self, name: &str) -> Vec<u8> {
-        let Ok(path) = self.host_path(name) else { return self.status(Err("Bad name.".into())) };
-        let Ok(metadata) = std::fs::metadata(&path) else { return self.status(Err("File not found.".into())) };
-        let long_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let Ok(path) = self.host_path(name) else {
+            return self.status(Err("Bad name.".into()));
+        };
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            return self.status(Err("File not found.".into()));
+        };
+        let long_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let mut payload = vec![0];
         payload.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
         payload.extend_from_slice(&[0; 4]);
         payload.push(if metadata.is_dir() { 0x10 } else { 0x20 });
-        let mut short = path.parent().map(|dir| short_name_in(dir, &long_name)).unwrap_or_default().into_bytes();
+        let mut short = path
+            .parent()
+            .map(|dir| short_name_in(dir, &long_name))
+            .unwrap_or_default()
+            .into_bytes();
         short.resize(13, 0);
         payload.extend(short);
         payload.extend(nul_terminated(&long_name));
@@ -624,24 +690,29 @@ impl M4Board {
     /// snapshot); its size in KB.
     fn snapshot_flat(&mut self, params: &[u8]) -> Vec<u8> {
         let fd = byte(params, 0);
-        let Some(file) = self.files.get_mut(&fd) else { return vec![64] };
+        let Some(file) = self.files.get_mut(&fd) else {
+            return vec![64];
+        };
         let mut bytes = Vec::new();
         let _ = file.io().seek(SeekFrom::Start(0));
         let _ = file.io().read_to_end(&mut bytes);
-        match cpclib::sna::Snapshot::from_buffer(bytes).and_then(|snapshot| snapshot.memory_dump()) {
+        match cpclib::sna::Snapshot::from_buffer(bytes).and_then(|snapshot| snapshot.memory_dump())
+        {
             Ok(memory) => {
                 let kb = (memory.len() / 1024).min(255) as u8;
                 self.files.insert(fd, OpenFile::Memory(Cursor::new(memory)));
                 vec![kb]
-            },
-            Err(_) => vec![64]
+            }
+            Err(_) => vec![64],
         }
     }
 
     /// The entries of the current directory, by name, those starting with a dot left out; in a
     /// DSK image, its AMSDOS files (not the system ones).
     fn directory(&self) -> Vec<DirEntry> {
-        let Ok(path) = self.host_path(".") else { return Vec::new() };
+        let Ok(path) = self.host_path(".") else {
+            return Vec::new();
+        };
         if let Some((_, catalog)) = dsk_files(&path) {
             let mut entries: Vec<DirEntry> = (0..catalog.len())
                 .map(|index| &catalog[index])
@@ -651,7 +722,7 @@ impl M4Board {
                     short: entry.file_name().filename(),
                     directory: false,
                     size: entry.size() as u64 * 1024,
-                    read_only: true
+                    read_only: true,
                 })
                 .collect();
             entries.retain(|entry| self.pattern.is_empty() || wildcard(&self.pattern, &entry.name));
@@ -668,7 +739,7 @@ impl M4Board {
                     short,
                     directory: metadata.is_dir(),
                     size: metadata.len(),
-                    read_only: metadata.permissions().readonly()
+                    read_only: metadata.permissions().readonly(),
                 })
             })
             .collect();
@@ -728,7 +799,7 @@ impl ExpansionDevice for M4Board {
                 0xfc00 => {
                     let packet = std::mem::take(&mut self.command);
                     self.execute(&packet);
-                },
+                }
                 _ => {}
             }
         }
@@ -742,7 +813,10 @@ impl ExpansionDevice for M4Board {
         }
         // its ROM, in place of the CPC's
         let address = port.address();
-        if !port.get_pin(ExpansionPin::Neg_ROMEN) && address >= 0xc000 && self.selected_rom == self.slot {
+        if !port.get_pin(ExpansionPin::Neg_ROMEN)
+            && address >= 0xc000
+            && self.selected_rom == self.slot
+        {
             port.assert(ExpansionPin::ROMDIS);
             port.drive_data(self.rom[usize::from(address & 0x3fff)]);
         }
@@ -775,12 +849,23 @@ impl ExpansionDevice for M4Board {
 /// A DSK image on the SD card (`path` itself), or a file of one (`path` in it): the image and
 /// the file's name.
 fn dsk_parts(path: &Path) -> Option<(PathBuf, Option<String>)> {
-    let is_image = |path: &Path| path.is_file() && path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("dsk"));
+    let is_image = |path: &Path| {
+        path.is_file()
+            && path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("dsk"))
+    };
     if is_image(path) {
         return Some((path.to_path_buf(), None));
     }
     let parent = path.parent()?;
-    is_image(parent).then(|| (parent.to_path_buf(), path.file_name().map(|name| name.to_string_lossy().into_owned())))
+    is_image(parent).then(|| {
+        (
+            parent.to_path_buf(),
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned()),
+        )
+    })
 }
 
 /// A DSK image's disc and AMSDOS catalogue (its data format's, side A).
@@ -813,9 +898,16 @@ fn dsk_file(image: &Path, name: &str) -> Option<Vec<u8>> {
     let entry = candidates.iter().find_map(|candidate| {
         (0..catalog.len())
             .map(|index| &catalog[index])
-            .find(|entry| entry.file_name().ibm_filename().eq_ignore_ascii_case(candidate))
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .ibm_filename()
+                    .eq_ignore_ascii_case(candidate)
+            })
     })?;
-    let file = AmsdosManagerNonMut::new_from_disc(&disc, Head::A).get_file(*entry.file_name()).ok()??;
+    let file = AmsdosManagerNonMut::new_from_disc(&disc, Head::A)
+        .get_file(*entry.file_name())
+        .ok()??;
     Some(file.header_and_content().to_vec())
 }
 
@@ -842,7 +934,7 @@ fn string(bytes: &[u8]) -> String {
 fn open_name(bytes: &[u8]) -> String {
     match bytes.iter().position(|&b| b == 0) {
         Some(_) => string(bytes),
-        None => string(&bytes[..bytes.len().saturating_sub(3)])
+        None => string(&bytes[..bytes.len().saturating_sub(3)]),
     }
 }
 
@@ -883,15 +975,17 @@ fn fat_base_name(name: &str) -> (String, String, bool) {
         let c = if !c.is_ascii() || "+,;=[]".contains(c) {
             lossy = true;
             '_'
-        }
-        else {
+        } else {
             c.to_ascii_uppercase()
         };
-        let (part, length) = if last_dot.is_some_and(|dot| index > dot) { (&mut extension, 3) } else { (&mut base, 8) };
+        let (part, length) = if last_dot.is_some_and(|dot| index > dot) {
+            (&mut extension, 3)
+        } else {
+            (&mut base, 8)
+        };
         if part.len() < length {
             part.push(c);
-        }
-        else {
+        } else {
             lossy = true;
         }
     }
@@ -918,7 +1012,12 @@ fn fat_numbered(base: &str, long: &str, seq: u32) -> String {
     }
     let mut tail = String::new();
     loop {
-        tail.insert(0, char::from_digit(number % 16, 16).unwrap().to_ascii_uppercase());
+        tail.insert(
+            0,
+            char::from_digit(number % 16, 16)
+                .unwrap()
+                .to_ascii_uppercase(),
+        );
         number /= 16;
         if number == 0 || tail.len() == 7 {
             break;
@@ -934,12 +1033,24 @@ fn fat_numbered(base: &str, long: &str, seq: u32) -> String {
 /// in the names' order (a card's follows the files' creation, which the host doesn't keep).
 fn fat_short_names(names: &[String]) -> Vec<String> {
     let parts: Vec<(String, String, bool)> = names.iter().map(|name| fat_base_name(name)).collect();
-    let join = |base: &str, extension: &str| if extension.is_empty() { base.to_owned() } else { format!("{base}.{extension}") };
-    let mut taken: std::collections::HashSet<String> =
-        parts.iter().filter(|(_, _, lossy)| !lossy).map(|(base, extension, _)| join(base, extension)).collect();
+    let join = |base: &str, extension: &str| {
+        if extension.is_empty() {
+            base.to_owned()
+        } else {
+            format!("{base}.{extension}")
+        }
+    };
+    let mut taken: std::collections::HashSet<String> = parts
+        .iter()
+        .filter(|(_, _, lossy)| !lossy)
+        .map(|(base, extension, _)| join(base, extension))
+        .collect();
     let mut order: Vec<usize> = (0..names.len()).filter(|&index| parts[index].2).collect();
     order.sort_by_key(|&index| names[index].to_ascii_uppercase());
-    let mut short: Vec<String> = parts.iter().map(|(base, extension, _)| join(base, extension)).collect();
+    let mut short: Vec<String> = parts
+        .iter()
+        .map(|(base, extension, _)| join(base, extension))
+        .collect();
     for index in order {
         let (base, extension, _) = &parts[index];
         let name = (1..=0xffff)
@@ -955,9 +1066,13 @@ fn fat_short_names(names: &[String]) -> Vec<String> {
 /// The names in host directory `dir` (all of them: FAT numbers the hidden ones too), with their
 /// 8.3 names.
 fn fat_directory(dir: &Path) -> Vec<(std::ffi::OsString, String)> {
-    let names: Vec<std::ffi::OsString> =
-        std::fs::read_dir(dir).map(|entries| entries.flatten().map(|entry| entry.file_name()).collect()).unwrap_or_default();
-    let long: Vec<String> = names.iter().map(|name| name.to_string_lossy().into_owned()).collect();
+    let names: Vec<std::ffi::OsString> = std::fs::read_dir(dir)
+        .map(|entries| entries.flatten().map(|entry| entry.file_name()).collect())
+        .unwrap_or_default();
+    let long: Vec<String> = names
+        .iter()
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect();
     names.into_iter().zip(fat_short_names(&long)).collect()
 }
 
@@ -968,7 +1083,11 @@ fn short_name_in(dir: &Path, long: &str) -> String {
         .find(|(name, _)| name.to_string_lossy() == long)
         .map(|(_, short)| short)
         .unwrap_or_else(|| fat_short_names(&[long.to_owned()]).remove(0));
-    if short.contains('.') { short } else { format!("{short}.") }
+    if short.contains('.') {
+        short
+    } else {
+        format!("{short}.")
+    }
 }
 
 /// `*` and `?` wildcards, ignoring case.
@@ -976,10 +1095,12 @@ fn wildcard(pattern: &str, name: &str) -> bool {
     fn matches(pattern: &[u8], name: &[u8]) -> bool {
         match (pattern.first(), name.first()) {
             (None, None) => true,
-            (Some(b'*'), _) => matches(&pattern[1..], name) || (!name.is_empty() && matches(pattern, &name[1..])),
+            (Some(b'*'), _) => {
+                matches(&pattern[1..], name) || (!name.is_empty() && matches(pattern, &name[1..]))
+            }
             (Some(b'?'), Some(_)) => matches(&pattern[1..], &name[1..]),
             (Some(p), Some(n)) => p.eq_ignore_ascii_case(n) && matches(&pattern[1..], &name[1..]),
-            _ => false
+            _ => false,
         }
     }
     let pattern = pattern.rsplit(['/', '\\']).next().unwrap_or(pattern);
@@ -989,11 +1110,18 @@ fn wildcard(pattern: &str, name: &str) -> bool {
 /// The time, as the board prints it (UTC).
 /// The time, as the board prints it (and UniDOS's node reads it): UTC plus `time_zone` hours.
 fn now(time_zone: i64) -> String {
-    let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
         + time_zone * 3600;
     let (days, time) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
     let (year, month, day) = crate::calendar::civil_from_days(days);
-    format!("{:02}:{:02}:{:02} {year}-{month:02}-{day:02}", time / 3600, time / 60 % 60, time % 60)
+    format!(
+        "{:02}:{:02}:{:02} {year}-{month:02}-{day:02}",
+        time / 3600,
+        time / 60 % 60,
+        time % 60
+    )
 }
 
 /// Where a test's SD card goes.
@@ -1016,7 +1144,11 @@ mod test {
         packet.extend_from_slice(params);
         board.execute(&packet);
         let rom = board.rom();
-        assert_eq!(u16::from_le_bytes([rom[RESPONSE + 1], rom[RESPONSE + 2]]), command, "echoed");
+        assert_eq!(
+            u16::from_le_bytes([rom[RESPONSE + 1], rom[RESPONSE + 2]]),
+            command,
+            "echoed"
+        );
         let length = usize::from(rom[RESPONSE]).saturating_sub(2);
         rom[RESPONSE + 3..RESPONSE + 3 + length].to_vec()
     }
@@ -1036,14 +1168,24 @@ mod test {
     fn files_are_written_and_read_back() {
         let (mut board, sd) = board("files");
         // as CAS OUT: fd 2
-        assert_eq!(run(&mut board, C_OPEN, &named("hello.txt", FA_WRITE | FA_CREATE_ALWAYS)), vec![2, 0]);
+        assert_eq!(
+            run(
+                &mut board,
+                C_OPEN,
+                &named("hello.txt", FA_WRITE | FA_CREATE_ALWAYS)
+            ),
+            vec![2, 0]
+        );
         assert_eq!(run(&mut board, C_WRITE, &[2, b'H', b'i', b'!']), vec![0]);
         assert_eq!(run(&mut board, C_CLOSE, &[2]), vec![0]);
         assert_eq!(std::fs::read(sd.join("hello.txt")).unwrap(), b"Hi!");
         assert_eq!(run(&mut board, C_CLOSE, &[2]), vec![0xff], "not open");
 
         // as CAS IN, the name in another case: fd 1
-        assert_eq!(run(&mut board, C_OPEN, &named("HELLO.TXT", 0x01)), vec![1, 0]);
+        assert_eq!(
+            run(&mut board, C_OPEN, &named("HELLO.TXT", 0x01)),
+            vec![1, 0]
+        );
         assert_eq!(run(&mut board, C_FSIZE, &[1])[..2], [3, 0]);
         let read = run(&mut board, C_READ, &[1, 2, 0]);
         assert_eq!(read, vec![0, b'H', b'i']);
@@ -1055,8 +1197,14 @@ mod test {
 
         // dynamic descriptors, and AMSDOS's extensions
         std::fs::write(sd.join("GAME.BAS"), b"10 PRINT").unwrap();
-        assert_eq!(run(&mut board, C_OPEN, &named("game", 0x01 | FD_DYNAMIC)), vec![3, 0]);
-        assert_eq!(run(&mut board, C_OPEN, &named("missing", 0x01))[1], FR_NO_FILE);
+        assert_eq!(
+            run(&mut board, C_OPEN, &named("game", 0x01 | FD_DYNAMIC)),
+            vec![3, 0]
+        );
+        assert_eq!(
+            run(&mut board, C_OPEN, &named("missing", 0x01))[1],
+            FR_NO_FILE
+        );
     }
 
     #[test]
@@ -1064,7 +1212,10 @@ mod test {
         let (mut board, sd) = board("dirs");
         std::fs::write(sd.join("demo.bin"), vec![0; 2000]).unwrap();
         std::fs::write(sd.join(".hidden"), b"").unwrap();
-        assert_eq!(run(&mut board, C_MAKEDIR, &nul_terminated("games")), vec![0]);
+        assert_eq!(
+            run(&mut board, C_MAKEDIR, &nul_terminated("games")),
+            vec![0]
+        );
 
         run(&mut board, C_DIRSETARGS, &[0]);
         let first = run(&mut board, C_READDIR, &[]);
@@ -1083,15 +1234,31 @@ mod test {
         assert_eq!(run(&mut board, C_CD, &nul_terminated("GAMES")), vec![0]);
         assert_eq!(run(&mut board, C_GETPATH, &[]), nul_terminated("/games"));
         assert_eq!(board.rom()[RESPONSE], 2 + 7, "+0: 2 + the path and its NUL");
-        assert_eq!(run(&mut board, C_CD, &nul_terminated("nowhere")), vec![0xff]);
+        assert_eq!(
+            run(&mut board, C_CD, &nul_terminated("nowhere")),
+            vec![0xff]
+        );
         assert_eq!(run(&mut board, C_CD, &nul_terminated("../../..")), vec![0]);
         assert_eq!(board.path(), "/", "not above the card");
 
-        assert_eq!(run(&mut board, C_RENAME, &[nul_terminated("demo.bin"), nul_terminated("other.bin")].concat()), vec![0]);
+        assert_eq!(
+            run(
+                &mut board,
+                C_RENAME,
+                &[nul_terminated("demo.bin"), nul_terminated("other.bin")].concat()
+            ),
+            vec![0]
+        );
         assert!(sd.join("other.bin").is_file());
-        assert_eq!(run(&mut board, C_ERASEFILE, &nul_terminated("other.bin")), vec![0]);
+        assert_eq!(
+            run(&mut board, C_ERASEFILE, &nul_terminated("other.bin")),
+            vec![0]
+        );
         assert!(!sd.join("other.bin").exists());
-        assert_eq!(run(&mut board, C_ERASEFILE, &nul_terminated("other.bin"))[0], 0xff);
+        assert_eq!(
+            run(&mut board, C_ERASEFILE, &nul_terminated("other.bin"))[0],
+            0xff
+        );
     }
 
     /// A DSK image is entered as a directory (RulezCharge's "Reset + Open .DSK"), its AMSDOS
@@ -1099,19 +1266,44 @@ mod test {
     #[test]
     fn a_dsk_image_is_a_directory() {
         let (mut board, sd) = board("dsk");
-        let image = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m4sd/Columns_CPC_v2004.1.1__ENGLISH.dsk");
+        let image = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("m4sd/Columns_CPC_v2004.1.1__ENGLISH.dsk");
         std::fs::copy(image, sd.join("Columns.dsk")).unwrap();
-        assert_eq!(run(&mut board, C_CD, &nul_terminated("columns.DSK")), vec![0]);
+        assert_eq!(
+            run(&mut board, C_CD, &nul_terminated("columns.DSK")),
+            vec![0]
+        );
         assert_eq!(run(&mut board, C_CD, &nul_terminated("..")), vec![0]);
         // by its 8.3 name too (CAT shows it so)
-        std::fs::rename(sd.join("Columns.dsk"), sd.join("Columns_CPC_v2004.1.1__ENGLISH.dsk")).unwrap();
+        std::fs::rename(
+            sd.join("Columns.dsk"),
+            sd.join("Columns_CPC_v2004.1.1__ENGLISH.dsk"),
+        )
+        .unwrap();
         run(&mut board, C_DIRSETARGS, &[0]);
         assert_eq!(&run(&mut board, C_READDIR, &[])[..12], b"COLUMN~1.DSK");
-        assert_eq!(run(&mut board, C_CD, &nul_terminated("column~1.dsk")), vec![0]);
-        assert_eq!(run(&mut board, C_CD, &nul_terminated("/COLUMN~1 .DSK")), vec![0], "as CAT pads it");
-        std::fs::rename(sd.join("Columns_CPC_v2004.1.1__ENGLISH.dsk"), sd.join("Columns.dsk")).unwrap();
-        assert_eq!(run(&mut board, C_CD, &nul_terminated("/columns.DSK")), vec![0]);
-        assert_eq!(run(&mut board, C_GETPATH, &[]), nul_terminated("/Columns.dsk"));
+        assert_eq!(
+            run(&mut board, C_CD, &nul_terminated("column~1.dsk")),
+            vec![0]
+        );
+        assert_eq!(
+            run(&mut board, C_CD, &nul_terminated("/COLUMN~1 .DSK")),
+            vec![0],
+            "as CAT pads it"
+        );
+        std::fs::rename(
+            sd.join("Columns_CPC_v2004.1.1__ENGLISH.dsk"),
+            sd.join("Columns.dsk"),
+        )
+        .unwrap();
+        assert_eq!(
+            run(&mut board, C_CD, &nul_terminated("/columns.DSK")),
+            vec![0]
+        );
+        assert_eq!(
+            run(&mut board, C_GETPATH, &[]),
+            nul_terminated("/Columns.dsk")
+        );
 
         run(&mut board, C_DIRSETARGS, &[0]);
         let mut entry = run(&mut board, C_READDIR, &[]);
@@ -1126,14 +1318,27 @@ mod test {
         assert_eq!(run(&mut board, C_OPEN, &named("COLUMNS .BAS", 0x01))[1], 0);
         let data = run(&mut board, C_READ, &[1, 128, 0]);
         assert_eq!(&data[2..9], b"COLUMNS", "the header's name");
-        assert_eq!(run(&mut board, C_OPEN, &named("nothere.bas", 0x01))[1], FR_NO_FILE);
-        assert_eq!(run(&mut board, C_OPEN, &named("columns.bas", FA_WRITE | FA_CREATE_ALWAYS))[1], FR_DENIED);
+        assert_eq!(
+            run(&mut board, C_OPEN, &named("nothere.bas", 0x01))[1],
+            FR_NO_FILE
+        );
+        assert_eq!(
+            run(
+                &mut board,
+                C_OPEN,
+                &named("columns.bas", FA_WRITE | FA_CREATE_ALWAYS)
+            )[1],
+            FR_DENIED
+        );
 
         assert_eq!(run(&mut board, C_CD, &nul_terminated("..")), vec![0]);
         assert_eq!(board.path(), "/");
         // a file that isn't a disc image is no directory
         std::fs::write(sd.join("bad.dsk"), b"not a disc").unwrap();
-        assert_eq!(run(&mut board, C_CD, &nul_terminated("bad.dsk")), vec![0xff]);
+        assert_eq!(
+            run(&mut board, C_CD, &nul_terminated("bad.dsk")),
+            vec![0xff]
+        );
     }
 
     #[test]
@@ -1147,13 +1352,21 @@ mod test {
         // to the NMI ROM: not emulated, nothing written
         board.execute(&[0, 0xfd, 0x43, 0x01, 0x00, 1, 0, 0xff, 0x55]);
         assert_ne!(board.rom()[1], 0x55);
-        assert_eq!(run(&mut board, 0x4327, &[])[..3], *b"Not", "UPGRADE: not emulated");
+        assert_eq!(
+            run(&mut board, 0x4327, &[])[..3],
+            *b"Not",
+            "UPGRADE: not emulated"
+        );
     }
 
     #[test]
     fn a_name_without_extension_gets_amsdos_one() {
         let (mut board, sd) = board("extension");
-        run(&mut board, C_OPEN, &named("prog", FA_WRITE | FA_CREATE_ALWAYS));
+        run(
+            &mut board,
+            C_OPEN,
+            &named("prog", FA_WRITE | FA_CREATE_ALWAYS),
+        );
         run(&mut board, C_WRITE, &[2, 1, 2, 3]);
         run(&mut board, C_CLOSE, &[2]);
         assert!(sd.join("prog.bas").is_file(), "no header: .BAS");
@@ -1162,7 +1375,11 @@ mod test {
         header[18] = 2;
         let sum: u16 = header[..67].iter().map(|&b| u16::from(b)).sum();
         header[67..69].copy_from_slice(&sum.to_le_bytes());
-        run(&mut board, C_OPEN, &named("CODE", FA_WRITE | FA_CREATE_ALWAYS));
+        run(
+            &mut board,
+            C_OPEN,
+            &named("CODE", FA_WRITE | FA_CREATE_ALWAYS),
+        );
         let mut write = vec![2];
         write.extend_from_slice(&header);
         run(&mut board, C_WRITE, &write);
@@ -1172,20 +1389,58 @@ mod test {
 
     #[test]
     fn names() {
-        let short = |names: &[&str]| fat_short_names(&names.iter().map(|name| name.to_string()).collect::<Vec<_>>());
+        let short = |names: &[&str]| {
+            fat_short_names(
+                &names
+                    .iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>(),
+            )
+        };
         // the M4's documentation (|LONGNAME): "ROMCON~1.BIN" is romconfig.bin
         assert_eq!(short(&["romconfig.bin"]), ["ROMCON~1.BIN"]);
         assert_eq!(
-            short(&["Columns_CPC_v2004.1.1__ENGLISH.dsk", "Blight-Benediction.dsk"]),
+            short(&[
+                "Columns_CPC_v2004.1.1__ENGLISH.dsk",
+                "Blight-Benediction.dsk"
+            ]),
             ["COLUMN~1.DSK", "BLIGHT~1.DSK"]
         );
         // 8.3 names keep theirs, upper case; dots but the last, spaces, +,;=[] are lost
-        assert_eq!(short(&["readme", "Game.bas", "hello.world.txt", "a b.txt", "x+y.bin"]), ["README", "GAME.BAS", "HELLOW~1.TXT", "AB~1.TXT", "X_Y~1.BIN"]);
+        assert_eq!(
+            short(&[
+                "readme",
+                "Game.bas",
+                "hello.world.txt",
+                "a b.txt",
+                "x+y.bin"
+            ]),
+            [
+                "README",
+                "GAME.BAS",
+                "HELLOW~1.TXT",
+                "AB~1.TXT",
+                "X_Y~1.BIN"
+            ]
+        );
         // collisions take the next number, in the names' order; past 5 a hash of the long name
         let many: Vec<String> = (1..=7).map(|n| format!("longfilename{n}.txt")).collect();
         let names = fat_short_names(&many);
-        assert_eq!(&names[..5], ["LONGFI~1.TXT", "LONGFI~2.TXT", "LONGFI~3.TXT", "LONGFI~4.TXT", "LONGFI~5.TXT"]);
-        assert!(names[5].starts_with("LO") && names[5].contains('~') && names[5].len() == 12, "{}", names[5]);
+        assert_eq!(
+            &names[..5],
+            [
+                "LONGFI~1.TXT",
+                "LONGFI~2.TXT",
+                "LONGFI~3.TXT",
+                "LONGFI~4.TXT",
+                "LONGFI~5.TXT"
+            ]
+        );
+        assert!(
+            names[5].starts_with("LO") && names[5].contains('~') && names[5].len() == 12,
+            "{}",
+            names[5]
+        );
         assert_ne!(names[5], names[6]);
         assert!(wildcard("*.BAS", "game.bas"));
         assert!(!wildcard("*.BAS", "game.bin"));

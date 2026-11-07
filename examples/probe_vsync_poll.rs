@@ -25,7 +25,11 @@ fn main() {
         let vs = mb.crtc().vsync();
         if vs && !prev_vs {
             if let Some(last) = last_vs {
-                print!("VSYNC +{:6}.{:02}  ", (tick - last) / 16, (tick - last) % 16);
+                print!(
+                    "VSYNC +{:6}.{:02}  ",
+                    (tick - last) / 16,
+                    (tick - last) % 16
+                );
             }
             last_vs = Some(tick);
             vs_at = Some(tick);
@@ -33,7 +37,12 @@ fn main() {
         prev_vs = vs;
         if mb.is_aligned_with_new_instruction() && mb.pc() == pc {
             if let Some(at) = vs_at.take() {
-                println!("code {:3}.{:02} us after the VSYNC (C0={})", (tick - at) / 16, (tick - at) % 16, mb.crtc().hcc);
+                println!(
+                    "code {:3}.{:02} us after the VSYNC (C0={})",
+                    (tick - at) / 16,
+                    (tick - at) % 16,
+                    mb.crtc().hcc
+                );
                 seen += 1;
             }
         }

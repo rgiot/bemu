@@ -21,10 +21,10 @@ pub use cpu::CpuCrt;
 pub use crt::{CrtParams, CrtProfile, Warp};
 #[cfg(not(target_arch = "wasm32"))]
 pub use curved::Curved;
-#[cfg(feature = "crt-gpu")]
-pub use gpu::{Blit, CrtPass, FrameTexture};
 #[cfg(all(feature = "crt-gpu", not(target_arch = "wasm32")))]
 pub use gpu::{wait_for, GpuCrt};
+#[cfg(feature = "crt-gpu")]
+pub use gpu::{Blit, CrtPass, FrameTexture};
 
 use image::RgbImage;
 use std::str::FromStr;
@@ -42,7 +42,7 @@ pub enum DisplayMode {
     #[default]
     Raw,
     /// An approximation of a CRT, see [`crt`].
-    Crt(CrtProfile)
+    Crt(CrtProfile),
 }
 
 impl DisplayMode {
@@ -56,7 +56,7 @@ impl DisplayMode {
     pub fn output_size(self) -> (usize, usize) {
         match self {
             Self::Raw => (RAW_WIDTH, RAW_HEIGHT),
-            Self::Crt(profile) => profile.params().output_size()
+            Self::Crt(profile) => profile.params().output_size(),
         }
     }
 
@@ -67,7 +67,7 @@ impl DisplayMode {
             Self::Crt(CrtProfile::Ctm644) => Self::Crt(CrtProfile::Trinitron),
             Self::Crt(CrtProfile::Trinitron) => Self::Crt(CrtProfile::Gt65),
             Self::Crt(CrtProfile::Gt65) => Self::Crt(CrtProfile::AtariColor),
-            Self::Crt(CrtProfile::AtariColor) => Self::Raw
+            Self::Crt(CrtProfile::AtariColor) => Self::Raw,
         }
     }
 
@@ -104,7 +104,7 @@ impl DisplayMode {
     pub fn warp(self, curvature: f32) -> Warp {
         match self {
             Self::Raw => Warp::FLAT,
-            Self::Crt(profile) => Warp::of(profile, curvature)
+            Self::Crt(profile) => Warp::of(profile, curvature),
         }
     }
 }
@@ -118,7 +118,7 @@ impl FromStr for DisplayMode {
             other => other
                 .parse()
                 .map(Self::Crt)
-                .map_err(|_| format!("unknown display {other:?} (expected {})", Self::NAMES))
+                .map_err(|_| format!("unknown display {other:?} (expected {})", Self::NAMES)),
         }
     }
 }
@@ -191,7 +191,10 @@ mod test {
     #[test]
     fn mode_parses() {
         assert_eq!("raw".parse::<DisplayMode>(), Ok(DisplayMode::Raw));
-        assert_eq!("ctm".parse::<DisplayMode>(), Ok(DisplayMode::Crt(CrtProfile::Ctm644)));
+        assert_eq!(
+            "ctm".parse::<DisplayMode>(),
+            Ok(DisplayMode::Crt(CrtProfile::Ctm644))
+        );
         assert!("nope".parse::<DisplayMode>().is_err());
     }
 
@@ -211,6 +214,9 @@ mod test {
     #[test]
     fn render_to_image_has_the_output_size() {
         let image = RawFilter.render_to_image(&RgbImage::new(768, 272));
-        assert_eq!((image.width() as usize, image.height() as usize), (RAW_WIDTH, RAW_HEIGHT));
+        assert_eq!(
+            (image.width() as usize, image.height() as usize),
+            (RAW_WIDTH, RAW_HEIGHT)
+        );
     }
 }

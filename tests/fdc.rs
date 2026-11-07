@@ -15,7 +15,9 @@ const DIO: u8 = 1 << 6;
 
 fn disk_with_known_sector() -> (AnyDisc, u8, u16) {
     let mut dsk = single_head_data_dsk();
-    let sector_id = dsk.track_min_sector(Head::A, 0).expect("track 0 must be formatted");
+    let sector_id = dsk
+        .track_min_sector(Head::A, 0)
+        .expect("track 0 must be formatted");
     let bytes = dsk
         .sector_read_bytes(Head::A, 0, sector_id)
         .expect("sector must exist");
@@ -74,7 +76,10 @@ fn read_data_full_roundtrip() {
         result.push(fdc.read_data());
     }
     // the terminal count is not wired on a CPC: a read ends on EOT with End of Cylinder
-    assert_eq!(result[0], 0x40, "ST0 should report the abnormal termination of the end of cylinder");
+    assert_eq!(
+        result[0], 0x40,
+        "ST0 should report the abnormal termination of the end of cylinder"
+    );
     assert_eq!(result[1], 0x80, "ST1 should report End of Cylinder only");
     assert_eq!(result[2], 0x00, "ST2 should report no error");
     assert_eq!(result[3], 0x00, "result C");
@@ -95,7 +100,17 @@ fn read_data_sector_not_found_reports_no_data() {
     fdc.insert_disk(FdcDrive::A, Some(disk)).unwrap();
     fdc.set_motor(true);
 
-    let command = [0x46, 0x00, 0x00, 0x00, missing_sector, 0x02, missing_sector, 0x2a, 0xff];
+    let command = [
+        0x46,
+        0x00,
+        0x00,
+        0x00,
+        missing_sector,
+        0x02,
+        missing_sector,
+        0x2a,
+        0xff,
+    ];
     for &byte in &command {
         fdc.write_data(byte);
     }
@@ -104,7 +119,11 @@ fn read_data_sector_not_found_reports_no_data() {
     for _ in 0..7 {
         result.push(fdc.read_data());
     }
-    assert_eq!(result[0] & 0xc0, 0x40, "ST0 should report abnormal termination");
+    assert_eq!(
+        result[0] & 0xc0,
+        0x40,
+        "ST0 should report abnormal termination"
+    );
     assert_eq!(result[1] & 0x04, 0x04, "ST1 ND (no data) bit should be set");
 }
 
@@ -123,7 +142,11 @@ fn read_data_without_disk_reports_not_ready() {
     for _ in 0..7 {
         result.push(fdc.read_data());
     }
-    assert_eq!(result[0] & 0x08, 0x08, "ST0 NR (not ready) bit should be set");
+    assert_eq!(
+        result[0] & 0x08,
+        0x08,
+        "ST0 NR (not ready) bit should be set"
+    );
 }
 
 #[test]
@@ -147,7 +170,11 @@ fn seek_and_sense_interrupt_status() {
     fdc.write_data(0x08);
     let st0 = fdc.read_data();
     let pcn = fdc.read_data();
-    assert_eq!(st0 & 0xe0, 0x20, "ST0: normal termination with SE (seek end)");
+    assert_eq!(
+        st0 & 0xe0,
+        0x20,
+        "ST0: normal termination with SE (seek end)"
+    );
     assert_eq!(pcn, 5, "PCN should report the new track");
 
     // A second SIS with nothing pending reports invalid command, one byte.
@@ -240,7 +267,10 @@ fn motherboard_reads_disk_through_real_io_ports() {
         .disable_lower_rom()
         .disable_upper_rom()
         .build();
-    motherboard.fdc_mut().insert_disk(FdcDrive::A, Some(disk)).unwrap();
+    motherboard
+        .fdc_mut()
+        .insert_disk(FdcDrive::A, Some(disk))
+        .unwrap();
     // the program below reads the bytes blindly, without waiting for RQM
     motherboard.fdc_mut().set_realistic_timing(false);
 
@@ -284,8 +314,16 @@ fn motherboard_reads_disk_through_real_io_ports() {
             "data byte {i}"
         );
     }
-    assert_eq!(motherboard.read_byte(result_buffer + sector_len), 0x40, "ST0 (end of cylinder)");
-    assert_eq!(motherboard.read_byte(result_buffer + sector_len + 5), sector_id, "result R");
+    assert_eq!(
+        motherboard.read_byte(result_buffer + sector_len),
+        0x40,
+        "ST0 (end of cylinder)"
+    );
+    assert_eq!(
+        motherboard.read_byte(result_buffer + sector_len + 5),
+        sector_id,
+        "result R"
+    );
 }
 
 const CB: u8 = 1 << 4;
@@ -337,5 +375,9 @@ fn commands_are_accepted_again_after_an_invalid_sense_interrupt() {
     fdc.read_data();
 
     fdc.write_data(0x03); // SPECIFY
-    assert_eq!(fdc.read_status() & (RQM | CB), RQM | CB, "command byte was not accepted");
+    assert_eq!(
+        fdc.read_status() & (RQM | CB),
+        RQM | CB,
+        "command byte was not accepted"
+    );
 }

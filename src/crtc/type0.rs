@@ -12,7 +12,7 @@ use super::model::{pointer_mask, CrtcChip, CrtcType, DisplaySkew, PreviousRegist
 /// ACCC §4.3: which bits each register stores. R3 holds both the VSYNC and
 /// the HSYNC width, R8 the two skew fields and the interlace mode.
 const WRITE_MASK: [u8; 16] = [
-    0xff, 0xff, 0xff, 0xff, 0x7f, 0x1f, 0x7f, 0x7f, 0xf3, 0x1f, 0x7f, 0x1f, 0x3f, 0xff, 0x3f, 0xff
+    0xff, 0xff, 0xff, 0xff, 0x7f, 0x1f, 0x7f, 0x7f, 0xf3, 0x1f, 0x7f, 0x1f, 0x3f, 0xff, 0x3f, 0xff,
 ];
 
 /// C0 below which an R7 written with the value of C4 does not start a VSYNC
@@ -196,14 +196,18 @@ impl CrtcChip for Crtc0 {
     fn read_register(&self, context: &ReadContext) -> u8 {
         match context.selected & 0x1f {
             number @ 12..=17 => context.register(number) & pointer_mask(number),
-            _ => 0
+            _ => 0,
         }
     }
 
     /// ACCC §21.3.2: no status register; "my CPC CRTC 0 randomly returns 255
     /// or 127 on this port".
     fn read_status(&self, context: &ReadContext) -> u8 {
-        if context.noise { 0xff } else { 0x7f }
+        if context.noise {
+            0xff
+        } else {
+            0x7f
+        }
     }
 
     /// ACCC §14.6: with R3l = 0, CRTC 0 does not produce an HSYNC.
@@ -215,7 +219,7 @@ impl CrtcChip for Crtc0 {
     fn vsync_width(&self, r3: u8) -> u8 {
         match r3 >> 4 {
             0 => 16,
-            width => width
+            width => width,
         }
     }
 
@@ -256,7 +260,12 @@ impl CrtcChip for Crtc0 {
     fn register_written(&mut self, core: &mut Core, r: u8, previous: PreviousRegisters) {
         // ACCC §13.2.4: R0=0 written on the C0=0 that has just updated the counters makes it the
         // first C0=0 with R0=0; the next wrap is the second (C4 moves once if C9 reached R9)
-        if r == 0 && core.regs[0] == 0 && previous.r0 > 1 && core.hcc == 0 && self.r0_zero_wraps == 0 {
+        if r == 0
+            && core.regs[0] == 0
+            && previous.r0 > 1
+            && core.hcc == 0
+            && self.r0_zero_wraps == 0
+        {
             let hiccup = !core.in_vertical_adjust && self.c9_is_last(core);
             self.r0_zero_c4_pending = hiccup;
             if hiccup && core.vcc == core.regs[4] {
@@ -266,14 +275,22 @@ impl CrtcChip for Crtc0 {
         }
         // ACCC §13.7.2: R0 enlarged out of 1 when C0=1 and C9=R9 overflows C4
         // (even if C4<>R4); the step itself lands at C0=2.
-        if r == 0 && core.hcc == 1 && previous.r0 == 1 && core.regs[0] > 1 && self.c9_is_last(core)
+        if r == 0
+            && core.hcc == 1
+            && previous.r0 == 1
+            && core.regs[0] > 1
+            && self.c9_is_last(core)
             && !core.in_vertical_adjust
         {
             self.r0_enlarge_steps_c4 = true;
         }
         // an early window of an R3l=2 HSYNC that turns out wide (R3 raised on the very
         // character R2 names, HBL's main sync) is not drawn early
-        if r == 3 && self.early_blank_chars > 0 && core.hcc == core.regs[2] && !self.hsync_is_two_wide(core) {
+        if r == 3
+            && self.early_blank_chars > 0
+            && core.hcc == core.regs[2]
+            && !self.hsync_is_two_wide(core)
+        {
             self.early_blank_chars = 0;
             self.two_wide_pulse = false;
         }
@@ -315,7 +332,8 @@ impl CrtcChip for Crtc0 {
     /// R3l=2: the Gate Array blanks and takes the mode a character before the pulse (AMSpiriT
     /// probe on HBL's R3=2 pulses), the pulse itself keeps its place for the interrupt counter.
     fn before_hsync_check(&mut self, core: &mut Core) {
-        if self.hsync_is_two_wide(core) && core.hcc.wrapping_add(1) == core.regs[2] && !core.hsync() {
+        if self.hsync_is_two_wide(core) && core.hcc.wrapping_add(1) == core.regs[2] && !core.hsync()
+        {
             self.early_blank_chars = 2;
             self.two_wide_pulse = true;
         }
@@ -481,13 +499,12 @@ impl CrtcChip for Crtc0 {
     fn last_line(&self) -> bool {
         self.last_line
     }
-
 }
 
 /// The skew field shared by the chips that have one (CRTC 0, 3, 4).
 pub(super) fn skew_from_r8(r8: u8) -> DisplaySkew {
     match (r8 >> 4) & 3 {
         3 => DisplaySkew::Blanked,
-        delay => DisplaySkew::Delayed(delay)
+        delay => DisplaySkew::Delayed(delay),
     }
 }

@@ -37,7 +37,9 @@ fn main() {
         let dt = (mb.t_state_counter().value() - t0) as u64;
         *stats.entry(key).or_default().entry(dt).or_default() += 1;
         n += 1;
-        if mb.pc() == to { hits += 1; }
+        if mb.pc() == to {
+            hits += 1;
+        }
     }
     for (k, v) in &stats {
         let d: Vec<String> = v.iter().map(|(dt, c)| format!("{}us x{}", dt, c)).collect();

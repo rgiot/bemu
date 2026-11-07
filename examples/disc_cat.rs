@@ -14,9 +14,17 @@ fn main() {
         "{} tracks, {} side(s){}",
         image.nb_tracks(),
         image.nb_heads(),
-        if image.is_bitstream() { ", bitstream" } else { "" }
+        if image.is_bitstream() {
+            ", bitstream"
+        } else {
+            ""
+        }
     );
     for entry in image.amsdos_catalog() {
-        println!("{:>3}K  {}", (usize::from(entry.records) * 128).div_ceil(1024), entry.filename());
+        println!(
+            "{:>3}K  {}",
+            (usize::from(entry.records) * 128).div_ceil(1024),
+            entry.filename()
+        );
     }
 }

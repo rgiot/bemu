@@ -28,8 +28,14 @@ fn main() {
         let b = mb.cpu().reg8(Reg8::B).value();
         let pc = mb.pc();
         eprintln!("DD 41 (LD B,C): B={b:02X} (expect 42), PC={pc:04X} (expect 0002)");
-        assert_eq!(b, 0x42, "DD 41 should transfer C into B exactly like unprefixed LD B,C");
-        assert_eq!(pc, 2, "DD 41 is a 2-byte instruction (DD + opcode), nothing more");
+        assert_eq!(
+            b, 0x42,
+            "DD 41 should transfer C into B exactly like unprefixed LD B,C"
+        );
+        assert_eq!(
+            pc, 2,
+            "DD 41 is a 2-byte instruction (DD + opcode), nothing more"
+        );
     }
 
     // Case 2: DD 01 nnnn = "LD BC,nnnn" (undocumented, DD prefix ignored)
@@ -47,7 +53,10 @@ fn main() {
         let pc = mb.pc();
         eprintln!("DD 01 34 12 (LD BC,1234): BC={bc:04X} (expect 1234), PC={pc:04X} (expect 0004)");
         assert_eq!(bc, 0x1234, "DD 01 nnnn should load BC from the two immediate bytes exactly like unprefixed LD BC,nnnn");
-        assert_eq!(pc, 4, "DD 01 nnnn is a 4-byte instruction (DD + opcode + 2 operand bytes)");
+        assert_eq!(
+            pc, 4,
+            "DD 01 nnnn is a 4-byte instruction (DD + opcode + 2 operand bytes)"
+        );
     }
 
     eprintln!("\nAll checks passed.");

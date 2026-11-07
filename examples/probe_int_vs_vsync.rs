@@ -27,7 +27,11 @@ fn main() {
         prev_vs = vs;
         let pc = mb.pc();
         if pc != prev_pc && (pc == 0x38 || pc == 0x39) {
-            println!("{:9.1} INT   (+{:.1} after vsync)", t as f64 / 16.0, (t - last_vs) as f64 / 16.0);
+            println!(
+                "{:9.1} INT   (+{:.1} after vsync)",
+                t as f64 / 16.0,
+                (t - last_vs) as f64 / 16.0
+            );
         }
         prev_pc = pc;
         let _ = mb.crtc_mut().take_write_log();

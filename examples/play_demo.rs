@@ -52,20 +52,49 @@ fn main() {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--run" => run_name = Some(args.next().expect("--run needs a name")),
-            "--args" => run_args = args.next().expect("--args needs the text to type after the closing quote"),
-            "--crtc" => crtc = args.next().expect("--crtc needs 0-4").parse().expect("--crtc must be 0-4"),
-            "--seconds" => seconds = args.next().expect("--seconds needs a number").parse().expect("bad number"),
-            "--every" => every = args.next().expect("--every needs a number").parse().expect("bad number"),
-            "--boot-wait" => boot_wait = args.next().expect("--boot-wait needs a number").parse().expect("bad number"),
+            "--args" => {
+                run_args = args
+                    .next()
+                    .expect("--args needs the text to type after the closing quote")
+            }
+            "--crtc" => {
+                crtc = args
+                    .next()
+                    .expect("--crtc needs 0-4")
+                    .parse()
+                    .expect("--crtc must be 0-4")
+            }
+            "--seconds" => {
+                seconds = args
+                    .next()
+                    .expect("--seconds needs a number")
+                    .parse()
+                    .expect("bad number")
+            }
+            "--every" => {
+                every = args
+                    .next()
+                    .expect("--every needs a number")
+                    .parse()
+                    .expect("bad number")
+            }
+            "--boot-wait" => {
+                boot_wait = args
+                    .next()
+                    .expect("--boot-wait needs a number")
+                    .parse()
+                    .expect("bad number")
+            }
             "--list" => list_only = true,
             _ if disc_path.is_none() => disc_path = Some(PathBuf::from(arg)),
             _ if output_dir.is_none() => output_dir = Some(PathBuf::from(arg)),
-            other => panic!("unexpected argument {other:?}")
+            other => panic!("unexpected argument {other:?}"),
         }
     }
     let disc_path = disc_path.expect("usage: play_demo <disc.dsk> <output_dir> [options]");
 
-    let bytes = std::fs::read(&disc_path).unwrap_or_else(|e| panic!("{}: {e}", disc_path.display()));
+    let bytes =
+        std::fs::read(&disc_path).unwrap_or_else(|e| panic!("{}: {e}", disc_path.display()));
     let disc = load_dsk(&bytes).unwrap_or_else(|e| panic!("{}: {e}", disc_path.display()));
     let catalog = disc.amsdos_catalog();
 
@@ -79,11 +108,18 @@ fn main() {
         .map(|name| {
             catalog
                 .iter()
-                .find(|e| e.filename().eq_ignore_ascii_case(name) || e.name.eq_ignore_ascii_case(name))
+                .find(|e| {
+                    e.filename().eq_ignore_ascii_case(name) || e.name.eq_ignore_ascii_case(name)
+                })
                 .unwrap_or_else(|| panic!("{name:?} is not on {}", disc_path.display()))
         })
         .or_else(|| pick_program(&catalog))
-        .unwrap_or_else(|| panic!("no plausible file to run on {} (see the catalog above, try --run)", disc_path.display()));
+        .unwrap_or_else(|| {
+            panic!(
+                "no plausible file to run on {} (see the catalog above, try --run)",
+                disc_path.display()
+            )
+        });
     let program = entry.filename();
     eprintln!("-> RUN\"{program}\"{run_args}");
 
@@ -92,7 +128,11 @@ fn main() {
 
     let mut runner = CslRunner::new(&output_dir);
     runner.set_verbose(true);
-    let disc_name = disc_path.file_name().unwrap().to_string_lossy().replace('\'', "");
+    let disc_name = disc_path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\'', "");
     let mut script = format!(
         "csl_version 1.0\n\
          crtc_select {crtc}\n\
@@ -113,7 +153,9 @@ fn main() {
         script.push_str(&format!("wait {}\nscreenshot\n", every * 1_000_000));
     }
 
-    let base_dir = disc_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let base_dir = disc_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
     match runner.run_text(&script, base_dir) {
         Ok(report) => {
             eprintln!(
@@ -126,7 +168,7 @@ fn main() {
             for ignored in report.ignored {
                 eprintln!("ignored: {ignored}");
             }
-        },
+        }
         Err(error) => {
             eprintln!("{error}");
             std::process::exit(1);
@@ -145,7 +187,7 @@ fn escape_for_csl(text: &str) -> String {
             '\'' => escaped.push_str(r"\(')"),
             '{' => escaped.push_str(r"\({)"),
             '}' => escaped.push_str(r"\(})"),
-            c => escaped.push(c)
+            c => escaped.push(c),
         }
     }
     escaped
@@ -159,11 +201,9 @@ fn print_catalog(catalog: &[AmsdosEntry]) {
     for entry in catalog {
         let flag = if !entry.is_plausible_filename() {
             " (CATART, not a real file)"
-        }
-        else if entry.hidden {
+        } else if entry.hidden {
             " (hidden)"
-        }
-        else {
+        } else {
             ""
         };
         eprintln!("  {}:{}{flag}", entry.user, entry.filename());
@@ -175,9 +215,16 @@ fn print_catalog(catalog: &[AmsdosEntry]) {
 /// `.BAS`, then whatever plausible entry sorts first - all among entries
 /// [`AmsdosEntry::is_plausible_filename`] accepts (real files, not CATART).
 fn pick_program(catalog: &[AmsdosEntry]) -> Option<&AmsdosEntry> {
-    let real: Vec<&AmsdosEntry> = catalog.iter().filter(|e| e.is_plausible_filename()).collect();
+    let real: Vec<&AmsdosEntry> = catalog
+        .iter()
+        .filter(|e| e.is_plausible_filename())
+        .collect();
 
-    let by_name = |wanted: &str| real.iter().find(|e| e.name.eq_ignore_ascii_case(wanted)).copied();
+    let by_name = |wanted: &str| {
+        real.iter()
+            .find(|e| e.name.eq_ignore_ascii_case(wanted))
+            .copied()
+    };
     let contains = |needle: &str| {
         real.iter()
             .filter(|e| e.name.to_ascii_uppercase().contains(needle))

@@ -1,9 +1,9 @@
 pub fn res_bit(byte: &mut u8, bit: u8) {
-    *byte &= !(1 << bit) ;
+    *byte &= !(1 << bit);
 }
 
 pub fn set_bit(byte: &mut u8, bit: u8) {
-    *byte |= 1 << bit ;
+    *byte |= 1 << bit;
 }
 
 pub fn and(byte: &mut u8, value: u8) {
@@ -18,7 +18,7 @@ pub fn xor(byte: &mut u8, value: u8) {
     *byte ^= value;
 }
 
-pub fn rla(byte: &mut u8, c: bool) -> bool  {
+pub fn rla(byte: &mut u8, c: bool) -> bool {
     let bit7 = *byte & 1 << 7 != 0;
     *byte <<= 1;
     if c {
@@ -46,7 +46,7 @@ pub fn rr(byte: &mut u8, c: bool) -> bool {
 }
 
 pub fn rrc(byte: &mut u8) -> bool {
-    let bit0 = *byte & 1  != 0;
+    let bit0 = *byte & 1 != 0;
     *byte >>= 1;
     if bit0 {
         set_bit(byte, 7);
@@ -65,8 +65,6 @@ pub fn sla(byte: &mut u8) -> bool {
     *byte <<= 1;
     bit7
 }
-
-
 
 pub fn srl(byte: &mut u8) -> bool {
     let bit0 = *byte & 1 << 0 != 0;

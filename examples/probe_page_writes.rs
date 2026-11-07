@@ -25,15 +25,28 @@ fn main() {
         let c = mb.crtc().counters();
         if show_vma && (c.vcc, c.vlc) != last_line {
             last_line = (c.vcc, c.vlc);
-            println!("line C4={} C9={} C0={} vma={:04X}", c.vcc, c.vlc, c.hcc, mb.crtc().vma());
+            println!(
+                "line C4={} C9={} C0={} vma={:04X}",
+                c.vcc,
+                c.vlc,
+                c.hcc,
+                mb.crtc().vma()
+            );
         }
         for access in mb.take_bus_accesses() {
             if (access.kind == BusAccessKind::MemoryWrite && (from..=to).contains(&access.address))
-                || (access.kind == BusAccessKind::IoWrite && access.address >> 8 == 0x7f && std::env::var("PROBE_GA").is_ok())
+                || (access.kind == BusAccessKind::IoWrite
+                    && access.address >> 8 == 0x7f
+                    && std::env::var("PROBE_GA").is_ok())
             {
                 println!(
                     "us={} pc={pc:04X} {:04X}={:02X} C0={} C4={} C9={}",
-                    mb.t_state_counter().value() / 4 - start, access.address, access.value, c.hcc, c.vcc, c.vlc
+                    mb.t_state_counter().value() / 4 - start,
+                    access.address,
+                    access.value,
+                    c.hcc,
+                    c.vcc,
+                    c.vlc
                 );
             }
         }

@@ -11,20 +11,17 @@ use crate::z80::{HasValue, Reg16, Z80};
 
 pub use self::breakpoint::BreakPoint;
 
-
-mod interpretor;
 mod breakpoint;
+mod interpretor;
 mod stepable;
 
-use stepable::StepInto;
 use interpretor::*;
+use stepable::StepInto;
 
 #[cfg(not(target_arch = "wasm32"))]
 use rustyline::error::ReadlineError;
 #[cfg(not(target_arch = "wasm32"))]
 use rustyline::Editor;
-
-
 
 pub struct Monitor {}
 
@@ -84,24 +81,23 @@ impl Monitor {
 
     pub fn monitor_crtc_counters(crtc: &Crtc) {
         println!(
-            "VSC:{}{} VCC:{} VLC:{} VTAC:{} | HSC:{}{} HDC:{} HCC:{} | VMA:0x{:x}", 
-            if crtc.vsync(){"*"}else{""},
+            "VSC:{}{} VCC:{} VLC:{} VTAC:{} | HSC:{}{} HDC:{} HCC:{} | VMA:0x{:x}",
+            if crtc.vsync() { "*" } else { "" },
             crtc.vsc,
             crtc.vcc.value(),
             crtc.vlc.value(),
             crtc.vtac,
-
-            if crtc.hsync(){"*"}else{""},
+            if crtc.hsync() { "*" } else { "" },
             crtc.hsc,
             crtc.hdc,
             crtc.hcc,
-
             crtc.vma()
         );
     }
 
     pub fn monitor_crtc_pins(crtc: &Crtc) {
-        println!("CCLK:{} EN:{} A8/RS:{} A9/RW:{} A14/CS:{}, data: {}",
+        println!(
+            "CCLK:{} EN:{} A8/RS:{} A9/RW:{} A14/CS:{}, data: {}",
             crtc.get_pin(CrtcPin::CCLK),
             crtc.get_pin(CrtcPin::EN),
             crtc.get_pin(CrtcPin::RS),
@@ -154,7 +150,7 @@ impl Monitor {
         );
     }
 
-    pub fn monitor_z80_flags(cpu: &Z80) {   
+    pub fn monitor_z80_flags(cpu: &Z80) {
         if cpu.flag(Z80Flags::S) {
             print!("S");
         } else {
@@ -196,7 +192,6 @@ impl Monitor {
         } else {
             print!("-");
         }
-      
 
         if cpu.flag(Z80Flags::C) {
             print!("C");
@@ -210,7 +205,7 @@ impl Monitor {
         println!(
             "Pen: {:#?} Mode:{} R52: {} UR: {:?}  LR: {:?} Palette {:?}",
             ga.pen().value(),
-		    ga.current_mode() as u8,
+            ga.current_mode() as u8,
             ga.r52(),
             ga.upper_rom_pagging(),
             ga.lower_rom_pagging(),
@@ -230,19 +225,17 @@ impl Monitor {
         println!("{}", motherboard.disassemble_next_instruction());
     }
 
-
-
     /// Wrap the motherboard around a cli interface (a terminal: not in a web page)
     /// TODO handle special case as the one of zexdoc where prints are emulated
     #[cfg(not(target_arch = "wasm32"))]
     pub fn cli_monitoring(motherboard: &mut Motherboard, ctx: &mut MonitorContext) {
-         // `()` can be used when no completer is required
+        // `()` can be used when no completer is required
         let mut rl = Editor::<()>::new();
         if rl.load_history("history.txt").is_err() {
             println!("No previous history.");
         }
 
-        let mut previous : Option<String> = None;
+        let mut previous: Option<String> = None;
         loop {
             ctx.execute_displays(motherboard);
             ctx.print_instruction(&motherboard.disassemble_next_instruction());
@@ -263,11 +256,9 @@ impl Monitor {
                         previous = Some(line.clone());
                         line
                     };
-                    
+
                     let quit = match interpretor::parse_command(&line, &ctx.symbols) {
-                        Ok(cmd) => {
-                            ctx.execute_command(motherboard, cmd)
-                        }
+                        Ok(cmd) => ctx.execute_command(motherboard, cmd),
                         _ => {
                             eprintln!("Error in the command line");
                             false
@@ -276,18 +267,18 @@ impl Monitor {
                     if quit {
                         break;
                     }
-                },
+                }
                 Err(ReadlineError::Interrupted) => {
                     println!("CTRL-C");
-                    break
-                },
+                    break;
+                }
                 Err(ReadlineError::Eof) => {
                     println!("CTRL-D");
-                    break
-                },
+                    break;
+                }
                 Err(err) => {
                     println!("Error: {:?}", err);
-                    break
+                    break;
                 }
             }
         }
@@ -313,14 +304,13 @@ pub struct MonitorContext<'f> {
     symbols: crate::symbols::SymbolTable,
 }
 
-
 impl<'f> MonitorContext<'f> {
     pub fn new(handle: Box<&'f mut dyn Fn(&mut Motherboard) -> bool>) -> Self {
         Self {
             breakpoints: Default::default(),
             displays: Default::default(),
             pre_exec: Some(handle),
-            symbols: Default::default()
+            symbols: Default::default(),
         }
     }
 
@@ -337,7 +327,10 @@ impl<'f> MonitorContext<'f> {
             text.push_str(&format!("{label}:\n"));
         }
         text.push_str(&instruction.to_string());
-        if let Some(target) = instruction.target().and_then(|target| self.symbols.describe(target)) {
+        if let Some(target) = instruction
+            .target()
+            .and_then(|target| self.symbols.describe(target))
+        {
             text.push_str(&format!(" ; {target}"));
         }
         text
@@ -347,8 +340,8 @@ impl<'f> MonitorContext<'f> {
         match breakpoint {
             BreakPoint::Address(address) => match self.symbols.describe(*address) {
                 Some(label) => format!("{} ({label})", breakpoint),
-                None => breakpoint.to_string()
-            }
+                None => breakpoint.to_string(),
+            },
         }
     }
 
@@ -356,8 +349,7 @@ impl<'f> MonitorContext<'f> {
         println!("{}", self.format_instruction(instruction));
     }
 }
-pub enum MonitorError {
-}
+pub enum MonitorError {}
 
 impl<'f> MonitorContext<'f> {
     /// Execute the command. Return true if it is expected to leave
@@ -373,13 +365,13 @@ impl<'f> MonitorContext<'f> {
                 false
             }
             Command::Disassemble(addr) => {
-                self.execute_disassemble(motherboard,  addr);
+                self.execute_disassemble(motherboard, addr);
                 false
-            },
+            }
             Command::Break(b) => {
                 self.add_breakpoint(b);
                 false
-            },
+            }
             Command::Clear(b) => {
                 self.clear_breakpoint(b);
                 false
@@ -387,16 +379,16 @@ impl<'f> MonitorContext<'f> {
             Command::Help => {
                 Self::execute_help();
                 false
-            },
+            }
             Command::Info(info) => {
-                self.execute_info(motherboard, &info); 
+                self.execute_info(motherboard, &info);
                 false
-            },
+            }
             Command::Display(info) => {
                 self.displays.push(info);
                 false
             }
-            Command::Quit => true
+            Command::Quit => true,
         }
     }
 
@@ -406,7 +398,7 @@ impl<'f> MonitorContext<'f> {
         self.execute_continue(motherboard)
     }
 
-    /// Make run the emulator until the next breakpoint. 
+    /// Make run the emulator until the next breakpoint.
     pub fn execute_continue(&mut self, motherboard: &mut Motherboard) -> bool {
         loop {
             let res = self.execute_next(motherboard);
@@ -419,7 +411,7 @@ impl<'f> MonitorContext<'f> {
                 break;
             }
         }
-        false 
+        false
     }
 
     /// Make run the emulator for a single instruction.
@@ -440,7 +432,7 @@ impl<'f> MonitorContext<'f> {
     pub fn execute_step(&mut self, motherboard: &mut Motherboard) -> bool {
         let next_instruction = motherboard.disassemble_next_instruction();
         if next_instruction.can_use_step_into() {
-            let next_pc = motherboard.pc() + next_instruction.len() as u16 ;
+            let next_pc = motherboard.pc() + next_instruction.len() as u16;
             while motherboard.pc() != next_pc {
                 let quit = self.execute_next(motherboard);
                 if quit {
@@ -448,33 +440,32 @@ impl<'f> MonitorContext<'f> {
                 }
             }
             false
-        }
-        else {
+        } else {
             self.execute_next(motherboard)
         }
     }
 
     /// Check if one breakpoint is fired
     pub fn has_some_breakpoint_fired(&self, motherboard: &mut Motherboard) -> Option<&BreakPoint> {
-        self.breakpoints
-            .iter().find(|b| b.is_fired(motherboard))
+        self.breakpoints.iter().find(|b| b.is_fired(motherboard))
     }
 
-    pub fn execute_info(&self, motherboard: &Motherboard, info: & InfoKind) {
+    pub fn execute_info(&self, motherboard: &Motherboard, info: &InfoKind) {
         match info {
             InfoKind::BreakPoint => {
-               self.breakpoints.iter()
-                .for_each(|b| println!("{}", self.describe_breakpoint(b)));
-            },
+                self.breakpoints
+                    .iter()
+                    .for_each(|b| println!("{}", self.describe_breakpoint(b)));
+            }
             InfoKind::Crtc => {
                 Monitor::monitor_crtc(motherboard.crtc());
-            },
+            }
             InfoKind::Ga => {
                 Monitor::monitor_ga(motherboard.ga());
-            },
+            }
             InfoKind::Stack => {
                 Monitor::monitor_stack(motherboard, 2, 2);
-            },
+            }
             InfoKind::Z80 => {
                 Monitor::monitor_z80(motherboard.cpu());
                 Monitor::monitor_z80_flags(motherboard.cpu());
@@ -482,8 +473,9 @@ impl<'f> MonitorContext<'f> {
         }
     }
 
-    pub fn execute_displays(&self, motherboard: & Motherboard) {
-        self.displays.iter()
+    pub fn execute_displays(&self, motherboard: &Motherboard) {
+        self.displays
+            .iter()
             .for_each(|d| self.execute_info(motherboard, d));
     }
 
@@ -495,7 +487,7 @@ impl<'f> MonitorContext<'f> {
         self.breakpoints.retain(|kept| *kept != b);
     }
 
-    pub fn execute_disassemble(&self, motherboard: & Motherboard, addr: Option<u16>) {
+    pub fn execute_disassemble(&self, motherboard: &Motherboard, addr: Option<u16>) {
         let addr = addr.unwrap_or(motherboard.cpu().pc());
         let code = motherboard.disassemble_instructions_from(addr, 10);
         for inst in code {
@@ -504,18 +496,18 @@ impl<'f> MonitorContext<'f> {
     }
 
     pub fn execute_help() {
-        println!("
+        println!(
+            "
         n | next: Execute next instruction
         s | step: Execute next instruction and its consequences
         c | cont | continue: Execute until next breakpoint
         h | help: Display help
         q | quit: Quit monitor
         d | disass | disassemble [addr]: Disassmble at PC or addr if provided
-        ");
+        "
+        );
     }
 }
-
-
 
 #[derive(Debug)]
 pub struct DisassembledInstruction {
@@ -526,7 +518,13 @@ pub struct DisassembledInstruction {
 
 impl std::fmt::Display for DisassembledInstruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "0x{:04x} {:<16} {:02x?}", self.address, self.token.to_string(), self.memory)
+        write!(
+            f,
+            "0x{:04x} {:<16} {:02x?}",
+            self.address,
+            self.token.to_string(),
+            self.memory
+        )
     }
 }
 
@@ -545,17 +543,19 @@ impl DisassembledInstruction {
     pub fn target(&self) -> Option<u16> {
         let bytes = &self.memory;
         match (bytes.len(), bytes.first()) {
-            (2, Some(0x10 | 0x18 | 0x20 | 0x28 | 0x30 | 0x38)) => {
-                Some(self.address.wrapping_add(2).wrapping_add(bytes[1] as i8 as u16))
-            },
+            (2, Some(0x10 | 0x18 | 0x20 | 0x28 | 0x30 | 0x38)) => Some(
+                self.address
+                    .wrapping_add(2)
+                    .wrapping_add(bytes[1] as i8 as u16),
+            ),
             (3, Some(&prefix)) if prefix != 0xdd && prefix != 0xfd && prefix != 0xcb => {
                 Some(u16::from_le_bytes([bytes[1], bytes[2]]))
-            },
+            }
             // DD/FD/ED: the operand after the two opcode bytes
             (4, Some(0xdd | 0xfd | 0xed)) if bytes[1] != 0xcb && bytes[1] != 0x36 => {
                 Some(u16::from_le_bytes([bytes[2], bytes[3]]))
-            },
-            _ => None
+            }
+            _ => None,
         }
     }
 }
@@ -566,7 +566,9 @@ mod test {
 
     #[test]
     fn the_disassembly_shows_the_labels() {
-        let mut motherboard = crate::motherboard::MotherboardBuilder::default().disable_lower_rom().build();
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default()
+            .disable_lower_rom()
+            .build();
         // start: call sub : jr start ; sub: ret
         motherboard.write_buffer(0x4000, &[0xcd, 0x05, 0x40, 0x18, 0xfb, 0xc9]);
         let mut symbols = crate::symbols::SymbolTable::default();
@@ -579,7 +581,11 @@ mod test {
             .iter()
             .map(|instruction| ctx.format_instruction(instruction))
             .collect();
-        assert!(lines[0].starts_with("start:\n") && lines[0].ends_with("; sub"), "{}", lines[0]);
+        assert!(
+            lines[0].starts_with("start:\n") && lines[0].ends_with("; sub"),
+            "{}",
+            lines[0]
+        );
         assert!(lines[1].ends_with("; start"), "{}", lines[1]);
         assert!(lines[2].starts_with("sub:\n"), "{}", lines[2]);
     }

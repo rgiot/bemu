@@ -10,7 +10,7 @@ use amsrust::z80::{HasValue, Reg16};
 const CODE: u16 = 0x9000;
 /// Stack positions worth probing: wrap-around, 16K bank boundaries, plain.
 const STACKS: [u16; 12] = [
-    0x0000, 0x0001, 0x0002, 0x0100, 0x3fff, 0x4001, 0x7fff, 0x8001, 0xbfff, 0xc001, 0xfffe, 0xffff
+    0x0000, 0x0001, 0x0002, 0x0100, 0x3fff, 0x4001, 0x7fff, 0x8001, 0xbfff, 0xc001, 0xfffe, 0xffff,
 ];
 
 fn machine() -> Motherboard {
@@ -121,7 +121,14 @@ fn ex_sp_hl_and_ld_sp_forms() {
         assert_eq!(reg(mb, Reg16::Sp), sp, "{ctx}");
 
         // LD (&A000),SP ; LD SP,&1234 ; LD SP,(&A000) ; LD SP,HL
-        run(mb, &[0xed, 0x73, 0x00, 0xa0, 0x31, 0x34, 0x12, 0xed, 0x7b, 0x00, 0xa0], sp, 3);
+        run(
+            mb,
+            &[
+                0xed, 0x73, 0x00, 0xa0, 0x31, 0x34, 0x12, 0xed, 0x7b, 0x00, 0xa0,
+            ],
+            sp,
+            3,
+        );
         assert_eq!(reg(mb, Reg16::Sp), sp, "{ctx} LD SP,(nn)");
         run(mb, &[0x21, 0xfe, 0xff, 0xf9], sp, 2);
         assert_eq!(reg(mb, Reg16::Sp), 0xfffe, "{ctx} LD SP,HL");

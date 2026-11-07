@@ -33,7 +33,9 @@ fn main() {
          key_output 'RUN\"HBL\\(RET)'\n\
          wait 2000000\n"
     );
-    runner.run_text(&script, ".").unwrap_or_else(|e| panic!("boot script failed: {e}"));
+    runner
+        .run_text(&script, ".")
+        .unwrap_or_else(|e| panic!("boot script failed: {e}"));
 
     eprintln!("boot script done, switching to raw single-stepping");
 
@@ -57,7 +59,8 @@ fn main() {
 
         if pc == 0x0000 {
             eprintln!("\n=== PC hit the cold-reset entry point: {last_pc:04X} -> 0000 at step {steps} ===");
-            eprintln!("AF={:04X} BC={:04X} DE={:04X} HL={:04X} IX={:04X} IY={:04X} SP={:04X}",
+            eprintln!(
+                "AF={:04X} BC={:04X} DE={:04X} HL={:04X} IX={:04X} IY={:04X} SP={:04X}",
                 mb.cpu().reg16(Reg16::Af).value(),
                 mb.cpu().reg16(Reg16::Bc).value(),
                 mb.cpu().reg16(Reg16::De).value(),
@@ -90,7 +93,10 @@ fn main() {
                 }
             }
 
-            eprintln!("\nrecent PC trace (last {} entries, oldest first):", pc_history.len());
+            eprintln!(
+                "\nrecent PC trace (last {} entries, oldest first):",
+                pc_history.len()
+            );
             for p in &pc_history {
                 eprintln!("{p:04X}");
             }

@@ -7,7 +7,11 @@ fn main() {
         eprintln!("usage: dsk_to_hfe <in.dsk> <out.hfe>");
         std::process::exit(2);
     };
-    let img = hxcfe::Hxcfe::get().load(&input).unwrap_or_else(|e| panic!("{input}: {e}"));
-    let hfe = img.save_to_buffer(hxcfe::ImageFormat::HxcHfe).unwrap_or_else(|e| panic!("HFE: {e}"));
+    let img = hxcfe::Hxcfe::get()
+        .load(&input)
+        .unwrap_or_else(|e| panic!("{input}: {e}"));
+    let hfe = img
+        .save_to_buffer(hxcfe::ImageFormat::HxcHfe)
+        .unwrap_or_else(|e| panic!("HFE: {e}"));
     std::fs::write(&output, hfe).unwrap_or_else(|e| panic!("{output}: {e}"));
 }

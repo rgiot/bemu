@@ -34,7 +34,11 @@ const FIXTURES: &str = "tests/fixtures/amstrad_diagnostics";
 /// element of `extra_keys`, in order, plus the very first one taken right
 /// after boot.
 fn run_diag(crtc: u8, extra_keys: &[(&str, u64)]) -> Vec<RgbImage> {
-    let dir = std::env::temp_dir().join(format!("amsrust_amstrad_diag_{}_{crtc}_{}", std::process::id(), extra_keys.len()));
+    let dir = std::env::temp_dir().join(format!(
+        "amsrust_amstrad_diag_{}_{crtc}_{}",
+        std::process::id(),
+        extra_keys.len()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
 
     let mut runner = CslRunner::new(&dir);
@@ -50,16 +54,28 @@ fn run_diag(crtc: u8, extra_keys: &[(&str, u64)]) -> Vec<RgbImage> {
          screenshot\n"
     );
     for (keys, wait_us) in extra_keys {
-        script.push_str(&format!("key_output '{keys}'\nwait {wait_us}\nscreenshot\n"));
+        script.push_str(&format!(
+            "key_output '{keys}'\nwait {wait_us}\nscreenshot\n"
+        ));
     }
 
-    let report = runner.run_text(&script, DISC_DIR).expect("the diagnostics script should run to completion");
-    assert!(report.ignored.is_empty(), "unexpected ignored instructions: {:?}", report.ignored);
+    let report = runner
+        .run_text(&script, DISC_DIR)
+        .expect("the diagnostics script should run to completion");
+    assert!(
+        report.ignored.is_empty(),
+        "unexpected ignored instructions: {:?}",
+        report.ignored
+    );
 
     report
         .screenshots
         .iter()
-        .map(|s| image::open(&s.path).unwrap_or_else(|e| panic!("{}: {e}", s.path.display())).into_rgb8())
+        .map(|s| {
+            image::open(&s.path)
+                .unwrap_or_else(|e| panic!("{}: {e}", s.path.display()))
+                .into_rgb8()
+        })
         .collect()
 }
 
@@ -69,7 +85,12 @@ fn run_diag(crtc: u8, extra_keys: &[(&str, u64)]) -> Vec<RgbImage> {
 fn assert_matches_golden(actual: &RgbImage, golden_name: &str) {
     let path = Path::new(FIXTURES).join(golden_name);
     let golden = image::open(&path)
-        .unwrap_or_else(|e| panic!("{}: {e} (missing golden? see this file's module doc)", path.display()))
+        .unwrap_or_else(|e| {
+            panic!(
+                "{}: {e} (missing golden? see this file's module doc)",
+                path.display()
+            )
+        })
         .into_rgb8();
     assert_eq!(
         actual.dimensions(),
@@ -78,7 +99,11 @@ fn assert_matches_golden(actual: &RgbImage, golden_name: &str) {
         actual.dimensions(),
         golden.dimensions()
     );
-    assert_eq!(actual.as_raw(), golden.as_raw(), "{golden_name}: pixels differ from the golden screenshot");
+    assert_eq!(
+        actual.as_raw(),
+        golden.as_raw(),
+        "{golden_name}: pixels differ from the golden screenshot"
+    );
 }
 
 /// Like `assert_matches_golden`, but only over the `(x, y, width, height)`
@@ -86,13 +111,22 @@ fn assert_matches_golden(actual: &RgbImage, golden_name: &str) {
 /// exact timing (e.g. the Upper RAM test's per-bank progress hatching,
 /// mid-sweep) while the part actually being checked doesn't.
 #[track_caller]
-fn assert_region_matches_golden(actual: &RgbImage, region: (u32, u32, u32, u32), golden_name: &str) {
+fn assert_region_matches_golden(
+    actual: &RgbImage,
+    region: (u32, u32, u32, u32),
+    golden_name: &str,
+) {
     use image::GenericImageView;
     let (x, y, w, h) = region;
     let cropped = actual.view(x, y, w, h).to_image();
     let path = Path::new(FIXTURES).join(golden_name);
     let golden = image::open(&path)
-        .unwrap_or_else(|e| panic!("{}: {e} (missing golden? see this file's module doc)", path.display()))
+        .unwrap_or_else(|e| {
+            panic!(
+                "{}: {e} (missing golden? see this file's module doc)",
+                path.display()
+            )
+        })
         .into_rgb8();
     assert_eq!(
         cropped.dimensions(),
@@ -101,7 +135,11 @@ fn assert_region_matches_golden(actual: &RgbImage, region: (u32, u32, u32, u32),
         cropped.dimensions(),
         golden.dimensions()
     );
-    assert_eq!(cropped.as_raw(), golden.as_raw(), "{golden_name}: pixels differ from the golden crop");
+    assert_eq!(
+        cropped.as_raw(),
+        golden.as_raw(),
+        "{golden_name}: pixels differ from the golden crop"
+    );
 }
 
 /// The exact panic this whole test file exists to guard against: a stock
@@ -160,9 +198,14 @@ fn upper_ram_test_detects_a_4mb_expansion() {
     std::fs::create_dir_all(&dir).unwrap();
     let mut runner = CslRunner::new(&dir);
 
-    runner.run_text("csl_version 1.0\ncrtc_select 0\nreset\n", DISC_DIR).unwrap();
+    runner
+        .run_text("csl_version 1.0\ncrtc_select 0\nreset\n", DISC_DIR)
+        .unwrap();
     runner.motherboard_mut().plug_large_ram_expansion(64);
-    assert_eq!(runner.motherboard().large_ram_expansion_bank_count(), Some(64));
+    assert_eq!(
+        runner.motherboard().large_ram_expansion_bank_count(),
+        Some(64)
+    );
 
     let report = runner
         .run_text(
@@ -175,12 +218,18 @@ fn upper_ram_test_detects_a_4mb_expansion() {
              key_output 'U'\n\
              wait 8000000\n\
              screenshot\n",
-            DISC_DIR
+            DISC_DIR,
         )
         .unwrap();
-    assert!(report.ignored.is_empty(), "unexpected ignored instructions: {:?}", report.ignored);
+    assert!(
+        report.ignored.is_empty(),
+        "unexpected ignored instructions: {:?}",
+        report.ignored
+    );
 
-    let frame = image::open(&report.screenshots[0].path).unwrap().into_rgb8();
+    let frame = image::open(&report.screenshots[0].path)
+        .unwrap()
+        .into_rgb8();
     assert_region_matches_golden(&frame, (190, 63, 280, 9), "upper_ram_size_4096kb.png");
 }
 
@@ -219,16 +268,17 @@ fn keyboard_test_highlights_the_pressed_key() {
 #[ignore = "slow: boots the real firmware and a real diagnostics tool from disc"]
 fn keyboard_test_registers_every_typeable_key() {
     const KEYS: &[&str] = &[
-        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
-        "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", " ",
-        "\\(RET)", "\\(TAB)", "\\(ESC)", "\\(CAP)", "\\(DEL)", "\\(CLR)", "\\(COP)",
-        "\\(ARL)", "\\(ARR)", "\\(ARU)", "\\(ARD)",
-        "\\(FN0)", "\\(FN1)", "\\(FN2)", "\\(FN3)", "\\(FN4)",
-        "\\(FN5)", "\\(FN6)", "\\(FN7)", "\\(FN8)", "\\(FN9)", "\\(ENT)"
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r",
+        "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+        " ", "\\(RET)", "\\(TAB)", "\\(ESC)", "\\(CAP)", "\\(DEL)", "\\(CLR)", "\\(COP)",
+        "\\(ARL)", "\\(ARR)", "\\(ARU)", "\\(ARD)", "\\(FN0)", "\\(FN1)", "\\(FN2)", "\\(FN3)",
+        "\\(FN4)", "\\(FN5)", "\\(FN6)", "\\(FN7)", "\\(FN8)", "\\(FN9)", "\\(ENT)",
     ];
 
-    let dir = std::env::temp_dir().join(format!("amsrust_amstrad_diag_allkeys_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "amsrust_amstrad_diag_allkeys_{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let mut runner = CslRunner::new(&dir);
 
@@ -253,18 +303,28 @@ fn keyboard_test_registers_every_typeable_key() {
          key_output 'K'\n\
          wait 3000000\n\
          screenshot\n\
-         key_delay 100000 20000 20000\n"
+         key_delay 100000 20000 20000\n",
     );
     for key in KEYS {
         script.push_str(&format!("key_output '{key}'\nwait 90000\nscreenshot\n"));
     }
-    let report = runner.run_text(&script, DISC_DIR).expect("the diagnostics script should run to completion");
-    assert!(report.ignored.is_empty(), "unexpected ignored instructions: {:?}", report.ignored);
+    let report = runner
+        .run_text(&script, DISC_DIR)
+        .expect("the diagnostics script should run to completion");
+    assert!(
+        report.ignored.is_empty(),
+        "unexpected ignored instructions: {:?}",
+        report.ignored
+    );
 
     let frames: Vec<RgbImage> = report
         .screenshots
         .iter()
-        .map(|s| image::open(&s.path).unwrap_or_else(|e| panic!("{}: {e}", s.path.display())).into_rgb8())
+        .map(|s| {
+            image::open(&s.path)
+                .unwrap_or_else(|e| panic!("{}: {e}", s.path.display()))
+                .into_rgb8()
+        })
         .collect();
 
     // Checked once, right after entering the test, before any of these keys

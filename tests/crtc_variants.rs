@@ -27,7 +27,7 @@ fn expected_write_mask(crtc: CrtcType, register: u8) -> u8 {
         8 if asic_or_hd => 0xf3, // cursor skew, display skew, interlace
         8 => 0x03,               // interlace only
         12 | 14 => 0x3f,
-        _ => 0x00
+        _ => 0x00,
     }
 }
 
@@ -91,7 +91,7 @@ fn read_register(crtc: CrtcType, selected: u8) -> u8 {
         vma: 0,
         vma_prime: 0,
         fields: 0,
-        light_pen_full: true
+        light_pen_full: true,
     })
 }
 
@@ -118,7 +118,13 @@ fn pointer_registers_read_back_six_or_eight_bits() {
     for number in [12usize, 14, 16] {
         registers[number] = 0xff;
     }
-    for (crtc, selected) in [(Crtc0, 12), (Crtc0, 14), (Crtc0, 16), (Crtc1, 14), (Crtc2, 16)] {
+    for (crtc, selected) in [
+        (Crtc0, 12),
+        (Crtc0, 14),
+        (Crtc0, 16),
+        (Crtc1, 14),
+        (Crtc2, 16),
+    ] {
         let value = crtc.new_chip().read_register(&ReadContext {
             registers: &registers,
             selected,
@@ -131,7 +137,7 @@ fn pointer_registers_read_back_six_or_eight_bits() {
             vma: 0,
             vma_prime: 0,
             fields: 0,
-        light_pen_full: true
+            light_pen_full: true,
         });
         assert_eq!(value, 0x3f, "{crtc:?} R{selected}");
     }
@@ -200,7 +206,7 @@ fn read_status(crtc: CrtcType, vertical_border: bool, noise: bool) -> u8 {
         vma: 0,
         vma_prime: 0,
         fields: 0,
-        light_pen_full: true
+        light_pen_full: true,
     })
 }
 
@@ -276,7 +282,11 @@ fn vsync_width_is_r3h_only_on_crtc_0_3_4() {
     for crtc in [Crtc0, Crtc3, Crtc4] {
         assert_eq!(crtc.new_chip().vsync_width(0x80), 8, "{crtc:?}");
         assert_eq!(crtc.new_chip().vsync_width(0x3e), 3, "{crtc:?}");
-        assert_eq!(crtc.new_chip().vsync_width(0x0e), 16, "{crtc:?}: 0 means 16");
+        assert_eq!(
+            crtc.new_chip().vsync_width(0x0e),
+            16,
+            "{crtc:?}: 0 means 16"
+        );
     }
 }
 
@@ -290,7 +300,11 @@ fn display_skew_exists_on_crtc_0_3_4_only() {
         assert_eq!(crtc.new_chip().display_skew(0x30), DisplaySkew::Blanked);
     }
     for crtc in [Crtc1, Crtc2] {
-        assert_eq!(crtc.new_chip().display_skew(0x30), DisplaySkew::Delayed(0), "{crtc:?}");
+        assert_eq!(
+            crtc.new_chip().display_skew(0x30),
+            DisplaySkew::Delayed(0),
+            "{crtc:?}"
+        );
     }
 }
 
@@ -306,7 +320,10 @@ fn a_zero_width_hsync_is_never_started_on_crtc_0_and_1() {
         motherboard.crtc_mut().do_write_register(3, 0x00);
         for _ in 0..200_000 {
             motherboard.tick();
-            assert!(!motherboard.crtc().hsync(), "{crtc:?} started an HSYNC with R3l=0");
+            assert!(
+                !motherboard.crtc().hsync(),
+                "{crtc:?} started an HSYNC with R3l=0"
+            );
         }
     }
 }
@@ -332,7 +349,14 @@ fn rhino_routine_result(crtc: CrtcType) -> u8 {
     // the file is in allocation block 2: sectors &C5 and &C6
     let mut file = Vec::new();
     for id in [0xc5u8, 0xc6] {
-        file.extend_from_slice(&track.sectors.iter().find(|sector| sector.r == id).unwrap().data);
+        file.extend_from_slice(
+            &track
+                .sectors
+                .iter()
+                .find(|sector| sector.r == id)
+                .unwrap()
+                .data,
+        );
     }
     let body = &file[128..128 + 256];
 
@@ -342,7 +366,16 @@ fn rhino_routine_result(crtc: CrtcType) -> u8 {
         .disable_upper_rom()
         .build();
     // what the firmware programs: 64 µs lines, 38+1 rows, 25 displayed
-    for (register, value) in [(0, 63), (1, 40), (2, 46), (3, 0x8e), (4, 38), (6, 25), (7, 30), (9, 7)] {
+    for (register, value) in [
+        (0, 63),
+        (1, 40),
+        (2, 46),
+        (3, 0x8e),
+        (4, 38),
+        (6, 25),
+        (7, 30),
+        (9, 7),
+    ] {
         motherboard.crtc_mut().do_write_register(register, value);
     }
     motherboard.write_buffer(0x0170, body);
@@ -382,10 +415,25 @@ fn rhino_identifies_every_crtc_type() {
 fn asics_status_registers_report_the_counters_events() {
     let mut registers = registers();
     // R0 63, R1 40, R2 46, R3 &8E (VSYNC 8 lines), R4 38, R6 25, R7 30, R9 7
-    for (register, value) in [(0, 63), (1, 40), (2, 46), (3, 0x8e), (4, 38), (6, 25), (7, 30), (9, 7)] {
+    for (register, value) in [
+        (0, 63),
+        (1, 40),
+        (2, 46),
+        (3, 0x8e),
+        (4, 38),
+        (6, 25),
+        (7, 30),
+        (9, 7),
+    ] {
         registers[register] = value;
     }
-    let read_in = |crtc: CrtcType, selected: u8, c0: u8, c4: u8, c9: u8, vsync_line: Option<u8>, vertical_border: bool| {
+    let read_in = |crtc: CrtcType,
+                   selected: u8,
+                   c0: u8,
+                   c4: u8,
+                   c9: u8,
+                   vsync_line: Option<u8>,
+                   vertical_border: bool| {
         crtc.new_chip().read_register(&ReadContext {
             registers: &registers,
             selected,
@@ -398,10 +446,12 @@ fn asics_status_registers_report_the_counters_events() {
             vma: 0,
             vma_prime: 0,
             fields: 0,
-        light_pen_full: true
+            light_pen_full: true,
         })
     };
-    let read = |crtc, selected, c0, c4, c9, vsync_line| read_in(crtc, selected, c0, c4, c9, vsync_line, true);
+    let read = |crtc, selected, c0, c4, c9, vsync_line| {
+        read_in(crtc, selected, c0, c4, c9, vsync_line, true)
+    };
     // STATUS 1's bit 6: always set on CRTC 4, the vertical border on CRTC 3 (Kevin Thacker's acid
     // test "VBlank")
     assert_eq!(read_in(Crtc4, 10, 10, 0, 0, None, false) & 0x40, 0x40);
@@ -411,14 +461,30 @@ fn asics_status_registers_report_the_counters_events() {
         // STATUS 1 (in the border): bit 6 set; bit 0 set at C0=R0; bit 3 cleared at C0=R2; bit 5
         // cleared on the VSYNC's last line (OffseT's TestCRTC: the end of the VBL)
         assert_eq!(read(crtc, 10, 10, 0, 0, None) & 0x41, 0x40, "{crtc:?}");
-        assert_eq!(read(crtc, 10, 63, 0, 0, None) & 0x01, 0x01, "{crtc:?} C0=R0");
+        assert_eq!(
+            read(crtc, 10, 63, 0, 0, None) & 0x01,
+            0x01,
+            "{crtc:?} C0=R0"
+        );
         assert_eq!(read(crtc, 10, 46, 0, 0, None) & 0x08, 0, "{crtc:?} C0=R2");
-        assert_eq!(read(crtc, 2, 10, 30, 0, Some(6)) & 0x20, 0x20, "{crtc:?} during the VSYNC (R2 reads R10)");
-        assert_eq!(read(crtc, 10, 10, 30, 7, Some(7)) & 0x20, 0, "{crtc:?} its last line");
+        assert_eq!(
+            read(crtc, 2, 10, 30, 0, Some(6)) & 0x20,
+            0x20,
+            "{crtc:?} during the VSYNC (R2 reads R10)"
+        );
+        assert_eq!(
+            read(crtc, 10, 10, 30, 7, Some(7)) & 0x20,
+            0,
+            "{crtc:?} its last line"
+        );
         // STATUS 2: bit 4 set, bit 6 clear; bit 5 cleared on C9=R9; bit 0 cleared on the screen's
         // last character
         assert_eq!(read(crtc, 11, 10, 0, 0, None) & 0x50, 0x10, "{crtc:?}");
         assert_eq!(read(crtc, 11, 10, 0, 7, None) & 0x20, 0, "{crtc:?} C9=R9");
-        assert_eq!(read(crtc, 11, 63, 38, 7, None) & 0x01, 0, "{crtc:?} the last character");
+        assert_eq!(
+            read(crtc, 11, 63, 38, 7, None) & 0x01,
+            0,
+            "{crtc:?} the last character"
+        );
     }
 }

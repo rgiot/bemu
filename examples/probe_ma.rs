@@ -19,7 +19,9 @@ fn main() {
     loop {
         mb.tick();
         let vs = mb.crtc().vsync();
-        if vs && !prev_vs { break; }
+        if vs && !prev_vs {
+            break;
+        }
         prev_vs = vs;
     }
     let mut n = 0usize;
@@ -29,11 +31,23 @@ fn main() {
         let c = mb.crtc();
         let key = (c.hcc, c.vma());
         if key.0 != last.0 {
-            if key.0 == 0 { n += 1; }
-            if n >= from && n < to {
-                println!("line {n:3} C4={:3} C9={} C0={:2} R1={} MA={:04X} DE={}", c.vcc.value(), c.vlc.value(), c.hcc, c.r1(), c.vma(), c.get_pin(CrtcPin::DE));
+            if key.0 == 0 {
+                n += 1;
             }
-            if n >= to { break; }
+            if n >= from && n < to {
+                println!(
+                    "line {n:3} C4={:3} C9={} C0={:2} R1={} MA={:04X} DE={}",
+                    c.vcc.value(),
+                    c.vlc.value(),
+                    c.hcc,
+                    c.r1(),
+                    c.vma(),
+                    c.get_pin(CrtcPin::DE)
+                );
+            }
+            if n >= to {
+                break;
+            }
         }
         last = key;
     }

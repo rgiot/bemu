@@ -18,7 +18,9 @@ fn main() {
     loop {
         mb.tick();
         let vs = mb.crtc().vsync();
-        if vs && !prev_vs { break; }
+        if vs && !prev_vs {
+            break;
+        }
         prev_vs = vs;
     }
     let mut line = 0usize;
@@ -32,21 +34,43 @@ fn main() {
         mb.tick();
         tick_in_line += 1;
         let c = mb.crtc();
-        if c.hsync() { hs_w += 1; }
+        if c.hsync() {
+            hs_w += 1;
+        }
         let hs_now = c.hsync();
-        if hs_now != prev_hs { desc.push_str(&format!(" [{}: CRTC_HS={}]", tick_in_line, hs_now)); prev_hs = hs_now; }
+        if hs_now != prev_hs {
+            desc.push_str(&format!(" [{}: CRTC_HS={}]", tick_in_line, hs_now));
+            prev_hs = hs_now;
+        }
         let gs_now = mb.ga().sync().hsync;
-        if gs_now != prev_gs { desc.push_str(&format!(" [{}: C-HS={}]", tick_in_line, gs_now)); prev_gs = gs_now; }
+        if gs_now != prev_gs {
+            desc.push_str(&format!(" [{}: C-HS={}]", tick_in_line, gs_now));
+            prev_gs = gs_now;
+        }
         let now = (mb.ga().next_video_mode(), mb.ga().active_video_mode());
         if now != last {
-            desc.push_str(&format!(" [{}: next={:?} active={:?}]", tick_in_line, now.0, now.1));
+            desc.push_str(&format!(
+                " [{}: next={:?} active={:?}]",
+                tick_in_line, now.0, now.1
+            ));
             last = now;
         }
         let hcc = mb.crtc().hcc;
         if hcc == 0 && last_hcc != 0 {
             let c = mb.crtc();
-            println!("{line:3} R0={} R2={} R3={} hs={hs_w:3} C4={:?} C9={}{}", c.r0(), c.r2(), c.r3(), c.vcc, c.vlc.value(), desc);
-            desc.clear(); hs_w = 0; tick_in_line = 0; line += 1;
+            println!(
+                "{line:3} R0={} R2={} R3={} hs={hs_w:3} C4={:?} C9={}{}",
+                c.r0(),
+                c.r2(),
+                c.r3(),
+                c.vcc,
+                c.vlc.value(),
+                desc
+            );
+            desc.clear();
+            hs_w = 0;
+            tick_in_line = 0;
+            line += 1;
         }
         last_hcc = hcc;
     }

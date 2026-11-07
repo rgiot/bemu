@@ -12,7 +12,9 @@ fn main() {
     let (head, tail) = text.split_at(split);
     runner.run_text(head, base.clone()).expect("csl head");
     runner.motherboard_mut().fdc_mut().start_command_log();
-    runner.run_text(&format!("csl_version 1.0\n{tail}"), base).expect("csl tail");
+    runner
+        .run_text(&format!("csl_version 1.0\n{tail}"), base)
+        .expect("csl tail");
     let mb = runner.motherboard_mut();
     for (i, rec) in mb.fdc().command_log().iter().enumerate() {
         println!("{i:4} cmd {:02x?} -> {:02x?}", rec.command, rec.result);

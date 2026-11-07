@@ -10,14 +10,14 @@ use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 struct RawManifest {
-    tests: Vec<RawTest>
+    tests: Vec<RawTest>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawTest {
     module: String,
     id: String,
-    subtests: Vec<RawSubTest>
+    subtests: Vec<RawSubTest>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,26 +27,28 @@ struct RawSubTest {
     hex: String,
     /// B1's sub-tests repeat their names in several R9 settings (`R9E7`, `R9E6`...).
     #[serde(default)]
-    subfolder: Option<String>
+    subfolder: Option<String>,
 }
 
 /// One entry: `module` ('A'-'E') and the 16-bit SSM code both identify it.
 pub struct TestId {
     pub test_id: String,
     pub sub_test: String,
-    pub subfolder: Option<String>
+    pub subfolder: Option<String>,
 }
 
 /// Maps `(module, SSM code)` to the test/sub-test the site knows it as.
 pub struct Manifest {
-    by_code: HashMap<(char, u16), TestId>
+    by_code: HashMap<(char, u16), TestId>,
 }
 
 impl Manifest {
     /// The manifest bundled with the repository (`validation/Shaker_CSL/shakerland_manifest.json`).
     pub fn bundled() -> Self {
-        Self::parse(include_str!("../validation/Shaker_CSL/shakerland_manifest.json"))
-            .expect("bundled shakerland_manifest.json must parse")
+        Self::parse(include_str!(
+            "../validation/Shaker_CSL/shakerland_manifest.json"
+        ))
+        .expect("bundled shakerland_manifest.json must parse")
     }
 
     pub fn parse(json: &str) -> Result<Self, String> {
@@ -59,15 +61,16 @@ impl Manifest {
                 .next()
                 .ok_or_else(|| format!("test {} has an empty module", test.id))?;
             for sub in test.subtests {
-                let code = u16::from_str_radix(&sub.hex, 16)
-                    .map_err(|e| format!("{}/{}: bad hex {:?}: {e}", test.id, sub.sub_test, sub.hex))?;
+                let code = u16::from_str_radix(&sub.hex, 16).map_err(|e| {
+                    format!("{}/{}: bad hex {:?}: {e}", test.id, sub.sub_test, sub.hex)
+                })?;
                 by_code.insert(
                     (module, code),
                     TestId {
                         test_id: test.id.clone(),
                         sub_test: sub.sub_test,
-                        subfolder: sub.subfolder
-                    }
+                        subfolder: sub.subfolder,
+                    },
                 );
             }
         }
@@ -86,9 +89,13 @@ impl Manifest {
     /// (e.g. module E, whose tests are not published there yet).
     pub fn file_stem(&self, module: char, crtc: u8, code: u16) -> String {
         match self.lookup(module, code) {
-            Some(TestId { test_id, sub_test, subfolder: Some(folder) }) => format!("{test_id}_CRTC{crtc}_{folder}_{sub_test}"),
+            Some(TestId {
+                test_id,
+                sub_test,
+                subfolder: Some(folder),
+            }) => format!("{test_id}_CRTC{crtc}_{folder}_{sub_test}"),
             Some(test) => format!("{}_CRTC{crtc}_{}", test.test_id, test.sub_test),
-            None => format!("{module}_CRTC{crtc}_{code:04X}")
+            None => format!("{module}_CRTC{crtc}_{code:04X}"),
         }
     }
 }
@@ -101,7 +108,9 @@ mod test {
     fn the_bundled_manifest_parses_and_finds_a_known_code() {
         let manifest = Manifest::bundled();
         // A1/A (see the manifest): "UPDATE VRAM VS CRTC/GA", sub-test A, code 0001
-        let found = manifest.lookup('A', 0x0001).expect("A1/A must be in the manifest");
+        let found = manifest
+            .lookup('A', 0x0001)
+            .expect("A1/A must be in the manifest");
         assert_eq!(found.test_id, "A1");
         assert_eq!(found.sub_test, "A");
         assert_eq!(manifest.file_stem('A', 0, 0x0001), "A1_CRTC0_A");
@@ -118,7 +127,10 @@ mod test {
     #[test]
     fn an_unknown_code_falls_back_to_a_generic_name() {
         let manifest = Manifest::bundled();
-        assert!(manifest.lookup('E', 0x0001).is_none(), "module E isn't published there yet");
+        assert!(
+            manifest.lookup('E', 0x0001).is_none(),
+            "module E isn't published there yet"
+        );
         assert_eq!(manifest.file_stem('E', 2, 0x1234), "E_CRTC2_1234");
     }
 }

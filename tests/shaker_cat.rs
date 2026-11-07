@@ -12,9 +12,9 @@ mod common;
 use amsrust::fdc::FdcDrive;
 use amsrust::keyboard::CpcKey;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
+use common::*;
 use cpclib_disc::edsk::ExtendedDsk;
 use cpclib_disc::AnyDisc;
-use common::*;
 
 const SHAKER_DSK: &str = "../rust.cpcdemotools/cpclib-csl/tests/CSL/Shaker_CSL/shaker26.dsk";
 
@@ -62,7 +62,11 @@ fn cat_command_lists_shaker_disk_contents() {
     // What AMSDOS prints, with the columns' padding collapsed. Names and
     // sizes are the ones the disc's catalog really holds (cross-checked
     // against the directory as parsed independently by cpclib-disc).
-    let screen = after.join(" ").split_whitespace().collect::<Vec<_>>().join(" ");
+    let screen = after
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for expected in [
         "Drive A: user 0",
         "SHAKE26A.BIN 27K",
@@ -70,7 +74,7 @@ fn cat_command_lists_shaker_disk_contents() {
         "SHAKE26C.BIN 28K",
         "SHAKE26D.BIN 27K",
         "SHAKE26E.BIN 8K",
-        "61K free"
+        "61K free",
     ] {
         assert!(
             screen.contains(expected),

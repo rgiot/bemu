@@ -12,7 +12,10 @@ fn main() {
     let mut address = start;
     for token in listing.listing() {
         let size = token.number_of_bytes().unwrap_or(0);
-        let bytes: String = data[address..address + size].iter().map(|b| format!("{b:02X} ")).collect();
+        let bytes: String = data[address..address + size]
+            .iter()
+            .map(|b| format!("{b:02X} "))
+            .collect();
         println!("{address:04X}  {bytes:<12}{token}");
         address += size;
     }

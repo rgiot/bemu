@@ -13,7 +13,10 @@ use std::path::Path;
 const SHAKER_CSL: &str = "validation/Shaker_CSL";
 
 fn scratch_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("amsrust_shaker_suite_{name}_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "amsrust_shaker_suite_{name}_{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -21,8 +24,11 @@ fn scratch_dir(name: &str) -> std::path::PathBuf {
 #[test]
 fn every_module_s_top_level_script_parses_and_chains_to_five_crtc_types() {
     for module in ['A', 'B', 'C', 'D', 'E'] {
-        let script = Path::new(SHAKER_CSL).join(format!("MODULE_{module}")).join(format!("SHAKER-{module}-0.CSL"));
-        let text = std::fs::read_to_string(&script).unwrap_or_else(|e| panic!("{}: {e}", script.display()));
+        let script = Path::new(SHAKER_CSL)
+            .join(format!("MODULE_{module}"))
+            .join(format!("SHAKER-{module}-0.CSL"));
+        let text = std::fs::read_to_string(&script)
+            .unwrap_or_else(|e| panic!("{}: {e}", script.display()));
         assert!(text.contains("csl_version"), "{module}: not a CSL script");
         // each module's -0 chains through -1..-4, one crtc_select per file
         for variant in 0..=4 {
@@ -39,7 +45,8 @@ fn every_module_s_top_level_script_parses_and_chains_to_five_crtc_types() {
 
 #[test]
 fn the_disc_image_is_present_and_loadable() {
-    let bytes = std::fs::read(Path::new(SHAKER_CSL).join("shaker27.dsk")).expect("shaker27.dsk must be bundled");
+    let bytes = std::fs::read(Path::new(SHAKER_CSL).join("shaker27.dsk"))
+        .expect("shaker27.dsk must be bundled");
     amsrust::disc_image::load_dsk(&bytes).expect("shaker27.dsk must be a valid DSK image");
 }
 
@@ -49,7 +56,11 @@ fn the_shakerland_manifest_covers_every_module_the_site_publishes() {
     // spot-checked against the site's own /api/tests: A1/A is "UPDATE VRAM VS
     // CRTC/GA" sub-test A, code 0001 - modules A-D are published, E is not yet.
     assert_eq!(manifest.file_stem('A', 0, 0x0001), "A1_CRTC0_A");
-    assert_eq!(manifest.file_stem('E', 0, 0x0001), "E_CRTC0_0001", "module E isn't published yet");
+    assert_eq!(
+        manifest.file_stem('E', 0, 0x0001),
+        "E_CRTC0_0001",
+        "module E isn't published yet"
+    );
 }
 
 /// Boots into module E far enough to select its first test - the same
@@ -65,7 +76,7 @@ fn module_e_boots_and_accepts_a_keypress() {
             "crtc_select 0\nreset\nwait 3000000\ndisk_insert 'shaker27.dsk'\n\
              key_delay 70000 70000 400000\nkey_output 'RUN\"SHAKE27E\"\\(RET)'\nwait 10000000\n\
              key_output '1'\nwait 3000000\n",
-            SHAKER_CSL
+            SHAKER_CSL,
         )
         .unwrap();
 

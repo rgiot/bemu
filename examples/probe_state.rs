@@ -18,8 +18,21 @@ fn main() {
         let c = mb.crtc();
         println!(
             "PC={:04X} R0-R9={:?} mode next={:?} active={:?}",
-            mb.pc(), [c.r0(), c.r1(), c.r2(), c.r3(), c.r4(), c.r5(), c.r6(), c.r7(), c.r8(), c.r9()],
-            mb.ga().next_video_mode(), mb.ga().active_video_mode()
+            mb.pc(),
+            [
+                c.r0(),
+                c.r1(),
+                c.r2(),
+                c.r3(),
+                c.r4(),
+                c.r5(),
+                c.r6(),
+                c.r7(),
+                c.r8(),
+                c.r9()
+            ],
+            mb.ga().next_video_mode(),
+            mb.ga().active_video_mode()
         );
     }
 }

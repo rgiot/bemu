@@ -5,7 +5,9 @@
 //! 8x8 font (a letter and its accent, or a few small bitmaps).
 
 /// The codes the countries change.
-pub const NATIONAL_CODES: [u8; 12] = [0x23, 0x24, 0x40, 0x5b, 0x5c, 0x5d, 0x5e, 0x60, 0x7b, 0x7c, 0x7d, 0x7e];
+pub const NATIONAL_CODES: [u8; 12] = [
+    0x23, 0x24, 0x40, 0x5b, 0x5c, 0x5d, 0x5e, 0x60, 0x7b, 0x7c, 0x7d, 0x7e,
+];
 
 /// The country sets, as ESC R n numbers them: USA, France, Germany, UK, Denmark, Sweden,
 /// Italy, Spain, Japan. What stands at each of the [`NATIONAL_CODES`].
@@ -18,12 +20,14 @@ const SETS: [&str; 9] = [
     "#¤ÉÄÖÅÜéäöåü",
     "#$@°\\é^ùàòèì",
     "₧$@¡Ñ¿^`¨ñ}~",
-    "#$@[¥]^`{|}~"
+    "#$@[¥]^`{|}~",
 ];
 
 /// The character a country puts at `code`.
 pub fn national_char(set: u8, code: u8) -> Option<char> {
-    let index = NATIONAL_CODES.iter().position(|&national| national == code)?;
+    let index = NATIONAL_CODES
+        .iter()
+        .position(|&national| national == code)?;
     SETS.get(usize::from(set))?.chars().nth(index)
 }
 
@@ -51,12 +55,18 @@ fn lower(glyph: [u8; 8]) -> [u8; 8] {
 /// letter quality has the ASCII ones where ASCII has them).
 pub fn eprom_code(character: char) -> Option<u8> {
     const CODES: &str = "àèùòì°£¡¿Ññ¤₧Ååç§ßÆæØø¨ÄÖÜäöüÉé¥";
-    CODES.chars().position(|c| c == character).map(|code| code as u8)
+    CODES
+        .chars()
+        .position(|c| c == character)
+        .map(|code| code as u8)
 }
 
 /// The printer's `^`: the CPC's font has an arrow at that code.
 pub fn caret() -> [u8; 8] {
-    art(["..##....", ".#..#...", "#....#..", "........", "........", "........", "........", "........"])
+    art([
+        "..##....", ".#..#...", "#....#..", "........", "........", "........", "........",
+        "........",
+    ])
 }
 
 /// The glyph of a national character, from the CPC's font (`font`: 256 glyphs, a row a byte).
@@ -102,7 +112,7 @@ pub fn glyph(character: char, font: &[[u8; 8]]) -> Option<[u8; 8]> {
             let mut glyph = of('c');
             glyph[7] |= 0x10;
             glyph
-        },
+        }
         'Ä' => capital('A', 0x28),
         'Ö' => capital('O', 0x28),
         'Ü' => capital('U', 0x28),
@@ -115,38 +125,63 @@ pub fn glyph(character: char, font: &[[u8; 8]]) -> Option<[u8; 8]> {
                 glyph[row] |= bits;
             }
             glyph
-        },
+        }
         'Ø' => {
             let mut glyph = lower(of('O'));
-            for (row, bits) in [(1, 0x02), (2, 0x04), (3, 0x08), (4, 0x10), (5, 0x20), (6, 0x40)] {
+            for (row, bits) in [
+                (1, 0x02),
+                (2, 0x04),
+                (3, 0x08),
+                (4, 0x10),
+                (5, 0x20),
+                (6, 0x40),
+            ] {
                 glyph[row] |= bits;
             }
             glyph
-        },
+        }
         '¡' | '¿' => {
             let mut glyph = of(if character == '¡' { '!' } else { '?' });
             glyph[..7].reverse();
             glyph
-        },
+        }
         '¥' => {
             let mut glyph = of('Y');
             glyph[3] |= 0x7c;
             glyph[4] |= 0x7c;
             glyph
-        },
+        }
         '₧' => of('P'),
         '¨' => {
             let mut glyph = [0u8; 8];
             glyph[0] = 0x28;
             glyph
-        },
-        '°' => art(["..##....", ".#..#...", ".#..#...", "..##....", "........", "........", "........", "........"]),
-        '§' => art([".####...", "##......", ".###....", "##.##...", ".###....", "....##..", "####....", "........"]),
-        '¤' => art(["........", "#.....#.", ".#####..", ".#...#..", ".#...#..", ".#####..", "#.....#.", "........"]),
-        'ß' => art([".###....", "##.##...", "##.##...", "##.##...", "##..##..", "##..##..", "##.##...", "##......"]),
-        'æ' => art(["........", "........", ".##.##..", "...#..#.", ".####.##", "#..#.#..", ".##.###.", "........"]),
-        'Æ' => art(["..#####.", ".##.#...", "##..#...", "##.###..", "######..", "##..#...", "##..####", "........"]),
-        _ => return None
+        }
+        '°' => art([
+            "..##....", ".#..#...", ".#..#...", "..##....", "........", "........", "........",
+            "........",
+        ]),
+        '§' => art([
+            ".####...", "##......", ".###....", "##.##...", ".###....", "....##..", "####....",
+            "........",
+        ]),
+        '¤' => art([
+            "........", "#.....#.", ".#####..", ".#...#..", ".#...#..", ".#####..", "#.....#.",
+            "........",
+        ]),
+        'ß' => art([
+            ".###....", "##.##...", "##.##...", "##.##...", "##..##..", "##..##..", "##.##...",
+            "##......",
+        ]),
+        'æ' => art([
+            "........", "........", ".##.##..", "...#..#.", ".####.##", "#..#.#..", ".##.###.",
+            "........",
+        ]),
+        'Æ' => art([
+            "..#####.", ".##.#...", "##..#...", "##.###..", "######..", "##..#...", "##..####",
+            "........",
+        ]),
+        _ => return None,
     })
 }
 
@@ -158,7 +193,9 @@ mod test {
         (0..256usize)
             .map(|code| {
                 let mut glyph = [0u8; 8];
-                glyph.copy_from_slice(&crate::roms::OS6128[0x3800 + code * 8..0x3800 + code * 8 + 8]);
+                glyph.copy_from_slice(
+                    &crate::roms::OS6128[0x3800 + code * 8..0x3800 + code * 8 + 8],
+                );
                 glyph
             })
             .collect()
@@ -188,7 +225,8 @@ mod test {
                 if character.is_ascii() {
                     continue;
                 }
-                let glyph = glyph(character, &font).unwrap_or_else(|| panic!("no glyph for {character}"));
+                let glyph =
+                    glyph(character, &font).unwrap_or_else(|| panic!("no glyph for {character}"));
                 assert!(glyph.iter().any(|&row| row != 0), "{character} is blank");
             }
         }

@@ -53,14 +53,21 @@ fn main() {
          key_output 'RUN\"HBL\\(RET)'\n\
          wait 2000000\n"
     );
-    runner.run_text(&script, ".").unwrap_or_else(|e| panic!("boot script failed: {e}"));
+    runner
+        .run_text(&script, ".")
+        .unwrap_or_else(|e| panic!("boot script failed: {e}"));
 
     eprintln!("boot script done, watching the checksum buffer and PSG state while single-stepping");
 
     let mb = runner.motherboard_mut();
     let mut snapshot: Vec<u8> = (WATCH_START..=WATCH_END).map(|a| mb.read_byte(a)).collect();
-    let mut source_snapshot: Vec<u8> = (SOURCE_START..=SOURCE_END).map(|a| mb.read_byte(a)).collect();
-    eprintln!("initial: {:02X?} / source: {:02X?}", snapshot, source_snapshot);
+    let mut source_snapshot: Vec<u8> = (SOURCE_START..=SOURCE_END)
+        .map(|a| mb.read_byte(a))
+        .collect();
+    eprintln!(
+        "initial: {:02X?} / source: {:02X?}",
+        snapshot, source_snapshot
+    );
 
     let mut steps: u64 = 0;
     const MAX_STEPS: u64 = 2_500_000;

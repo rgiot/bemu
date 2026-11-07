@@ -14,14 +14,82 @@ use std::collections::VecDeque;
 /// A physical host key, named as in the usual windowing libraries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HostKey {
-    A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
-    Key0, Key1, Key2, Key3, Key4, Key5, Key6, Key7, Key8, Key9,
-    Space, Enter, LeftShift, RightShift, LeftCtrl, RightCtrl, LeftAlt, RightAlt,
-    CapsLock, Tab, Escape, Backspace, Delete, Up, Down, Left, Right,
-    Minus, LeftBracket, RightBracket, Backslash, Semicolon, Apostrophe, Comma,
-    Period, Slash, Backquote, Equal,
-    NumPad0, NumPad1, NumPad2, NumPad3, NumPad4, NumPad5, NumPad6, NumPad7, NumPad8, NumPad9,
-    NumPadDot, NumPadEnter,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    Key0,
+    Key1,
+    Key2,
+    Key3,
+    Key4,
+    Key5,
+    Key6,
+    Key7,
+    Key8,
+    Key9,
+    Space,
+    Enter,
+    LeftShift,
+    RightShift,
+    LeftCtrl,
+    RightCtrl,
+    LeftAlt,
+    RightAlt,
+    CapsLock,
+    Tab,
+    Escape,
+    Backspace,
+    Delete,
+    Up,
+    Down,
+    Left,
+    Right,
+    Minus,
+    LeftBracket,
+    RightBracket,
+    Backslash,
+    Semicolon,
+    Apostrophe,
+    Comma,
+    Period,
+    Slash,
+    Backquote,
+    Equal,
+    NumPad0,
+    NumPad1,
+    NumPad2,
+    NumPad3,
+    NumPad4,
+    NumPad5,
+    NumPad6,
+    NumPad7,
+    NumPad8,
+    NumPad9,
+    NumPadDot,
+    NumPadEnter,
     /// The ISO keyboards' key left of Z (`<>` or `\|`).
     IntlBackslash,
     /// F1-F3 press the CPC's keypad 1-3 (f1-f3), for hosts without a keypad.
@@ -39,7 +107,7 @@ pub enum HostKey {
     /// F5 turns the disc of drive A over (Shift+F5: drive B), in a 3" drive.
     F5,
     /// F12 switches between the symbolic and the positional keyboard mappings.
-    F12
+    F12,
 }
 
 /// How the host's keys press the CPC's, as VICE's keyboard mappings.
@@ -50,7 +118,7 @@ pub enum KeyboardMapping {
     #[default]
     Symbolic,
     /// A key presses the CPC key at its place, whatever either's labels: for games.
-    Positional
+    Positional,
 }
 
 impl KeyboardMapping {
@@ -59,14 +127,14 @@ impl KeyboardMapping {
     pub fn other(self) -> Self {
         match self {
             Self::Symbolic => Self::Positional,
-            Self::Positional => Self::Symbolic
+            Self::Positional => Self::Symbolic,
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Symbolic => "symbolic",
-            Self::Positional => "positional"
+            Self::Positional => "positional",
         }
     }
 }
@@ -78,7 +146,10 @@ impl std::str::FromStr for KeyboardMapping {
         match text {
             "symbolic" => Ok(Self::Symbolic),
             "positional" => Ok(Self::Positional),
-            other => Err(format!("unknown keyboard mapping {other:?} (expected {})", Self::NAMES))
+            other => Err(format!(
+                "unknown keyboard mapping {other:?} (expected {})",
+                Self::NAMES
+            )),
         }
     }
 }
@@ -94,7 +165,7 @@ pub struct HostInput {
     /// The keys held named by their place on a US keyboard (the physical keys), for the
     /// positional mapping: on an AZERTY host the key labelled A is [`HostKey::Q`] here. Empty
     /// when the frontend can't tell (minifb): `down` stands in.
-    pub placed: Vec<HostKey>
+    pub placed: Vec<HostKey>,
 }
 
 /// Queue of characters typed on the host keyboard.
@@ -133,7 +204,7 @@ pub struct TypedCombo {
     keys: Vec<CpcKey>,
     frames_left: u8,
     /// A character started at the last advance.
-    started: bool
+    started: bool,
 }
 
 impl TypedCombo {
@@ -170,7 +241,11 @@ impl TypedCombo {
             self.frames_left -= 1;
         }
         // held, then released for RELEASE_FRAMES before the next character
-        if self.frames_left >= Self::RELEASE_FRAMES { &self.keys } else { &[] }
+        if self.frames_left >= Self::RELEASE_FRAMES {
+            &self.keys
+        } else {
+            &[]
+        }
     }
 
     /// Whether a character started at the last advance (once: the next call says false).
@@ -209,7 +284,7 @@ pub struct HostKeyboard {
     waiting: Vec<(HostKey, u8)>,
     /// What a printable key types here, with (true) or without Shift: its CPC key, or `None`
     /// when the typed character does it alone.
-    learned: Vec<((HostKey, bool), Option<CpcKey>)>
+    learned: Vec<((HostKey, bool), Option<CpcKey>)>,
 }
 
 /// What a host key down presses.
@@ -219,7 +294,7 @@ enum Pressing {
     /// The key it was learned to type (none: the typed character's alone).
     Learned(Option<CpcKey>),
     /// Nothing yet: its character may still come.
-    Waiting
+    Waiting,
 }
 
 impl HostKeyboard {
@@ -227,7 +302,10 @@ impl HostKeyboard {
     pub const WAIT_POLLS: u8 = 2;
 
     pub fn new(mapping: KeyboardMapping) -> Self {
-        Self { mapping, ..Default::default() }
+        Self {
+            mapping,
+            ..Default::default()
+        }
     }
 
     pub fn mapping(&self) -> KeyboardMapping {
@@ -236,7 +314,10 @@ impl HostKeyboard {
 
     /// From the next [`Self::apply`] on; what was learned or typed is forgotten.
     pub fn set_mapping(&mut self, mapping: KeyboardMapping) {
-        *self = Self { switched: true, ..Self::new(mapping) };
+        *self = Self {
+            switched: true,
+            ..Self::new(mapping)
+        };
     }
 
     /// Set every mapped [`CpcKey`]'s pressed state from `input` - polled at
@@ -254,7 +335,7 @@ impl HostKeyboard {
         }
         match self.mapping {
             KeyboardMapping::Symbolic => self.apply_symbolic(motherboard, input),
-            KeyboardMapping::Positional => apply_positional(motherboard, input)
+            KeyboardMapping::Positional => apply_positional(motherboard, input),
         }
     }
 
@@ -270,9 +351,10 @@ impl HostKeyboard {
 
         // every key a host key can press starts up, then the ones held go down
         let mut pressed: Vec<(CpcKey, bool)> = Vec::new();
-        let mut press = |key: CpcKey, down: bool| match pressed.iter_mut().find(|(k, _)| *k == key) {
+        let mut press = |key: CpcKey, down: bool| match pressed.iter_mut().find(|(k, _)| *k == key)
+        {
             Some((_, held)) => *held |= down,
-            None => pressed.push((key, down))
+            None => pressed.push((key, down)),
         };
         for (_, key) in HOST_KEY_MAP {
             press(*key, false);
@@ -287,7 +369,7 @@ impl HostKeyboard {
         }
         for &host in &input.down {
             match self.pressing(host, shift) {
-                Pressing::Waiting | Pressing::Learned(None) => {},
+                Pressing::Waiting | Pressing::Learned(None) => {}
                 Pressing::Learned(Some(key)) => press(key, true),
                 Pressing::Place => {
                     for (_, key) in HOST_KEY_MAP.iter().filter(|(h, _)| *h == host) {
@@ -305,12 +387,17 @@ impl HostKeyboard {
             }
         }
         // a key held pressing the CPC key it learned (a game's): the host's Shift is its
-        let playing = input.down.iter().any(|&host| matches!(self.pressing(host, shift), Pressing::Learned(Some(_))));
+        let playing = input
+            .down
+            .iter()
+            .any(|&host| matches!(self.pressing(host, shift), Pressing::Learned(Some(_))));
         const MODIFIERS: [CpcKey; 3] = [CpcKey::Shift, CpcKey::Control, CpcKey::Copy];
         // The firmware takes a key going down in the scan that releases Shift as shifted (the
         // host's Shift+& types 1 on an AZERTY, Shift+1 on the CPC is !): a modifier the host
         // holds and the character doesn't want goes up a frame before the character's keys.
-        let conflict = MODIFIERS.iter().any(|m| !combo.contains(m) && pressed.contains(&(*m, true)));
+        let conflict = MODIFIERS
+            .iter()
+            .any(|m| !combo.contains(m) && pressed.contains(&(*m, true)));
         let lead = started && !playing && conflict;
         if lead {
             self.combo.hold_one_more();
@@ -337,11 +424,17 @@ impl HostKeyboard {
     /// them, one each, in order.
     fn learn(&mut self, input: &HostInput, layout: KeyboardLayout) {
         let shift = is_shift_down(&input.down);
-        let control = input.down.iter().any(|k| matches!(k, HostKey::LeftCtrl | HostKey::RightCtrl));
+        let control = input
+            .down
+            .iter()
+            .any(|k| matches!(k, HostKey::LeftCtrl | HostKey::RightCtrl));
         // released keys stop waiting; the others wait a poll less
         self.waiting.retain(|(key, _)| input.down.contains(key));
         for &key in &input.down {
-            if is_printable(key) && !self.held.contains(&key) && self.learned_as(key, shift).is_none() {
+            if is_printable(key)
+                && !self.held.contains(&key)
+                && self.learned_as(key, shift).is_none()
+            {
                 self.waiting.push((key, Self::WAIT_POLLS + 1));
             }
         }
@@ -350,8 +443,15 @@ impl HostKeyboard {
             for ((key, _), &c) in self.waiting.drain(..).zip(&input.typed) {
                 let pressing = layout.keys_of_char(c).and_then(|keys| {
                     let needs_shift = keys.contains(&CpcKey::Shift);
-                    let key = keys.iter().copied().rfind(|k| !matches!(k, CpcKey::Shift | CpcKey::Control));
-                    if needs_shift == shift { key } else { None }
+                    let key = keys
+                        .iter()
+                        .copied()
+                        .rfind(|k| !matches!(k, CpcKey::Shift | CpcKey::Control));
+                    if needs_shift == shift {
+                        key
+                    } else {
+                        None
+                    }
                 });
                 self.learned.retain(|(learned, _)| *learned != (key, shift));
                 self.learned.push(((key, shift), pressing));
@@ -366,7 +466,10 @@ impl HostKeyboard {
     }
 
     fn learned_as(&self, key: HostKey, shift: bool) -> Option<Option<CpcKey>> {
-        self.learned.iter().find(|(learned, _)| *learned == (key, shift)).map(|(_, pressing)| *pressing)
+        self.learned
+            .iter()
+            .find(|(learned, _)| *learned == (key, shift))
+            .map(|(_, pressing)| *pressing)
     }
 
     fn pressing(&self, key: HostKey, shift: bool) -> Pressing {
@@ -374,10 +477,12 @@ impl HostKeyboard {
             Pressing::Waiting
         }
         // the other Shift state's, not learned yet in this one (Shift pressed with the key held)
-        else if let Some(pressing) = self.learned_as(key, shift).or_else(|| self.learned_as(key, !shift)) {
+        else if let Some(pressing) = self
+            .learned_as(key, shift)
+            .or_else(|| self.learned_as(key, !shift))
+        {
             Pressing::Learned(pressing)
-        }
-        else {
+        } else {
             Pressing::Place
         }
     }
@@ -394,7 +499,7 @@ pub enum HostLayout {
     /// French.
     Azerty,
     /// German.
-    Qwertz
+    Qwertz,
 }
 
 impl HostLayout {
@@ -416,7 +521,7 @@ impl HostLayout {
             (Self::Qwertz, Y) => Z,
             (Self::Qwertz, Z) => Y,
             (Self::Qwertz, Minus) => Slash,
-            (_, key) => key
+            (_, key) => key,
         }
     }
 
@@ -449,7 +554,7 @@ impl HostLayout {
             (Self::Qwertz, '#' | '\'') => Backslash,
             (Self::Qwertz, '<' | '>') => IntlBackslash,
             (Self::Qwertz, '°') => Backquote,
-            _ => return None
+            _ => return None,
         })
     }
 }
@@ -462,7 +567,10 @@ impl std::str::FromStr for HostLayout {
             "qwerty" | "us" | "uk" | "gb" => Ok(Self::Qwerty),
             "azerty" | "fr" => Ok(Self::Azerty),
             "qwertz" | "de" => Ok(Self::Qwertz),
-            other => Err(format!("unknown host keyboard layout {other:?} (expected {})", Self::NAMES))
+            other => Err(format!(
+                "unknown host keyboard layout {other:?} (expected {})",
+                Self::NAMES
+            )),
         }
     }
 }
@@ -474,7 +582,7 @@ impl std::str::FromStr for HostLayout {
 #[derive(Debug, Default)]
 pub struct HostPlaces {
     layout: HostLayout,
-    by_character: Vec<(HostKey, u8)>
+    by_character: Vec<(HostKey, u8)>,
 }
 
 impl HostPlaces {
@@ -482,7 +590,10 @@ impl HostPlaces {
     pub const CHARACTER_POLLS: u8 = 3;
 
     pub fn new(layout: HostLayout) -> Self {
-        Self { layout, by_character: Vec::new() }
+        Self {
+            layout,
+            by_character: Vec::new(),
+        }
     }
 
     /// This poll's places, from the keys the window names and the characters typed.
@@ -494,7 +605,21 @@ impl HostPlaces {
         // the keypad's characters (/ * + and its digits) are no other key's
         let keypad = down.iter().any(|key| {
             use HostKey::*;
-            matches!(key, NumPad0 | NumPad1 | NumPad2 | NumPad3 | NumPad4 | NumPad5 | NumPad6 | NumPad7 | NumPad8 | NumPad9 | NumPadDot | NumPadEnter)
+            matches!(
+                key,
+                NumPad0
+                    | NumPad1
+                    | NumPad2
+                    | NumPad3
+                    | NumPad4
+                    | NumPad5
+                    | NumPad6
+                    | NumPad7
+                    | NumPad8
+                    | NumPad9
+                    | NumPadDot
+                    | NumPadEnter
+            )
         });
         if !keypad {
             for &c in typed {
@@ -517,7 +642,11 @@ impl HostPlaces {
 /// Every key of [`POSITIONAL_MAP`] as its place holds it: the CPC's matrix is the same on every
 /// layout (an AZERTY CPC's A is the UK Q), so the CPC's own layout doesn't matter either.
 fn apply_positional(motherboard: &mut Motherboard, input: &HostInput) {
-    let held = if input.placed.is_empty() { &input.down } else { &input.placed };
+    let held = if input.placed.is_empty() {
+        &input.down
+    } else {
+        &input.placed
+    };
     let matrix = motherboard.keyboard_mut();
     for (_, key) in POSITIONAL_MAP {
         matrix.set_pressed(*key, false);
@@ -530,7 +659,8 @@ fn apply_positional(motherboard: &mut Motherboard, input: &HostInput) {
 }
 
 fn is_shift_down(down: &[HostKey]) -> bool {
-    down.iter().any(|k| matches!(k, HostKey::LeftShift | HostKey::RightShift))
+    down.iter()
+        .any(|k| matches!(k, HostKey::LeftShift | HostKey::RightShift))
 }
 
 /// The host keys that type a character, so whose CPC key the host's layout decides.
@@ -538,23 +668,84 @@ fn is_printable(key: HostKey) -> bool {
     use HostKey::*;
     matches!(
         key,
-        A | B | C | D | E | F | G | H | I | J | K | L | M | N | O | P | Q | R | S | T | U | V | W | X | Y | Z
-            | Key0 | Key1 | Key2 | Key3 | Key4 | Key5 | Key6 | Key7 | Key8 | Key9
-            | Minus | LeftBracket | RightBracket | Backslash | Semicolon | Apostrophe | Comma | Period | Slash
-            | Backquote | Equal
+        A | B
+            | C
+            | D
+            | E
+            | F
+            | G
+            | H
+            | I
+            | J
+            | K
+            | L
+            | M
+            | N
+            | O
+            | P
+            | Q
+            | R
+            | S
+            | T
+            | U
+            | V
+            | W
+            | X
+            | Y
+            | Z
+            | Key0
+            | Key1
+            | Key2
+            | Key3
+            | Key4
+            | Key5
+            | Key6
+            | Key7
+            | Key8
+            | Key9
+            | Minus
+            | LeftBracket
+            | RightBracket
+            | Backslash
+            | Semicolon
+            | Apostrophe
+            | Comma
+            | Period
+            | Slash
+            | Backquote
+            | Equal
     )
 }
 
 /// The keys of the UK punctuation, which hold letters on other layouts.
 fn is_uk_punctuation(key: CpcKey) -> bool {
     use CpcKey::*;
-    matches!(key, Caret | Minus | At | Colon | Semicolon | Slash | Dot | Comma | OpenBracket | CloseBracket | Backslash)
+    matches!(
+        key,
+        Caret
+            | Minus
+            | At
+            | Colon
+            | Semicolon
+            | Slash
+            | Dot
+            | Comma
+            | OpenBracket
+            | CloseBracket
+            | Backslash
+    )
 }
 
 /// Whether `target` should be considered pressed: any host key `map`s to it
 /// that `is_down` reports held.
-pub fn any_host_key_pressed(map: &[(HostKey, CpcKey)], target: CpcKey, is_down: impl Fn(HostKey) -> bool) -> bool {
-    map.iter().filter(|(_, cpc)| *cpc == target).any(|(host, _)| is_down(*host))
+pub fn any_host_key_pressed(
+    map: &[(HostKey, CpcKey)],
+    target: CpcKey,
+    is_down: impl Fn(HostKey) -> bool,
+) -> bool {
+    map.iter()
+        .filter(|(_, cpc)| *cpc == target)
+        .any(|(host, _)| is_down(*host))
 }
 
 /// Host key -> CPC key, per [`crate::keyboard`]'s own contract. A first pass
@@ -565,30 +756,62 @@ pub const HOST_KEY_MAP: &[(HostKey, CpcKey)] = {
     use CpcKey::*;
     use HostKey as Hk;
     &[
-        (Hk::A, A), (Hk::B, B), (Hk::C, C), (Hk::D, D), (Hk::E, E),
-        (Hk::F, F), (Hk::G, G), (Hk::H, CpcKey::H), (Hk::I, I), (Hk::J, J),
-        (Hk::K, K), (Hk::L, L), (Hk::M, M), (Hk::N, N), (Hk::O, O),
-        (Hk::P, P), (Hk::Q, Q), (Hk::R, R), (Hk::S, S), (Hk::T, T),
-        (Hk::U, U), (Hk::V, V), (Hk::W, W), (Hk::X, X), (Hk::Y, Y),
+        (Hk::A, A),
+        (Hk::B, B),
+        (Hk::C, C),
+        (Hk::D, D),
+        (Hk::E, E),
+        (Hk::F, F),
+        (Hk::G, G),
+        (Hk::H, CpcKey::H),
+        (Hk::I, I),
+        (Hk::J, J),
+        (Hk::K, K),
+        (Hk::L, L),
+        (Hk::M, M),
+        (Hk::N, N),
+        (Hk::O, O),
+        (Hk::P, P),
+        (Hk::Q, Q),
+        (Hk::R, R),
+        (Hk::S, S),
+        (Hk::T, T),
+        (Hk::U, U),
+        (Hk::V, V),
+        (Hk::W, W),
+        (Hk::X, X),
+        (Hk::Y, Y),
         (Hk::Z, Z),
-        (Hk::Key0, Digit0), (Hk::Key1, Digit1), (Hk::Key2, Digit2),
-        (Hk::Key3, Digit3), (Hk::Key4, Digit4), (Hk::Key5, Digit5),
-        (Hk::Key6, Digit6), (Hk::Key7, Digit7), (Hk::Key8, Digit8),
+        (Hk::Key0, Digit0),
+        (Hk::Key1, Digit1),
+        (Hk::Key2, Digit2),
+        (Hk::Key3, Digit3),
+        (Hk::Key4, Digit4),
+        (Hk::Key5, Digit5),
+        (Hk::Key6, Digit6),
+        (Hk::Key7, Digit7),
+        (Hk::Key8, Digit8),
         (Hk::Key9, Digit9),
         (Hk::Space, Space),
         (Hk::Enter, Return),
-        (Hk::LeftShift, Shift), (Hk::RightShift, Shift),
-        (Hk::LeftCtrl, Control), (Hk::RightCtrl, Control),
-        (Hk::LeftAlt, Copy), (Hk::RightAlt, Copy),
+        (Hk::LeftShift, Shift),
+        (Hk::RightShift, Shift),
+        (Hk::LeftCtrl, Control),
+        (Hk::RightCtrl, Control),
+        (Hk::LeftAlt, Copy),
+        (Hk::RightAlt, Copy),
         (Hk::CapsLock, CapsLock),
         (Hk::Tab, Tab),
         (Hk::Escape, Esc),
         (Hk::Backspace, Del),
         (Hk::Delete, Clr),
-        (Hk::Up, CursorUp), (Hk::Down, CursorDown),
-        (Hk::Left, CursorLeft), (Hk::Right, CursorRight),
+        (Hk::Up, CursorUp),
+        (Hk::Down, CursorDown),
+        (Hk::Left, CursorLeft),
+        (Hk::Right, CursorRight),
         (Hk::Minus, Minus),
-        (Hk::LeftBracket, OpenBracket), (Hk::RightBracket, CloseBracket),
+        (Hk::LeftBracket, OpenBracket),
+        (Hk::RightBracket, CloseBracket),
         (Hk::Backslash, Backslash),
         (Hk::Semicolon, Semicolon),
         (Hk::Apostrophe, Colon),
@@ -597,14 +820,21 @@ pub const HOST_KEY_MAP: &[(HostKey, CpcKey)] = {
         (Hk::Slash, Slash),
         (Hk::Backquote, Caret),
         (Hk::Equal, At),
-        (Hk::NumPad0, Keypad0), (Hk::NumPad1, Keypad1),
-        (Hk::NumPad2, Keypad2), (Hk::NumPad3, Keypad3),
-        (Hk::NumPad4, Keypad4), (Hk::NumPad5, Keypad5),
-        (Hk::NumPad6, Keypad6), (Hk::NumPad7, Keypad7),
-        (Hk::NumPad8, Keypad8), (Hk::NumPad9, Keypad9),
+        (Hk::NumPad0, Keypad0),
+        (Hk::NumPad1, Keypad1),
+        (Hk::NumPad2, Keypad2),
+        (Hk::NumPad3, Keypad3),
+        (Hk::NumPad4, Keypad4),
+        (Hk::NumPad5, Keypad5),
+        (Hk::NumPad6, Keypad6),
+        (Hk::NumPad7, Keypad7),
+        (Hk::NumPad8, Keypad8),
+        (Hk::NumPad9, Keypad9),
         (Hk::NumPadDot, KeypadDot),
         (Hk::NumPadEnter, KeypadEnter),
-        (Hk::F1, Keypad1), (Hk::F2, Keypad2), (Hk::F3, Keypad3),
+        (Hk::F1, Keypad1),
+        (Hk::F2, Keypad2),
+        (Hk::F3, Keypad3),
     ]
 };
 
@@ -616,39 +846,88 @@ pub const POSITIONAL_MAP: &[(HostKey, CpcKey)] = {
     use CpcKey::*;
     use HostKey as Hk;
     &[
-        (Hk::A, A), (Hk::B, B), (Hk::C, C), (Hk::D, D), (Hk::E, E),
-        (Hk::F, F), (Hk::G, G), (Hk::H, CpcKey::H), (Hk::I, I), (Hk::J, J),
-        (Hk::K, K), (Hk::L, L), (Hk::M, M), (Hk::N, N), (Hk::O, O),
-        (Hk::P, P), (Hk::Q, Q), (Hk::R, R), (Hk::S, S), (Hk::T, T),
-        (Hk::U, U), (Hk::V, V), (Hk::W, W), (Hk::X, X), (Hk::Y, Y),
+        (Hk::A, A),
+        (Hk::B, B),
+        (Hk::C, C),
+        (Hk::D, D),
+        (Hk::E, E),
+        (Hk::F, F),
+        (Hk::G, G),
+        (Hk::H, CpcKey::H),
+        (Hk::I, I),
+        (Hk::J, J),
+        (Hk::K, K),
+        (Hk::L, L),
+        (Hk::M, M),
+        (Hk::N, N),
+        (Hk::O, O),
+        (Hk::P, P),
+        (Hk::Q, Q),
+        (Hk::R, R),
+        (Hk::S, S),
+        (Hk::T, T),
+        (Hk::U, U),
+        (Hk::V, V),
+        (Hk::W, W),
+        (Hk::X, X),
+        (Hk::Y, Y),
         (Hk::Z, Z),
-        (Hk::Key0, Digit0), (Hk::Key1, Digit1), (Hk::Key2, Digit2),
-        (Hk::Key3, Digit3), (Hk::Key4, Digit4), (Hk::Key5, Digit5),
-        (Hk::Key6, Digit6), (Hk::Key7, Digit7), (Hk::Key8, Digit8),
+        (Hk::Key0, Digit0),
+        (Hk::Key1, Digit1),
+        (Hk::Key2, Digit2),
+        (Hk::Key3, Digit3),
+        (Hk::Key4, Digit4),
+        (Hk::Key5, Digit5),
+        (Hk::Key6, Digit6),
+        (Hk::Key7, Digit7),
+        (Hk::Key8, Digit8),
         (Hk::Key9, Digit9),
         // the digits' row: ESC left of 1, - and ^ right of 0, CLR and DEL
-        (Hk::Backquote, Esc), (Hk::Escape, Esc),
-        (Hk::Minus, Minus), (Hk::Equal, Caret),
-        (Hk::Delete, Clr), (Hk::Backspace, Del),
+        (Hk::Backquote, Esc),
+        (Hk::Escape, Esc),
+        (Hk::Minus, Minus),
+        (Hk::Equal, Caret),
+        (Hk::Delete, Clr),
+        (Hk::Backspace, Del),
         // right of P: @ [; right of L: : ; ]; right of / (the ISO key left of Z): \
-        (Hk::LeftBracket, At), (Hk::RightBracket, OpenBracket),
-        (Hk::Semicolon, Colon), (Hk::Apostrophe, Semicolon), (Hk::Backslash, CloseBracket),
-        (Hk::Comma, Comma), (Hk::Period, Dot), (Hk::Slash, Slash), (Hk::IntlBackslash, Backslash),
-        (Hk::Tab, Tab), (Hk::CapsLock, CapsLock), (Hk::Enter, Return),
-        (Hk::LeftShift, Shift), (Hk::RightShift, Shift),
-        (Hk::LeftCtrl, Control), (Hk::RightCtrl, Control),
-        (Hk::LeftAlt, Copy), (Hk::RightAlt, Copy),
+        (Hk::LeftBracket, At),
+        (Hk::RightBracket, OpenBracket),
+        (Hk::Semicolon, Colon),
+        (Hk::Apostrophe, Semicolon),
+        (Hk::Backslash, CloseBracket),
+        (Hk::Comma, Comma),
+        (Hk::Period, Dot),
+        (Hk::Slash, Slash),
+        (Hk::IntlBackslash, Backslash),
+        (Hk::Tab, Tab),
+        (Hk::CapsLock, CapsLock),
+        (Hk::Enter, Return),
+        (Hk::LeftShift, Shift),
+        (Hk::RightShift, Shift),
+        (Hk::LeftCtrl, Control),
+        (Hk::RightCtrl, Control),
+        (Hk::LeftAlt, Copy),
+        (Hk::RightAlt, Copy),
         (Hk::Space, Space),
-        (Hk::Up, CursorUp), (Hk::Down, CursorDown),
-        (Hk::Left, CursorLeft), (Hk::Right, CursorRight),
-        (Hk::NumPad0, Keypad0), (Hk::NumPad1, Keypad1),
-        (Hk::NumPad2, Keypad2), (Hk::NumPad3, Keypad3),
-        (Hk::NumPad4, Keypad4), (Hk::NumPad5, Keypad5),
-        (Hk::NumPad6, Keypad6), (Hk::NumPad7, Keypad7),
-        (Hk::NumPad8, Keypad8), (Hk::NumPad9, Keypad9),
+        (Hk::Up, CursorUp),
+        (Hk::Down, CursorDown),
+        (Hk::Left, CursorLeft),
+        (Hk::Right, CursorRight),
+        (Hk::NumPad0, Keypad0),
+        (Hk::NumPad1, Keypad1),
+        (Hk::NumPad2, Keypad2),
+        (Hk::NumPad3, Keypad3),
+        (Hk::NumPad4, Keypad4),
+        (Hk::NumPad5, Keypad5),
+        (Hk::NumPad6, Keypad6),
+        (Hk::NumPad7, Keypad7),
+        (Hk::NumPad8, Keypad8),
+        (Hk::NumPad9, Keypad9),
         (Hk::NumPadDot, KeypadDot),
         (Hk::NumPadEnter, KeypadEnter),
-        (Hk::F1, Keypad1), (Hk::F2, Keypad2), (Hk::F3, Keypad3),
+        (Hk::F1, Keypad1),
+        (Hk::F2, Keypad2),
+        (Hk::F3, Keypad3),
     ]
 };
 
@@ -662,11 +941,26 @@ mod test {
     /// one (see `HostKeyboard::apply`).
     #[test]
     fn holding_just_one_mapped_host_key_is_not_cancelled_by_the_other_unheld_one() {
-        let map: &[(HostKey, CpcKey)] = &[(HostKey::LeftShift, CpcKey::Shift), (HostKey::RightShift, CpcKey::Shift)];
-        assert!(any_host_key_pressed(map, CpcKey::Shift, |k| k == HostKey::LeftShift), "left alone should register");
-        assert!(any_host_key_pressed(map, CpcKey::Shift, |k| k == HostKey::RightShift), "right alone should register");
-        assert!(any_host_key_pressed(map, CpcKey::Shift, |_| true), "both together should register");
-        assert!(!any_host_key_pressed(map, CpcKey::Shift, |_| false), "neither held should not register");
+        let map: &[(HostKey, CpcKey)] = &[
+            (HostKey::LeftShift, CpcKey::Shift),
+            (HostKey::RightShift, CpcKey::Shift),
+        ];
+        assert!(
+            any_host_key_pressed(map, CpcKey::Shift, |k| k == HostKey::LeftShift),
+            "left alone should register"
+        );
+        assert!(
+            any_host_key_pressed(map, CpcKey::Shift, |k| k == HostKey::RightShift),
+            "right alone should register"
+        );
+        assert!(
+            any_host_key_pressed(map, CpcKey::Shift, |_| true),
+            "both together should register"
+        );
+        assert!(
+            !any_host_key_pressed(map, CpcKey::Shift, |_| false),
+            "neither held should not register"
+        );
     }
 
     /// Both Alt keys act as the CPC's own COPY key.
@@ -680,10 +974,12 @@ mod test {
     /// combine to reach it are both mapped and distinct.
     #[test]
     fn double_quote_is_reachable_via_shift_plus_2() {
-        assert!(HOST_KEY_MAP.iter().any(|(h, c)| *h == HostKey::Key2 && *c == CpcKey::Digit2));
         assert!(HOST_KEY_MAP
             .iter()
-            .any(|(h, c)| (*h == HostKey::LeftShift || *h == HostKey::RightShift) && *c == CpcKey::Shift));
+            .any(|(h, c)| *h == HostKey::Key2 && *c == CpcKey::Digit2));
+        assert!(HOST_KEY_MAP.iter().any(|(h, c)| (*h == HostKey::LeftShift
+            || *h == HostKey::RightShift)
+            && *c == CpcKey::Shift));
     }
 
     /// On a French AZERTY host, physical-key polling alone can never produce
@@ -712,7 +1008,10 @@ mod test {
                 break;
             }
         }
-        assert!(released, "a typed combo must eventually release, not stick forever");
+        assert!(
+            released,
+            "a typed combo must eventually release, not stick forever"
+        );
     }
 
     /// Two typed characters are apart: their keys are never pressed in the same frame, and all
@@ -723,14 +1022,23 @@ mod test {
         typed.push('+');
         typed.push('2');
         let mut combo = TypedCombo::default();
-        let frames: Vec<Vec<CpcKey>> = (0..20).map(|_| combo.advance(&mut typed).to_vec()).collect();
+        let frames: Vec<Vec<CpcKey>> = (0..20)
+            .map(|_| combo.advance(&mut typed).to_vec())
+            .collect();
         let plus = keys_of_char('+').unwrap();
         let two = keys_of_char('2').unwrap();
         let held_plus = frames.iter().position(|keys| *keys != plus).unwrap();
         assert_eq!(held_plus, usize::from(TypedCombo::HOLD_FRAMES));
-        let gap = frames[held_plus..].iter().take_while(|keys| keys.is_empty()).count();
+        let gap = frames[held_plus..]
+            .iter()
+            .take_while(|keys| keys.is_empty())
+            .count();
         assert_eq!(gap, usize::from(TypedCombo::RELEASE_FRAMES));
-        assert_eq!(frames[held_plus + gap], two, "then the 2, without the Shift");
+        assert_eq!(
+            frames[held_plus + gap],
+            two,
+            "then the 2, without the Shift"
+        );
     }
 
     /// A character `keys_of_char` doesn't know how to type is just skipped,
@@ -752,9 +1060,15 @@ mod test {
         builder.set_keyboard_layout(KeyboardLayout::French);
         let mut machine = builder.build();
         let mut keyboard = HostKeyboard::default();
-        let typed = HostInput { typed: vec![','], ..Default::default() };
+        let typed = HostInput {
+            typed: vec![','],
+            ..Default::default()
+        };
         keyboard.apply(&mut machine, &typed);
-        assert!(machine.keyboard_mut().is_pressed(CpcKey::M), "the French , key");
+        assert!(
+            machine.keyboard_mut().is_pressed(CpcKey::M),
+            "the French , key"
+        );
         for _ in 0..TypedCombo::HOLD_FRAMES + TypedCombo::RELEASE_FRAMES {
             keyboard.apply(&mut machine, &HostInput::default());
         }
@@ -762,8 +1076,20 @@ mod test {
     }
 
     /// Polls a keyboard as a frontend does: the host keys down and the characters typed.
-    fn poll(keyboard: &mut HostKeyboard, motherboard: &mut Motherboard, down: &[HostKey], typed: &str) -> Vec<CpcKey> {
-        keyboard.apply(motherboard, &HostInput { down: down.to_vec(), typed: typed.chars().collect(), ..Default::default() });
+    fn poll(
+        keyboard: &mut HostKeyboard,
+        motherboard: &mut Motherboard,
+        down: &[HostKey],
+        typed: &str,
+    ) -> Vec<CpcKey> {
+        keyboard.apply(
+            motherboard,
+            &HostInput {
+                down: down.to_vec(),
+                typed: typed.chars().collect(),
+                ..Default::default()
+            },
+        );
         use CpcKey::*;
         [A, Q, Z, W, Digit1, Digit6, Shift, Control]
             .into_iter()
@@ -777,17 +1103,38 @@ mod test {
     fn a_key_the_layout_moves_presses_what_it_types() {
         let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
         let mut keyboard = HostKeyboard::default();
-        assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "a"), vec![CpcKey::A]);
+        assert_eq!(
+            poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "a"),
+            vec![CpcKey::A]
+        );
         for _ in 0..10 {
-            assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q], ""), vec![CpcKey::A], "held");
+            assert_eq!(
+                poll(&mut keyboard, &mut motherboard, &[HostKey::Q], ""),
+                vec![CpcKey::A],
+                "held"
+            );
         }
         // the character typed late (a poll after the key): nothing meanwhile, then A
         let mut keyboard = HostKeyboard::default();
         let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
-        assert!(!poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "").contains(&CpcKey::Q), "waits");
-        assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "a"), vec![CpcKey::A]);
+        assert!(
+            !poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "").contains(&CpcKey::Q),
+            "waits"
+        );
+        assert_eq!(
+            poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "a"),
+            vec![CpcKey::A]
+        );
         // Shift pressed with it held: still A
-        assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q, HostKey::LeftShift], ""), vec![CpcKey::A, CpcKey::Shift]);
+        assert_eq!(
+            poll(
+                &mut keyboard,
+                &mut motherboard,
+                &[HostKey::Q, HostKey::LeftShift],
+                ""
+            ),
+            vec![CpcKey::A, CpcKey::Shift]
+        );
     }
 
     /// A QWERTY host: Q types `q`, the same as its place.
@@ -795,8 +1142,14 @@ mod test {
     fn a_qwerty_host_is_unchanged() {
         let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
         let mut keyboard = HostKeyboard::default();
-        assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "q"), vec![CpcKey::Q]);
-        assert_eq!(poll(&mut keyboard, &mut motherboard, &[HostKey::Q], ""), vec![CpcKey::Q]);
+        assert_eq!(
+            poll(&mut keyboard, &mut motherboard, &[HostKey::Q], "q"),
+            vec![CpcKey::Q]
+        );
+        assert_eq!(
+            poll(&mut keyboard, &mut motherboard, &[HostKey::Q], ""),
+            vec![CpcKey::Q]
+        );
     }
 
     /// No character comes (Ctrl+key): after the wait, the place's key.
@@ -805,7 +1158,9 @@ mod test {
         let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
         let mut keyboard = HostKeyboard::default();
         let down = [HostKey::LeftCtrl, HostKey::Z];
-        let polls: Vec<Vec<CpcKey>> = (0..4).map(|_| poll(&mut keyboard, &mut motherboard, &down, "")).collect();
+        let polls: Vec<Vec<CpcKey>> = (0..4)
+            .map(|_| poll(&mut keyboard, &mut motherboard, &down, ""))
+            .collect();
         assert_eq!(polls[0], vec![CpcKey::Control], "waiting for a character");
         assert_eq!(polls[3], vec![CpcKey::Z, CpcKey::Control]);
     }
@@ -818,15 +1173,28 @@ mod test {
         let mut keyboard = HostKeyboard::default();
         let first = poll(&mut keyboard, &mut motherboard, &[HostKey::Key1], "&");
         assert!(!first.contains(&CpcKey::Digit1), "{first:?}");
-        assert!(first.contains(&CpcKey::Digit6) && first.contains(&CpcKey::Shift), "the typed &: {first:?}");
+        assert!(
+            first.contains(&CpcKey::Digit6) && first.contains(&CpcKey::Shift),
+            "the typed &: {first:?}"
+        );
         // with Shift it types 1: learned apart
         for _ in 0..8 {
             poll(&mut keyboard, &mut motherboard, &[], "");
         }
         // its Shift up first (the firmware would take the 1 shifted), then the 1
-        let shifted = poll(&mut keyboard, &mut motherboard, &[HostKey::Key1, HostKey::LeftShift], "1");
+        let shifted = poll(
+            &mut keyboard,
+            &mut motherboard,
+            &[HostKey::Key1, HostKey::LeftShift],
+            "1",
+        );
         assert!(shifted.is_empty(), "{shifted:?}");
-        let shifted = poll(&mut keyboard, &mut motherboard, &[HostKey::Key1, HostKey::LeftShift], "");
+        let shifted = poll(
+            &mut keyboard,
+            &mut motherboard,
+            &[HostKey::Key1, HostKey::LeftShift],
+            "",
+        );
         assert_eq!(shifted, vec![CpcKey::Digit1]);
     }
 
@@ -839,15 +1207,31 @@ mod test {
         let input = |down: &[HostKey], placed: &[HostKey], typed: &str| HostInput {
             down: down.to_vec(),
             placed: placed.to_vec(),
-            typed: typed.chars().collect()
+            typed: typed.chars().collect(),
         };
         keyboard.apply(&mut motherboard, &input(&[HostKey::A], &[HostKey::Q], "a"));
         assert!(motherboard.keyboard().is_pressed(CpcKey::Q));
-        assert!(!motherboard.keyboard().is_pressed(CpcKey::A), "neither its label nor its character");
+        assert!(
+            !motherboard.keyboard().is_pressed(CpcKey::A),
+            "neither its label nor its character"
+        );
         // the punctuation by place: = is ^'s, [ @'s, ' ;'s, the ISO key \'s
-        for (host, cpc) in [(HostKey::Equal, CpcKey::Caret), (HostKey::LeftBracket, CpcKey::At), (HostKey::Apostrophe, CpcKey::Semicolon), (HostKey::IntlBackslash, CpcKey::Backslash), (HostKey::Backquote, CpcKey::Esc)] {
-            keyboard.apply(&mut motherboard, &input(&[], &[host, HostKey::LeftShift], ""));
-            assert!(motherboard.keyboard().is_pressed(cpc) && motherboard.keyboard().is_pressed(CpcKey::Shift), "{host:?}");
+        for (host, cpc) in [
+            (HostKey::Equal, CpcKey::Caret),
+            (HostKey::LeftBracket, CpcKey::At),
+            (HostKey::Apostrophe, CpcKey::Semicolon),
+            (HostKey::IntlBackslash, CpcKey::Backslash),
+            (HostKey::Backquote, CpcKey::Esc),
+        ] {
+            keyboard.apply(
+                &mut motherboard,
+                &input(&[], &[host, HostKey::LeftShift], ""),
+            );
+            assert!(
+                motherboard.keyboard().is_pressed(cpc)
+                    && motherboard.keyboard().is_pressed(CpcKey::Shift),
+                "{host:?}"
+            );
             keyboard.apply(&mut motherboard, &input(&[], &[], ""));
             assert!(!motherboard.keyboard().is_pressed(cpc), "{host:?} released");
         }
@@ -863,53 +1247,159 @@ mod test {
         let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
         let down = [HostKey::LeftShift, HostKey::Key2];
-        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), typed: vec!['@'], ..Default::default() });
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: down.to_vec(),
+                typed: vec!['@'],
+                ..Default::default()
+            },
+        );
         // the host's Shift up a frame first: the firmware takes a key going down as Shift goes
         // up shifted
-        assert!(!motherboard.keyboard().is_pressed(CpcKey::Shift) && !motherboard.keyboard().is_pressed(CpcKey::At));
-        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), ..Default::default() });
+        assert!(
+            !motherboard.keyboard().is_pressed(CpcKey::Shift)
+                && !motherboard.keyboard().is_pressed(CpcKey::At)
+        );
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: down.to_vec(),
+                ..Default::default()
+            },
+        );
         assert!(motherboard.keyboard().is_pressed(CpcKey::At));
-        assert!(!motherboard.keyboard().is_pressed(CpcKey::Shift), "the host's Shift is not @'s");
+        assert!(
+            !motherboard.keyboard().is_pressed(CpcKey::Shift),
+            "the host's Shift is not @'s"
+        );
         assert!(!motherboard.keyboard().is_pressed(CpcKey::Digit2));
         // a German host (QWERTZ): its Y key (at the US Z's place) types `y`, and ß has no CPC
         // key: Y types y, ß nothing, and Shift held with a letter stays (a game's keys)
         let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
-        keyboard.apply(&mut motherboard, &HostInput { down: vec![HostKey::Y], typed: vec!['y'], ..Default::default() });
-        assert!(motherboard.keyboard().is_pressed(CpcKey::Y) && !motherboard.keyboard().is_pressed(CpcKey::Z));
-        keyboard.apply(&mut motherboard, &HostInput { down: vec![HostKey::Y, HostKey::LeftShift], ..Default::default() });
-        assert!(motherboard.keyboard().is_pressed(CpcKey::Y) && motherboard.keyboard().is_pressed(CpcKey::Shift));
-        keyboard.apply(&mut motherboard, &HostInput { typed: vec!['ß'], ..Default::default() });
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: vec![HostKey::Y],
+                typed: vec!['y'],
+                ..Default::default()
+            },
+        );
+        assert!(
+            motherboard.keyboard().is_pressed(CpcKey::Y)
+                && !motherboard.keyboard().is_pressed(CpcKey::Z)
+        );
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: vec![HostKey::Y, HostKey::LeftShift],
+                ..Default::default()
+            },
+        );
+        assert!(
+            motherboard.keyboard().is_pressed(CpcKey::Y)
+                && motherboard.keyboard().is_pressed(CpcKey::Shift)
+        );
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                typed: vec!['ß'],
+                ..Default::default()
+            },
+        );
         // a French CPC: the character is found where its layout has it (A at the UK Q)
         let mut french = crate::motherboard::MotherboardBuilder::default().build();
         french.set_keyboard_layout(KeyboardLayout::French).unwrap();
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
-        keyboard.apply(&mut french, &HostInput { down: vec![HostKey::A], typed: vec!['a'], ..Default::default() });
-        assert!(french.keyboard().is_pressed(CpcKey::Q), "the French CPC's A is the UK Q's key");
+        keyboard.apply(
+            &mut french,
+            &HostInput {
+                down: vec![HostKey::A],
+                typed: vec!['a'],
+                ..Default::default()
+            },
+        );
+        assert!(
+            french.keyboard().is_pressed(CpcKey::Q),
+            "the French CPC's A is the UK Q's key"
+        );
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
         let down = [HostKey::LeftShift, HostKey::Key2];
-        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), typed: vec!['@'], ..Default::default() });
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: down.to_vec(),
+                typed: vec!['@'],
+                ..Default::default()
+            },
+        );
         // the key up before its character's turn (a quick tap, Shift still held): still no Shift
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
-        keyboard.apply(&mut motherboard, &HostInput { down: vec![HostKey::LeftShift], typed: vec!['@'], ..Default::default() });
-        keyboard.apply(&mut motherboard, &HostInput { down: vec![HostKey::LeftShift], ..Default::default() });
-        assert!(motherboard.keyboard().is_pressed(CpcKey::At) && !motherboard.keyboard().is_pressed(CpcKey::Shift));
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: vec![HostKey::LeftShift],
+                typed: vec!['@'],
+                ..Default::default()
+            },
+        );
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: vec![HostKey::LeftShift],
+                ..Default::default()
+            },
+        );
+        assert!(
+            motherboard.keyboard().is_pressed(CpcKey::At)
+                && !motherboard.keyboard().is_pressed(CpcKey::Shift)
+        );
         // AltGr reported as Right Alt (COPY) or Ctrl+Alt: the character alone
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
         let altgr = vec![HostKey::LeftCtrl, HostKey::RightAlt];
-        keyboard.apply(&mut motherboard, &HostInput { down: altgr.clone(), typed: vec!['@'], ..Default::default() });
-        keyboard.apply(&mut motherboard, &HostInput { down: altgr, ..Default::default() });
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: altgr.clone(),
+                typed: vec!['@'],
+                ..Default::default()
+            },
+        );
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: altgr,
+                ..Default::default()
+            },
+        );
         for key in [CpcKey::Copy, CpcKey::Control, CpcKey::Shift] {
             assert!(!motherboard.keyboard().is_pressed(key), "{key:?}");
         }
         assert!(motherboard.keyboard().is_pressed(CpcKey::At));
         let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
         let down = [HostKey::LeftShift, HostKey::Key2];
-        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), typed: vec!['@'], ..Default::default() });
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: down.to_vec(),
+                typed: vec!['@'],
+                ..Default::default()
+            },
+        );
         // switching mappings forgets the character
         keyboard.set_mapping(KeyboardMapping::Positional);
-        keyboard.apply(&mut motherboard, &HostInput { down: down.to_vec(), ..Default::default() });
-        assert!(motherboard.keyboard().is_pressed(CpcKey::Shift) && motherboard.keyboard().is_pressed(CpcKey::Digit2));
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down: down.to_vec(),
+                ..Default::default()
+            },
+        );
+        assert!(
+            motherboard.keyboard().is_pressed(CpcKey::Shift)
+                && motherboard.keyboard().is_pressed(CpcKey::Digit2)
+        );
         assert!(!motherboard.keyboard().is_pressed(CpcKey::At));
     }
 
@@ -931,23 +1421,38 @@ mod test {
     #[test]
     fn a_host_layout_gives_the_places_back() {
         let mut places = HostPlaces::new(HostLayout::Azerty);
-        assert_eq!(places.places(&[HostKey::A, HostKey::M, HostKey::Comma], &['a']), [HostKey::Q, HostKey::Semicolon, HostKey::M]);
+        assert_eq!(
+            places.places(&[HostKey::A, HostKey::M, HostKey::Comma], &['a']),
+            [HostKey::Q, HostKey::Semicolon, HostKey::M]
+        );
         assert_eq!(places.places(&[], &['é']), [HostKey::Key2]);
         for _ in 1..HostPlaces::CHARACTER_POLLS {
             assert_eq!(places.places(&[], &[]), [HostKey::Key2], "held");
         }
         assert_eq!(places.places(&[], &[]), [], "then up");
         // Shift: the same places
-        assert_eq!(places.places(&[HostKey::LeftShift], &['2']), [HostKey::LeftShift, HostKey::Key2]);
+        assert_eq!(
+            places.places(&[HostKey::LeftShift], &['2']),
+            [HostKey::LeftShift, HostKey::Key2]
+        );
         // the keypad's characters are not the main keys'
         let mut places = HostPlaces::new(HostLayout::Azerty);
-        assert_eq!(places.places(&[HostKey::NumPad5], &['5']), [HostKey::NumPad5]);
+        assert_eq!(
+            places.places(&[HostKey::NumPad5], &['5']),
+            [HostKey::NumPad5]
+        );
         // German: Z and Y swapped, ö at the US ;
         let mut places = HostPlaces::new(HostLayout::Qwertz);
-        assert_eq!(places.places(&[HostKey::Z, HostKey::Key1], &['ö']), [HostKey::Y, HostKey::Key1, HostKey::Semicolon]);
+        assert_eq!(
+            places.places(&[HostKey::Z, HostKey::Key1], &['ö']),
+            [HostKey::Y, HostKey::Key1, HostKey::Semicolon]
+        );
         // QWERTY: unchanged
         let mut places = HostPlaces::new(HostLayout::Qwerty);
-        assert_eq!(places.places(&[HostKey::A, HostKey::Minus], &['a', '-']), [HostKey::A, HostKey::Minus]);
+        assert_eq!(
+            places.places(&[HostKey::A, HostKey::Minus], &['a', '-']),
+            [HostKey::A, HostKey::Minus]
+        );
         assert_eq!("fr".parse::<HostLayout>(), Ok(HostLayout::Azerty));
     }
 
@@ -960,8 +1465,19 @@ mod test {
         let mut places = HostPlaces::new(HostLayout::Azerty);
         let (down, typed) = (vec![HostKey::A], vec!['a', 'é']);
         let placed = places.places(&down, &typed);
-        keyboard.apply(&mut motherboard, &HostInput { down, typed, placed });
-        for (key, pressed) in [(CpcKey::Q, true), (CpcKey::Digit2, true), (CpcKey::A, false)] {
+        keyboard.apply(
+            &mut motherboard,
+            &HostInput {
+                down,
+                typed,
+                placed,
+            },
+        );
+        for (key, pressed) in [
+            (CpcKey::Q, true),
+            (CpcKey::Digit2, true),
+            (CpcKey::A, false),
+        ] {
             assert_eq!(motherboard.keyboard().is_pressed(key), pressed, "{key:?}");
         }
     }

@@ -1,8 +1,8 @@
 use std::ops::BitAndAssign;
 
-use crate::history::History;
 use crate::bits::*;
 use crate::chip::*;
+use crate::history::History;
 use crate::memory::Flag;
 use array_init::*;
 use delegate::delegate;
@@ -311,8 +311,7 @@ impl ToRGBLevels for Ink {
 #[derive(Debug)]
 pub struct RMR(u8);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum VideoMode {
     #[default]
     Mode0,
@@ -320,7 +319,6 @@ pub enum VideoMode {
     Mode2, // Pay attention to its 1 pixel shift
     Mode3,
 }
-
 
 impl From<u8> for VideoMode {
     fn from(u: u8) -> Self {
@@ -383,7 +381,10 @@ impl INKR {
         // so the duplicates are resolved to their primary code here first.
         const DUPLICATES: [(u8, u8); 5] = [(1, 0), (8, 5), (9, 3), (16, 4), (17, 2)];
         let hard = self.0 & 0b000_11111;
-        let hard = DUPLICATES.iter().find(|(dup, _)| *dup == hard).map_or(hard, |(_, primary)| *primary);
+        let hard = DUPLICATES
+            .iter()
+            .find(|(dup, _)| *dup == hard)
+            .map_or(hard, |(_, primary)| *primary);
         cpclib::image::ga::Ink::from_hardware_color_number(hard).into()
     }
 }
@@ -424,7 +425,7 @@ enum Shown {
     Black,
     Pen(Pen),
     /// A CPC+ hardware sprite's colour (1-15).
-    Sprite(u8)
+    Sprite(u8),
 }
 
 /// Ticks the black zone of an R3l=2 HSYNC (the window the CRTC opens a character before the pulse,
@@ -633,19 +634,16 @@ impl PixelOrder {
             PixelOrder::Pixel8 => 7,
         }
     }
-
 }
 
 /// This is this strcuture that has the responsibility to produce the colors
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub enum PixelAutomata {
     /// The pixel to produce next, of the byte, in its mode (the pens: the palette is applied later).
     AvailablePixel(PixelOrder, u8, VideoMode),
     #[default]
     NeedToReadMemory,
 }
-
 
 impl PixelAutomata {
     /// The new automaton depends on the byte to display and its video mode
@@ -841,7 +839,11 @@ impl PixelAutomata {
                     return PixelAutomata::AvailablePixel(PixelOrder::Pixel1, *byte, new_mode);
                 }
                 let remaining = 8 - missed;
-                let pad_byte = if ga_type.missed_bit_pad() == 1 { 0xFFu8 } else { 0x00u8 };
+                let pad_byte = if ga_type.missed_bit_pad() == 1 {
+                    0xFFu8
+                } else {
+                    0x00u8
+                };
                 let real_bits = byte & ((1u8 << remaining) - 1);
                 let virtual_byte = (real_bits << missed) | (pad_byte & ((1u8 << missed) - 1));
                 // Resume from Pixel1, not from wherever the old byte's own
@@ -868,33 +870,28 @@ pub struct Sync {
 
 /// Handle the vsync information to generate interrupt
 /// two lines after vsync
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub enum VSyncCounter {
     #[default]
     NoVsync,
     VSync(usize),
 }
 
-
-
 /// Handle the hsync information to generate hsync signal
 /// two nops  after hsync
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub enum HSyncCounter {
     #[default]
     NoHsync,
     HSync(usize),
 }
 
-
 impl HSyncCounter {
     pub fn inc(&mut self) {
         match self {
             Self::NoHsync => {
                 *self = Self::HSync(0);
-            },
+            }
             Self::HSync(ref mut count) => {
                 *count = count.wrapping_add(1);
             }
@@ -950,7 +947,7 @@ pub enum GateArrayType {
     /// and what this emulator already modelled exclusively before this
     /// type existed, so it stays the default (no behaviour change).
     #[default]
-    Ga40010
+    Ga40010,
 }
 
 impl GateArrayType {
@@ -998,7 +995,7 @@ impl GateArrayType {
 /// The effect of an INKR command appears almost immediatly always with the same timings, but the change is not in sync with the character display of the CRTC so the new color appears somehow in the middle of a character (the CRTC display unit).
 #[derive(Debug)]
 pub struct GateArray {
-    pub (crate) clock: u8,
+    pub(crate) clock: u8,
     pins: PinsBuffer,
     /// Which of the two classic Gate Array chip families is fitted - see
     /// [`GateArrayType`]'s own doc comment for what this does (and
@@ -1231,7 +1228,7 @@ impl GateArray {
     /// Gate array works at 16Mhz and divide it to generate signals for other chips.
     /// CPU is at 4 Mhz
     pub fn manage_clocks(&mut self) {
-        self.clock = (self.clock + 1) % 16 ;
+        self.clock = (self.clock + 1) % 16;
         self.divide_clock();
     }
 
@@ -1410,7 +1407,11 @@ impl GateArray {
     fn generate_pixel(&mut self) {
         let shown = if self.pixel_automata.is_done() {
             // the last pixel of a delayed (non MODE 2) byte still comes out
-            let shown = if self.rgb_delayed { self.shown_previous } else { Shown::Black };
+            let shown = if self.rgb_delayed {
+                self.shown_previous
+            } else {
+                Shown::Black
+            };
             self.shown_previous = Shown::Black;
             self.rgb_delayed = false;
             shown
@@ -1439,7 +1440,11 @@ impl GateArray {
                 self.byte_pens[tick] = (raw, dispen_border, extended);
             }
             if tick <= DISPEN_LATCH_TICKS {
-                self.byte_shown[tick] = if mode == Some(VideoMode::Mode2) { Some(tick) } else { tick.checked_sub(1) };
+                self.byte_shown[tick] = if mode == Some(VideoMode::Mode2) {
+                    Some(tick)
+                } else {
+                    tick.checked_sub(1)
+                };
             }
             self.byte_tick += 1;
             if let Some(plus) = &mut self.plus {
@@ -1458,7 +1463,11 @@ impl GateArray {
             // ACCC §9.3 (GA 40007/8/10): the pixels of MODE 2 are displayed one
             // pixel earlier than those of the other modes (the BORDER stops and
             // starts one pixel earlier too); the other modes are what we delay
-            let pixel = if mode == Some(VideoMode::Mode2) { computed } else { self.shown_previous };
+            let pixel = if mode == Some(VideoMode::Mode2) {
+                computed
+            } else {
+                self.shown_previous
+            };
             self.shown_previous = computed;
             self.rgb_delayed = mode != Some(VideoMode::Mode2);
             // the black zone of an R3l=2 window comes BLANK_DELAY_TICKS later (see the constant); the
@@ -1472,7 +1481,8 @@ impl GateArray {
         };
         // the HSYNC-GA's and the VSYNC's own black, on the output (an R3l=2 window replaces the
         // HSYNC-GA's)
-        self.sync_black_ring.push((self.blank_window.is_none() && self.hsync_ga) || self.vsync_black);
+        self.sync_black_ring
+            .push((self.blank_window.is_none() && self.hsync_ga) || self.vsync_black);
         let sync_black = self.sync_black_ring.get(self.sync_black_lag);
         // The ink is looked up in the palette as it is now, a few ticks after the pen was known.
         self.shown_ring.push(shown);
@@ -1480,14 +1490,16 @@ impl GateArray {
             self.latch_byte_dispen();
         }
         self.palette_ring.push(self.palette);
-        let palette = &self.palette_ring.get(self.ga_type.palette_write_delay_ticks());
+        let palette = &self
+            .palette_ring
+            .get(self.ga_type.palette_write_delay_ticks());
         self.rgb = match (self.shown_ring.get(self.lookup_lag), &self.plus) {
             _ if sync_black => (0., 0., 0.).into(),
             (Shown::Black, _) => (0., 0., 0.).into(),
             (Shown::Pen(pen), None) => palette[pen.value() as usize].into(),
             (Shown::Pen(pen), Some(plus)) => plus.rgb(pen.value() as usize),
             (Shown::Sprite(pen), Some(plus)) => plus.rgb(16 + pen as usize),
-            (Shown::Sprite(_), None) => (0., 0., 0.).into()
+            (Shown::Sprite(_), None) => (0., 0., 0.).into(),
         };
     }
 
@@ -1497,11 +1509,17 @@ impl GateArray {
         let border = !self.get_pin(GateArrayPin::DISPEN);
         for tick in 0..=DISPEN_LATCH_TICKS {
             // (the pen of this very tick already follows DISPEN as it is now)
-            let Some(source) = self.byte_shown[tick].filter(|&source| source < DISPEN_LATCH_TICKS) else { continue };
+            let Some(source) = self.byte_shown[tick].filter(|&source| source < DISPEN_LATCH_TICKS)
+            else {
+                continue;
+            };
             let (raw, was_border, extended) = self.byte_pens[source];
             let age = DISPEN_LATCH_TICKS - tick;
             if was_border != border && matches!(self.shown_ring.get(age), Shown::Pen(_)) {
-                self.shown_ring.set(age, Shown::Pen(if border || extended { Pen::Border } else { raw }));
+                self.shown_ring.set(
+                    age,
+                    Shown::Pen(if border || extended { Pen::Border } else { raw }),
+                );
             }
         }
     }
@@ -1509,14 +1527,14 @@ impl GateArray {
     /// Generate the synchronization data for the CTM
     /// TODO understand/find how it is really done
     fn generate_sync(&mut self) {
-
         let hsync = match self.hsync_counter {
             HSyncCounter::NoHsync => false,
             HSyncCounter::HSync(n) => (32..96).contains(&(n + self.monitor_hsync_advance)), // from 2 nops during 4 nops
         };
 
         self.sync = Sync {
-            vsync: self.c_vsync && (!self.c_vsync_needs_crtc_vsync || self.get_pin(GateArrayPin::VSYNC)),
+            vsync: self.c_vsync
+                && (!self.c_vsync_needs_crtc_vsync || self.get_pin(GateArrayPin::VSYNC)),
             hsync,
         }
     }
@@ -1534,8 +1552,7 @@ impl GateArray {
 
         if std::mem::take(&mut self.v26_ignores_next_end) {
             // an HSYNC the CRTC ended before its VSYNC rose (see the flag)
-        }
-        else if let Some(count) = self.v26 {
+        } else if let Some(count) = self.v26 {
             let count = count + 1;
             match count {
                 2 => self.c_vsync = true,
@@ -1601,7 +1618,6 @@ impl GateArray {
     /// The CPC+'s programmable raster interrupt: the INT line as R52's, whose bit 5 it resets
     /// ("Extra CPC Plus Hardware Information": the next R52 interrupt is at least 32 lines away).
     pub fn raise_raster_interrupt(&mut self) {
-
         self.r52.bitand_assign(0b011111);
         self.request_interrupt();
         self.raster_interrupt = true;
@@ -1621,7 +1637,7 @@ impl GateArray {
 
     fn request_interrupt(&mut self) {
         self.raster_interrupt = false;
-  //      dbg!("GA request interrupt");
+        //      dbg!("GA request interrupt");
         self.interrupt_signal_counter = InterruptionSignal::Signal(0);
         self.set_pin(GateArrayPin::INTERRUPT, false); //activate when low
     }
@@ -1728,7 +1744,7 @@ impl GateArray {
         self.r52 = Bit8Max6::from(value & 0x3f);
     }
 
-    /// When the CPU acknowledge the interrupt (eg. it is going to jump to the interrupt vector), the Gate Array will reset bit5 of the counter, so the next interrupt can't occur closer than 32 HSync. 
+    /// When the CPU acknowledge the interrupt (eg. it is going to jump to the interrupt vector), the Gate Array will reset bit5 of the counter, so the next interrupt can't occur closer than 32 HSync.
     /// An R2.JIT HSYNC rises late for the black zone, but the monitor is
     /// synchronised as if it had risen on its character (ACCC 14.7.1).
     pub fn set_crtc_hsync_two_wide(&mut self, window: Option<bool>) {
@@ -1745,8 +1761,8 @@ impl GateArray {
     }
 
     fn handle_cpu_acknowledge_of_interruption(&mut self) {
- //       dbg!("CPU acknowledge interruption");
-       self.r52.bitand_assign(0b011111);
+        //       dbg!("CPU acknowledge interruption");
+        self.r52.bitand_assign(0b011111);
     }
 }
 impl Chip for GateArray {
@@ -1778,7 +1794,11 @@ impl Chip for GateArray {
             self.vsync_black = true;
             self.v26_ignores_next_end = !self.get_pin(GateArrayPin::HSYNC) && self.hsync_ga;
             let pin_active = self.get_pin(GateArrayPin::HSYNC);
-            self.vsync_sync_hsyncs = if pin_active && self.r52.deref() > &50 { 1 } else { 2 };
+            self.vsync_sync_hsyncs = if pin_active && self.r52.deref() > &50 {
+                1
+            } else {
+                2
+            };
             self.vsync_ignores_next_end = !pin_active && self.hsync_ga;
         }
 
@@ -1805,19 +1825,16 @@ impl Chip for GateArray {
 
         if self.is_upfront(GateArrayPin::VSYNC) {
             self.hsync_counter = HSyncCounter::HSync(0);
-        }
-        else if self.hsync_ga_prev && !self.hsync_ga {
+        } else if self.hsync_ga_prev && !self.hsync_ga {
             self.manage_hsync_end();
-        }
-        else if self.hsync_ga {
+        } else if self.hsync_ga {
             self.hsync_counter.inc();
         }
         if self.hsync_ga && !self.mode_latched {
             if let HSyncCounter::HSync(n) = self.hsync_counter {
                 if n as u64 + 1 >= MODE_LATCH_CAP_TICKS {
                     self.latch_mode(0);
-                }
-                else if self.crtc_hsync_two_wide && n as u64 + 1 >= MODE_LATCH_TWO_WIDE_TICKS {
+                } else if self.crtc_hsync_two_wide && n as u64 + 1 >= MODE_LATCH_TWO_WIDE_TICKS {
                     self.latch_mode(MODE_WRITE_DELAY_TWO_WIDE_TICKS);
                 }
             }
@@ -1860,8 +1877,6 @@ impl Chip for GateArray {
         self.generate_sync();
     }
 
-
-
     /// React to the port addressing of the CPU
     fn execute_tick(&mut self) {
         if !self.get_pin(GateArrayPin::Neg_RD) {
@@ -1883,8 +1898,7 @@ impl Chip for GateArray {
             // hundreds of thousands of times a second for real software),
             // which was pure debug noise and, worse, slowed emulation down
             // by roughly an order of magnitude (stderr I/O in a hot path).
-        }
-        else {
+        } else {
             // out expected: latched on the GA's own tick, once per bus cycle
             if !self.write_seen && self.clock == GA_WRITE_LATCH_CLOCK {
                 self.write_seen = true;
@@ -1925,7 +1939,11 @@ impl GateArray {
             if let Some(plus) = &mut self.plus {
                 plus.set_ink(self.penr.pen().value(), command & 0x1f);
             }
-        } else if let Some(plus) = self.plus.as_mut().filter(|plus| plus.unlocked && command & 0xe0 == 0xa0) {
+        } else if let Some(plus) = self
+            .plus
+            .as_mut()
+            .filter(|plus| plus.unlocked && command & 0xe0 == 0xa0)
+        {
             // the CPC+'s RMR2, there once the lock is open (Arnold V 2.8)
             plus.rmr2 = command & 0x1f;
         } else if RMR::is_addressed(command) {
@@ -1999,7 +2017,8 @@ mod test {
         // the new colour number is (A3,A2,A1,A0) = (0, b0, 0, b2).
         let byte = 0b0000_0101u8; // b2=1, b1=0, b0=1
         let automaton = mode2_automaton_at(4, byte);
-        let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode0, GateArrayType::Ga40010);
+        let reconstructed =
+            automaton.reconstruct_for_mode_switch(VideoMode::Mode0, GateArrayType::Ga40010);
         // virtual byte: bits[7,6,5] = [b2,b1,b0] = [1,0,1], bits[4..0] = 0
         assert_eq!(reconstructed.byte(), Some(0b1010_0000));
         assert_eq!(reconstructed.step(), Some(&PixelOrder::Pixel1));
@@ -2013,7 +2032,8 @@ mod test {
         // (the top 4) are padded with 1 instead of 0.
         let byte = 0b0000_1101u8; // b3=1, b2=1, b1=0, b0=1
         let automaton = mode2_automaton_at(4, byte);
-        let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode0, GateArrayType::Ga40007_8);
+        let reconstructed =
+            automaton.reconstruct_for_mode_switch(VideoMode::Mode0, GateArrayType::Ga40007_8);
         // virtual byte: bits[7,6,5,4] = [b3,b2,b1,b0] = [1,1,0,1], bits[3..0] = 1111
         assert_eq!(reconstructed.byte(), Some(0b1101_1111));
         assert_eq!(reconstructed.step(), Some(&PixelOrder::Pixel1));
@@ -2026,7 +2046,10 @@ mod test {
         let byte = 0b1011_0110u8; // b5=1 b4=1 b3=0 b2=1 b1=1 b0=0
         let at = || PixelAutomata::AvailablePixel(PixelOrder::Pixel5, byte, VideoMode::Mode1);
         // MODE 0: colour (pad, b3, b1, b5) = (0,0,1,1) on a 40010, (1,0,1,1) on a 40007/8
-        for (ga, pad) in [(GateArrayType::Ga40010, 0u8), (GateArrayType::Ga40007_8, 1u8)] {
+        for (ga, pad) in [
+            (GateArrayType::Ga40010, 0u8),
+            (GateArrayType::Ga40007_8, 1u8),
+        ] {
             let r = at().reconstruct_for_mode_switch(VideoMode::Mode0, ga);
             let v = r.byte().unwrap();
             let pen = BYTE_TO_MODE0_PENS[v as usize].1.value();
@@ -2035,11 +2058,22 @@ mod test {
         }
         // MODE 3: colour (b1, b5) = (1, 1)
         let r = at().reconstruct_for_mode_switch(VideoMode::Mode3, GateArrayType::Ga40010);
-        assert_eq!(BYTE_TO_MODE0_PENS[r.byte().unwrap() as usize].1.value() & 3, 0b11);
+        assert_eq!(
+            BYTE_TO_MODE0_PENS[r.byte().unwrap() as usize].1.value() & 3,
+            0b11
+        );
         // MODE 2: pixels b5, b4, b3 then the continuation (b2) on slots 5..8
         let r = at().reconstruct_for_mode_switch(VideoMode::Mode2, GateArrayType::Ga40010);
         let pens = BYTE_TO_MODE2_PENS[r.byte().unwrap() as usize];
-        assert_eq!([pens.4.value(), pens.5.value(), pens.6.value(), pens.7.value()], [1, 1, 0, 1]);
+        assert_eq!(
+            [
+                pens.4.value(),
+                pens.5.value(),
+                pens.6.value(),
+                pens.7.value()
+            ],
+            [1, 1, 0, 1]
+        );
         // MODE 1 -> MODE 1 never gets here with a change; the byte stays real
         let r = at().reconstruct_for_mode_switch(VideoMode::Mode1, GateArrayType::Ga40010);
         assert_eq!(r.byte(), Some(byte));
@@ -2054,7 +2088,8 @@ mod test {
         // the function itself is also a safe no-op if it somehow were).
         let byte = 0b1011_0110u8;
         let automaton = mode2_automaton_at(4, byte);
-        let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode2, GateArrayType::Ga40010);
+        let reconstructed =
+            automaton.reconstruct_for_mode_switch(VideoMode::Mode2, GateArrayType::Ga40010);
         assert_eq!(reconstructed.byte(), Some(byte));
     }
 
@@ -2075,7 +2110,8 @@ mod test {
             // byte (e.g. `get_mode0_pen`'s Pixel5-8 branch).
             let automaton = PixelAutomata::AvailablePixel(PixelOrder::Pixel5, byte, old_mode);
             for ga_type in [GateArrayType::Ga40010, GateArrayType::Ga40007_8] {
-                let reconstructed = automaton.reconstruct_for_mode_switch(VideoMode::Mode1, ga_type);
+                let reconstructed =
+                    automaton.reconstruct_for_mode_switch(VideoMode::Mode1, ga_type);
                 assert_eq!(reconstructed.byte(), Some(byte));
                 assert_eq!(reconstructed.step(), Some(&PixelOrder::Pixel5));
             }
@@ -2179,7 +2215,8 @@ mod test {
     /// the 40010 than on the 40007/8.
     #[test]
     fn a_palette_write_acts_in_the_middle_of_a_byte() {
-        for (ga_type, ticks_to_show) in [(GateArrayType::Ga40007_8, 1), (GateArrayType::Ga40010, 2)] {
+        for (ga_type, ticks_to_show) in [(GateArrayType::Ga40007_8, 1), (GateArrayType::Ga40010, 2)]
+        {
             let mut ga = GateArray::default();
             ga.set_gate_array_type(ga_type);
             ga.set_pin(GateArrayPin::DISPEN, true);
@@ -2200,7 +2237,11 @@ mod test {
                 assert_eq!(ga.rgb(), Ink(1).to_rgb_levels(), "{ga_type:?}: too early");
             }
             tick(&mut ga);
-            assert_eq!(ga.rgb(), Ink(2).to_rgb_levels(), "{ga_type:?}: the pixel of the same byte, still in the lag");
+            assert_eq!(
+                ga.rgb(),
+                Ink(2).to_rgb_levels(),
+                "{ga_type:?}: the pixel of the same byte, still in the lag"
+            );
         }
     }
 
@@ -2372,12 +2413,21 @@ mod test {
         ga.set_plus(true);
         ga.reset();
         ga.request_interrupt();
-        assert!(!ga.get_pin(GateArrayPin::INTERRUPT), "R52's interrupt, pending");
+        assert!(
+            !ga.get_pin(GateArrayPin::INTERRUPT),
+            "R52's interrupt, pending"
+        );
         ga.cancel_r52_interrupt();
-        assert!(ga.get_pin(GateArrayPin::INTERRUPT), "PRI set: R52's interrupt is cancelled");
+        assert!(
+            ga.get_pin(GateArrayPin::INTERRUPT),
+            "PRI set: R52's interrupt is cancelled"
+        );
 
         ga.raise_raster_interrupt();
         ga.cancel_r52_interrupt();
-        assert!(!ga.get_pin(GateArrayPin::INTERRUPT), "the raster's own interrupt stays");
+        assert!(
+            !ga.get_pin(GateArrayPin::INTERRUPT),
+            "the raster's own interrupt stays"
+        );
     }
 }

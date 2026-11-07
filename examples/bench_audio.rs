@@ -7,7 +7,15 @@ fn run(audio: bool, seconds: u64) -> f64 {
     if audio {
         psg.set_audio_output(Some(AudioConfig::stereo(48_000)));
     }
-    for (reg, value) in [(7u8, 0b111000u8), (0, 125), (2, 90), (4, 60), (8, 15), (9, 12), (10, 10)] {
+    for (reg, value) in [
+        (7u8, 0b111000u8),
+        (0, 125),
+        (2, 90),
+        (4, 60),
+        (8, 15),
+        (9, 12),
+        (10, 10),
+    ] {
         psg.set_register(reg, value);
     }
     let start = Instant::now();
@@ -23,7 +31,10 @@ fn run(audio: bool, seconds: u64) -> f64 {
 }
 
 fn main() {
-    let seconds = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(20);
+    let seconds = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
     let without = run(false, seconds);
     let with = run(true, seconds);
     println!("per emulated second: psg alone {:.2} ms, with audio {:.2} ms (audio {:.2} ms = {:.1}% of a 20ms frame budget x50)", without * 1e3, with * 1e3, (with - without) * 1e3, (with - without) * 1e3 / 1000.0 * 100.0);

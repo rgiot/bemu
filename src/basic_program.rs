@@ -38,7 +38,7 @@ pub struct BasicRom {
     /// The ROM's per-statement point: just after it stored the statement's
     /// address in `current_statement` (`LD (nnnn),HL`, the 3 bytes
     /// before): reached once per statement run, both pointers fresh.
-    pub statement_hook: u16
+    pub statement_hook: u16,
 }
 
 impl BasicRom {
@@ -54,10 +54,13 @@ impl BasicRom {
         arrays_end: 0xAE6C,
         variable_chain_heads: 0xADB7,
         flags: &[0xAC01, 0xAD90, 0xAE2C],
-        statement_hook: 0xDE63
+        statement_hook: 0xDE63,
     };
     /// BASIC 1.1 of the 664: the same workspace, the code 5 bytes further.
-    pub const BASIC_664: BasicRom = BasicRom { statement_hook: 0xDE68, ..Self::BASIC_6128 };
+    pub const BASIC_664: BasicRom = BasicRom {
+        statement_hook: 0xDE68,
+        ..Self::BASIC_6128
+    };
     /// BASIC 1.0 of the 464.
     pub const BASIC_464: BasicRom = BasicRom {
         version: 10,
@@ -72,7 +75,7 @@ impl BasicRom {
         // Located by the code using them, matched against 1.1's: not all
         // on the &19 shift of the rest.
         flags: &[0xAC1C, 0xADAA, 0xAE45],
-        statement_hook: 0xDD7F
+        statement_hook: 0xDD7F,
     };
 
     pub fn of(model: CpcModel) -> Self {
@@ -81,7 +84,9 @@ impl BasicRom {
             CpcModel::Cpc664 => Self::BASIC_664,
             // the CPC+'s BASIC (its system cartridge's page 1) differs from the 6128's, but not
             // in its statement hook nor its workspace
-            CpcModel::Cpc6128 | CpcModel::Cpc464Plus | CpcModel::Cpc6128Plus | CpcModel::Gx4000 => Self::BASIC_6128
+            CpcModel::Cpc6128 | CpcModel::Cpc464Plus | CpcModel::Cpc6128Plus | CpcModel::Gx4000 => {
+                Self::BASIC_6128
+            }
         }
     }
 
@@ -101,7 +106,10 @@ fn peek(motherboard: &Motherboard, address: u16) -> u8 {
 }
 
 fn deek(motherboard: &Motherboard, address: u16) -> u16 {
-    u16::from_le_bytes([peek(motherboard, address), peek(motherboard, address.wrapping_add(1))])
+    u16::from_le_bytes([
+        peek(motherboard, address),
+        peek(motherboard, address.wrapping_add(1)),
+    ])
 }
 
 fn doke(motherboard: &mut Motherboard, address: u16, value: u16) {
@@ -123,7 +131,7 @@ pub struct BasicState {
     /// gives them).
     pub stmt_addr: u16,
     /// Whether that statement is the first of its line.
-    pub first_statement: bool
+    pub first_statement: bool,
 }
 
 impl BasicState {
@@ -140,7 +148,7 @@ impl BasicState {
             line,
             stmt_addr,
             // The first statement follows the line number's high byte.
-            first_statement: line.is_some() && stmt_addr == line_field.wrapping_add(1)
+            first_statement: line.is_some() && stmt_addr == line_field.wrapping_add(1),
         }
     }
 }
@@ -169,7 +177,7 @@ pub struct ListedStatement {
     pub colon: bool,
     pub text: String,
     /// The variables it names, as written (`A%`, `MSG$`).
-    pub vars: Vec<String>
+    pub vars: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,14 +185,19 @@ pub struct ListedLine {
     /// The line's length field.
     pub addr: u16,
     pub number: u16,
-    pub statements: Vec<ListedStatement>
+    pub statements: Vec<ListedStatement>,
 }
 
 /// The program's bytes (with the end marker) and its address.
 fn program_bytes(motherboard: &Motherboard) -> (u16, Vec<u8>) {
     let state = BasicState::read(motherboard);
     let end = state.txttop.max(state.prog_start);
-    (state.prog_start, (state.prog_start..end).map(|a| peek(motherboard, a)).collect())
+    (
+        state.prog_start,
+        (state.prog_start..end)
+            .map(|a| peek(motherboard, a))
+            .collect(),
+    )
 }
 
 /// The program in RAM, decoded.
@@ -200,7 +213,9 @@ pub fn listing(motherboard: &Motherboard) -> Result<Vec<ListedLine>, String> {
     let mut lines = Vec::new();
     let mut offset = 0usize;
     for line in program.lines() {
-        let Some(&[low, high]) = bytes.get(offset..offset + 2).map(|b| <&[u8; 2]>::try_from(b).unwrap())
+        let Some(&[low, high]) = bytes
+            .get(offset..offset + 2)
+            .map(|b| <&[u8; 2]>::try_from(b).unwrap())
         else {
             break;
         };
@@ -212,7 +227,7 @@ pub fn listing(motherboard: &Motherboard) -> Result<Vec<ListedLine>, String> {
         lines.push(ListedLine {
             addr,
             number: line.line_number(),
-            statements: statements(addr, length, line.tokens())
+            statements: statements(addr, length, line.tokens()),
         });
         offset += length;
     }
@@ -224,18 +239,31 @@ fn statements(addr: u16, length: usize, tokens: &[BasicToken]) -> Vec<ListedStat
     let first = addr.wrapping_add(3);
     let last = addr.wrapping_add(length as u16 - 1);
     let mut statements = Vec::new();
-    let mut current = ListedStatement { addr: first, end: last, colon: false, text: String::new(), vars: Vec::new() };
+    let mut current = ListedStatement {
+        addr: first,
+        end: last,
+        colon: false,
+        text: String::new(),
+        vars: Vec::new(),
+    };
     let mut position = addr.wrapping_add(4);
     for token in tokens {
         if token.is_statement_separator() {
             current.end = position;
-            let next = ListedStatement { addr: position, end: last, colon: true, text: String::new(), vars: Vec::new() };
+            let next = ListedStatement {
+                addr: position,
+                end: last,
+                colon: true,
+                text: String::new(),
+                vars: Vec::new(),
+            };
             statements.push(std::mem::replace(&mut current, next));
-        }
-        else if matches!(token, BasicToken::SimpleToken(BasicTokenNoPrefix::EndOfTokenisedLine)) {
+        } else if matches!(
+            token,
+            BasicToken::SimpleToken(BasicTokenNoPrefix::EndOfTokenisedLine)
+        ) {
             break;
-        }
-        else {
+        } else {
             current.text.push_str(&token.to_string());
             if let BasicToken::Variable(..) = token {
                 let name = token.to_string().trim().to_owned();
@@ -249,9 +277,19 @@ fn statements(addr: u16, length: usize, tokens: &[BasicToken]) -> Vec<ListedStat
     statements.push(current);
     // Token lengths not adding up to the line's: one statement.
     if position != last {
-        let text = statements.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(":");
+        let text = statements
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(":");
         let vars = statements.iter().flat_map(|s| s.vars.clone()).collect();
-        return vec![ListedStatement { addr: first, end: last, colon: false, text, vars }];
+        return vec![ListedStatement {
+            addr: first,
+            end: last,
+            colon: false,
+            text,
+            vars,
+        }];
     }
     for statement in &mut statements {
         statement.text = statement.text.trim().to_owned();
@@ -268,14 +306,23 @@ pub fn load(motherboard: &mut Motherboard, source: &str) -> Result<usize, String
     let start = BasicState::read(motherboard).prog_start;
     let end = start as usize + bytes.len();
     if end > HIGHEST_PROGRAM_END as usize {
-        return Err(format!("program too large: {} bytes, {} available", bytes.len(), HIGHEST_PROGRAM_END - start));
+        return Err(format!(
+            "program too large: {} bytes, {} available",
+            bytes.len(),
+            HIGHEST_PROGRAM_END - start
+        ));
     }
     for (i, &byte) in bytes.iter().enumerate() {
         motherboard.write_base_ram(start + i as u16, byte);
     }
     let end = end as u16;
     let rom = BasicRom::of_machine(motherboard);
-    for pointer in [rom.program_end, rom.variables_start, rom.arrays_start, rom.arrays_end] {
+    for pointer in [
+        rom.program_end,
+        rom.variables_start,
+        rom.arrays_start,
+        rom.arrays_end,
+    ] {
         doke(motherboard, pointer, end);
     }
     for i in 0..VARIABLE_CHAIN_HEADS_SIZE {
@@ -286,4 +333,3 @@ pub fn load(motherboard: &mut Motherboard, source: &str) -> Result<usize, String
     }
     Ok(bytes.len())
 }
-

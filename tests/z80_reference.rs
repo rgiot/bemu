@@ -22,7 +22,7 @@ fn ignored_flag_bits(code: &[u8]) -> u8 {
     match code {
         [0xcb, op, ..] if is_bit(*op) && op & 7 == 6 => 0x28,
         [0xdd | 0xfd, 0xcb, _, op, ..] if is_bit(*op) => 0x28,
-        _ => 0
+        _ => 0,
     }
 }
 
@@ -44,9 +44,18 @@ fn memory_byte(address: u16, seed: u32) -> u8 {
 type State = [u16; 16];
 
 const REG16: [Reg16; 12] = [
-    Reg16::Af, Reg16::Bc, Reg16::De, Reg16::Hl,
-    Reg16::Af2, Reg16::Bc2, Reg16::De2, Reg16::Hl2,
-    Reg16::Ix, Reg16::Iy, Reg16::Sp, Reg16::Pc
+    Reg16::Af,
+    Reg16::Bc,
+    Reg16::De,
+    Reg16::Hl,
+    Reg16::Af2,
+    Reg16::Bc2,
+    Reg16::De2,
+    Reg16::Hl2,
+    Reg16::Ix,
+    Reg16::Iy,
+    Reg16::Sp,
+    Reg16::Pc,
 ];
 
 fn parse_state<'a>(fields: &mut impl Iterator<Item = &'a str>) -> State {
@@ -58,7 +67,9 @@ fn parse_state<'a>(fields: &mut impl Iterator<Item = &'a str>) -> State {
 }
 
 fn load(motherboard: &mut Motherboard, code: &[u8], seed: u32, state: &State) {
-    let memory: Vec<u8> = (0..=0xffffu16).map(|address| memory_byte(address, seed)).collect();
+    let memory: Vec<u8> = (0..=0xffffu16)
+        .map(|address| memory_byte(address, seed))
+        .collect();
     motherboard.write_buffer(0, &memory[..0x8000]);
     motherboard.write_buffer(0x8000, &memory[0x8000..]);
     motherboard.write_buffer(state[11], code);
@@ -90,7 +101,8 @@ fn read_state(motherboard: &Motherboard) -> State {
 }
 
 const NAMES: [&str; 16] = [
-    "AF", "BC", "DE", "HL", "AF'", "BC'", "DE'", "HL'", "IX", "IY", "SP", "PC", "I", "R", "IFF1", "IFF2"
+    "AF", "BC", "DE", "HL", "AF'", "BC'", "DE'", "HL'", "IX", "IY", "SP", "PC", "I", "R", "IFF1",
+    "IFF2",
 ];
 
 #[test]
@@ -120,7 +132,10 @@ fn every_instruction_matches_the_reference_core() {
         let writes: Vec<(u16, u8)> = fields
             .map(|w| {
                 let (address, value) = w.split_once('=').unwrap();
-                (u16::from_str_radix(address, 16).unwrap(), u8::from_str_radix(value, 16).unwrap())
+                (
+                    u16::from_str_radix(address, 16).unwrap(),
+                    u8::from_str_radix(value, 16).unwrap(),
+                )
             })
             .collect();
 
@@ -170,25 +185,35 @@ fn every_instruction_matches_the_reference_core() {
         for (address, value) in &expected_memory {
             let found = motherboard.read_byte(*address);
             if found != *value {
-                problems.push(format!("[{address:04x}]: {found:02x}, reference {value:02x}"));
+                problems.push(format!(
+                    "[{address:04x}]: {found:02x}, reference {value:02x}"
+                ));
             }
         }
         total += 1;
 
         if !problems.is_empty() {
             let key = if code[0] == 0xdd || code[0] == 0xfd {
-                if code[1] == 0xcb { format!("{:02x}{:02x}..{:02x}", code[0], code[1], code[3]) } else { format!("{:02x}{:02x}", code[0], code[1]) }
-            }
-            else if code[0] == 0xcb || code[0] == 0xed {
+                if code[1] == 0xcb {
+                    format!("{:02x}{:02x}..{:02x}", code[0], code[1], code[3])
+                } else {
+                    format!("{:02x}{:02x}", code[0], code[1])
+                }
+            } else if code[0] == 0xcb || code[0] == 0xed {
                 format!("{:02x}{:02x}", code[0], code[1])
-            }
-            else {
+            } else {
                 format!("{:02x}", code[0])
             };
             let entry = failures.entry(key).or_insert((0, String::new()));
             entry.0 += 1;
             if entry.1.is_empty() {
-                entry.1 = format!("{code_hex} from AF={:04x} BC={:04x} HL={:04x}: {}", before[0], before[1], before[3], problems.join(", "));
+                entry.1 = format!(
+                    "{code_hex} from AF={:04x} BC={:04x} HL={:04x}: {}",
+                    before[0],
+                    before[1],
+                    before[3],
+                    problems.join(", ")
+                );
             }
         }
     }
@@ -199,6 +224,11 @@ fn every_instruction_matches_the_reference_core() {
             .iter()
             .map(|(opcode, (count, example))| format!("{opcode}: {count} failures, e.g. {example}"))
             .collect();
-        panic!("{} of {total} vectors differ, {} instructions:\n{}", failures.values().map(|f| f.0).sum::<usize>(), failures.len(), report.join("\n"));
+        panic!(
+            "{} of {total} vectors differ, {} instructions:\n{}",
+            failures.values().map(|f| f.0).sum::<usize>(),
+            failures.len(),
+            report.join("\n")
+        );
     }
 }

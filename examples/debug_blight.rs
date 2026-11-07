@@ -33,9 +33,14 @@ fn main() {
          key_output 'RUN\"BLIGHT\\(RET)'\n\
          wait 3000000\n"
     );
-    runner.run_text(&boot, ".").unwrap_or_else(|e| panic!("boot failed: {e}"));
+    runner
+        .run_text(&boot, ".")
+        .unwrap_or_else(|e| panic!("boot failed: {e}"));
 
-    eprintln!("boot script done (PC={:04X}), switching to raw single-stepping", runner.motherboard().pc());
+    eprintln!(
+        "boot script done (PC={:04X}), switching to raw single-stepping",
+        runner.motherboard().pc()
+    );
 
     let mut last_pc = runner.motherboard().pc();
     let mut steps: u64 = 0;
@@ -56,7 +61,11 @@ fn main() {
         if pc == 0x0000 && last_pc != 0x0000 {
             eprintln!("\n=== PC hit the cold-reset entry point: {last_pc:04X} -> 0000 at step {steps} ===");
             print_state(mb);
-            eprintln!("\ndisassembly leading up to it ({:04X}-{:04X}):", last_pc.saturating_sub(32), last_pc);
+            eprintln!(
+                "\ndisassembly leading up to it ({:04X}-{:04X}):",
+                last_pc.saturating_sub(32),
+                last_pc
+            );
             for insn in mb.disassemble_instructions_from(last_pc.saturating_sub(32), 20) {
                 eprintln!("{}", insn);
             }
@@ -81,13 +90,16 @@ fn main() {
         }
         if steps.is_multiple_of(SHOT_EVERY) {
             let name = format!("step_{steps:010}");
-            if let Err(e) = runner.run_text(&format!("screenshot_name '{name}'\nscreenshot\n"), ".") {
+            if let Err(e) = runner.run_text(&format!("screenshot_name '{name}'\nscreenshot\n"), ".")
+            {
                 eprintln!("(screenshot at step {steps} failed: {e})");
             }
         }
 
         if steps >= MAX_STEPS {
-            eprintln!("\n=== reached MAX_STEPS ({MAX_STEPS}) without a cold reset or getting stuck ===");
+            eprintln!(
+                "\n=== reached MAX_STEPS ({MAX_STEPS}) without a cold reset or getting stuck ==="
+            );
             print_state(runner.motherboard());
             break;
         }

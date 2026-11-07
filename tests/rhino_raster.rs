@@ -34,26 +34,47 @@ fn differing_pixels(reference: &RgbImage, ours: &RgbImage) -> usize {
 }
 
 fn rhino(gate_array: &str) -> RgbImage {
-    let script = std::fs::read_to_string("validation/demos/rhino/rhino.csl").expect("the Rhino CSL");
+    let script =
+        std::fs::read_to_string("validation/demos/rhino/rhino.csl").expect("the Rhino CSL");
     let script = script
-        .replace("crtc_select 1", &format!("gate_array {gate_array}\ncrtc_select 0"))
+        .replace(
+            "crtc_select 1",
+            &format!("gate_array {gate_array}\ncrtc_select 0"),
+        )
         .replace("'../../rhino_mdr.dsk'", "'validation/rhino_mdr.dsk'");
     let dir = std::env::temp_dir().join(format!("amsrust_rhino_{gate_array}"));
     let mut runner = CslRunner::new(&dir);
-    runner.run_text(&script, std::env::current_dir().unwrap()).expect("the CSL runs");
-    image::open(dir.join("rhino_01.png")).expect("the screenshot").to_rgb8()
+    runner
+        .run_text(&script, std::env::current_dir().unwrap())
+        .expect("the CSL runs");
+    image::open(dir.join("rhino_01.png"))
+        .expect("the screenshot")
+        .to_rgb8()
 }
 
 #[test]
 #[ignore = "slow: plays the demo"]
 fn both_gate_arrays_match_their_reference_emulators() {
-    let amspirit = image::open("validation/demos/rhino/amspirit_1.13.4_crtc1.png").unwrap().to_rgb8();
-    let ace = image::open("validation/demos/rhino/ace_dl.png").unwrap().to_rgb8();
+    let amspirit = image::open("validation/demos/rhino/amspirit_1.13.4_crtc1.png")
+        .unwrap()
+        .to_rgb8();
+    let ace = image::open("validation/demos/rhino/ace_dl.png")
+        .unwrap()
+        .to_rgb8();
     let (ga40007, ga40010) = (rhino("40007"), rhino("40010"));
 
-    assert!(differing_pixels(&amspirit, &ga40007) < 10, "GA 40007/8 vs AMSpiriT Lite");
+    assert!(
+        differing_pixels(&amspirit, &ga40007) < 10,
+        "GA 40007/8 vs AMSpiriT Lite"
+    );
     assert!(differing_pixels(&ace, &ga40010) < 10, "GA 40010 vs ACE-DL");
     // and the chips really differ
-    assert!(differing_pixels(&amspirit, &ga40010) > 20, "GA 40010 should not look like AMSpiriT Lite");
-    assert!(differing_pixels(&ace, &ga40007) > 20, "GA 40007/8 should not look like ACE-DL");
+    assert!(
+        differing_pixels(&amspirit, &ga40010) > 20,
+        "GA 40010 should not look like AMSpiriT Lite"
+    );
+    assert!(
+        differing_pixels(&ace, &ga40007) > 20,
+        "GA 40007/8 should not look like ACE-DL"
+    );
 }

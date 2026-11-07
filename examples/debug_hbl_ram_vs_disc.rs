@@ -16,7 +16,12 @@ fn extract(image: &amsrust::disc_image::DiscImage, wanted: &str) -> Vec<u8> {
         let n = block * 2 + half;
         let (track, idx) = (n / 9, n % 9);
         let t = image.track(0, track as u8).expect("track");
-        t.sectors.iter().find(|s| s.r == 0xc1 + idx as u8).expect("sector").data.clone()
+        t.sectors
+            .iter()
+            .find(|s| s.r == 0xc1 + idx as u8)
+            .expect("sector")
+            .data
+            .clone()
     };
     let mut dir = Vec::new();
     for b in 0..2 {
@@ -29,9 +34,18 @@ fn extract(image: &amsrust::disc_image::DiscImage, wanted: &str) -> Vec<u8> {
         if e[0] == 0xe5 || e.len() < 32 {
             continue;
         }
-        let name: String = e[1..9].iter().map(|b| (b & 0x7f) as char).collect::<String>().trim_end().to_string()
+        let name: String = e[1..9]
+            .iter()
+            .map(|b| (b & 0x7f) as char)
+            .collect::<String>()
+            .trim_end()
+            .to_string()
             + "."
-            + e[9..12].iter().map(|b| (b & 0x7f) as char).collect::<String>().trim_end();
+            + e[9..12]
+                .iter()
+                .map(|b| (b & 0x7f) as char)
+                .collect::<String>()
+                .trim_end();
         if name == wanted {
             extents.push((e[12] as u32 + 32 * e[14] as u32, e[16..32].to_vec(), e[15]));
         }
@@ -63,12 +77,21 @@ fn main() {
     );
     runner.run_text(&boot, ".").expect("boot");
     let mb = runner.motherboard_mut();
-    for _ in 0..std::env::var("STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(1_000_000u64) {
+    for _ in 0..std::env::var("STEPS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1_000_000u64)
+    {
         mb.execute_next_opcode_no_video();
     }
     // physical RAM: base 64K + every extra page
     let mut ram: Vec<(String, Vec<u8>)> = Vec::new();
-    let banks = [BankNumber::Bank0, BankNumber::Bank1, BankNumber::Bank2, BankNumber::Bank3];
+    let banks = [
+        BankNumber::Bank0,
+        BankNumber::Bank1,
+        BankNumber::Bank2,
+        BankNumber::Bank3,
+    ];
     let mut pages = vec![("base".to_string(), PageNumber::Base)];
     for p in 0..mb.extra_ram_pages() as u8 {
         pages.push((format!("extra{p}"), PageNumber::Page(p)));
@@ -84,13 +107,33 @@ fn main() {
     }
     if let Some(file) = std::env::args().nth(2) {
         let full = extract(&image, &file);
-        println!("{file}: {} bytes on disc, header load={:02x}{:02x} exec={:02x}{:02x} len={:02x}{:02x}", full.len(), full[22], full[21], full[27], full[26], full[25], full[24]);
+        println!(
+            "{file}: {} bytes on disc, header load={:02x}{:02x} exec={:02x}{:02x} len={:02x}{:02x}",
+            full.len(),
+            full[22],
+            full[21],
+            full[27],
+            full[26],
+            full[25],
+            full[24]
+        );
         let body = full[128..].to_vec();
         println!("  body[0..8]={:02x?}", &body[..8]);
         // longest verbatim prefix/any 16-byte probe positions of the body, anywhere
         for probe in [0usize, 0x100, 0x1000, 0x2000, 0x3000] {
-            if probe + 16 > body.len() { continue; }
-            let hits: Vec<_> = ram.iter().flat_map(|(n, r)| r.windows(16).enumerate().filter(|(_, w)| **w == body[probe..probe + 16]).map(move |(i, _)| format!("{n}:{i:#06x}")).collect::<Vec<_>>()).collect();
+            if probe + 16 > body.len() {
+                continue;
+            }
+            let hits: Vec<_> = ram
+                .iter()
+                .flat_map(|(n, r)| {
+                    r.windows(16)
+                        .enumerate()
+                        .filter(|(_, w)| **w == body[probe..probe + 16])
+                        .map(move |(i, _)| format!("{n}:{i:#06x}"))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
             println!("  16-byte probe @{probe:#x}: {hits:?}");
         }
         let chunks: Vec<&[u8]> = body.chunks(256).filter(|c| c.len() == 256).collect();
@@ -98,14 +141,19 @@ fn main() {
             .iter()
             .filter(|c| ram.iter().any(|(_, r)| r.windows(256).any(|w| w == **c)))
             .count();
-        println!("{file}: {hits}/{} 256-byte chunks found verbatim in physical RAM", chunks.len());
+        println!(
+            "{file}: {hits}/{} 256-byte chunks found verbatim in physical RAM",
+            chunks.len()
+        );
         return;
     }
     let (mut found, mut missing, mut empty) = (0, 0, 0);
     let mut per_track: std::collections::BTreeMap<u8, (u32, u32)> = Default::default();
     for head in 0..image.nb_heads() {
         for cyl in 0..image.nb_tracks() {
-            let Some(track) = image.track(head, cyl) else { continue };
+            let Some(track) = image.track(head, cyl) else {
+                continue;
+            };
             for s in &track.sectors {
                 let d = &s.data;
                 if d.iter().all(|b| *b == d[0]) {
@@ -116,7 +164,10 @@ fn main() {
                 let mut hit = None;
                 for (name, bytes) in &ram {
                     let mut start = 0;
-                    while let Some(pos) = bytes[start..].windows(d.len().min(64)).position(|w| w == &d[..d.len().min(64)]) {
+                    while let Some(pos) = bytes[start..]
+                        .windows(d.len().min(64))
+                        .position(|w| w == &d[..d.len().min(64)])
+                    {
                         let at = start + pos;
                         if bytes.len() >= at + d.len() && bytes[at..at + d.len()] == d[..] {
                             hit = Some((name.clone(), at));

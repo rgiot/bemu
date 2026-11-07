@@ -56,7 +56,8 @@ impl Crtc2 {
     /// The last line of the frame: C4=R4 and C9=R9, or the last line of the adjustment.
     fn is_frame_last_line(&self, core: &Core) -> bool {
         if core.in_vertical_adjust {
-            core.vtac.saturating_add(1) >= core.regs[5].saturating_add(u8::from(core.interlace_extra_line))
+            core.vtac.saturating_add(1)
+                >= core.regs[5].saturating_add(u8::from(core.interlace_extra_line))
         } else {
             core.vcc == core.regs[4] && self.c9_is_last(core)
         }
@@ -82,7 +83,7 @@ impl CrtcChip for Crtc2 {
     fn read_register(&self, context: &ReadContext) -> u8 {
         match context.selected & 0x1f {
             number @ 14..=17 => context.register(number) & pointer_mask(number),
-            _ => 0
+            _ => 0,
         }
     }
 
@@ -97,7 +98,7 @@ impl CrtcChip for Crtc2 {
     fn hsync_width(&self, r3: u8) -> Option<u8> {
         Some(match r3 & 0x0f {
             0 => 16,
-            width => width
+            width => width,
         })
     }
 
@@ -130,8 +131,13 @@ impl CrtcChip for Crtc2 {
         }
         // ACCC §19.5.4/§19.6.3: IVM switched on during the first line of an odd frame, whatever
         // C0, makes that line the additional line; a new line 0 follows it
-        if r == 8 && previous.r8 & 3 != 3 && core.regs[8] & 3 == 3
-            && core.vcc == 0 && core.vlc == 0 && !core.in_vertical_adjust && core.parity_frame
+        if r == 8
+            && previous.r8 & 3 != 3
+            && core.regs[8] & 3 == 3
+            && core.vcc == 0
+            && core.vlc == 0
+            && !core.in_vertical_adjust
+            && core.parity_frame
         {
             core.in_vertical_adjust = true;
             core.interlace_extra_line = true;
@@ -140,8 +146,11 @@ impl CrtcChip for Crtc2 {
         }
         // ACCC §19.6.3: the interlace mode left during the additional line cancels it: C4 (past
         // R4) is not sent back to 0, C9 counts on to R9 and C4 on until R4 again
-        if r == 8 && previous.r8 & 1 != 0 && core.regs[8] & 1 == 0
-            && core.in_vertical_adjust && core.interlace_extra_line
+        if r == 8
+            && previous.r8 & 1 != 0
+            && core.regs[8] & 1 == 0
+            && core.in_vertical_adjust
+            && core.interlace_extra_line
             && (self.lone_extra_line || core.vtac >= core.regs[5])
         {
             core.in_vertical_adjust = false;
@@ -180,7 +189,11 @@ impl CrtcChip for Crtc2 {
         core.ivm_lines = false;
         // ACCC 19.8.3: C9.IVM steps beside C9 at every line end, IVM or not
         let (c9, r9) = (core.vlc.value(), core.regs[9] & 0x1f);
-        self.c9_ivm = if c9 == r9 || c9 == r9 >> 1 { 0 } else { (self.c9_ivm + 1) & 0x1f };
+        self.c9_ivm = if c9 == r9 || c9 == r9 >> 1 {
+            0
+        } else {
+            (self.c9_ivm + 1) & 0x1f
+        };
         // compared before the increment: C9 is a 5-bit counter, so with R9=31 the incremented
         // value (0) never equals R9+1 (32)
         let end = core.vlc == core.regs[9];

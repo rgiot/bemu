@@ -22,13 +22,17 @@ fn main() {
         assert!(guard < 50_000_000, "no interrupt");
         if mb.pc() == 0x38 && before != 0x38 {
             seen += 1;
-            if seen > skip { break; }
+            if seen > skip {
+                break;
+            }
         }
     }
     println!("interrupt accepted, PC=0038");
     for _ in 0..count {
         let pc = mb.pc();
-        let b: Vec<String> = (0..4).map(|i| format!("{:02X}", mb.read_byte(pc.wrapping_add(i)))).collect();
+        let b: Vec<String> = (0..4)
+            .map(|i| format!("{:02X}", mb.read_byte(pc.wrapping_add(i))))
+            .collect();
         let t0 = mb.t_state_counter().value();
         let c = mb.crtc().hcc;
         mb.execute_next_opcode_no_video();

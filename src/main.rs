@@ -56,18 +56,17 @@
 //! registers (see `amsrust::snapshot`); apply it after `--dsk` if the
 //! software expects a particular disc already in the drive.
 
-
-use amsrust::display::{DisplayFilter, DisplayMode};
-use amsrust::input::HostKey;
 use amsrust::debug::{Monitor, MonitorContext};
+use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::disc_image::load_disc_file;
+use amsrust::display::{DisplayFilter, DisplayMode};
 use amsrust::fdc::FdcDrive;
+use amsrust::input::HostKey;
 use amsrust::input::{HostKeyboard, HostLayout, KeyboardMapping};
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use amsrust::overlay::Overlay;
-use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::psg::AudioConfig;
 use cli::FrontendKind;
 use frontend::{Frontend, MinifbFrontend};
@@ -120,7 +119,10 @@ fn main() {
     if let Some(ga_type) = args.gate_array {
         builder.set_gate_array_type(ga_type);
     }
-    builder.set_crtc(args.crtc).set_model(args.model).enable_interruptions();
+    builder
+        .set_crtc(args.crtc)
+        .set_model(args.model)
+        .enable_interruptions();
     if let Some(kb) = args.ram_kb {
         builder.set_extra_ram_pages(kb / 64 - 1);
     }
@@ -164,10 +166,11 @@ fn main() {
             Some(path) => {
                 let rom = amsrust::roms::load_rom(path).unwrap_or_else(|e| panic!("--m4-rom {e}"));
                 amsrust::m4::M4Board::new(&rom, sd)
-            },
-            None => amsrust::m4::M4Board::with_bundled_rom(sd)
+            }
+            None => amsrust::m4::M4Board::with_bundled_rom(sd),
         };
-        let board = board.map(|board| board.in_slot(args.m4_slot.unwrap_or(amsrust::m4::M4_ROM_SLOT)));
+        let board =
+            board.map(|board| board.in_slot(args.m4_slot.unwrap_or(amsrust::m4::M4_ROM_SLOT)));
         #[cfg(feature = "m4-wifi")]
         let board = board.map(|board| board.with_wifi(!args.m4_no_wifi));
         motherboard.plug_expansion(Box::new(board.unwrap_or_else(|e| panic!("--m4: {e}"))));
@@ -182,7 +185,8 @@ fn main() {
         if args.m4.is_some() {
             panic!("--albireo and --m4: both decode &FExx, plug one");
         }
-        let board = amsrust::ch376::Albireo::open(std::path::Path::new(image)).unwrap_or_else(|e| panic!("--albireo: {e}"));
+        let board = amsrust::ch376::Albireo::open(std::path::Path::new(image))
+            .unwrap_or_else(|e| panic!("--albireo: {e}"));
         motherboard.plug_expansion(Box::new(board));
         eprintln!("{image}: the Albireo's USB key");
     }
@@ -192,7 +196,8 @@ fn main() {
     }
     #[cfg(feature = "nova")]
     if let Some(file) = &args.nova {
-        let nova = amsrust::nova::Nova::new(Some(file.into())).unwrap_or_else(|e| panic!("--nova: {e}"));
+        let nova =
+            amsrust::nova::Nova::new(Some(file.into())).unwrap_or_else(|e| panic!("--nova: {e}"));
         motherboard.plug_expansion(Box::new(nova));
         eprintln!("{file}: the Nova's NVRAM");
     }
@@ -204,31 +209,41 @@ fn main() {
     if let Some(board) = args.booster() {
         let model = if board == "miniboster" {
             amsrust::booster::Model::MiniBooster
-        }
-        else {
+        } else {
             amsrust::booster::Model::BoosterPlus
         };
         let mut booster = amsrust::booster::Booster::new(model);
         if let Some(uart) = &args.booster_uart {
             booster = booster.with_link(match uart.split_once(':') {
                 None if uart == "loopback" => Box::<amsrust::booster::Loopback>::default(),
-                Some(("listen", address)) => {
-                    Box::new(amsrust::booster::TcpLink::listen(address).unwrap_or_else(|e| panic!("--booster-uart {uart}: {e}")))
-                },
-                Some(("connect", address)) => {
-                    Box::new(amsrust::booster::TcpLink::connect(address).unwrap_or_else(|e| panic!("--booster-uart {uart}: {e}")))
-                },
-                _ => panic!("--booster-uart: loopback, listen:ADDRESS or connect:ADDRESS, not {uart:?}")
+                Some(("listen", address)) => Box::new(
+                    amsrust::booster::TcpLink::listen(address)
+                        .unwrap_or_else(|e| panic!("--booster-uart {uart}: {e}")),
+                ),
+                Some(("connect", address)) => Box::new(
+                    amsrust::booster::TcpLink::connect(address)
+                        .unwrap_or_else(|e| panic!("--booster-uart {uart}: {e}")),
+                ),
+                _ => panic!(
+                    "--booster-uart: loopback, listen:ADDRESS or connect:ADDRESS, not {uart:?}"
+                ),
             });
         }
         if let Some(file) = &args.booster_eeprom {
-            booster = booster.with_eeprom_file(file.into()).unwrap_or_else(|e| panic!("--booster-eeprom: {e}"));
+            booster = booster
+                .with_eeprom_file(file.into())
+                .unwrap_or_else(|e| panic!("--booster-eeprom: {e}"));
         }
         if let Some(file) = &args.booster_flash {
-            booster = booster.with_flash_file(file.into()).unwrap_or_else(|e| panic!("--booster-flash: {e}"));
+            booster = booster
+                .with_flash_file(file.into())
+                .unwrap_or_else(|e| panic!("--booster-flash: {e}"));
         }
         if let Some(file) = &args.booster_adc {
-            booster = booster.with_adc(amsrust::booster::AdcSource::open(std::path::Path::new(file)).unwrap_or_else(|e| panic!("--booster-adc: {e}")));
+            booster = booster.with_adc(
+                amsrust::booster::AdcSource::open(std::path::Path::new(file))
+                    .unwrap_or_else(|e| panic!("--booster-adc: {e}")),
+            );
         }
         motherboard.plug_expansion(Box::new(booster));
         eprintln!("the CPC Booster ({model:?}) is plugged");
@@ -239,9 +254,17 @@ fn main() {
     }
     #[cfg(feature = "dandanator")]
     if let Some(romset) = &args.dandanator {
-        let card = amsrust::dandanator::Dandanator::open(romset, args.dandanator_writable).unwrap_or_else(|e| panic!("--dandanator {e}"));
+        let card = amsrust::dandanator::Dandanator::open(romset, args.dandanator_writable)
+            .unwrap_or_else(|e| panic!("--dandanator {e}"));
         motherboard.plug_expansion(Box::new(card));
-        eprintln!("the Dandanator: {romset}{}", if args.dandanator_writable { " (writable)" } else { "" });
+        eprintln!(
+            "the Dandanator: {romset}{}",
+            if args.dandanator_writable {
+                " (writable)"
+            } else {
+                ""
+            }
+        );
     }
     #[cfg(not(feature = "willy"))]
     if args.willy_opl3().is_some() || args.willy_s2p.is_some() {
@@ -256,29 +279,44 @@ fn main() {
             eprintln!("Willy with an OPL3LPT at &{base:04X}");
         }
         if let Some(soundfont) = &args.willy_s2p {
-            let base = args.willy_s2p_at.as_deref().map_or(Ok(S2P_BASE), parse_base).unwrap_or_else(|e| panic!("--willy-s2p-at {e}"));
-            let card = S2p::open(base, std::path::Path::new(soundfont)).unwrap_or_else(|e| panic!("--willy-s2p {e}"));
+            let base = args
+                .willy_s2p_at
+                .as_deref()
+                .map_or(Ok(S2P_BASE), parse_base)
+                .unwrap_or_else(|e| panic!("--willy-s2p-at {e}"));
+            let card = S2p::open(base, std::path::Path::new(soundfont))
+                .unwrap_or_else(|e| panic!("--willy-s2p {e}"));
             motherboard.plug_expansion(Box::new(card));
             eprintln!("Willy with an S2P at &{base:04X} ({soundfont})");
         }
     }
     if let Some(spec) = &args.cart {
-        let cartridge = amsrust::asic::Cartridge::load_file(spec).unwrap_or_else(|e| panic!("--cart {e}"));
+        let cartridge =
+            amsrust::asic::Cartridge::load_file(spec).unwrap_or_else(|e| panic!("--cart {e}"));
         eprintln!("{spec}: a cartridge of {}K", cartridge.page_count() * 16);
         motherboard.insert_cartridge(Some(cartridge));
         motherboard.restart();
     }
     for (slot, path) in &args.roms {
         let data = amsrust::roms::load_rom(path).unwrap_or_else(|e| panic!("--rom {e}"));
-        motherboard.set_upper_rom(*slot, Some(&data)).unwrap_or_else(|e| panic!("{path}: {e}"));
+        motherboard
+            .set_upper_rom(*slot, Some(&data))
+            .unwrap_or_else(|e| panic!("{path}: {e}"));
         eprintln!("{path}: upper ROM {slot}");
     }
     if (args.dsk_a.is_some() || args.dsk_b.is_some()) && !motherboard.has_disc_interface() {
-        eprintln!("--dsk: this {} has no disc interface (--ddi adds one)", args.model.name());
+        eprintln!(
+            "--dsk: this {} has no disc interface (--ddi adds one)",
+            args.model.name()
+        );
     }
 
-    motherboard.fdc_mut().set_drive_kind(FdcDrive::A, args.drive_a);
-    motherboard.fdc_mut().set_drive_kind(FdcDrive::B, args.drive_b);
+    motherboard
+        .fdc_mut()
+        .set_drive_kind(FdcDrive::A, args.drive_a);
+    motherboard
+        .fdc_mut()
+        .set_drive_kind(FdcDrive::B, args.drive_b);
     if let Some(path) = &args.dsk_a {
         insert_disc(path, FdcDrive::A, &mut motherboard);
     }
@@ -302,7 +340,10 @@ fn main() {
     if let Some(path) = &args.sna {
         amsrust::snapshot::load_sna(&mut motherboard, path).unwrap_or_else(|e| panic!("{e}"));
         if motherboard.model() != args.model {
-            eprintln!("{path}: a CPC {} snapshot, run as such", motherboard.model().name());
+            eprintln!(
+                "{path}: a CPC {} snapshot, run as such",
+                motherboard.model().name()
+            );
         }
         breakpoints = amsrust::snapshot::load_breakpoints(path).unwrap_or_else(|e| panic!("{e}"));
         for what in &breakpoints.ignored {
@@ -318,8 +359,10 @@ fn main() {
         eprintln!("{path}: {} symbol(s)", symbols.len());
         breakpoints.symbols.extend(&symbols);
     }
-    let monitor_mode =
-        args.screenshot_dir.is_none() && !args.window && args.record.is_none() && !args.debug_server();
+    let monitor_mode = args.screenshot_dir.is_none()
+        && !args.window
+        && args.record.is_none()
+        && !args.debug_server();
     if !breakpoints.is_empty() && !monitor_mode && !args.debug_server() {
         eprintln!(
             "{} snapshot breakpoint(s), used by the interactive monitor and the debug server only",
@@ -329,16 +372,27 @@ fn main() {
     // What a run writes at its end (a recording, the sound, the printer's sheets) survives
     // Ctrl+C: the loops stop at the next frame. Not in the interactive monitor, where Ctrl+C
     // keeps its usual meaning.
-    if !monitor_mode && (args.dmp2000.is_some() || args.record_wav.is_some() || args.record_ym.is_some()) {
+    if !monitor_mode
+        && (args.dmp2000.is_some() || args.record_wav.is_some() || args.record_ym.is_some())
+    {
         ctrlc::set_handler(|| STOP.store(true, std::sync::atomic::Ordering::Relaxed)).ok();
     }
     start_sound_export(&args, &mut motherboard);
     let mut typist = match &args.basic {
         Some(file) => {
-            let source = std::fs::read_to_string(file).unwrap_or_else(|e| panic!("--basic {file}: {e}"));
-            Some(Typist::with_basic(args.text.as_deref().unwrap_or(""), source, args.type_at, motherboard.keyboard_layout()))
-        },
-        None => args.text.as_deref().map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout()))
+            let source =
+                std::fs::read_to_string(file).unwrap_or_else(|e| panic!("--basic {file}: {e}"));
+            Some(Typist::with_basic(
+                args.text.as_deref().unwrap_or(""),
+                source,
+                args.type_at,
+                motherboard.keyboard_layout(),
+            ))
+        }
+        None => args
+            .text
+            .as_deref()
+            .map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout())),
     };
     if typist.is_some() && monitor_mode {
         eprintln!("--type is ignored in the interactive monitor");
@@ -349,24 +403,59 @@ fn main() {
     }
 
     match args.screenshot_dir {
-        Some(dir) => run_headless(&mut motherboard, &dir, args.seconds, args.every, args.from, &mut typist, args.display, filter.as_mut(), args.black_level, args.overlay),
+        Some(dir) => run_headless(
+            &mut motherboard,
+            &dir,
+            args.seconds,
+            args.every,
+            args.from,
+            &mut typist,
+            args.display,
+            filter.as_mut(),
+            args.black_level,
+            args.overlay,
+        ),
         None if args.window => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(&mut motherboard, !args.mute, args.record.as_deref(), &mut typist, &mut reloader, server.as_mut(), args.display, args.gpu, args.curvature, args.black_level, args.frontend, args.turbo, args.overlay, args.keyboard, args.host_keyboard_layout)
-        },
+            run_window(
+                &mut motherboard,
+                !args.mute,
+                args.record.as_deref(),
+                &mut typist,
+                &mut reloader,
+                server.as_mut(),
+                args.display,
+                args.gpu,
+                args.curvature,
+                args.black_level,
+                args.frontend,
+                args.turbo,
+                args.overlay,
+                args.keyboard,
+                args.host_keyboard_layout,
+            )
+        }
         None if args.debug_server() => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
             run_debug_server(&mut motherboard, &mut server, &mut typist, &mut reloader)
-        },
-        None if args.record.is_some() => {
-            run_recording(&mut motherboard, args.record.as_deref().unwrap(), args.seconds, &mut typist, filter.as_mut(), args.black_level)
-        },
+        }
+        None if args.record.is_some() => run_recording(
+            &mut motherboard,
+            args.record.as_deref().unwrap(),
+            args.seconds,
+            &mut typist,
+            filter.as_mut(),
+            args.black_level,
+        ),
         None => {
             let mut handle = |_motherboard: &mut amsrust::motherboard::Motherboard| false;
             let mut ctx = MonitorContext::new(Box::new(&mut handle));
             ctx.add_symbols(&breakpoints.symbols);
             for breakpoint in &breakpoints.exec {
-                eprintln!("breakpoint at {:#06x} (from the snapshot's {} chunk)", breakpoint.address, breakpoint.chunk);
+                eprintln!(
+                    "breakpoint at {:#06x} (from the snapshot's {} chunk)",
+                    breakpoint.address, breakpoint.chunk
+                );
                 ctx.add_breakpoint(amsrust::debug::BreakPoint::Address(breakpoint.address));
             }
             if !breakpoints.advanced.is_empty() {
@@ -386,10 +475,11 @@ fn main() {
     if let Some(path) = &args.save_sna {
         match amsrust::snapshot::save_sna(&motherboard, path) {
             Ok(()) => {
-            let full = std::fs::canonicalize(path).map_or(path.clone(), |p| p.display().to_string());
-            eprintln!("snapshot saved: {full}")
-        },
-            Err(e) => eprintln!("cannot save the snapshot: {e}")
+                let full =
+                    std::fs::canonicalize(path).map_or(path.clone(), |p| p.display().to_string());
+                eprintln!("snapshot saved: {full}")
+            }
+            Err(e) => eprintln!("cannot save the snapshot: {e}"),
         }
     }
 }
@@ -399,7 +489,7 @@ struct SoundExport {
     ym: Option<String>,
     wav_path: Option<String>,
     /// Opened with the first samples, at the rate they come at.
-    wav: Option<amsrust::sound_export::WavWriter<std::io::BufWriter<std::fs::File>>>
+    wav: Option<amsrust::sound_export::WavWriter<std::io::BufWriter<std::fs::File>>>,
 }
 
 thread_local! {
@@ -425,7 +515,11 @@ fn start_sound_export(args: &Args, motherboard: &mut Motherboard) {
         WAV_EXPORT.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     SOUND_EXPORT.with(|export| {
-        *export.borrow_mut() = Some(SoundExport { ym: args.record_ym.clone(), wav_path: args.record_wav.clone(), wav: None })
+        *export.borrow_mut() = Some(SoundExport {
+            ym: args.record_ym.clone(),
+            wav_path: args.record_wav.clone(),
+            wav: None,
+        })
     });
 }
 
@@ -436,14 +530,19 @@ fn export_samples(motherboard: &Motherboard, samples: &[f32]) {
     }
     SOUND_EXPORT.with(|export| {
         let mut export = export.borrow_mut();
-        let Some(export) = export.as_mut() else { return };
+        let Some(export) = export.as_mut() else {
+            return;
+        };
         if export.wav.is_none() {
-            let (Some(path), Some(config)) = (&export.wav_path, motherboard.psg().audio_config()) else { return };
+            let (Some(path), Some(config)) = (&export.wav_path, motherboard.psg().audio_config())
+            else {
+                return;
+            };
             let opened = std::fs::File::create(path).and_then(|file| {
                 amsrust::sound_export::WavWriter::new(
                     std::io::BufWriter::new(file),
                     config.sample_rate,
-                    config.nb_channels() as u16
+                    config.nb_channels() as u16,
                 )
             });
             match opened {
@@ -489,8 +588,8 @@ fn finish_printer_export(motherboard: &Motherboard, prefix: &str) {
             for file in files {
                 eprintln!("printed: {}", file.display());
             }
-        },
-        Err(e) => eprintln!("{prefix}: {e}")
+        }
+        Err(e) => eprintln!("{prefix}: {e}"),
     }
 }
 
@@ -498,27 +597,34 @@ fn finish_sound_export(motherboard: &mut Motherboard) {
     let samples = motherboard.take_audio_samples();
     export_samples(motherboard, &samples);
     WAV_EXPORT.store(false, std::sync::atomic::Ordering::Relaxed);
-    let Some(export) = SOUND_EXPORT.with(|export| export.borrow_mut().take()) else { return };
+    let Some(export) = SOUND_EXPORT.with(|export| export.borrow_mut().take()) else {
+        return;
+    };
     if let (Some(wav), Some(path)) = (export.wav, &export.wav_path) {
         match wav.finish() {
             Ok(_) => eprintln!("sound saved: {path}"),
-            Err(e) => eprintln!("{path}: {e}")
+            Err(e) => eprintln!("{path}: {e}"),
         }
     }
     if let Some(path) = &export.ym {
         let frames = motherboard.psg_mut().take_logged_frames();
-        let song = std::path::Path::new(path).file_stem().map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+        let song = std::path::Path::new(path)
+            .file_stem()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
         match std::fs::write(path, amsrust::sound_export::ym6(&frames, 50, &song)) {
             Ok(()) => eprintln!("{path}: {} frames of AY registers", frames.len()),
-            Err(e) => eprintln!("{path}: {e}")
+            Err(e) => eprintln!("{path}: {e}"),
         }
         // the cards' AYs (a PlayCity's: file.right.ym and file.left.ym)
         for (side, chip) in motherboard.expansion_sound_chips() {
             let side_path = std::path::Path::new(path).with_extension(format!("{side}.ym"));
             let frames = chip.take_logged_frames();
-            match std::fs::write(&side_path, amsrust::sound_export::ym6(&frames, 50, &format!("{song} {side}"))) {
+            match std::fs::write(
+                &side_path,
+                amsrust::sound_export::ym6(&frames, 50, &format!("{song} {side}")),
+            ) {
                 Ok(()) => eprintln!("{}: the {side} AY of a card", side_path.display()),
-                Err(e) => eprintln!("{}: {e}", side_path.display())
+                Err(e) => eprintln!("{}: {e}", side_path.display()),
             }
         }
     }
@@ -535,7 +641,7 @@ struct Typist {
     keys: VecDeque<Step>,
     /// T-state at which the next press or release is due.
     next_at: usize,
-    pressed: Option<Vec<CpcKey>>
+    pressed: Option<Vec<CpcKey>>,
 }
 
 /// 40ms: 2 frames, long enough for the firmware's keyboard scan.
@@ -544,25 +650,37 @@ const KEY_T_STATES: usize = T_STATES_PER_SECOND / 25;
 /// What `--type` does next: press keys together, or wait (`\(WAIT n)`, n seconds).
 enum Step {
     Keys(Vec<CpcKey>),
-    Pause(usize)
+    Pause(usize),
 }
 
 /// `text`'s keys, with its `\(WAIT n)` pauses (n seconds: a program's prompt to wait for).
-fn steps_of_text(text: &str, layout: amsrust::keyboard::KeyboardLayout) -> Result<Vec<Step>, String> {
+fn steps_of_text(
+    text: &str,
+    layout: amsrust::keyboard::KeyboardLayout,
+) -> Result<Vec<Step>, String> {
     const WAIT: &str = "\\(WAIT ";
     let mut steps = Vec::new();
     let mut rest = text;
     loop {
         let (keys, after) = match rest.find(WAIT) {
             Some(start) => (&rest[..start], Some(&rest[start + WAIT.len()..])),
-            None => (rest, None)
+            None => (rest, None),
         };
-        steps.extend(amsrust::csl_runner::keys_of_text(keys, layout)?.into_iter().map(Step::Keys));
+        steps.extend(
+            amsrust::csl_runner::keys_of_text(keys, layout)?
+                .into_iter()
+                .map(Step::Keys),
+        );
         let Some(after) = after else {
             return Ok(steps);
         };
-        let end = after.find(')').ok_or_else(|| format!("{WAIT}... without its )"))?;
-        let seconds: f64 = after[..end].trim().parse().map_err(|_| format!("{WAIT}{}): not a number of seconds", &after[..end]))?;
+        let end = after
+            .find(')')
+            .ok_or_else(|| format!("{WAIT}... without its )"))?;
+        let seconds: f64 = after[..end]
+            .trim()
+            .parse()
+            .map_err(|_| format!("{WAIT}{}): not a number of seconds", &after[..end]))?;
         steps.push(Step::Pause((seconds * T_STATES_PER_SECOND as f64) as usize));
         rest = &after[end + 1..];
     }
@@ -576,11 +694,21 @@ impl Typist {
                 Vec::new()
             })
             .into();
-        Self { basic: None, keys, next_at: (at_seconds * T_STATES_PER_SECOND as f64) as usize, pressed: None }
+        Self {
+            basic: None,
+            keys,
+            next_at: (at_seconds * T_STATES_PER_SECOND as f64) as usize,
+            pressed: None,
+        }
     }
 
     /// `--basic`: the listing goes in memory at `at_seconds`, then RUN and `text` are typed.
-    fn with_basic(text: &str, basic: String, at_seconds: f64, layout: amsrust::keyboard::KeyboardLayout) -> Self {
+    fn with_basic(
+        text: &str,
+        basic: String,
+        at_seconds: f64,
+        layout: amsrust::keyboard::KeyboardLayout,
+    ) -> Self {
         let mut typist = Self::new(&format!("RUN\n{text}"), at_seconds, layout);
         typist.basic = Some(basic);
         typist
@@ -597,13 +725,16 @@ impl Typist {
                 if let Err(error) = amsrust::basic_program::load(motherboard, &source) {
                     eprintln!("--basic: {error}\n--basic: typing the listing instead");
                     let layout = motherboard.keyboard_layout();
-                    let typed = source.lines().map(|line| format!("{line}\n")).collect::<String>();
+                    let typed = source
+                        .lines()
+                        .map(|line| format!("{line}\n"))
+                        .collect::<String>();
                     match amsrust::csl_runner::keys_of_text(&typed, layout) {
                         Ok(keys) => {
                             for key in keys.into_iter().rev() {
                                 self.keys.push_front(Step::Keys(key));
                             }
-                        },
+                        }
                         Err(error) => {
                             eprintln!("--basic: {error}");
                             self.keys.clear();
@@ -627,9 +758,9 @@ impl Typist {
                 Some(Step::Pause(t_states)) => {
                     self.next_at = now + t_states;
                     return;
-                },
-                None => return
-            }
+                }
+                None => return,
+            },
         };
         for &key in &keys {
             motherboard.keyboard_mut().set_pressed(key, pressed);
@@ -647,7 +778,7 @@ struct Reloader {
     /// The snapshot, which the machine restarts from when a disc changes too.
     sna: Option<String>,
     text: Option<String>,
-    type_at: f64
+    type_at: f64,
 }
 
 impl Reloader {
@@ -656,16 +787,27 @@ impl Reloader {
             (args.sna.clone(), watch::Kind::Sna),
             (args.dsk_a.clone(), watch::Kind::Dsk(FdcDrive::A)),
             (args.dsk_b.clone(), watch::Kind::Dsk(FdcDrive::B)),
-            (args.cdt.clone(), watch::Kind::Cdt)
+            (args.cdt.clone(), watch::Kind::Cdt),
         ];
-        let watcher = watch::Watcher::new(files.into_iter().filter_map(|(path, kind)| path.map(|path| (path, kind))));
+        let watcher = watch::Watcher::new(
+            files
+                .into_iter()
+                .filter_map(|(path, kind)| path.map(|path| (path, kind))),
+        );
         if watcher.is_empty() {
             eprintln!("--watch: nothing to watch (--sna, --dsk, --dsk-b, --cdt)");
+        } else {
+            eprintln!(
+                "watching {}",
+                watcher.paths().collect::<Vec<_>>().join(", ")
+            );
         }
-        else {
-            eprintln!("watching {}", watcher.paths().collect::<Vec<_>>().join(", "));
+        Self {
+            watcher,
+            sna: args.sna.clone(),
+            text: args.text.clone(),
+            type_at: args.type_at,
         }
-        Self { watcher, sna: args.sna.clone(), text: args.text.clone(), type_at: args.type_at }
     }
 
     /// Take the files that changed:
@@ -691,8 +833,8 @@ impl Reloader {
                         motherboard.fdc_mut().insert_image(*drive, Some(image));
                         eprintln!("{path}: changed, inserted again");
                         restart = true;
-                    },
-                    Err(e) => eprintln!("{path}: changed, but {e}")
+                    }
+                    Err(e) => eprintln!("{path}: changed, but {e}"),
                 },
                 watch::Kind::Cdt => {
                     let tape = std::fs::read(path)
@@ -703,11 +845,11 @@ impl Reloader {
                             motherboard.insert_tape(Some(tape));
                             eprintln!("{path}: changed, inserted again");
                             restart = true;
-                        },
-                        Err(e) => eprintln!("{path}: changed, but {e}")
+                        }
+                        Err(e) => eprintln!("{path}: changed, but {e}"),
                     }
-                },
-                watch::Kind::Sna => restart = true
+                }
+                watch::Kind::Sna => restart = true,
             }
         }
         if !restart {
@@ -716,13 +858,16 @@ impl Reloader {
         match &self.sna {
             Some(path) => match amsrust::snapshot::load_sna(motherboard, path) {
                 Ok(()) => eprintln!("{path}: loaded again"),
-                Err(e) => eprintln!("{e}")
+                Err(e) => eprintln!("{e}"),
             },
             None => {
                 motherboard.power_cycle();
                 let now = motherboard.t_state_counter().value() as f64 / T_STATES_PER_SECOND as f64;
                 let layout = motherboard.keyboard_layout();
-                *typist = self.text.as_deref().map(|text| Typist::new(text, now + self.type_at, layout));
+                *typist = self
+                    .text
+                    .as_deref()
+                    .map(|text| Typist::new(text, now + self.type_at, layout));
                 eprintln!("machine switched off and on");
             }
         }
@@ -743,7 +888,7 @@ fn save_snapshot(motherboard: &Motherboard) {
         .expect("a free name");
     match amsrust::snapshot::save_sna(motherboard, &path) {
         Ok(()) => eprintln!("snapshot saved: {path}"),
-        Err(e) => eprintln!("cannot save the snapshot: {e}")
+        Err(e) => eprintln!("cannot save the snapshot: {e}"),
     }
 }
 
@@ -758,7 +903,7 @@ fn run_headless(
     mode: amsrust::display::DisplayMode,
     filter: &mut dyn DisplayFilter,
     black_level: u8,
-    show_overlay: bool
+    show_overlay: bool,
 ) {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{dir}: {e}"));
     let mut overlay = show_overlay.then(Overlay::default);
@@ -771,7 +916,11 @@ fn run_headless(
     let save = |frame: &image::RgbImage, shot: usize, filter: &mut dyn DisplayFilter, at: usize| {
         let path = format!("{dir}/frame_{shot:04}.png");
         // The raw mode keeps the monitor's own frame, as the test suites do.
-        let saved = if mode.is_raw() { frame.save(&path) } else { filter.render_to_image(frame).save(&path) };
+        let saved = if mode.is_raw() {
+            frame.save(&path)
+        } else {
+            filter.render_to_image(frame).save(&path)
+        };
         saved.unwrap_or_else(|e| panic!("{path}: {e}"));
         eprintln!("[{:>9.3}s] {path}", at as f64 / T_STATES_PER_SECOND as f64);
     };
@@ -780,7 +929,9 @@ fn run_headless(
         cli::Every::Seconds(seconds) => ((seconds * T_STATES_PER_SECOND as f64) as usize).max(1),
         cli::Every::Frames(frames) => {
             // One monitor follows the beam all along: every frame is whole and in order.
-            while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) && !stop_requested() {
+            while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states)
+                && !stop_requested()
+            {
                 motherboard.execute_next_opcode_no_video();
                 type_due_keys(typist, motherboard);
                 poll_sound_export(motherboard);
@@ -819,7 +970,9 @@ fn run_headless(
     };
 
     while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
-        while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states) && !stop_requested() {
+        while motherboard.t_state_counter().value() < next_shot_at.min(target_t_states)
+            && !stop_requested()
+        {
             // between screenshots, run without collecting video (cheaper)
             motherboard.execute_next_opcode_no_video();
             type_due_keys(typist, motherboard);
@@ -835,7 +988,10 @@ fn run_headless(
         motherboard.watch_io_writes(show_overlay);
         // Capture the next whole frame once due, rather than every tick:
         // matches how the CSL runner and play_demo grab a screenshot.
-        while frame.is_none() && motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
+        while frame.is_none()
+            && motherboard.t_state_counter().value() < target_t_states
+            && !stop_requested()
+        {
             type_due_keys(typist, motherboard);
             poll_sound_export(motherboard);
             motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
@@ -852,8 +1008,7 @@ fn run_headless(
             }
         }
         motherboard.watch_io_writes(false);
-        let Some(mut frame) = frame
-        else {
+        let Some(mut frame) = frame else {
             break; // ran out of time mid-frame
         };
         if let Some(overlay) = &mut overlay {
@@ -870,7 +1025,12 @@ fn run_headless(
 /// The format the PSG is recorded in when no audio device dictates it.
 const RECORD_AUDIO: fn() -> AudioConfig = || AudioConfig::stereo(48_000);
 
-fn start_recorder(path: &str, audio: Option<AudioConfig>, size: (usize, usize), plus: bool) -> recorder::Recorder {
+fn start_recorder(
+    path: &str,
+    audio: Option<AudioConfig>,
+    size: (usize, usize),
+    plus: bool,
+) -> recorder::Recorder {
     recorder::Recorder::start(std::path::Path::new(path), size.0, size.1, audio, plus)
         .unwrap_or_else(|e| {
             eprintln!("{e}");
@@ -880,7 +1040,10 @@ fn start_recorder(path: &str, audio: Option<AudioConfig>, size: (usize, usize), 
 
 fn finish_recorder(recorder: recorder::Recorder, path: &str) {
     match recorder.finish() {
-        Ok(frames) => eprintln!("{path}: {frames} frames ({:.1}s)", frames as f64 * 312.0 / 15625.0),
+        Ok(frames) => eprintln!(
+            "{path}: {frames} frames ({:.1}s)",
+            frames as f64 * 312.0 / 15625.0
+        ),
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(1)
@@ -896,10 +1059,15 @@ fn run_recording(
     seconds: u64,
     typist: &mut Option<Typist>,
     filter: &mut dyn DisplayFilter,
-    black_level: u8
+    black_level: u8,
 ) {
     motherboard.set_audio_output(Some(RECORD_AUDIO()));
-    let mut recorder = start_recorder(path, Some(RECORD_AUDIO()), filter.output_size(), motherboard.asic().is_some());
+    let mut recorder = start_recorder(
+        path,
+        Some(RECORD_AUDIO()),
+        filter.output_size(),
+        motherboard.asic().is_some(),
+    );
     let (width, height) = filter.output_size();
     let mut buffer = vec![0u32; width * height];
     let target_t_states = seconds as usize * T_STATES_PER_SECOND;
@@ -917,7 +1085,9 @@ fn run_recording(
             filter.render(&frame, &mut buffer);
             let samples = motherboard.take_audio_samples();
             export_samples(motherboard, &samples);
-            let recorded = recorder.samples(&samples).and_then(|()| recorder.frame(&buffer));
+            let recorded = recorder
+                .samples(&samples)
+                .and_then(|()| recorder.frame(&buffer));
             if let Err(e) = recorded {
                 eprintln!("{e}");
                 std::process::exit(1);
@@ -933,7 +1103,7 @@ fn run_recording(
 fn start_debug_server(
     args: &Args,
     breakpoints: &amsrust::snapshot::SnapshotBreakpoints,
-    motherboard: &mut Motherboard
+    motherboard: &mut Motherboard,
 ) -> Option<DebugServer> {
     if !args.debug_server() {
         return None;
@@ -949,7 +1119,10 @@ fn start_debug_server(
     }
     match DebugServer::start(args.debug_port()) {
         Ok(mut server) => {
-            eprintln!("debug server: http://127.0.0.1:{}/api/doc", args.debug_port());
+            eprintln!(
+                "debug server: http://127.0.0.1:{}/api/doc",
+                args.debug_port()
+            );
             server.add_symbols(&breakpoints.symbols);
             for breakpoint in &breakpoints.exec {
                 server.add_exec_breakpoint(breakpoint.address, motherboard);
@@ -963,7 +1136,7 @@ fn start_debug_server(
                 server.pause();
             }
             Some(server)
-        },
+        }
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(1)
@@ -978,7 +1151,7 @@ fn run_frame(
     motherboard: &mut Motherboard,
     monitor: &mut CrtMonitor,
     mut server: Option<&mut DebugServer>,
-    mut overlay: Option<&mut Overlay>
+    mut overlay: Option<&mut Overlay>,
 ) -> Option<image::RgbImage> {
     let mut frame = None;
     while frame.is_none() {
@@ -994,7 +1167,12 @@ fn run_frame(
         if let Some(server) = server.as_deref_mut() {
             let (x, line) = monitor.beam();
             let (crop_x, crop_y) = monitor.crop_origin();
-            server.set_beam(Beam { x, line, crop_x, crop_y });
+            server.set_beam(Beam {
+                x,
+                line,
+                crop_x,
+                crop_y,
+            });
             server.after_instruction(motherboard);
             if let Some(pc) = server.take_stop() {
                 eprintln!("debug server: breakpoint at {pc:#06x}");
@@ -1025,7 +1203,7 @@ fn run_debug_server(
     motherboard: &mut Motherboard,
     server: &mut DebugServer,
     typist: &mut Option<Typist>,
-    reloader: &mut Option<Reloader>
+    reloader: &mut Option<Reloader>,
 ) {
     ctrlc::set_handler(|| STOP.store(true, std::sync::atomic::Ordering::Relaxed)).ok();
     let mut monitor = CrtMonitor::default();
@@ -1050,8 +1228,7 @@ fn run_debug_server(
             let now = std::time::Instant::now();
             if deadline > now {
                 std::thread::sleep(deadline - now);
-            }
-            else {
+            } else {
                 deadline = now;
             }
         }
@@ -1079,19 +1256,21 @@ fn run_window(
     mut turbo: bool,
     show_overlay: bool,
     keyboard: KeyboardMapping,
-    host_layout: Option<HostLayout>
+    host_layout: Option<HostLayout>,
 ) {
     let (width, height) = mode.output_size();
     let mut window: Box<dyn Frontend> = match frontend {
-        FrontendKind::Minifb => {
-            Box::new(MinifbFrontend::open("amsrust", width, height, host_layout).unwrap_or_else(|e| panic!("{e}")))
-        },
+        FrontendKind::Minifb => Box::new(
+            MinifbFrontend::open("amsrust", width, height, host_layout)
+                .unwrap_or_else(|e| panic!("{e}")),
+        ),
         #[cfg(feature = "gpu-window")]
-        FrontendKind::Winit => {
-            Box::new(frontend::WinitGpuFrontend::open((width, height), curvature).unwrap_or_else(|e| panic!("{e}")))
-        },
+        FrontendKind::Winit => Box::new(
+            frontend::WinitGpuFrontend::open((width, height), curvature)
+                .unwrap_or_else(|e| panic!("{e}")),
+        ),
         #[cfg(not(feature = "gpu-window"))]
-        FrontendKind::Winit => panic!("--frontend winit needs a build with --features gpu-window")
+        FrontendKind::Winit => panic!("--frontend winit needs a build with --features gpu-window"),
     };
     // A frontend that draws the frames itself needs a picture from the filter
     // only to record it...
@@ -1112,7 +1291,12 @@ fn run_window(
             motherboard.set_audio_output(Some(RECORD_AUDIO()));
             RECORD_AUDIO()
         });
-        start_recorder(path, Some(config), (width, height), motherboard.asic().is_some())
+        start_recorder(
+            path,
+            Some(config),
+            (width, height),
+            motherboard.asic().is_some(),
+        )
     });
 
     let mut host_keyboard = HostKeyboard::new(keyboard);
@@ -1146,7 +1330,11 @@ fn run_window(
     // One whole frame per redraw, locked to the emulator's real VSYNC, not
     // to a fixed t-state count.
     // The debug server's pictures stay exact: no lifted black.
-    let mut monitor = if server.is_some() { CrtMonitor::default() } else { viewing_monitor(black_level) };
+    let mut monitor = if server.is_some() {
+        CrtMonitor::default()
+    } else {
+        viewing_monitor(black_level)
+    };
     if server.is_some() {
         monitor.keep_full_frames();
     }
@@ -1187,34 +1375,58 @@ fn run_window(
                     let now = !server.paused();
                     server.set_paused(now);
                     now
-                },
+                }
                 None => {
                     paused = !paused;
                     paused
                 }
             };
-            eprintln!("{}", if now { "paused (F8 resumes, F7 saves a snapshot)" } else { "running" });
+            eprintln!(
+                "{}",
+                if now {
+                    "paused (F8 resumes, F7 saves a snapshot)"
+                } else {
+                    "running"
+                }
+            );
         }
         f8_was_down = f8_down;
         // F6 shows or hides the timing overlay
         let f6_down = input.down.contains(&HostKey::F6);
         if f6_down && !f6_was_down {
-            overlay = if overlay.is_some() { None } else { Some(Overlay::default()) };
+            overlay = if overlay.is_some() {
+                None
+            } else {
+                Some(Overlay::default())
+            };
             motherboard.watch_io_writes(overlay.is_some());
-            eprintln!("timing overlay: {}", if overlay.is_some() { "on" } else { "off" });
+            eprintln!(
+                "timing overlay: {}",
+                if overlay.is_some() { "on" } else { "off" }
+            );
         }
         f6_was_down = f6_down;
         // F5 turns the disc of drive A over, Shift+F5 the one of drive B (3" drives)
         let f5_down = input.down.contains(&HostKey::F5);
         if f5_down && !f5_was_down {
-            let shift = input.down.contains(&HostKey::LeftShift) || input.down.contains(&HostKey::RightShift);
-            let (drive, letter) = if shift { (FdcDrive::B, 'B') } else { (FdcDrive::A, 'A') };
+            let shift = input.down.contains(&HostKey::LeftShift)
+                || input.down.contains(&HostKey::RightShift);
+            let (drive, letter) = if shift {
+                (FdcDrive::B, 'B')
+            } else {
+                (FdcDrive::A, 'A')
+            };
             match motherboard.fdc_mut().flip_disc(drive) {
-                Some(side) => eprintln!("drive {letter}: disc turned over, side {} up", if side == 0 { 'A' } else { 'B' }),
+                Some(side) => eprintln!(
+                    "drive {letter}: disc turned over, side {} up",
+                    if side == 0 { 'A' } else { 'B' }
+                ),
                 None if motherboard.fdc().has_disk(drive) => {
-                    eprintln!("drive {letter}: a 3.5\" drive reads both sides, nothing to turn over")
-                },
-                None => eprintln!("drive {letter}: no disc")
+                    eprintln!(
+                        "drive {letter}: a 3.5\" drive reads both sides, nothing to turn over"
+                    )
+                }
+                None => eprintln!("drive {letter}: no disc"),
             }
         }
         f5_was_down = f5_down;
@@ -1240,9 +1452,10 @@ fn run_window(
                 // Stopped by the debugger: keep the window alive.
                 if direct {
                     window.redraw().unwrap_or_else(|e| panic!("{e}"));
-                }
-                else {
-                    window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
+                } else {
+                    window
+                        .present(&buffer, filter.output_size())
+                        .unwrap_or_else(|e| panic!("{e}"));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(15));
                 continue;
@@ -1251,16 +1464,20 @@ fn run_window(
         if paused {
             if direct {
                 window.redraw().unwrap_or_else(|e| panic!("{e}"));
-            }
-            else {
-                window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
+            } else {
+                window
+                    .present(&buffer, filter.output_size())
+                    .unwrap_or_else(|e| panic!("{e}"));
             }
             std::thread::sleep(std::time::Duration::from_millis(15));
             continue;
         }
         // At full speed the frames not shown run without any picture (a quarter faster): one
         // frame's time, then the next loop. A recording and the debug server see every frame.
-        let unseen = turbo && recorder.is_none() && server.is_none() && last_present.elapsed() < FRAME_SHOWN_EVERY;
+        let unseen = turbo
+            && recorder.is_none()
+            && server.is_none()
+            && last_present.elapsed() < FRAME_SHOWN_EVERY;
         motherboard.set_video(!unseen);
         if unseen {
             let end = motherboard.t_state_counter().value() + FRAME_T_STATES;
@@ -1271,8 +1488,12 @@ fn run_window(
             motherboard.take_io_writes().for_each(drop);
             continue;
         }
-        let Some(mut frame) = run_frame(motherboard, &mut monitor, server.as_deref_mut(), overlay.as_mut())
-        else {
+        let Some(mut frame) = run_frame(
+            motherboard,
+            &mut monitor,
+            server.as_deref_mut(),
+            overlay.as_mut(),
+        ) else {
             continue; // paused mid-frame
         };
         if let Some(overlay) = &mut overlay {
@@ -1285,7 +1506,9 @@ fn run_window(
         let samples = motherboard.take_audio_samples();
         export_samples(motherboard, &samples);
         if let Some(recorder) = &mut recorder {
-            let recorded = recorder.samples(&samples).and_then(|()| recorder.frame(&buffer));
+            let recorded = recorder
+                .samples(&samples)
+                .and_then(|()| recorder.frame(&buffer));
             if let Err(e) = recorded {
                 eprintln!("recording stopped: {e}");
                 break;
@@ -1298,16 +1521,18 @@ fn run_window(
                 continue;
             }
             last_present = std::time::Instant::now();
-        }
-        else {
+        } else {
             play_frame_audio(audio.as_ref(), &samples, window.as_ref());
         }
 
         if direct {
-            window.present_frame(&frame, mode).unwrap_or_else(|e| panic!("{e}"));
-        }
-        else {
-            window.present(&buffer, filter.output_size()).unwrap_or_else(|e| panic!("{e}"));
+            window
+                .present_frame(&frame, mode)
+                .unwrap_or_else(|e| panic!("{e}"));
+        } else {
+            window
+                .present(&buffer, filter.output_size())
+                .unwrap_or_else(|e| panic!("{e}"));
         }
         // the next frame is drawn in this one
         monitor.recycle(frame);
@@ -1354,7 +1579,7 @@ fn open_audio(sound: bool, motherboard: &mut Motherboard) -> Option<AudioOut> {
                 );
                 motherboard.set_audio_output(Some(config));
                 Some(audio)
-            },
+            }
             Err(error) => {
                 eprintln!("sound disabled: {error}");
                 None
@@ -1394,10 +1619,13 @@ mod tests {
             .iter()
             .map(|step| match step {
                 Step::Keys(_) => None,
-                Step::Pause(t_states) => Some(*t_states)
+                Step::Pause(t_states) => Some(*t_states),
             })
             .collect();
-        assert_eq!(shape, [None, None, Some(T_STATES_PER_SECOND * 3 / 2), None, None]);
+        assert_eq!(
+            shape,
+            [None, None, Some(T_STATES_PER_SECOND * 3 / 2), None, None]
+        );
         assert!(steps_of_text("\\(WAIT x)a", KeyboardLayout::Uk).is_err());
         assert!(steps_of_text("\\(WAIT 2", KeyboardLayout::Uk).is_err());
     }

@@ -30,7 +30,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use crate::expansion_port::{ExpansionDevice, ExpansionPort};
@@ -61,14 +61,14 @@ pub enum Model {
     /// The CPC Booster+: `&FF01` reads 85.
     BoosterPlus,
     /// The MiniBooster: `&FF01` reads 238.
-    MiniBooster
+    MiniBooster,
 }
 
 impl Model {
     fn second_test_byte(self) -> u8 {
         match self {
             Model::BoosterPlus => 0b0101_0101,
-            Model::MiniBooster => 238
+            Model::MiniBooster => 238,
         }
     }
 
@@ -130,13 +130,17 @@ impl SerialLink for Unplugged {
 /// takes the place of the previous), `connect` joins a server. Threads read the socket.
 pub struct TcpLink {
     writer: Arc<Mutex<Option<TcpStream>>>,
-    incoming: Receiver<u8>
+    incoming: Receiver<u8>,
 }
 
 impl TcpLink {
     /// Serve `address` (`127.0.0.1:2323`, `:2323` for every interface).
     pub fn listen(address: &str) -> std::io::Result<Self> {
-        let address = if address.starts_with(':') { format!("0.0.0.0{address}") } else { address.to_owned() };
+        let address = if address.starts_with(':') {
+            format!("0.0.0.0{address}")
+        } else {
+            address.to_owned()
+        };
         let listener = TcpListener::bind(address)?;
         let (sender, incoming) = channel();
         let writer: Arc<Mutex<Option<TcpStream>>> = Arc::default();
@@ -159,7 +163,10 @@ impl TcpLink {
         stream.set_nodelay(true)?;
         let (sender, incoming) = channel();
         Self::read_forever(stream.try_clone()?, sender);
-        Ok(Self { writer: Arc::new(Mutex::new(Some(stream))), incoming })
+        Ok(Self {
+            writer: Arc::new(Mutex::new(Some(stream))),
+            incoming,
+        })
     }
 
     fn read_forever(mut stream: TcpStream, sender: Sender<u8>) {
@@ -199,25 +206,36 @@ impl SerialLink for TcpLink {
 pub struct AdcSource {
     channels: [Vec<u8>; 2],
     /// The samples per second of the file (a WAV's rate); `None`: one sample per conversion.
-    rate: Option<u32>
+    rate: Option<u32>,
 }
 
 impl AdcSource {
     /// A constant level (silence is 128).
     pub fn constant(level: u8) -> Self {
-        Self { channels: [vec![level], vec![level]], rate: None }
+        Self {
+            channels: [vec![level], vec![level]],
+            rate: None,
+        }
     }
 
     /// A raw file of unsigned bytes (the same on both channels), one per conversion.
     pub fn raw(samples: Vec<u8>) -> Self {
-        let samples = if samples.is_empty() { vec![128] } else { samples };
-        Self { channels: [samples.clone(), samples], rate: None }
+        let samples = if samples.is_empty() {
+            vec![128]
+        } else {
+            samples
+        };
+        Self {
+            channels: [samples.clone(), samples],
+            rate: None,
+        }
     }
 
     /// A PCM WAV (8 or 16 bits, mono or stereo; mono feeds both channels).
     pub fn wav(data: &[u8]) -> Result<Self, String> {
         let le16 = |at: usize| u16::from_le_bytes([data[at], data[at + 1]]);
-        let le32 = |at: usize| u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
+        let le32 =
+            |at: usize| u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
         if data.len() < 12 || &data[..4] != b"RIFF" || &data[8..12] != b"WAVE" {
             return Err("not a WAV".to_owned());
         }
@@ -234,21 +252,33 @@ impl AdcSource {
                         return Err(format!("WAV format {tag}: PCM only"));
                     }
                     let _ = le16;
-                    format = Some((u16::from_le_bytes([body[2], body[3]]), u32::from_le_bytes([body[4], body[5], body[6], body[7]]), u16::from_le_bytes([body[14], body[15]])));
-                },
+                    format = Some((
+                        u16::from_le_bytes([body[2], body[3]]),
+                        u32::from_le_bytes([body[4], body[5], body[6], body[7]]),
+                        u16::from_le_bytes([body[14], body[15]]),
+                    ));
+                }
                 b"data" => samples = Some(body),
                 _ => {}
             }
             at += 8 + size + (size & 1);
         }
-        let ((channels, rate, bits), samples) = format.zip(samples).ok_or("a WAV with no format or no data")?;
+        let ((channels, rate, bits), samples) = format
+            .zip(samples)
+            .ok_or("a WAV with no format or no data")?;
         if !matches!(bits, 8 | 16) || channels == 0 {
-            return Err(format!("WAV of {channels} channels of {bits} bits: 8 or 16 bits only"));
+            return Err(format!(
+                "WAV of {channels} channels of {bits} bits: 8 or 16 bits only"
+            ));
         }
         let bytes = usize::from(bits / 8);
         let frame = bytes * usize::from(channels);
         let sample = |bytes_of: &[u8]| -> u8 {
-            if bytes == 1 { bytes_of[0] } else { ((i16::from_le_bytes([bytes_of[0], bytes_of[1]]) >> 8) + 128) as u8 }
+            if bytes == 1 {
+                bytes_of[0]
+            } else {
+                ((i16::from_le_bytes([bytes_of[0], bytes_of[1]]) >> 8) + 128) as u8
+            }
         };
         let mut lists = [Vec::new(), Vec::new()];
         for frame_bytes in samples.chunks_exact(frame) {
@@ -260,7 +290,10 @@ impl AdcSource {
         if lists[0].is_empty() {
             return Err("a WAV with no sample".to_owned());
         }
-        Ok(Self { channels: lists, rate: Some(rate) })
+        Ok(Self {
+            channels: lists,
+            rate: Some(rate),
+        })
     }
 
     /// The file: a WAV by its content, else raw bytes.
@@ -268,8 +301,7 @@ impl AdcSource {
         let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         if data.starts_with(b"RIFF") {
             Self::wav(&data)
-        }
-        else {
+        } else {
             Ok(Self::raw(data))
         }
     }
@@ -288,7 +320,7 @@ struct Pins {
     /// Bits the outside world drives...
     driven: u8,
     /// ...and the level it drives them to.
-    level: u8
+    level: u8,
 }
 
 /// The UART: the registers of the ATmega16's and the frames in transit.
@@ -310,12 +342,15 @@ struct Uart {
     /// When the frame being sent is complete.
     tx_busy_until: Option<u64>,
     /// The receive buffer (REG3 bit 4).
-    buffer: VecDeque<u8>
+    buffer: VecDeque<u8>,
 }
 
 impl Uart {
     fn new() -> Self {
-        Self { flags: UDRE, ..Self::default() }
+        Self {
+            flags: UDRE,
+            ..Self::default()
+        }
     }
 
     fn buffered(&self) -> bool {
@@ -333,7 +368,7 @@ impl Uart {
             1 => 6,
             2 => 7,
             3 => 8,
-            _ => 9
+            _ => 9,
         };
         let parity = u64::from(self.reg2 & 0x60 != 0);
         let stop = if self.reg2 & 0x10 != 0 { 2 } else { 1 };
@@ -376,7 +411,7 @@ pub struct Booster {
     product: u16,
     version_position: usize,
     /// What the last read of a register put on the bus (an IN drives it for its whole length).
-    read_latch: u8
+    read_latch: u8,
 }
 
 impl Booster {
@@ -412,7 +447,7 @@ impl Booster {
             multiplier: [0; 2],
             product: 0,
             version_position: 0,
-            read_latch: 0
+            read_latch: 0,
         }
     }
 
@@ -438,9 +473,9 @@ impl Booster {
             Ok(data) => {
                 let length = data.len().min(EEPROM_SIZE);
                 self.eeprom[..length].copy_from_slice(&data[..length]);
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
-            Err(e) => return Err(format!("{}: {e}", file.display()))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", file.display())),
         }
         self.eeprom_file = Some(file);
         Ok(self)
@@ -452,9 +487,9 @@ impl Booster {
             Ok(data) => {
                 let length = data.len().min(FLASH_SIZE);
                 self.flash[..length].copy_from_slice(&data[..length]);
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
-            Err(e) => return Err(format!("{}: {e}", file.display()))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", file.display())),
         }
         self.flash_file = Some(file);
         Ok(self)
@@ -495,13 +530,17 @@ impl Booster {
     /// The RESET of the microcontroller (an OUT to &FF00 or &FF01, the pins of the CPC do not
     /// reset it).
     pub fn reset_board(&mut self) {
-        let (model, link, adc) = (self.model, std::mem::replace(&mut self.link, Box::new(Unplugged)), self.adc.clone());
+        let (model, link, adc) = (
+            self.model,
+            std::mem::replace(&mut self.link, Box::new(Unplugged)),
+            self.adc.clone(),
+        );
         let (eeprom, eeprom_file, flash, flash_file, flash_dirty) = (
             self.eeprom,
             self.eeprom_file.take(),
             std::mem::take(&mut self.flash),
             self.flash_file.take(),
-            self.flash_dirty
+            self.flash_dirty,
         );
         let (pins, now) = (self.pins, self.now);
         *self = Self::new(model);
@@ -545,8 +584,7 @@ impl Booster {
                 self.uart.buffer.pop_front();
             }
             self.uart.buffer.push_back(byte);
-        }
-        else {
+        } else {
             if self.uart.flags & RXC != 0 {
                 // the previous one was never read
                 self.uart.flags |= DOR;
@@ -591,14 +629,18 @@ impl Booster {
             0x05 => {
                 self.uart.flags &= !RXC;
                 self.uart.received
-            },
+            }
             0x06 => self.uart.flags,
             0x07 => self.uart.reg2,
             0x09 => {
                 // the BIOS waits for a character, up to the time out: 255 when there is one, else 0
                 self.run_uart();
-                if self.uart.flags & RXC != 0 || !self.uart.buffer.is_empty() { 0xff } else { 0 }
-            },
+                if self.uart.flags & RXC != 0 || !self.uart.buffer.is_empty() {
+                    0xff
+                } else {
+                    0
+                }
+            }
             0x0a => self.uart.timeout,
             0x0b => self.uart.reg3,
             0x0c => (self.eeprom_address >> 8) as u8,
@@ -608,14 +650,15 @@ impl Booster {
             0x10 => self.adc_channel,
             0x11 => {
                 let (seconds, rate) = (self.seconds(), self.conversions_per_second());
-                self.adc.sample(usize::from(self.adc_channel), seconds, rate)
-            },
+                self.adc
+                    .sample(usize::from(self.adc_channel), seconds, rate)
+            }
             0x12 => {
                 let key = self.key_pressed;
                 self.key_buffer.clear();
                 self.key_pressed = 0;
                 key
-            },
+            }
             0x15 => self.page_buffer_position,
             0x16 => self.page[0],
             0x17 => self.page[1],
@@ -629,14 +672,14 @@ impl Booster {
                 }
                 self.page[1] = position;
                 byte
-            },
+            }
             0x19 => (self.rom_address >> 8) as u8,
             0x1a => self.rom_address as u8,
             0x1b => {
                 let byte = self.flash[usize::from(self.rom_address) % FLASH_SIZE];
                 self.rom_address = (self.rom_address + 1) & 0x3fff;
                 byte
-            },
+            }
             0x1c => self.uart.buffer.len() as u8,
             0x1d => self.uart.buffer.pop_front().unwrap_or(0),
             0x1e => self.port_direction,
@@ -650,15 +693,19 @@ impl Booster {
                 let text = self.model.version_text();
                 let byte = text[self.version_position.min(text.len() - 1)];
                 // the terminator is sent, then it starts again
-                self.version_position = if byte == 0 { 0 } else { self.version_position + 1 };
+                self.version_position = if byte == 0 {
+                    0
+                } else {
+                    self.version_position + 1
+                };
                 byte
-            },
+            }
             0x26 => {
                 self.pwm_pending = None;
                 0
-            },
+            }
             // 08, 13, 14: nothing answers
-            _ => 0
+            _ => 0,
         }
     }
 
@@ -676,12 +723,14 @@ impl Booster {
                 if value & TXC != 0 {
                     self.uart.flags &= !TXC;
                 }
-            },
+            }
             0x07 => self.uart.reg2 = value,
             0x08 => self.transmit(value),
             0x0a => self.uart.timeout = value,
             0x0b => self.uart.reg3 = value & 0x1f,
-            0x0c => self.eeprom_address = (self.eeprom_address & 0x00ff) | u16::from(value & 1) << 8,
+            0x0c => {
+                self.eeprom_address = (self.eeprom_address & 0x00ff) | u16::from(value & 1) << 8
+            }
             0x0d => self.eeprom_address = (self.eeprom_address & 0x0100) | u16::from(value),
             0x0e => self.eeprom[usize::from(self.eeprom_address) % EEPROM_SIZE] = value,
             0x0f => self.adc_frequency = value & 0b111,
@@ -692,12 +741,12 @@ impl Booster {
                     self.key_pressed = find_key(&self.key_buffer);
                     self.key_buffer.clear();
                 }
-            },
+            }
             0x13 => self.write_flash_page(value & 0x7f),
             0x14 => {
                 self.page_buffer[usize::from(self.page_buffer_position)] = value;
                 self.page_buffer_position = (self.page_buffer_position + 1) & 0x7f;
-            },
+            }
             0x15 => self.page_buffer_position = value & 0x7f,
             0x16 => self.page[0] = value & 0x7f,
             0x17 => self.page[1] = value & 0x7f,
@@ -710,13 +759,11 @@ impl Booster {
             0x22 => {
                 self.multiplier[1] = value;
                 self.product = u16::from(self.multiplier[0]) * u16::from(value);
-            },
+            }
             0x25 => self.version_position = 0,
-            0x26 => {
-                match self.pwm_pending.take() {
-                    None => self.pwm_pending = Some(value),
-                    Some(first) => self.pwm = [first, value]
-                }
+            0x26 => match self.pwm_pending.take() {
+                None => self.pwm_pending = Some(value),
+                Some(first) => self.pwm = [first, value],
             },
             0x27 => self.pwm = [value; 2],
             _ => {}
@@ -768,9 +815,13 @@ pub fn find_key(lines: &[u8]) -> u8 {
         [32, 31, 18, 20, 7, 6, 2, 22],
         [30, 29, 5, 23, 19, 4, 3, 24],
         [27, 28, 72, 17, 71, 1, 69, 26],
-        [0, 0, 0, 0, 0, 0, 0, 64]
+        [0, 0, 0, 0, 0, 0, 0, 64],
     ];
-    let shift = if lines.get(2).is_some_and(|line| line & 0x20 == 0) { 128 } else { 0 };
+    let shift = if lines.get(2).is_some_and(|line| line & 0x20 == 0) {
+        128
+    } else {
+        0
+    };
     for (line, keys) in lines.iter().zip(KEYS) {
         if *line == 0xff {
             continue;
@@ -789,7 +840,9 @@ impl ExpansionDevice for Booster {
     fn tick(&mut self, port: &mut ExpansionPort) {
         self.now += 1;
 
-        let register = |address: u16| (address >> 8 == 0xff && address & 0xff < REGISTERS).then_some(address as u8);
+        let register = |address: u16| {
+            (address >> 8 == 0xff && address & 0xff < REGISTERS).then_some(address as u8)
+        };
         if let Some((address, value)) = port.io_write_started() {
             if let Some(register) = register(address) {
                 self.write_register(register, value);
@@ -806,7 +859,8 @@ impl ExpansionDevice for Booster {
 
     fn sound(&self) -> [f32; 2] {
         // the PWM through its low-pass filter: a level, 128 being the middle
-        self.pwm.map(|value| (f32::from(value) - 128.0) / 128.0 * 0.5)
+        self.pwm
+            .map(|value| (f32::from(value) - 128.0) / 128.0 * 0.5)
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -829,7 +883,10 @@ mod test {
     #[test]
     fn the_test_bytes_tell_the_boards_apart() {
         let mut booster = board();
-        assert_eq!((booster.read_register(0), booster.read_register(1)), (170, 85));
+        assert_eq!(
+            (booster.read_register(0), booster.read_register(1)),
+            (170, 85)
+        );
         let mut mini = Booster::new(Model::MiniBooster);
         assert_eq!((mini.read_register(0), mini.read_register(1)), (170, 238));
     }
@@ -849,7 +906,8 @@ mod test {
         let mut booster = board();
         booster.write_register(0x21, 200);
         booster.write_register(0x22, 100);
-        let product = u16::from(booster.read_register(0x23)) << 8 | u16::from(booster.read_register(0x24));
+        let product =
+            u16::from(booster.read_register(0x23)) << 8 | u16::from(booster.read_register(0x24));
         assert_eq!(product, 20_000);
     }
 
@@ -903,7 +961,7 @@ mod test {
         let mut booster = board();
         booster.write_register(0x1e, 0b11001); // pins 1, 4, 5 are outputs
         booster.write_register(0x1f, 0b10111); // 1 and 5 high, 2 and 3 pulled up
-        // pin 4 is an output driven low: 0; pins 2, 3 read their pull-up; pins 1 and 5 their level
+                                               // pin 4 is an output driven low: 0; pins 2, 3 read their pull-up; pins 1 and 5 their level
         assert_eq!(booster.read_register(0x20), 0b10111);
         booster.drive_pins(0b00100, 0); // a switch to the ground on pin 3
         assert_eq!(booster.read_register(0x20) & 0b00100, 0);
@@ -982,7 +1040,11 @@ mod test {
     fn a_byte_sent_comes_back_through_a_loopback_after_its_frame() {
         let mut booster = board().with_link(Box::<Loopback>::default());
         baud_9600(&mut booster);
-        assert_eq!(booster.read_register(0x06) & (UDRE | TXC | RXC), UDRE, "ready to send");
+        assert_eq!(
+            booster.read_register(0x06) & (UDRE | TXC | RXC),
+            UDRE,
+            "ready to send"
+        );
         booster.write_register(0x05, 0x41);
         assert_eq!(booster.read_register(0x06) & (UDRE | TXC), 0, "being sent");
         // a frame of 10 bits at 9600 bauds: a little more than a millisecond
@@ -1028,11 +1090,19 @@ mod test {
         assert_eq!(booster.read_register(0x1c), 3);
         assert_eq!(booster.read_register(0x09), 0xff, "a character is there");
         assert_eq!(
-            [booster.read_register(0x1d), booster.read_register(0x1d), booster.read_register(0x1d)],
+            [
+                booster.read_register(0x1d),
+                booster.read_register(0x1d),
+                booster.read_register(0x1d)
+            ],
             [10, 20, 30]
         );
         assert_eq!(booster.read_register(0x1c), 0);
-        assert_eq!(booster.read_register(0x09), 0, "nothing, the time out is not waited");
+        assert_eq!(
+            booster.read_register(0x09),
+            0,
+            "nothing, the time out is not waited"
+        );
         assert_eq!(booster.read_register(0x06) & RXC, 0, "the UDR is not used");
     }
 
@@ -1051,7 +1121,7 @@ mod test {
     fn the_adc_reads_its_source_by_channel_and_time() {
         let mut booster = board().with_adc(AdcSource {
             channels: [vec![1, 2, 3, 4], vec![10, 20, 30, 40]],
-            rate: Some(1)
+            rate: Some(1),
         });
         assert_eq!(booster.read_register(0x11), 1);
         booster.write_register(0x10, 1);
@@ -1110,17 +1180,30 @@ mod test {
             ramrd: true,
             ..CpcSide::default()
         };
-        let reading = CpcSide { iorq: false, rd: false, ..idle };
+        let reading = CpcSide {
+            iorq: false,
+            rd: false,
+            ..idle
+        };
         port.tick_with(idle);
         port.tick_with(reading);
         assert_eq!(port.driven_data(), Some(238));
         // another port is left alone
         port.tick_with(idle);
-        port.tick_with(CpcSide { address: 0xfe81, ..reading });
+        port.tick_with(CpcSide {
+            address: 0xfe81,
+            ..reading
+        });
         assert_eq!(port.driven_data(), None);
         // an OUT: the PWM
         port.tick_with(idle);
-        port.tick_with(CpcSide { address: 0xff27, data: 200, iorq: false, wr: false, ..idle });
+        port.tick_with(CpcSide {
+            address: 0xff27,
+            data: 200,
+            iorq: false,
+            wr: false,
+            ..idle
+        });
         let booster = port.device::<Booster>().unwrap();
         assert_eq!(booster.pwm(), [200, 200]);
         assert!(booster.sound()[0] > 0.0);

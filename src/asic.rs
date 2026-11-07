@@ -15,7 +15,7 @@ use crate::memory::Bank;
 /// address lines unconnected: its pages repeat.
 #[derive(Clone)]
 pub struct Cartridge {
-    pages: Vec<Box<Bank>>
+    pages: Vec<Box<Bank>>,
 }
 
 impl std::fmt::Debug for Cartridge {
@@ -28,7 +28,12 @@ impl Cartridge {
     /// A cartridge image (`.cpr`: a RIFF "AMS!" file of `cbNN` chunks).
     pub fn from_cpr(bytes: &[u8]) -> Result<Self, String> {
         let cpr = cpclib_cpr::Cpr::from_buffer(bytes.to_vec())?;
-        let count = cpr.banks().iter().map(|bank| usize::from(bank.number()) + 1).max().unwrap_or(0);
+        let count = cpr
+            .banks()
+            .iter()
+            .map(|bank| usize::from(bank.number()) + 1)
+            .max()
+            .unwrap_or(0);
         if count == 0 {
             return Err("a cartridge without any page".to_owned());
         }
@@ -43,8 +48,9 @@ impl Cartridge {
     /// A cartridge image, or the first one (or `entry`) of a zip archive.
     pub fn from_bytes(bytes: &[u8], name: &str, entry: Option<&str>) -> Result<Self, String> {
         if bytes.starts_with(b"PK\x03\x04") {
-            let (entry_name, data) = crate::disc_image::zip_entry_with(bytes, entry, &["cpr"], "cartridge (.cpr)")
-                .map_err(|e| format!("{name}: {e}"))?;
+            let (entry_name, data) =
+                crate::disc_image::zip_entry_with(bytes, entry, &["cpr"], "cartridge (.cpr)")
+                    .map_err(|e| format!("{name}: {e}"))?;
             return Self::from_cpr(&data).map_err(|e| format!("{name}#{entry_name}: {e}"));
         }
         Self::from_cpr(bytes).map_err(|e| format!("{name}: {e}"))
@@ -61,7 +67,11 @@ impl Cartridge {
     /// The system cartridge of the 6128+ and 464+ (firmware, BASIC, AMSDOS, Burnin' Rubber),
     /// French (AZERTY firmware) or English.
     pub fn system(french: bool) -> Self {
-        let image: &[u8] = if french { crate::roms::PLUS_SYSTEM_FR } else { crate::roms::PLUS_SYSTEM_UK };
+        let image: &[u8] = if french {
+            crate::roms::PLUS_SYSTEM_FR
+        } else {
+            crate::roms::PLUS_SYSTEM_UK
+        };
         Self::from_cpr(image).expect("the embedded system cartridge")
     }
 
@@ -77,7 +87,9 @@ impl Cartridge {
 
 /// The sequence written to the CRTC's select register (&BCxx) that opens the lock, after a
 /// non-zero byte then a zero (Arnold V 2.11). The same without its last byte closes it.
-const UNLOCK_SEQUENCE: [u8; 15] = [0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15, 0x8a, 0xcd, 0xee];
+const UNLOCK_SEQUENCE: [u8; 15] = [
+    0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15, 0x8a, 0xcd, 0xee,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum LockSequence {
@@ -86,7 +98,7 @@ enum LockSequence {
     /// A non-zero byte: a zero then starts the sequence.
     NonZero,
     /// That many bytes of the sequence matched.
-    Matched(usize)
+    Matched(usize),
 }
 
 /// What the analogue inputs read with nothing plugged (Kevin Thacker's 6128+).
@@ -120,7 +132,7 @@ struct DmaChannel {
     loop_address: u16,
     /// The instruction fetched this line, and the microsecond it is executed at.
     fetched: Option<u16>,
-    execute_at: u8
+    execute_at: u8,
 }
 
 /// The CPC+ ASIC's own registers and machinery (the cartridge is fitted to the memory, the video
@@ -157,7 +169,7 @@ pub struct Asic {
     dma_active: [bool; 3],
     dma_end: u8,
     /// The analogue inputs (6 bits each).
-    adc: [u8; 8]
+    adc: [u8; 8],
 }
 
 impl Default for Asic {
@@ -181,7 +193,7 @@ impl Default for Asic {
             dma_us: None,
             dma_active: [false; 3],
             dma_end: 0,
-            adc: ADC_IDLE
+            adc: ADC_IDLE,
         }
     }
 }
@@ -196,7 +208,10 @@ impl Asic {
     /// The reset line: the lock closes, the registers with a power-on reset are cleared (Arnold
     /// V appendix I), the DMA channels stop.
     pub fn reset(&mut self) {
-        *self = Self { ivr: self.ivr | 1, ..Self::default() };
+        *self = Self {
+            ivr: self.ivr | 1,
+            ..Self::default()
+        };
     }
 
     /// The new features are unlocked (RMR2 exists).
@@ -211,7 +226,7 @@ impl Asic {
         let restart = |value: u8, last: u8| match (value, last) {
             (0, 0) => LockSequence::Idle,
             (0, _) => LockSequence::Matched(0),
-            _ => LockSequence::NonZero
+            _ => LockSequence::NonZero,
         };
         self.lock = match self.lock {
             LockSequence::Matched(n) if n + 1 == UNLOCK_SEQUENCE.len() => {
@@ -221,7 +236,7 @@ impl Asic {
                 restart(value, self.last_select)
             }
             LockSequence::Matched(n) if value == UNLOCK_SEQUENCE[n] => LockSequence::Matched(n + 1),
-            _ => restart(value, self.last_select)
+            _ => restart(value, self.last_select),
         };
         self.last_select = value;
         was != self.unlocked
@@ -266,17 +281,24 @@ impl Asic {
     pub fn acknowledge(&mut self, pc: u16) -> u8 {
         let source = if self.ga_interrupt {
             self.raster_acknowledged = true;
-            if pc & 0x2000 != 0 { 6 } else { 4 }
+            if pc & 0x2000 != 0 {
+                6
+            } else {
+                4
+            }
         } else {
             self.raster_acknowledged = false;
-            match (0..3).rev().find(|&channel| self.dma_interrupts & (1 << channel) != 0) {
+            match (0..3)
+                .rev()
+                .find(|&channel| self.dma_interrupts & (1 << channel) != 0)
+            {
                 Some(channel) => {
                     if self.ivr & 1 == 0 {
                         self.dma_interrupts &= !(1 << channel);
                     }
                     (2 - channel) * 2
                 }
-                None => 6
+                None => 6,
             }
         };
         (self.ivr & 0xf8) | source
@@ -286,9 +308,15 @@ impl Asic {
     /// bit 6, 1 on 5, 2 on 4), the channels enabled.
     fn dcsr(&self) -> u8 {
         let interrupts = (0..3).fold(0, |bits, channel| {
-            bits | if self.dma_interrupts & (1 << channel) != 0 { 0x40 >> channel } else { 0 }
+            bits | if self.dma_interrupts & (1 << channel) != 0 {
+                0x40 >> channel
+            } else {
+                0
+            }
         });
-        let enabled = (0..3).fold(0, |bits, channel| bits | (u8::from(self.dma[channel].enabled) << channel));
+        let enabled = (0..3).fold(0, |bits, channel| {
+            bits | (u8::from(self.dma[channel].enabled) << channel)
+        });
         (u8::from(self.raster_acknowledged) << 7) | interrupts | enabled
     }
 
@@ -298,12 +326,14 @@ impl Asic {
     /// in the RAM at &7800 with the page mapped, and shows them as on the real machine.
     pub fn read(&self, video: &AsicVideo, address: u16) -> Option<u8> {
         Some(match address {
-            0x4000..=0x4fff => video.sprite_data[usize::from(address >> 8 & 0x0f)][usize::from(address & 0xff)],
+            0x4000..=0x4fff => {
+                video.sprite_data[usize::from(address >> 8 & 0x0f)][usize::from(address & 0xff)]
+            }
             0x6000..=0x607f => video.read_sprite_register(address),
             0x6400..=0x643f => video.read_palette(address),
             0x6808..=0x680f => self.adc[usize::from(address & 7)],
             0x6c00..=0x6c0f => self.dcsr(),
-            _ => return None
+            _ => return None,
         })
     }
 
@@ -395,15 +425,22 @@ impl Asic {
         chunk[0x8f7] = match self.lock {
             LockSequence::Idle => 0,
             LockSequence::NonZero => 1,
-            LockSequence::Matched(n) => n as u8 + 2
+            LockSequence::Matched(n) => n as u8 + 2,
         };
         chunk
     }
 
     /// Restore the ASIC from a snapshot's "CPC+" chunk (see [`Self::snapshot_chunk`]).
-    pub fn restore_snapshot_chunk(&mut self, video: &mut AsicVideo, chunk: &[u8]) -> Result<(), String> {
+    pub fn restore_snapshot_chunk(
+        &mut self,
+        video: &mut AsicVideo,
+        chunk: &[u8],
+    ) -> Result<(), String> {
         if chunk.len() < SNAPSHOT_CHUNK_LEN {
-            return Err(format!("a CPC+ chunk of {} bytes, not {SNAPSHOT_CHUNK_LEN}", chunk.len()));
+            return Err(format!(
+                "a CPC+ chunk of {} bytes, not {SNAPSHOT_CHUNK_LEN}",
+                chunk.len()
+            ));
         }
         for (sprite, data) in video.sprite_data.iter_mut().enumerate() {
             for (pair, pixels) in data.chunks_mut(2).enumerate() {
@@ -417,7 +454,8 @@ impl Asic {
             video.sprite_magnification[sprite] = chunk[0x800 + sprite * 8 + 4] & 0x0f;
         }
         for (index, entry) in video.palette.iter_mut().enumerate() {
-            *entry = u16::from(chunk[0x880 + index * 2]) | (u16::from(chunk[0x881 + index * 2] & 0x0f) << 8);
+            *entry = u16::from(chunk[0x880 + index * 2])
+                | (u16::from(chunk[0x881 + index * 2] & 0x0f) << 8);
         }
         self.pri = chunk[0x8c0];
         video.pri_active = self.pri != 0;
@@ -432,7 +470,9 @@ impl Asic {
         self.raster_acknowledged = dcsr & 0x80 != 0;
         self.dma_interrupts = 0;
         for (channel, dma) in self.dma.iter_mut().enumerate() {
-            dma.address = u16::from_le_bytes([chunk[0x8d0 + channel * 4], chunk[0x8d1 + channel * 4]]) & 0xfffe;
+            dma.address =
+                u16::from_le_bytes([chunk[0x8d0 + channel * 4], chunk[0x8d1 + channel * 4]])
+                    & 0xfffe;
             dma.prescaler = chunk[0x8d2 + channel * 4];
             let internal = &chunk[0x8e0 + channel * 7..][..7];
             dma.loop_count = u16::from_le_bytes([internal[0], internal[1]]) & 0x0fff;
@@ -452,7 +492,7 @@ impl Asic {
         self.lock = match chunk[0x8f7] {
             0 => LockSequence::Idle,
             1 => LockSequence::NonZero,
-            state => LockSequence::Matched(usize::from(state - 2).min(UNLOCK_SEQUENCE.len() - 1))
+            state => LockSequence::Matched(usize::from(state - 2).min(UNLOCK_SEQUENCE.len() - 1)),
         };
         video.line = None;
         Ok(())
@@ -466,7 +506,7 @@ impl Asic {
         crtc: &crate::crtc::Crtc,
         ga: &mut crate::ga::GateArray,
         psg: &mut crate::psg::Psg,
-        read_ram: impl Fn(u16) -> u8
+        read_ram: impl Fn(u16) -> u8,
     ) {
         use crate::chip::Chip;
         use crate::crtc::CrtcPin;
@@ -536,7 +576,9 @@ impl Asic {
         if us <= fetches {
             let dma = &mut self.dma[active[usize::from(us) - 1]];
             let address = dma.address & 0xfffe;
-            dma.fetched = Some(u16::from(read_ram(address)) | (u16::from(read_ram(address.wrapping_add(1))) << 8));
+            dma.fetched = Some(
+                u16::from(read_ram(address)) | (u16::from(read_ram(address.wrapping_add(1))) << 8),
+            );
             dma.address = address.wrapping_add(2);
         }
         if us == fetches {
@@ -547,7 +589,7 @@ impl Asic {
                 dma.execute_at = at;
                 at += match dma.fetched {
                     Some(instruction) if instruction & 0x7000 == 0 => DMA_LOAD_US,
-                    _ => 1
+                    _ => 1,
                 };
             }
             self.dma_end = at - 1;
@@ -638,7 +680,7 @@ const INK_LEVELS: [(u8, u8, u8); 32] = [
     (6, 0, 0),
     (6, 0, 15),
     (6, 6, 0),
-    (6, 6, 15)
+    (6, 6, 15),
 ];
 
 /// A palette entry as the register page holds it: red in bits 7-4, blue in 3-0, green in 11-8.
@@ -677,7 +719,7 @@ pub struct AsicVideo {
     byte_x: u16,
     byte_y: u16,
     /// Pixels displayed since the border ended on this line (for the extended border).
-    displayed: u16
+    displayed: u16,
 }
 
 impl Default for AsicVideo {
@@ -697,7 +739,7 @@ impl Default for AsicVideo {
             scroll_ring: [0; 16],
             byte_x: 0,
             byte_y: 0,
-            displayed: 0
+            displayed: 0,
         }
     }
 }
@@ -729,7 +771,11 @@ impl AsicVideo {
 
     fn read_palette(&self, address: u16) -> u8 {
         let entry = self.palette[usize::from((address >> 1) & 0x1f)];
-        if address & 1 == 0 { entry as u8 } else { (entry >> 8) as u8 & 0x0f }
+        if address & 1 == 0 {
+            entry as u8
+        } else {
+            (entry >> 8) as u8 & 0x0f
+        }
     }
 
     fn write_palette(&mut self, address: u16, value: u8) {
@@ -754,7 +800,7 @@ impl AsicVideo {
         let sprite = usize::from((address >> 3) & 0x0f);
         match address & 7 {
             offset @ 0..=3 => self.sprite_position[sprite][usize::from(offset)] = value,
-            _ => self.sprite_magnification[sprite] = value & 0x0f
+            _ => self.sprite_magnification[sprite] = value & 0x0f,
         }
         self.line = None;
     }
@@ -763,9 +809,21 @@ impl AsicVideo {
     fn read_sprite_register(&self, address: u16) -> u8 {
         let position = self.sprite_position[usize::from((address >> 3) & 0x0f)];
         match address & 3 {
-            1 => if position[1] & 3 == 3 { 0xff } else { position[1] & 3 },
-            3 => if position[3] & 1 == 1 { 0xff } else { position[3] & 1 },
-            offset => position[usize::from(offset)]
+            1 => {
+                if position[1] & 3 == 3 {
+                    0xff
+                } else {
+                    position[1] & 3
+                }
+            }
+            3 => {
+                if position[3] & 1 == 1 {
+                    0xff
+                } else {
+                    position[3] & 1
+                }
+            }
+            offset => position[usize::from(offset)],
         }
     }
 
@@ -860,12 +918,30 @@ mod test {
     #[test]
     fn the_lock_opens_with_the_sequence_and_closes_without_its_last_byte() {
         let mut asic = Asic::default();
-        write_sequence(&mut asic, &[0xff, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15, 0x8a, 0xcd, 0xee]);
+        write_sequence(
+            &mut asic,
+            &[
+                0xff, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15,
+                0x8a, 0xcd, 0xee,
+            ],
+        );
         assert!(asic.unlocked());
-        write_sequence(&mut asic, &[0x01, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15, 0x8a, 0xcd, 0xa5]);
+        write_sequence(
+            &mut asic,
+            &[
+                0x01, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15,
+                0x8a, 0xcd, 0xa5,
+            ],
+        );
         assert!(!asic.unlocked());
         // a wrong byte, then the sequence again
-        write_sequence(&mut asic, &[0xff, 0x00, 0xff, 0x77, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15, 0x8a, 0xcd, 0xee]);
+        write_sequence(
+            &mut asic,
+            &[
+                0xff, 0x00, 0xff, 0x77, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c,
+                0x46, 0x2b, 0x15, 0x8a, 0xcd, 0xee,
+            ],
+        );
         assert!(asic.unlocked());
         // a register selection alone does nothing
         write_sequence(&mut asic, &[12, 13, 0, 1]);
@@ -877,20 +953,43 @@ mod test {
         let mut asic = Asic::default();
         let mut video = AsicVideo::default();
         asic.write(&mut video, 0x4123, 0xa7);
-        assert_eq!(asic.read(&video, 0x4123), Some(0x07), "sprite data keeps 4 bits");
+        assert_eq!(
+            asic.read(&video, 0x4123),
+            Some(0x07),
+            "sprite data keeps 4 bits"
+        );
         asic.write(&mut video, 0x6008, 0x34);
         asic.write(&mut video, 0x6009, 0x03);
         asic.write(&mut video, 0x600b, 0x01);
-        assert_eq!(asic.read(&video, 0x6009), Some(0xff), "X's high byte sign extended");
-        assert_eq!(asic.read(&video, 0x600c), Some(0x34), "the magnification reads X");
+        assert_eq!(
+            asic.read(&video, 0x6009),
+            Some(0xff),
+            "X's high byte sign extended"
+        );
+        assert_eq!(
+            asic.read(&video, 0x600c),
+            Some(0x34),
+            "the magnification reads X"
+        );
         assert_eq!(asic.read(&video, 0x600b), Some(0xff));
         asic.write(&mut video, 0x6402, 0x5a);
         asic.write(&mut video, 0x6403, 0xf3);
-        assert_eq!((asic.read(&video, 0x6402), asic.read(&video, 0x6403)), (Some(0x5a), Some(0x03)));
+        assert_eq!(
+            (asic.read(&video, 0x6402), asic.read(&video, 0x6403)),
+            (Some(0x5a), Some(0x03))
+        );
         assert_eq!(asic.read(&video, 0x6808), Some(0x3f));
         asic.write(&mut video, 0x6c0f, 0x05);
-        assert_eq!(asic.read(&video, 0x6c03), Some(0x05), "the DMA registers read as DCSR");
-        assert_eq!(asic.read(&video, 0x7820), None, "the RAM below is read where no register is");
+        assert_eq!(
+            asic.read(&video, 0x6c03),
+            Some(0x05),
+            "the DMA registers read as DCSR"
+        );
+        assert_eq!(
+            asic.read(&video, 0x7820),
+            None,
+            "the RAM below is read where no register is"
+        );
     }
 
     #[test]
@@ -959,29 +1058,59 @@ mod test {
         assert_eq!(lines, 7, "LOAD, REPEAT, (LOAD, LOOP) twice, INT|STOP");
         assert!(asic.dma_interrupt());
         assert_eq!(asic.acknowledge(0x2000) & 7, 4, "channel 0's vector");
-        assert!(!asic.dma_interrupt(), "cleared by the acknowledge, IVR bit 0 being clear");
+        assert!(
+            !asic.dma_interrupt(),
+            "cleared by the acknowledge, IVR bit 0 being clear"
+        );
     }
 
     #[test]
     fn the_snapshot_chunk_gives_the_asic_back() {
         let mut asic = Asic::default();
         let mut video = AsicVideo::default();
-        write_sequence(&mut asic, &[0xff, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15, 0x8a, 0xcd, 0xee]);
+        write_sequence(
+            &mut asic,
+            &[
+                0xff, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15,
+                0x8a, 0xcd, 0xee,
+            ],
+        );
         video.unlocked = true;
         video.rmr2 = 0x18;
-        for (address, value) in [(0x4001, 0x0c), (0x4f00, 0x03), (0x6008, 0x40), (0x6009, 0x01), (0x600c, 0x0f), (0x6402, 0x5a),
-            (0x6403, 0x0f), (0x6800, 0x80), (0x6801, 0x20), (0x6802, 0x30), (0x6803, 0x40), (0x6804, 0x8c), (0x6805, 0x40),
-            (0x6c04, 0x20), (0x6c05, 0x81), (0x6c06, 0x07), (0x6c0f, 0x02)] {
+        for (address, value) in [
+            (0x4001, 0x0c),
+            (0x4f00, 0x03),
+            (0x6008, 0x40),
+            (0x6009, 0x01),
+            (0x600c, 0x0f),
+            (0x6402, 0x5a),
+            (0x6403, 0x0f),
+            (0x6800, 0x80),
+            (0x6801, 0x20),
+            (0x6802, 0x30),
+            (0x6803, 0x40),
+            (0x6804, 0x8c),
+            (0x6805, 0x40),
+            (0x6c04, 0x20),
+            (0x6c05, 0x81),
+            (0x6c06, 0x07),
+            (0x6c0f, 0x02),
+        ] {
             asic.write(&mut video, address, value);
         }
         asic.set_analogue_input(2, 0x21);
         let chunk = asic.snapshot_chunk(&video);
         assert_eq!(chunk.len(), SNAPSHOT_CHUNK_LEN);
-        assert_eq!(chunk[0], 0x0c, "the first two pixels of sprite 0 in one byte");
+        assert_eq!(
+            chunk[0], 0x0c,
+            "the first two pixels of sprite 0 in one byte"
+        );
 
         let mut restored = Asic::default();
         let mut restored_video = AsicVideo::default();
-        restored.restore_snapshot_chunk(&mut restored_video, &chunk).unwrap();
+        restored
+            .restore_snapshot_chunk(&mut restored_video, &chunk)
+            .unwrap();
         assert_eq!(restored.snapshot_chunk(&restored_video), chunk);
         assert!(restored.unlocked() && restored_video.unlocked);
         assert_eq!(restored.read(&restored_video, 0x4001), Some(0x0c));
@@ -1011,7 +1140,11 @@ mod test {
         asic.execute_dma(0, 0x2003, &mut psg); // REPEAT 3
         asic.dma[0].address = 0x0200;
         asic.execute_dma(0, 0x2000, &mut psg); // REPEAT 0
-        assert_eq!((asic.dma[0].loop_count, asic.dma[0].loop_address), (3, 0x0102), "REPEAT 0 is a NOP");
+        assert_eq!(
+            (asic.dma[0].loop_count, asic.dma[0].loop_address),
+            (3, 0x0102),
+            "REPEAT 0 is a NOP"
+        );
 
         asic.write(&mut video, 0x6c02, 5);
         asic.execute_dma(0, 0x1002, &mut psg); // PAUSE 2
@@ -1020,7 +1153,11 @@ mod test {
         assert_eq!(asic.dma[0].pause_hsyncs, 3);
         asic.write(&mut video, 0x6c02, 1);
         asic.start_dma_line();
-        assert_eq!((asic.dma[0].pause, asic.dma[0].pause_hsyncs), (1, 1), "the count in progress wrapped at once");
+        assert_eq!(
+            (asic.dma[0].pause, asic.dma[0].pause_hsyncs),
+            (1, 1),
+            "the count in progress wrapped at once"
+        );
     }
 
     /// Where the raster interrupt is asked for PRI 1 (C4, C9, C0), with HSYNC at `r2` for 14
@@ -1030,7 +1167,16 @@ mod test {
         use crate::crtc::{Crtc, CrtcType};
         use crate::ga::{GateArray, GateArrayPin};
         let mut crtc = Crtc::from(CrtcType::Crtc3);
-        for (register, value) in [(0, 63), (1, 40), (2, r2), (3, 0x8e), (4, 38), (6, 25), (7, 30), (9, 7)] {
+        for (register, value) in [
+            (0, 63),
+            (1, 40),
+            (2, r2),
+            (3, 0x8e),
+            (4, 38),
+            (6, 25),
+            (7, 30),
+            (9, 7),
+        ] {
             crtc.do_write_register(register, value);
         }
         let mut ga = GateArray::default();
@@ -1054,8 +1200,15 @@ mod test {
     #[test]
     fn the_raster_interrupt_is_asked_where_line_and_hsync_meet() {
         // INT on C0=47: the Z80 halted there is in &0038 on C0=52, as in ACE-DL and AMSpiriT
-        assert_eq!(raster_interrupt_position(46), (0, 1, 47), "just after the HSYNC start of line 1");
+        assert_eq!(
+            raster_interrupt_position(46),
+            (0, 1, 47),
+            "just after the HSYNC start of line 1"
+        );
         let (vcc, vlc, hcc) = raster_interrupt_position(51);
-        assert!((vcc, vlc) == (0, 1) && hcc < 4, "line 0's HSYNC running over into line 1: {hcc}");
+        assert!(
+            (vcc, vlc) == (0, 1) && hcc < 4,
+            "line 0's HSYNC running over into line 1: {hcc}"
+        );
     }
 }

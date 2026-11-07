@@ -91,7 +91,7 @@ struct Layout {
     /// First data byte.
     data_start: Vec<u64>,
     /// Length of a revolution.
-    period: u64
+    period: u64,
 }
 
 impl Layout {
@@ -109,7 +109,7 @@ impl Layout {
             id_start,
             id_end,
             data_start,
-            period: pos.max(TRACK_BYTES) * BYTE_US
+            period: pos.max(TRACK_BYTES) * BYTE_US,
         }
     }
 }
@@ -132,7 +132,7 @@ pub enum DriveKind {
     #[default]
     ThreeInch,
     /// A double-sided 3.5" drive: two heads, the FDC's side select chooses one, 80 tracks and more.
-    ThreeAndHalfInch
+    ThreeAndHalfInch,
 }
 
 impl DriveKind {
@@ -140,7 +140,7 @@ impl DriveKind {
     pub fn max_track(self) -> u8 {
         match self {
             DriveKind::ThreeInch => 42,
-            DriveKind::ThreeAndHalfInch => 82
+            DriveKind::ThreeAndHalfInch => 82,
         }
     }
 
@@ -152,7 +152,7 @@ impl DriveKind {
     pub fn name(self) -> &'static str {
         match self {
             DriveKind::ThreeInch => "3\"",
-            DriveKind::ThreeAndHalfInch => "3.5\""
+            DriveKind::ThreeAndHalfInch => "3.5\"",
         }
     }
 }
@@ -164,7 +164,7 @@ impl std::str::FromStr for DriveKind {
         match s.trim_end_matches(['"', 'i', 'n']) {
             "3" => Ok(DriveKind::ThreeInch),
             "3.5" => Ok(DriveKind::ThreeAndHalfInch),
-            _ => Err(format!("{s}: a drive is 3 (3 inch) or 3.5 (3.5 inch)"))
+            _ => Err(format!("{s}: a drive is 3 (3 inch) or 3.5 (3.5 inch)")),
         }
     }
 }
@@ -174,14 +174,14 @@ impl std::str::FromStr for DriveKind {
 pub enum FdcDrive {
     #[default]
     A,
-    B
+    B,
 }
 
 impl FdcDrive {
     fn index(self) -> usize {
         match self {
             FdcDrive::A => 0,
-            FdcDrive::B => 1
+            FdcDrive::B => 1,
         }
     }
 }
@@ -190,7 +190,7 @@ impl FdcDrive {
 enum Phase {
     Command,
     Execution,
-    Result
+    Result,
 }
 
 /// The commands of the uPD765A (datasheet Table 4). `Version` is a 765B
@@ -212,7 +212,7 @@ enum Cmd {
     Specify,
     SenseDriveStatus,
     Seek,
-    Invalid
+    Invalid,
 }
 
 impl Cmd {
@@ -235,7 +235,7 @@ impl Cmd {
             0x11 => Cmd::ScanEqual,
             0x19 => Cmd::ScanLowOrEqual,
             0x1d => Cmd::ScanHighOrEqual,
-            _ => Cmd::Invalid
+            _ => Cmd::Invalid,
         }
     }
 
@@ -253,7 +253,7 @@ impl Cmd {
             Cmd::FormatTrack => 6,
             Cmd::ReadId | Cmd::Recalibrate | Cmd::SenseDriveStatus => 2,
             Cmd::Specify | Cmd::Seek => 3,
-            Cmd::SenseInterruptStatus | Cmd::Invalid => 1
+            Cmd::SenseInterruptStatus | Cmd::Invalid => 1,
         }
     }
 
@@ -272,7 +272,10 @@ impl Cmd {
     }
 
     fn is_scan(self) -> bool {
-        matches!(self, Cmd::ScanEqual | Cmd::ScanLowOrEqual | Cmd::ScanHighOrEqual)
+        matches!(
+            self,
+            Cmd::ScanEqual | Cmd::ScanLowOrEqual | Cmd::ScanHighOrEqual
+        )
     }
 
     fn is_write(self) -> bool {
@@ -294,7 +297,7 @@ const CMD_R: usize = 4;
 const CMD_N: usize = 5;
 const CMD_EOT: usize = 6;
 const CMD_DTL: usize = 8; // also STP for the scan commands
-// Format Track (Write ID) command bytes
+                          // Format Track (Write ID) command bytes
 const FMT_N: usize = 2;
 const FMT_SC: usize = 3;
 const FMT_GPL: usize = 4;
@@ -308,7 +311,7 @@ pub struct CommandRecord {
     pub result: Vec<u8>,
     /// Microseconds (with drive timing) when the command was complete and when its result began
     pub start_us: u64,
-    pub end_us: u64
+    pub end_us: u64,
 }
 
 #[derive(Default)]
@@ -326,7 +329,7 @@ struct Drive {
     cursor: usize,
     /// How often each sector was read, to alternate the copies of a weak
     /// sector: (head, track, index in the track).
-    reads: HashMap<(u8, u8, usize), usize>
+    reads: HashMap<(u8, u8, usize), usize>,
 }
 
 /// The data-transfer command in progress: where it is and what it searches.
@@ -353,7 +356,7 @@ struct Transfer {
     /// Scan: whether a sector satisfied the condition.
     scan_satisfied: bool,
     /// Read Track: the sector indexes still to read (last one first).
-    track_queue: Vec<usize>
+    track_queue: Vec<usize>,
 }
 
 pub struct Fdc {
@@ -409,7 +412,7 @@ pub struct Fdc {
     /// Seeks in progress: (done at, unit, track reached, ST0 at the end).
     seeks: Vec<(u64, usize, u8, u8)>,
     /// MSR bits D0B-D3B: drives that are stepping.
-    seeking: u8
+    seeking: u8,
 }
 
 impl Default for Fdc {
@@ -440,7 +443,7 @@ impl Default for Fdc {
             data_t0: 0,
             step_us: 12_000,
             seeks: Vec::new(),
-            seeking: 0
+            seeking: 0,
         };
         fdc.reset();
         fdc
@@ -508,8 +511,7 @@ impl Fdc {
                 self.drives[unit].cursor = 0;
                 self.pending_interrupt[unit] = Some(st0);
                 self.seeking &= !(1 << unit);
-            }
-            else {
+            } else {
                 i += 1;
             }
         }
@@ -539,7 +541,7 @@ impl Fdc {
         match self.phase {
             Phase::Command => "command",
             Phase::Execution => "execution",
-            Phase::Result => "result"
+            Phase::Result => "result",
         }
     }
 
@@ -624,7 +626,7 @@ impl Fdc {
         let drive = &self.drives[unit];
         match drive.kind {
             DriveKind::ThreeInch => u8::from(drive.flipped),
-            DriveKind::ThreeAndHalfInch => head
+            DriveKind::ThreeAndHalfInch => head,
         }
     }
 
@@ -656,8 +658,7 @@ impl Fdc {
                 st &= !msr::RQM;
             }
             st
-        }
-        else {
+        } else {
             self.st
         }
     }
@@ -684,7 +685,7 @@ impl Fdc {
                     self.st &= !msr::RQM;
                     self.advance_execution();
                 }
-            },
+            }
             Phase::Result => {
                 // The CPU has nothing to write during the result phase.
             }
@@ -703,11 +704,10 @@ impl Fdc {
                     self.st &= !msr::RQM;
                     self.advance_execution();
                     byte
-                }
-                else {
+                } else {
                     0xff
                 }
-            },
+            }
             Phase::Result => {
                 let byte = self.result.get(self.result_pos).copied().unwrap_or(0xff);
                 self.result_pos += 1;
@@ -716,8 +716,8 @@ impl Fdc {
                     self.go_to_command_phase();
                 }
                 byte
-            },
-            Phase::Command => 0xff
+            }
+            Phase::Command => 0xff,
         }
     }
 
@@ -752,11 +752,12 @@ impl Fdc {
         match self.current_cmd {
             Cmd::FormatTrack => {
                 let size = size_from_code(self.command[FMT_N]) as u64;
-                let slot = (22 + 22 + 12 + 4 + size + 2 + u64::from(self.command[FMT_GPL])) * BYTE_US;
+                let slot =
+                    (22 + 22 + 12 + 4 + size + 2 + u64::from(self.command[FMT_GPL])) * BYTE_US;
                 self.data_t0 + (pos / 4) * slot + (pos % 4) * BYTE_US
-            },
+            }
             cmd if cmd.is_from_cpu() => self.data_t0 + pos * BYTE_US,
-            _ => self.data_t0 + pos * BYTE_US
+            _ => self.data_t0 + pos * BYTE_US,
         }
     }
 
@@ -800,7 +801,7 @@ impl Fdc {
                 command: self.command.clone(),
                 result: Vec::new(),
                 start_us: self.now_us,
-                end_us: 0
+                end_us: 0,
             });
         }
 
@@ -821,9 +822,9 @@ impl Fdc {
             Cmd::Specify => {
                 self.step_us = (16 - u64::from(self.command[1] >> 4)) * 2_000;
                 self.go_to_command_phase()
-            },
+            }
             Cmd::SenseDriveStatus => self.do_sense_drive_status(),
-            Cmd::Invalid => self.do_invalid()
+            Cmd::Invalid => self.do_invalid(),
         }
     }
 
@@ -878,7 +879,8 @@ impl Fdc {
             let steps = u64::from(from.abs_diff(to));
             // The READY line is tied high on a CPC: even without a disc the seek ends normally
             let st0 = st0::SE | unit as u8;
-            let done = self.now_us + steps * self.step_us + if steps > 0 { SETTLE_US } else { 1_000 };
+            let done =
+                self.now_us + steps * self.step_us + if steps > 0 { SETTLE_US } else { 1_000 };
             self.seeks.retain(|seek| seek.1 != unit);
             self.seeks.push((done, unit, to, st0));
             self.seeking |= 1 << unit;
@@ -900,10 +902,10 @@ impl Fdc {
             Some(unit) => {
                 let st0 = self.pending_interrupt[unit].take().unwrap_or(0);
                 self.result = vec![st0, self.drives[unit].track];
-            },
+            }
             // No interrupt pending: the chip treats this as an invalid
             // command and answers with the single byte ST0 = &80.
-            None => self.result = vec![st0::IC_INVALID]
+            None => self.result = vec![st0::IC_INVALID],
         }
         self.go_to_result_phase();
     }
@@ -942,7 +944,7 @@ impl Fdc {
                 id_start: timing.id_start.clone(),
                 id_end: timing.id_end.clone(),
                 data_start: timing.data_start.clone(),
-                period: timing.period.max(1)
+                period: timing.period.max(1),
             });
         }
         disc.track(side, drive.track)
@@ -957,7 +959,11 @@ impl Fdc {
         }
         if let Some(layout) = self.layout(unit, head) {
             let phase = self.t_cursor % layout.period;
-            self.drives[unit].cursor = layout.id_start.iter().position(|&start| start >= phase).unwrap_or(0);
+            self.drives[unit].cursor = layout
+                .id_start
+                .iter()
+                .position(|&start| start >= phase)
+                .unwrap_or(0);
         }
     }
 
@@ -1009,8 +1015,7 @@ impl Fdc {
             if sector.r == r && sector.c != c {
                 if sector.c == 0xff {
                     bad_cylinder = true;
-                }
-                else {
+                } else {
                     wrong_cylinder = true;
                 }
             }
@@ -1021,7 +1026,7 @@ impl Fdc {
                 let len = sectors.len();
                 self.drives[unit].cursor = (index + 1) % len;
                 Some(index)
-            },
+            }
             None => {
                 self.st1 |= st1::ND;
                 if wrong_cylinder {
@@ -1047,30 +1052,28 @@ impl Fdc {
         let mut id = (self.drives[unit].track, head, 0u8, 0u8);
         if !self.ready(unit) {
             self.st0 |= st0::IC_ABNORMAL | st0::NR;
-        }
-        else if !self.mfm() {
+        } else if !self.mfm() {
             // The discs held as DSK images are MFM: no FM address mark
             self.st0 |= st0::IC_ABNORMAL;
             self.st1 |= st1::MA | st1::ND;
-        }
-        else {
+        } else {
             self.sync_cursor(unit, head);
             let cursor = self.drives[unit].cursor;
             if self.timing {
                 match self.layout(unit, head) {
                     Some(layout) => {
                         let index = cursor % layout.id_end.len();
-                        self.t_cursor = occurrence(self.t_cursor, layout.id_end[index], layout.period);
-                    },
-                    None => self.t_cursor += 2 * TRACK_BYTES * BYTE_US
+                        self.t_cursor =
+                            occurrence(self.t_cursor, layout.id_end[index], layout.period);
+                    }
+                    None => self.t_cursor += 2 * TRACK_BYTES * BYTE_US,
                 }
             }
             let sectors = self.sectors(unit, head);
             if sectors.is_empty() {
                 self.st0 |= st0::IC_ABNORMAL;
                 self.st1 |= st1::MA | st1::ND;
-            }
-            else {
+            } else {
                 let index = cursor % sectors.len();
                 let sector = &sectors[index];
                 id = (sector.c, sector.h, sector.r, sector.n);
@@ -1133,7 +1136,9 @@ impl Fdc {
             self.drives[unit].cursor = 0;
             if self.timing {
                 // Read Track starts at the index hole
-                let period = self.layout(unit, self.xfer.head).map_or(TRACK_BYTES * BYTE_US, |l| l.period);
+                let period = self
+                    .layout(unit, self.xfer.head)
+                    .map_or(TRACK_BYTES * BYTE_US, |l| l.period);
                 self.t_cursor = occurrence(self.now_us, 0, period);
             }
             if !self.next_read_track_sector() {
@@ -1153,8 +1158,7 @@ impl Fdc {
     fn search_and_load(&mut self) {
         loop {
             self.sync_cursor(self.xfer.unit, self.xfer.head);
-            let Some(index) = self.find_sector()
-            else {
+            let Some(index) = self.find_sector() else {
                 self.lose_two_turns();
                 self.st0 |= st0::IC_ABNORMAL;
                 self.finish_transfer();
@@ -1166,8 +1170,8 @@ impl Fdc {
 
             // Data mark not the wanted kind (Read Data met a deleted
             // sector, Read Deleted Data a normal one)?
-            let mark_mismatch = !self.current_cmd.is_write()
-                && deleted != self.current_cmd.wants_deleted_mark();
+            let mark_mismatch =
+                !self.current_cmd.is_write() && deleted != self.current_cmd.wants_deleted_mark();
             if mark_mismatch && self.xfer.sk {
                 // SK: skip that sector without transferring it
                 if !self.advance_to_next_sector() {
@@ -1195,7 +1199,7 @@ impl Fdc {
                 sector.st1,
                 sector.st2,
                 sector.read_copy(copy, filler),
-                (sector.c, sector.h, sector.r, sector.n)
+                (sector.c, sector.h, sector.r, sector.n),
             )
         };
 
@@ -1203,7 +1207,9 @@ impl Fdc {
         (self.xfer.c, self.xfer.h, self.xfer.r, self.xfer.n) = id;
         if self.timing {
             if let Some(layout) = self.layout(unit, head) {
-                if let (Some(&id_end), Some(&data_start)) = (layout.id_end.get(index), layout.data_start.get(index)) {
+                if let (Some(&id_end), Some(&data_start)) =
+                    (layout.id_end.get(index), layout.data_start.get(index))
+                {
                     let t_id = occurrence(self.t_cursor, id_end, layout.period);
                     self.data_t0 = occurrence(t_id, data_start, layout.period);
                     self.t_cursor = t_id;
@@ -1254,8 +1260,7 @@ impl Fdc {
         }
         self.exec_data = if self.current_cmd.is_write() || self.current_cmd.is_scan() {
             vec![0; len]
-        }
-        else {
+        } else {
             let mut data = data;
             data.truncate(len);
             data
@@ -1275,8 +1280,7 @@ impl Fdc {
 
     /// Read Track: start the next queued sector. False when none is left.
     fn next_read_track_sector(&mut self) -> bool {
-        let Some(index) = self.xfer.track_queue.pop()
-        else {
+        let Some(index) = self.xfer.track_queue.pop() else {
             return false;
         };
         self.load_sector(index, false);
@@ -1306,8 +1310,7 @@ impl Fdc {
         }
         let step = if self.current_cmd.is_scan() {
             self.xfer.dtl.max(1)
-        }
-        else {
+        } else {
             1
         };
         self.xfer.r = self.xfer.r.wrapping_add(step);
@@ -1328,7 +1331,7 @@ impl Fdc {
 
         match self.current_cmd {
             Cmd::FormatTrack => self.finish_format(),
-            _ => self.finish_sector()
+            _ => self.finish_sector(),
         }
     }
 
@@ -1338,13 +1341,13 @@ impl Fdc {
         if self.timing {
             // the last byte has passed: the chip reports at once, the CRC is checked as it goes by
             // (CPCSyntaxError's command timings of Amazing's loader are matched to a few microseconds this way)
-            self.t_cursor = self.data_t0 + (self.exec_data.len() as u64).saturating_sub(1) * BYTE_US;
+            self.t_cursor =
+                self.data_t0 + (self.exec_data.len() as u64).saturating_sub(1) * BYTE_US;
         }
 
         if self.current_cmd.is_write() {
             self.store_written_sector(unit, head, index);
-        }
-        else if self.current_cmd.is_scan() {
+        } else if self.current_cmd.is_scan() {
             self.compare_scanned_sector(unit, head, index);
         }
 
@@ -1364,8 +1367,7 @@ impl Fdc {
         }
         if self.advance_to_next_sector() {
             self.search_and_load();
-        }
-        else {
+        } else {
             if self.current_cmd.is_scan() && !self.xfer.scan_satisfied {
                 self.st2 |= st2::SN;
             }
@@ -1439,7 +1441,7 @@ impl Fdc {
         let satisfied = match self.current_cmd {
             Cmd::ScanEqual => equal,
             Cmd::ScanLowOrEqual => lower_or_equal,
-            _ => higher_or_equal
+            _ => higher_or_equal,
         };
         if satisfied {
             self.xfer.scan_satisfied = true;
@@ -1505,8 +1507,7 @@ impl Fdc {
         self.exec_data = vec![0; usize::from(self.command[FMT_SC]) * 4];
         if self.exec_data.is_empty() {
             self.finish_format();
-        }
-        else {
+        } else {
             self.go_to_execution_phase();
         }
     }
@@ -1531,13 +1532,17 @@ impl Fdc {
         let drive = &mut self.drives[unit];
         let track_number = drive.track;
         let formatted = drive.disc.as_mut().is_some_and(|disc| {
-            disc.set_track(side, track_number, Track {
-                track: track_number,
-                head: side,
-                gap3,
-                filler,
-                sectors
-            })
+            disc.set_track(
+                side,
+                track_number,
+                Track {
+                    track: track_number,
+                    head: side,
+                    gap3,
+                    filler,
+                    sectors,
+                },
+            )
             .is_ok()
         });
         drive.cursor = 0;
@@ -1552,8 +1557,7 @@ impl Fdc {
             self.xfer.c = track_number;
             self.xfer.h = head;
             self.xfer.n = n;
-        }
-        else {
+        } else {
             // off the end of the disc
             self.st0 |= st0::IC_ABNORMAL;
             self.st1 |= st1::NW;

@@ -19,12 +19,23 @@ fn main() {
             mb.execute_next_opcode_no_video();
         }
         let n = mb.fdc().command_log().len();
-        println!("+{}x0.25s: commands={} (+{}) motor={} PC={:04X}", sec, n, n - last, mb.fdc().motor(), mb.pc());
+        println!(
+            "+{}x0.25s: commands={} (+{}) motor={} PC={:04X}",
+            sec,
+            n,
+            n - last,
+            mb.fdc().motor(),
+            mb.pc()
+        );
         last = n;
     }
     let log = mb.fdc().command_log();
     println!("--- commands (first 12, last 12) of {}", log.len());
-    for r in log.iter().take(12) { println!("{:02X?} -> {:02X?}", r.command, r.result); }
+    for r in log.iter().take(12) {
+        println!("{:02X?} -> {:02X?}", r.command, r.result);
+    }
     println!("...");
-    for r in log.iter().rev().take(12).rev() { println!("{:02X?} -> {:02X?}", r.command, r.result); }
+    for r in log.iter().rev().take(12).rev() {
+        println!("{:02X?} -> {:02X?}", r.command, r.result);
+    }
 }

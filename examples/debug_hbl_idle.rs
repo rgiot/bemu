@@ -27,7 +27,9 @@ fn main() {
          key_output 'RUN\"HBL\\(RET)'\n\
          wait 60000000\n"
     );
-    runner.run_text(&boot, ".").unwrap_or_else(|e| panic!("boot failed: {e}"));
+    runner
+        .run_text(&boot, ".")
+        .unwrap_or_else(|e| panic!("boot failed: {e}"));
 
     let mb = runner.motherboard();
     let pc = mb.pc();

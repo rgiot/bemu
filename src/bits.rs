@@ -7,7 +7,6 @@ use num::{
     FromPrimitive, Integer, One, Zero,
 };
 
-
 /**
  * Number stored with a maximum number of bits
  */
@@ -162,26 +161,25 @@ where
     }
 }
 
-
-impl<T, const C: usize> PartialEq<T> for BitMax<T, C> 
-where BitMax<T, C>:From<T> ,
-T: PartialEq + Clone
+impl<T, const C: usize> PartialEq<T> for BitMax<T, C>
+where
+    BitMax<T, C>: From<T>,
+    T: PartialEq + Clone,
 {
     fn eq(&self, other: &T) -> bool {
-        self.value() == *other    
+        self.value() == *other
     }
 }
 
-
-impl<T, const C: usize> PartialOrd<T> for BitMax<T, C> 
-where BitMax<T, C>:From<T> ,
-T: PartialOrd + Clone {
+impl<T, const C: usize> PartialOrd<T> for BitMax<T, C>
+where
+    BitMax<T, C>: From<T>,
+    T: PartialOrd + Clone,
+{
     fn partial_cmp(&self, other: &T) -> Option<std::cmp::Ordering> {
         self.value().partial_cmp(other)
     }
 }
-
-
 
 pub type Bit8Max5 = BitMax<u8, 5>;
 pub type Bit8Max6 = BitMax<u8, 6>;

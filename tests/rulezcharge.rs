@@ -24,7 +24,11 @@ fn search_reply() -> Vec<u8> {
         let head = format!("{id} {name:<64}{description}");
         format!("{head:`<234}")
     };
-    reply += &record(ID, &FILE[..FILE.len() - 4], "Gaming related stuff > Extended DSK/40 Cyls");
+    reply += &record(
+        ID,
+        &FILE[..FILE.len() - 4],
+        "Gaming related stuff > Extended DSK/40 Cyls",
+    );
     reply += &record("42425", "Another_Game", "Demoscene > 40 Cyls");
     for _ in 0..20 {
         reply += &format!("{:234}", "");
@@ -34,7 +38,11 @@ fn search_reply() -> Vec<u8> {
 
 /// An entry's details: an id, the date, the notes, 182 bytes.
 fn info_reply() -> Vec<u8> {
-    format!("{:<182}", "a1234    2026-10-26Made for bemu's test/ Extended DSK/40 Cyls").into_bytes()
+    format!(
+        "{:<182}",
+        "a1234    2026-10-26Made for bemu's test/ Extended DSK/40 Cyls"
+    )
+    .into_bytes()
 }
 
 fn download() -> Vec<u8> {
@@ -52,21 +60,28 @@ fn serve(listener: TcpListener, asked: Arc<Mutex<Vec<String>>>) {
         while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
             line.clear();
         }
-        let path = request.split_whitespace().nth(1).unwrap_or_default().to_owned();
+        let path = request
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or_default()
+            .to_owned();
         asked.lock().unwrap().push(path.clone());
         let (headers, body) = if path.starts_with("/m4/?w=") {
             (String::new(), search_reply())
-        }
-        else if path.starts_with("/m4/?i=") {
+        } else if path.starts_with("/m4/?i=") {
             (String::new(), info_reply())
-        }
-        else if path.starts_with("/m4/?d=") {
-            (format!("Content-Disposition: attachment; filename=\"{FILE}\"\r\n"), download())
-        }
-        else {
+        } else if path.starts_with("/m4/?d=") {
+            (
+                format!("Content-Disposition: attachment; filename=\"{FILE}\"\r\n"),
+                download(),
+            )
+        } else {
             (String::new(), b"?".to_vec())
         };
-        let head = format!("HTTP/1.1 200 OK\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+        let head = format!(
+            "HTTP/1.1 200 OK\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
         let _ = stream.write_all(head.as_bytes());
         let _ = stream.write_all(&body);
     }
@@ -89,9 +104,13 @@ fn rulezcharge_searches_and_downloads() {
 
     let mut runner = CslRunner::new(&dir);
     let motherboard = runner.motherboard_mut();
-    let board = M4Board::with_bundled_rom(&sd).unwrap().with_host("cpcrulez.fr", &address);
+    let board = M4Board::with_bundled_rom(&sd)
+        .unwrap()
+        .with_host("cpcrulez.fr", &address);
     motherboard.plug_expansion(Box::new(board));
-    motherboard.set_upper_rom(5, Some(&load_rom("inner://rulezcharge").unwrap())).unwrap();
+    motherboard
+        .set_upper_rom(5, Some(&load_rom("inner://rulezcharge").unwrap()))
+        .unwrap();
     let script = "csl_version 1.0\n\
         wait 4000000\n\
         key_output '|rz\\(RET)'\n\
@@ -107,10 +126,20 @@ fn rulezcharge_searches_and_downloads() {
     runner.run_text(script, &dir).unwrap();
 
     let asked = asked.lock().unwrap().clone();
-    assert!(asked.iter().any(|path| path == "/m4/?w=aa&s=test"), "the search: {asked:?}");
-    assert!(asked.iter().any(|path| path == &format!("/m4/?i={ID}")), "the details: {asked:?}");
-    assert!(asked.iter().any(|path| path == &format!("/m4/?d=001{ID}")), "the download: {asked:?}");
-    let downloaded = std::fs::read(sd.join(FILE)).unwrap_or_else(|e| panic!("{FILE} on the SD card: {e}"));
+    assert!(
+        asked.iter().any(|path| path == "/m4/?w=aa&s=test"),
+        "the search: {asked:?}"
+    );
+    assert!(
+        asked.iter().any(|path| path == &format!("/m4/?i={ID}")),
+        "the details: {asked:?}"
+    );
+    assert!(
+        asked.iter().any(|path| path == &format!("/m4/?d=001{ID}")),
+        "the download: {asked:?}"
+    );
+    let downloaded =
+        std::fs::read(sd.join(FILE)).unwrap_or_else(|e| panic!("{FILE} on the SD card: {e}"));
     assert_eq!(downloaded, download());
     let _ = std::fs::remove_dir_all(&dir);
 }

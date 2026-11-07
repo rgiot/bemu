@@ -20,7 +20,13 @@ fn main() {
         mb.execute_next_opcode_with_video(|(rgb, sync)| monitor.receive(rgb, sync));
         if monitor.take_frame().is_some() {
             let c = mb.crtc();
-            println!("frame done at C4={} C9={} C0={} vs={}", c.vcc.value(), c.vlc.value(), c.hcc, c.vsync());
+            println!(
+                "frame done at C4={} C9={} C0={} vs={}",
+                c.vcc.value(),
+                c.vlc.value(),
+                c.hcc,
+                c.vsync()
+            );
             if let Some(f) = monitor.full_frame() {
                 f.save(format!("{prefix}{saved}.png")).unwrap();
                 saved += 1;

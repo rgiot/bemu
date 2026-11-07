@@ -18,7 +18,10 @@ fn main() {
         eprintln!("usage: debug_blight_screen <BLIGHT.DSK path> [steps]");
         std::process::exit(2);
     });
-    let steps: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(60_000_000);
+    let steps: u64 = args
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60_000_000);
 
     let mut runner = CslRunner::new("/tmp/debug_blight_screen_shots");
     runner.set_verbose(true);
@@ -35,9 +38,14 @@ fn main() {
          key_output 'RUN\"BLIGHT\\(RET)'\n\
          wait 3000000\n"
     );
-    runner.run_text(&boot, ".").unwrap_or_else(|e| panic!("boot failed: {e}"));
+    runner
+        .run_text(&boot, ".")
+        .unwrap_or_else(|e| panic!("boot failed: {e}"));
 
-    eprintln!("boot script done (PC={:04X}), stepping {steps} instructions", runner.motherboard().pc());
+    eprintln!(
+        "boot script done (PC={:04X}), stepping {steps} instructions",
+        runner.motherboard().pc()
+    );
 
     for i in 0..steps {
         runner.motherboard_mut().execute_next_opcode_no_video();

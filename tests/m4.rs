@@ -37,15 +37,29 @@ fn the_cpu_reads_the_m4_rom_and_its_responses() {
     for _ in 0..5000 {
         motherboard.execute_next_opcode_no_video();
     }
-    assert_eq!(motherboard.read_byte(0x8000), 0x01, "a background ROM's header");
+    assert_eq!(
+        motherboard.read_byte(0x8000),
+        0x01,
+        "a background ROM's header"
+    );
     let name: Vec<u8> = (0..8).map(|i| motherboard.read_byte(0x8010 + i)).collect();
     assert_eq!(&name, b"M4 BOAR\xc4");
     // the response: the length, the command echoed, the version
-    assert_eq!((motherboard.read_byte(0x8101), motherboard.read_byte(0x8102)), (0x26, 0x43));
+    assert_eq!(
+        (motherboard.read_byte(0x8101), motherboard.read_byte(0x8102)),
+        (0x26, 0x43)
+    );
     let length = usize::from(motherboard.read_byte(0x8100)) - 2;
-    let text: Vec<u8> = (0..length).map(|i| motherboard.read_byte(0x8103 + i as u16)).collect();
+    let text: Vec<u8> = (0..length)
+        .map(|i| motherboard.read_byte(0x8103 + i as u16))
+        .collect();
     // short, as the board's firmware version: RulezCharge copies it into a field of its help
-    assert_eq!(text, b"v2.0.8 (bemu)\0", "{}", String::from_utf8_lossy(&text));
+    assert_eq!(
+        text,
+        b"v2.0.8 (bemu)\0",
+        "{}",
+        String::from_utf8_lossy(&text)
+    );
     // ROM 0 (BASIC) is the CPC's again
     assert_eq!(motherboard.read_byte(0x8200), 0x80, "BASIC's first byte");
 }

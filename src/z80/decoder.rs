@@ -81,7 +81,7 @@ impl Operands for Bytes {
         // The displacement counts from the next instruction, 2 bytes on.
         match self.0[0] as i8 as i32 + 2 {
             0 => Expr::Label("$".into()),
-            offset => Expr::Value(offset)
+            offset => Expr::Value(offset),
         }
     }
 }
@@ -122,7 +122,7 @@ pub fn decode(prefix: OpcodePrefix, opcode: u8, operands: &impl Operands) -> Tok
         OpcodePrefix::Dd => indexed(opcode, IndexRegister16::Ix, operands),
         OpcodePrefix::Fd => indexed(opcode, IndexRegister16::Iy, operands),
         OpcodePrefix::DdCb => Some(indexed_cb(opcode, IndexRegister16::Ix, operands)),
-        OpcodePrefix::FdCb => Some(indexed_cb(opcode, IndexRegister16::Iy, operands))
+        OpcodePrefix::FdCb => Some(indexed_cb(opcode, IndexRegister16::Iy, operands)),
     };
     decoded.unwrap_or_else(nop)
 }
@@ -174,7 +174,7 @@ fn r(index: u8) -> DataAccess {
         4 => DataAccess::Register8(Register8::H),
         5 => DataAccess::Register8(Register8::L),
         6 => DataAccess::MemoryRegister16(Register16::Hl),
-        _ => DataAccess::Register8(Register8::A)
+        _ => DataAccess::Register8(Register8::A),
     }
 }
 
@@ -182,18 +182,28 @@ fn r(index: u8) -> DataAccess {
 fn register8(index: u8) -> Option<Register8> {
     match r(index) {
         DataAccess::Register8(register) => Some(register),
-        _ => None
+        _ => None,
     }
 }
 
 /// rp[i]: BC, DE, HL, SP.
 fn rp(index: u8) -> Register16 {
-    [Register16::Bc, Register16::De, Register16::Hl, Register16::Sp][index as usize]
+    [
+        Register16::Bc,
+        Register16::De,
+        Register16::Hl,
+        Register16::Sp,
+    ][index as usize]
 }
 
 /// rp2[i]: BC, DE, HL, AF.
 fn rp2(index: u8) -> Register16 {
-    [Register16::Bc, Register16::De, Register16::Hl, Register16::Af][index as usize]
+    [
+        Register16::Bc,
+        Register16::De,
+        Register16::Hl,
+        Register16::Af,
+    ][index as usize]
 }
 
 /// cc[i]: NZ, Z, NC, C, PO, PE, P, M.
@@ -207,8 +217,8 @@ fn cc(index: u8) -> DataAccess {
             FlagTest::PO,
             FlagTest::PE,
             FlagTest::P,
-            FlagTest::M
-        ][index as usize]
+            FlagTest::M,
+        ][index as usize],
     )
 }
 
@@ -223,7 +233,7 @@ fn alu(y: u8, operand: DataAccess) -> Token {
         Mnemonic::And,
         Mnemonic::Xor,
         Mnemonic::Or,
-        Mnemonic::Cp
+        Mnemonic::Cp,
     ][y as usize];
     let accumulator = (mnemonic == Mnemonic::Sbc).then_some(DataAccess::Register8(Register8::A));
     op(mnemonic, accumulator, Some(operand))
@@ -239,7 +249,7 @@ fn rot(y: u8) -> Mnemonic {
         Mnemonic::Sla,
         Mnemonic::Sra,
         Mnemonic::Sl1,
-        Mnemonic::Srl
+        Mnemonic::Srl,
     ][y as usize]
 }
 
@@ -264,25 +274,40 @@ fn unprefixed(opcode: u8, operands: &impl Operands) -> Option<Token> {
             1 => op(Mnemonic::ExAf, None, None),
             2 => op(Mnemonic::Djnz, Some(Expression(operands.relative())), None),
             3 => op(Mnemonic::Jr, None, Some(Expression(operands.relative()))),
-            _ => op(Mnemonic::Jr, Some(cc(y - 4)), Some(Expression(operands.relative())))
+            _ => op(
+                Mnemonic::Jr,
+                Some(cc(y - 4)),
+                Some(Expression(operands.relative())),
+            ),
         },
-        (0, 1) if q == 0 => op(Mnemonic::Ld, Some(reg16(rp(p))), Some(Expression(operands.word()))),
-        (0, 1) => op(Mnemonic::Add, Some(reg16(Register16::Hl)), Some(reg16(rp(p)))),
+        (0, 1) if q == 0 => op(
+            Mnemonic::Ld,
+            Some(reg16(rp(p))),
+            Some(Expression(operands.word())),
+        ),
+        (0, 1) => op(
+            Mnemonic::Add,
+            Some(reg16(Register16::Hl)),
+            Some(reg16(rp(p))),
+        ),
         (0, 2) => {
             let (memory, register) = match p {
                 0 => (MemoryRegister16(Register16::Bc), a()),
                 1 => (MemoryRegister16(Register16::De), a()),
                 2 => (Memory(operands.word()), reg16(Register16::Hl)),
-                _ => (Memory(operands.word()), a())
+                _ => (Memory(operands.word()), a()),
             };
             if q == 0 {
                 op(Mnemonic::Ld, Some(memory), Some(register))
-            }
-            else {
+            } else {
                 op(Mnemonic::Ld, Some(register), Some(memory))
             }
-        },
-        (0, 3) => op([Mnemonic::Inc, Mnemonic::Dec][q as usize], Some(reg16(rp(p))), None),
+        }
+        (0, 3) => op(
+            [Mnemonic::Inc, Mnemonic::Dec][q as usize],
+            Some(reg16(rp(p))),
+            None,
+        ),
         (0, 4) => op(Mnemonic::Inc, Some(r(y)), None),
         (0, 5) => op(Mnemonic::Dec, Some(r(y)), None),
         (0, 6) => op(Mnemonic::Ld, Some(r(y)), Some(Expression(operands.byte(0)))),
@@ -295,10 +320,10 @@ fn unprefixed(opcode: u8, operands: &impl Operands) -> Option<Token> {
                 Mnemonic::Daa,
                 Mnemonic::Cpl,
                 Mnemonic::Scf,
-                Mnemonic::Ccf
+                Mnemonic::Ccf,
             ][y as usize],
             None,
-            None
+            None,
         ),
         (1, 6) if y == 6 => op(Mnemonic::Halt, None, None),
         (1, _) => op(Mnemonic::Ld, Some(r(y)), Some(r(z))),
@@ -309,7 +334,11 @@ fn unprefixed(opcode: u8, operands: &impl Operands) -> Option<Token> {
             (_, 0) => op(Mnemonic::Ret, None, None),
             (_, 1) => op(Mnemonic::Exx, None, None),
             (_, 2) => op(Mnemonic::Jp, None, Some(MemoryRegister16(Register16::Hl))),
-            _ => op(Mnemonic::Ld, Some(reg16(Register16::Sp)), Some(reg16(Register16::Hl)))
+            _ => op(
+                Mnemonic::Ld,
+                Some(reg16(Register16::Sp)),
+                Some(reg16(Register16::Hl)),
+            ),
         },
         (_, 2) => op(Mnemonic::Jp, Some(cc(y)), Some(Expression(operands.word()))),
         (_, 3) => match y {
@@ -320,16 +349,20 @@ fn unprefixed(opcode: u8, operands: &impl Operands) -> Option<Token> {
             4 => op(Mnemonic::ExMemSp, Some(reg16(Register16::Hl)), None),
             5 => op(Mnemonic::ExHlDe, None, None),
             6 => op(Mnemonic::Di, None, None),
-            _ => op(Mnemonic::Ei, None, None)
+            _ => op(Mnemonic::Ei, None, None),
         },
-        (_, 4) => op(Mnemonic::Call, Some(cc(y)), Some(Expression(operands.word()))),
+        (_, 4) => op(
+            Mnemonic::Call,
+            Some(cc(y)),
+            Some(Expression(operands.word())),
+        ),
         (_, 5) => match (q, p) {
             (0, _) => op(Mnemonic::Push, Some(reg16(rp2(p))), None),
             (_, 0) => op(Mnemonic::Call, None, Some(Expression(operands.word()))),
-            _ => return None // DD, ED, FD prefixes
+            _ => return None, // DD, ED, FD prefixes
         },
         (_, 6) => alu(y, Expression(operands.byte(0))),
-        _ => op(Mnemonic::Rst, Some(value(8 * y as i32)), None)
+        _ => op(Mnemonic::Rst, Some(value(8 * y as i32)), None),
     })
 }
 
@@ -341,8 +374,8 @@ fn cb(opcode: u8) -> Token {
         _ => op(
             [Mnemonic::Bit, Mnemonic::Res, Mnemonic::Set][x as usize - 1],
             Some(value(y as i32)),
-            Some(r(z))
-        )
+            Some(r(z)),
+        ),
     }
 }
 
@@ -356,23 +389,35 @@ fn ed(opcode: u8, operands: &impl Operands) -> Option<Token> {
             // y = 6: the undocumented IN (C), which only sets the flags.
             let destination = register8(y).map_or_else(|| value(0), DataAccess::Register8);
             op(Mnemonic::In, Some(destination), Some(PortC))
-        },
+        }
         (1, 1) => {
             // y = 6: the undocumented OUT (C),0.
             let source = register8(y).map_or_else(|| value(0), DataAccess::Register8);
             op(Mnemonic::Out, Some(PortC), Some(source))
-        },
+        }
         (1, 2) => op(
             [Mnemonic::Sbc, Mnemonic::Adc][q as usize],
             Some(reg16(Register16::Hl)),
-            Some(reg16(rp(p)))
+            Some(reg16(rp(p))),
         ),
-        (1, 3) if q == 0 => op(Mnemonic::Ld, Some(Memory(operands.word())), Some(reg16(rp(p)))),
-        (1, 3) => op(Mnemonic::Ld, Some(reg16(rp(p))), Some(Memory(operands.word()))),
+        (1, 3) if q == 0 => op(
+            Mnemonic::Ld,
+            Some(Memory(operands.word())),
+            Some(reg16(rp(p))),
+        ),
+        (1, 3) => op(
+            Mnemonic::Ld,
+            Some(reg16(rp(p))),
+            Some(Memory(operands.word())),
+        ),
         (1, 4) => op(Mnemonic::Neg, None, None),
         (1, 5) if y == 1 => op(Mnemonic::Reti, None, None),
         (1, 5) => op(Mnemonic::Retn, None, None),
-        (1, 6) => op(Mnemonic::Im, Some(value([0, 0, 1, 2][y as usize & 3])), None),
+        (1, 6) => op(
+            Mnemonic::Im,
+            Some(value([0, 0, 1, 2][y as usize & 3])),
+            None,
+        ),
         (1, 7) => match y {
             0 => op(Mnemonic::Ld, Some(DataAccess::SpecialRegisterI), Some(a())),
             1 => op(Mnemonic::Ld, Some(DataAccess::SpecialRegisterR), Some(a())),
@@ -380,7 +425,7 @@ fn ed(opcode: u8, operands: &impl Operands) -> Option<Token> {
             3 => op(Mnemonic::Ld, Some(a()), Some(DataAccess::SpecialRegisterR)),
             4 => op(Mnemonic::Rrd, None, None),
             5 => op(Mnemonic::Rld, None, None),
-            _ => return None
+            _ => return None,
         },
         // Block instructions: y = 4..7 (increment, decrement, repeat
         // increment, repeat decrement), z = 0..3 (LD, CP, IN, OUT).
@@ -388,12 +433,22 @@ fn ed(opcode: u8, operands: &impl Operands) -> Option<Token> {
             let block = [
                 [Mnemonic::Ldi, Mnemonic::Cpi, Mnemonic::Ini, Mnemonic::Outi],
                 [Mnemonic::Ldd, Mnemonic::Cpd, Mnemonic::Ind, Mnemonic::Outd],
-                [Mnemonic::Ldir, Mnemonic::Cpir, Mnemonic::Inir, Mnemonic::Otir],
-                [Mnemonic::Lddr, Mnemonic::Cpdr, Mnemonic::Indr, Mnemonic::Otdr]
+                [
+                    Mnemonic::Ldir,
+                    Mnemonic::Cpir,
+                    Mnemonic::Inir,
+                    Mnemonic::Otir,
+                ],
+                [
+                    Mnemonic::Lddr,
+                    Mnemonic::Cpdr,
+                    Mnemonic::Indr,
+                    Mnemonic::Otdr,
+                ],
             ];
             op(block[y as usize - 4][z as usize], None, None)
-        },
-        _ => return None
+        }
+        _ => return None,
     })
 }
 
@@ -402,7 +457,7 @@ fn index_half(index: IndexRegister16, register: Register8) -> IndexRegister8 {
         (IndexRegister16::Ix, true) => IndexRegister8::Ixh,
         (IndexRegister16::Ix, false) => IndexRegister8::Ixl,
         (IndexRegister16::Iy, true) => IndexRegister8::Iyh,
-        (IndexRegister16::Iy, false) => IndexRegister8::Iyl
+        (IndexRegister16::Iy, false) => IndexRegister8::Iyl,
     }
 }
 
@@ -411,18 +466,23 @@ fn index_half(index: IndexRegister16, register: Register8) -> IndexRegister8 {
 /// stay themselves; otherwise H and L become IXh and IXl. An instruction
 /// using none of them executes unchanged, as its unprefixed form.
 fn indexed(opcode: u8, index: IndexRegister16, operands: &impl Operands) -> Option<Token> {
-    use DataAccess::{Expression, IndexRegister16WithIndex, MemoryIndexRegister16, MemoryRegister16};
+    use DataAccess::{
+        Expression, IndexRegister16WithIndex, MemoryIndexRegister16, MemoryRegister16,
+    };
     let displaced = || IndexRegister16WithIndex(index, BinaryOperation::Add, operands.byte(0));
 
     let token = match opcode {
         // LD (IX+d),n: the displacement comes first, the value second.
-        0x36 => op(Mnemonic::Ld, Some(displaced()), Some(Expression(operands.byte(1)))),
+        0x36 => op(
+            Mnemonic::Ld,
+            Some(displaced()),
+            Some(Expression(operands.byte(1))),
+        ),
         // JP (HL) jumps to HL itself: JP (IX), no displacement.
         0xe9 => op(Mnemonic::Jp, None, Some(MemoryIndexRegister16(index))),
-        _ => unprefixed(opcode, operands)?
+        _ => unprefixed(opcode, operands)?,
     };
-    let Token::OpCode(mnemonic, arg1, arg2, arg3) = token
-    else {
+    let Token::OpCode(mnemonic, arg1, arg2, arg3) = token else {
         unreachable!()
     };
     if opcode == 0x36 || opcode == 0xe9 {
@@ -438,8 +498,8 @@ fn indexed(opcode: u8, index: IndexRegister16, operands: &impl Operands) -> Opti
             DataAccess::Register16(Register16::Hl) => DataAccess::IndexRegister16(index),
             DataAccess::Register8(register @ (Register8::H | Register8::L)) if !uses_memory => {
                 DataAccess::IndexRegister8(index_half(index, register))
-            },
-            other => other
+            }
+            other => other,
         })
     };
     let (new1, new2) = (substitute(arg1.clone()), substitute(arg2.clone()));
@@ -466,8 +526,8 @@ fn indexed_cb(opcode: u8, index: IndexRegister16, operands: &impl Operands) -> T
             [Mnemonic::Res, Mnemonic::Set][x as usize - 2],
             Some(value(y as i32)),
             Some(displaced),
-            copy
-        )
+            copy,
+        ),
     }
 }
 
@@ -484,7 +544,7 @@ mod test {
         OpcodePrefix::Ed,
         OpcodePrefix::Fd,
         OpcodePrefix::DdCb,
-        OpcodePrefix::FdCb
+        OpcodePrefix::FdCb,
     ];
 
     fn table(prefix: OpcodePrefix) -> &'static [&'static str; 256] {
@@ -495,7 +555,7 @@ mod test {
             OpcodePrefix::Ed => &TABINSTRED,
             OpcodePrefix::Fd => &TABINSTRFD,
             OpcodePrefix::DdCb => &TABINSTRDDCB,
-            OpcodePrefix::FdCb => &TABINSTRFDCB
+            OpcodePrefix::FdCb => &TABINSTRFDCB,
         }
     }
 
@@ -504,7 +564,8 @@ mod test {
     /// empty entry is a NOP, warnings are unwrapped.
     fn reference(prefix: OpcodePrefix, opcode: u8, operands: Option<[u8; 2]>) -> Token {
         let mut lut = table(prefix);
-        if lut[opcode as usize].is_empty() && matches!(prefix, OpcodePrefix::Dd | OpcodePrefix::Fd) {
+        if lut[opcode as usize].is_empty() && matches!(prefix, OpcodePrefix::Dd | OpcodePrefix::Fd)
+        {
             lut = &TABINSTR;
         }
         let parsed = match operands {
@@ -513,16 +574,23 @@ mod test {
             Some(bytes) => {
                 cpclib_asm::disass::disassemble_with_potential_argument(opcode, lut, &bytes)
                     .map(|(token, _)| token)
-            },
+            }
         };
-        let token = parsed.map(|t| t.unwrapped().clone()).unwrap_or_else(|_| nop());
+        let token = parsed
+            .map(|t| t.unwrapped().clone())
+            .unwrap_or_else(|_| nop());
         // RST: the tables' "RST 10" parses as decimal 10.
         match token {
-            Token::OpCode(Mnemonic::Rst, Some(DataAccess::Expression(Expr::Value(v))), None, None) => {
+            Token::OpCode(
+                Mnemonic::Rst,
+                Some(DataAccess::Expression(Expr::Value(v))),
+                None,
+                None,
+            ) => {
                 let address = i32::from_str_radix(&v.to_string(), 16).unwrap();
                 op(Mnemonic::Rst, Some(value(address)), None)
-            },
-            token => token
+            }
+            token => token,
         }
     }
 
@@ -547,14 +615,18 @@ mod test {
         for prefix in PREFIXES {
             for opcode in 0..=255u8 {
                 let nb = nb_operand_bytes(prefix, opcode);
-                let first_bytes: Vec<u8> = if nb == 0 { vec![0x5a] } else { (0..=255).collect() };
-                // DD CB d op only uses its displacement byte.
-                let second_bytes: &[u8] = if nb == 2 && !matches!(prefix, OpcodePrefix::DdCb | OpcodePrefix::FdCb) {
-                    &[0x00, 0x01, 0x7f, 0x80, 0xc3, 0xff]
-                }
-                else {
-                    &[0x00, 0xff]
+                let first_bytes: Vec<u8> = if nb == 0 {
+                    vec![0x5a]
+                } else {
+                    (0..=255).collect()
                 };
+                // DD CB d op only uses its displacement byte.
+                let second_bytes: &[u8] =
+                    if nb == 2 && !matches!(prefix, OpcodePrefix::DdCb | OpcodePrefix::FdCb) {
+                        &[0x00, 0x01, 0x7f, 0x80, 0xc3, 0xff]
+                    } else {
+                        &[0x00, 0xff]
+                    };
                 for &low in &first_bytes {
                     for &high in second_bytes {
                         assert_eq!(
@@ -597,14 +669,24 @@ mod test {
     #[test]
     fn rst_carries_its_target_address() {
         for (opcode, address) in [(0xc7, 0x00), (0xd7, 0x10), (0xff, 0x38)] {
-            assert_eq!(template(OpcodePrefix::None, opcode), op(Mnemonic::Rst, Some(value(address)), None));
+            assert_eq!(
+                template(OpcodePrefix::None, opcode),
+                op(Mnemonic::Rst, Some(value(address)), None)
+            );
         }
     }
 
     #[test]
     fn relative_jumps() {
         let jr = |d: u8| with_operands(OpcodePrefix::None, 0x18, [d, 0]);
-        assert_eq!(jr(0xfe), op(Mnemonic::Jr, None, Some(DataAccess::Expression(Expr::Label("$".into())))));
+        assert_eq!(
+            jr(0xfe),
+            op(
+                Mnemonic::Jr,
+                None,
+                Some(DataAccess::Expression(Expr::Label("$".into())))
+            )
+        );
         assert_eq!(jr(0x05), op(Mnemonic::Jr, None, Some(value(7))));
         assert_eq!(jr(0x80), op(Mnemonic::Jr, None, Some(value(-126))));
     }

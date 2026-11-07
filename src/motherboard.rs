@@ -5,8 +5,10 @@ use crate::counter::*;
 use crate::crtc::*;
 use crate::debug::DisassembledInstruction;
 use crate::expansion::{LargeRamExpansion, LargeRamExpansionPin, RamBankExpansion};
+use crate::expansion_port::{
+    CpcSide, ExpansionDevice, ExpansionPin, ExpansionPort, PrinterDevice, PrinterPort,
+};
 use crate::fdc::{Fdc, FdcDrive};
-use crate::expansion_port::{CpcSide, ExpansionDevice, ExpansionPin, ExpansionPort, PrinterDevice, PrinterPort};
 use crate::ga::*;
 use crate::keyboard::KeyboardMatrix;
 use crate::memory::*;
@@ -147,9 +149,17 @@ impl Default for Motherboard {
             printer_port: None,
             fdc_write_active: false,
             us: 0,
-            trace_pc_from: std::env::var("AMSRUST_TRACE_PC").ok().and_then(|v| v.parse().ok()),
-            trace_pc_to: std::env::var("AMSRUST_TRACE_PC_TO").ok().and_then(|v| v.parse().ok()).unwrap_or(u64::MAX),
-            trace_pc_min: std::env::var("AMSRUST_TRACE_PC_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(4),
+            trace_pc_from: std::env::var("AMSRUST_TRACE_PC")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            trace_pc_to: std::env::var("AMSRUST_TRACE_PC_TO")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(u64::MAX),
+            trace_pc_min: std::env::var("AMSRUST_TRACE_PC_MIN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(4),
             last_traced_pc: 0,
             fdc_read_active: false,
             floating_bus: 0xff,
@@ -185,7 +195,7 @@ pub enum CpcModel {
     Cpc6128,
     Cpc464Plus,
     Cpc6128Plus,
-    Gx4000
+    Gx4000,
 }
 
 impl CpcModel {
@@ -195,7 +205,7 @@ impl CpcModel {
         CpcModel::Cpc6128,
         CpcModel::Cpc464Plus,
         CpcModel::Cpc6128Plus,
-        CpcModel::Gx4000
+        CpcModel::Gx4000,
     ];
 
     /// "464", "664", "6128", "464plus", "6128plus" or "gx4000".
@@ -206,7 +216,7 @@ impl CpcModel {
             CpcModel::Cpc6128 => "6128",
             CpcModel::Cpc464Plus => "464plus",
             CpcModel::Cpc6128Plus => "6128plus",
-            CpcModel::Gx4000 => "gx4000"
+            CpcModel::Gx4000 => "gx4000",
         }
     }
 
@@ -214,7 +224,7 @@ impl CpcModel {
     pub fn basic_version(&self) -> u8 {
         match self {
             CpcModel::Cpc464 => 10,
-            _ => 11
+            _ => 11,
         }
     }
 
@@ -227,12 +237,18 @@ impl CpcModel {
     /// Whether a disc interface is built in (664, 6128, 6128+). A 464 gets one
     /// from a DDI-1.
     pub fn has_disc_interface(&self) -> bool {
-        matches!(self, CpcModel::Cpc664 | CpcModel::Cpc6128 | CpcModel::Cpc6128Plus)
+        matches!(
+            self,
+            CpcModel::Cpc664 | CpcModel::Cpc6128 | CpcModel::Cpc6128Plus
+        )
     }
 
     /// A CPC+ (or the GX4000): the ASIC, CRTC 3, and a cartridge.
     pub fn is_plus(&self) -> bool {
-        matches!(self, CpcModel::Cpc464Plus | CpcModel::Cpc6128Plus | CpcModel::Gx4000)
+        matches!(
+            self,
+            CpcModel::Cpc464Plus | CpcModel::Cpc6128Plus | CpcModel::Gx4000
+        )
     }
 }
 
@@ -241,12 +257,17 @@ impl std::str::FromStr for CpcModel {
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         // "cpc6128", "6128+", "6128 Plus"...
-        let name = text.to_ascii_lowercase().replace([' ', '-', '_'], "").replace('+', "plus");
+        let name = text
+            .to_ascii_lowercase()
+            .replace([' ', '-', '_'], "")
+            .replace('+', "plus");
         let name = name.trim_start_matches("cpc");
         CpcModel::ALL
             .into_iter()
             .find(|model| model.name() == name)
-            .ok_or_else(|| format!("unknown CPC model \"{text}\": 464, 664, 6128, 464plus, 6128plus or gx4000"))
+            .ok_or_else(|| {
+                format!("unknown CPC model \"{text}\": 464, 664, 6128, 464plus, 6128plus or gx4000")
+            })
     }
 }
 
@@ -258,7 +279,7 @@ impl std::str::FromStr for CpcModel {
 pub struct BusAccess {
     pub kind: BusAccessKind,
     pub address: u16,
-    pub value: u8
+    pub value: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,7 +287,7 @@ pub enum BusAccessKind {
     MemoryRead,
     MemoryWrite,
     IoRead,
-    IoWrite
+    IoWrite,
 }
 
 /// TODO add the other kinds of varitions
@@ -438,7 +459,7 @@ impl MotherboardBuilder {
         // the CPC+'s CRTC is its ASIC's
         let crtc_type = match self.model {
             Some(model) if model.is_plus() => CrtcType::Crtc3,
-            _ => self.crtc_type.unwrap_or_default()
+            _ => self.crtc_type.unwrap_or_default(),
         };
 
         let mut motherboard = Motherboard {
@@ -475,7 +496,8 @@ impl MotherboardBuilder {
                 printer.export_to(prefix);
             }
             // its own characters: the EPROM it has, or the one it is given
-            if let Err(e) = printer.load_font_rom(self.dmp2000_font.unwrap_or(crate::roms::DMP2000)) {
+            if let Err(e) = printer.load_font_rom(self.dmp2000_font.unwrap_or(crate::roms::DMP2000))
+            {
                 eprintln!("DMP2000's EPROM: {e}");
             }
             printer.set_international_set(self.dmp2000_charset);
@@ -505,11 +527,11 @@ impl MotherboardBuilder {
         motherboard.stabilize_run();
 
         if self.enable_interruptions {
-            motherboard.cpu.iff1 = true ;
-            motherboard.cpu.iff2 = true ;
+            motherboard.cpu.iff1 = true;
+            motherboard.cpu.iff2 = true;
             motherboard.cpu.im = InterruptMode::Mode1;
         }
-        
+
         motherboard
     }
 }
@@ -597,19 +619,23 @@ impl Motherboard {
     }
 
     fn save_disc(&mut self, drive: FdcDrive) {
-        let Some(file) = self.disc_files[drive as usize].clone() else { return };
+        let Some(file) = self.disc_files[drive as usize].clone() else {
+            return;
+        };
         if !self.fdc.is_modified(drive) {
             return;
         }
-        let Some(image) = self.fdc.image(drive) else { return };
+        let Some(image) = self.fdc.image(drive) else {
+            return;
+        };
         #[cfg(not(target_arch = "wasm32"))]
         match crate::disc_image::save_disc_file(&file, image) {
             Ok(()) => {
                 self.fdc.mark_saved(drive);
                 eprintln!("{file}: saved");
                 self.saved_disc_files.push(file);
-            },
-            Err(e) => eprintln!("cannot save the disc: {e}")
+            }
+            Err(e) => eprintln!("cannot save the disc: {e}"),
         }
         #[cfg(target_arch = "wasm32")]
         let _ = (file, image);
@@ -642,25 +668,34 @@ impl Motherboard {
 
     /// Plug a card on the expansion port (after the ones already there).
     pub fn plug_expansion(&mut self, device: Box<dyn ExpansionDevice>) {
-        self.expansion_port.get_or_insert_with(Box::default).plug(device);
+        self.expansion_port
+            .get_or_insert_with(Box::default)
+            .plug(device);
         self.update_sound_mix();
     }
 
     /// Plug a device on the printer port (in place of the one there).
     pub fn plug_printer(&mut self, device: Box<dyn PrinterDevice>) {
-        self.printer_port.get_or_insert_with(Box::default).plug(device);
+        self.printer_port
+            .get_or_insert_with(Box::default)
+            .plug(device);
         self.update_sound_mix();
     }
 
     /// A card on the expansion port, or a device making sound on the printer port.
     fn sound_cards_fitted(&self) -> bool {
-        self.expansion_port.is_some() || self.printer_port.as_ref().is_some_and(|port| port.has_sound())
+        self.expansion_port.is_some()
+            || self
+                .printer_port
+                .as_ref()
+                .is_some_and(|port| port.has_sound())
     }
 
     /// The AY's share of the sound: all of it alone, half with cards that make sound.
     fn update_sound_mix(&mut self) {
         let cards = self.sound_cards_fitted();
-        self.psg.set_extra_sound([0.0; 2], if cards { 0.5 } else { 1.0 });
+        self.psg
+            .set_extra_sound([0.0; 2], if cards { 0.5 } else { 1.0 });
     }
 
     pub fn expansion_port(&self) -> Option<&ExpansionPort> {
@@ -680,7 +715,11 @@ impl Motherboard {
     pub fn expansion_sound_chips(&mut self) -> Vec<(&'static str, &mut crate::psg::Psg)> {
         self.expansion_port
             .as_deref_mut()
-            .map(|port| port.devices_mut().flat_map(|device| device.sound_chips()).collect())
+            .map(|port| {
+                port.devices_mut()
+                    .flat_map(|device| device.sound_chips())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -696,7 +735,9 @@ impl Motherboard {
             let config = self.memory_config();
             config.is_in_enabled_lower_rom(address) || config.is_in_enabled_upper_rom(address)
         };
-        let Some(port) = &mut self.expansion_port else { return };
+        let Some(port) = &mut self.expansion_port else {
+            return;
+        };
         let cpu = &self.cpu;
         port.tick_with(CpcSide {
             address,
@@ -712,7 +753,7 @@ impl Motherboard {
             romen: !rom,
             ramrd: !(memory_read && !rom),
             cursor: self.crtc.cursor(),
-            clk4: cpu.get_pin(Z80Pin::Neg_CLK)
+            clk4: cpu.get_pin(Z80Pin::Neg_CLK),
         });
         // /NMI: the CPU latches its falling edge
         self.cpu.set_nmi_line(port.get_pin(ExpansionPin::Neg_NMI));
@@ -720,7 +761,10 @@ impl Motherboard {
 
     /// The cards' sound for the coming microsecond.
     fn expansion_sound(&self) -> [f32; 2] {
-        let mut sound = self.printer_port.as_ref().map_or([0.0; 2], |port| port.sound());
+        let mut sound = self
+            .printer_port
+            .as_ref()
+            .map_or([0.0; 2], |port| port.sound());
         if let Some(port) = &self.expansion_port {
             for device in port.devices() {
                 let [left, right] = device.sound();
@@ -880,7 +924,12 @@ impl Motherboard {
                 if self.us >= from && self.us < self.trace_pc_to {
                     let pc = self.cpu.pc();
                     if (i32::from(pc) - i32::from(self.last_traced_pc)).abs() > self.trace_pc_min {
-                        eprintln!("PC {} {:04X} sp={:04X}", self.us, pc, self.cpu.reg16(Reg16::Sp).value());
+                        eprintln!(
+                            "PC {} {:04X} sp={:04X}",
+                            self.us,
+                            pc,
+                            self.cpu.reg16(Reg16::Sp).value()
+                        );
                     }
                     self.last_traced_pc = pc;
                 }
@@ -899,12 +948,20 @@ impl Motherboard {
             self.crtc.tick(); // Virtually uses 16 cycles
             if let Some(asic) = &mut self.asic {
                 // the CPC+: raster interrupt, DMA, split (the DMA reads the base 64K)
-                let Motherboard { crtc, ga, psg, memory, .. } = self;
-                asic.microsecond(crtc, ga, psg, |address| memory.read(address, &MemoryConfig::default(), None));
+                let Motherboard {
+                    crtc,
+                    ga,
+                    psg,
+                    memory,
+                    ..
+                } = self;
+                asic.microsecond(crtc, ga, psg, |address| {
+                    memory.read(address, &MemoryConfig::default(), None)
+                });
             }
-        }
-        else {
-            self.crtc.set_phase_ticks(self.crtc.phase_ticks().saturating_add(1));
+        } else {
+            self.crtc
+                .set_phase_ticks(self.crtc.phase_ticks().saturating_add(1));
             if self.crtc.must_execute_tick() {
                 self.crtc.execute_tick();
             }
@@ -916,7 +973,8 @@ impl Motherboard {
         // byte leaked at the right edge of every line and the first pixel of
         // the line was lost.
         let display = self.crtc.get_pin(CrtcPin::DE)
-            && !((self.crtc.second_byte_is_border() || self.crtc.r6_conflict_second_byte_is_border())
+            && !((self.crtc.second_byte_is_border()
+                || self.crtc.r6_conflict_second_byte_is_border())
                 && self.ga.get_pin(GateArrayPin::CCLK));
         self.ga.set_pin(GateArrayPin::DISPEN, display);
         // Unlike the CRTC (whose is_activated() gates on CCLK - a genuinely
@@ -957,8 +1015,10 @@ impl Motherboard {
             }
         }
         self.ga.set_last_idle_t(self.cpu.last_idle_t());
-        self.ga.set_monitor_hsync_advance(self.crtc.hsync_late_ticks());
-        self.ga.set_crtc_hsync_two_wide(self.crtc.hsync_blank_window());
+        self.ga
+            .set_monitor_hsync_advance(self.crtc.hsync_late_ticks());
+        self.ga
+            .set_crtc_hsync_two_wide(self.crtc.hsync_blank_window());
         self.ga.tick();
         if self.ram_banking {
             self.pal.tick();
@@ -1004,10 +1064,10 @@ impl Motherboard {
     pub fn handle_write_access(&mut self) {
         if self.ga_request_read() {
             unimplemented!();
-        }  else if self.cpu_request_byte_write() {
+        } else if self.cpu_request_byte_write() {
             let addr = self.cpu.get_address_from_pins();
             let byte = self.cpu.get_data_from_pins();
-        //    eprintln!("0x{:x}=0x{:x}", addr, byte);
+            //    eprintln!("0x{:x}=0x{:x}", addr, byte);
             self.write_byte(addr, byte);
             self.log_bus(BusAccessKind::MemoryWrite, addr, byte);
             self.cpu.set_pin(Z80Pin::Neg_WR, true); // TODO do the real stuff - but here I am sure to not play with the data bus ...
@@ -1087,14 +1147,15 @@ impl Motherboard {
     pub fn handle_read_access(&mut self) {
         if self.ga_request_read() {
             unimplemented!();
-        
-        } else  if self.cpu_request_byte_read() {
+        } else if self.cpu_request_byte_read() {
             let addr = self.cpu.get_address_from_pins();
             let mut byte = self.read_byte(addr);
             if let Some(port) = &self.expansion_port {
                 // ROMDIS and RAMDIS take the CPC's ROM and RAM off the bus: a card's byte instead
                 let rom = !port.get_pin(ExpansionPin::Neg_ROMEN);
-                if (rom && port.get_pin(ExpansionPin::ROMDIS)) || (!rom && port.get_pin(ExpansionPin::RAMDIS)) {
+                if (rom && port.get_pin(ExpansionPin::ROMDIS))
+                    || (!rom && port.get_pin(ExpansionPin::RAMDIS))
+                {
                     byte = port.driven_data().unwrap_or(self.floating_bus);
                 }
             }
@@ -1104,12 +1165,16 @@ impl Motherboard {
             self.cpu.set_data_on_pins(byte);
             self.cpu.set_pin(Z80Pin::Neg_RD, true); // TODO do the real stuff - but here I am sure to not play with the data bus ...
             self.fdc_read_active = false;
-        }else if self.cpu_request_byte_input() {
+        } else if self.cpu_request_byte_input() {
             // The request is held for the whole input cycle; `input_byte` (which can advance the
             // FDC's internal state) is called once, on the tick the Z80 latches the data bus: at
             // the end of the cycle's T3 (`INPUT_LATCH_TICKS`), the first tick for an interrupt
             // acknowledge. The byte is then held on the bus.
-            self.input_ticks = if self.fdc_read_active { self.input_ticks + 1 } else { 0 };
+            self.input_ticks = if self.fdc_read_active {
+                self.input_ticks + 1
+            } else {
+                0
+            };
             let acknowledge = !self.cpu.get_pin(Z80Pin::Neg_M1);
             let latch = self.input_ticks == if acknowledge { 0 } else { INPUT_LATCH_TICKS };
             if latch {
@@ -1117,7 +1182,9 @@ impl Motherboard {
                 self.cached_input_byte = self.input_byte(addr);
                 if !acknowledge && addr & 0x4300 == 0 {
                     // an IN from the CRTC's select register: on a CPC+ the lock hears it too
-                    if let (Some(asic), Some(video)) = (self.asic.as_deref_mut(), self.ga.plus_mut()) {
+                    if let (Some(asic), Some(video)) =
+                        (self.asic.as_deref_mut(), self.ga.plus_mut())
+                    {
                         if asic.crtc_select_written(video.bus_value) {
                             video.unlocked = asic.unlocked();
                         }
@@ -1128,7 +1195,8 @@ impl Motherboard {
                     // an interrupt acknowledge: the IM 2 vector is what a card puts on the bus,
                     // or the CPC+'s ASIC (the interrupt's source)
                     if let Some(asic) = &mut self.asic {
-                        self.cpu.set_interrupt_vector(Some(asic.acknowledge(self.cpu.pc())));
+                        self.cpu
+                            .set_interrupt_vector(Some(asic.acknowledge(self.cpu.pc())));
                     } else if let Some(port) = &self.expansion_port {
                         self.cpu.set_interrupt_vector(port.driven_data());
                     }
@@ -1151,7 +1219,7 @@ impl Motherboard {
 
     #[inline]
     fn cpu_request_byte_write(&self) -> bool {
-        !self.cpu.get_pin(Z80Pin::Neg_WR)&& !self.cpu.get_pin(Z80Pin::Neg_MREQ)
+        !self.cpu.get_pin(Z80Pin::Neg_WR) && !self.cpu.get_pin(Z80Pin::Neg_MREQ)
     }
 
     #[inline]
@@ -1161,10 +1229,8 @@ impl Motherboard {
 
     #[inline]
     fn cpu_request_byte_output(&self) -> bool {
-        !self.cpu.get_pin(Z80Pin::Neg_WR)&& !self.cpu.get_pin(Z80Pin::Neg_IORQ)
+        !self.cpu.get_pin(Z80Pin::Neg_WR) && !self.cpu.get_pin(Z80Pin::Neg_IORQ)
     }
-
-
 
     #[inline]
     /// TODO implement that aspect
@@ -1283,7 +1349,8 @@ impl Motherboard {
         // read back as a hardware fault and cold-reset on - reproduced via
         // HBL.DSK rebooting during its "amsdos leaving" sequence.
         if self.psg.port_a_is_input() {
-            self.psg.set_register(REG_IO_PORT_A, self.keyboard.line(row_select));
+            self.psg
+                .set_register(REG_IO_PORT_A, self.keyboard.line(row_select));
         }
 
         // The bus is shared: the PPI drives it when port A is an output (what the CPU wrote), the PSG
@@ -1291,9 +1358,17 @@ impl Motherboard {
         // the next PSG latch/write cycle still sees what the CPU wrote.
         let a_out = self.ppi.port_a_is_output();
         let latch = self.ppi.port_a_latch();
-        let data_bus = if a_out { latch } else { self.ppi.get_data_a_from_pins() };
+        let data_bus = if a_out {
+            latch
+        } else {
+            self.ppi.get_data_a_from_pins()
+        };
         if let Some(read_value) = self.psg.bus_cycle(control, data_bus) {
-            self.ppi.set_port_a_input(if a_out { latch & read_value } else { read_value });
+            self.ppi.set_port_a_input(if a_out {
+                latch & read_value
+            } else {
+                read_value
+            });
         } else if a_out {
             self.ppi.set_port_a_input(latch);
         } else {
@@ -1377,7 +1452,10 @@ impl Motherboard {
         // /INT is wired-or: a card on the expansion port pulls it too, and the CPC+'s DMA
         // channels
         if self.expansion_port.is_some() || self.asic.is_some() {
-            let card = self.expansion_port.as_ref().is_none_or(|port| port.get_pin(ExpansionPin::Neg_INT));
+            let card = self
+                .expansion_port
+                .as_ref()
+                .is_none_or(|port| port.get_pin(ExpansionPin::Neg_INT));
             let dma = self.asic.as_ref().is_some_and(|asic| asic.dma_interrupt());
             let line = self.ga.get_pin(GateArrayPin::INTERRUPT) && card && !dma;
             self.cpu.set_pin(Z80Pin::Neg_INT, line);
@@ -1445,7 +1523,8 @@ impl Motherboard {
                     Z80Pin::Neg_IORQ,
                     Z80Pin::Neg_RD,
                     Z80Pin::Neg_M1,
-                    Z80Pin::Neg_MREQ, ],
+                    Z80Pin::Neg_MREQ,
+                ],
                 &mut self.ga,
                 &[
                     GateArrayPin::A14,
@@ -1453,7 +1532,7 @@ impl Motherboard {
                     GateArrayPin::Neg_IORQ,
                     GateArrayPin::Neg_RD,
                     GateArrayPin::Neg_M1,
-                    GateArrayPin::Neg_MREQ
+                    GateArrayPin::Neg_MREQ,
                 ],
             );
 
@@ -1611,7 +1690,11 @@ impl Motherboard {
     }
 
     /// Disassemble a bunch of instruction given an address
-    pub fn disassemble_instructions_from(&self, mut pc: u16, count: usize) -> Vec<DisassembledInstruction> {
+    pub fn disassemble_instructions_from(
+        &self,
+        mut pc: u16,
+        count: usize,
+    ) -> Vec<DisassembledInstruction> {
         let mut res = Vec::new();
         for _ in 0..count {
             let inst = self.disassemble_instruction_at(pc);
@@ -1632,7 +1715,7 @@ impl Motherboard {
         };
 
         let mut current_prefix = OpcodePrefix::None;
-        let mut instruction_bytes : SmallVec <[u8;4]> = Default::default();
+        let mut instruction_bytes: SmallVec<[u8; 4]> = Default::default();
         let mut ir;
         loop {
             ir = read();
@@ -1644,13 +1727,13 @@ impl Motherboard {
                         0xfd => OpcodePrefix::Fd,
                         0xcb => OpcodePrefix::Cb,
                         0xed => OpcodePrefix::Ed,
-                        _ => OpcodePrefix::None
+                        _ => OpcodePrefix::None,
                     };
-                    
+
                     if current_prefix == OpcodePrefix::None {
                         break;
                     }
-                },
+                }
 
                 OpcodePrefix::Cb | OpcodePrefix::Ed => {
                     break;
@@ -1662,18 +1745,18 @@ impl Motherboard {
                     } else {
                         break;
                     }
-                },
-                
+                }
+
                 OpcodePrefix::Fd => {
                     if ir == 0xcb {
                         current_prefix = OpcodePrefix::FdCb
                     } else {
                         break;
                     }
-                },
+                }
 
-                OpcodePrefix::DdCb |  OpcodePrefix::FdCb => {
-                   break;
+                OpcodePrefix::DdCb | OpcodePrefix::FdCb => {
+                    break;
                 }
             }
         }
@@ -1684,8 +1767,7 @@ impl Motherboard {
             let opcode = read();
             instruction_bytes.push(opcode);
             crate::z80::decoder::with_operands(current_prefix, opcode, [ir, 0])
-        }
-        else {
+        } else {
             let mut operands = [0u8; 2];
             for operand in operands
                 .iter_mut()
@@ -1696,7 +1778,6 @@ impl Motherboard {
             }
             crate::z80::decoder::with_operands(current_prefix, ir, operands)
         };
-
 
         DisassembledInstruction {
             token,
@@ -1729,11 +1810,14 @@ impl Motherboard {
         // RMR2 (CPC+): the lower ROM's cartridge page and where it is (bits 4-3 at 3: at &0000,
         // the register page at &4000)
         let (lower_rom_page, lower_rom_quarter) = match self.ga.plus() {
-            Some(plus) => (plus.rmr2 & 7, match plus.rmr2 >> 3 & 3 {
-                3 => 0,
-                quarter => quarter
-            }),
-            None => (0, 0)
+            Some(plus) => (
+                plus.rmr2 & 7,
+                match plus.rmr2 >> 3 & 3 {
+                    3 => 0,
+                    quarter => quarter,
+                },
+            ),
+            None => (0, 0),
         };
         MemoryConfig(
             RomConfig {
@@ -1771,7 +1855,11 @@ impl Motherboard {
             }
         }
         if let Some(plus) = self.ga.plus_mut() {
-            plus.bus_value = if model == CpcModel::Cpc6128Plus { 0x79 } else { 0x78 };
+            plus.bus_value = if model == CpcModel::Cpc6128Plus {
+                0x79
+            } else {
+                0x78
+            };
         }
         self.memory.set_firmware(model, self.keyboard_layout);
         self.ram_banking = model.has_ram_banking();
@@ -1783,13 +1871,15 @@ impl Motherboard {
     /// its ports on a mode-set write, unlike a real 8255, and no cassette input; the ASICs' Gate
     /// Array syncs (CRTC 3 and 4).
     fn fit_crtc_chips(&mut self, crtc_type: CrtcType) {
-        self.ppi.set_clears_ports_on_mode_set(crtc_type != CrtcType::Crtc3);
+        self.ppi
+            .set_clears_ports_on_mode_set(crtc_type != CrtcType::Crtc3);
         self.cassette_idle = crtc_type == CrtcType::Crtc3;
         self.ppi.set_pin(PpiPin::B7, self.cassette_idle);
-        self.ga.set_c_vsync_needs_crtc_vsync(matches!(crtc_type, CrtcType::Crtc3 | CrtcType::Crtc4));
+        self.ga
+            .set_c_vsync_needs_crtc_vsync(matches!(crtc_type, CrtcType::Crtc3 | CrtcType::Crtc4));
         self.ga.set_sync_black_lag_ticks(match crtc_type {
             CrtcType::Crtc3 | CrtcType::Crtc4 => crate::ga::ASIC_SYNC_BLACK_LAG_TICKS,
-            _ => crate::ga::SYNC_BLACK_LAG_TICKS
+            _ => crate::ga::SYNC_BLACK_LAG_TICKS,
         });
     }
 
@@ -1820,7 +1910,7 @@ impl Motherboard {
     pub fn restore_asic_snapshot_chunk(&mut self, chunk: &[u8]) -> Result<(), String> {
         match (self.asic.as_deref_mut(), self.ga.plus_mut()) {
             (Some(asic), Some(video)) => asic.restore_snapshot_chunk(video, chunk),
-            _ => Err("a CPC+ chunk in the snapshot of a CPC".to_owned())
+            _ => Err("a CPC+ chunk in the snapshot of a CPC".to_owned()),
         }
     }
 
@@ -1847,9 +1937,17 @@ impl Motherboard {
     }
 
     /// Fit the French ROMs (AZERTY) or the English ones: the French ones exist for the 6128 only.
-    pub fn set_keyboard_layout(&mut self, layout: crate::keyboard::KeyboardLayout) -> Result<(), String> {
-        if layout == crate::keyboard::KeyboardLayout::French && !matches!(self.model, CpcModel::Cpc6128 | CpcModel::Cpc6128Plus) {
-            return Err(format!("there are French ROMs for the 6128 only, not the {}", self.model.name()));
+    pub fn set_keyboard_layout(
+        &mut self,
+        layout: crate::keyboard::KeyboardLayout,
+    ) -> Result<(), String> {
+        if layout == crate::keyboard::KeyboardLayout::French
+            && !matches!(self.model, CpcModel::Cpc6128 | CpcModel::Cpc6128Plus)
+        {
+            return Err(format!(
+                "there are French ROMs for the 6128 only, not the {}",
+                self.model.name()
+            ));
         }
         self.keyboard_layout = layout;
         self.memory.set_firmware(self.model, layout);
@@ -1930,7 +2028,9 @@ impl Motherboard {
     /// How many 64kb banks the currently plugged-in `LargeRamExpansion`
     /// provides, if any - `None` on a stock machine.
     pub fn large_ram_expansion_bank_count(&self) -> Option<usize> {
-        self.large_ram_expansion.as_ref().map(Expansion::ram_bank_count)
+        self.large_ram_expansion
+            .as_ref()
+            .map(Expansion::ram_bank_count)
     }
 
     /// The currently plugged-in `LargeRamExpansion`'s last-latched high
@@ -1938,7 +2038,9 @@ impl Motherboard {
     /// external code (tests, diagnostics) observe whether anything has
     /// actually driven a port other than the standard &7Fxx.
     pub fn large_ram_expansion_high_bits(&self) -> Option<u8> {
-        self.large_ram_expansion.as_ref().map(|e| e.ram_bank_high_bits())
+        self.large_ram_expansion
+            .as_ref()
+            .map(|e| e.ram_bank_high_bits())
     }
 
     /// Whatever's plugged into the expansion port, as the trait `Memory`
@@ -1950,15 +2052,28 @@ impl Motherboard {
     /// destructure `self` into its `memory`/`large_ram_expansion` fields
     /// directly instead, which the borrow checker can see are disjoint.
     fn expansion_ram_source(&self) -> Option<&dyn Expansion> {
-        self.large_ram_expansion.as_ref().map(|e| e as &dyn Expansion)
+        self.large_ram_expansion
+            .as_ref()
+            .map(|e| e as &dyn Expansion)
     }
 
     /// Write the databuffer in memory according to the memory configuration
     pub fn write_buffer(&mut self, mut addr: u16, buffer: &[u8]) {
         let config = self.memory_config();
-        let Motherboard { memory, large_ram_expansion, .. } = self;
+        let Motherboard {
+            memory,
+            large_ram_expansion,
+            ..
+        } = self;
         for byte in buffer.iter() {
-            memory.write(addr, *byte, &config, large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
+            memory.write(
+                addr,
+                *byte,
+                &config,
+                large_ram_expansion
+                    .as_mut()
+                    .map(|e| e as &mut dyn Expansion),
+            );
             addr = addr.wrapping_add(1);
         }
     }
@@ -1967,7 +2082,8 @@ impl Motherboard {
     /// ROMs there, for reads and writes.
     #[inline]
     fn in_register_page(&self, addr: u16) -> bool {
-        (0x4000..0x8000).contains(&addr) && self.ga.plus().is_some_and(|plus| plus.rmr2 & 0x18 == 0x18)
+        (0x4000..0x8000).contains(&addr)
+            && self.ga.plus().is_some_and(|plus| plus.rmr2 & 0x18 == 0x18)
     }
 
     /// Write one memory byte according to the memory configuration
@@ -1983,17 +2099,46 @@ impl Motherboard {
             return;
         }
         let memory_cfg = self.memory_config();
-        let Motherboard { memory, large_ram_expansion, .. } = self;
-        memory.write(addr, byte, &memory_cfg, large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
+        let Motherboard {
+            memory,
+            large_ram_expansion,
+            ..
+        } = self;
+        memory.write(
+            addr,
+            byte,
+            &memory_cfg,
+            large_ram_expansion
+                .as_mut()
+                .map(|e| e as &mut dyn Expansion),
+        );
     }
 
     pub fn write_word(&mut self, addr: u16, word: u16) {
         let memory_cfg = self.memory_config();
         let low = (word & 0xff) as u8;
         let high = ((word & 0xff00) >> 8) as u8;
-        let Motherboard { memory, large_ram_expansion, .. } = self;
-        memory.write(addr, low, &memory_cfg, large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
-        memory.write(addr.wrapping_add(1), high, &memory_cfg, large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
+        let Motherboard {
+            memory,
+            large_ram_expansion,
+            ..
+        } = self;
+        memory.write(
+            addr,
+            low,
+            &memory_cfg,
+            large_ram_expansion
+                .as_mut()
+                .map(|e| e as &mut dyn Expansion),
+        );
+        memory.write(
+            addr.wrapping_add(1),
+            high,
+            &memory_cfg,
+            large_ram_expansion
+                .as_mut()
+                .map(|e| e as &mut dyn Expansion),
+        );
     }
 
     /// Read one memory byte according to the memory configuration
@@ -2007,15 +2152,25 @@ impl Motherboard {
             }
         }
         let memory_cfg = self.memory_config();
-        self.memory.read(addr, &memory_cfg, self.expansion_ram_source())
+        self.memory
+            .read(addr, &memory_cfg, self.expansion_ram_source())
     }
 
     /// Debug/diagnostic: one byte of a physical RAM bank, whatever the
     /// current CPU mapping, ROMs ignored.
-    pub fn read_physical_ram(&self, page: crate::memory::PageNumber, bank: crate::memory::BankNumber, offset: u16) -> u8 {
+    pub fn read_physical_ram(
+        &self,
+        page: crate::memory::PageNumber,
+        bank: crate::memory::BankNumber,
+        offset: u16,
+    ) -> u8 {
         use crate::memory::{BankConfig, MemoryConfig, RamConfig};
-        let config = MemoryConfig(MemoryConfig::default().0, RamConfig([BankConfig(page, bank); 4]));
-        self.memory.read(offset % 0x4000, &config, self.expansion_ram_source())
+        let config = MemoryConfig(
+            MemoryConfig::default().0,
+            RamConfig([BankConfig(page, bank); 4]),
+        );
+        self.memory
+            .read(offset % 0x4000, &config, self.expansion_ram_source())
     }
 
     /// Record (`true`) or not (`false`, the default) the CPU's bus accesses
@@ -2032,18 +2187,27 @@ impl Motherboard {
 
     /// The I/O writes `(port, value)` since the last call (none when not watching).
     pub fn take_io_writes(&mut self) -> impl Iterator<Item = (u16, u8)> + '_ {
-        self.io_writes.iter_mut().flat_map(|writes| writes.drain(..))
+        self.io_writes
+            .iter_mut()
+            .flat_map(|writes| writes.drain(..))
     }
 
     /// The accesses recorded since the last call (empty when not watching).
     pub fn take_bus_accesses(&mut self) -> Vec<BusAccess> {
-        self.bus_log.as_mut().map(std::mem::take).unwrap_or_default()
+        self.bus_log
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
     }
 
     #[inline]
     fn log_bus(&mut self, kind: BusAccessKind, address: u16, value: u8) {
         if let Some(log) = &mut self.bus_log {
-            log.push(BusAccess { kind, address, value });
+            log.push(BusAccess {
+                kind,
+                address,
+                value,
+            });
         }
     }
 
@@ -2053,12 +2217,16 @@ impl Motherboard {
         let offset = addr & 0x3fff;
         if config.is_in_enabled_lower_rom(addr) {
             PhysicalAddress::LowerRom { offset }
-        }
-        else if config.is_in_enabled_upper_rom(addr) {
-            PhysicalAddress::UpperRom { rom: config.0.rom_number, offset }
-        }
-        else {
-            PhysicalAddress::Ram { bank: config.bank_at(addr).physical_index(), offset }
+        } else if config.is_in_enabled_upper_rom(addr) {
+            PhysicalAddress::UpperRom {
+                rom: config.0.rom_number,
+                offset,
+            }
+        } else {
+            PhysicalAddress::Ram {
+                bank: config.bank_at(addr).physical_index(),
+                offset,
+            }
         }
     }
 
@@ -2066,13 +2234,16 @@ impl Motherboard {
     /// board or on an expansion card.
     /// Where a write to `addr` goes: always RAM, whatever ROM is read there.
     pub fn physical_address_for_write(&self, addr: u16) -> PhysicalAddress {
-        PhysicalAddress::Ram { bank: self.memory_config().bank_at(addr).physical_index(), offset: addr & 0x3fff }
+        PhysicalAddress::Ram {
+            bank: self.memory_config().bank_at(addr).physical_index(),
+            offset: addr & 0x3fff,
+        }
     }
 
     pub fn physical_bank_count(&self) -> u16 {
         let extra_pages = match self.large_ram_expansion_bank_count() {
             Some(count) => count,
-            None => self.extra_ram_pages()
+            None => self.extra_ram_pages(),
         };
         4 + 4 * extra_pages as u16
     }
@@ -2085,8 +2256,13 @@ impl Motherboard {
     /// One byte of a 16K RAM bank (see [`Self::physical_bank_count`]),
     /// whatever the CPU mapping. `None` for a bank that does not exist.
     pub fn read_bank_byte(&self, bank: u16, offset: u16) -> Option<u8> {
-        (bank < self.physical_bank_count())
-            .then(|| self.memory.read(offset & 0x3fff, &self.physical_bank_config(bank), self.expansion_ram_source()))
+        (bank < self.physical_bank_count()).then(|| {
+            self.memory.read(
+                offset & 0x3fff,
+                &self.physical_bank_config(bank),
+                self.expansion_ram_source(),
+            )
+        })
     }
 
     /// Write one byte of a 16K RAM bank; `false` for a bank that does not
@@ -2096,8 +2272,19 @@ impl Motherboard {
             return false;
         }
         let config = self.physical_bank_config(bank);
-        let Motherboard { memory, large_ram_expansion, .. } = self;
-        memory.write(offset & 0x3fff, byte, &config, large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
+        let Motherboard {
+            memory,
+            large_ram_expansion,
+            ..
+        } = self;
+        memory.write(
+            offset & 0x3fff,
+            byte,
+            &config,
+            large_ram_expansion
+                .as_mut()
+                .map(|e| e as &mut dyn Expansion),
+        );
         true
     }
 
@@ -2105,8 +2292,19 @@ impl Motherboard {
     /// (ROM overlays, extra RAM pages) - the counterpart of
     /// [`Self::read_video_ram_byte`].
     pub fn write_base_ram(&mut self, addr: u16, byte: u8) {
-        let Motherboard { memory, large_ram_expansion, .. } = self;
-        memory.write(addr, byte, &MemoryConfig::default(), large_ram_expansion.as_mut().map(|e| e as &mut dyn Expansion));
+        let Motherboard {
+            memory,
+            large_ram_expansion,
+            ..
+        } = self;
+        memory.write(
+            addr,
+            byte,
+            &MemoryConfig::default(),
+            large_ram_expansion
+                .as_mut()
+                .map(|e| e as &mut dyn Expansion),
+        );
     }
 
     /// Read a byte the way the video hardware sees it: always from RAM, even
@@ -2124,7 +2322,8 @@ impl Motherboard {
     /// video hardware's *only* view, full stop.
     #[inline]
     pub fn read_video_ram_byte(&self, addr: u16) -> u8 {
-        self.memory.read(addr, &MemoryConfig::default(), self.expansion_ram_source())
+        self.memory
+            .read(addr, &MemoryConfig::default(), self.expansion_ram_source())
     }
 
     /// Read a byte as if the lower ROM was mapped in (and no upper ROM),
@@ -2143,7 +2342,7 @@ impl Motherboard {
                 upper_rom,
                 ..rom
             },
-            ram
+            ram,
         );
         self.memory.read(addr, &config, self.expansion_ram_source())
     }
@@ -2176,7 +2375,11 @@ impl Motherboard {
             self.fdc.read_status()
         } else if self.disc_interface && Self::is_fdc_data_addr(addr) {
             self.fdc.read_data()
-        } else if let Some(value) = self.expansion_port.as_ref().and_then(|port| port.driven_data()) {
+        } else if let Some(value) = self
+            .expansion_port
+            .as_ref()
+            .and_then(|port| port.driven_data())
+        {
             value
         } else {
             self.floating_bus
@@ -2343,7 +2546,10 @@ mod test {
         let mut motherboard = MotherboardBuilder::default();
         let mut motherboard = motherboard.disable_lower_rom().disable_upper_rom().build();
         // FD DD 21 34 12: LD IX,&1234; FD DD E5: PUSH IX; DD ED 44: NEG; DD FD 21 78 56: LD IY,&5678
-        let program = [0xfd, 0xdd, 0x21, 0x34, 0x12, 0x3e, 0x05, 0xdd, 0xed, 0x44, 0xdd, 0xfd, 0x21, 0x78, 0x56];
+        let program = [
+            0xfd, 0xdd, 0x21, 0x34, 0x12, 0x3e, 0x05, 0xdd, 0xed, 0x44, 0xdd, 0xfd, 0x21, 0x78,
+            0x56,
+        ];
         for (offset, byte) in program.iter().enumerate() {
             motherboard.write_byte(0x4000 + offset as u16, *byte);
         }
@@ -2425,14 +2631,12 @@ mod test {
         assert_eq!(count_crtc, 32 / 16);
     }
 
-
-
     #[test]
     fn motherboard_execute_step_nop() {
         let mut motherboard = MotherboardBuilder::default()
-                                .disable_lower_rom()
-                                .disable_upper_rom()
-                                .build();
+            .disable_lower_rom()
+            .disable_upper_rom()
+            .build();
 
         // full of nop, no need to inject
         motherboard.set_pc(0x1000);
@@ -2441,56 +2645,36 @@ mod test {
         motherboard.nops_counter_mut().reset();
         motherboard.set_pc(0x1000);
         let res = motherboard.execute_next_opcode();
-        assert_eq!(
-            motherboard.pc(),
-            0x1001
-        );
-        assert_eq!(
-            res.len(),
-            16
-        );
-        assert_eq!(
-            motherboard.nops_counter().value(),
-            1
-        );
+        assert_eq!(motherboard.pc(), 0x1001);
+        assert_eq!(res.len(), 16);
+        assert_eq!(motherboard.nops_counter().value(), 1);
     }
 
     #[test]
     fn motherboard_execute_step_halt_no_inter() {
         let mut motherboard = MotherboardBuilder::default()
-                                .disable_lower_rom()
-                                .disable_upper_rom()
-                                .build();
+            .disable_lower_rom()
+            .disable_upper_rom()
+            .build();
 
-         motherboard.nops_counter_mut().reset();
+        motherboard.nops_counter_mut().reset();
         motherboard.set_pc(0x1000);
         motherboard.cpu_mut().force_interruption_received(true);
 
-
         motherboard.write_byte(0x1000, 0x76);
         let res = motherboard.execute_next_opcode();
-        assert_eq!(
-            motherboard.pc(),
-            0x1000
-        );
-        assert_eq!(
-            res.len(),
-            16
-        );
-        assert_eq!(
-            motherboard.nops_counter().value(),
-            1
-        );
+        assert_eq!(motherboard.pc(), 0x1000);
+        assert_eq!(res.len(), 16);
+        assert_eq!(motherboard.nops_counter().value(), 1);
     }
 
     #[test]
     fn motherboard_execute_step_halt() {
         let mut motherboard = MotherboardBuilder::default()
-                                .disable_lower_rom()
-                                .disable_upper_rom()
-                                .enable_interruptions()
-                                .build();
-
+            .disable_lower_rom()
+            .disable_upper_rom()
+            .enable_interruptions()
+            .build();
 
         motherboard.nops_counter_mut().reset();
         motherboard.set_pc(0x1000);
@@ -2501,16 +2685,9 @@ mod test {
         motherboard.write_byte(0x1000, 0x76);
         let _res = motherboard.execute_next_opcode();
         dbg!(&motherboard.cpu.next_state);
-        assert_eq!(
-            motherboard.pc(),
-            0x38
-        );
-        assert_eq!(
-            motherboard.nops_counter().value(),
-            1 + 5
-        );
+        assert_eq!(motherboard.pc(), 0x38);
+        assert_eq!(motherboard.nops_counter().value(), 1 + 5);
     }
-
 }
 
 #[cfg(test)]
@@ -2528,7 +2705,14 @@ mod model_test {
                 mb.execute_next_opcode_no_video();
             }
             let memory: Vec<u8> = (0..=0xffffu16).map(|addr| mb.read_byte(addr)).collect();
-            (mb.t_state_counter().value(), mb.pc(), mb.cpu().af(), mb.cpu().hl(), mb.cpu().sp(), memory)
+            (
+                mb.t_state_counter().value(),
+                mb.pc(),
+                mb.cpu().af(),
+                mb.cpu().hl(),
+                mb.cpu().sp(),
+                memory,
+            )
         };
         assert!(run(true) == run(false));
     }
@@ -2536,13 +2720,19 @@ mod model_test {
     /// LD BC,&7FC4: OUT (C),C - then write 0x42 at &4000.
     fn bank_and_write(model: CpcModel, extra_pages: Option<usize>) -> Motherboard {
         let mut builder = MotherboardBuilder::default();
-        builder.set_model(model).disable_lower_rom().disable_upper_rom();
+        builder
+            .set_model(model)
+            .disable_lower_rom()
+            .disable_upper_rom();
         if let Some(pages) = extra_pages {
             builder.set_extra_ram_pages(pages);
         }
         let mut mb = builder.build();
         // The code runs from &8000.
-        mb.write_buffer(0x8000, &[0x01, 0xc4, 0x7f, 0xed, 0x49, 0x3e, 0x42, 0x32, 0x00, 0x40]);
+        mb.write_buffer(
+            0x8000,
+            &[0x01, 0xc4, 0x7f, 0xed, 0x49, 0x3e, 0x42, 0x32, 0x00, 0x40],
+        );
         mb.cpu_mut().reg16_mut(crate::z80::Reg16::Pc).set(0x8000);
         for _ in 0..4 {
             mb.execute_next_opcode_no_video();
@@ -2555,18 +2745,32 @@ mod model_test {
         let mb = bank_and_write(CpcModel::Cpc6128, None);
         assert_eq!(mb.read_bank_byte(4, 0), Some(0x42), "6128: &4000 is bank 4");
         let mb = bank_and_write(CpcModel::Cpc464, None);
-        assert_eq!(mb.read_bank_byte(1, 0), Some(0x42), "stock 464: the MMR does nothing");
+        assert_eq!(
+            mb.read_bank_byte(1, 0),
+            Some(0x42),
+            "stock 464: the MMR does nothing"
+        );
         let mb = bank_and_write(CpcModel::Cpc464, Some(1));
-        assert_eq!(mb.read_bank_byte(4, 0), Some(0x42), "464 with a 64K expansion");
+        assert_eq!(
+            mb.read_bank_byte(4, 0),
+            Some(0x42),
+            "464 with a 64K expansion"
+        );
     }
 
     #[test]
     fn ram_banking_ignores_a14() {
         let mut builder = MotherboardBuilder::default();
-        builder.set_model(CpcModel::Cpc6128).disable_lower_rom().disable_upper_rom();
+        builder
+            .set_model(CpcModel::Cpc6128)
+            .disable_lower_rom()
+            .disable_upper_rom();
         let mut mb = builder.build();
         // LD BC,&01C4: OUT (C),C - A15=0 selects the RAM configuration even with A14=0.
-        mb.write_buffer(0x8000, &[0x01, 0xc4, 0x01, 0xed, 0x49, 0x3e, 0x42, 0x32, 0x00, 0x40]);
+        mb.write_buffer(
+            0x8000,
+            &[0x01, 0xc4, 0x01, 0xed, 0x49, 0x3e, 0x42, 0x32, 0x00, 0x40],
+        );
         mb.cpu_mut().reg16_mut(crate::z80::Reg16::Pc).set(0x8000);
         for _ in 0..4 {
             mb.execute_next_opcode_no_video();
@@ -2576,17 +2780,30 @@ mod model_test {
 
     #[test]
     fn a_plus_maps_its_cartridge_and_its_register_page() {
-        let mut mb = MotherboardBuilder::default().set_model(CpcModel::Cpc6128Plus).build();
+        let mut mb = MotherboardBuilder::default()
+            .set_model(CpcModel::Cpc6128Plus)
+            .build();
         assert_eq!(mb.crtc().crtc_type(), CrtcType::Crtc3, "the ASIC's CRTC");
         assert!(mb.has_disc_interface() && mb.has_ram_banking());
         let lower_rom: Vec<u8> = (0..0x4000).map(|address| mb.read_byte(address)).collect();
-        assert_ne!(&lower_rom[..], &crate::roms::OS6128[..], "the lower ROM is the cartridge's (Plus) firmware");
+        assert_ne!(
+            &lower_rom[..],
+            &crate::roms::OS6128[..],
+            "the lower ROM is the cartridge's (Plus) firmware"
+        );
 
         // RMR2 does not exist while the lock is closed
         mb.ga.write_register(0xb8);
         mb.write_byte(0x6402, 0x5a);
-        assert_eq!(mb.read_bank_byte(1, 0x2402), Some(0x5a), "a plain RAM write, the page is not mapped");
-        for byte in [0xff, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15, 0x8a, 0xcd, 0xee] {
+        assert_eq!(
+            mb.read_bank_byte(1, 0x2402),
+            Some(0x5a),
+            "a plain RAM write, the page is not mapped"
+        );
+        for byte in [
+            0xff, 0x00, 0xff, 0x77, 0xb3, 0x51, 0xa8, 0xd4, 0x62, 0x39, 0x9c, 0x46, 0x2b, 0x15,
+            0x8a, 0xcd, 0xee,
+        ] {
             if mb.asic.as_mut().unwrap().crtc_select_written(byte) {
                 mb.ga.plus_mut().unwrap().unlocked = true;
             }
@@ -2594,21 +2811,50 @@ mod model_test {
         mb.ga.write_register(0xb8);
         mb.write_byte(0x6402, 0x21);
         mb.write_byte(0x6403, 0xf7);
-        assert_eq!((mb.read_byte(0x6402), mb.read_byte(0x6403)), (0x21, 0x07), "the palette, in the register page");
-        assert_eq!(mb.read_bank_byte(1, 0x2402), Some(0x5a), "the RAM below is not written");
-        assert_eq!(mb.read_byte(0x7820), mb.read_bank_byte(1, 0x3820).unwrap(), "where no register is: the RAM");
+        assert_eq!(
+            (mb.read_byte(0x6402), mb.read_byte(0x6403)),
+            (0x21, 0x07),
+            "the palette, in the register page"
+        );
+        assert_eq!(
+            mb.read_bank_byte(1, 0x2402),
+            Some(0x5a),
+            "the RAM below is not written"
+        );
+        assert_eq!(
+            mb.read_byte(0x7820),
+            mb.read_bank_byte(1, 0x3820).unwrap(),
+            "where no register is: the RAM"
+        );
         mb.ga.write_register(0xa0);
         assert_eq!(mb.read_byte(0x6402), 0x5a, "the page unmapped");
 
         // the lower ROM at &4000 (RMR2 &A9: page 1, BASIC), the upper ROM from the cartridge
         mb.ga.write_register(0xa9);
         let basic = mb.read_byte(0x4000);
-        mb.force_rom_config(RomConfig { upper_rom: Flag::Enable, rom_number: 0x81, ..mb.memory_config().0 });
-        assert_eq!(mb.read_byte(0xc000), basic, "&DF81 selects the cartridge's page 1 too");
-        mb.force_rom_config(RomConfig { rom_number: 7, ..mb.memory_config().0 });
-        assert_ne!(mb.read_byte(0xc006), mb.read_byte(0x4006), "ROM 7 is AMSDOS (page 3), not BASIC");
+        mb.force_rom_config(RomConfig {
+            upper_rom: Flag::Enable,
+            rom_number: 0x81,
+            ..mb.memory_config().0
+        });
+        assert_eq!(
+            mb.read_byte(0xc000),
+            basic,
+            "&DF81 selects the cartridge's page 1 too"
+        );
+        mb.force_rom_config(RomConfig {
+            rom_number: 7,
+            ..mb.memory_config().0
+        });
+        assert_ne!(
+            mb.read_byte(0xc006),
+            mb.read_byte(0x4006),
+            "ROM 7 is AMSDOS (page 3), not BASIC"
+        );
 
-        let gx = MotherboardBuilder::default().set_model(CpcModel::Gx4000).build();
+        let gx = MotherboardBuilder::default()
+            .set_model(CpcModel::Gx4000)
+            .build();
         assert!(!gx.has_disc_interface() && !gx.has_ram_banking());
         assert_eq!("6128+".parse::<CpcModel>(), Ok(CpcModel::Cpc6128Plus));
         assert_eq!("GX4000".parse::<CpcModel>(), Ok(CpcModel::Gx4000));
@@ -2617,12 +2863,19 @@ mod model_test {
     #[test]
     fn the_fdc_answers_with_a_disc_interface_only() {
         let msr = |mb: &mut Motherboard| mb.input_byte(0xfb7e);
-        let mut mb = MotherboardBuilder::default().set_model(CpcModel::Cpc464).build();
+        let mut mb = MotherboardBuilder::default()
+            .set_model(CpcModel::Cpc464)
+            .build();
         assert_eq!(msr(&mut mb), 0xff, "464: nothing on &FB7E");
         assert!(!mb.has_disc_interface());
-        let mut mb = MotherboardBuilder::default().set_model(CpcModel::Cpc464).set_disc_interface(true).build();
+        let mut mb = MotherboardBuilder::default()
+            .set_model(CpcModel::Cpc464)
+            .set_disc_interface(true)
+            .build();
         assert_eq!(msr(&mut mb), 0x80, "464 with a DDI-1");
-        let mut mb = MotherboardBuilder::default().set_model(CpcModel::Cpc664).build();
+        let mut mb = MotherboardBuilder::default()
+            .set_model(CpcModel::Cpc664)
+            .build();
         assert_eq!(msr(&mut mb), 0x80);
         assert_eq!("cpc464".parse::<CpcModel>(), Ok(CpcModel::Cpc464));
         assert!("6129".parse::<CpcModel>().is_err());

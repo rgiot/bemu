@@ -14,7 +14,7 @@ use super::{Route, ROUTES};
 pub(super) enum Place {
     Query,
     /// A field of the JSON body.
-    Body
+    Body,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -24,20 +24,35 @@ pub(super) struct Param {
     /// integer, boolean, string, hex (a string of hex bytes).
     pub kind: &'static str,
     pub required: bool,
-    pub description: &'static str
+    pub description: &'static str,
 }
 
 const fn q(name: &'static str, kind: &'static str, description: &'static str) -> Param {
-    Param { name, place: Place::Query, kind, required: false, description }
+    Param {
+        name,
+        place: Place::Query,
+        kind,
+        required: false,
+        description,
+    }
 }
 
 const fn b(name: &'static str, kind: &'static str, description: &'static str) -> Param {
-    Param { name, place: Place::Body, kind, required: false, description }
+    Param {
+        name,
+        place: Place::Body,
+        kind,
+        required: false,
+        description,
+    }
 }
 
 impl Param {
     const fn required(self) -> Self {
-        Param { required: true, ..self }
+        Param {
+            required: true,
+            ..self
+        }
     }
 }
 
@@ -45,14 +60,14 @@ impl Param {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct RawBody {
     pub content_type: &'static str,
-    pub description: &'static str
+    pub description: &'static str,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Example {
     /// Without the `?`.
     pub query: &'static str,
-    pub body: &'static str
+    pub body: &'static str,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -64,13 +79,19 @@ pub(super) struct Operation {
     pub raw_body: Option<RawBody>,
     pub response_type: &'static str,
     pub response: &'static str,
-    pub example: Option<Example>
+    pub example: Option<Example>,
 }
 
 const JSON: &str = "application/json";
-const OK: &str = "{ok: true, cmd_seq}: cmd_seq numbers the commands, for matching the events they cause";
+const OK: &str =
+    "{ok: true, cmd_seq}: cmd_seq numbers the commands, for matching the events they cause";
 
-const fn op(method: &'static str, path: &'static str, description: &'static str, response: &'static str) -> Operation {
+const fn op(
+    method: &'static str,
+    path: &'static str,
+    description: &'static str,
+    response: &'static str,
+) -> Operation {
     Operation {
         method,
         path,
@@ -79,7 +100,7 @@ const fn op(method: &'static str, path: &'static str, description: &'static str,
         raw_body: None,
         response_type: JSON,
         response,
-        example: None
+        example: None,
     }
 }
 
@@ -89,15 +110,27 @@ impl Operation {
     }
 
     const fn raw_body(self, content_type: &'static str, description: &'static str) -> Self {
-        Operation { raw_body: Some(RawBody { content_type, description }), ..self }
+        Operation {
+            raw_body: Some(RawBody {
+                content_type,
+                description,
+            }),
+            ..self
+        }
     }
 
     const fn returns(self, response_type: &'static str) -> Self {
-        Operation { response_type, ..self }
+        Operation {
+            response_type,
+            ..self
+        }
     }
 
     const fn example(self, query: &'static str, body: &'static str) -> Self {
-        Operation { example: Some(Example { query, body }), ..self }
+        Operation {
+            example: Some(Example { query, body }),
+            ..self
+        }
     }
 
     fn has_json_body(&self) -> bool {
@@ -351,7 +384,8 @@ pub(super) const OPERATIONS: &[Operation] = &[
 ];
 
 fn param_json(param: &Param) -> Value {
-    let mut value = json!({ "name": param.name, "type": param.kind, "description": param.description });
+    let mut value =
+        json!({ "name": param.name, "type": param.kind, "description": param.description });
     if param.required {
         value["required"] = json!(true);
     }
@@ -359,7 +393,14 @@ fn param_json(param: &Param) -> Value {
 }
 
 fn operation_json(operation: &Operation) -> Value {
-    let list = |place| operation.params.iter().filter(|p| p.place == place).map(param_json).collect::<Vec<_>>();
+    let list = |place| {
+        operation
+            .params
+            .iter()
+            .filter(|p| p.place == place)
+            .map(param_json)
+            .collect::<Vec<_>>()
+    };
     let mut value = json!({ "method": operation.method, "description": operation.description });
     let query = list(Place::Query);
     if !query.is_empty() {
@@ -369,9 +410,11 @@ fn operation_json(operation: &Operation) -> Value {
         value["body"] = json!({ "content_type": JSON, "fields": list(Place::Body) });
     }
     if let Some(body) = operation.raw_body {
-        value["body"] = json!({ "content_type": body.content_type, "description": body.description });
+        value["body"] =
+            json!({ "content_type": body.content_type, "description": body.description });
     }
-    value["response"] = json!({ "content_type": operation.response_type, "description": operation.response });
+    value["response"] =
+        json!({ "content_type": operation.response_type, "description": operation.response });
     if let Some(example) = operation.example {
         let mut request = format!("{} {}", operation.method, operation.path);
         if !example.query.is_empty() {
@@ -390,7 +433,10 @@ fn operations_of(path: &str) -> impl Iterator<Item = &'static Operation> + '_ {
 }
 
 fn doc_link(route: &Route) -> String {
-    format!("/api/doc?endpoint={}", route.path.trim_start_matches("/api/"))
+    format!(
+        "/api/doc?endpoint={}",
+        route.path.trim_start_matches("/api/")
+    )
 }
 
 /// `GET /api/doc`: the endpoints.
@@ -398,7 +444,8 @@ pub(super) fn index() -> Value {
     let endpoints: Vec<Value> = ROUTES
         .iter()
         .map(|route| {
-            let mut endpoint = json!({ "path": route.path, "methods": route.methods, "summary": route.summary });
+            let mut endpoint =
+                json!({ "path": route.path, "methods": route.methods, "summary": route.summary });
             if route.extension {
                 endpoint["extension"] = json!(true);
             }
@@ -419,7 +466,9 @@ pub(super) fn index() -> Value {
 pub(super) fn endpoint(name: &str) -> Option<Value> {
     let name = name.trim_start_matches('/');
     let name = name.strip_prefix("api/").unwrap_or(name);
-    let route = ROUTES.iter().find(|r| r.path.trim_start_matches("/api/") == name)?;
+    let route = ROUTES
+        .iter()
+        .find(|r| r.path.trim_start_matches("/api/") == name)?;
     let mut value = json!({
         "path": route.path,
         "summary": route.summary,
@@ -437,7 +486,7 @@ fn schema_of(kind: &str) -> Value {
         "integer" => json!({ "oneOf": [{ "type": "integer" }, { "type": "string" }] }),
         "boolean" => json!({ "type": "boolean" }),
         "hex" => json!({ "type": "string", "pattern": "^[0-9A-Fa-f :]*$" }),
-        _ => json!({ "type": "string" })
+        _ => json!({ "type": "string" }),
     }
 }
 
@@ -489,16 +538,25 @@ pub(super) fn openapi() -> Value {
                     schema["description"] = json!(p.description);
                     properties.insert(p.name.to_owned(), schema);
                 }
-                let required: Vec<&str> =
-                    operation.params.iter().filter(|p| p.place == Place::Body && p.required).map(|p| p.name).collect();
+                let required: Vec<&str> = operation
+                    .params
+                    .iter()
+                    .filter(|p| p.place == Place::Body && p.required)
+                    .map(|p| p.name)
+                    .collect();
                 let mut schema = json!({ "type": "object", "properties": properties });
                 if !required.is_empty() {
                     schema["required"] = json!(required);
                 }
-                value["requestBody"] = json!({ "required": true, "content": { JSON: { "schema": schema } } });
+                value["requestBody"] =
+                    json!({ "required": true, "content": { JSON: { "schema": schema } } });
             }
             if let Some(body) = operation.raw_body {
-                let format = if body.content_type == "application/octet-stream" { "binary" } else { "text" };
+                let format = if body.content_type == "application/octet-stream" {
+                    "binary"
+                } else {
+                    "text"
+                };
                 value["requestBody"] = json!({
                     "description": body.description,
                     "content": { body.content_type: { "schema": { "type": "string", "format": format } } }
@@ -508,7 +566,7 @@ pub(super) fn openapi() -> Value {
                 let content_type = operation.raw_body.map_or(JSON, |b| b.content_type);
                 value["requestBody"]["content"][content_type]["example"] = match content_type {
                     JSON => serde_json::from_str(example.body).unwrap_or(json!(example.body)),
-                    _ => json!(example.body)
+                    _ => json!(example.body),
                 };
             }
             if route.extension {
@@ -543,7 +601,10 @@ pub(super) fn openapi() -> Value {
 }
 
 fn escape(text: &str) -> String {
-    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// `GET /api/doc?format=html`: the same, to read in a browser.
@@ -589,11 +650,17 @@ pub(super) fn html() -> String {
                 escape(operation.description)
             ));
             for (place, title) in [(Place::Query, "Query"), (Place::Body, "JSON body")] {
-                let params: Vec<_> = operation.params.iter().filter(|p| p.place == place).collect();
+                let params: Vec<_> = operation
+                    .params
+                    .iter()
+                    .filter(|p| p.place == place)
+                    .collect();
                 if params.is_empty() {
                     continue;
                 }
-                page.push_str(&format!("<table><tr><th>{title}</th><th>type</th><th></th></tr>"));
+                page.push_str(&format!(
+                    "<table><tr><th>{title}</th><th>type</th><th></th></tr>"
+                ));
                 for p in params {
                     page.push_str(&format!(
                         "<tr><td><code>{}</code>{}</td><td>{}</td><td>{}</td></tr>",
@@ -606,7 +673,11 @@ pub(super) fn html() -> String {
                 page.push_str("</table>");
             }
             if let Some(body) = operation.raw_body {
-                page.push_str(&format!("<p>Body (<code>{}</code>): {}</p>", body.content_type, escape(body.description)));
+                page.push_str(&format!(
+                    "<p>Body (<code>{}</code>): {}</p>",
+                    body.content_type,
+                    escape(body.description)
+                ));
             }
             page.push_str(&format!(
                 "<p>Answer (<code>{}</code>): {}</p>",
@@ -639,13 +710,18 @@ mod test {
     fn every_route_and_method_is_documented_once() {
         for route in ROUTES {
             for method in route.methods {
-                let count = OPERATIONS.iter().filter(|o| o.path == route.path && o.method == *method).count();
+                let count = OPERATIONS
+                    .iter()
+                    .filter(|o| o.path == route.path && o.method == *method)
+                    .count();
                 assert_eq!(count, 1, "{method} {}", route.path);
             }
         }
         for operation in OPERATIONS {
             assert!(
-                ROUTES.iter().any(|r| r.path == operation.path && r.methods.contains(&operation.method)),
+                ROUTES
+                    .iter()
+                    .any(|r| r.path == operation.path && r.methods.contains(&operation.method)),
                 "{} {} is not served",
                 operation.method,
                 operation.path
@@ -668,7 +744,12 @@ mod test {
                 (k.to_owned(), v.to_owned())
             })
             .collect();
-        ApiRequest { method: method.to_owned(), path: path.to_owned(), query, body: body.as_bytes().to_vec() }
+        ApiRequest {
+            method: method.to_owned(),
+            path: path.to_owned(),
+            query,
+            body: body.as_bytes().to_vec(),
+        }
     }
 
     fn booted() -> Motherboard {
@@ -685,13 +766,25 @@ mod test {
     fn the_examples_are_accepted() {
         let mut server = DebugServer::with_requests(std::sync::mpsc::channel().1);
         let mut mb = booted();
-        server.handle(&request("POST", "/api/basic", "", "10 PRINT 1\n20 GOTO 10\n"), &mut mb);
-        let mut order: Vec<&Operation> = OPERATIONS.iter().filter(|o| o.example.is_some()).collect();
+        server.handle(
+            &request("POST", "/api/basic", "", "10 PRINT 1\n20 GOTO 10\n"),
+            &mut mb,
+        );
+        let mut order: Vec<&Operation> =
+            OPERATIONS.iter().filter(|o| o.example.is_some()).collect();
         // Create before delete.
         order.sort_by_key(|o| o.method == "DELETE");
         for operation in order {
             let example = operation.example.unwrap();
-            let response = server.handle(&request(operation.method, operation.path, example.query, example.body), &mut mb);
+            let response = server.handle(
+                &request(
+                    operation.method,
+                    operation.path,
+                    example.query,
+                    example.body,
+                ),
+                &mut mb,
+            );
             let accepted = response.status == 200
                 // The beam is known only when a monitor drives the emulation.
                 || operation.path == "/api/beam" && response.status == 400
@@ -718,7 +811,8 @@ mod test {
         assert_eq!(index["endpoints"][3]["doc"], "/api/doc?endpoint=ram");
 
         for name in ["ram", "/api/ram", "api/ram"] {
-            let ram: Value = serde_json::from_slice(&get(&format!("endpoint={name}")).body).unwrap();
+            let ram: Value =
+                serde_json::from_slice(&get(&format!("endpoint={name}")).body).unwrap();
             assert_eq!(ram["path"], "/api/ram", "{name}");
             assert_eq!(ram["operations"][0]["method"], "GET");
             assert_eq!(ram["operations"][0]["query"][0]["name"], "addr");
@@ -731,10 +825,21 @@ mod test {
         assert_eq!(openapi["openapi"], "3.0.3");
         let breakpoints = &openapi["paths"]["/api/breakpoints"];
         assert_eq!(breakpoints["post"]["x-bemu-extension"], true);
-        assert_eq!(breakpoints["post"]["requestBody"]["content"][JSON]["schema"]["required"], json!(["addr"]));
+        assert_eq!(
+            breakpoints["post"]["requestBody"]["content"][JSON]["schema"]["required"],
+            json!(["addr"])
+        );
         assert_eq!(breakpoints["delete"]["parameters"][0]["name"], "index");
-        assert_eq!(openapi["paths"]["/api/media"]["post"]["requestBody"]["content"]["application/octet-stream"]["schema"]["format"], "binary");
-        assert_eq!(openapi["paths"]["/api/z80_bp"]["post"]["requestBody"]["content"]["text/plain"]["example"], "0x4000, B01:0010");
+        assert_eq!(
+            openapi["paths"]["/api/media"]["post"]["requestBody"]["content"]
+                ["application/octet-stream"]["schema"]["format"],
+            "binary"
+        );
+        assert_eq!(
+            openapi["paths"]["/api/z80_bp"]["post"]["requestBody"]["content"]["text/plain"]
+                ["example"],
+            "0x4000, B01:0010"
+        );
 
         let html = get("format=html");
         assert_eq!(html.content_type, "text/html; charset=utf-8");

@@ -83,7 +83,7 @@ pub enum ExpansionPin {
     CURSOR = 1 << 42,
     LPEN = 1 << 43,
     Neg_EXP = 1 << 44,
-    CLK4 = 1 << 45
+    CLK4 = 1 << 45,
 }
 
 impl From<ExpansionPin> for u64 {
@@ -134,13 +134,17 @@ pub struct ExpansionPort {
     pins: PinsBuffer,
     /// A card drives the data bus this tick.
     data_driven: bool,
-    devices: Vec<Box<dyn ExpansionDevice>>
+    devices: Vec<Box<dyn ExpansionDevice>>,
 }
 
 impl Default for ExpansionPort {
     /// No card pulls a line yet.
     fn default() -> Self {
-        Self { pins: PinsBuffer(CARD_LINES_IDLE, CARD_LINES_IDLE), data_driven: false, devices: Vec::new() }
+        Self {
+            pins: PinsBuffer(CARD_LINES_IDLE, CARD_LINES_IDLE),
+            data_driven: false,
+            devices: Vec::new(),
+        }
     }
 }
 
@@ -190,7 +194,7 @@ pub struct CpcSide {
     pub romen: bool,
     pub ramrd: bool,
     pub cursor: bool,
-    pub clk4: bool
+    pub clk4: bool,
 }
 
 impl ExpansionPort {
@@ -212,11 +216,15 @@ impl ExpansionPort {
 
     /// The first card of type `T`.
     pub fn device<T: ExpansionDevice>(&self) -> Option<&T> {
-        self.devices.iter().find_map(|device| device.as_any().downcast_ref::<T>())
+        self.devices
+            .iter()
+            .find_map(|device| device.as_any().downcast_ref::<T>())
     }
 
     pub fn device_mut<T: ExpansionDevice>(&mut self) -> Option<&mut T> {
-        self.devices.iter_mut().find_map(|device| device.as_any_mut().downcast_mut::<T>())
+        self.devices
+            .iter_mut()
+            .find_map(|device| device.as_any_mut().downcast_mut::<T>())
     }
 
     /// One tick: the CPC's side of the pins (the CPU's levels: the `Neg_` ones are the
@@ -235,7 +243,7 @@ impl ExpansionPort {
             (ExpansionPin::Neg_ROMEN, cpc.romen),
             (ExpansionPin::Neg_RAMRD, cpc.ramrd),
             (ExpansionPin::CURSOR, cpc.cursor),
-            (ExpansionPin::CLK4, cpc.clk4)
+            (ExpansionPin::CLK4, cpc.clk4),
         ];
         let mut pins = u64::from(cpc.address) | u64::from(cpc.data) << DATA_SHIFT;
         for (pin, level) in levels {
@@ -265,7 +273,11 @@ impl ExpansionPort {
 
     /// A card puts `value` on the data bus (several at once: the bus fights, the zeroes win).
     pub fn drive_data(&mut self, value: u8) {
-        let value = if self.data_driven { self.data() & value } else { value };
+        let value = if self.data_driven {
+            self.data() & value
+        } else {
+            value
+        };
         self.pins.1 = (self.pins.1 & !DATA_MASK) | u64::from(value) << DATA_SHIFT;
         self.data_driven = true;
     }
@@ -293,7 +305,8 @@ impl ExpansionPort {
 
     /// The CPU begins an OUT this tick: its port and byte.
     pub fn io_write_started(&self) -> Option<(u16, u8)> {
-        (Self::io_write_level(self.pins.1) && !Self::io_write_level(self.pins.0)).then(|| (self.address(), self.data()))
+        (Self::io_write_level(self.pins.1) && !Self::io_write_level(self.pins.0))
+            .then(|| (self.address(), self.data()))
     }
 
     /// The CPU reads a port (an IN): its address.
@@ -348,7 +361,7 @@ pub enum PrinterPin {
     D6 = 1 << 6,
     Neg_STROBE = 1 << 7,
     /// To the PPI's port B bit 6.
-    BUSY = 1 << 8
+    BUSY = 1 << 8,
 }
 
 impl From<PrinterPin> for u64 {
@@ -387,7 +400,7 @@ pub trait PrinterDevice: Any {
 #[derive(Default)]
 pub struct PrinterPort {
     pins: PinsBuffer,
-    device: Option<Box<dyn PrinterDevice>>
+    device: Option<Box<dyn PrinterDevice>>,
 }
 
 impl PrinterPort {
@@ -422,7 +435,9 @@ impl PrinterPort {
     }
 
     pub fn sound(&self) -> [f32; 2] {
-        self.device.as_ref().map_or([0.0; 2], |device| device.sound())
+        self.device
+            .as_ref()
+            .map_or([0.0; 2], |device| device.sound())
     }
 
     /// The device's BUSY line, if it drives it.
@@ -432,7 +447,9 @@ impl PrinterPort {
 
     /// Whether the device makes sound.
     pub fn has_sound(&self) -> bool {
-        self.device.as_ref().is_some_and(|device| device.has_sound())
+        self.device
+            .as_ref()
+            .is_some_and(|device| device.has_sound())
     }
 
     /// A microsecond passes for the device.

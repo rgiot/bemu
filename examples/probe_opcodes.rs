@@ -1,7 +1,10 @@
 //! Execute a few bytes of Z80 code at &4000 (ROMs off) and print PC and the main registers after
 //! each instruction: `probe_opcodes FD DD 21 34 12 ED FC 76`.
 fn main() {
-    let bytes: Vec<u8> = std::env::args().skip(1).map(|b| u8::from_str_radix(&b, 16).expect("hex bytes")).collect();
+    let bytes: Vec<u8> = std::env::args()
+        .skip(1)
+        .map(|b| u8::from_str_radix(&b, 16).expect("hex bytes"))
+        .collect();
     let mut mb = amsrust::motherboard::MotherboardBuilder::default();
     let mut mb = mb.disable_lower_rom().disable_upper_rom().build();
     for (offset, byte) in bytes.iter().enumerate() {

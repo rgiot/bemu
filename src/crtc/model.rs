@@ -33,9 +33,8 @@ pub enum CrtcType {
     /// Amstrad ASIC 40489 (CPC+)
     Crtc3 = 3,
     /// Amstrad ASIC 40226 ("pre-ASIC" cost-reduced CPC)
-    Crtc4 = 4
+    Crtc4 = 4,
 }
-
 
 impl CrtcType {
     pub const ALL: [CrtcType; 5] = [
@@ -43,7 +42,7 @@ impl CrtcType {
         CrtcType::Crtc1,
         CrtcType::Crtc2,
         CrtcType::Crtc3,
-        CrtcType::Crtc4
+        CrtcType::Crtc4,
     ];
 }
 
@@ -78,7 +77,7 @@ pub struct ReadContext<'a> {
     pub vma_prime: u16,
     pub fields: u8,
     /// The light pen registers hold a strobe not read yet (the UM6845R's L status bit).
-    pub light_pen_full: bool
+    pub light_pen_full: bool,
 }
 
 /// Bits of a pointer register (R12-R17) that read back: the high registers
@@ -86,13 +85,16 @@ pub struct ReadContext<'a> {
 pub const fn pointer_mask(register: u8) -> u8 {
     match register {
         12 | 14 | 16 => 0x3f,
-        _ => 0xff
+        _ => 0xff,
     }
 }
 
 impl ReadContext<'_> {
     pub fn register(&self, number: u8) -> u8 {
-        self.registers.get(usize::from(number)).copied().unwrap_or(0)
+        self.registers
+            .get(usize::from(number))
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -102,9 +104,8 @@ pub enum DisplaySkew {
     /// DISPTMG delayed by that many characters (0-2).
     Delayed(u8),
     /// Skew of 3: the display is never enabled ("non-display").
-    Blanked
+    Blanked,
 }
-
 
 /// The registers as they were before a write, for the side effects that depend on the change.
 #[derive(Clone, Copy, Debug)]
@@ -112,7 +113,7 @@ pub struct PreviousRegisters {
     pub r0: u8,
     pub r3l: u8,
     pub r5: u8,
-    pub r8: u8
+    pub r8: u8,
 }
 
 /// One CRTC chip: what it is (register bits, read-back, sync widths, skew) and how it runs the

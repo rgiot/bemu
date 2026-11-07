@@ -41,7 +41,9 @@ fn main() {
          key_output 'RUN\"HBL\\(RET)'\n\
          wait 3000000\n"
     );
-    runner.run_text(&boot, ".").unwrap_or_else(|e| panic!("boot failed: {e}"));
+    runner
+        .run_text(&boot, ".")
+        .unwrap_or_else(|e| panic!("boot failed: {e}"));
 
     let mb = runner.motherboard_mut();
 
@@ -52,7 +54,10 @@ fn main() {
         mb.execute_next_opcode_no_video();
         instr_steps += 1;
     }
-    eprintln!("reached instruction-step {instr_steps}, PC={:04X} - switching to raw tick tracing", mb.pc());
+    eprintln!(
+        "reached instruction-step {instr_steps}, PC={:04X} - switching to raw tick tracing",
+        mb.pc()
+    );
 
     // Phase 2: raw tick-level tracing through the window of interest,
     // covering well past the last observed config change (instr-step
