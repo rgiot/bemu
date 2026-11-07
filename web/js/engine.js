@@ -48,6 +48,8 @@ export class Engine {
     #running = false;
     /** The frame or its display settings changed since the last draw. */
     #fresh = false;
+    /** A generated picture is waiting for a draw, independently of display-setting changes. */
+    #framePending = false;
     #frameRequest = 0;
     #lastTime = undefined;
     #owed = 0;
@@ -59,7 +61,7 @@ export class Engine {
     #audio = null;
     /** Times real time: 1, more, or Infinity (as fast as possible). */
     #speed = 1;
-    #stats = { since: undefined, frames: 0, frameMs: 0, maxFrameMs: 0, draws: 0, drawMs: 0 };
+    #stats = { since: undefined, frames: 0, frameMs: 0, maxFrameMs: 0, draws: 0, drawMs: 0, replaced: 0, refreshes: 0 };
 
     /**
      * `core`: the wasm Emulator. `emit(event, detail)`: what the page hears ('screenshot',
@@ -149,6 +151,7 @@ export class Engine {
             this.#core.advance_frame();
             this.#core.audio_samples();
             this.#fresh = true;
+            this.#framePending = true;
             this.#draw();
         });
     }
@@ -207,6 +210,7 @@ export class Engine {
         this.#stats.drawMs += this.#now() - start;
         this.#stats.draws++;
         this.#fresh = false;
+        this.#framePending = false;
     }
 
     #safely(fn) {
@@ -271,7 +275,11 @@ export class Engine {
         const frameMs = this.#now() - start;
         this.#stats.frameMs += frameMs;
         this.#stats.maxFrameMs = Math.max(this.#stats.maxFrameMs, frameMs);
-        if (!unseen) this.#fresh = true;
+        if (!unseen) {
+            if (this.#framePending) this.#stats.replaced++;
+            this.#framePending = true;
+            this.#fresh = true;
+        }
         this.#stats.frames++;
         const audio = this.#audio;
         if (!audio) return;
@@ -291,6 +299,13 @@ export class Engine {
         this.#measureRefresh(elapsed);
         this.#safely(() => {
             this.#emitStats(time);
+            this.#stats.refreshes++;
+            // Audio reports may have produced a picture since the last refresh. Present it
+            // before doing more emulation: replacing it here loses a whole display opportunity.
+            if (this.#speed === 1 && this.#audio && this.#framePending) {
+                this.#draw();
+                return;
+            }
             const budget = Math.min(Math.max(elapsed * BUSY_SHARE, BUSY_MIN_MS), BUSY_MAX_MS);
             if (this.#speed === Infinity) {
                 // full speed: frames without picture for most of the refresh, then one shown
@@ -357,7 +372,7 @@ export class Engine {
         if (stats.since === undefined) {
             stats.since = time;
             stats.frames = 0;
-            stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = 0;
+            stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = stats.replaced = stats.refreshes = 0;
             return;
         }
         if (time - stats.since < 1000) return;
@@ -366,11 +381,14 @@ export class Engine {
             frameMs: stats.frames ? stats.frameMs / stats.frames : 0,
             maxFrameMs: stats.maxFrameMs,
             drawMs: stats.draws ? stats.drawMs / stats.draws : 0,
-            draws: stats.draws
+            draws: stats.draws,
+            drawFps: stats.draws * 1000 / (time - stats.since),
+            refreshFps: stats.refreshes * 1000 / (time - stats.since),
+            replaced: stats.replaced
         };
         stats.since = time;
         stats.frames = 0;
-        stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = 0;
+        stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = stats.replaced = stats.refreshes = 0;
         const audio = this.#audio;
         this.#emit('stats', {
             fps, speed: fps * FRAME_MS / 1000, performance,

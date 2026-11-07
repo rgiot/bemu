@@ -152,7 +152,10 @@ slower.
   or `{ underruns, bufferedMs, targetMs, playing }`. An increasing `underruns` count indicates
   that the audio buffer ran dry; it does not detect every possible audio glitch. `performance`
   contains `frameMs` (average), `maxFrameMs`, `drawMs` (average CPU-side draw call duration),
-  and `draws` for the interval. Draw timing does not measure asynchronous GPU completion.
+  `draws` (count), `drawFps` and `refreshFps` (per second), and `replaced` (frame advances
+  replaced by another before a draw). These count draw submissions and scheduled callbacks,
+  not frames actually presented by the browser or GPU. Draw timing does not measure asynchronous
+  GPU completion.
 
 To bypass stale cached assets when testing, add a new `?bemuVersion=...` value to the demo URL
 and reload. The demo passes this value to the emulator module, which propagates its query string
@@ -226,11 +229,10 @@ setTimeout(() => emu.setSpeed(1), 10000); // back to real time once it has loade
 
 A web page cannot set the display's refresh rate (the browser's fullscreen only enlarges the
 page: the screen keeps the desktop's rate), so the library measures it.
-- **About 50 Hz, 100, 150 or 200 Hz** (a monitor set to it): one CPC frame is shown every 1, 2,
-  3 or 4 refreshes, as the desktop's fullscreen does. Every frame stays on the screen as long as
-  the others, so scrolling is smooth. The sound card's clock is not the display's, so the sound
-  queue is watched: a frame is skipped when it runs ahead, an extra one run (not shown) when it
-  runs short.
+- **About 50 Hz, 100, 150 or 200 Hz** (a monitor set to it): the browser targets one CPC frame
+  every 1, 2, 3 or 4 refreshes. The sound card's clock is independent, so audio refills can produce
+  frames between refreshes. A pending frame is drawn at the next refresh before advancing again;
+  actual presentation and equal frame durations depend on the browser and available performance.
 - **Otherwise** (60, 120, 144 Hz…): the sound's clock paces the emulation, as on the desktop,
   and each refresh shows the latest frame: at 60 Hz, one frame in five is shown twice, which
   a scrolling shows as a slight judder. Before sound starts, the browser's clock paces it, at

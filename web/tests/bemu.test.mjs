@@ -134,6 +134,48 @@ try {
         engine.destroy();
     });
 
+    await test('a refresh draws an audio-generated frame before running another', () => {
+        let frames = 0;
+        const displayed = [];
+        const { engine, core, clock } = engineWith(() => { frames++; });
+        core.enable_audio = () => {};
+        core.audio_samples = () => new Float32Array(960 * 2);
+        core.redraw = () => displayed.push(frames);
+        const port = { postMessage() {}, close() {} };
+        engine.attachAudio(port, 48000);
+        engine.start();
+        clock.scheduled(0);
+        assert.deepEqual(displayed, [4]);
+        port.onmessage({ data: { fill: 0, received: 3840, playing: true, underruns: 0 } });
+        assert.equal(frames, 8);
+        clock.scheduled(16);
+        assert.deepEqual(displayed, [4, 8]);
+        assert.equal(frames, 8, 'a pending frame is not overwritten by refresh work');
+        engine.destroy();
+    });
+
+    await test('audio-generated pictures are drawn even between 100 Hz pacing slots', () => {
+        let frames = 0;
+        let draws = 0;
+        const { engine, core, clock } = engineWith(() => { frames++; });
+        core.enable_audio = () => {};
+        core.audio_samples = () => new Float32Array(960 * 2);
+        core.redraw = () => { draws++; };
+        const port = { postMessage() {}, close() {} };
+        engine.attachAudio(port, 48000);
+        engine.start();
+        for (let i = 0; i < 35; i++) {
+            clock.now = i * 10;
+            clock.scheduled(clock.now);
+        }
+        assert.equal(engine.state().refreshesPerFrame, 2);
+        port.onmessage({ data: { fill: 0, received: frames * 960, playing: true, underruns: 0 } });
+        const before = draws;
+        clock.scheduled(clock.now + 10);
+        assert.equal(draws, before + 1);
+        engine.destroy();
+    });
+
     await test('Canvas 2D resizes its physical backing store', () => {
         const { engine, core } = engineWith(() => {});
         const canvas = { width: 10, height: 10 };
@@ -238,7 +280,32 @@ try {
         clock.scheduled(0);
         clock.scheduled(1000);
         const stats = events.find(([name]) => name === 'stats')[1];
-        assert.deepEqual(stats.performance, { frameMs: 3, maxFrameMs: 3, drawMs: 2, draws: 1 });
+        assert.deepEqual(stats.performance, { frameMs: 3, maxFrameMs: 3, drawMs: 2, draws: 1, drawFps: 1, refreshFps: 1, replaced: 0 });
+        engine.destroy();
+    });
+
+    await test('stats distinguish audio-refilled frames replaced before drawing', () => {
+        const clock = { now: 0, scheduled: null };
+        const scheduler = { request: (fn) => { clock.scheduled = fn; return 1; }, cancel() {} };
+        const events = [];
+        const core = {
+            on_screenshot() {}, on_csl_done() {}, backend: () => 'webgpu', free() {},
+            enable_audio() {}, advance_frame() {}, redraw() {},
+            audio_samples: () => new Float32Array(960 * 2)
+        };
+        const engine = new Engine(core, { scheduler, now: () => clock.now, emit: (name, value) => events.push([name, value]) });
+        const port = { postMessage() {}, close() {} };
+        engine.attachAudio(port, 48000);
+        engine.start();
+        clock.scheduled(0);
+        port.onmessage({ data: { fill: 0, received: 3840, playing: true, underruns: 0 } });
+        clock.now = 1000;
+        clock.scheduled(1000);
+        const stats = events.find(([name]) => name === 'stats')[1];
+        assert.equal(stats.fps, 8);
+        assert.equal(stats.performance.drawFps, 1);
+        assert.equal(stats.performance.refreshFps, 1);
+        assert.equal(stats.performance.replaced, 6);
         engine.destroy();
     });
 
