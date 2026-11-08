@@ -42,6 +42,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::keyboard::{Key, KeyCode, KeyLocation, NamedKey, PhysicalKey};
 use winit::monitor::VideoModeHandle;
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::window::{Fullscreen, Window, WindowId};
 
@@ -55,6 +56,16 @@ struct CrtState {
     target: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     size: (usize, usize),
+}
+
+/// The user interface (egui) of the window: its input, and the last frame to draw.
+struct UiLayer {
+    ctx: egui::Context,
+    state: Option<egui_winit::State>,
+    painter: Option<amsrust::ui::Painter>,
+    output: Option<egui::FullOutput>,
+    /// The menu bar's height in pixels: the picture goes below.
+    top_pixels: f32,
 }
 
 struct Gfx {
@@ -164,7 +175,12 @@ impl Gfx {
     /// Draw `mode`'s picture of the frame already uploaded (`again`: the same frame shown on
     /// one more refresh, the CRT's picture of it already drawn). Whether it was shown: not when
     /// the surface had to be configured again (a resize, a fullscreen switch).
-    fn draw(&mut self, mode: DisplayMode, again: bool) -> Result<bool, String> {
+    fn draw(
+        &mut self,
+        mode: DisplayMode,
+        again: bool,
+        ui: Option<&mut UiLayer>,
+    ) -> Result<bool, String> {
         let surface_texture = match self.surface.get_current_texture() {
             Ok(texture) => texture,
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
@@ -195,8 +211,12 @@ impl Gfx {
             _ => (&self.raw_bind_group, (RAW_WIDTH, RAW_HEIGHT)),
         };
 
-        // the picture, as large as the window allows, centred
-        let (window_w, window_h) = (self.config.width as f32, self.config.height as f32);
+        // the picture, as large as the window allows below the menu bar, centred
+        let top = ui.as_ref().map_or(0.0, |ui| ui.top_pixels);
+        let (window_w, window_h) = (
+            self.config.width as f32,
+            (self.config.height as f32 - top).max(1.0),
+        );
         let scale = (window_w / picture_w as f32).min(window_h / picture_h as f32);
         let (w, h) = (picture_w as f32 * scale, picture_h as f32 * scale);
         {
@@ -215,14 +235,64 @@ impl Gfx {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_viewport((window_w - w) / 2.0, (window_h - h) / 2.0, w, h, 0.0, 1.0);
+            pass.set_viewport(
+                (window_w - w) / 2.0,
+                top + (window_h - h) / 2.0,
+                w,
+                h,
+                0.0,
+                1.0,
+            );
             self.blit.draw(&mut pass, bind_group);
+        }
+        // the menus and windows over it
+        if let Some(ui) = ui {
+            if let Some(output) = ui.output.take() {
+                let painter = ui.painter.get_or_insert_with(|| {
+                    amsrust::ui::Painter::new(&self.device, self.config.format)
+                });
+                painter.paint(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    &view,
+                    [self.config.width, self.config.height],
+                    &ui.ctx,
+                    output,
+                );
+            }
         }
         self.queue.submit([encoder.finish()]);
         surface_texture.present();
         self.shown = Some(mode);
         Ok(true)
     }
+}
+
+/// Whether `event` is the chord of a command with Ctrl or Alt (Ctrl+Shift+P, the palette):
+/// the interface runs it, the CPC does not get the key.
+fn is_ui_shortcut(event: &KeyEvent, modifiers: ModifiersState) -> bool {
+    let (ctrl, alt, shift) = (
+        modifiers.control_key() || modifiers.super_key(),
+        modifiers.alt_key(),
+        modifiers.shift_key(),
+    );
+    if !(ctrl || alt) {
+        return false;
+    }
+    let Key::Character(text) = event.key_without_modifiers() else {
+        return false;
+    };
+    amsrust::commands::all().iter().any(|spec| {
+        spec.shortcut
+            .and_then(amsrust::commands::Chord::parse)
+            .is_some_and(|chord| {
+                chord.ctrl == ctrl
+                    && chord.alt == alt
+                    && chord.shift == shift
+                    && chord.key.eq_ignore_ascii_case(text.as_str())
+            })
+    })
 }
 
 /// F11, or Ctrl+Cmd+F (macOS's fullscreen shortcut: F11 shows its desktop there).
@@ -452,6 +522,9 @@ struct App {
     /// The physical keys held, by their place (the positional mapping's).
     placed: HashMap<PhysicalKey, HostKey>,
     typed: Vec<char>,
+    /// The keys pressed since the last poll, held or not by then (a press and its release
+    /// between two frames still counts).
+    pressed: Vec<HostKey>,
     closed: bool,
     error: Option<String>,
     /// F11 asked for fullscreen (kept here: the window manager may refuse it).
@@ -462,6 +535,9 @@ struct App {
     /// frame (1 at 50 Hz, 2 at 100 Hz...), the vertical sync pacing the emulation. `None`: the
     /// clock paces it.
     refreshes_per_frame: Option<u32>,
+    ui: Option<UiLayer>,
+    /// Fullscreen asked by a command (F11 is the window's): done on the next events.
+    wanted_fullscreen: Option<bool>,
 }
 
 /// How many refreshes at `millihertz` show a CPC frame, if it is a multiple of 50 Hz (within
@@ -596,6 +672,19 @@ fn exclusive_fullscreen_works(event_loop: &ActiveEventLoop) -> bool {
 }
 
 impl ApplicationHandler for App {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(on) = self.wanted_fullscreen.take() {
+            let now = self.fullscreen
+                || self
+                    .window
+                    .as_ref()
+                    .is_some_and(|window| window.fullscreen().is_some());
+            if on != now {
+                self.toggle_fullscreen(event_loop);
+            }
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -607,7 +696,19 @@ impl ApplicationHandler for App {
             Ok(window) => {
                 let window = Arc::new(window);
                 match Gfx::new(window.clone(), self.curvature) {
-                    Ok(gfx) => self.gfx = Some(gfx),
+                    Ok(gfx) => {
+                        if let Some(ui) = &mut self.ui {
+                            ui.state = Some(egui_winit::State::new(
+                                ui.ctx.clone(),
+                                egui::ViewportId::ROOT,
+                                &window,
+                                Some(window.scale_factor() as f32),
+                                None,
+                                Some(gfx.device.limits().max_texture_dimension_2d as usize),
+                            ));
+                        }
+                        self.gfx = Some(gfx)
+                    }
                     Err(e) => self.error = Some(e),
                 }
                 self.window = Some(window);
@@ -617,6 +718,20 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // the interface first: what it takes (a click on a menu, a key in a field) is not the CPC's
+        if let (Some(ui), Some(window)) = (&mut self.ui, &self.window) {
+            if let Some(state) = &mut ui.state {
+                let response = state.on_window_event(window, &event);
+                let typing = ui.ctx.wants_keyboard_input() || ui.ctx.is_popup_open();
+                if let WindowEvent::KeyboardInput { event: key, .. } = &event {
+                    if key.state == ElementState::Pressed
+                        && (response.consumed || typing || is_ui_shortcut(key, self.modifiers))
+                    {
+                        return;
+                    }
+                }
+            }
+        }
         match event {
             WindowEvent::CloseRequested => self.closed = true,
             WindowEvent::Resized(size) => {
@@ -650,6 +765,7 @@ impl ApplicationHandler for App {
                     ElementState::Pressed => {
                         if let Some(key) = host_key(&event) {
                             self.held.insert(event.physical_key, key);
+                            self.pressed.push(key);
                         }
                         if let Some(key) = placed_key(event.physical_key) {
                             self.placed.insert(event.physical_key, key);
@@ -697,7 +813,11 @@ impl Drop for WinitGpuFrontend {
 impl WinitGpuFrontend {
     /// A window for pictures of `picture` pixels (for its shape and size).
     /// CRTs are seen through their glass, curved `curvature` times their bulge (0: flat).
-    pub fn open(picture: (usize, usize), curvature: f32) -> Result<Self, String> {
+    pub fn open(
+        picture: (usize, usize),
+        curvature: f32,
+        ui: Option<egui::Context>,
+    ) -> Result<Self, String> {
         let event_loop =
             EventLoop::new().map_err(|e| format!("cannot start the event loop: {e}"))?;
         let width = INITIAL_WIDTH;
@@ -712,11 +832,20 @@ impl WinitGpuFrontend {
                 held: HashMap::new(),
                 placed: HashMap::new(),
                 typed: Vec::new(),
+                pressed: Vec::new(),
                 closed: false,
                 error: None,
                 fullscreen: false,
                 modifiers: ModifiersState::empty(),
                 refreshes_per_frame: None,
+                wanted_fullscreen: None,
+                ui: ui.map(|ctx| UiLayer {
+                    ctx,
+                    state: None,
+                    painter: None,
+                    output: None,
+                    top_pixels: 0.0,
+                }),
             },
             frame_time: None,
             deadline: Instant::now(),
@@ -791,8 +920,14 @@ impl Frontend for WinitGpuFrontend {
 
     fn poll_input(&mut self) -> HostInput {
         self.pump();
+        let mut down: Vec<HostKey> = self.app.held.values().copied().collect();
+        for key in self.app.pressed.drain(..) {
+            if !down.contains(&key) {
+                down.push(key);
+            }
+        }
         HostInput {
-            down: self.app.held.values().copied().collect(),
+            down,
             typed: std::mem::take(&mut self.app.typed),
             placed: self.app.placed.values().copied().collect(),
         }
@@ -810,21 +945,89 @@ impl Frontend for WinitGpuFrontend {
         let gfx = self.gfx()?;
         gfx.use_mode(mode);
         gfx.frame.upload(&gfx.queue, frame);
-        let mut shown = gfx.draw(mode, false)?;
+        let gfx = self
+            .app
+            .gfx
+            .as_mut()
+            .ok_or_else(|| "no window".to_owned())?;
+        let mut shown = gfx.draw(mode, false, self.app.ui.as_mut())?;
         // at 100 Hz (or more) the frame on each refresh of its own: the vertical sync paces 50
         // (the CRT's picture drawn by the first draw that was shown)
         for _ in 1..self.app.refreshes_per_frame.unwrap_or(1) {
-            shown |= self.gfx()?.draw(mode, shown)?;
+            let gfx = self
+                .app
+                .gfx
+                .as_mut()
+                .ok_or_else(|| "no window".to_owned())?;
+            shown |= gfx.draw(mode, shown, self.app.ui.as_mut())?;
         }
         self.pace();
         Ok(())
     }
 
     fn redraw(&mut self) -> Result<(), String> {
-        let gfx = self.gfx()?;
+        let gfx = self
+            .app
+            .gfx
+            .as_mut()
+            .ok_or_else(|| "no window".to_owned())?;
         let mode = gfx.shown.unwrap_or_default();
         gfx.use_mode(mode);
-        gfx.draw(mode, false).map(|_| ())
+        gfx.draw(mode, false, self.app.ui.as_mut()).map(|_| ())
+    }
+
+    fn ui_input(&mut self) -> Option<egui::RawInput> {
+        let window = self.app.window.as_ref()?;
+        Some(
+            self.app
+                .ui
+                .as_mut()?
+                .state
+                .as_mut()?
+                .take_egui_input(window),
+        )
+    }
+
+    fn set_ui_output(&mut self, mut output: egui::FullOutput, menu_height: f32) {
+        let (Some(ui), Some(window)) = (self.app.ui.as_mut(), self.app.window.as_ref()) else {
+            return;
+        };
+        if let Some(state) = &mut ui.state {
+            state.handle_platform_output(window, std::mem::take(&mut output.platform_output));
+        }
+        ui.top_pixels = menu_height * output.pixels_per_point;
+        // textures not drawn yet are kept for the next draw
+        if let Some(previous) = ui.output.take() {
+            let mut textures = previous.textures_delta;
+            textures.append(std::mem::take(&mut output.textures_delta));
+            output.textures_delta = textures;
+        }
+        ui.output = Some(output);
+    }
+
+    fn set_curvature(&mut self, curvature: f32) {
+        if let Some(gfx) = &mut self.app.gfx {
+            if gfx.curvature != curvature {
+                gfx.curvature = curvature;
+                // the CRT pass again, with its new glass
+                gfx.crt = None;
+            }
+        }
+    }
+
+    fn clipboard_text(&mut self) -> Option<String> {
+        self.app.ui.as_mut()?.state.as_mut()?.clipboard_text()
+    }
+
+    fn set_fullscreen(&mut self, on: bool) {
+        if on != self.fullscreen() {
+            self.app.wanted_fullscreen = Some(on);
+            self.pump();
+        }
+    }
+
+    fn fullscreen(&self) -> bool {
+        self.app.fullscreen
     }
 }
 

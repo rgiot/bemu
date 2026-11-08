@@ -45,7 +45,12 @@ pub fn search(query: &str, recent: &[&str]) -> Vec<&'static CommandSpec> {
                 let label = score(query, &format!("{} {}", spec.label(), spec.id)).map(|s| s + 20);
                 label.max(score(query, &haystack(spec)))
             }?;
-            let bonus = recency.map_or(0, |r| 40 - r as i32);
+            // first when nothing is typed; with a query, a tie-breaker only
+            let bonus = match (recency, query.is_empty()) {
+                (Some(r), true) => 40 - r as i32,
+                (Some(_), false) => 2,
+                (None, _) => 0,
+            };
             Some((score + bonus, order, spec))
         })
         .collect();
@@ -68,5 +73,10 @@ mod tests {
     #[test]
     fn recent_commands_come_first() {
         assert_eq!(search("", &["help-about"])[0].id, "help-about");
+        // but not before what the query names
+        assert_eq!(
+            search("set pc", &["view-disassembly"])[0].id,
+            "debug-set-pc"
+        );
     }
 }

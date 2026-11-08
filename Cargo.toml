@@ -41,6 +41,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 sevenz-rust2 = { version = "0.24", default-features = false }
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
+# the menus, the command palette and the debugger's windows (`gui`), in the window and the page
+egui = { version = "0.33", optional = true }
+egui-wgpu = { version = "0.33", optional = true, default-features = false }
 
 # The desktop: terminal monitor, debug server, windows, sound, and cpclib with its defaults.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -59,6 +62,10 @@ tiny_http = "0.12"
 wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "vulkan"] }
 # `--frontend winit`: a window drawn by the GPU, see src/frontend/winit_gpu.rs
 winit = { version = "0.30", optional = true }
+egui-winit = { version = "0.33", optional = true, default-features = false, features = ["clipboard", "links", "wayland", "x11"] }
+# `--features dap`: the debugger's windows with cpclib-dap's disassembly (NOP costs) and call
+# stack (see src/ui/views.rs)
+cpclib-dap = { path = "../rust.cpcdemotools/cpclib-dap", optional = true }
 
 # wgpu needs a native backend per OS; "vulkan" alone leaves macOS with none.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -136,4 +143,9 @@ audio = ["dep:cpal"]
 # The CRT display filter on the GPU (wgpu), besides the CPU one.
 crt-gpu = ["dep:wgpu", "dep:bytemuck"]
 # A winit + wgpu window that shows the (CRT) picture without reading it back.
-gpu-window = ["crt-gpu", "dep:winit"]
+gpu-window = ["crt-gpu", "dep:winit", "gui", "dep:egui-winit"]
+# The menu bar, the command palette and the debugger's windows (egui), drawn by the GPU.
+gui = ["crt-gpu", "dep:egui", "dep:egui-wgpu"]
+# The debugger's windows with cpclib-dap's views: NOP costs, the call stack (desktop for now:
+# cpclib-dap does not build for the web yet).
+dap = ["gui", "dep:cpclib-dap"]

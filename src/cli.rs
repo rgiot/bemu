@@ -263,6 +263,11 @@ pub struct Args {
     #[arg(long, help_heading = DISPLAY)]
     pub overlay: bool,
 
+    /// The window without its menu bar (Tools > Show menu bar, or the command palette,
+    /// Ctrl+Shift+P, shows it again).
+    #[arg(long, help_heading = DISPLAY)]
+    pub no_menu: bool,
+
     /// A PlayCity on the expansion port: two more AYs, right and left, and a CTC whose channel 1
     /// counts the CRTC's CURSOR to an NMI.
     #[arg(long, help_heading = EXPANSIONS)]
@@ -393,7 +398,11 @@ In the window: F10 toggles full speed (the emulation as fast as it can, silent, 
 told), F7 saves the machine's state in bemu_0000.sna (then 0001...) in the current directory,
 F9 cycles the displays (not while recording), F6 shows or hides the overlay, F5 turns the disc
 of drive A over (Shift+F5: drive B; 3\" drives), F12 switches the keyboard
-mapping, F4 closes it.";
+mapping, F4 closes it.
+
+The window (--frontend winit) has a menu bar with every command (--no-menu hides it) and a
+command palette, Ctrl+Shift+P: type a few letters of a command, Enter runs it. The machine is
+changed while it runs (Machine > CRTC, Memory expansion, Expansions...): it keeps its state.";
 
 /// `--every`: seconds apart, or frames apart.
 #[derive(Clone, Copy, Debug, PartialEq)]

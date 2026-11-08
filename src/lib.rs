@@ -56,6 +56,8 @@ pub mod commands;
 pub mod debug_server;
 pub mod display;
 pub mod input;
+#[cfg(feature = "gui")]
+pub mod ui;
 
 mod bits;
 mod history;

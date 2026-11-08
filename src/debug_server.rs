@@ -56,6 +56,7 @@ use crate::breakpoints::{
     AdvancedBreakpoint, BreakpointAccess, BreakpointKind, Condition, ConditionContext,
     CounterAction, RunMode,
 };
+use crate::commands::{Arg, Command, CommandTarget, Outcome};
 use crate::keyboard::CpcKey;
 use crate::memory::PhysicalAddress;
 use crate::monitor::Monitor;
@@ -968,6 +969,22 @@ impl DebugServer {
         self.command();
     }
 
+    /// Whether the debugger has something to do after each instruction (a server, a
+    /// breakpoint, a step, keys to type, a counter): the window calls
+    /// [`Self::after_instruction`] only then, the emulation running at full speed otherwise.
+    pub fn is_active(&self) -> bool {
+        self.listening_port().is_some()
+            || self.has_breakpoints()
+            || self.stepping
+            || self.run_to.is_some()
+            || self.step_out_sp.is_some()
+            || self.step_frame
+            || self.is_typing()
+            || self.pending_basic.is_some()
+            || self.basic_target.is_some()
+            || !self.counters.is_empty()
+    }
+
     /// Whether some breakpoint is set.
     pub fn has_breakpoints(&self) -> bool {
         !self.exec_breakpoints.is_empty()
@@ -1019,6 +1036,28 @@ impl DebugServer {
                 )
             })
             .collect()
+    }
+
+    /// What a `GET` route of the API shows, for the debugger's windows (the same data): `z80`,
+    /// `crtc`, `ga`, `psg`, `fdc`, `memmap`, `breakpoints`, `symbols`, `counters`, `raster_bp`,
+    /// `beam`, `state`, `basic_state`.
+    pub fn inspect(&self, what: &str, motherboard: &Motherboard) -> Value {
+        match what {
+            "z80" => z80(motherboard),
+            "crtc" => self.crtc(motherboard),
+            "ga" => ga(motherboard),
+            "psg" => psg(motherboard),
+            "fdc" => fdc(motherboard),
+            "memmap" => memmap(motherboard),
+            "breakpoints" => self.list_breakpoints(),
+            "symbols" => self.list_symbols(),
+            "counters" => self.list_counters(),
+            "raster_bp" => self.list_raster_breakpoints(),
+            "beam" => self.beam.map_or(Value::Null, beam_json),
+            "state" => self.state(motherboard),
+            "basic_state" => basic_state(motherboard),
+            _ => Value::Null,
+        }
     }
 
     /// Answer an API call made from inside the emulator (the menus): the same code as the
@@ -1095,13 +1134,9 @@ impl DebugServer {
             ("GET", "/api/ram") => read_ram(request, motherboard),
             ("POST", "/api/ram") => self.write_ram(request, motherboard),
             ("POST", "/api/exec") => self.exec(request, motherboard),
-            ("POST", "/api/step") => {
-                self.paused = false;
-                self.stepping = true;
-                Ok(ApiResponse::ok(
-                    json!({ "ok": true, "cmd_seq": self.command() }),
-                ))
-            }
+            ("POST", "/api/step") => self
+                .run_command("debug-step-in", None, motherboard)
+                .map(|()| ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.cmd_seq }))),
             ("GET", "/api/config") => Ok(ApiResponse::ok(json!({
                 "crtc_type": motherboard.crtc().crtc_type() as u8,
                 "paused": self.paused,
@@ -1118,12 +1153,9 @@ impl DebugServer {
             ("GET", "/api/events") => Err(ApiError::new("events are streamed by the HTTP server")),
             ("POST", "/api/keytype") => self.keytype(request, motherboard.keyboard_layout()),
             ("GET", "/api/doc") => doc(request),
-            ("POST", "/api/quit") => {
-                self.quit = true;
-                Ok(ApiResponse::ok(
-                    json!({ "ok": true, "cmd_seq": self.command() }),
-                ))
-            }
+            ("POST", "/api/quit") => self
+                .run_command("exit", None, motherboard)
+                .map(|()| ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.cmd_seq }))),
             ("GET", "/api/history") => self.history_list(request, motherboard),
             ("GET", "/api/screenshot") => self.screenshot(request, monitor),
             ("POST", "/api/media") => self.media(request, motherboard),
@@ -1143,7 +1175,7 @@ impl DebugServer {
             ("GET", "/api/ga") => Ok(ApiResponse::ok(ga(motherboard))),
             ("GET", "/api/psg") => Ok(ApiResponse::ok(psg(motherboard))),
             ("GET", "/api/fdc") => Ok(ApiResponse::ok(fdc(motherboard))),
-            ("POST", "/api/drive") => drive_command(request, motherboard),
+            ("POST", "/api/drive") => self.drive_command(request, motherboard),
             ("GET", "/api/beam") => self.beam_position(request),
             ("GET", "/api/raster_bp") => Ok(ApiResponse::ok(self.list_raster_breakpoints())),
             ("POST", "/api/raster_bp") => self.set_raster_breakpoint(request),
@@ -1694,7 +1726,7 @@ impl DebugServer {
         let body = parse_body(&request.text())?;
         let addr = int_field(&body, "addr", 0, 0xffff)?
             .ok_or_else(|| ApiError::field("addr", "missing field \"addr\": the new PC"))?;
-        motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr as u16);
+        self.run_command("debug-set-pc", Some(Arg::Number(addr)), motherboard)?;
         self.ram_seq += 1;
         Ok(ApiResponse::ok(
             json!({ "ok": true, "seq": self.ram_seq, "cmd_seq": self.command() }),
@@ -1722,22 +1754,23 @@ impl DebugServer {
                 "no recognised field: supported are paused, do_soft_reset, do_hard_reset, history_size"
             ));
         }
+        // The same commands as the menus.
         if let Some(size) = history_size {
             // Resizing empties the history, as in AMSpiriT.
-            self.history_size = size as usize;
-            self.history.clear();
+            self.run_command("history-set-size", Some(Arg::Number(size)), motherboard)?;
         }
         if soft || hard {
             // Soft: the reset button (RAM kept). Hard: power off and on.
-            if hard {
-                motherboard.power_cycle();
+            let reset = if hard {
+                "machine-reset-hard"
             } else {
-                motherboard.restart();
-            }
-            self.events.publish("reset", &json!({ "hard": hard }));
+                "machine-reset-soft"
+            };
+            self.run_command(reset, None, motherboard)?;
         }
         if let Some(paused) = paused {
-            self.paused = paused;
+            let id = if paused { "debug-pause" } else { "debug-run" };
+            self.run_command(id, None, motherboard)?;
         }
         Ok(ApiResponse::ok(
             json!({ "ok": true, "cmd_seq": self.command() }),
@@ -1887,6 +1920,12 @@ impl DebugServer {
             .iter()
             .map(|(name, address)| json!({ "name": name, "address": address }))
             .collect::<Vec<_>>())
+    }
+
+    /// Whether an execution breakpoint is on the CPU address `address` (as mapped now).
+    pub fn has_exec_breakpoint(&self, address: u16, motherboard: &Motherboard) -> bool {
+        self.exec_breakpoints
+            .contains(&motherboard.physical_address(address))
     }
 
     /// An execution breakpoint on a CPU address, resolved now.
@@ -2304,36 +2343,96 @@ fn fdc(motherboard: &Motherboard) -> Value {
 
 /// `POST /api/drive?drive=0|1[&kind=3|3.5][&flip=1]`: make a drive a 3" or a 3.5" one, turn the
 /// disc of a 3" drive over. Replies with the FDC state.
-fn drive_command(
-    request: &ApiRequest,
-    motherboard: &mut Motherboard,
-) -> Result<ApiResponse, ApiError> {
-    use crate::fdc::{DriveKind, FdcDrive};
-    let drive = match request.param("drive") {
-        None | Some("0") => FdcDrive::A,
-        Some("1") => FdcDrive::B,
-        Some(_) => {
-            return Err(ApiError::field(
-                "drive",
-                "parameter \"drive\" must be 0 or 1",
-            ))
+impl DebugServer {
+    /// `POST /api/drive`, through the commands of File > Drive A / B.
+    fn drive_command(
+        &mut self,
+        request: &ApiRequest,
+        motherboard: &mut Motherboard,
+    ) -> Result<ApiResponse, ApiError> {
+        use crate::fdc::DriveKind;
+        let drive = match request.param("drive") {
+            None | Some("0") => "drive-a",
+            Some("1") => "drive-b",
+            Some(_) => {
+                return Err(ApiError::field(
+                    "drive",
+                    "parameter \"drive\" must be 0 or 1",
+                ))
+            }
+        };
+        if let Some(kind) = request.param("kind") {
+            let kind: DriveKind = kind
+                .parse()
+                .map_err(|e: String| ApiError::field("kind", e))?;
+            let id = match kind {
+                DriveKind::ThreeInch => format!("{drive}-original"),
+                DriveKind::ThreeAndHalfInch => format!("{drive}-pc"),
+            };
+            self.run_command(&id, None, motherboard)?;
         }
-    };
-    if let Some(kind) = request.param("kind") {
-        let kind: DriveKind = kind
-            .parse()
-            .map_err(|e: String| ApiError::field("kind", e))?;
-        motherboard.fdc_mut().set_drive_kind(drive, kind);
+        if request.param("flip").is_some_and(|v| v == "1")
+            && self
+                .run_command(&format!("{drive}-flip-disc"), None, motherboard)
+                .is_err()
+        {
+            return Err(ApiError::field(
+                "flip",
+                "only the disc of a 3\" drive with a disc in it can be turned over",
+            ));
+        }
+        Ok(ApiResponse::ok(fdc(motherboard)))
     }
-    if request.param("flip").is_some_and(|v| v == "1")
-        && motherboard.fdc_mut().flip_disc(drive).is_none()
-    {
-        return Err(ApiError::field(
-            "flip",
-            "only the disc of a 3\" drive with a disc in it can be turned over",
-        ));
+
+    /// Run the command `id` of the menus (see [`crate::commands`]): the API and the menus do
+    /// the same thing the same way.
+    fn run_command(
+        &mut self,
+        id: &str,
+        arg: Option<Arg>,
+        motherboard: &mut Motherboard,
+    ) -> Result<(), ApiError> {
+        let command = match arg {
+            Some(arg) => Command::with_arg(id, arg),
+            None => Command::new(id),
+        }
+        .map_err(|e| ApiError::new(e.to_string()))?;
+        let mut target = ServerTarget {
+            server: self,
+            motherboard,
+        };
+        match command.execute(&mut target) {
+            Ok(Outcome::Done(_)) => Ok(()),
+            Ok(Outcome::NeedsArg(prompt)) => {
+                Err(ApiError::new(format!("{}: missing", prompt.title)))
+            }
+            Err(error) => Err(ApiError::new(error.to_string())),
+        }
     }
-    Ok(ApiResponse::ok(fdc(motherboard)))
+}
+
+/// The commands' receiver for the API: the machine and the debugger, no window.
+struct ServerTarget<'a> {
+    server: &'a mut DebugServer,
+    motherboard: &'a mut Motherboard,
+}
+
+impl CommandTarget for ServerTarget<'_> {
+    fn motherboard(&self) -> &Motherboard {
+        self.motherboard
+    }
+    fn motherboard_mut(&mut self) -> &mut Motherboard {
+        self.motherboard
+    }
+    fn debugger(&self) -> Option<&DebugServer> {
+        Some(self.server)
+    }
+    fn debugger_mut(&mut self) -> Option<&mut DebugServer> {
+        Some(self.server)
+    }
+    fn debugger_and_motherboard(&mut self) -> Option<(&mut DebugServer, &mut Motherboard)> {
+        Some((self.server, self.motherboard))
+    }
 }
 
 /// `GET /api/memmap`: each 16K region of the CPU's view, with the ROM

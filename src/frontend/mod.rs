@@ -54,4 +54,37 @@ pub trait Frontend {
     fn redraw(&mut self) -> Result<(), String> {
         Ok(())
     }
+
+    /// The input of the user interface since the last call (`None`: this frontend has none).
+    #[cfg(feature = "gui")]
+    fn ui_input(&mut self) -> Option<egui::RawInput> {
+        None
+    }
+
+    /// What the user interface draws over the next picture, its menu bar `menu_height` points
+    /// high.
+    #[cfg(feature = "gui")]
+    fn set_ui_output(&mut self, output: egui::FullOutput, menu_height: f32) {
+        let _ = (output, menu_height);
+    }
+
+    /// The text of the host's clipboard.
+    fn clipboard_text(&mut self) -> Option<String> {
+        None
+    }
+
+    /// How curved the CRTs' glass is (see `DisplayMode::warp`), for a frontend that draws them.
+    fn set_curvature(&mut self, curvature: f32) {
+        let _ = curvature;
+    }
+
+    /// Go fullscreen, or back to the window.
+    fn set_fullscreen(&mut self, on: bool) {
+        let _ = on;
+    }
+
+    /// Whether the window is fullscreen (F11 also switches it).
+    fn fullscreen(&self) -> bool {
+        false
+    }
 }
