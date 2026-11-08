@@ -132,6 +132,28 @@ export class Engine {
     stopCsl() { this.#core.stop_csl(); }
     typeText(text) { this.#core.type_text(text); }
     keyDown(code, key, ctrlOrMeta) { this.#core.key_down(code, key, ctrlOrMeta); }
+    /** A key with its modifiers: the menus take it when they have the focus. */
+    keyEvent(code, key, pressed, ctrl, shift, alt, meta) {
+        const taken = this.#core.key_event(code, key, pressed, ctrl, shift, alt, meta);
+        if (taken) this.#redrawIfPaused();
+        return taken;
+    }
+    /** The pointer over the canvas (CSS pixels): the menus, the palette, the debugger's windows. */
+    uiPointer(kind, x, y, button) {
+        const over = this.#core.ui_pointer(kind, x, y, button);
+        this.#redrawIfPaused();
+        return over;
+    }
+    uiWheel(dx, dy) {
+        this.#core.ui_wheel(dx, dy);
+        this.#redrawIfPaused();
+    }
+    uiScale(ratio) { this.#core.ui_scale(ratio); }
+    /** The file the page picked for a menu command. */
+    answerFile(id, name, bytes) {
+        this.#core.answer_file(id, name, bytes);
+        this.#redrawIfPaused();
+    }
     keyUp(code) { this.#core.key_up(code); }
     releaseKeys() { this.#core.release_keys(); }
     screenshot() { return this.#core.screenshot(); }
@@ -142,7 +164,11 @@ export class Engine {
         if (value !== 1) this.#core.audio_samples(); // what is queued is dropped, not played late
         this.#speed = value;
         this.#owed = 0;
+        this.#core.ui_speed?.(value); // the menus show it
     }
+    /** The page is fullscreen or not, its volume: the menus show them. */
+    uiFullscreen(on) { this.#core.ui_fullscreen?.(on); }
+    uiVolume(volume, muted) { this.#core.ui_volume?.(volume, muted); }
 
     /** While paused: one more frame, shown. */
     stepFrame() {
@@ -207,10 +233,37 @@ export class Engine {
         if (!this.#fresh) return;
         const start = this.#now();
         this.#core.redraw();
+        this.#uiRequests();
         this.#stats.drawMs += this.#now() - start;
         this.#stats.draws++;
         this.#fresh = false;
         this.#framePending = false;
+    }
+
+    /** What the menus asked: the speed and the scripts here, the rest by the page. */
+    #uiRequests() {
+        const requests = this.#core.take_ui_requests?.() ?? [];
+        for (const request of requests) {
+            switch (request.type) {
+                case 'speed':
+                    this.setSpeed(request.value === null ? Infinity : request.value);
+                    this.#emit('ui-request', request);
+                    break;
+                case 'runCsl': this.runCsl(request.text); break;
+                case 'stopCsl': this.stopCsl(); break;
+                case 'copyScreenshot': {
+                    const png = this.#core.screenshot();
+                    if (png) this.#emit('ui-request', { type: 'copyImage', data: png });
+                    break;
+                }
+                case 'screenshot': {
+                    const png = this.#core.screenshot();
+                    if (png) this.#emit('ui-request', { type: 'download', name: 'bemu.png', data: png });
+                    break;
+                }
+                default: this.#emit('ui-request', request);
+            }
+        }
     }
 
     #safely(fn) {

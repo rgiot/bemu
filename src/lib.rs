@@ -54,10 +54,12 @@ pub mod debug;
 // an HTTP server on a socket, with threads: not in a web page
 pub mod basic_program;
 pub mod breakpoints;
-#[cfg(not(target_arch = "wasm32"))]
+pub mod commands;
 pub mod debug_server;
 pub mod display;
 pub mod input;
+#[cfg(feature = "gui")]
+pub mod ui;
 
 mod bits;
 mod history;

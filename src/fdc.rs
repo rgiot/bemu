@@ -133,6 +133,9 @@ pub enum DriveKind {
     ThreeInch,
     /// A double-sided 3.5" drive: two heads, the FDC's side select chooses one, 80 tracks and more.
     ThreeAndHalfInch,
+    /// A Gotek (a USB floppy emulator in place of a drive): double sided like a 3.5" drive, 84
+    /// tracks, and no mechanics: its head steps and settles at once.
+    Gotek,
 }
 
 impl DriveKind {
@@ -141,18 +144,30 @@ impl DriveKind {
         match self {
             DriveKind::ThreeInch => 42,
             DriveKind::ThreeAndHalfInch => 82,
+            DriveKind::Gotek => 84,
         }
     }
 
     /// The drive has two heads: the FDC selects the side (and ST3 reports TS).
     pub fn is_double_sided(self) -> bool {
-        self == DriveKind::ThreeAndHalfInch
+        self != DriveKind::ThreeInch
+    }
+
+    /// How long a seek of `steps` tracks takes, the FDC stepping every `step_us`: a real
+    /// drive's head moves then settles, a Gotek's has nothing to move.
+    pub fn seek_us(self, steps: u64, step_us: u64) -> u64 {
+        match self {
+            DriveKind::Gotek => 1,
+            _ if steps > 0 => steps * step_us + SETTLE_US,
+            _ => 1_000,
+        }
     }
 
     pub fn name(self) -> &'static str {
         match self {
             DriveKind::ThreeInch => "3\"",
             DriveKind::ThreeAndHalfInch => "3.5\"",
+            DriveKind::Gotek => "Gotek",
         }
     }
 }
@@ -161,10 +176,15 @@ impl std::str::FromStr for DriveKind {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, String> {
+        if s.eq_ignore_ascii_case("gotek") {
+            return Ok(DriveKind::Gotek);
+        }
         match s.trim_end_matches(['"', 'i', 'n']) {
             "3" => Ok(DriveKind::ThreeInch),
             "3.5" => Ok(DriveKind::ThreeAndHalfInch),
-            _ => Err(format!("{s}: a drive is 3 (3 inch) or 3.5 (3.5 inch)")),
+            _ => Err(format!(
+                "{s}: a drive is 3 (3 inch), 3.5 (3.5 inch) or gotek"
+            )),
         }
     }
 }
@@ -303,10 +323,26 @@ const FMT_SC: usize = 3;
 const FMT_GPL: usize = 4;
 const FMT_D: usize = 5;
 
+impl CommandRecord {
+    /// The command's name ("ReadData", "Seek"...).
+    pub fn name(&self) -> String {
+        format!(
+            "{:?}",
+            Cmd::from_byte(self.command.first().copied().unwrap_or(0))
+        )
+    }
+}
+
+/// How many of the last commands [`Fdc::recent_commands`] keeps.
+const RECENT_COMMANDS: usize = 16;
+
 /// One command as seen on the data register: the bytes the CPU wrote and
 /// the result bytes the FDC answered (empty for commands with no result).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandRecord {
+    /// How many more times it ran right after, the same (a driver polling Sense Interrupt
+    /// Status): counted in [`Fdc::recent_commands`] only.
+    pub repeats: u32,
     pub command: Vec<u8>,
     pub result: Vec<u8>,
     /// Microseconds (with drive timing) when the command was complete and when its result began
@@ -396,6 +432,8 @@ pub struct Fdc {
     /// [`Fdc::start_command_log`]): a debugging aid for whoever needs to see
     /// what a driver such as AMSDOS really says to the chip.
     command_log: Option<Vec<CommandRecord>>,
+    /// The last commands (always kept, a few): the debugger's FDC window.
+    recent: std::collections::VecDeque<CommandRecord>,
 
     /// Real drive timing (rotation, seek, 32 us a byte) instead of instant transfers.
     timing: bool,
@@ -436,6 +474,7 @@ impl Default for Fdc {
             exec_data: Vec::new(),
             exec_pos: 0,
             command_log: None,
+            recent: std::collections::VecDeque::new(),
             timing: false,
             now_us: 0,
             rqm_at: 0,
@@ -477,6 +516,11 @@ impl Fdc {
     /// Start recording every command (and its result) from now on.
     pub fn start_command_log(&mut self) {
         self.command_log = Some(Vec::new());
+    }
+
+    /// The last commands run (the last at the end), whether or not a log is recorded.
+    pub fn recent_commands(&self) -> impl DoubleEndedIterator<Item = &CommandRecord> {
+        self.recent.iter()
     }
 
     /// The commands recorded since [`Fdc::start_command_log`].
@@ -626,7 +670,7 @@ impl Fdc {
         let drive = &self.drives[unit];
         match drive.kind {
             DriveKind::ThreeInch => u8::from(drive.flipped),
-            DriveKind::ThreeAndHalfInch => head,
+            DriveKind::ThreeAndHalfInch | DriveKind::Gotek => head,
         }
     }
 
@@ -766,9 +810,16 @@ impl Fdc {
     /// it stop after the first byte and desynchronise the FDC.
     /// `go_to_command_phase` clears it once the last byte has been read.
     fn go_to_result_phase(&mut self) {
-        if let Some(record) = self.command_log.as_mut().and_then(|log| log.last_mut()) {
+        let end_us = self.t_cursor.max(self.now_us);
+        for record in self
+            .command_log
+            .as_mut()
+            .and_then(|log| log.last_mut())
+            .into_iter()
+            .chain(self.recent.back_mut())
+        {
             record.result = self.result.clone();
-            record.end_us = self.t_cursor.max(self.now_us);
+            record.end_us = end_us;
         }
         self.phase = Phase::Result;
         self.result_pos = 0;
@@ -796,8 +847,28 @@ impl Fdc {
 
     fn dispatch_command(&mut self) {
         self.t_cursor = self.now_us;
+        match self.recent.back_mut() {
+            // the same again: counted, so that a polling loop does not push the rest out
+            Some(last) if last.command == self.command => {
+                last.repeats += 1;
+                last.start_us = self.now_us;
+            }
+            _ => {
+                if self.recent.len() == RECENT_COMMANDS {
+                    self.recent.pop_front();
+                }
+                self.recent.push_back(CommandRecord {
+                    repeats: 0,
+                    command: self.command.clone(),
+                    result: Vec::new(),
+                    start_us: self.now_us,
+                    end_us: 0,
+                });
+            }
+        }
         if let Some(log) = &mut self.command_log {
             log.push(CommandRecord {
+                repeats: 0,
                 command: self.command.clone(),
                 result: Vec::new(),
                 start_us: self.now_us,
@@ -879,8 +950,7 @@ impl Fdc {
             let steps = u64::from(from.abs_diff(to));
             // The READY line is tied high on a CPC: even without a disc the seek ends normally
             let st0 = st0::SE | unit as u8;
-            let done =
-                self.now_us + steps * self.step_us + if steps > 0 { SETTLE_US } else { 1_000 };
+            let done = self.now_us + self.drives[unit].kind.seek_us(steps, self.step_us);
             self.seeks.retain(|seek| seek.1 != unit);
             self.seeks.push((done, unit, to, st0));
             self.seeking |= 1 << unit;

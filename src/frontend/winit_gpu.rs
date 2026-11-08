@@ -42,6 +42,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::keyboard::{Key, KeyCode, KeyLocation, NamedKey, PhysicalKey};
 use winit::monitor::VideoModeHandle;
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::window::{Fullscreen, Window, WindowId};
 
@@ -57,7 +58,183 @@ struct CrtState {
     size: (usize, usize),
 }
 
+/// The user interface (egui) of the window: its input, and the last frame to draw.
+struct UiLayer {
+    ctx: egui::Context,
+    state: Option<egui_winit::State>,
+    painter: Option<amsrust::ui::Painter>,
+    output: Option<egui::FullOutput>,
+    /// The last frame's shapes, drawn again on the extra refreshes of a 100-200 Hz fullscreen.
+    shapes: Vec<egui::epaint::ClippedShape>,
+    pixels_per_point: f32,
+    /// The menu bar's height in pixels: the picture goes below.
+    top_pixels: f32,
+}
+
+/// A debugger's window, a window of the system: its surface on the main window's GPU device,
+/// its own interface.
+struct ViewWindow {
+    window: Arc<Window>,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    state: egui_winit::State,
+    ctx: egui::Context,
+    painter: Option<amsrust::ui::Painter>,
+    /// The size last asked for its content, in points.
+    fitted: Option<egui::Vec2>,
+}
+
+impl ViewWindow {
+    fn open(
+        event_loop: &ActiveEventLoop,
+        gfx: &Gfx,
+        title: &str,
+        ctx: egui::Context,
+    ) -> Result<Self, String> {
+        let attributes = Window::default_attributes()
+            .with_title(format!("bemu: {title}"))
+            .with_inner_size(LogicalSize::new(460.0, 520.0));
+        let window = Arc::new(
+            event_loop
+                .create_window(attributes)
+                .map_err(|e| format!("cannot open the {title} window: {e}"))?,
+        );
+        let surface = gfx
+            .instance
+            .create_surface(window.clone())
+            .map_err(|e| format!("cannot draw in the {title} window: {e}"))?;
+        let capabilities = surface.get_capabilities(&gfx.adapter);
+        let format = capabilities
+            .formats
+            .iter()
+            .copied()
+            .find(|f| !f.is_srgb())
+            .unwrap_or(capabilities.formats[0]);
+        let size = window.inner_size();
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: size.width.max(1),
+            height: size.height.max(1),
+            // it must not hold back the emulation: no wait for the refresh
+            present_mode: if capabilities
+                .present_modes
+                .contains(&wgpu::PresentMode::Mailbox)
+            {
+                wgpu::PresentMode::Mailbox
+            } else if capabilities
+                .present_modes
+                .contains(&wgpu::PresentMode::Immediate)
+            {
+                wgpu::PresentMode::Immediate
+            } else {
+                wgpu::PresentMode::Fifo
+            },
+            alpha_mode: capabilities.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&gfx.device, &config);
+        let state = egui_winit::State::new(
+            ctx.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            Some(gfx.device.limits().max_texture_dimension_2d as usize),
+        );
+        Ok(Self {
+            window,
+            surface,
+            config,
+            state,
+            ctx,
+            painter: None,
+            fitted: None,
+        })
+    }
+
+    /// As large as its content (`wanted` points), up to most of a screen: a longer one scrolls.
+    fn fit(&mut self, wanted: egui::Vec2) {
+        const MAX: egui::Vec2 = egui::vec2(1000.0, 900.0);
+        let size = wanted.max(egui::vec2(160.0, 60.0)).min(MAX).ceil();
+        // the user resized it, or it was fitted already: changes of a few points are left
+        if self
+            .fitted
+            .is_some_and(|fitted| (fitted - size).abs().max_elem() < 4.0)
+        {
+            return;
+        }
+        self.fitted = Some(size);
+        let _ = self
+            .window
+            .request_inner_size(LogicalSize::new(f64::from(size.x), f64::from(size.y)));
+    }
+
+    fn resize(&mut self, gfx: &Gfx, width: u32, height: u32) {
+        self.config.width = width.max(1);
+        self.config.height = height.max(1);
+        self.surface.configure(&gfx.device, &self.config);
+    }
+
+    /// Draw a frame of its interface.
+    fn draw(&mut self, gfx: &Gfx, mut output: egui::FullOutput) {
+        self.state
+            .handle_platform_output(&self.window, std::mem::take(&mut output.platform_output));
+        let surface_texture = match self.surface.get_current_texture() {
+            Ok(texture) => texture,
+            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                self.surface.configure(&gfx.device, &self.config);
+                return;
+            }
+            Err(_) => return,
+        };
+        let view = surface_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = gfx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        // the panel covers it all: a clear, then the shapes
+        drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("view"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        }));
+        let format = self.config.format;
+        let painter = self
+            .painter
+            .get_or_insert_with(|| amsrust::ui::Painter::new(&gfx.device, format));
+        painter.paint_shapes(
+            &gfx.device,
+            &gfx.queue,
+            &mut encoder,
+            &view,
+            [self.config.width, self.config.height],
+            &self.ctx,
+            output.shapes,
+            output.pixels_per_point,
+            &output.textures_delta,
+        );
+        gfx.queue.submit([encoder.finish()]);
+        surface_texture.present();
+    }
+}
+
 struct Gfx {
+    /// Kept for the surfaces of the debugger's windows.
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -111,6 +288,8 @@ impl Gfx {
         let blit = Blit::new(&device, format);
         let raw_bind_group = blit.bind_group(&device, frame.view(), false, Warp::FLAT);
         Ok(Self {
+            instance,
+            adapter,
             surface,
             device,
             queue,
@@ -164,7 +343,12 @@ impl Gfx {
     /// Draw `mode`'s picture of the frame already uploaded (`again`: the same frame shown on
     /// one more refresh, the CRT's picture of it already drawn). Whether it was shown: not when
     /// the surface had to be configured again (a resize, a fullscreen switch).
-    fn draw(&mut self, mode: DisplayMode, again: bool) -> Result<bool, String> {
+    fn draw(
+        &mut self,
+        mode: DisplayMode,
+        again: bool,
+        ui: Option<&mut UiLayer>,
+    ) -> Result<bool, String> {
         let surface_texture = match self.surface.get_current_texture() {
             Ok(texture) => texture,
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
@@ -195,8 +379,12 @@ impl Gfx {
             _ => (&self.raw_bind_group, (RAW_WIDTH, RAW_HEIGHT)),
         };
 
-        // the picture, as large as the window allows, centred
-        let (window_w, window_h) = (self.config.width as f32, self.config.height as f32);
+        // the picture, as large as the window allows below the menu bar, centred
+        let top = ui.as_ref().map_or(0.0, |ui| ui.top_pixels);
+        let (window_w, window_h) = (
+            self.config.width as f32,
+            (self.config.height as f32 - top).max(1.0),
+        );
         let scale = (window_w / picture_w as f32).min(window_h / picture_h as f32);
         let (w, h) = (picture_w as f32 * scale, picture_h as f32 * scale);
         {
@@ -215,14 +403,73 @@ impl Gfx {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_viewport((window_w - w) / 2.0, (window_h - h) / 2.0, w, h, 0.0, 1.0);
+            pass.set_viewport(
+                (window_w - w) / 2.0,
+                top + (window_h - h) / 2.0,
+                w,
+                h,
+                0.0,
+                1.0,
+            );
             self.blit.draw(&mut pass, bind_group);
+        }
+        // the menus and windows over it
+        if let Some(ui) = ui {
+            // a new frame of the interface (its texture updates once), else the last one again
+            let textures = match ui.output.take() {
+                Some(output) => {
+                    ui.shapes = output.shapes;
+                    ui.pixels_per_point = output.pixels_per_point;
+                    output.textures_delta
+                }
+                None => egui::TexturesDelta::default(),
+            };
+            let painter = ui
+                .painter
+                .get_or_insert_with(|| amsrust::ui::Painter::new(&self.device, self.config.format));
+            painter.paint_shapes(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &view,
+                [self.config.width, self.config.height],
+                &ui.ctx,
+                ui.shapes.clone(),
+                ui.pixels_per_point,
+                &textures,
+            );
         }
         self.queue.submit([encoder.finish()]);
         surface_texture.present();
         self.shown = Some(mode);
         Ok(true)
     }
+}
+
+/// Whether `event` is the chord of a command with Ctrl or Alt (Ctrl+Shift+P, the palette):
+/// the interface runs it, the CPC does not get the key.
+fn is_ui_shortcut(event: &KeyEvent, modifiers: ModifiersState) -> bool {
+    let (ctrl, alt, shift) = (
+        modifiers.control_key() || modifiers.super_key(),
+        modifiers.alt_key(),
+        modifiers.shift_key(),
+    );
+    if !(ctrl || alt) {
+        return false;
+    }
+    let Key::Character(text) = event.key_without_modifiers() else {
+        return false;
+    };
+    amsrust::commands::all().iter().any(|spec| {
+        spec.shortcut
+            .and_then(amsrust::commands::Chord::parse)
+            .is_some_and(|chord| {
+                chord.ctrl == ctrl
+                    && chord.alt == alt
+                    && chord.shift == shift
+                    && chord.key.eq_ignore_ascii_case(text.as_str())
+            })
+    })
 }
 
 /// F11, or Ctrl+Cmd+F (macOS's fullscreen shortcut: F11 shows its desktop there).
@@ -452,6 +699,9 @@ struct App {
     /// The physical keys held, by their place (the positional mapping's).
     placed: HashMap<PhysicalKey, HostKey>,
     typed: Vec<char>,
+    /// The keys pressed since the last poll, held or not by then (a press and its release
+    /// between two frames still counts).
+    pressed: Vec<HostKey>,
     closed: bool,
     error: Option<String>,
     /// F11 asked for fullscreen (kept here: the window manager may refuse it).
@@ -462,6 +712,14 @@ struct App {
     /// frame (1 at 50 Hz, 2 at 100 Hz...), the vertical sync pacing the emulation. `None`: the
     /// clock paces it.
     refreshes_per_frame: Option<u32>,
+    ui: Option<UiLayer>,
+    /// Fullscreen asked by a command (F11 is the window's): done on the next events.
+    wanted_fullscreen: Option<bool>,
+    /// The debugger's windows open, by view, and the ones to have (opened in the event loop).
+    views: HashMap<u8, ViewWindow>,
+    wanted_views: Vec<(u8, &'static str, egui::Context)>,
+    /// The views whose window the user closed.
+    closed_views: Vec<u8>,
 }
 
 /// How many refreshes at `millihertz` show a CPC frame, if it is a multiple of 50 Hz (within
@@ -595,7 +853,89 @@ fn exclusive_fullscreen_works(event_loop: &ActiveEventLoop) -> bool {
     }
 }
 
+impl App {
+    /// Open the debugger's windows wanted, close the others.
+    fn sync_views(&mut self, event_loop: &ActiveEventLoop) {
+        let wanted = &self.wanted_views;
+        self.views
+            .retain(|key, _| wanted.iter().any(|(wanted, ..)| wanted == key));
+        let Some(gfx) = &self.gfx else { return };
+        for (key, title, ctx) in wanted {
+            if self.views.contains_key(key) {
+                continue;
+            }
+            match ViewWindow::open(event_loop, gfx, title, ctx.clone()) {
+                Ok(view) => {
+                    self.views.insert(*key, view);
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    self.closed_views.push(*key);
+                }
+            }
+        }
+    }
+
+    /// An event of a debugger's window: `true` when `id` is one.
+    fn view_event(&mut self, id: WindowId, event: &WindowEvent) -> bool {
+        let Some((&key, view)) = self.views.iter_mut().find(|(_, v)| v.window.id() == id) else {
+            return false;
+        };
+        let response = view.state.on_window_event(&view.window, event);
+        match event {
+            // the debugger's function keys (F7 step, F8 pause...) work there too, unless a
+            // field takes the key
+            WindowEvent::KeyboardInput { event: key, .. }
+                if key.state == ElementState::Pressed
+                    && !key.repeat
+                    && !response.consumed
+                    && matches!(
+                        key.logical_key,
+                        Key::Named(
+                            NamedKey::F5
+                                | NamedKey::F6
+                                | NamedKey::F7
+                                | NamedKey::F8
+                                | NamedKey::F9
+                                | NamedKey::F12
+                        )
+                    ) =>
+            {
+                if let Some(host) = host_key(key) {
+                    self.pressed.push(host);
+                }
+            }
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                self.views.remove(&key);
+                self.wanted_views.retain(|(wanted, ..)| *wanted != key);
+                self.closed_views.push(key);
+            }
+            WindowEvent::Resized(size) => {
+                if let Some(gfx) = &self.gfx {
+                    view.resize(gfx, size.width, size.height);
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+}
+
 impl ApplicationHandler for App {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.sync_views(event_loop);
+        if let Some(on) = self.wanted_fullscreen.take() {
+            let now = self.fullscreen
+                || self
+                    .window
+                    .as_ref()
+                    .is_some_and(|window| window.fullscreen().is_some());
+            if on != now {
+                self.toggle_fullscreen(event_loop);
+            }
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -607,7 +947,19 @@ impl ApplicationHandler for App {
             Ok(window) => {
                 let window = Arc::new(window);
                 match Gfx::new(window.clone(), self.curvature) {
-                    Ok(gfx) => self.gfx = Some(gfx),
+                    Ok(gfx) => {
+                        if let Some(ui) = &mut self.ui {
+                            ui.state = Some(egui_winit::State::new(
+                                ui.ctx.clone(),
+                                egui::ViewportId::ROOT,
+                                &window,
+                                Some(window.scale_factor() as f32),
+                                None,
+                                Some(gfx.device.limits().max_texture_dimension_2d as usize),
+                            ));
+                        }
+                        self.gfx = Some(gfx)
+                    }
                     Err(e) => self.error = Some(e),
                 }
                 self.window = Some(window);
@@ -616,7 +968,25 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // a debugger's window: its own interface, nothing for the CPC
+        if self.view_event(id, &event) {
+            return;
+        }
+        // the interface first: what it takes (a click on a menu, a key in a field) is not the CPC's
+        if let (Some(ui), Some(window)) = (&mut self.ui, &self.window) {
+            if let Some(state) = &mut ui.state {
+                let response = state.on_window_event(window, &event);
+                let typing = ui.ctx.wants_keyboard_input() || ui.ctx.is_popup_open();
+                if let WindowEvent::KeyboardInput { event: key, .. } = &event {
+                    if key.state == ElementState::Pressed
+                        && (response.consumed || typing || is_ui_shortcut(key, self.modifiers))
+                    {
+                        return;
+                    }
+                }
+            }
+        }
         match event {
             WindowEvent::CloseRequested => self.closed = true,
             WindowEvent::Resized(size) => {
@@ -650,6 +1020,7 @@ impl ApplicationHandler for App {
                     ElementState::Pressed => {
                         if let Some(key) = host_key(&event) {
                             self.held.insert(event.physical_key, key);
+                            self.pressed.push(key);
                         }
                         if let Some(key) = placed_key(event.physical_key) {
                             self.placed.insert(event.physical_key, key);
@@ -680,6 +1051,8 @@ pub struct WinitGpuFrontend {
     /// Time between two presents, if capped.
     frame_time: Option<Duration>,
     deadline: Instant,
+    /// Not at the real speed: the clock paces, not the vertical sync.
+    speed_factor: bool,
 }
 
 impl Drop for WinitGpuFrontend {
@@ -697,7 +1070,11 @@ impl Drop for WinitGpuFrontend {
 impl WinitGpuFrontend {
     /// A window for pictures of `picture` pixels (for its shape and size).
     /// CRTs are seen through their glass, curved `curvature` times their bulge (0: flat).
-    pub fn open(picture: (usize, usize), curvature: f32) -> Result<Self, String> {
+    pub fn open(
+        picture: (usize, usize),
+        curvature: f32,
+        ui: Option<egui::Context>,
+    ) -> Result<Self, String> {
         let event_loop =
             EventLoop::new().map_err(|e| format!("cannot start the event loop: {e}"))?;
         let width = INITIAL_WIDTH;
@@ -712,14 +1089,29 @@ impl WinitGpuFrontend {
                 held: HashMap::new(),
                 placed: HashMap::new(),
                 typed: Vec::new(),
+                pressed: Vec::new(),
                 closed: false,
                 error: None,
                 fullscreen: false,
                 modifiers: ModifiersState::empty(),
                 refreshes_per_frame: None,
+                wanted_fullscreen: None,
+                views: HashMap::new(),
+                wanted_views: Vec::new(),
+                closed_views: Vec::new(),
+                ui: ui.map(|ctx| UiLayer {
+                    ctx,
+                    state: None,
+                    painter: None,
+                    output: None,
+                    shapes: Vec::new(),
+                    pixels_per_point: 1.0,
+                    top_pixels: 0.0,
+                }),
             },
             frame_time: None,
             deadline: Instant::now(),
+            speed_factor: false,
         };
         // the window and the GPU come up on the first events
         for _ in 0..100 {
@@ -748,7 +1140,8 @@ impl WinitGpuFrontend {
     /// Wait for the end of the frame when the rate is capped (not in a 50 Hz
     /// fullscreen mode: the vertical sync, FIFO, does it).
     fn pace(&mut self) {
-        if self.app.refreshes_per_frame.is_some() {
+        // the vertical sync paces the real speed only: 25 % or 200 % go by the clock
+        if self.app.refreshes_per_frame.is_some() && !self.speed_factor {
             // a present that didn't wait for the refresh (a hidden window, another Space):
             // the clock's frame, so that the emulation doesn't run free
             const FRAME: Duration = Duration::from_millis(20);
@@ -780,6 +1173,10 @@ impl Frontend for WinitGpuFrontend {
         !self.app.closed
     }
 
+    fn set_speed_factor(&mut self, on: bool) {
+        self.speed_factor = on;
+    }
+
     fn set_target_fps(&mut self, fps: usize) {
         self.frame_time = (fps > 0).then(|| Duration::from_secs_f64(1.0 / fps as f64));
         self.deadline = Instant::now();
@@ -791,8 +1188,14 @@ impl Frontend for WinitGpuFrontend {
 
     fn poll_input(&mut self) -> HostInput {
         self.pump();
+        let mut down: Vec<HostKey> = self.app.held.values().copied().collect();
+        for key in self.app.pressed.drain(..) {
+            if !down.contains(&key) {
+                down.push(key);
+            }
+        }
         HostInput {
-            down: self.app.held.values().copied().collect(),
+            down,
             typed: std::mem::take(&mut self.app.typed),
             placed: self.app.placed.values().copied().collect(),
         }
@@ -810,21 +1213,120 @@ impl Frontend for WinitGpuFrontend {
         let gfx = self.gfx()?;
         gfx.use_mode(mode);
         gfx.frame.upload(&gfx.queue, frame);
-        let mut shown = gfx.draw(mode, false)?;
+        let gfx = self
+            .app
+            .gfx
+            .as_mut()
+            .ok_or_else(|| "no window".to_owned())?;
+        let mut shown = gfx.draw(mode, false, self.app.ui.as_mut())?;
         // at 100 Hz (or more) the frame on each refresh of its own: the vertical sync paces 50
         // (the CRT's picture drawn by the first draw that was shown)
-        for _ in 1..self.app.refreshes_per_frame.unwrap_or(1) {
-            shown |= self.gfx()?.draw(mode, shown)?;
+        let refreshes = if self.speed_factor {
+            1
+        } else {
+            self.app.refreshes_per_frame.unwrap_or(1)
+        };
+        for _ in 1..refreshes {
+            let gfx = self
+                .app
+                .gfx
+                .as_mut()
+                .ok_or_else(|| "no window".to_owned())?;
+            shown |= gfx.draw(mode, shown, self.app.ui.as_mut())?;
         }
         self.pace();
         Ok(())
     }
 
     fn redraw(&mut self) -> Result<(), String> {
-        let gfx = self.gfx()?;
+        let gfx = self
+            .app
+            .gfx
+            .as_mut()
+            .ok_or_else(|| "no window".to_owned())?;
         let mode = gfx.shown.unwrap_or_default();
         gfx.use_mode(mode);
-        gfx.draw(mode, false).map(|_| ())
+        gfx.draw(mode, false, self.app.ui.as_mut()).map(|_| ())
+    }
+
+    fn ui_input(&mut self) -> Option<egui::RawInput> {
+        let window = self.app.window.as_ref()?;
+        Some(
+            self.app
+                .ui
+                .as_mut()?
+                .state
+                .as_mut()?
+                .take_egui_input(window),
+        )
+    }
+
+    fn set_ui_output(&mut self, mut output: egui::FullOutput, menu_height: f32) {
+        let (Some(ui), Some(window)) = (self.app.ui.as_mut(), self.app.window.as_ref()) else {
+            return;
+        };
+        if let Some(state) = &mut ui.state {
+            state.handle_platform_output(window, std::mem::take(&mut output.platform_output));
+        }
+        ui.top_pixels = menu_height * output.pixels_per_point;
+        // textures not drawn yet are kept for the next draw
+        if let Some(previous) = ui.output.take() {
+            let mut textures = previous.textures_delta;
+            textures.append(std::mem::take(&mut output.textures_delta));
+            output.textures_delta = textures;
+        }
+        ui.output = Some(output);
+    }
+
+    fn has_view_windows(&self) -> bool {
+        true
+    }
+
+    fn sync_view_windows(&mut self, views: &[amsrust::ui::NativeView]) -> Vec<u8> {
+        let closed = std::mem::take(&mut self.app.closed_views);
+        self.app.wanted_views = views
+            .iter()
+            .filter(|view| !closed.contains(&view.key))
+            .map(|view| (view.key, view.title, view.ctx.clone()))
+            .collect();
+        closed
+    }
+
+    fn view_input(&mut self, key: u8) -> Option<egui::RawInput> {
+        let view = self.app.views.get_mut(&key)?;
+        Some(view.state.take_egui_input(&view.window))
+    }
+
+    fn set_view_output(&mut self, key: u8, output: egui::FullOutput, wanted: egui::Vec2) {
+        if let (Some(view), Some(gfx)) = (self.app.views.get_mut(&key), self.app.gfx.as_ref()) {
+            view.fit(wanted);
+            view.draw(gfx, output);
+        }
+    }
+
+    fn set_curvature(&mut self, curvature: f32) {
+        if let Some(gfx) = &mut self.app.gfx {
+            if gfx.curvature != curvature {
+                gfx.curvature = curvature;
+                // the CRT pass again, with its new glass
+                gfx.crt = None;
+            }
+        }
+    }
+
+    fn clipboard_text(&mut self) -> Option<String> {
+        self.app.ui.as_mut()?.state.as_mut()?.clipboard_text()
+    }
+
+    fn set_fullscreen(&mut self, on: bool) {
+        if on != self.fullscreen() {
+            self.app.wanted_fullscreen = Some(on);
+            self.pump();
+        }
+    }
+
+    fn fullscreen(&self) -> bool {
+        self.app.fullscreen
     }
 }
 

@@ -59,23 +59,21 @@
 use amsrust::debug::{Monitor, MonitorContext};
 use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::disc_image::load_disc_file;
-use amsrust::display::{DisplayFilter, DisplayMode};
+use amsrust::display::DisplayFilter;
 use amsrust::fdc::FdcDrive;
-use amsrust::input::HostKey;
-use amsrust::input::{HostKeyboard, HostLayout, KeyboardMapping};
 use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use amsrust::overlay::Overlay;
 use amsrust::psg::AudioConfig;
-use cli::FrontendKind;
-use frontend::{Frontend, MinifbFrontend};
+use frontend::Frontend;
 use std::collections::VecDeque;
 
 mod cli;
 mod frontend;
 mod host_audio;
 mod recorder;
+mod session;
 mod watch;
 
 use cli::{parse_args, Args};
@@ -484,23 +482,14 @@ fn main() {
             args.overlay,
         ),
         None if args.window => {
-            let mut server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            run_window(
+            let server = start_debug_server(&args, &breakpoints, &mut motherboard);
+            session::run_window(
                 &mut motherboard,
-                !args.mute,
-                args.record.as_deref(),
+                builder,
+                &args,
                 &mut typist,
                 &mut reloader,
-                server.as_mut(),
-                args.display,
-                args.gpu,
-                args.curvature,
-                args.black_level,
-                args.frontend,
-                args.turbo,
-                args.overlay,
-                args.keyboard,
-                args.host_keyboard_layout,
+                server,
             )
         }
         None if args.debug_server() => {
@@ -567,28 +556,51 @@ thread_local! {
 static WAV_EXPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn start_sound_export(args: &Args, motherboard: &mut Motherboard) {
-    if args.record_ym.is_none() && args.record_wav.is_none() {
-        return;
+    if let Some(path) = &args.record_ym {
+        start_ym(path, motherboard);
     }
-    if args.record_ym.is_some() {
-        motherboard.psg_mut().log_frames(true);
-        for (_, chip) in motherboard.expansion_sound_chips() {
-            chip.log_frames(true);
-        }
+    if let Some(path) = &args.record_wav {
+        start_wav(path, motherboard);
     }
-    if args.record_wav.is_some() {
-        if motherboard.psg().audio_config().is_none() {
-            motherboard.set_audio_output(Some(RECORD_AUDIO()));
-        }
-        WAV_EXPORT.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
+}
+
+fn with_sound_export<R>(f: impl FnOnce(&mut SoundExport) -> R) -> R {
     SOUND_EXPORT.with(|export| {
-        *export.borrow_mut() = Some(SoundExport {
-            ym: args.record_ym.clone(),
-            wav_path: args.record_wav.clone(),
+        f(export.borrow_mut().get_or_insert_with(|| SoundExport {
+            ym: None,
+            wav_path: None,
             wav: None,
-        })
+        }))
+    })
+}
+
+/// Record the AY registers (and the cards' AYs) from now on, in a YM6 file when it ends.
+fn start_ym(path: &str, motherboard: &mut Motherboard) {
+    motherboard.psg_mut().log_frames(true);
+    for (_, chip) in motherboard.expansion_sound_chips() {
+        chip.log_frames(true);
+    }
+    with_sound_export(|export| export.ym = Some(path.to_owned()));
+}
+
+/// Record the sound from now on, in a WAV file.
+fn start_wav(path: &str, motherboard: &mut Motherboard) {
+    if motherboard.psg().audio_config().is_none() {
+        motherboard.set_audio_output(Some(RECORD_AUDIO()));
+    }
+    with_sound_export(|export| {
+        export.wav_path = Some(path.to_owned());
+        export.wav = None;
     });
+    WAV_EXPORT.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn recording_ym() -> bool {
+    SOUND_EXPORT.with(|export| export.borrow().as_ref().is_some_and(|e| e.ym.is_some()))
+}
+
+fn recording_wav() -> bool {
+    WAV_EXPORT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Samples the main loop took: into the WAV file.
@@ -662,38 +674,49 @@ fn finish_printer_export(motherboard: &Motherboard, prefix: &str) {
 }
 
 fn finish_sound_export(motherboard: &mut Motherboard) {
+    finish_wav(motherboard);
+    finish_ym(motherboard);
+}
+
+/// The WAV file finished.
+fn finish_wav(motherboard: &mut Motherboard) {
     let samples = motherboard.take_audio_samples();
     export_samples(motherboard, &samples);
     WAV_EXPORT.store(false, std::sync::atomic::Ordering::Relaxed);
-    let Some(export) = SOUND_EXPORT.with(|export| export.borrow_mut().take()) else {
-        return;
-    };
-    if let (Some(wav), Some(path)) = (export.wav, &export.wav_path) {
+    let (wav, path) = with_sound_export(|export| (export.wav.take(), export.wav_path.take()));
+    if let (Some(wav), Some(path)) = (wav, path) {
         match wav.finish() {
             Ok(_) => eprintln!("sound saved: {path}"),
             Err(e) => eprintln!("{path}: {e}"),
         }
     }
-    if let Some(path) = &export.ym {
-        let frames = motherboard.psg_mut().take_logged_frames();
-        let song = std::path::Path::new(path)
-            .file_stem()
-            .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-        match std::fs::write(path, amsrust::sound_export::ym6(&frames, 50, &song)) {
-            Ok(()) => eprintln!("{path}: {} frames of AY registers", frames.len()),
-            Err(e) => eprintln!("{path}: {e}"),
-        }
-        // the cards' AYs (a PlayCity's: file.right.ym and file.left.ym)
-        for (side, chip) in motherboard.expansion_sound_chips() {
-            let side_path = std::path::Path::new(path).with_extension(format!("{side}.ym"));
-            let frames = chip.take_logged_frames();
-            match std::fs::write(
-                &side_path,
-                amsrust::sound_export::ym6(&frames, 50, &format!("{song} {side}")),
-            ) {
-                Ok(()) => eprintln!("{}: the {side} AY of a card", side_path.display()),
-                Err(e) => eprintln!("{}: {e}", side_path.display()),
-            }
+}
+
+/// The YM files written, the AY registers no longer recorded.
+fn finish_ym(motherboard: &mut Motherboard) {
+    let Some(path) = with_sound_export(|export| export.ym.take()) else {
+        return;
+    };
+    let frames = motherboard.psg_mut().take_logged_frames();
+    motherboard.psg_mut().log_frames(false);
+    let song = std::path::Path::new(&path)
+        .file_stem()
+        .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+    match std::fs::write(&path, amsrust::sound_export::ym6(&frames, 50, &song)) {
+        Ok(()) => eprintln!("{path}: {} frames of AY registers", frames.len()),
+        Err(e) => eprintln!("{path}: {e}"),
+    }
+    // the cards' AYs (a PlayCity's: file.right.ym and file.left.ym)
+    for (side, chip) in motherboard.expansion_sound_chips() {
+        let side_path = std::path::Path::new(&path).with_extension(format!("{side}.ym"));
+        let frames = chip.take_logged_frames();
+        chip.log_frames(false);
+        match std::fs::write(
+            &side_path,
+            amsrust::sound_export::ym6(&frames, 50, &format!("{song} {side}")),
+        ) {
+            Ok(()) => eprintln!("{}: the {side} AY of a card", side_path.display()),
+            Err(e) => eprintln!("{}: {e}", side_path.display()),
         }
     }
 }
@@ -851,11 +874,26 @@ struct Reloader {
 
 impl Reloader {
     fn new(args: &Args) -> Self {
+        Self::watching(
+            [
+                args.sna.clone(),
+                args.dsk_a.clone(),
+                args.dsk_b.clone(),
+                args.cdt.clone(),
+            ],
+            args.text.clone(),
+            args.type_at,
+        )
+    }
+
+    /// Watch the snapshot, the discs of drive A and B and the tape `files` (the menus' media).
+    fn watching(files: [Option<String>; 4], text: Option<String>, type_at: f64) -> Self {
+        let [sna, dsk_a, dsk_b, cdt] = files;
         let files = [
-            (args.sna.clone(), watch::Kind::Sna),
-            (args.dsk_a.clone(), watch::Kind::Dsk(FdcDrive::A)),
-            (args.dsk_b.clone(), watch::Kind::Dsk(FdcDrive::B)),
-            (args.cdt.clone(), watch::Kind::Cdt),
+            (sna.clone(), watch::Kind::Sna),
+            (dsk_a, watch::Kind::Dsk(FdcDrive::A)),
+            (dsk_b, watch::Kind::Dsk(FdcDrive::B)),
+            (cdt, watch::Kind::Cdt),
         ];
         let watcher = watch::Watcher::new(
             files
@@ -872,9 +910,9 @@ impl Reloader {
         }
         Self {
             watcher,
-            sna: args.sna.clone(),
-            text: args.text.clone(),
-            type_at: args.type_at,
+            sna,
+            text,
+            type_at,
         }
     }
 
@@ -945,18 +983,6 @@ impl Reloader {
 fn type_due_keys(typist: &mut Option<Typist>, motherboard: &mut Motherboard) {
     if let Some(typist) = typist {
         typist.update(motherboard);
-    }
-}
-
-/// The machine's state in `bemu_<n>.sna`, the first `n` free in the current directory.
-fn save_snapshot(motherboard: &Motherboard) {
-    let path = (0..)
-        .map(|n| format!("bemu_{n:04}.sna"))
-        .find(|path| !std::path::Path::new(path).exists())
-        .expect("a free name");
-    match amsrust::snapshot::save_sna(motherboard, &path) {
-        Ok(()) => eprintln!("snapshot saved: {path}"),
-        Err(e) => eprintln!("cannot save the snapshot: {e}"),
     }
 }
 
@@ -1307,320 +1333,6 @@ fn run_debug_server(
 const FRAME_T_STATES: usize = 312 * 64 * 4;
 /// At full speed, a frame is shown this often (50 a second).
 const FRAME_SHOWN_EVERY: std::time::Duration = std::time::Duration::from_millis(20);
-
-#[allow(clippy::too_many_arguments)] // the command line's options for the window
-fn run_window(
-    motherboard: &mut Motherboard,
-    sound: bool,
-    record: Option<&str>,
-    typist: &mut Option<Typist>,
-    reloader: &mut Option<Reloader>,
-    mut server: Option<&mut DebugServer>,
-    mut mode: DisplayMode,
-    gpu: bool,
-    curvature: f32,
-    black_level: u8,
-    frontend: FrontendKind,
-    mut turbo: bool,
-    show_overlay: bool,
-    keyboard: KeyboardMapping,
-    host_layout: Option<HostLayout>,
-) {
-    let (width, height) = mode.output_size();
-    let mut window: Box<dyn Frontend> = match frontend {
-        FrontendKind::Minifb => Box::new(
-            MinifbFrontend::open("amsrust", width, height, host_layout)
-                .unwrap_or_else(|e| panic!("{e}")),
-        ),
-        #[cfg(feature = "gpu-window")]
-        FrontendKind::Winit => Box::new(
-            frontend::WinitGpuFrontend::open((width, height), curvature)
-                .unwrap_or_else(|e| panic!("{e}")),
-        ),
-        #[cfg(not(feature = "gpu-window"))]
-        FrontendKind::Winit => panic!("--frontend winit needs a build with --features gpu-window"),
-    };
-    // A frontend that draws the frames itself needs a picture from the filter
-    // only to record it...
-    let direct = window.direct();
-    // ...and then on the CPU: such a frontend draws on the GPU by itself.
-    let gpu = gpu && !direct;
-    let mut filter = mode.filter_on(gpu, curvature);
-    // Cap redraws (and so input polling and emulated speed) at the CPC's
-    // own real refresh rate rather than running full tilt.
-    let audio = open_audio(sound, motherboard);
-    // The audio device's clock paces the emulation instead, if there is one; at full speed
-    // nothing does.
-    let paced_fps = if audio.is_some() { 0 } else { 50 };
-    window.set_target_fps(if turbo { 0 } else { paced_fps });
-    // The recording takes the sound in the device's format if it plays it.
-    let mut recorder = record.map(|path| {
-        let config = motherboard.psg().audio_config().unwrap_or_else(|| {
-            motherboard.set_audio_output(Some(RECORD_AUDIO()));
-            RECORD_AUDIO()
-        });
-        start_recorder(
-            path,
-            Some(config),
-            (width, height),
-            motherboard.asic().is_some(),
-        )
-    });
-
-    let mut host_keyboard = HostKeyboard::new(keyboard);
-    let explain_places = |mapping: KeyboardMapping, window: &dyn Frontend| {
-        if mapping == KeyboardMapping::Positional && !window.knows_key_places() {
-            eprintln!(
-                "keyboard: this window names the keys after the host's layout: positional on a QWERTY host only, else give --host-keyboard-layout (azerty, qwertz)"
-            );
-        }
-    };
-    explain_places(keyboard, window.as_ref());
-    let mut buffer = vec![0u32; width * height];
-    let mut f9_was_down = false;
-    let mut f10_was_down = false;
-    let mut f7_was_down = false;
-    let mut f8_was_down = false;
-    // F8's pause, without a debug server (with one, F8 pauses through it)
-    let mut paused = false;
-    let mut f6_was_down = false;
-    let mut f5_was_down = false;
-    let mut f12_was_down = false;
-    let mut overlay = show_overlay.then(Overlay::default);
-    motherboard.watch_io_writes(show_overlay);
-    // at full speed, the frames shown (at most 50 a second: presenting each would hold the
-    // emulation back to the display's rate)
-    let mut last_present = std::time::Instant::now();
-    if turbo {
-        eprintln!("speed: full (F10 for real time)");
-    }
-
-    // One whole frame per redraw, locked to the emulator's real VSYNC, not
-    // to a fixed t-state count.
-    // The debug server's pictures stay exact: no lifted black.
-    let mut monitor = if server.is_some() {
-        CrtMonitor::default()
-    } else {
-        viewing_monitor(black_level)
-    };
-    if server.is_some() {
-        monitor.keep_full_frames();
-    }
-    while window.is_open() && !stop_requested() {
-        let input = window.poll_input();
-        // F9 cycles the display (not while recording: a video has one size).
-        let f9_down = input.down.contains(&HostKey::F9);
-        if f9_down && !f9_was_down && recorder.is_none() {
-            mode = mode.next();
-            filter = mode.filter_on(gpu, curvature);
-            let (width, height) = filter.output_size();
-            buffer = vec![0u32; width * height];
-            eprintln!("display: {mode:?}");
-        }
-        f9_was_down = f9_down;
-        // F10 toggles full speed
-        let f10_down = input.down.contains(&HostKey::F10);
-        if f10_down && !f10_was_down {
-            turbo = !turbo;
-            window.set_target_fps(if turbo { 0 } else { paced_fps });
-            eprintln!("speed: {}", if turbo { "full" } else { "real time" });
-        }
-        f10_was_down = f10_down;
-        if let Some(reloader) = reloader {
-            reloader.poll(motherboard, typist);
-        }
-        // F7 saves a snapshot, in the current directory
-        let f7_down = input.down.contains(&HostKey::F7);
-        if f7_down && !f7_was_down {
-            save_snapshot(motherboard);
-        }
-        f7_was_down = f7_down;
-        // F8 pauses and resumes (F7 then saves the paused state)
-        let f8_down = input.down.contains(&HostKey::F8);
-        if f8_down && !f8_was_down {
-            let now = match server.as_deref_mut() {
-                Some(server) => {
-                    let now = !server.paused();
-                    server.set_paused(now);
-                    now
-                }
-                None => {
-                    paused = !paused;
-                    paused
-                }
-            };
-            eprintln!(
-                "{}",
-                if now {
-                    "paused (F8 resumes, F7 saves a snapshot)"
-                } else {
-                    "running"
-                }
-            );
-        }
-        f8_was_down = f8_down;
-        // F6 shows or hides the timing overlay
-        let f6_down = input.down.contains(&HostKey::F6);
-        if f6_down && !f6_was_down {
-            overlay = if overlay.is_some() {
-                None
-            } else {
-                Some(Overlay::default())
-            };
-            motherboard.watch_io_writes(overlay.is_some());
-            eprintln!(
-                "timing overlay: {}",
-                if overlay.is_some() { "on" } else { "off" }
-            );
-        }
-        f6_was_down = f6_down;
-        // F5 turns the disc of drive A over, Shift+F5 the one of drive B (3" drives)
-        let f5_down = input.down.contains(&HostKey::F5);
-        if f5_down && !f5_was_down {
-            let shift = input.down.contains(&HostKey::LeftShift)
-                || input.down.contains(&HostKey::RightShift);
-            let (drive, letter) = if shift {
-                (FdcDrive::B, 'B')
-            } else {
-                (FdcDrive::A, 'A')
-            };
-            match motherboard.fdc_mut().flip_disc(drive) {
-                Some(side) => eprintln!(
-                    "drive {letter}: disc turned over, side {} up",
-                    if side == 0 { 'A' } else { 'B' }
-                ),
-                None if motherboard.fdc().has_disk(drive) => {
-                    eprintln!(
-                        "drive {letter}: a 3.5\" drive reads both sides, nothing to turn over"
-                    )
-                }
-                None => eprintln!("drive {letter}: no disc"),
-            }
-        }
-        f5_was_down = f5_down;
-        // F12 switches between the symbolic and the positional keyboards
-        let f12_down = input.down.contains(&HostKey::F12);
-        if f12_down && !f12_was_down {
-            let mapping = host_keyboard.mapping().other();
-            host_keyboard.set_mapping(mapping);
-            eprintln!("keyboard: {}", mapping.name());
-            explain_places(mapping, window.as_ref());
-        }
-        f12_was_down = f12_down;
-        host_keyboard.apply(motherboard, &input);
-        // After the host keyboard, which would release the typed keys.
-        type_due_keys(typist, motherboard);
-
-        if let Some(server) = server.as_deref_mut() {
-            server.poll_with(motherboard, Some(&monitor));
-            if server.quit_requested() {
-                break;
-            }
-            if server.paused() {
-                // Stopped by the debugger: keep the window alive.
-                if direct {
-                    window.redraw().unwrap_or_else(|e| panic!("{e}"));
-                } else {
-                    window
-                        .present(&buffer, filter.output_size())
-                        .unwrap_or_else(|e| panic!("{e}"));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(15));
-                continue;
-            }
-        }
-        if paused {
-            if direct {
-                window.redraw().unwrap_or_else(|e| panic!("{e}"));
-            } else {
-                window
-                    .present(&buffer, filter.output_size())
-                    .unwrap_or_else(|e| panic!("{e}"));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(15));
-            continue;
-        }
-        // At full speed the frames not shown run without any picture (a quarter faster): one
-        // frame's time, then the next loop. A recording and the debug server see every frame.
-        let unseen = turbo
-            && recorder.is_none()
-            && server.is_none()
-            && last_present.elapsed() < FRAME_SHOWN_EVERY;
-        motherboard.set_video(!unseen);
-        if unseen {
-            let end = motherboard.t_state_counter().value() + FRAME_T_STATES;
-            while motherboard.t_state_counter().value() < end {
-                motherboard.execute_next_opcode_no_video();
-            }
-            motherboard.take_audio_samples();
-            motherboard.take_io_writes().for_each(drop);
-            continue;
-        }
-        let Some(mut frame) = run_frame(
-            motherboard,
-            &mut monitor,
-            server.as_deref_mut(),
-            overlay.as_mut(),
-        ) else {
-            continue; // paused mid-frame
-        };
-        if let Some(overlay) = &mut overlay {
-            overlay.draw_and_clear(&mut frame);
-        }
-
-        if !direct || recorder.is_some() {
-            filter.render(&frame, &mut buffer);
-        }
-        let samples = motherboard.take_audio_samples();
-        export_samples(motherboard, &samples);
-        if let Some(recorder) = &mut recorder {
-            let recorded = recorder
-                .samples(&samples)
-                .and_then(|()| recorder.frame(&buffer));
-            if let Err(e) = recorded {
-                eprintln!("recording stopped: {e}");
-                break;
-            }
-        }
-        if turbo {
-            // the sound of a fast-forward is dropped, and only some frames are shown
-            if last_present.elapsed() < FRAME_SHOWN_EVERY {
-                monitor.recycle(frame);
-                continue;
-            }
-            last_present = std::time::Instant::now();
-        } else {
-            play_frame_audio(audio.as_ref(), &samples, window.as_ref());
-        }
-
-        if direct {
-            window
-                .present_frame(&frame, mode)
-                .unwrap_or_else(|e| panic!("{e}"));
-        } else {
-            window
-                .present(&buffer, filter.output_size())
-                .unwrap_or_else(|e| panic!("{e}"));
-        }
-        // the next frame is drawn in this one
-        monitor.recycle(frame);
-    }
-
-    if let (Some(recorder), Some(path)) = (recorder, record) {
-        finish_recorder(recorder, path);
-    }
-
-    #[cfg(feature = "audio")]
-    if let Some(audio) = &audio {
-        let missing = audio.missing_frames();
-        if missing > 0 {
-            eprintln!(
-                "sound: {:.1}s of gaps in total (the emulation ran slower than real time)",
-                missing as f64 / audio.config().sample_rate as f64
-            );
-        }
-    }
-}
 
 #[cfg(feature = "audio")]
 type AudioOut = host_audio::AudioOut;

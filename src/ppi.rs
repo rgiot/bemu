@@ -129,7 +129,7 @@ pub enum PpiDirection {
 
 /// The brand displayed by firmware
 #[repr(u8)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 pub enum Brand {
     Lsp = 0,
     Triumph = 1,
@@ -235,6 +235,10 @@ impl Ppi {
 
     /// Set which manufacturer's name the firmware reads back from port B
     /// bits 1-3 (and therefore which one appears in the boot banner).
+    pub fn brand(&self) -> Brand {
+        self.brand
+    }
+
     pub fn set_brand(&mut self, brand: Brand) {
         self.brand = brand;
         self.drive_hardwired_port_b_bits();

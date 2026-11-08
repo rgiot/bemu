@@ -9,7 +9,9 @@ description = "The bemu Amstrad CPC emulator, to embed in a web page (see README
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-amsrust = { path = "..", default-features = false, features = ["crt-gpu"] }
+amsrust = { path = "..", default-features = false, features = ["crt-gpu", "gui"] }
+# the menu bar, the command palette and the debugger's windows (amsrust::ui), drawn over the picture
+egui = "0.33"
 image = "0.23.14"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
@@ -23,11 +25,16 @@ console_error_panic_hook = "0.1"
 [features]
 # a headless speed measure for node, see src/bench.rs
 bench = []
-default = ["playcity", "digiblaster", "willy"]
+default = ["playcity", "digiblaster", "willy", "nova", "dandanator", "albireo"]
 # the sound expansions a page can ask for (config playcity / digiblaster / willyOpl3)
 playcity = ["amsrust/playcity"]
 digiblaster = ["amsrust/digiblaster"]
 willy = ["amsrust/willy"]
+# the Nova (its NVRAM in memory) and the Dandanator (its romset uploaded, not written back)
+nova = ["amsrust/nova"]
+dandanator = ["amsrust/dandanator"]
+# the Albireo, its USB key a FAT image uploaded (kept in memory)
+albireo = ["amsrust/albireo"]
 
 [dev-dependencies]
 serde_json = "1"

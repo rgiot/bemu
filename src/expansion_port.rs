@@ -206,6 +206,15 @@ impl ExpansionPort {
         self.devices.is_empty()
     }
 
+    /// Take the first card of type `T` off the port (the cards after it move up the chain).
+    pub fn unplug<T: ExpansionDevice>(&mut self) -> Option<Box<dyn ExpansionDevice>> {
+        let index = self
+            .devices
+            .iter()
+            .position(|device| device.as_any().is::<T>())?;
+        Some(self.devices.remove(index))
+    }
+
     pub fn devices(&self) -> impl Iterator<Item = &dyn ExpansionDevice> {
         self.devices.iter().map(|device| device.as_ref())
     }
@@ -394,6 +403,7 @@ pub trait PrinterDevice: Any {
     }
 
     fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 /// The printer port: the CPC's 74LS273 latch.
@@ -407,6 +417,24 @@ impl PrinterPort {
     pub fn plug(&mut self, device: Box<dyn PrinterDevice>) {
         self.device = Some(device);
         self.latch(0);
+    }
+
+    /// Take the device off the port.
+    pub fn unplug(&mut self) -> Option<Box<dyn PrinterDevice>> {
+        self.device.take()
+    }
+
+    pub fn device_mut(&mut self) -> Option<&mut dyn PrinterDevice> {
+        self.device.as_deref_mut()
+    }
+
+    /// The device, if it is a `T`.
+    pub fn device_as<T: PrinterDevice>(&self) -> Option<&T> {
+        self.device.as_deref()?.as_any().downcast_ref()
+    }
+
+    pub fn device_as_mut<T: PrinterDevice>(&mut self) -> Option<&mut T> {
+        self.device.as_deref_mut()?.as_any_mut().downcast_mut()
     }
 
     pub fn device(&self) -> Option<&dyn PrinterDevice> {

@@ -1,0 +1,228 @@
+Menu,Sub-Menu,Sub-Sub-Menu,Sub-Sub-Sub-Menu,Command,Command when active (stop),Aim,Note,Type,Shortcut,Exists today,Origin,Seen in
+File,Drive A,Insert disc image,,drive-a-select-disc,,Select a disc to insert in drive A (open a file browser if no file is provided),"DSK, HFE, zip, or archive.zip#name.dsk. Opens the browser unless a path is given",inp,,--dsk; web insertDisc/swapDisc,draft,"WinAPE, ACE, Caprice, RVM"
+File,Drive A,New blank disc,,drive-a-new-disc,,Create a new disc in drive A (open a file browser if no file is provided),"Ask for the file to create and the format (DSK / HFE; data 178K, system, 40/80 tracks)",inp,,new,draft,"WinAPE (Format), ACE"
+File,Drive A,Flip disc,,drive-a-flip-disc,,"Flip disc for 3""5 multiside emulation","Only for a 3"" drive (one head): turns the disc over. With a 3.5"" drive both sides are selected by the FDC",act,F5,F5 / Shift+F5,draft,"WinAPE (Flip disc), ACE"
+File,Drive A,Remove disc,,drive-a-remove-disc,,Remove the disc from the drive,"Enable only when there is a disc in drive A. If 'write back' is on, the modified disc is saved first",act,,web eject(),draft,"WinAPE, ACE, Caprice"
+File,Drive A,Save disc,,drive-a-save-disc,,Write the disc of drive A back to its file now,"Enable only when the disc was modified by the CPC. An HFE stays an HFE, a DSK becomes an extended DSK",act,,--save-discs (automatic only); web getDisc(),added,"WinAPE, ACE"
+File,Drive A,Save disc as…,,drive-a-save-disc-as,,Write the disc of drive A to a new file (DSK or HFE),Enable only when there is a disc in the drive,inp,,examples/dsk_to_hfe (HFE conversion),added,"WinAPE, ACE"
+File,Drive A,Insert recent disc,,drive-a-insert-recent,,Submenu of the last discs used in drive A,Dynamic list stored in the preferences; one entry = drive-x-select-disc with that path,sub,,new,added,"WinAPE, ACE, RVM"
+File,Drive A,Kind,"3""",drive-a-original,,"Drive A is an original CPC 3"" drive",Radio. Default for 664/6128 (drive A),rad,,--drive-a 3 / --drive-b 3,filled,
+File,Drive A,Kind,"3""5",drive-a-pc,,"Drive A is a double-sided 3.5"" PC drive (80 tracks, FDC side select)",Radio,rad,,--drive-a 3.5 / --drive-b 3.5,filled,
+File,Drive A,Kind,gotek,drive-a-gotek,,Drive A is a Gotek (USB floppy emulator),"Radio. Double sided, 84 tracks, instant seek (no head to move or settle)",rad,,yes,filled,ACE
+File,Drive B,Insert disc image,,drive-b-select-disc,,Select a disc to insert in drive B (open a file browser if no file is provided),"DSK, HFE, zip, or archive.zip#name.dsk. Opens the browser unless a path is given",inp,,--dsk-b; web insertDisc/swapDisc,added,"WinAPE, ACE, Caprice, RVM"
+File,Drive B,New blank disc,,drive-b-new-disc,,Create a new disc in drive B (open a file browser if no file is provided),"Ask for the file to create and the format (DSK / HFE; data 178K, system, 40/80 tracks)",inp,,new,added,"WinAPE (Format), ACE"
+File,Drive B,Flip disc,,drive-b-flip-disc,,"Flip disc for 3""5 multiside emulation","Only for a 3"" drive (one head): turns the disc over. With a 3.5"" drive both sides are selected by the FDC",act,Shift+F5,F5 / Shift+F5,added,"WinAPE (Flip disc), ACE"
+File,Drive B,Remove disc,,drive-b-remove-disc,,Remove the disc from the drive,"Enable only when there is a disc in drive B. If 'write back' is on, the modified disc is saved first",act,,web eject(),added,"WinAPE, ACE, Caprice"
+File,Drive B,Save disc,,drive-b-save-disc,,Write the disc of drive B back to its file now,"Enable only when the disc was modified by the CPC. An HFE stays an HFE, a DSK becomes an extended DSK",act,,--save-discs (automatic only); web getDisc(),added,"WinAPE, ACE"
+File,Drive B,Save disc as…,,drive-b-save-disc-as,,Write the disc of drive B to a new file (DSK or HFE),Enable only when there is a disc in the drive,inp,,examples/dsk_to_hfe (HFE conversion),added,"WinAPE, ACE"
+File,Drive B,Insert recent disc,,drive-b-insert-recent,,Submenu of the last discs used in drive B,Dynamic list stored in the preferences; one entry = drive-x-select-disc with that path,sub,,new,added,"WinAPE, ACE, RVM"
+File,Drive B,Kind,"3""",drive-b-original,,"Drive B is an original CPC 3"" drive",Radio. Default for 664/6128 (drive A),rad,,--drive-a 3 / --drive-b 3,added,
+File,Drive B,Kind,"3""5",drive-b-pc,,"Drive B is a double-sided 3.5"" PC drive (80 tracks, FDC side select)",Radio,rad,,--drive-a 3.5 / --drive-b 3.5,added,
+File,Drive B,Kind,gotek,drive-b-gotek,,Drive B is a Gotek (USB floppy emulator),"Radio. Double sided, 84 tracks, instant seek (no head to move or settle)",rad,,yes,added,ACE
+File,Swap disc A and B,,,drives-swap,,Exchange the discs of drive A and drive B,Enabled when at least one drive holds a disc,act,,new,fixed,
+File,Write modified discs back automatically,,,discs-save-automatically-toggle,,"Write a disc back to its file when the drive motor stops, when it is replaced and at exit",Checkable; off by default,tog,,--save-discs,added,
+File,Tape,Insert,,tape-insert,,Insert a CDT/TZX tape in the cassette deck (open a file browser if no file is provided),"Available only for a machine with a tape (CPC 464 and 464+ built in; on a 664/6128 the deck is the external one, so keep it enabled but note |TAPE)",inp,,--cdt; web insertTape,filled,"WinAPE, ACE, RVM"
+File,Tape,Eject,,tape-eject,,Remove the tape from the deck,Enable only when a tape is inserted,act,,web ejectTape(),filled,
+File,Tape,Record,,tape-record,tape-record-stop,Record what the CPC writes to the cassette port in a new CDT,"Toggle: starts / stops the recording; stop asks where to save the CDT (direct recording blocks, 2 µs samples; downloaded on the web)",ss,,yes,filled,"WinAPE, ACE"
+File,Tape,Play,,tape-play,,Press PLAY on the deck (the tape runs when the CPC starts the motor),Enable only when a tape is inserted,act,,web tapeControl('play'),added,"WinAPE, ACE"
+File,Tape,Stop,,tape-stop,,Press STOP on the deck,,act,,web tapeControl('stop'),added,
+File,Tape,Rewind,,tape-rewind,,Rewind the tape to its start,,act,,web tapeControl('rewind'),added,"WinAPE, ACE"
+File,Albireo,Select USB path,,albireo-select-path,,"Choose the USB key of the Albireo: a folder, or a FAT image (whole or partitioned)",Plugs the Albireo if it is not (see machine-expansion-albireo-toggle),inp,,--albireo,draft,
+File,Albireo,Eject USB key,,albireo-eject,,"Remove the USB key (the Albireo stays plugged, with no key)",Enable only when a key is selected,act,,new,filled,
+File,M4,Select SD card folder,,m4-select-folder,,Choose the folder that is the M4's SD card,Plugs the M4 if it is not,inp,,--m4,filled,
+File,M4,Eject SD card,,m4-eject,,Unplug the SD card folder,Enable only when an SD folder is set,act,,new,filled,
+File,Cartridge,Insert cartridge,,cartridge-insert,,Insert a CPC+ cartridge (.cpr or zip) in place of the system cartridge,Enabled only on Amstrad Plus (the machine restarts),inp,,--cart,fixed,
+File,Cartridge,Remove cartridge,,cartridge-remove,,"Go back to the system cartridge (firmware, BASIC, AMSDOS)",Enabled only when there is a cartridge,act,,new,filled,
+File,Dandanator,Select romset,,dandanator-select-romset,,Choose the 512K romset of a CPC Dandanator Mini (boots in place of the firmware),Plugs the Dandanator; the machine restarts,inp,,--dandanator,added,
+File,Dandanator,Eject romset,,dandanator-eject,,Unplug the Dandanator,Enable only when plugged,act,,new,added,
+File,Snapshot,Load snapshot,,snapshot-load,,Load an SNA snapshot (open a file browser if no file is provided),,inp,,--sna; web loadSnapshot,draft,all
+File,Snapshot,Save snapshot,,snapshot-save,,Save the machine state in an SNA v3 file (open a file browser if no file is provided),,inp,,web saveSnapshot,draft,all
+File,Snapshot,Update snapshot,,snapshot-update,,Save the machine state again in the last snapshot file,Enable only after a snapshot was loaded or saved,act,,new,fixed,
+File,Snapshot,Quick snapshot,,snapshot-quick-save,,Save the state at once in bemu_NNNN.sna of the current directory,No dialog,act,F7,F7,added,Caprice (F-key)
+File,Snapshot,Save snapshot when the emulator exits,,snapshot-save-on-exit-toggle,,Save the state in a chosen file when the run ends,Checkable; asks the file,tog,,--save-sna,added,
+File,Snapshot,Version,Version 2,snapshot-version-2,,"Write version 2 snapshots (for older emulators: no CRTC counters, no CPC+ state)",Radio; CSL's snapshot_version,rad,,new,added,
+File,Snapshot,Version,Version 3,snapshot-version-3,,Write version 3 snapshots (the CRTC counters and the CPC+ state included),Radio; default,rad,,new,added,
+File,Machine,Load configuration,,config-load,,"Load a machine configuration (model, CRTC, RAM, ROMs, expansions, display)",Open a file browser if no file is provided,inp,,new,filled,"WinAPE, ACE, RVM"
+File,Machine,Save configuration,,config-save,,Save the current machine configuration to a file,Same file format as the command line (one option per line) is a possibility,inp,,new,filled,
+File,Machine,Restore default configuration,,config-reset,,"Go back to the default machine (6128, CRTC 0, GA 40010, raw display)",,act,,new,added,
+File,Load CSL,,,csl-load,,Play a CSL script (open a file browser if no file is provided),"Plays on a machine of its own (the command line's, the script's settings applied at its reset), which becomes the window's when the script ends; screenshots in the script's folder",inp,,web runCsl; desktop window,draft,
+File,Stop CSL,,,csl-stop,,Stop the running CSL script; the machine goes on,Enable only while a script plays,act,,web stopCsl(),added,
+File,Watch files for changes,,,files-watch-toggle,,"Load again the snapshot, discs and tape when their files change on the host",Checkable. Edit / assemble / see loop,tog,,--watch,added,
+File,Exit,,,exit,,Close the emulator,,act,F4 (window close),F4; /api/quit; monitor q,draft,all
+Debug,Run,,,debug-run,,Resume the emulation,Enable only when paused,act,F8,F8; monitor c; /api/config paused=false,draft,
+Debug,Pause,,,debug-pause,,Pause the emulation,Enable only when running,act,F8,F8; /api/config paused=true,draft,
+Debug,Reset,,,debug-reset,,Press the CPC reset button (RAM kept),Alias of machine-reset-soft; keep one of the two menu entries if the duplication bothers you,act,,/api/config do_soft_reset,draft,
+Debug,Step-in,,,debug-step-in,,Run one instruction (enter calls),Pauses afterwards,act,,/api/step; monitor s,draft,all debuggers
+Debug,Step-out,,,debug-step-out,,Run until the current routine returns,Runs until the routine returns: SP back above its value at the start,act,,yes,draft,all debuggers
+Debug,Step over,,,debug-step-over,,"Run one instruction, running a CALL / RST / DJNZ loop as a whole","Label in the draft was cut at 'Step-', its command was 'debug-step'; renamed so the three step commands are in/out/over. monitor n = next",act,,monitor n,fixed,all debuggers
+Debug,Step one frame,,,debug-step-frame,,"Run until the next VSYNC, then pause",Enable only when paused,act,,web stepFrame(),added,
+Debug,Run to…,Address,,debug-run-to-address,,Run until a CPU address (or symbol) is reached,Asks the address / symbol,inp,,monitor r ADDR (sets PC and runs); /api/exec,added,
+Debug,Run to…,Beam position,,debug-run-to-beam,,"Run until the beam reaches a position (x/y, or NOP in line)",Asks the position,inp,,/api/raster_bp,added,"ACE, RVM"
+Debug,Set PC…,,,debug-set-pc,,Jump: set the program counter,Asks the address,inp,,/api/exec,added,
+Debug,Speed,Normal,,speed-normal,,"Real time (100 %, 50 Hz)",Radio; default,rad,F10,F10 toggles,filled,
+Debug,Speed,Maximum,,speed-max,,"Full speed: as fast as the host can, silent",Radio; F10 toggles between normal and maximum,rad,F10,--turbo; F10; web setSpeed('max'),filled,"WinAPE, ACE, RVM"
+Debug,Speed,25 %,,speed-25,,Run at 25 % of the real speed,Radio; the web library accepts any factor,rad,,web setSpeed(factor),added,"ACE, RVM"
+Debug,Speed,50 %,,speed-50,,Run at 50 % of the real speed,Radio; the web library accepts any factor,rad,,web setSpeed(factor),added,"ACE, RVM"
+Debug,Speed,200 %,,speed-200,,Run at 200 % of the real speed,Radio; the web library accepts any factor,rad,,web setSpeed(factor),added,"ACE, RVM"
+Debug,Speed,400 %,,speed-400,,Run at 400 % of the real speed,Radio; the web library accepts any factor,rad,,web setSpeed(factor),added,"ACE, RVM"
+Debug,Breakpoints,Add execution breakpoint…,,breakpoint-add,,"Stop when the PC reaches an address or symbol (label, label+n, Bnn:hhhh)",Asks the address,inp,,monitor b; /api/z80_bp,added,all debuggers
+Debug,Breakpoints,Add memory / I/O breakpoint…,,breakpoint-add-advanced,,"Stop, watch or count on a memory or I/O access, with mask / value / condition",Dialog,inp,,/api/breakpoints,added,"WinAPE, ACE, RVM"
+Debug,Breakpoints,Add raster breakpoint…,,breakpoint-add-raster,,Stop when the beam reaches a position,Asks x / y / NOP,inp,,/api/raster_bp,added,ACE
+Debug,Breakpoints,Add BASIC line breakpoint…,,breakpoint-add-basic,,Stop at a BASIC line,Asks the line,inp,,/api/basic_bp,added,
+Debug,Breakpoints,Show breakpoints,,view-breakpoints,,"Open the list of all breakpoints (remove one, enable, disable)",,act,,monitor i b; /api/breakpoints,added,
+Debug,Breakpoints,Remove all,,breakpoints-clear,,Remove every breakpoint,monitor 'clear ADDR' removes one,act,,DELETE /api/breakpoints,added,
+Debug,View,Z80 registers,,view-z80,,Open the Z80 registers,,act,,monitor i z; /api/z80,added,
+Debug,View,Stack,,view-stack,,Open the stack,,act,,monitor i s,added,
+Debug,View,CRTC,,view-crtc,,Open the CRTC registers and counters,,act,,monitor i c; /api/crtc,added,
+Debug,View,Gate Array,,view-ga,,"Open the Gate Array state (mode, pens, ROM / RAM banking)",,act,,monitor i g; /api/ga,added,
+Debug,View,PSG,,view-psg,,"Open the PSG registers, decoded",,act,,/api/psg,added,
+Debug,View,FDC,,view-fdc,,"Open the FDC status, motor, heads",,act,,/api/fdc,added,
+Debug,View,Memory map,,view-memmap,,"Open what each 16K region maps (ROM or RAM bank, RMR, MMR)",,act,,/api/memmap,added,
+Debug,View,Memory,,view-memory,,Open the memory (hex) viewer / editor,,act,,monitor peek; /api/ram,added,
+Debug,View,Disassembly,,view-disassembly,,Open the disassembly at PC or at an address,,act,,monitor d,added,
+Debug,View,Instruction history,,view-history,,Open the last instructions run,,act,,/api/history,added,
+Debug,View,Symbols,,view-symbols,,Open the known symbols (snapshot chunks and symbol files),,act,,/api/symbols,added,
+Debug,View,Beam position,,view-beam,,Show the beam position and the CPU / CRTC counters,,act,,"/api/ping, /api/state",added,
+Debug,View,PPI,,view-ppi,,"Open the PPI: its ports decoded (VSYNC, brand, cassette, motor, PSG control) and the keyboard matrix",,act,,new,added,
+Debug,View,Tape,,view-tape,,"Open the cassette deck: position, duration, PLAY, motor, level, the recording",,act,,new,added,
+Debug,View,ASIC (CPC+),,view-asic,,"Open the CPC+ ASIC: lock, raster interrupt, split, DMA, its 32-colour palette",,act,,new,added,
+Debug,Counters,New counter…,,counter-new,,Create a NOP counter,Asks the name,inp,,POST /api/counters,added,"ACE, RVM"
+Debug,Counters,Start / stop counter…,,counter-toggle,,Start or stop a counter,,inp,,POST /api/counters,added,
+Debug,Counters,Reset counter…,,counter-reset,,Reset a counter to 0,,inp,,POST /api/counters,added,
+Debug,Counters,Delete counters,,counter-delete,,"Delete a counter, or all",,inp,,DELETE /api/counters,added,
+Debug,Counters,Show counters,,view-counters,,"Open the counters: their NOPs, start / stop, reset, delete",,act,,GET /api/counters,added,"ACE, RVM"
+Debug,Load symbols…,,,symbols-load,,Load a symbol file (name equ #4000 …) for the viewers and breakpoints,,inp,,--sym,added,"WinAPE, ACE, RVM"
+Debug,Poke memory…,,,memory-poke,,Write bytes at an address (or bank),,inp,,POST /api/ram,added,
+Debug,Set register…,,,z80-set-register,,Change a Z80 register,,inp,,POST /api/z80,added,
+Debug,Keyboard matrix…,,,keyboard-write,,Set the keyboard matrix (the 10 rows the PPI scans),"CSL's keyboard_write: 10 hexadecimal rows, a bit at 0 is a key down",inp,,new,added,
+Debug,Set history size…,,,history-set-size,,Number of instructions kept (1-100000),,inp,,POST /api/config history_size,added,
+Debug,BASIC,Export listing…,,basic-export,,Save the BASIC program in RAM as text,,inp,,GET /api/basic_export,added,
+Debug,BASIC,Step statement,,basic-step,,Run to the next BASIC statement,,act,,POST /api/basic_step,added,
+Debug,BASIC,Run to line…,,basic-run-to,,"Run to a BASIC line or statement, once",,inp,,POST /api/basic_runto,added,
+Debug,Debug server,Enable,,debug-server-toggle,,Serve the AMSpiriT-Lite compatible API on 127.0.0.1,Checkable,tog,,--debug-server,added,
+Debug,Debug server,Port…,,debug-server-set-port,,Port of the debug server,Asks the port,inp,,--debug-port,added,
+Debug,Debug server,Open API documentation,,debug-server-open-doc,,Open GET /api/doc in the browser,Enable only when the server runs,act,,/api/doc,added,
+Debug,Overlay,Show CRTC / Gate Array writes,,overlay-toggle,,Draw where the CPU wrote to the CRTC / GA (screen and screenshots),Checkable. Also in the Video menu? Keep it here: it is a debug aid,tog,F6,--overlay; F6,added,
+Machine,Reset,,,machine-reset-soft,,"Reset button: reset the CPU / chips, RAM kept",,act,,/api/config do_soft_reset,added,all
+Machine,Power cycle,,,machine-reset-hard,,Switch the machine off and on (RAM cleared),,act,,/api/config do_hard_reset; web reset(),added,all
+Machine,CRTC,CRTC 0,,machine-crtc-0,,CRTC type 0,Radio; applied without losing the state,rad,,--crtc,draft,ACE
+Machine,CRTC,CRTC 1,,machine-crtc-1,,CRTC type 1,Radio,rad,,--crtc,draft,
+Machine,CRTC,CRTC 2,,machine-crtc-2,,CRTC type 2,Radio,rad,,--crtc,draft,
+Machine,CRTC,CRTC 3,,machine-crtc-3,,CRTC type 3,Radio,rad,,--crtc,draft,
+Machine,CRTC,CRTC 4,,machine-crtc-4,,CRTC type 4 (draft stopped at 3; the code accepts 0-4),Radio,rad,,--crtc,added,
+Machine,Gate Array,40007 / 40008,,machine-ga-40007,,Early Gate Array: palette writes are one pixel ahead,Radio; the code makes the 40007 and 40008 one type,rad,,--ga 40007|40008,filled,
+Machine,Gate Array,40010,,machine-ga-40010,,Gate Array 40010 (default),Radio,rad,,--ga 40010,filled,
+Machine,Platform,Amstrad CPC 464,,machine-platform-cpc464,,Switch to a Amstrad CPC 464,"Radio; the machine restarts, discs / tape stay in, expansions compatible with the model stay plugged. Plus models force CRTC 3 (ASIC)",rad,,--model,draft,all
+Machine,Platform,Amstrad CPC 664,,machine-platform-cpc664,,Switch to a Amstrad CPC 664,Radio,rad,,--model,draft,all
+Machine,Platform,Amstrad CPC 6128,,machine-platform-cpc6128,,Switch to a Amstrad CPC 6128,Radio,rad,,--model,draft,all
+Machine,Platform,Amstrad 464 Plus,,machine-platform-cpc464plus,,Switch to a Amstrad 464 Plus,Radio,rad,,--model,draft,all
+Machine,Platform,Amstrad 6128 Plus,,machine-platform-cpc6128plus,,Switch to a Amstrad 6128 Plus,Radio,rad,,--model,draft,all
+Machine,Platform,GX4000,,machine-platform-gx4000,,Switch to a GX4000,Radio,rad,,--model,draft,all
+Machine,ROM language,English,,machine-language-en,,UK ROMs and QWERTY keyboard,"Radio. Adapts to the platform: on a Plus it chooses the uk or fr cartridge, on a 6128 the 6128 or azerty ROM; disabled on 464 / 664 (no French ROM set shipped)",rad,,default,filled,
+Machine,ROM language,French,,machine-language-fr,,French ROMs and AZERTY keyboard,Radio,rad,,--french; web language:'fr',filled,
+Machine,Brand,Amstrad,,machine-brand-amstrad,,The name shown at start-up (Amstrad); the PPI's brand jumpers,Radio; Amstrad is the default,rad,,web config brand,added,
+Machine,Brand,Schneider,,machine-brand-schneider,,The name shown at start-up (Schneider); the PPI's brand jumpers,Radio; Amstrad is the default,rad,,web config brand,added,
+Machine,Brand,Awa,,machine-brand-awa,,The name shown at start-up (Awa); the PPI's brand jumpers,Radio; Amstrad is the default,rad,,web config brand,added,
+Machine,Brand,Orion,,machine-brand-orion,,The name shown at start-up (Orion); the PPI's brand jumpers,Radio; Amstrad is the default,rad,,web config brand,added,
+Machine,Brand,Saisho,,machine-brand-saisho,,The name shown at start-up (Saisho); the PPI's brand jumpers,Radio; Amstrad is the default,rad,,web config brand,added,
+Machine,Brand,Solavox,,machine-brand-solavox,,The name shown at start-up (Solavox); the PPI's brand jumpers,Radio; Amstrad is the default,rad,,web config brand,added,
+Machine,Brand,Triumph,,machine-brand-triumph,,The name shown at start-up (Triumph); the PPI's brand jumpers,Radio; Amstrad is the default,rad,,web config brand,added,
+Machine,Brand,ISP,,machine-brand-lsp,,The name shown at start-up (ISP); the PPI's brand jumpers,Radio; Amstrad is the default,rad,,web config brand,added,
+Machine,Disc interface,Model default,,machine-disc-interface-default,,"Built in on 664 / 6128, none on 464",Radio,rad,,new,added,
+Machine,Disc interface,DDI-1 (AMSDOS),,machine-disc-interface-ddi1,,Add a DDI-1 to a 464,Radio; 464 only,rad,,--ddi,added,
+Machine,Disc interface,None,,machine-disc-interface-none,,Remove the disc interface,Radio,rad,,--no-disc,added,
+Machine,Memory expansion,None,,machine-ram-default,,"Model's own RAM (64K on 464 / 664, 128K on 6128)",Radio; default,rad,,default,draft,
+Machine,Memory expansion,64K total,,machine-ram-64,,"64K of RAM, the extension banked as a 6128's","Radio; the draft had two '???' here, the code accepts 64 … 576 in 64K steps. 4 MB exists in the web library only",rad,,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+Machine,Memory expansion,128K total,,machine-ram-128,,"128K of RAM, the extension banked as a 6128's",Radio,rad,,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+Machine,Memory expansion,192K total,,machine-ram-192,,"192K of RAM, the extension banked as a 6128's",Radio,rad,,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+Machine,Memory expansion,256K total,,machine-ram-256,,"256K of RAM, the extension banked as a 6128's",Radio,rad,,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+Machine,Memory expansion,320K total,,machine-ram-320,,"320K of RAM, the extension banked as a 6128's",Radio,rad,,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+Machine,Memory expansion,384K total,,machine-ram-384,,"384K of RAM, the extension banked as a 6128's",Radio,rad,,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+Machine,Memory expansion,448K total,,machine-ram-448,,"448K of RAM, the extension banked as a 6128's",Radio,rad,,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+Machine,Memory expansion,512K total,,machine-ram-512,,"512K of RAM, the extension banked as a 6128's",Radio,rad,,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+Machine,Memory expansion,576K total,,machine-ram-576,,"576K of RAM, the extension banked as a 6128's",Radio,rad,,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+Machine,Memory expansion,4160K total (4M card),,machine-ram-4160,,"A 4M RAM card (Yarek, RAM7, CPC4MB): 64 banks of 64K on the expansion port",Radio; CSL's memory_exp 4MB,rad,,--ram (web: ramKb 4160),added,
+Machine,ROMs,Load upper ROM in slot…,,rom-load,,Put a 16K ROM file (or an embedded one) in an upper ROM slot 0-255,Asks slot and file,inp,,--rom SLOT=FILE,added,"WinAPE, ACE, RVM"
+Machine,ROMs,Remove ROM from slot…,,rom-remove,,Empty an upper ROM slot,Asks the slot,inp,,new,added,
+Machine,ROMs,Orgams set (+576K RAM),,rom-set-orgams,,Plug the five Orgams ROMs (slots 10-14) and 576K of RAM,Checkable,tog,,--orgams,added,
+Machine,ROMs,UniDOS set,,rom-set-unidos,,"Plug UniDOS as its manual advises (slots 1, 7, 14, 15, 27)",Checkable; adds the Nova / Albireo / M4 variants as they are plugged,tog,,--rom inner://unidos…,added,
+Machine,ROMs,RulezCharge,,rom-set-rulezcharge,,"Plug the RulezCharge ROM (slot 5), downloads from cpcrulez.fr",Needs the M4,tog,,--rom 5=inner://rulezcharge,added,
+Machine,ROMs,List embedded ROMs,,rom-list,,Show the ROMs embedded in the executable,,act,,--list-roms,added,
+Machine,Keyboard,Symbolic (types what the host key types),,keyboard-mapping-symbolic,,"A key types the same character on the CPC, whatever the languages",Radio; default,rad,F12,--keyboard symbolic,added,VICE (symbolic / positional)
+Machine,Keyboard,Positional (key at the same place),,keyboard-mapping-positional,,"A key presses the CPC key at its place, for games",Radio,rad,F12,--keyboard positional,added,
+Machine,Keyboard,Switch mapping,,keyboard-mapping-toggle,,Alternate symbolic and positional,,act,F12,F12,added,
+Machine,Keyboard,Host layout: auto,,keyboard-host-layout-auto,,Host keyboard layout: auto,Radio. Needed for the positional mapping on Linux with minifb only; hidden elsewhere,rad,,--host-keyboard-layout,added,
+Machine,Keyboard,Host layout: qwerty,,keyboard-host-layout-qwerty,,Host keyboard layout: qwerty,Radio. Needed for the positional mapping on Linux with minifb only; hidden elsewhere,rad,,--host-keyboard-layout,added,
+Machine,Keyboard,Host layout: azerty,,keyboard-host-layout-azerty,,Host keyboard layout: azerty,Radio. Needed for the positional mapping on Linux with minifb only; hidden elsewhere,rad,,--host-keyboard-layout,added,
+Machine,Keyboard,Host layout: qwertz,,keyboard-host-layout-qwertz,,Host keyboard layout: qwertz,Radio. Needed for the positional mapping on Linux with minifb only; hidden elsewhere,rad,,--host-keyboard-layout,added,
+Machine,Expansions,Albireo,Plugged,expansion-albireo-toggle,,Plug / unplug the Albireo (CH376 at &FE80),Checkable; plugging asks the USB path (albireo-select-path),tog,,--albireo,filled,
+Machine,Expansions,Nova,Plugged,expansion-nova-toggle,,"Plug / unplug the Nova (32K NVRAM, a clock)",Checkable; plugging asks the NVRAM file,tog,,--nova,filled,
+Machine,Expansions,Nova,NVRAM file…,nova-select-file,,Choose the file that keeps the NVRAM,,inp,,--nova,added,
+Machine,Expansions,Printer,DMP2000,expansion-dmp2000-toggle,,Plug / unplug an Amstrad DMP2000 on the printer port,"Checkable; asks the output prefix (PREFIX.txt, .prn, _001.png…)",tog,,--dmp2000,filled,
+Machine,Expansions,Printer,Character set: USA,printer-charset-usa,,DMP2000 character set: usa,Radio; the printer DIP switches (ESC R n changes it),rad,,--dmp2000-charset,filled,
+Machine,Expansions,Printer,Character set: France,printer-charset-france,,DMP2000 character set: france,Radio,rad,,--dmp2000-charset,filled,
+Machine,Expansions,Printer,Character set: Germany,printer-charset-germany,,DMP2000 character set: germany,Radio,rad,,--dmp2000-charset,filled,
+Machine,Expansions,Printer,Character set: UK,printer-charset-uk,,DMP2000 character set: uk,Radio,rad,,--dmp2000-charset,filled,
+Machine,Expansions,Printer,Character set: Denmark,printer-charset-denmark,,DMP2000 character set: denmark,Radio,rad,,--dmp2000-charset,filled,
+Machine,Expansions,Printer,Character set: Sweden,printer-charset-sweden,,DMP2000 character set: sweden,Radio,rad,,--dmp2000-charset,filled,
+Machine,Expansions,Printer,Character set: Italy,printer-charset-italy,,DMP2000 character set: italy,Radio,rad,,--dmp2000-charset,filled,
+Machine,Expansions,Printer,Character set: Spain,printer-charset-spain,,DMP2000 character set: spain,Radio,rad,,--dmp2000-charset,filled,
+Machine,Expansions,Printer,Character set: Japan,printer-charset-japan,,DMP2000 character set: japan,Radio,rad,,--dmp2000-charset,filled,
+Machine,Expansions,Printer,Real-time printing,printer-realtime-toggle,,"105 characters a second, 200 ms a line feed (BUSY meanwhile)",Checkable,tog,,--dmp2000-realtime,filled,
+Machine,Expansions,Printer,Alternate EPROM…,printer-select-rom,,Another 16K EPROM for the printer's characters,,inp,,--dmp2000-rom,added,
+Machine,Expansions,Printer,Save printout now,printer-save-printout,,"Write what was printed (text, bytes, sheets) without waiting for the end",Enable only when printed,act,,at the end of the run only,added,
+Machine,Expansions,Digiblaster,Plugged,expansion-digiblaster-toggle,,DAC on the printer port (&EFxx),Checkable,tog,,--digiblaster; web config,added,
+Machine,Expansions,PlayCity,Plugged,expansion-playcity-toggle,,Two more AYs and a CTC on the expansion port,Checkable,tog,,--playcity,added,
+Machine,Expansions,Willy,OPL3LPT,willy-opl3-toggle,,Plug / unplug Willy's OPL3LPT (OPL3 at &FEBC …),Checkable,tog,,--willy-opl3,filled,
+Machine,Expansions,Willy,OPL3LPT base address…,willy-opl3-set-address,,"Willy's jumper: &FEBC, &FEAC, &FEA4, &FE9C, &FE94, &FE8C, &FE84",Radio list of the 7 values (single command with an argument),inp,,--willy-opl3-at,filled,
+Machine,Expansions,Willy,S2P (General MIDI),willy-s2p-toggle,,Plug / unplug Willy's S2P,Checkable; plugging asks the SoundFont,tog,,--willy-s2p,filled,
+Machine,Expansions,Willy,S2P SoundFont…,willy-s2p-select-soundfont,,Choose the .sf2 file,,inp,,--willy-s2p,added,
+Machine,Expansions,Willy,S2P base address…,willy-s2p-set-address,,Willy's jumper for the S2P (as the OPL3LPT),,inp,,--willy-s2p-at,added,
+Machine,Expansions,M4,Plugged,expansion-m4-toggle,,Plug / unplug the M4 board,Checkable; plugging asks the SD folder (m4-select-folder),tog,,--m4,added,
+Machine,Expansions,M4,WiFi,m4-wifi-toggle,,The M4's WiFi on / off (the host's network),Checkable; on by default,tog,,"--m4-no-wifi; |WIFI,0",added,
+Machine,Expansions,M4,ROM…,m4-select-rom,,Another ROM than the bundled v2.0.8,,inp,,--m4-rom,added,
+Machine,Expansions,M4,ROM slot…,m4-set-slot,,The slot of the M4's ROM (6 by default),,inp,,--m4-slot,added,
+Machine,Expansions,Booster,None,booster-none,,No CPC Booster,Radio; default,rad,,default,added,
+Machine,Expansions,Booster,Booster+,booster-plus,,CPC Booster+ at &FF00-&FF27,Radio,rad,,--booster,added,
+Machine,Expansions,Booster,MiniBooster,booster-mini,,The Booster+'s variant (&FF01 reads 238),Radio,rad,,--miniboster,added,
+Machine,Expansions,Booster,UART…,booster-set-uart,,"Loopback, or a TCP null modem (listen:ADDR, connect:ADDR)",Enable only with a Booster,inp,,--booster-uart,added,
+Machine,Expansions,Booster,EEPROM file…,booster-select-eeprom,,File that keeps the 512 bytes of EEPROM,Enable only with a Booster,inp,,--booster-eeprom,added,
+Machine,Expansions,Booster,Program memory file…,booster-select-flash,,File of the 16K program memory (a dump of the BIOS),Enable only with a Booster,inp,,--booster-flash,added,
+Machine,Expansions,Booster,ADC input file…,booster-select-adc,,"What the ADC samples (WAV or raw bytes), looped",Enable only with a Booster,inp,,--booster-adc,added,
+Machine,Expansions,Dandanator,Writable,dandanator-writable-toggle,,What the CPC programs into the flash goes back to the romset file,Checkable; enable only with a romset,tog,,--dandanator-writable,added,
+Machine,Expansions,Dandanator,Plugged,expansion-dandanator-toggle,,Plug / unplug the Dandanator,Same as dandanator-select-romset / -eject,tog,,--dandanator,added,
+Audio,Stereo,,,audio-stereo,,Stereo output (default),Radio; selected by default,rad,,default,filled,
+Audio,Mono,,,audio-mono,,Mono output (channels mixed),Radio,rad,,host_audio mono mode,added,
+Audio,Mute,,,audio-mute-toggle,,Silence the sound,Checkable,tog,,--mute; web setMuted,filled,all
+Audio,Volume,Up,,audio-volume-up,,Louder,,act,,web setVolume,added,
+Audio,Volume,Down,,audio-volume-down,,Quieter,,act,,web setVolume,added,
+Audio,Volume,Set…,,audio-volume-set,,Volume 0-100 %,,inp,,web setVolume,added,
+Audio,Save WAV,,,wav-start,wav-stop,Record the sound in a WAV file (asks the file),Checkable: selected when running; another click stops the capture. The sound of full speed is not kept,ss,,--record-wav,fixed,
+Audio,Save YM,,,ym-start,ym-stop,Record the AY registers (once a frame) in a YM6 file,Checkable: selected when running; another click stops the capture,ss,,--record-ym,fixed,
+Video,Save Screenshot,,,screenshot-save,,Save the last frame as a PNG (asks the file),,inp,,--screenshot; web screenshot(),draft,all
+Video,Copy Screenshot,,,screenshot-copy,,Copy the last frame to the clipboard,,act,,new,added,
+Video,Screenshot series,,,screenshot-series-start,screenshot-series-stop,Save a screenshot every N seconds or frames (1f = every frame),"Checkable; asks directory, interval, first screenshot time",ss,,--screenshot DIR --every --from,added,
+Video,Save Video,,,video-start,video-stop,Record a video with sound through ffmpeg (asks the file),Checkable: selected when running; another click stops the capture. Needs ffmpeg; no display change while recording,ss,,--record,filled,
+Video,Rendering,Raw,,video-rendering-raw,,The monitor's ideal picture,Radio,rad,F9 cycles,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
+Video,Rendering,CTM,,video-rendering-ctm,,Amstrad CTM644 colour monitor tube,Radio,rad,,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
+Video,Rendering,GT65,,video-rendering-gt65,,Amstrad GT65 green monitor tube,Radio,rad,,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
+Video,Rendering,Trinitron,,video-rendering-trinitron,,Sony Trinitron-like tube,Radio,rad,,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
+Video,Rendering,Atari,,video-rendering-atari,,Atari monitor tube,"Radio; draft listed 4 of the 5 profiles, 'Atari' was missing",rad,,--display; web setDisplay,added,"WinAPE (colour / green), ACE"
+Video,Rendering,Next,,video-rendering-next,,Cycle through the renderings,Not while recording a video,act,F9,F9,added,
+Video,Curvature…,,,video-curvature-set,,How curved the CRT glass is: 0 (flat) to 4,Slider / asks the value,inp,,--curvature; web setCurvature,added,
+Video,Black level…,,,video-black-level-set,,"Grey of a black ink, 0-255 (default 8)",Slider / asks the value,inp,,--black-level,added,
+Video,Render CRT on the GPU,,,video-crt-gpu-toggle,,Draw the CRT with the GPU,Checkable; hidden if the build lacks the feature,tog,,--crt-gpu,added,
+Video,Fullscreen,,,video-fullscreen-toggle,,Toggle fullscreen,winit window only (not minifb),tog,F11,F11; web fullscreen(),added,all
+Tools,Auto-type,Type text…,,autotype-text,,"Type text on the CPC keyboard (keys as CSL key_output: \n, \(RET), \(WAIT n)…)",Asks the text,inp,,--type; /api/keytype; web typeText,filled,
+Tools,Auto-type,Paste clipboard,,autotype-paste,,Type the clipboard on the CPC keyboard,,act,Ctrl+V,web typeText,filled,"WinAPE (Paste), ACE"
+Tools,Auto-type,Type text from file…,,autotype-file,,Type the content of a text file,,inp,,new,added,
+Tools,Auto-type,Typing speed…,,autotype-delays,,"How long a typed key is held, the pause after it and after a whole text (µs)","CSL's key_delay: PRESS [AFTER_KEY [AFTER_TEXT]], 70000 70000 400000 by default",inp,,new,added,
+Tools,Auto-type,Load BASIC listing…,,basic-load,,Put a BASIC listing (text) in memory and RUN it,,inp,,--basic; POST /api/basic,added,ACE
+Tools,Disc tools,Catalogue of a disc…,,tools-disc-catalog,,Show the files of a disc image,,inp,,examples/disc_cat,filled,WinAPE
+Tools,Disc tools,Convert disc image…,,tools-disc-convert,,Convert a DSK to HFE (and back),,inp,,examples/dsk_to_hfe,filled,
+Tools,Command palette,,,palette-open,,Search and run any command by name,The point of the command column,act,Ctrl+Shift+P,new,added,"VS Code, RVM"
+Tools,Preferences…,,,preferences-open,,"Defaults: display, mapping, volume, recent files, paths",,act,,new,added,all
+Help,Keyboard shortcuts,,,help-shortcuts,,List the F-keys and other shortcuts,,act,,--help (after_long_help),added,
+Help,Debug API documentation,,,help-api-doc,,Open the debug server's documentation,Same as debug-server-open-doc,act,,/api/doc,added,
+Help,About,,,help-about,,"Version, authors, licence",,act,,--version,added,
+Tools,Show menu bar,,,ui-menu-toggle,,Show or hide the menu bar (the command palette stays on its shortcut),Checkable; the window and the page can start without it (--no-menu / config menu:false),tog,,new,added,

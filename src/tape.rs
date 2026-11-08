@@ -374,6 +374,72 @@ pub fn cdt_of_binary(name: &str, load: u16, entry: u16, data: &[u8], baud: u32) 
     cdt
 }
 
+/// The cassette recorder: what the CPC writes on its cassette port (PPI port C, bit 5) while its
+/// motor runs (port C, bit 4), sampled every 2 µs (7 T-states of the CDT's 3.5 MHz clock). The
+/// tape only moves with the motor: what is recorded is one stream, written by [`Self::to_cdt`]
+/// as direct recording blocks (0x15) - what a firmware `SAVE` records, at any speed, whatever
+/// the encoding.
+#[derive(Clone, Debug, Default)]
+pub struct TapeRecorder {
+    /// The samples, 8 a byte, the first in bit 7.
+    bytes: Vec<u8>,
+    samples: usize,
+    /// Every other microsecond is sampled.
+    odd: bool,
+}
+
+/// T-states (at 3.5 MHz) of a sample: 2 µs.
+const RECORDED_SAMPLE_T_STATES: u16 = 7;
+
+impl TapeRecorder {
+    /// One microsecond: the motor `motor`, the cassette output at `level`.
+    #[inline]
+    pub fn advance_us(&mut self, motor: bool, level: bool) {
+        if !motor {
+            return;
+        }
+        self.odd = !self.odd;
+        if self.odd {
+            return;
+        }
+        if self.samples % 8 == 0 {
+            self.bytes.push(0);
+        }
+        if level {
+            *self.bytes.last_mut().unwrap() |= 0x80 >> (self.samples % 8);
+        }
+        self.samples += 1;
+    }
+
+    /// Seconds of tape recorded (while the motor ran).
+    pub fn seconds(&self) -> f64 {
+        self.samples as f64 * 2e-6
+    }
+
+    /// The recording as a CDT, a second of blank tape after it.
+    pub fn to_cdt(&self) -> Vec<u8> {
+        let mut cdt = b"ZXTape!\x1a\x01\x14".to_vec();
+        // a block's length is 24 bits: a long recording takes several
+        const BLOCK: usize = 0xff_ffff;
+        let blocks = self.bytes.len().div_ceil(BLOCK);
+        for (i, chunk) in self.bytes.chunks(BLOCK).enumerate() {
+            let last = i + 1 == blocks;
+            let used = if last && self.samples % 8 != 0 {
+                self.samples % 8
+            } else {
+                8
+            };
+            cdt.push(0x15);
+            cdt.extend_from_slice(&RECORDED_SAMPLE_T_STATES.to_le_bytes());
+            cdt.extend_from_slice(&(if last { 1000u16 } else { 0 }).to_le_bytes());
+            cdt.push(used as u8);
+            cdt.extend_from_slice(&(chunk.len() as u32).to_le_bytes()[..3]);
+            cdt.extend_from_slice(chunk);
+        }
+        cdt
+    }
+}
+
 /// The cassette deck: a tape, its position, and whether PLAY is down.
 #[derive(Clone, Debug, Default)]
 pub struct TapeDeck {
@@ -518,6 +584,27 @@ mod test {
                 (false, 1000)
             ]
         );
+    }
+
+    #[test]
+    fn a_recording_plays_back_what_was_written() {
+        let mut recorder = TapeRecorder::default();
+        // the motor off: nothing recorded
+        recorder.advance_us(false, true);
+        // a square wave of 100 µs, 10 periods
+        for us in 0..1000 {
+            recorder.advance_us(true, us / 50 % 2 == 1);
+        }
+        recorder.advance_us(false, false);
+        assert!((recorder.seconds() - 0.001).abs() < 1e-9);
+        let mut deck = TapeDeck::new(Tape::from_cdt(&recorder.to_cdt()).unwrap());
+        let mut levels = Vec::new();
+        for _ in 0..1000 {
+            deck.advance_us(true);
+            levels.push(deck.level());
+        }
+        let edges = levels.windows(2).filter(|w| w[0] != w[1]).count();
+        assert!((18..=20).contains(&edges), "{edges} edges");
     }
 
     #[test]
