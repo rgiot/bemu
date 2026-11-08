@@ -1,7 +1,7 @@
 //! The chips' windows: what the registers mean, decoded (as WinAPE, ACE and MAME show them),
 //! over the raw values `DebugServer::inspect` serves the API.
 
-use crate::commands::CommandBus;
+use crate::commands::{Arg, Command, CommandBus};
 use crate::ga::RgbLevels;
 use crate::motherboard::Motherboard;
 
@@ -675,4 +675,104 @@ mod test {
         assert_eq!(super::branch(0, &[0xf8], 0x00), Some((None, Some(false))));
         assert_eq!(super::branch(0, &[0x3e, 0x01], 0), None);
     }
+}
+
+fn run(bus: &mut CommandBus, id: &str, arg: Arg) {
+    if let Ok(command) = Command::with_arg(id, arg) {
+        bus.push(command);
+    }
+}
+
+/// The Z80's registers, each a field: dragged or typed, the register is set (Debug > Set
+/// register).
+pub fn registers(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
+    use crate::z80::{HasValue, Reg16, Reg8};
+    let cpu = mb.cpu();
+    let pairs = [
+        ("PC", cpu.reg16(Reg16::Pc).value()),
+        ("SP", cpu.reg16(Reg16::Sp).value()),
+        ("AF", cpu.reg16(Reg16::Af).value()),
+        ("BC", cpu.reg16(Reg16::Bc).value()),
+        ("DE", cpu.reg16(Reg16::De).value()),
+        ("HL", cpu.reg16(Reg16::Hl).value()),
+        ("IX", cpu.reg16(Reg16::Ix).value()),
+        ("IY", cpu.reg16(Reg16::Iy).value()),
+    ];
+    let shadows = [
+        ("AF'", cpu.reg16(Reg16::Af2).value()),
+        ("BC'", cpu.reg16(Reg16::Bc2).value()),
+        ("DE'", cpu.reg16(Reg16::De2).value()),
+        ("HL'", cpu.reg16(Reg16::Hl2).value()),
+    ];
+    egui::Grid::new("z80-registers")
+        .spacing([10.0, 4.0])
+        .show(ui, |ui| {
+            for (row, (name, value)) in pairs.iter().enumerate() {
+                ui.monospace(*name);
+                let mut edited = u32::from(*value);
+                let response = ui.add(
+                    egui::DragValue::new(&mut edited)
+                        .range(0..=0xffff)
+                        .hexadecimal(4, false, true)
+                        .prefix("&")
+                        .speed(1.0),
+                );
+                if response.changed() && edited != u32::from(*value) {
+                    run(
+                        bus,
+                        "z80-set-register",
+                        Arg::Text(format!("{name}={edited}")),
+                    );
+                }
+                ui.weak(format!("{value}"));
+                if let Some((shadow, value)) = shadows.get(row) {
+                    ui.monospace(*shadow);
+                    ui.monospace(format!("&{value:04X}"));
+                }
+                ui.end_row();
+            }
+            for (name, reg) in [("I", Reg8::I), ("R", Reg8::R)] {
+                let value = cpu.reg8(reg).value();
+                ui.monospace(name);
+                let mut edited = u32::from(value);
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut edited)
+                            .range(0..=0xff)
+                            .hexadecimal(2, false, true)
+                            .prefix("&"),
+                    )
+                    .changed()
+                    && edited != u32::from(value)
+                {
+                    run(
+                        bus,
+                        "z80-set-register",
+                        Arg::Text(format!("{name}={edited}")),
+                    );
+                }
+                ui.end_row();
+            }
+        });
+    // the flags, each a check box: F set again with that bit changed
+    let af = cpu.reg16(Reg16::Af).value();
+    let f = af as u8;
+    ui.horizontal(|ui| {
+        ui.label("F");
+        for (bit, name) in ["S", "Z", "Y", "H", "X", "P/V", "N", "C"]
+            .iter()
+            .enumerate()
+        {
+            let mask = 0x80u8 >> bit;
+            let mut on = f & mask != 0;
+            if ui.checkbox(&mut on, *name).changed() {
+                let flags = if on { f | mask } else { f & !mask };
+                run(
+                    bus,
+                    "z80-set-register",
+                    Arg::Text(format!("AF={}", (af & 0xff00) | u16::from(flags))),
+                );
+            }
+        }
+    });
 }
