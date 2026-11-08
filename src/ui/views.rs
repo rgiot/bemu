@@ -246,6 +246,8 @@ pub fn contents(
                 cpclib_dap::inspect::describe_flags(flags)
             ));
             json_grid(ui, "z80", &z80);
+            ui.separator();
+            super::chips::z80(ui, mb);
             ui.label("Set: Debug > Set register… (HL=&C000)");
         }
         View::Stack => {
@@ -335,8 +337,18 @@ pub fn contents(
         View::Ppi => super::chips::ppi(ui, mb),
         View::Tape => super::chips::tape(ui, mb, bus),
         View::Asic => super::chips::asic(ui, mb),
-        View::Fdc => json_grid(ui, "fdc", &inspect(target, "fdc")),
-        View::MemoryMap => json_grid(ui, "memmap", &inspect(target, "memmap")),
+        View::Fdc => {
+            super::chips::fdc(ui, mb);
+            ui.collapsing("Raw (as /api/fdc)", |ui| {
+                json_grid(ui, "fdc", &inspect(target, "fdc"))
+            });
+        }
+        View::MemoryMap => {
+            super::chips::memory_map(ui, mb);
+            ui.collapsing("Raw (as /api/memmap)", |ui| {
+                json_grid(ui, "memmap", &inspect(target, "memmap"))
+            });
+        }
         View::Beam => {
             json_grid(ui, "beam", &inspect(target, "beam"));
             ui.separator();
@@ -429,7 +441,22 @@ pub fn contents(
                         .map(|b| format!("{b:02X}"))
                         .collect();
                     ui.weak(egui::RichText::new(hex.join(" ")).monospace());
-                    ui.monospace(&instruction.text);
+                    // where it goes (its symbol), and at the PC whether the flags take it
+                    let f = crate::z80::HasValue::value(mb.cpu().reg8(crate::z80::Reg8::F));
+                    let mut text = instruction.text.clone();
+                    if let Some((destination, taken)) =
+                        super::chips::branch(at, &instruction.bytes, f)
+                    {
+                        if let Some(name) =
+                            destination.and_then(|d| symbols.and_then(|s| s.name_at(d)))
+                        {
+                            text.push_str(&format!("  ; {name}"));
+                        }
+                        if let (true, Some(taken)) = (at == pc, taken) {
+                            text.push_str(if taken { "  (taken)" } else { "  (not taken)" });
+                        }
+                    }
+                    ui.monospace(text);
                     ui.weak(match instruction.cost {
                         Some(nops) => format!("{nops} NOP{}", if nops == 1 { "" } else { "s" }),
                         None => String::new(),

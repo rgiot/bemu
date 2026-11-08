@@ -424,3 +424,250 @@ pub fn asic(ui: &mut egui::Ui, mb: &Motherboard) {
             }
         });
 }
+
+/// The names of the bits of `value` that are set (`names[0]` is bit 7).
+fn bits(value: u8, names: [&str; 8]) -> String {
+    let set: Vec<&str> = names
+        .iter()
+        .enumerate()
+        .filter(|(i, name)| !name.is_empty() && value & (0x80 >> i) != 0)
+        .map(|(_, name)| *name)
+        .collect();
+    if set.is_empty() {
+        "-".to_owned()
+    } else {
+        set.join(" ")
+    }
+}
+
+/// The FDC: its status registers decoded, the drives, the last commands.
+pub fn fdc(ui: &mut egui::Ui, mb: &Motherboard) {
+    use crate::fdc::FdcDrive;
+    let fdc = mb.fdc();
+    let msr = fdc.read_status();
+    let [st0, st1, st2] = fdc.status_registers();
+    let interrupt = match st0 >> 6 {
+        0 => "normal end",
+        1 => "abnormal end",
+        2 => "invalid command",
+        _ => "drive not ready",
+    };
+    egui::Grid::new("fdc-status").striped(true).show(ui, |ui| {
+        ui.label("Phase");
+        ui.monospace(format!("{} ({})", fdc.phase_name(), fdc.command_name()));
+        ui.end_row();
+        ui.label("MSR");
+        ui.monospace(format!(
+            "&{msr:02X}: {}",
+            bits(msr, ["RQM", "DIO", "EXM", "CB", "D3B", "D2B", "D1B", "D0B"])
+        ));
+        ui.end_row();
+        ui.label("ST0");
+        ui.monospace(format!(
+            "&{st0:02X}: {interrupt}, {}, head {}, unit {}",
+            bits(st0 & 0x38, ["", "", "SE", "EC", "NR", "", "", ""]),
+            (st0 >> 2) & 1,
+            st0 & 3
+        ));
+        ui.end_row();
+        ui.label("ST1");
+        ui.monospace(format!(
+            "&{st1:02X}: {}",
+            bits(st1, ["EN", "", "DE", "OR", "", "ND", "NW", "MA"])
+        ));
+        ui.end_row();
+        ui.label("ST2");
+        ui.monospace(format!(
+            "&{st2:02X}: {}",
+            bits(st2, ["", "CM", "DD", "WC", "SH", "SN", "BC", "MD"])
+        ));
+        ui.end_row();
+        ui.label("Motor");
+        ui.monospace(if fdc.motor() { "on" } else { "off" });
+        ui.end_row();
+    });
+    ui.separator();
+    egui::Grid::new("fdc-drives").striped(true).show(ui, |ui| {
+        for heading in ["Drive", "Kind", "Disc", "Track", "Side up", "Modified"] {
+            ui.strong(heading);
+        }
+        ui.end_row();
+        for (unit, drive) in [FdcDrive::A, FdcDrive::B].into_iter().enumerate() {
+            ui.monospace(["A", "B"][unit]);
+            ui.monospace(fdc.drive_kind(drive).name());
+            ui.monospace(yes(fdc.has_disk(drive)));
+            ui.monospace(fdc.track(unit).to_string());
+            ui.monospace(if fdc.disc_side(drive) == 0 { "A" } else { "B" });
+            ui.monospace(yes(fdc.is_modified(drive)));
+            ui.end_row();
+        }
+    });
+    ui.separator();
+    ui.strong("Last commands (the last first)");
+    let hex = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    egui::Grid::new("fdc-commands")
+        .striped(true)
+        .show(ui, |ui| {
+            let mut any = false;
+            for record in fdc.recent_commands().rev() {
+                any = true;
+                ui.monospace(record.name());
+                ui.monospace(hex(&record.command));
+                ui.weak(if record.result.is_empty() {
+                    String::new()
+                } else {
+                    format!("→ {}", hex(&record.result))
+                });
+                ui.end_row();
+            }
+            if !any {
+                ui.weak("none yet");
+            }
+        });
+}
+
+/// The Z80's state beyond its registers: HALT, WZ, the bytes the pointers point at.
+pub fn z80(ui: &mut egui::Ui, mb: &Motherboard) {
+    use crate::z80::{HasValue, Reg16};
+    let cpu = mb.cpu();
+    let r16 = |reg: Reg16| cpu.reg16(reg).value();
+    let pc = r16(Reg16::Pc);
+    egui::Grid::new("z80-more").striped(true).show(ui, |ui| {
+        ui.label("State");
+        // a HALT runs again until an interrupt: the PC stays on it
+        ui.monospace(if mb.read_byte(pc) == 0x76 {
+            "HALT, waiting for an interrupt"
+        } else {
+            "running"
+        });
+        ui.end_row();
+        ui.label("WZ (MEMPTR)");
+        ui.monospace(format!("&{:04X}", r16(Reg16::Wz)));
+        ui.end_row();
+        for (name, reg) in [
+            ("(HL)", Reg16::Hl),
+            ("(DE)", Reg16::De),
+            ("(BC)", Reg16::Bc),
+            ("(SP)", Reg16::Sp),
+            ("(IX)", Reg16::Ix),
+            ("(IY)", Reg16::Iy),
+        ] {
+            let at = r16(reg);
+            let bytes: Vec<String> = (0..8u16)
+                .map(|i| format!("{:02X}", mb.read_byte(at.wrapping_add(i))))
+                .collect();
+            ui.label(name);
+            ui.monospace(format!("&{at:04X}: {}", bytes.join(" ")));
+            ui.end_row();
+        }
+    });
+}
+
+/// The memory map: what each 16K of the CPU's view reads and writes, by name.
+pub fn memory_map(ui: &mut egui::Ui, mb: &Motherboard) {
+    use crate::memory::PhysicalAddress;
+    let mmr = mb.mmr();
+    // the Gate Array's RAM configurations (the PAL's, &7Fxx with bits 7-6 = 11)
+    const CONFIGS: [&str; 8] = [
+        "0 1 2 3 (C0)",
+        "0 1 2 7 (C1)",
+        "4 5 6 7 (C2)",
+        "0 3 2 7 (C3)",
+        "0 4 2 3 (C4)",
+        "0 5 2 3 (C5)",
+        "0 6 2 3 (C6)",
+        "0 7 2 3 (C7)",
+    ];
+    ui.label(format!(
+        "RAM configuration C{}, page {} (MMR &{mmr:02X}): banks {}",
+        mmr & 7,
+        (mmr >> 3) & 7,
+        CONFIGS[usize::from(mmr & 7)]
+    ));
+    if let Some(banks) = mb.large_ram_expansion_bank_count() {
+        ui.label(format!("4M card: {banks} banks of 64K"));
+    }
+    let name = |address: PhysicalAddress| match address {
+        PhysicalAddress::LowerRom { .. } => "lower ROM".to_owned(),
+        PhysicalAddress::UpperRom { rom, .. } => format!("upper ROM {rom}"),
+        PhysicalAddress::Ram { bank, .. } => format!("RAM bank {bank}"),
+    };
+    egui::Grid::new("memmap-regions")
+        .striped(true)
+        .show(ui, |ui| {
+            for heading in ["Region", "Read", "Write"] {
+                ui.strong(heading);
+            }
+            ui.end_row();
+            for region in 0..4u16 {
+                let base = region * 0x4000;
+                ui.monospace(format!("&{base:04X}-&{:04X}", base + 0x3fff));
+                ui.monospace(name(mb.physical_address(base)));
+                ui.monospace(name(mb.physical_address_for_write(base)));
+                ui.end_row();
+            }
+        });
+}
+
+/// A jump, call or return: its target (none for a return or an indirect jump) and, when
+/// conditional, whether it is taken with the flags `f`.
+pub fn branch(address: u16, bytes: &[u8], f: u8) -> Option<(Option<u16>, Option<bool>)> {
+    let op = *bytes.first()?;
+    let word = || Some(u16::from_le_bytes([*bytes.get(1)?, *bytes.get(2)?]));
+    let relative = || {
+        let e = *bytes.get(1)? as i8;
+        Some(address.wrapping_add(2).wrapping_add(e as u16))
+    };
+    // NZ Z NC C PO PE P M
+    let holds = |cc: u8| {
+        let (mask, set) = match cc {
+            0 | 1 => (0x40, cc == 1),
+            2 | 3 => (0x01, cc == 3),
+            4 | 5 => (0x04, cc == 5),
+            _ => (0x80, cc == 7),
+        };
+        (f & mask != 0) == set
+    };
+    let cc = (op >> 3) & 7;
+    Some(match op {
+        0xc3 => (word(), None),
+        0xcd => (word(), None),
+        0x18 => (relative(), None),
+        0x10 => (relative(), None),
+        0xc9 => (None, None),
+        _ if op & 0xc7 == 0xc2 || op & 0xc7 == 0xc4 => (word(), Some(holds(cc))),
+        0x20 | 0x28 | 0x30 | 0x38 => (relative(), Some(holds(cc - 4))),
+        _ if op & 0xc7 == 0xc0 => (None, Some(holds(cc))),
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn a_branch_is_taken_as_the_flags_say() {
+        // JR NZ,+2 at &4000: Z clear, taken, to &4004
+        assert_eq!(
+            super::branch(0x4000, &[0x20, 0x02], 0x00),
+            Some((Some(0x4004), Some(true)))
+        );
+        assert_eq!(
+            super::branch(0x4000, &[0x20, 0x02], 0x40),
+            Some((Some(0x4004), Some(false)))
+        );
+        // CALL C,&BB5A with carry
+        assert_eq!(
+            super::branch(0, &[0xdc, 0x5a, 0xbb], 0x01),
+            Some((Some(0xbb5a), Some(true)))
+        );
+        // RET M, sign clear
+        assert_eq!(super::branch(0, &[0xf8], 0x00), Some((None, Some(false))));
+        assert_eq!(super::branch(0, &[0x3e, 0x01], 0), None);
+    }
+}

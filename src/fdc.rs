@@ -323,6 +323,19 @@ const FMT_SC: usize = 3;
 const FMT_GPL: usize = 4;
 const FMT_D: usize = 5;
 
+impl CommandRecord {
+    /// The command's name ("ReadData", "Seek"...).
+    pub fn name(&self) -> String {
+        format!(
+            "{:?}",
+            Cmd::from_byte(self.command.first().copied().unwrap_or(0))
+        )
+    }
+}
+
+/// How many of the last commands [`Fdc::recent_commands`] keeps.
+const RECENT_COMMANDS: usize = 16;
+
 /// One command as seen on the data register: the bytes the CPU wrote and
 /// the result bytes the FDC answered (empty for commands with no result).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -416,6 +429,8 @@ pub struct Fdc {
     /// [`Fdc::start_command_log`]): a debugging aid for whoever needs to see
     /// what a driver such as AMSDOS really says to the chip.
     command_log: Option<Vec<CommandRecord>>,
+    /// The last commands (always kept, a few): the debugger's FDC window.
+    recent: std::collections::VecDeque<CommandRecord>,
 
     /// Real drive timing (rotation, seek, 32 us a byte) instead of instant transfers.
     timing: bool,
@@ -456,6 +471,7 @@ impl Default for Fdc {
             exec_data: Vec::new(),
             exec_pos: 0,
             command_log: None,
+            recent: std::collections::VecDeque::new(),
             timing: false,
             now_us: 0,
             rqm_at: 0,
@@ -497,6 +513,11 @@ impl Fdc {
     /// Start recording every command (and its result) from now on.
     pub fn start_command_log(&mut self) {
         self.command_log = Some(Vec::new());
+    }
+
+    /// The last commands run (the last at the end), whether or not a log is recorded.
+    pub fn recent_commands(&self) -> impl DoubleEndedIterator<Item = &CommandRecord> {
+        self.recent.iter()
     }
 
     /// The commands recorded since [`Fdc::start_command_log`].
@@ -786,9 +807,16 @@ impl Fdc {
     /// it stop after the first byte and desynchronise the FDC.
     /// `go_to_command_phase` clears it once the last byte has been read.
     fn go_to_result_phase(&mut self) {
-        if let Some(record) = self.command_log.as_mut().and_then(|log| log.last_mut()) {
+        let end_us = self.t_cursor.max(self.now_us);
+        for record in self
+            .command_log
+            .as_mut()
+            .and_then(|log| log.last_mut())
+            .into_iter()
+            .chain(self.recent.back_mut())
+        {
             record.result = self.result.clone();
-            record.end_us = self.t_cursor.max(self.now_us);
+            record.end_us = end_us;
         }
         self.phase = Phase::Result;
         self.result_pos = 0;
@@ -816,6 +844,15 @@ impl Fdc {
 
     fn dispatch_command(&mut self) {
         self.t_cursor = self.now_us;
+        if self.recent.len() == RECENT_COMMANDS {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(CommandRecord {
+            command: self.command.clone(),
+            result: Vec::new(),
+            start_us: self.now_us,
+            end_us: 0,
+        });
         if let Some(log) = &mut self.command_log {
             log.push(CommandRecord {
                 command: self.command.clone(),
