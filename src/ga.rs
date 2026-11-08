@@ -1419,6 +1419,7 @@ impl GateArray {
     /// There are 1024 mode 2 pixels per line and 312 lines per frame.
     /// Here, we do not care of where we are; it is up to the monitor to properly place these pixels at the right place thanks to other synchronization messages
     /// We assume that the automata is in a valid state
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn generate_pixel(&mut self) {
         let shown = if self.pixel_automata.is_done() {
             // the last pixel of a delayed (non MODE 2) byte still comes out
@@ -1807,6 +1808,7 @@ impl Chip for GateArray {
     }
 
     /// Change the screen mode when hsync is set
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn pre_tick(&mut self) {
         self.abs_tick += 1;
         if self.get_pin(GateArrayPin::Neg_IORQ) {
