@@ -82,6 +82,11 @@ pub struct WebUi {
     /// Texture updates of outputs not drawn (no picture yet, a surface to configure again): the
     /// next output draws them first, else the menus lose their font.
     pending_textures: egui::TexturesDelta,
+    /// The sound recorded (Audio > Record WAV): the samples the page played, their rate and
+    /// channels; downloaded when the recording stops.
+    pub wav: Option<(Vec<f32>, u32, u16)>,
+    /// The AY's registers recorded (Audio > Record YM), by the PSG itself.
+    ym: bool,
 }
 
 /// The settings the page applies itself.
@@ -114,6 +119,8 @@ pub struct Target<'a> {
     pub settings: &'a mut HostSettings,
     pub requests: &'a mut Vec<HostRequest>,
     pub csl_running: bool,
+    /// What is being recorded (WAV, YM).
+    pub recording: (bool, bool),
 }
 
 impl CommandTarget for Target<'_> {
@@ -147,14 +154,24 @@ impl CommandTarget for Target<'_> {
     }
     fn can(&self, request: &HostRequest) -> bool {
         match request {
-            HostRequest::StartRecording(..) | HostRequest::StopRecording(_) => false,
-            HostRequest::DebugServer(_) | HostRequest::SavePrintout | HostRequest::Quit => false,
+            // the sound the page plays (none without an audio context)
+            HostRequest::StartRecording(Recording::Wav, _) => self.motherboard.psg().audio_config().is_some(),
+            HostRequest::StartRecording(Recording::Ym, _) => true,
+            HostRequest::StopRecording(recording) => self.is_recording(*recording),
+            // a video or a series of screenshots would need the page's own recorder
+            HostRequest::StartRecording(..) => false,
+            HostRequest::SavePrintout => true,
+            HostRequest::DebugServer(_) | HostRequest::Quit => false,
             HostRequest::StopCsl => self.csl_running,
             _ => true,
         }
     }
-    fn is_recording(&self, _: Recording) -> bool {
-        false
+    fn is_recording(&self, recording: Recording) -> bool {
+        match recording {
+            Recording::Wav => self.recording.0,
+            Recording::Ym => self.recording.1,
+            _ => false,
+        }
     }
     fn has_file_system(&self) -> bool {
         false
@@ -181,6 +198,8 @@ impl WebUi {
             start: js_sys::Date::now(),
             now: 0.0,
             pending_textures: egui::TexturesDelta::default(),
+            wav: None,
+            ym: false,
         }
     }
 
@@ -273,11 +292,12 @@ impl WebUi {
     ) -> egui::FullOutput {
         self.now = (js_sys::Date::now() - self.start) / 1000.0;
         let mut target = Target {
-            motherboard,
+            motherboard: &mut *motherboard,
             debugger: &mut self.debugger,
             settings: &mut self.settings,
             requests: &mut self.requests,
             csl_running,
+            recording: (self.wav.is_some(), self.ym),
         };
         for (shift, key) in std::mem::take(&mut self.chords) {
             let chord = amsrust::commands::Chord {
@@ -343,6 +363,9 @@ impl WebUi {
             if self.gui.handle(&request) {
                 continue;
             }
+            let downloads = self.record(&request, motherboard);
+            self.page
+                .extend(downloads.into_iter().map(|(name, data)| PageRequest::Download { name, data }));
             self.page.extend(match request {
                 HostRequest::SaveFile { name, data } => Some(PageRequest::Download { name, data }),
                 HostRequest::Screenshot(_) => Some(PageRequest::Screenshot),
@@ -356,6 +379,44 @@ impl WebUi {
         }
         self.apply();
         output
+    }
+
+    /// The recordings and the printout, kept in memory: the files to download.
+    fn record(&mut self, request: &HostRequest, motherboard: &mut Motherboard) -> Vec<(String, Vec<u8>)> {
+        match request {
+            HostRequest::StartRecording(Recording::Wav, _) => {
+                if let Some(config) = motherboard.psg().audio_config() {
+                    let channels = if config.stereo { 2 } else { 1 };
+                    self.wav = Some((Vec::new(), config.sample_rate, channels));
+                }
+                Vec::new()
+            }
+            HostRequest::StopRecording(Recording::Wav) => match self.wav.take() {
+                Some((samples, rate, channels)) => vec![("bemu.wav".into(), wav(&samples, rate, channels))],
+                None => Vec::new(),
+            },
+            HostRequest::StartRecording(Recording::Ym, _) => {
+                motherboard.psg_mut().log_frames(true);
+                self.ym = true;
+                Vec::new()
+            }
+            HostRequest::StopRecording(Recording::Ym) => {
+                self.ym = false;
+                let frames = motherboard.psg_mut().take_logged_frames();
+                motherboard.psg_mut().log_frames(false);
+                vec![("bemu.ym".into(), amsrust::sound_export::ym6(&frames, 50, "bemu"))]
+            }
+            HostRequest::SavePrintout => {
+                let prefix = self.settings.devices.dmp2000_prefix.clone().unwrap_or_else(|| "printout".into());
+                motherboard
+                    .printer_port()
+                    .and_then(|port| port.device())
+                    .and_then(|device| device.as_any().downcast_ref::<amsrust::dmp2000::Dmp2000>())
+                    .map(|printer| printer.files(&prefix))
+                    .unwrap_or_default()
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// The settings the page applies itself.
@@ -436,4 +497,38 @@ fn shortcut(key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<&'static st
                 })
         })
         .map(|spec| spec.id)
+}
+
+/// `samples` (interleaved, -1 to 1) as a 16-bit PCM WAV file.
+fn wav(samples: &[f32], rate: u32, channels: u16) -> Vec<u8> {
+    let data_len = (samples.len() * 2) as u32;
+    let mut wav = Vec::with_capacity(44 + samples.len() * 2);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    wav.extend_from_slice(&channels.to_le_bytes());
+    wav.extend_from_slice(&rate.to_le_bytes());
+    wav.extend_from_slice(&(rate * u32::from(channels) * 2).to_le_bytes());
+    wav.extend_from_slice(&(channels * 2).to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    for sample in samples {
+        wav.extend_from_slice(&((sample.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+    }
+    wav
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn a_wav_has_its_header_and_samples() {
+        let file = super::wav(&[0.0, 1.0, -1.0, 0.5], 48_000, 2);
+        assert_eq!(&file[..4], b"RIFF");
+        assert_eq!(file.len(), 44 + 8);
+        assert_eq!(u32::from_le_bytes(file[24..28].try_into().unwrap()), 48_000);
+        assert_eq!(i16::from_le_bytes([file[46], file[47]]), 32767);
+    }
 }

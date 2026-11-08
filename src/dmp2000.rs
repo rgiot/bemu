@@ -178,6 +178,17 @@ impl Page {
         rgb
     }
 
+    /// The sheet as a PNG file.
+    pub fn png(&self) -> Vec<u8> {
+        let image = image::RgbImage::from_raw(self.width(), self.height(), self.to_rgb())
+            .expect("an image as big as its pixels");
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(image)
+            .write_to(&mut png, image::ImageOutputFormat::Png)
+            .expect("a PNG written in memory");
+        png
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn save_png(&self, path: &std::path::Path) -> std::io::Result<()> {
         let image = image::RgbImage::from_raw(self.width(), self.height(), self.to_rgb())
@@ -527,20 +538,26 @@ impl Dmp2000 {
             .filter(|(_, page)| page.has_ink())
     }
 
-    /// `prefix.txt` (the text), `prefix.prn` (the bytes), `prefix_001.png`... (the sheets).
-    /// Returns the files written.
+    /// The printout's files: `prefix.txt` (the text), `prefix.prn` (the bytes),
+    /// `prefix_001.png`... (the sheets), with their content.
+    pub fn files(&self, prefix: &str) -> Vec<(String, Vec<u8>)> {
+        let mut files = vec![
+            (format!("{prefix}.txt"), self.text().into_bytes()),
+            (format!("{prefix}.prn"), self.raw.clone()),
+        ];
+        for (index, page) in self.inked_pages() {
+            files.push((format!("{prefix}_{:03}.png", index + 1), page.png()));
+        }
+        files
+    }
+
+    /// [`Self::files`] written. Returns the files written.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn write_files(&self, prefix: &str) -> std::io::Result<Vec<std::path::PathBuf>> {
         let mut written = Vec::new();
-        let path = std::path::PathBuf::from(format!("{prefix}.txt"));
-        std::fs::write(&path, self.text())?;
-        written.push(path);
-        let path = std::path::PathBuf::from(format!("{prefix}.prn"));
-        std::fs::write(&path, &self.raw)?;
-        written.push(path);
-        for (index, page) in self.inked_pages() {
-            let path = std::path::PathBuf::from(format!("{prefix}_{:03}.png", index + 1));
-            page.save_png(&path)?;
+        for (name, data) in self.files(prefix) {
+            let path = std::path::PathBuf::from(name);
+            std::fs::write(&path, data)?;
             written.push(path);
         }
         Ok(written)

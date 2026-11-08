@@ -227,7 +227,12 @@ fn score(query: &str, text: &str) -> Option<i32> {
 
 /// How well `query` matches an entry: its name and id count most.
 fn entry_score(query: &str, entry: &Entry) -> Option<i32> {
-    let name = score(query, &format!("{} {}", entry.label(), entry.id())).map(|s| s + 20);
+    // a start/stop command is found by its stop's id too (`wav-stop`)
+    let stop = match entry {
+        Entry::Command(spec) => spec.stop_id.unwrap_or_default(),
+        Entry::Choice(_) => "",
+    };
+    let name = score(query, &format!("{} {} {stop}", entry.label(), entry.id())).map(|s| s + 20);
     name.max(score(query, &entry.haystack()))
 }
 
@@ -344,5 +349,15 @@ mod tests {
         assert_eq!(ids("", &["machine-crtc-1"])[0], "machine-crtc");
         // but not before what the query names
         assert_eq!(ids("set pc", &["view-disassembly"])[0], "debug-set-pc");
+    }
+
+    #[test]
+    fn a_start_stop_command_is_found_by_its_stop() {
+        let found = search("ym-stop", &[]);
+        assert!(
+            matches!(found.first(), Some(Entry::Command(spec)) if spec.id == "ym-start"),
+            "{:?}",
+            found.iter().take(3).map(Entry::id).collect::<Vec<_>>()
+        );
     }
 }

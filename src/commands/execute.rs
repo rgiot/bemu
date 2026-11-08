@@ -818,6 +818,17 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                         "the M4 decodes &FExx too: unplug it first".into(),
                     ));
                 }
+                if !target.has_file_system() {
+                    // a page: a FAT image uploaded, kept in memory
+                    let arg = arg!(
+                        command,
+                        "The Albireo's USB key: a FAT image",
+                        ArgKind::OpenFile(&["img", "ima", "bin", "fat"])
+                    );
+                    let (name, data) = arg.bytes()?;
+                    replug(target.motherboard_mut(), Ok(Albireo::with_image(data)))?;
+                    return said(format!("{name}: the Albireo's USB key"));
+                }
                 let arg = arg!(
                     command,
                     "The Albireo's USB key: a folder or a FAT image",
@@ -2191,12 +2202,12 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
         },
         "tape-stop" => CommandState::enabled(mb.tape_deck().is_some_and(|deck| deck.playing())),
         #[cfg(feature = "albireo")]
-        "albireo-select-path" => CommandState::enabled(files && has_settings),
+        "albireo-select-path" => CommandState::enabled(has_settings),
         #[cfg(feature = "albireo")]
         "albireo-eject" => CommandState::enabled(mb.has_expansion::<crate::ch376::Albireo>()),
         #[cfg(feature = "albireo")]
         "expansion-albireo-toggle" => CommandState {
-            enabled: files && has_settings,
+            enabled: has_settings,
             checked: mb.has_expansion::<crate::ch376::Albireo>(),
         },
         #[cfg(feature = "m4")]
@@ -2404,9 +2415,11 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
                 "video-start" => Recording::Video,
                 _ => Recording::ScreenshotSeries,
             };
+            // running, it stops
+            let running = target.is_recording(recording);
             CommandState {
-                enabled: target.can(&HostRequest::StartRecording(recording, None)),
-                checked: target.is_recording(recording),
+                enabled: running || target.can(&HostRequest::StartRecording(recording, None)),
+                checked: running,
             }
         }
         "wav-stop" => CommandState::enabled(target.is_recording(Recording::Wav)),

@@ -593,6 +593,10 @@ impl Emulator {
                 pair.fill(mono);
             }
         }
+        // Audio > Record WAV: what the page plays
+        if let Some((recorded, ..)) = self.ui.as_mut().and_then(|ui| ui.wav.as_mut()) {
+            recorded.extend_from_slice(&samples);
+        }
         samples
     }
 }

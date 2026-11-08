@@ -23,11 +23,16 @@ wgpu = { version = "27", default-features = false, features = ["wgsl", "webgpu",
 console_error_panic_hook = "0.1"
 
 [features]
-default = ["playcity", "digiblaster", "willy"]
+default = ["playcity", "digiblaster", "willy", "nova", "dandanator", "albireo"]
 # the sound expansions a page can ask for (config playcity / digiblaster / willyOpl3)
 playcity = ["amsrust/playcity"]
 digiblaster = ["amsrust/digiblaster"]
 willy = ["amsrust/willy"]
+# the Nova (its NVRAM in memory) and the Dandanator (its romset uploaded, not written back)
+nova = ["amsrust/nova"]
+dandanator = ["amsrust/dandanator"]
+# the Albireo, its USB key a FAT image uploaded (kept in memory)
+albireo = ["amsrust/albireo"]
 
 [dev-dependencies]
 serde_json = "1"
