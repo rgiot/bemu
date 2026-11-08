@@ -59,6 +59,12 @@ pub struct Crtc0 {
     /// (Shaker AT E: R2 moved during the pulse to where it ends does not start another one; CRTCs
     /// 1-4 start it, AT E and BCOPY A there).
     hsync_ended_on_char: bool,
+    /// C0 is at 0 or 1 after a 255 -> 0 wrap (R0 below C0): no line started, so the last-line
+    /// state is not assessed again (Overflow's previews write R0 = 15 at C0 = 183 on the frame's
+    /// last line, and AMSpiriT, like the real CPC, keeps that line's state through the wrap)
+    c0_wrapped: bool,
+    /// A line ended on this character (what tells C0 reaching 0 by a line end from a wrap)
+    line_just_ended: bool,
 }
 
 impl Crtc0 {
@@ -369,6 +375,7 @@ impl CrtcChip for Crtc0 {
     // ---- lines and frames ----
 
     fn line_wraps(&mut self, core: &mut Core) {
+        self.line_just_ended = true;
         // ACCC §13.2.1/§13.2.4: with R0=0, C0 never reaches 1 and C9 stops being managed: the
         // first wrap to C0=0 updates the counters as usual (and arms C4 if C9 reached R9), the
         // second only moves C4 once, then everything is frozen.
@@ -419,7 +426,11 @@ impl CrtcChip for Crtc0 {
                 self.r0_enlarge_c9_to_r5 = true;
             }
         }
-        if core.hcc < 2 {
+        if core.hcc == 0 {
+            self.c0_wrapped = !self.line_just_ended;
+            self.line_just_ended = false;
+        }
+        if core.hcc < 2 && !self.c0_wrapped {
             self.assess_last_line(core);
         }
         self.assess_additional_line(core);
