@@ -340,3 +340,49 @@ fn a_drive_becomes_a_gotek() {
     assert!(DriveKind::ThreeAndHalfInch.seek_us(40, 3_000) > 100_000);
     assert_eq!("gotek".parse::<DriveKind>(), Ok(DriveKind::Gotek));
 }
+
+#[test]
+fn a_breakpoint_is_toggled_and_removed() {
+    let mut host = Host::new();
+    host.run_with("breakpoint-toggle", Arg::Number(0x4000))
+        .unwrap();
+    assert!(host.debugger.has_exec_breakpoint(0x4000, &host.motherboard));
+    assert_eq!(
+        host.debugger.exec_breakpoints_mapped(&host.motherboard),
+        vec![0x4000]
+    );
+    host.run_with("breakpoint-toggle", Arg::Number(0x4000))
+        .unwrap();
+    assert!(!host.debugger.has_exec_breakpoint(0x4000, &host.motherboard));
+    host.run_with("breakpoint-add", Arg::Text("&4100".into()))
+        .unwrap();
+    host.run_with("breakpoint-remove", Arg::Text("&4100".into()))
+        .unwrap();
+    assert_eq!(host.debugger.exec_breakpoint_count(), 0);
+    assert!(host
+        .run_with("breakpoint-remove", Arg::Text("&4100".into()))
+        .is_err());
+    // a memory breakpoint, removed by its number
+    host.run_with(
+        "breakpoint-add-advanced",
+        Arg::Text(r#"{"kind":"mem","access":"w","addr":49152}"#.into()),
+    )
+    .unwrap();
+    host.run_with("breakpoint-remove", Arg::Text("#0".into()))
+        .unwrap();
+    assert!(!host.debugger.has_breakpoints());
+}
+
+#[test]
+fn a_register_and_a_flag_are_set_from_the_window() {
+    let mut host = Host::new();
+    host.run_with("z80-set-register", Arg::Text("HL=49152".into()))
+        .unwrap();
+    assert_eq!(host.motherboard.hl(), 0xc000);
+    let af = host.motherboard.af();
+    host.run_with("z80-set-register", Arg::Text(format!("AF={}", af | 1)))
+        .unwrap();
+    assert_eq!(host.motherboard.af() & 1, 1);
+    host.run_with("z80-set-register", Arg::Text("I=63".into()))
+        .unwrap();
+}

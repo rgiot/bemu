@@ -1207,6 +1207,51 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             debugger.add_exec_breakpoint(address, mb);
             said(format!("breakpoint at &{address:04X}"))
         }
+        "breakpoint-toggle" => {
+            let arg = arg!(
+                command,
+                "Toggle the execution breakpoint: address or symbol",
+                ArgKind::Address
+            );
+            let address = address(&arg, target)?;
+            let (debugger, mb) = debugger(target)?;
+            if debugger.remove_exec_breakpoint(address, mb) {
+                said(format!("breakpoint at &{address:04X} removed"))
+            } else {
+                debugger.add_exec_breakpoint(address, mb);
+                said(format!("breakpoint at &{address:04X}"))
+            }
+        }
+        "breakpoint-remove" => {
+            let arg = arg!(
+                command,
+                "Remove a breakpoint: address or symbol, or #N for memory / I/O breakpoint N",
+                ArgKind::Text
+            );
+            let text = arg.text();
+            if let Some(index) = text.trim().strip_prefix('#') {
+                let (debugger, mb) = debugger(target)?;
+                debugger
+                    .api(
+                        "DELETE",
+                        "/api/breakpoints",
+                        &[("index", index.trim())],
+                        "",
+                        mb,
+                    )
+                    .map_err(CommandError::Invalid)?;
+                return said(format!("breakpoint #{} removed", index.trim()));
+            }
+            let address = address(&arg, target)?;
+            let (debugger, mb) = debugger(target)?;
+            if debugger.remove_exec_breakpoint(address, mb) {
+                said(format!("breakpoint at &{address:04X} removed"))
+            } else {
+                Err(CommandError::Unavailable(format!(
+                    "no breakpoint at &{address:04X}"
+                )))
+            }
+        }
         "breakpoint-add-advanced" => {
             let arg = arg!(
                 command,
@@ -2282,6 +2327,8 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
         | "debug-run-to-address"
         | "debug-run-to-beam"
         | "breakpoint-add"
+        | "breakpoint-toggle"
+        | "breakpoint-remove"
         | "breakpoint-add-advanced"
         | "breakpoint-add-raster"
         | "breakpoint-add-basic"
