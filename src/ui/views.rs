@@ -162,6 +162,9 @@ pub fn show(
         View::Beam => "Beam",
         View::Breakpoints => "Breakpoints",
         View::Counters => "Counters",
+        View::Ppi => "PPI",
+        View::Tape => "Tape",
+        View::Asic => "ASIC (CPC+)",
         View::Preferences => "Preferences",
         View::Shortcuts => "Keyboard shortcuts",
         View::About => "About bemu",
@@ -284,6 +287,8 @@ fn contents(
                     }
                 });
             }
+            ui.separator();
+            super::chips::crtc(ui, mb);
             let registers = mb.crtc().registers();
             for warning in cpclib_dap::inspect::validate_crtc(&registers) {
                 let text = format!("{}: {}", warning.registers.join(", "), warning.message);
@@ -296,8 +301,21 @@ fn contents(
             }
             json_grid(ui, "crtc", &counters);
         }
-        View::GateArray => json_grid(ui, "ga", &inspect(target, "ga")),
-        View::Psg => json_grid(ui, "psg", &inspect(target, "psg")),
+        View::GateArray => {
+            super::chips::gate_array(ui, mb);
+            ui.collapsing("Raw (as /api/ga)", |ui| {
+                json_grid(ui, "ga", &inspect(target, "ga"))
+            });
+        }
+        View::Psg => {
+            super::chips::psg(ui, mb);
+            ui.collapsing("Raw (as /api/psg)", |ui| {
+                json_grid(ui, "psg", &inspect(target, "psg"))
+            });
+        }
+        View::Ppi => super::chips::ppi(ui, mb),
+        View::Tape => super::chips::tape(ui, mb, bus),
+        View::Asic => super::chips::asic(ui, mb),
         View::Fdc => json_grid(ui, "fdc", &inspect(target, "fdc")),
         View::MemoryMap => json_grid(ui, "memmap", &inspect(target, "memmap")),
         View::Beam => {

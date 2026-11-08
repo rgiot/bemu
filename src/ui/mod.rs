@@ -10,6 +10,7 @@
 //! the web page (`web/`, its input forwarded from the page): [`Gui::run`] takes egui's input and
 //! gives what to draw, [`Painter`] draws it with wgpu after the picture.
 
+mod chips;
 mod files;
 mod menu;
 mod paint;
@@ -61,7 +62,7 @@ pub struct Gui {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ViewKey(u8);
 
-const ALL_VIEWS: [View; 17] = [
+const ALL_VIEWS: [View; 20] = [
     View::Z80,
     View::Stack,
     View::Crtc,
@@ -76,6 +77,9 @@ const ALL_VIEWS: [View; 17] = [
     View::Beam,
     View::Breakpoints,
     View::Counters,
+    View::Ppi,
+    View::Tape,
+    View::Asic,
     View::Preferences,
     View::Shortcuts,
     View::About,
@@ -447,6 +451,30 @@ mod tests {
             }
             assert_eq!(gui.views.len(), 1, "{view:?}");
             gui.views.clear();
+        }
+    }
+
+    #[test]
+    fn every_window_draws_on_a_cpc_and_a_cpc_plus() {
+        for model in [
+            crate::motherboard::CpcModel::Cpc6128,
+            crate::motherboard::CpcModel::Cpc6128Plus,
+        ] {
+            let mut builder = crate::motherboard::MotherboardBuilder::default();
+            builder.set_model(model);
+            let mut motherboard = builder.build();
+            for _ in 0..200_000 {
+                motherboard.execute_next_opcode_no_video();
+            }
+            let target = Target(motherboard, DebugServer::offline(), HostSettings::default());
+            let mut bus = CommandBus::default();
+            let mut gui = Gui::new();
+            for view in ALL_VIEWS {
+                frame(&mut gui, &target, &mut bus, 0.0);
+                gui.handle(&HostRequest::Open(view));
+                frame(&mut gui, &target, &mut bus, 0.02);
+                gui.views.clear();
+            }
         }
     }
 }
