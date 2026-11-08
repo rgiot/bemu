@@ -97,6 +97,14 @@ over, out, a frame) and counters work without the debug server, which Debug > De
 starts on demand. The commands the emulator cannot do yet (a Gotek drive, recording a tape) are
 in the menus, greyed out.
 
+The debugger's windows use cpclib-dap's views (`cpclib-dap` without its debug adapter): the
+disassembly with each instruction's cost in NOPs, the call stack read from the stack, the
+CRTC's register checks.
+
+The command palette shows each command's name, its id and what it does; a command with a value
+to choose (the CRTC, the speed, the rendering...) or an argument to give (an address, a number)
+asks it in a second step.
+
 The minifb frontend (`--frontend minifb`) has no menu: its function keys run the same commands.
 
 ## CPC Booster+ and MiniBooster

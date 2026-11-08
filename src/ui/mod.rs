@@ -367,3 +367,65 @@ impl Gui {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::{CommandBus, CommandTarget, HostSettings};
+    use crate::debug_server::DebugServer;
+    use crate::motherboard::Motherboard;
+
+    struct Target(Motherboard, DebugServer, HostSettings);
+
+    impl CommandTarget for Target {
+        fn motherboard(&self) -> &Motherboard {
+            &self.0
+        }
+        fn motherboard_mut(&mut self) -> &mut Motherboard {
+            &mut self.0
+        }
+        fn debugger(&self) -> Option<&DebugServer> {
+            Some(&self.1)
+        }
+        fn settings(&self) -> Option<&HostSettings> {
+            Some(&self.2)
+        }
+        fn has_file_system(&self) -> bool {
+            false
+        }
+    }
+
+    /// A frame as the web page gives it: no window size from a backend, its own clock.
+    fn frame(gui: &mut Gui, target: &Target, bus: &mut CommandBus, time: f64) {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1068.0, 756.0),
+            )),
+            time: Some(time),
+            focused: true,
+            ..Default::default()
+        };
+        gui.run(raw, target, bus);
+    }
+
+    #[test]
+    fn a_window_opened_stays_open() {
+        let target = Target(
+            Motherboard::default(),
+            DebugServer::offline(),
+            HostSettings::default(),
+        );
+        let mut bus = CommandBus::default();
+        let mut gui = Gui::new();
+        for view in [View::Disassembly, View::About, View::Z80] {
+            frame(&mut gui, &target, &mut bus, 0.0);
+            gui.handle(&HostRequest::Open(view));
+            for n in 1..5 {
+                frame(&mut gui, &target, &mut bus, f64::from(n) * 0.02);
+            }
+            assert_eq!(gui.views.len(), 1, "{view:?}");
+            gui.views.clear();
+        }
+    }
+}

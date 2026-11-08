@@ -121,6 +121,16 @@ struct Keys {
 }
 
 impl Palette {
+    /// The step, for the field's id (a new step, a new field).
+    fn step_key(&self) -> u8 {
+        match self.step {
+            Step::Search => 0,
+            Step::Value(_) => 1,
+            Step::Waiting(_) => 2,
+            Step::Argument(_) => 3,
+        }
+    }
+
     /// The command it ran and waits on, to ask its argument here.
     pub fn waiting(&self) -> Option<&'static str> {
         match self.step {
@@ -200,13 +210,41 @@ impl Palette {
     }
 
     fn field(&mut self, ui: &mut egui::Ui, hint: &str) {
+        let id = egui::Id::new(("command-palette-field", self.step_key()));
+        // what is typed before the field has the focus (the frame it opens) is its
+        if !ui.memory(|m| m.has_focus(id)) {
+            let typed: String = ui.input_mut(|i| {
+                let mut typed = String::new();
+                i.events.retain(|event| match event {
+                    egui::Event::Text(text) => {
+                        typed.push_str(text);
+                        false
+                    }
+                    _ => true,
+                });
+                typed
+            });
+            if !typed.is_empty() {
+                self.query.push_str(&typed);
+                self.selected = 0;
+            }
+        }
         let field = ui.add(
             egui::TextEdit::singleline(&mut self.query)
+                .id(id)
                 .hint_text(hint)
                 .desired_width(f32::INFINITY),
         );
         if self.focus {
             field.request_focus();
+            // the cursor after what was already typed
+            if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
+                let end = egui::text::CCursor::new(self.query.chars().count());
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                state.store(ui.ctx(), id);
+            }
             self.focus = false;
         }
         if field.changed() {

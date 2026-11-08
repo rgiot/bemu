@@ -220,12 +220,8 @@ fn contents(
             let z80 = inspect(target, "z80");
             let flags = z80["F"].as_u64().unwrap_or(0) as u8;
             ui.monospace(format!(
-                "flags {}",
-                ["S", "Z", "5", "H", "3", "P", "N", "C"]
-                    .iter()
-                    .enumerate()
-                    .map(|(i, f)| if flags & (0x80 >> i) != 0 { *f } else { "." })
-                    .collect::<String>()
+                "F = {}",
+                cpclib_dap::inspect::describe_flags(flags)
             ));
             json_grid(ui, "z80", &z80);
             ui.label("Set: Debug > Set register… (HL=&C000)");
@@ -233,26 +229,39 @@ fn contents(
         View::Stack => {
             let sp = mb.sp();
             let symbols = target.debugger().map(|d| d.symbols());
+            let name = |address: u16| {
+                symbols
+                    .and_then(|s| s.describe(address))
+                    .unwrap_or_else(|| format!("&{address:04X}"))
+            };
+            // the calls the stack holds (cpclib-dap's walk: the return addresses after a CALL)
+            let stack: Vec<u8> = (0..256u16)
+                .map(|i| mb.read_byte(sp.wrapping_add(i)))
+                .collect();
+            let frames = cpclib_dap::callstack::walk(&stack, |address| Some(mb.read_byte(address)));
+            ui.strong(format!("Calls (SP = &{sp:04X})"));
+            if frames.is_empty() {
+                ui.weak("no CALL found on the stack");
+            }
+            egui::Grid::new("calls").striped(true).show(ui, |ui| {
+                for frame in &frames {
+                    ui.monospace(name(frame.called));
+                    ui.weak(format!(
+                        "called at &{:04X}, returns to &{:04X}",
+                        frame.call_site, frame.return_address
+                    ));
+                    ui.end_row();
+                }
+            });
+            ui.separator();
+            ui.strong("Words");
             egui::Grid::new("stack").striped(true).show(ui, |ui| {
                 for i in 0..16u16 {
                     let at = sp.wrapping_add(i * 2);
                     let word = mb.read_word(at);
                     ui.monospace(format!("&{at:04X}"));
                     ui.monospace(format!("&{word:04X}"));
-                    // a return address: a CALL just before it
-                    let call_at = word.wrapping_sub(3);
-                    let opcode = mb.read_byte(call_at);
-                    let is_call = opcode == 0xCD || opcode & 0b1100_0111 == 0b1100_0100;
-                    let name = symbols.and_then(|s| s.describe(word)).unwrap_or_default();
-                    if is_call {
-                        let called = mb.read_word(call_at.wrapping_add(1));
-                        let called_name = symbols
-                            .and_then(|s| s.describe(called))
-                            .unwrap_or_else(|| format!("&{called:04X}"));
-                        ui.weak(format!("returns after CALL {called_name} {name}"));
-                    } else {
-                        ui.weak(name);
-                    }
+                    ui.weak(symbols.and_then(|s| s.describe(word)).unwrap_or_default());
                     ui.end_row();
                 }
             });
@@ -274,6 +283,11 @@ fn contents(
                         }
                     }
                 });
+            }
+            let registers = mb.crtc().registers();
+            for warning in cpclib_dap::inspect::validate_crtc(&registers) {
+                let text = format!("{}: {}", warning.registers.join(", "), warning.message);
+                ui.colored_label(ui.visuals().warn_fg_color, text);
             }
             ui.separator();
             let mut counters = crtc.clone();
@@ -349,9 +363,14 @@ fn contents(
                     .or_else(|| symbols.and_then(|s| s.resolve(text)))
                     .unwrap_or(pc),
             };
-            egui::Grid::new("disassembly").show(ui, |ui| {
-                for _ in 0..32 {
-                    let instruction = mb.disassemble_instruction_at(at);
+            // cpclib-dap's disassembly: the text and the cost in NOPs
+            let bytes: Vec<u8> = (0..160u16)
+                .map(|i| mb.read_byte(at.wrapping_add(i)))
+                .collect();
+            let instructions = cpclib_dap::disassemble::decode(at, &bytes, 32);
+            egui::Grid::new("disassembly").striped(true).show(ui, |ui| {
+                for instruction in &instructions {
+                    at = instruction.address;
                     let marked = target
                         .debugger()
                         .is_some_and(|d| d.has_exec_breakpoint(at, mb));
@@ -363,14 +382,22 @@ fn contents(
                         push(bus, "breakpoint-add", Some(Arg::Number(i64::from(at))));
                     }
                     let here = if at == pc { "▶" } else { " " };
-                    if let Some(name) = symbols.and_then(|s| s.name_at(at)) {
-                        ui.monospace(format!("{here}{at:04X} {name}:"));
-                    } else {
-                        ui.monospace(format!("{here}{at:04X}"));
-                    }
-                    ui.monospace(instruction.to_string());
+                    match symbols.and_then(|s| s.name_at(at)) {
+                        Some(name) => ui.monospace(format!("{here}{at:04X} {name}:")),
+                        None => ui.monospace(format!("{here}{at:04X}")),
+                    };
+                    let hex: Vec<String> = instruction
+                        .bytes
+                        .iter()
+                        .map(|b| format!("{b:02X}"))
+                        .collect();
+                    ui.weak(egui::RichText::new(hex.join(" ")).monospace());
+                    ui.monospace(&instruction.text);
+                    ui.weak(match instruction.cost {
+                        Some(nops) => format!("{nops} NOP{}", if nops == 1 { "" } else { "s" }),
+                        None => String::new(),
+                    });
                     ui.end_row();
-                    at = at.wrapping_add(instruction.len().max(1) as u16);
                 }
             });
         }
@@ -385,9 +412,18 @@ fn contents(
             ));
             let mut text = String::new();
             for (pc, bytes) in debugger.history() {
-                let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02X}")).collect();
                 let name = debugger.symbols().describe(*pc).unwrap_or_default();
-                text.push_str(&format!("{pc:04X}  {}  {name}\n", hex.join(" ")));
+                let decoded = cpclib_dap::disassemble::decode(*pc, bytes, 1);
+                let (code, cost) = decoded.first().map_or_else(
+                    || (String::from("?"), String::new()),
+                    |i| {
+                        (
+                            i.text.clone(),
+                            i.cost.map_or(String::new(), |n| format!("{n} NOPs")),
+                        )
+                    },
+                );
+                text.push_str(&format!("{pc:04X}  {code:<20} {cost:<8} {name}\n"));
             }
             ui.add(egui::Label::new(egui::RichText::new(text).monospace()));
         }
