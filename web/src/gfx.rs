@@ -31,7 +31,8 @@ pub struct Gpu {
     frame: FrameTexture,
     blit: Blit,
     raw_bind_group: wgpu::BindGroup,
-    crt: Option<CrtState>
+    crt: Option<CrtState>,
+    painter: Option<amsrust::ui::Painter>
 }
 
 /// The page's canvas, or the one a page handed to a worker.
@@ -136,13 +137,33 @@ impl Gfx {
 
     /// Show `frame` (the monitor's 768x272 picture) as `mode` says, with CRT effects on the GPU.
     pub fn show(&mut self, frame: &RgbImage, mode: DisplayMode, curvature: f32) -> Result<(), String> {
+        self.show_with_ui(frame, mode, curvature, None)
+    }
+
+    /// [`Self::show`], the interface drawn over the picture (on the GPU), the picture below its
+    /// menu bar.
+    pub fn show_with_ui(
+        &mut self,
+        frame: &RgbImage,
+        mode: DisplayMode,
+        curvature: f32,
+        ui: Option<(&amsrust::ui::Gui, egui::FullOutput)>
+    ) -> Result<(), String> {
         match self {
             Self::Gpu(gpu) => {
                 gpu.use_mode(mode, mode.warp(curvature));
                 gpu.frame.upload(&gpu.queue, frame);
-                gpu.draw(mode)
+                gpu.draw(mode, ui)
             },
             Self::Flat(flat) => flat.show(frame)
+        }
+    }
+
+    /// The canvas's drawing buffer's size.
+    pub fn size(&self) -> (u32, u32) {
+        match self {
+            Self::Gpu(gpu) => (gpu.config.width, gpu.config.height),
+            Self::Flat(flat) => flat.size
         }
     }
 }
@@ -236,7 +257,7 @@ impl Gpu {
         let frame = FrameTexture::new(&device);
         let blit = Blit::new(&device, format);
         let raw_bind_group = blit.bind_group(&device, frame.view(), false, Warp::FLAT);
-        Ok(Self { surface, device, queue, config, frame, blit, raw_bind_group, crt: None })
+        Ok(Self { surface, device, queue, config, frame, blit, raw_bind_group, crt: None, painter: None })
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -266,7 +287,7 @@ impl Gpu {
     }
 
     /// Draw `mode`'s picture of the frame already uploaded.
-    fn draw(&mut self, mode: DisplayMode) -> Result<(), String> {
+    fn draw(&mut self, mode: DisplayMode, ui: Option<(&amsrust::ui::Gui, egui::FullOutput)>) -> Result<(), String> {
         let surface_texture = match self.surface.get_current_texture() {
             Ok(texture) => texture,
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
@@ -288,8 +309,14 @@ impl Gpu {
         };
 
         let integer = matches!(mode, DisplayMode::Raw | DisplayMode::Crt(CrtProfile::Ctm644));
+        // below the menu bar
+        let top = ui
+            .as_ref()
+            .map_or(0, |(gui, output)| (gui.menu_height() * output.pixels_per_point).ceil() as u32)
+            .min(self.config.height.saturating_sub(1));
         let (x, y, w, h, pixel_aligned) =
-            crate::viewport::fit((self.config.width, self.config.height), picture_size, integer);
+            crate::viewport::fit((self.config.width, self.config.height - top), picture_size, integer);
+        let y = y + top as f32;
         let bind_group = match crt {
             Some(crt) if pixel_aligned => &crt.pixel_bind_group,
             Some(crt) => &crt.bind_group,
@@ -310,6 +337,12 @@ impl Gpu {
             });
             pass.set_viewport(x, y, w, h, 0.0, 1.0);
             self.blit.draw(&mut pass, bind_group);
+        }
+        if let Some((gui, output)) = ui {
+            let painter = self
+                .painter
+                .get_or_insert_with(|| amsrust::ui::Painter::new(&self.device, self.config.format));
+            painter.paint(&self.device, &self.queue, &mut encoder, &view, [self.config.width, self.config.height], gui.context(), output);
         }
         self.queue.submit([encoder.finish()]);
         surface_texture.present();

@@ -239,9 +239,18 @@ export class Bemu {
 
         this.#listen(canvas, 'keydown', (event) => this.#keyDown(event));
         this.#listen(canvas, 'keyup', (event) => {
-            this.#send('keyUp', event.code);
+            this.#send('keyEvent', event.code, event.key, false, event.ctrlKey, event.shiftKey, event.altKey, event.metaKey);
             if (this.#isCpcKey(event)) event.preventDefault();
         });
+        // the menus, the command palette and the debugger's windows (config `menu`)
+        const pointer = (kind) => (event) => {
+            this.#send('uiPointer', kind, event.offsetX, event.offsetY, event.button ?? 0);
+        };
+        this.#listen(canvas, 'pointermove', pointer('move'));
+        this.#listen(canvas, 'pointerdown', pointer('down'));
+        this.#listen(canvas, 'pointerup', pointer('up'));
+        this.#listen(canvas, 'pointerleave', pointer('leave'));
+        this.#listen(canvas, 'wheel', (event) => this.#send('uiWheel', event.deltaX, event.deltaY));
         this.#listen(canvas, 'blur', () => this.#send('releaseKeys'));
         this.#listen(canvas, 'pointerdown', () => {
             canvas.focus();
@@ -253,6 +262,8 @@ export class Bemu {
                 if (next[0] === this.#size[0] && next[1] === this.#size[1]) return;
                 this.#size = next;
                 this.#send('resize', next[0], next[1]);
+                const box = canvas.getBoundingClientRect?.();
+                if (box?.width) this.#send('uiScale', next[0] / box.width);
                 this.#emit('display-size', this.displaySize);
                 this.#updateDisplayWarning();
             };
@@ -522,12 +533,57 @@ export class Bemu {
     }
 
     #onEvent(event, detail) {
+        if (event === 'ui-request') this.#uiRequest(detail);
         if (event === 'error') {
             // the engine stopped itself
             this.#setRunning(false, false);
             if (!this.#listeners.get('error')?.size) console.error(detail);
         }
         this.#emit(event, detail);
+    }
+
+    /** What the menus ask the page: a file to pick, one to save, the volume, fullscreen. */
+    #uiRequest(request) {
+        switch (request?.type) {
+            case 'pickFile': {
+                if (typeof document === 'undefined') return;
+                const input = document.createElement('input');
+                input.type = 'file';
+                if (request.accept) input.accept = request.accept;
+                input.addEventListener('change', async () => {
+                    const file = input.files?.[0];
+                    if (!file) return;
+                    const bytes = new Uint8Array(await file.arrayBuffer());
+                    this.#transport.call('answerFile', [request.id, file.name, bytes], [bytes.buffer])
+                        .catch((error) => this.#emit('error', error));
+                });
+                input.click();
+                break;
+            }
+            case 'download': {
+                if (typeof document === 'undefined') return;
+                const url = URL.createObjectURL(new Blob([request.data]));
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = request.name;
+                link.click();
+                setTimeout(() => URL.revokeObjectURL(url), 10_000);
+                break;
+            }
+            case 'volume':
+                this.setVolume(request.volume);
+                this.setMuted(request.muted);
+                break;
+            case 'fullscreen':
+                this.fullscreen().catch(() => {});
+                break;
+            case 'openUrl':
+                window.open(request.url, '_blank', 'noopener');
+                break;
+            case 'speed':
+                this.#speed = request.value === null ? Infinity : request.value;
+                break;
+        }
     }
 
     /** A call whose outcome only matters when it fails: input, resizing. */
@@ -601,9 +657,11 @@ export class Bemu {
             }
             return;
         }
-        this.#send('keyDown', event.code, event.key, event.ctrlKey || event.metaKey);
-        // the page does not scroll or move the focus on the CPC's keys
-        if (this.#isCpcKey(event)) event.preventDefault();
+        this.#send('keyEvent', event.code, event.key, true, event.ctrlKey, event.shiftKey, event.altKey, event.metaKey);
+        // the page does not scroll or move the focus on the CPC's keys, nor print on the palette's
+        if (this.#isCpcKey(event) || (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'p')) {
+            event.preventDefault();
+        }
     }
 
     async #startAudio() {

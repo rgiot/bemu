@@ -14,6 +14,8 @@ mod emulator;
 mod gfx;
 #[cfg(any(target_arch = "wasm32", test))]
 mod scanlines;
+#[cfg(target_arch = "wasm32")]
+mod ui;
 #[cfg(any(target_arch = "wasm32", test))]
 mod viewport;
 

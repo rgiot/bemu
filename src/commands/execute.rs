@@ -93,6 +93,20 @@ const WILLY_BASES: &[(&str, &str)] = &[
 
 type Mb = Motherboard;
 
+/// A disc image file of the host (none in a web page: the page gives bytes).
+#[cfg(not(target_arch = "wasm32"))]
+use crate::disc_image::{load_disc_file, save_disc_file};
+
+#[cfg(target_arch = "wasm32")]
+fn load_disc_file(spec: &str) -> Result<crate::disc_image::DiscImage, String> {
+    Err(format!("{spec}: no files here"))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn save_disc_file(spec: &str, _: &crate::disc_image::DiscImage) -> Result<(), String> {
+    Err(format!("{spec}: no files here"))
+}
+
 fn drive_of(id: &str) -> Option<(FdcDrive, usize, &str)> {
     if let Some(rest) = id.strip_prefix("drive-a-") {
         Some((FdcDrive::A, 0, rest))
@@ -209,7 +223,7 @@ fn load_disc(arg: &Arg) -> Result<(crate::disc_image::DiscImage, String), Comman
         }
         other => {
             let spec = other.text();
-            crate::disc_image::load_disc_file(&spec)
+            load_disc_file(&spec)
                 .map(|image| (image, spec))
                 .map_err(failed)
         }
@@ -263,7 +277,7 @@ fn disc_command(command: &Command, target: &mut dyn CommandTarget) -> Option<Com
             let file =
                 (target.has_file_system() && !matches!(arg, Arg::Bytes { .. })).then(|| arg.text());
             if let Some(file) = &file {
-                crate::disc_image::save_disc_file(file, &image).map_err(failed)?;
+                save_disc_file(file, &image).map_err(failed)?;
             }
             let mb = target.motherboard_mut();
             mb.insert_disc(drive, Some(image));
@@ -305,7 +319,7 @@ fn disc_command(command: &Command, target: &mut dyn CommandTarget) -> Option<Com
                 .cloned()
                 .ok_or_else(|| CommandError::Unavailable(format!("drive {letter}: no disc")))?;
             if target.has_file_system() {
-                crate::disc_image::save_disc_file(&file, &image).map_err(failed)?;
+                save_disc_file(&file, &image).map_err(failed)?;
             } else {
                 target.request(HostRequest::SaveFile {
                     name: file.clone(),
@@ -329,7 +343,7 @@ fn disc_command(command: &Command, target: &mut dyn CommandTarget) -> Option<Com
                 .ok_or_else(|| CommandError::Unavailable(format!("drive {letter}: no disc")))?;
             if target.has_file_system() && !matches!(arg, Arg::Bytes { .. }) {
                 let file = arg.text();
-                crate::disc_image::save_disc_file(&file, &image).map_err(failed)?;
+                save_disc_file(&file, &image).map_err(failed)?;
                 if let Some(settings) = target.settings_mut() {
                     settings.media.disc_inserted(index, Some(file.clone()));
                 }
@@ -498,6 +512,7 @@ fn rom_set(id: &str, mb: &Mb) -> Vec<(u8, &'static str)> {
             (14, "inner://orgass"),
         ],
         "rom-set-unidos" => {
+            #[allow(unused_mut)]
             let mut set = vec![
                 (7, "inner://unidos"),
                 (14, "inner://unitools"),
@@ -867,7 +882,10 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             );
             let cartridge = match &arg {
                 Arg::Bytes { name, data } => crate::asic::Cartridge::from_bytes(data, name, None),
-                other => crate::asic::Cartridge::load_file(&other.text()),
+                other => {
+                    let (name, data) = other.bytes()?;
+                    crate::asic::Cartridge::from_bytes(&data, &name, None)
+                }
             }
             .map_err(failed)?;
             let mb = target.motherboard_mut();
@@ -1917,7 +1935,7 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                 None => format!("{name}.hfe"),
             };
             if target.has_file_system() {
-                crate::disc_image::save_disc_file(&output, &image).map_err(failed)?;
+                save_disc_file(&output, &image).map_err(failed)?;
                 said(format!("{output} written"))
             } else {
                 host(

@@ -8,6 +8,8 @@ pub struct Palette {
     query: String,
     selected: usize,
     focused: bool,
+    /// Frames shown: a click from before it opened does not close it.
+    frames: u32,
 }
 
 /// How many matches are listed.
@@ -115,7 +117,8 @@ impl Palette {
                     }
                 }
             });
-        if ctx.input(|i| i.pointer.any_click()) && !ctx.is_pointer_over_area() {
+        self.frames += 1;
+        if self.frames > 2 && ctx.input(|i| i.pointer.any_click()) && !ctx.is_pointer_over_area() {
             open = false;
         }
         if let Some(id) = run {

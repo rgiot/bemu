@@ -402,8 +402,10 @@ pub struct EventHub {
 }
 
 /// AMSpiriT's limits: 8 clients, 32 queued events each (oldest dropped).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
 const MAX_SSE_CLIENTS: usize = 8;
 const MAX_SSE_QUEUE: usize = 32;
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
 const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
 /// `frame` events are sent every 10 frames (~5Hz).
 const FRAME_EVENT_EVERY: u64 = 10;
@@ -437,6 +439,7 @@ impl EventHub {
         }
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
     fn subscribe(&self, topics: Option<Vec<String>>) -> Option<Arc<(Mutex<SseQueue>, Condvar)>> {
         let mut clients = self.clients.lock().unwrap();
         clients.retain(|client| !client.queue.0.lock().unwrap().closed);
@@ -2539,6 +2542,7 @@ fn parse_binary<'b>(name: &str, bytes: &'b [u8]) -> Result<Binary<'b>, String> {
 }
 
 /// Decode `%XX` and `+` in a query value.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
