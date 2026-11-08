@@ -631,7 +631,7 @@ fn preferences(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut CommandB
             let mut curvature = settings.curvature;
             if ui
                 .add(egui::Slider::new(&mut curvature, 0.0..=4.0))
-                .drag_stopped()
+                .changed()
             {
                 push(
                     bus,
@@ -642,10 +642,7 @@ fn preferences(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut CommandB
             ui.end_row();
             ui.label("Black level");
             let mut level = settings.black_level;
-            if ui
-                .add(egui::Slider::new(&mut level, 0..=255))
-                .drag_stopped()
-            {
+            if ui.add(egui::Slider::new(&mut level, 0..=255)).changed() {
                 push(
                     bus,
                     "video-black-level-set",

@@ -250,6 +250,10 @@ export class Bemu {
         this.#listen(canvas, 'pointerdown', pointer('down'));
         this.#listen(canvas, 'pointerup', pointer('up'));
         this.#listen(canvas, 'pointerleave', pointer('leave'));
+        if (typeof document !== 'undefined') {
+            this.#listen(document, 'fullscreenchange', () =>
+                this.#send('uiFullscreen', document.fullscreenElement === canvas));
+        }
         this.#listen(canvas, 'wheel', (event) => this.#send('uiWheel', event.deltaX, event.deltaY));
         this.#listen(canvas, 'blur', () => this.#send('releaseKeys'));
         this.#listen(canvas, 'pointerdown', () => {
@@ -463,11 +467,13 @@ export class Bemu {
     setVolume(volume) {
         this.#volume = Math.max(0, Math.min(1, volume));
         this.#applyVolume();
+        this.#send('uiVolume', this.#volume, this.#muted);
     }
     /** Silence the sound, or bring it back at its volume. */
     setMuted(muted) {
         this.#muted = Boolean(muted);
         this.#applyVolume();
+        this.#send('uiVolume', this.#volume, this.#muted);
     }
     get muted() { return this.#muted; }
 
@@ -575,7 +581,22 @@ export class Bemu {
                 this.setMuted(request.muted);
                 break;
             case 'fullscreen':
-                this.fullscreen().catch(() => {});
+                if ((document.fullscreenElement === this.#canvas) !== Boolean(request.on)) {
+                    this.fullscreen().catch(() => {});
+                }
+                break;
+            case 'paste':
+                // the page has the clipboard (the worker does not); reading it may ask permission
+                navigator.clipboard?.readText()
+                    .then((text) => text && this.typeText(text))
+                    .catch((error) => this.#emit('error', error));
+                break;
+            case 'copyImage':
+                if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+                    navigator.clipboard
+                        .write([new ClipboardItem({ 'image/png': new Blob([request.data], { type: 'image/png' }) })])
+                        .catch((error) => this.#emit('error', error));
+                }
                 break;
             case 'openUrl':
                 window.open(request.url, '_blank', 'noopener');

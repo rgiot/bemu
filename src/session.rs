@@ -144,6 +144,10 @@ struct Window {
     applied: HostSettings,
     /// The last whole frame, for the screenshots.
     last_frame: Option<image::RgbImage>,
+    /// The monitor makes the debug server's exact pictures.
+    exact_monitor: bool,
+    /// The files the reloader watches.
+    watched: [Option<String>; 4],
     /// The function keys held, for their shortcuts on a press.
     keys_down: HashSet<HostKey>,
     paced_fps: usize,
@@ -344,6 +348,9 @@ impl Window {
                         Err(e) => self.notify(e, true),
                     }
                 }
+                // back to the display's own filter (the GPU one when chosen)
+                let settings = core.settings.clone();
+                self.refilter(&settings);
             }
             Recording::ScreenshotSeries => {
                 if let Some(series) = self.series.take() {
@@ -366,24 +373,24 @@ impl Window {
     fn apply(&mut self, core: &mut Core, reloader: &mut Option<Reloader>, args: &Args) {
         let wanted = core.settings.clone();
         let applied = self.applied.clone();
-        if wanted.display != applied.display
+        let display_changed = wanted.display != applied.display
             || wanted.curvature != applied.curvature
-            || wanted.crt_gpu != applied.crt_gpu
-        {
+            || wanted.crt_gpu != applied.crt_gpu;
+        if display_changed {
             if self.recorder.is_none() {
-                self.gpu = wanted.crt_gpu && !self.direct;
-                self.filter = wanted.display.filter_on(self.gpu, wanted.curvature);
-                let (width, height) = self.filter.output_size();
-                self.buffer = vec![0; width * height];
-                self.window.set_curvature(wanted.curvature);
+                self.refilter(&wanted);
             } else {
-                // a video has one size
+                // a video has one size: the display stays as it is until the recording ends
                 core.settings.display = applied.display;
+                core.settings.curvature = applied.curvature;
+                core.settings.crt_gpu = applied.crt_gpu;
                 self.notify("not while recording a video".into(), true);
             }
         }
         if wanted.speed != applied.speed || wanted.muted != applied.muted {
             self.window.set_target_fps(self.target_fps(&wanted));
+            self.window
+                .set_speed_factor(wanted.speed != Speed::Factor(1.0));
         }
         if wanted.overlay != applied.overlay {
             self.overlay = wanted.overlay.then(Overlay::default);
@@ -398,22 +405,54 @@ impl Window {
                 );
             }
         }
-        if wanted.black_level != applied.black_level && core.debugger.listening_port().is_none() {
-            self.monitor = viewing_monitor(wanted.black_level);
+        // the debug server's pictures are exact (no lifted black, whole frames)
+        let exact = core.debugger.listening_port().is_some();
+        if wanted.black_level != applied.black_level || exact != self.exact_monitor {
+            self.exact_monitor = exact;
+            self.monitor = if exact {
+                let mut monitor = CrtMonitor::default();
+                monitor.keep_full_frames();
+                monitor
+            } else {
+                viewing_monitor(wanted.black_level)
+            };
         }
         if wanted.fullscreen != applied.fullscreen {
             self.window.set_fullscreen(wanted.fullscreen);
         }
-        if wanted.watch_files && reloader.is_none() {
-            *reloader = Some(Reloader::new(args));
-        } else if !wanted.watch_files {
+        // the files of the media in use, inserted from the command line or the menus
+        let media = &wanted.media;
+        let watched = [
+            media.snapshot.as_ref().map(|p| p.display().to_string()),
+            media.discs[0].clone(),
+            media.discs[1].clone(),
+            media.tape.clone(),
+        ];
+        if !wanted.watch_files {
             *reloader = None;
+        } else if reloader.is_none() || watched != self.watched {
+            *reloader = Some(Reloader::watching(
+                watched.clone(),
+                args.text.clone(),
+                args.type_at,
+            ));
         }
+        self.watched = watched;
         self.applied = core.settings.clone();
         // F11 and the window's own control switch fullscreen too
         let fullscreen = self.window.fullscreen();
         core.settings.fullscreen = fullscreen;
         self.applied.fullscreen = fullscreen;
+    }
+
+    /// The display filter of `settings` (on the CPU for a frontend that does not draw the
+    /// CRT itself).
+    fn refilter(&mut self, settings: &HostSettings) {
+        self.gpu = settings.crt_gpu && !self.direct;
+        self.filter = settings.display.filter_on(self.gpu, settings.curvature);
+        let (width, height) = self.filter.output_size();
+        self.buffer = vec![0; width * height];
+        self.window.set_curvature(settings.curvature);
     }
 
     /// The frames a second the window paces (0: the sound device's clock does it, or full
@@ -598,6 +637,14 @@ pub fn run_window(
         applied: core.settings.clone(),
         last_frame: None,
         keys_down: HashSet::new(),
+        exact_monitor: has_server,
+        // what main's reloader (--watch) already watches
+        watched: [
+            args.sna.clone(),
+            args.dsk_a.clone(),
+            args.dsk_b.clone(),
+            args.cdt.clone(),
+        ],
         quit: false,
         #[cfg(feature = "gui")]
         gui,
@@ -674,8 +721,7 @@ pub fn run_window(
         let unseen = turbo
             && window.recorder.is_none()
             && window.series.is_none()
-            && core.debugger.listening_port().is_none()
-            && !core.debugger.has_breakpoints()
+            && !core.debugger.is_active()
             && last_present.elapsed() < FRAME_SHOWN_EVERY;
         core.motherboard.set_video(!unseen);
         if unseen {

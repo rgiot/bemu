@@ -64,6 +64,9 @@ struct UiLayer {
     state: Option<egui_winit::State>,
     painter: Option<amsrust::ui::Painter>,
     output: Option<egui::FullOutput>,
+    /// The last frame's shapes, drawn again on the extra refreshes of a 100-200 Hz fullscreen.
+    shapes: Vec<egui::epaint::ClippedShape>,
+    pixels_per_point: f32,
     /// The menu bar's height in pixels: the picture goes below.
     top_pixels: f32,
 }
@@ -247,20 +250,29 @@ impl Gfx {
         }
         // the menus and windows over it
         if let Some(ui) = ui {
-            if let Some(output) = ui.output.take() {
-                let painter = ui.painter.get_or_insert_with(|| {
-                    amsrust::ui::Painter::new(&self.device, self.config.format)
-                });
-                painter.paint(
-                    &self.device,
-                    &self.queue,
-                    &mut encoder,
-                    &view,
-                    [self.config.width, self.config.height],
-                    &ui.ctx,
-                    output,
-                );
-            }
+            // a new frame of the interface (its texture updates once), else the last one again
+            let textures = match ui.output.take() {
+                Some(output) => {
+                    ui.shapes = output.shapes;
+                    ui.pixels_per_point = output.pixels_per_point;
+                    output.textures_delta
+                }
+                None => egui::TexturesDelta::default(),
+            };
+            let painter = ui
+                .painter
+                .get_or_insert_with(|| amsrust::ui::Painter::new(&self.device, self.config.format));
+            painter.paint_shapes(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &view,
+                [self.config.width, self.config.height],
+                &ui.ctx,
+                ui.shapes.clone(),
+                ui.pixels_per_point,
+                &textures,
+            );
         }
         self.queue.submit([encoder.finish()]);
         surface_texture.present();
@@ -796,6 +808,8 @@ pub struct WinitGpuFrontend {
     /// Time between two presents, if capped.
     frame_time: Option<Duration>,
     deadline: Instant,
+    /// Not at the real speed: the clock paces, not the vertical sync.
+    speed_factor: bool,
 }
 
 impl Drop for WinitGpuFrontend {
@@ -844,11 +858,14 @@ impl WinitGpuFrontend {
                     state: None,
                     painter: None,
                     output: None,
+                    shapes: Vec::new(),
+                    pixels_per_point: 1.0,
                     top_pixels: 0.0,
                 }),
             },
             frame_time: None,
             deadline: Instant::now(),
+            speed_factor: false,
         };
         // the window and the GPU come up on the first events
         for _ in 0..100 {
@@ -877,7 +894,8 @@ impl WinitGpuFrontend {
     /// Wait for the end of the frame when the rate is capped (not in a 50 Hz
     /// fullscreen mode: the vertical sync, FIFO, does it).
     fn pace(&mut self) {
-        if self.app.refreshes_per_frame.is_some() {
+        // the vertical sync paces the real speed only: 25 % or 200 % go by the clock
+        if self.app.refreshes_per_frame.is_some() && !self.speed_factor {
             // a present that didn't wait for the refresh (a hidden window, another Space):
             // the clock's frame, so that the emulation doesn't run free
             const FRAME: Duration = Duration::from_millis(20);
@@ -907,6 +925,10 @@ impl WinitGpuFrontend {
 impl Frontend for WinitGpuFrontend {
     fn is_open(&self) -> bool {
         !self.app.closed
+    }
+
+    fn set_speed_factor(&mut self, on: bool) {
+        self.speed_factor = on;
     }
 
     fn set_target_fps(&mut self, fps: usize) {
@@ -953,7 +975,12 @@ impl Frontend for WinitGpuFrontend {
         let mut shown = gfx.draw(mode, false, self.app.ui.as_mut())?;
         // at 100 Hz (or more) the frame on each refresh of its own: the vertical sync paces 50
         // (the CRT's picture drawn by the first draw that was shown)
-        for _ in 1..self.app.refreshes_per_frame.unwrap_or(1) {
+        let refreshes = if self.speed_factor {
+            1
+        } else {
+            self.app.refreshes_per_frame.unwrap_or(1)
+        };
+        for _ in 1..refreshes {
             let gfx = self
                 .app
                 .gfx

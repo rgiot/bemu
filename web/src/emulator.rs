@@ -70,7 +70,9 @@ pub struct Emulator {
     /// Frames completed, see [`Self::frame_count`].
     frames: u64,
     /// The menus, the palette and the debugger (`config.menu`, WebGPU / WebGL only).
-    ui: Option<WebUi>
+    ui: Option<WebUi>,
+    /// The CRTC / Gate Array writes drawn on the picture (Debug > Overlay).
+    overlay: Option<amsrust::overlay::Overlay>
 }
 
 #[wasm_bindgen]
@@ -115,7 +117,8 @@ impl Emulator {
             placed: HashMap::new(),
             typed: Vec::new(),
             frames: 0,
-            ui
+            ui,
+            overlay: None
         })
     }
 
@@ -158,6 +161,12 @@ impl Emulator {
         self.display = display;
         self.curvature = curvature;
         self.csl = None;
+        if let Some(ui) = &mut self.ui {
+            ui.settings.keyboard = keyboard;
+            ui.settings.display = display;
+            ui.settings.curvature = curvature;
+            ui.settings.black_level = self.config.black_level();
+        }
         self.replace_machine(motherboard);
         Ok(())
     }
@@ -318,6 +327,11 @@ impl Emulator {
     pub fn key_event(&mut self, code: &str, key: &str, pressed: bool, ctrl: bool, shift: bool, alt: bool, meta: bool) -> bool {
         if let Some(ui) = &mut self.ui {
             if ui.key(code, key, pressed, ctrl, shift, alt, meta) {
+                // a key released while the menus have the keyboard is released on the CPC too
+                // (pressed before they took it: Ctrl and Shift of Ctrl+Shift+P)
+                if !pressed {
+                    self.key_up(code);
+                }
                 return true;
             }
         }
@@ -346,6 +360,31 @@ impl Emulator {
     pub fn ui_scale(&mut self, pixels_per_point: f32) {
         if let Some(ui) = &mut self.ui {
             ui.set_pixels_per_point(pixels_per_point);
+        }
+    }
+
+    /// The page's speed (times real time, `Infinity` at full speed), for the menus.
+    pub fn ui_speed(&mut self, speed: f64) {
+        if let Some(ui) = &mut self.ui {
+            ui.page_speed(if speed.is_finite() {
+                amsrust::commands::Speed::Factor(speed as f32)
+            } else {
+                amsrust::commands::Speed::Max
+            });
+        }
+    }
+
+    /// Whether the page is fullscreen, for the menus.
+    pub fn ui_fullscreen(&mut self, on: bool) {
+        if let Some(ui) = &mut self.ui {
+            ui.page_fullscreen(on);
+        }
+    }
+
+    /// The page's volume (0-1) and mute, for the menus.
+    pub fn ui_volume(&mut self, volume: f64, muted: bool) {
+        if let Some(ui) = &mut self.ui {
+            ui.page_volume(volume, muted);
         }
     }
 
@@ -394,8 +433,12 @@ impl Emulator {
     /// its place, for games).
     pub fn set_keyboard(&mut self, mapping: &str) -> Result<(), JsError> {
         let config = Config { keyboard: Some(mapping.to_owned()), ..self.config.clone() };
-        self.keyboard.set_mapping(config.keyboard().map_err(|e| JsError::new(&e))?);
+        let mapping = config.keyboard().map_err(|e| JsError::new(&e))?;
+        self.keyboard.set_mapping(mapping);
         self.config = config;
+        if let Some(ui) = &mut self.ui {
+            ui.settings.keyboard = mapping;
+        }
         Ok(())
     }
 
@@ -492,22 +535,39 @@ impl Emulator {
                 let size = self.gfx.size();
                 let csl = self.csl.is_some();
                 let output = ui.frame(size, self.machine(), csl);
-                // the menus changed the display, the keyboard
+                // the menus changed the display, the keyboard (a new mapping releases the keys:
+                // only on a change)
                 let settings = &ui.settings;
                 self.display = settings.display;
                 self.curvature = settings.curvature;
-                self.keyboard.set_mapping(settings.keyboard);
+                if self.keyboard.mapping() != settings.keyboard {
+                    self.keyboard.set_mapping(settings.keyboard);
+                }
+                if settings.black_level != self.config.black_level() {
+                    self.config.black_level = Some(settings.black_level);
+                    self.monitor = Monitor::default().with_black_level(settings.black_level);
+                }
+                if settings.overlay != self.overlay.is_some() {
+                    self.overlay = settings.overlay.then(amsrust::overlay::Overlay::default);
+                    self.motherboard.watch_io_writes(settings.overlay);
+                }
                 Some((ui, output))
             },
             None => None
         };
         let result = match (&self.frame, ui) {
-            (Some(frame), Some((ui, output))) => {
+            (Some(frame), Some((mut ui, output))) => {
                 let shown = self.gfx.show_with_ui(frame, self.display, self.curvature, Some((&ui.gui, output)));
+                let shown = shown.map(|undrawn| {
+                    if let Some(output) = undrawn {
+                        ui.not_drawn(output);
+                    }
+                });
                 self.ui = Some(ui);
                 shown
             },
-            (None, Some((ui, _))) => {
+            (None, Some((mut ui, output))) => {
+                ui.not_drawn(output);
                 self.ui = Some(ui);
                 Ok(())
             },
@@ -525,7 +585,15 @@ impl Emulator {
 
     /// The sound since the previous call: stereo samples, interleaved.
     pub fn audio_samples(&mut self) -> Vec<f32> {
-        self.machine().take_audio_samples()
+        let mut samples = self.machine().take_audio_samples();
+        // Audio > Mono: both channels the mix of the two
+        if self.ui.as_ref().is_some_and(|ui| !ui.settings.stereo) {
+            for pair in samples.chunks_mut(2) {
+                let mono = pair.iter().sum::<f32>() / pair.len() as f32;
+                pair.fill(mono);
+            }
+        }
+        samples
     }
 }
 
@@ -622,13 +690,28 @@ impl Emulator {
             let monitor = &mut self.monitor;
             self.motherboard.execute_next_opcode_with_video(|(rgb, sync)| monitor.receive(rgb, sync));
             if let Some(ui) = self.ui.as_mut().filter(|ui| ui.debugger.is_active()) {
+                let (x, line) = self.monitor.beam();
+                let (crop_x, crop_y) = self.monitor.crop_origin();
+                ui.debugger.set_beam(amsrust::debug_server::Beam { x, line, crop_x, crop_y });
                 ui.debugger.after_instruction(&mut self.motherboard);
                 if ui.debugger.paused() {
                     return;
                 }
             }
-            if let Some(frame) = self.monitor.take_frame() {
+            if let Some(overlay) = &mut self.overlay {
+                let (beam, origin) = (self.monitor.beam(), self.monitor.crop_origin());
+                for (port, value) in self.motherboard.take_io_writes() {
+                    overlay.note(port, value, beam, origin);
+                }
+            }
+            if let Some(mut frame) = self.monitor.take_frame() {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.draw_and_clear(&mut frame);
+                }
                 self.frames += 1;
+                if let Some(ui) = &mut self.ui {
+                    ui.debugger.frame_completed(&self.motherboard);
+                }
                 // the previous frame is drawn in next
                 if let Some(previous) = self.frame.replace(frame) {
                     self.monitor.recycle(previous);

@@ -1923,26 +1923,38 @@ impl Motherboard {
         if model == self.model {
             return;
         }
-        let extra_pages = self.extra_ram_pages();
-        let extra_banking = self.ram_banking && !self.model.has_ram_banking();
-        if !self.model.is_plus() {
+        let old = self.model;
+        let own_kb = |model: CpcModel| if model.has_ram_banking() { 128 } else { 64 };
+        let total_kb = self.total_ram_kb();
+        if !old.is_plus() {
             self.crtc_before_plus = self.crtc.crtc_type();
         }
         let disc_interface = self.disc_interface;
-        let leaves_plus = self.model.is_plus() && !model.is_plus();
+        let leaves_plus = old.is_plus() && !model.is_plus();
         self.set_model(model);
         if leaves_plus {
             let crtc_type = self.crtc_before_plus;
             let _ = self.change_crtc(crtc_type);
         }
-        // A RAM expansion stays plugged, a DDI-1 stays on a 464.
-        if extra_banking {
-            self.set_extra_ram_pages(extra_pages);
+        // what was chosen beyond the old model's own stays: a RAM expansion (the new model's
+        // own RAM otherwise), a DDI-1 added or a disc interface removed
+        if total_kb != own_kb(old) {
+            let _ = self.set_total_ram_kb(Some(total_kb));
         }
-        if disc_interface && !model.has_disc_interface() && !model.is_plus() {
-            self.set_disc_interface(true);
+        if disc_interface != old.has_disc_interface() {
+            self.set_disc_interface(disc_interface);
         }
         self.restart();
+    }
+
+    /// The RAM the CPU can reach in all, in KB: 64K without banking, else 64K and the extra
+    /// pages.
+    pub fn total_ram_kb(&self) -> usize {
+        if self.ram_banking {
+            64 * (1 + self.extra_ram_pages())
+        } else {
+            64
+        }
     }
 
     /// The RAM in all (64K to 576K, in 64K steps): the extra pages are added or removed, the

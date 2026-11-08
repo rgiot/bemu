@@ -190,6 +190,8 @@ pub enum ArgKind {
     Address,
     /// A number between two bounds, with a default.
     Number { min: i64, max: i64, default: i64 },
+    /// A decimal number between two bounds, with a default (the curvature: 1.5).
+    Decimal { min: f64, max: f64, default: f64 },
     /// One of a list of values (`(value, label)`).
     Choice(&'static [(&'static str, &'static str)]),
 }

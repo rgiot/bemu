@@ -318,6 +318,26 @@ impl Gui {
     /// The chords with Ctrl or Alt (the palette's Ctrl+Shift+P, Ctrl+V): the host runs the
     /// function keys itself, the window having no keyboard focus for them.
     fn shortcuts(&mut self, ctx: &egui::Context, target: &dyn CommandTarget, bus: &mut CommandBus) {
+        // Ctrl+V comes as a paste (egui reads the clipboard): typed on the CPC, unless a field
+        // of the interface has the keyboard
+        if !ctx.wants_keyboard_input() {
+            let pasted = ctx.input_mut(|i| {
+                let mut pasted = None;
+                i.events.retain(|event| match event {
+                    egui::Event::Paste(text) => {
+                        pasted = Some(text.clone());
+                        false
+                    }
+                    _ => true,
+                });
+                pasted
+            });
+            if let Some(text) = pasted.filter(|text| !text.is_empty()) {
+                if let Ok(command) = commands::Command::with_arg("autotype-text", Arg::Text(text)) {
+                    bus.push(command);
+                }
+            }
+        }
         for spec in commands::all() {
             let Some(chord) = spec.shortcut.and_then(commands::Chord::parse) else {
                 continue;
@@ -328,9 +348,10 @@ impl Gui {
             let Some(key) = egui::Key::from_name(chord.key) else {
                 continue;
             };
+            // Ctrl, or Cmd on macOS
             let modifiers = egui::Modifiers {
                 alt: chord.alt,
-                ctrl: chord.ctrl,
+                ctrl: false,
                 shift: chord.shift,
                 command: chord.ctrl,
                 mac_cmd: false,

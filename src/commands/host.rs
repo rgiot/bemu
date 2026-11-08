@@ -2,6 +2,7 @@
 //! at its next frame) and its requests (what only a window or a page can do).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::display::DisplayMode;
 use crate::input::{HostLayout, KeyboardMapping};
@@ -121,18 +122,18 @@ pub struct DeviceFiles {
     pub nova: Option<PathBuf>,
     /// Where the DMP2000's printout goes (a prefix), and its EPROM.
     pub dmp2000_prefix: Option<String>,
-    pub dmp2000_rom: Option<Vec<u8>>,
+    pub dmp2000_rom: Option<Arc<[u8]>>,
     /// Willy's jumpers and the S2P's SoundFont.
     pub opl3_base: u16,
     pub s2p_base: u16,
-    pub s2p_soundfont: Option<(String, Vec<u8>)>,
+    pub s2p_soundfont: Option<(String, Arc<[u8]>)>,
     /// The Booster's UART link and files.
     pub booster_uart: Option<String>,
     pub booster_eeprom: Option<PathBuf>,
     pub booster_flash: Option<PathBuf>,
     pub booster_adc: Option<PathBuf>,
     /// The Dandanator's romset, and whether the CPC writes it back.
-    pub dandanator: Option<(String, Vec<u8>)>,
+    pub dandanator: Option<(String, Arc<[u8]>)>,
     pub dandanator_writable: bool,
 }
 

@@ -16,8 +16,8 @@ impl Painter {
         }
     }
 
-    /// Draw `output` (from [`Gui::run`](super::Gui::run)) on `view`, `size` pixels with
-    /// `pixels_per_point`, keeping what is there.
+    /// Draw `output` (from [`Gui::run`](super::Gui::run)) on `view`, `size` pixels, keeping what
+    /// is there.
     #[allow(clippy::too_many_arguments)]
     pub fn paint(
         &mut self,
@@ -29,9 +29,36 @@ impl Painter {
         ctx: &egui::Context,
         output: egui::FullOutput,
     ) {
-        let pixels_per_point = output.pixels_per_point;
-        let jobs = ctx.tessellate(output.shapes, pixels_per_point);
-        for (id, delta) in &output.textures_delta.set {
+        self.paint_shapes(
+            device,
+            queue,
+            encoder,
+            view,
+            size,
+            ctx,
+            output.shapes,
+            output.pixels_per_point,
+            &output.textures_delta,
+        );
+    }
+
+    /// Draw `shapes` at `pixels_per_point`, after `textures`' updates (a frame drawn again on
+    /// another refresh gives the same shapes with no update).
+    #[allow(clippy::too_many_arguments)]
+    pub fn paint_shapes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        size: [u32; 2],
+        ctx: &egui::Context,
+        shapes: Vec<egui::epaint::ClippedShape>,
+        pixels_per_point: f32,
+        textures: &egui::TexturesDelta,
+    ) {
+        let jobs = ctx.tessellate(shapes, pixels_per_point);
+        for (id, delta) in &textures.set {
             self.renderer.update_texture(device, queue, *id, delta);
         }
         let screen = egui_wgpu::ScreenDescriptor {
@@ -64,7 +91,7 @@ impl Painter {
         if !commands.is_empty() {
             queue.submit(commands);
         }
-        for id in &output.textures_delta.free {
+        for id in &textures.free {
             self.renderer.free_texture(id);
         }
     }

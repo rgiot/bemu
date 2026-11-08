@@ -164,7 +164,11 @@ export class Engine {
         if (value !== 1) this.#core.audio_samples(); // what is queued is dropped, not played late
         this.#speed = value;
         this.#owed = 0;
+        this.#core.ui_speed?.(value); // the menus show it
     }
+    /** The page is fullscreen or not, its volume: the menus show them. */
+    uiFullscreen(on) { this.#core.ui_fullscreen?.(on); }
+    uiVolume(volume, muted) { this.#core.ui_volume?.(volume, muted); }
 
     /** While paused: one more frame, shown. */
     stepFrame() {
@@ -247,6 +251,11 @@ export class Engine {
                     break;
                 case 'runCsl': this.runCsl(request.text); break;
                 case 'stopCsl': this.stopCsl(); break;
+                case 'copyScreenshot': {
+                    const png = this.#core.screenshot();
+                    if (png) this.#emit('ui-request', { type: 'copyImage', data: png });
+                    break;
+                }
                 case 'screenshot': {
                     const png = this.#core.screenshot();
                     if (png) this.#emit('ui-request', { type: 'download', name: 'bemu.png', data: png });

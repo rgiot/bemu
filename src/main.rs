@@ -799,11 +799,26 @@ struct Reloader {
 
 impl Reloader {
     fn new(args: &Args) -> Self {
+        Self::watching(
+            [
+                args.sna.clone(),
+                args.dsk_a.clone(),
+                args.dsk_b.clone(),
+                args.cdt.clone(),
+            ],
+            args.text.clone(),
+            args.type_at,
+        )
+    }
+
+    /// Watch the snapshot, the discs of drive A and B and the tape `files` (the menus' media).
+    fn watching(files: [Option<String>; 4], text: Option<String>, type_at: f64) -> Self {
+        let [sna, dsk_a, dsk_b, cdt] = files;
         let files = [
-            (args.sna.clone(), watch::Kind::Sna),
-            (args.dsk_a.clone(), watch::Kind::Dsk(FdcDrive::A)),
-            (args.dsk_b.clone(), watch::Kind::Dsk(FdcDrive::B)),
-            (args.cdt.clone(), watch::Kind::Cdt),
+            (sna.clone(), watch::Kind::Sna),
+            (dsk_a, watch::Kind::Dsk(FdcDrive::A)),
+            (dsk_b, watch::Kind::Dsk(FdcDrive::B)),
+            (cdt, watch::Kind::Cdt),
         ];
         let watcher = watch::Watcher::new(
             files
@@ -820,9 +835,9 @@ impl Reloader {
         }
         Self {
             watcher,
-            sna: args.sna.clone(),
-            text: args.text.clone(),
-            type_at: args.type_at,
+            sna,
+            text,
+            type_at,
         }
     }
 

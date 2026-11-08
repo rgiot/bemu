@@ -217,3 +217,110 @@ fn a_configuration_round_trips() {
     .unwrap();
     assert_eq!(host.motherboard.crtc().crtc_type(), CrtcType::Crtc1);
 }
+
+/// Run until the debugger pauses (at most `limit` instructions).
+fn run_until_paused(host: &mut Host, limit: usize) {
+    for _ in 0..limit {
+        if host.debugger.paused() {
+            return;
+        }
+        host.motherboard.execute_next_opcode_no_video();
+        host.debugger.after_instruction(&mut host.motherboard);
+    }
+}
+
+#[test]
+fn step_over_a_firmware_rst_returns_after_its_address() {
+    let mut host = Host::new();
+    // RST &18 (FAR CALL) &9010 ; NOP   with at &9010 a far address block to &9020: RET
+    host.run_with("memory-poke", Arg::Text("&8000 DF 10 90 00".into()))
+        .unwrap();
+    host.run_with("memory-poke", Arg::Text("&9010 20 90 00".into()))
+        .unwrap();
+    host.run_with("memory-poke", Arg::Text("&9020 C9".into()))
+        .unwrap();
+    host.run_with("debug-set-pc", Arg::Text("&8000".into()))
+        .unwrap();
+    host.debugger.set_paused(true);
+    host.run("debug-step-over").unwrap();
+    run_until_paused(&mut host, 100_000);
+    assert_eq!(host.motherboard.pc(), 0x8003);
+}
+
+#[test]
+fn step_out_stops_when_the_routine_returns_even_at_the_top_of_the_stack() {
+    let mut host = Host::new();
+    // SP at &0000: the return address at &FFFE, RET makes SP wrap to &0000
+    host.run_with("memory-poke", Arg::Text("&8000 CD 00 90 00".into()))
+        .unwrap();
+    host.run_with("memory-poke", Arg::Text("&9000 00 00 C9".into()))
+        .unwrap();
+    host.run_with("z80-set-register", Arg::Text("SP=0".into()))
+        .unwrap();
+    host.run_with("debug-set-pc", Arg::Text("&8000".into()))
+        .unwrap();
+    host.motherboard.execute_next_opcode_no_video(); // the CALL
+    assert_eq!(host.motherboard.pc(), 0x9000);
+    host.debugger.set_paused(true);
+    host.run("debug-step-out").unwrap();
+    run_until_paused(&mut host, 1000);
+    assert_eq!(host.motherboard.pc(), 0x8003);
+}
+
+#[test]
+fn a_stop_cancels_the_step_in_progress() {
+    let mut host = Host::new();
+    host.run_with("memory-poke", Arg::Text("&8000 00 00 00 00 18 FA".into()))
+        .unwrap();
+    host.run_with("debug-set-pc", Arg::Text("&8000".into()))
+        .unwrap();
+    host.run_with("debug-run-to-address", Arg::Text("&7000".into()))
+        .unwrap();
+    host.run("debug-pause").unwrap();
+    assert!(!host.debugger.is_active(), "the run to &7000 is forgotten");
+}
+
+#[test]
+fn a_model_change_keeps_what_was_chosen_beyond_the_model() {
+    let mut host = Host::new();
+    host.run("machine-ram-576").unwrap();
+    host.run("machine-disc-interface-none").unwrap();
+    host.run("machine-platform-cpc464").unwrap();
+    assert_eq!(host.motherboard.total_ram_kb(), 576);
+    assert!(!host.motherboard.has_disc_interface());
+    host.run("machine-platform-cpc6128").unwrap();
+    assert_eq!(host.motherboard.total_ram_kb(), 576);
+    // the model's own: a 6128 gives a 464 its 64K, and no DDI-1 is invented
+    let mut host = Host::new();
+    host.run("machine-platform-cpc464").unwrap();
+    assert_eq!(host.motherboard.total_ram_kb(), 64);
+    assert!(!host.motherboard.has_disc_interface());
+    assert!(!state("machine-ram-64", &host).checked);
+    host.run("machine-platform-cpc6128").unwrap();
+    assert!(
+        !state("machine-ram-64", &host).enabled,
+        "a 6128 has its own 128K"
+    );
+}
+
+#[test]
+fn a_configuration_runs_only_its_own_commands() {
+    let mut host = Host::new();
+    let config = r#"{ "crtc": "exit", "rendering": "video-rendering-ctm" }"#;
+    let notes = match host.run_with(
+        "config-load",
+        Arg::Bytes {
+            name: "c.json".into(),
+            data: config.as_bytes().to_vec(),
+        },
+    ) {
+        Ok(Outcome::Done(Some(message))) => message,
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        notes.contains("crtc: exit is not one of its values"),
+        "{notes}"
+    );
+    assert!(host.requests.is_empty(), "exit was not run");
+    assert!(state("video-rendering-ctm", &host).checked);
+}

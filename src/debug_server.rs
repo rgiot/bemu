@@ -272,7 +272,7 @@ impl Beam {
 
 /// A beam breakpoint: a position in the frame, or (no line) a position in
 /// every line.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct RasterBreakpoint {
     /// The line; `None`: every line.
     line: Option<usize>,
@@ -370,6 +370,10 @@ pub struct DebugServer {
     symbols: crate::symbols::SymbolTable,
     /// Run until the CPU reaches this address (step over, run to), then pause.
     run_to: Option<u16>,
+    /// The beam kept is from before the debugger was idle (see `forget_beam`).
+    beam_stale: bool,
+    /// Run until the beam passes this position, once (Debug > Run to > Beam position).
+    run_to_beam: Option<RasterBreakpoint>,
     /// Step out: pause once the stack is above this SP (the routine returned).
     step_out_sp: Option<u16>,
     /// Pause at the end of the frame.
@@ -474,10 +478,18 @@ impl DebugServer {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn listen(&mut self, port: u16) -> Result<(), String> {
         self.stop_listening();
-        let server = std::sync::Arc::new(
-            tiny_http::Server::http(("127.0.0.1", port))
-                .map_err(|e| format!("debug server on port {port}: {e}"))?,
-        );
+        // the server just stopped may hold the port a moment
+        let mut tries = 0;
+        let server = loop {
+            match tiny_http::Server::http(("127.0.0.1", port)) {
+                Ok(server) => break std::sync::Arc::new(server),
+                Err(_) if tries < 20 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                Err(e) => return Err(format!("debug server on port {port}: {e}")),
+            }
+        };
         let (sender, requests) = mpsc::channel();
         self.requests = requests;
         let events = self.events.clone();
@@ -543,6 +555,8 @@ impl DebugServer {
             pending_basic: None,
             symbols: Default::default(),
             run_to: None,
+            run_to_beam: None,
+            beam_stale: false,
             step_out_sp: None,
             step_frame: false,
             #[cfg(not(target_arch = "wasm32"))]
@@ -563,7 +577,19 @@ impl DebugServer {
     /// event, as for a breakpoint.
     pub fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+        if paused {
+            self.cancel_run_targets();
+        }
         self.report_pause();
+    }
+
+    /// A stop (a breakpoint, a pause) ends a step over / out, a run to an address or a beam
+    /// position, a step of a frame: a later Run runs.
+    fn cancel_run_targets(&mut self) {
+        self.run_to = None;
+        self.run_to_beam = None;
+        self.step_out_sp = None;
+        self.step_frame = false;
     }
 
     /// Whether `POST /api/quit` asked the emulator to leave.
@@ -584,6 +610,9 @@ impl DebugServer {
     /// breakpoints.
     pub fn set_beam(&mut self, beam: Beam) {
         self.previous_beam = self.beam.replace(beam);
+        if std::mem::take(&mut self.beam_stale) {
+            self.previous_beam = None;
+        }
     }
 
     /// The breakpoint the CPU stopped on since the last call, if any.
@@ -688,15 +717,21 @@ impl DebugServer {
             self.paused = true;
         }
         if self.run_to == Some(pc) {
-            self.run_to = None;
             self.stop(motherboard, json!({ "kind": "run_to" }));
         }
+        // the routine returned: the stack above where it was (SP may wrap past &FFFF)
         if self
             .step_out_sp
-            .is_some_and(|sp| motherboard.sp() > sp && !stepped)
+            .is_some_and(|sp| (motherboard.sp().wrapping_sub(sp) as i16) > 0 && !stepped)
         {
-            self.step_out_sp = None;
             self.stop(motherboard, json!({ "kind": "step_out" }));
+        }
+        if let (Some(target), Some(before), Some(after)) =
+            (self.run_to_beam, self.previous_beam, self.beam)
+        {
+            if target.passed(before, after) {
+                self.stop(motherboard, json!({ "kind": "run_to_beam" }));
+            }
         }
         self.fetched = Some((pc, instruction_bytes(motherboard, pc)));
         self.report_pause();
@@ -773,6 +808,7 @@ impl DebugServer {
 
     fn stop(&mut self, motherboard: &Motherboard, info: Value) {
         self.paused = true;
+        self.cancel_run_targets();
         self.last_stop = Some(motherboard.pc());
         let mut event = registers_event(motherboard);
         event["ticks"] = json!(motherboard.t_state_counter().value() / T_STATES_PER_NOP);
@@ -810,6 +846,7 @@ impl DebugServer {
         if let Some(reason) = reason {
             self.basic_target = None;
             self.paused = true;
+            self.cancel_run_targets();
             self.last_stop = Some(motherboard.pc());
             let mut event =
                 json!({ "line": line, "addr": hex16(state.stmt_addr), "reason": reason });
@@ -896,22 +933,31 @@ impl DebugServer {
         let next = motherboard.disassemble_next_instruction();
         let opcode = motherboard.read_byte(pc);
         let ed = motherboard.read_byte(pc.wrapping_add(1));
-        let runs_whole = opcode == 0xCD                         // CALL nn
-            || opcode & 0b1100_0111 == 0b1100_0100              // CALL cc,nn
-            || opcode & 0b1100_0111 == 0b1100_0111              // RST n
-            || opcode == 0x10                                   // DJNZ
-            || (opcode == 0xED && matches!(ed, 0xB0..=0xB3 | 0xB8..=0xBB)); // LDIR, CPIR...
-        if runs_whole {
-            self.run_to(pc.wrapping_add(next.len() as u16));
-        } else {
-            self.step();
+        // the firmware's RST &08 (LOW JUMP), &10 (SIDE CALL) and &18 (FAR CALL) are followed by
+        // a 2-byte address and return after it; RST &00 (reset) and &28 (FIRM JUMP) don't return
+        let rst = (opcode & 0b1100_0111 == 0b1100_0111).then_some(opcode & 0x38);
+        let after = match rst {
+            Some(0x08 | 0x10 | 0x18) => Some(pc.wrapping_add(3)),
+            Some(0x00 | 0x28) => None,
+            Some(_) => Some(pc.wrapping_add(1)),
+            None => {
+                let runs_whole = opcode == 0xCD                     // CALL nn
+                    || opcode & 0b1100_0111 == 0b1100_0100          // CALL cc,nn
+                    || opcode == 0x10                               // DJNZ
+                    || (opcode == 0xED && matches!(ed, 0xB0..=0xB3 | 0xB8..=0xBB)); // LDIR...
+                runs_whole.then(|| pc.wrapping_add(next.len() as u16))
+            }
+        };
+        match after {
+            Some(address) => self.run_to(address),
+            None => self.step(),
         }
     }
 
     /// Run until the current routine returns: the stack goes above where it is now (Debug >
     /// Step-out).
     pub fn step_out(&mut self, motherboard: &Motherboard) {
-        self.step_out_sp = Some(motherboard.sp().wrapping_add(1));
+        self.step_out_sp = Some(motherboard.sp());
         self.paused = false;
         self.command();
     }
@@ -921,6 +967,27 @@ impl DebugServer {
         self.run_to = Some(address);
         self.paused = false;
         self.command();
+    }
+
+    /// Run until the beam reaches `line` (of the frame, as the monitor counts them) and NOP
+    /// `nop` of it, once, then pause.
+    pub fn run_to_beam(&mut self, line: usize, nop: usize) {
+        self.run_to_beam = Some(RasterBreakpoint {
+            line: Some(line),
+            x: nop.min(NOPS_PER_LINE - 1) * BEAM_TICKS_PER_NOP,
+        });
+        self.forget_beam();
+        self.paused = false;
+        self.command();
+    }
+
+    /// The beam seen long ago is not the one before the next instruction (the debugger was
+    /// idle meanwhile): no raster stop compares against it.
+    fn forget_beam(&mut self) {
+        // the current one stays: positions in the picture are cropped against it; it is not
+        // the one before the next instruction
+        self.previous_beam = None;
+        self.beam_stale = true;
     }
 
     /// Run to the end of the frame, then pause.
@@ -980,6 +1047,7 @@ impl DebugServer {
             || self.has_breakpoints()
             || self.stepping
             || self.run_to.is_some()
+            || self.run_to_beam.is_some()
             || self.step_out_sp.is_some()
             || self.step_frame
             || self.is_typing()
@@ -1323,6 +1391,7 @@ impl DebugServer {
     /// (0-63) in `line` (0-311), `frame_nop` (0-19967); `nop` alone stops
     /// in every line, `line` alone at its start.
     fn set_raster_breakpoint(&mut self, request: &ApiRequest) -> ApiResult {
+        self.forget_beam();
         let param = |name: &str, max: usize| -> Result<Option<usize>, ApiError> {
             match request.param(name) {
                 None | Some("") => Ok(None),

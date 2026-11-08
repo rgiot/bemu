@@ -14,6 +14,7 @@ pub struct Prompt {
     question: ArgPrompt,
     text: String,
     number: i64,
+    decimal: f64,
     browser: Option<FileBrowser>,
     focused: bool,
 }
@@ -23,6 +24,10 @@ impl Prompt {
         let number = match question.kind {
             ArgKind::Number { default, .. } => default,
             _ => 0,
+        };
+        let decimal = match question.kind {
+            ArgKind::Decimal { default, .. } => default,
+            _ => 0.0,
         };
         let browser = match question.kind {
             ArgKind::OpenFile(extensions) => Some(FileBrowser::open(extensions)),
@@ -34,6 +39,7 @@ impl Prompt {
             question,
             text: String::new(),
             number,
+            decimal,
             browser,
             focused: false,
         }
@@ -64,6 +70,20 @@ impl Prompt {
                                 answer = Answer::Given(id, Arg::Text((*value).to_owned()));
                             }
                         }
+                    }
+                    ArgKind::Decimal { min, max, .. } => {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut self.decimal)
+                                    .range(*min..=*max)
+                                    .speed(0.05),
+                            );
+                            if ui.button("OK").clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
+                                answer = Answer::Given(id, Arg::Text(self.decimal.to_string()));
+                            }
+                        });
                     }
                     ArgKind::Number { min, max, .. } => {
                         ui.horizontal(|ui| {

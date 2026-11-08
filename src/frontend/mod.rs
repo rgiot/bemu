@@ -73,6 +73,12 @@ pub trait Frontend {
         None
     }
 
+    /// Whether the emulation runs at another speed than the real one (the clock paces it then,
+    /// not a 50 Hz display's vertical sync).
+    fn set_speed_factor(&mut self, on: bool) {
+        let _ = on;
+    }
+
     /// How curved the CRTs' glass is (see `DisplayMode::warp`), for a frontend that draws them.
     fn set_curvature(&mut self, curvature: f32) {
         let _ = curvature;

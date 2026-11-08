@@ -36,7 +36,14 @@ pub enum PageRequest {
         volume: f64,
         muted: bool,
     },
-    Fullscreen,
+    /// Fullscreen on or off.
+    Fullscreen {
+        on: bool,
+    },
+    /// Type the page's clipboard on the CPC keyboard.
+    Paste,
+    /// The last frame to the clipboard.
+    CopyScreenshot,
     OpenUrl {
         url: String,
     },
@@ -61,7 +68,10 @@ pub struct WebUi {
     pub bus: CommandBus,
     pub debugger: DebugServer,
     pub settings: HostSettings,
-    applied: HostSettings,
+    /// What the page last applied of the settings it applies (speed, volume, fullscreen).
+    applied: PageSettings,
+    /// Function keys pressed, their commands chosen at the next frame (with the machine).
+    chords: Vec<(bool, &'static str)>,
     requests: Vec<HostRequest>,
     pub page: Vec<PageRequest>,
     events: Vec<egui::Event>,
@@ -69,7 +79,33 @@ pub struct WebUi {
     pixels_per_point: f32,
     start: f64,
     now: f64,
+    /// Texture updates of outputs not drawn (no picture yet, a surface to configure again): the
+    /// next output draws them first, else the menus lose their font.
+    pending_textures: egui::TexturesDelta,
 }
+
+/// The settings the page applies itself.
+#[derive(Clone, Copy, PartialEq)]
+struct PageSettings {
+    speed: Speed,
+    volume: u8,
+    muted: bool,
+    fullscreen: bool,
+}
+
+impl PageSettings {
+    fn of(settings: &HostSettings) -> Self {
+        Self {
+            speed: settings.speed,
+            volume: settings.volume,
+            muted: settings.muted,
+            fullscreen: settings.fullscreen,
+        }
+    }
+}
+
+/// The function keys whose commands the page runs (F10 and F11 are the page's own).
+const FUNCTION_KEYS: [&str; 6] = ["F5", "F6", "F7", "F8", "F9", "F12"];
 
 /// The commands' receiver in the page.
 pub struct Target<'a> {
@@ -113,8 +149,6 @@ impl CommandTarget for Target<'_> {
         match request {
             HostRequest::StartRecording(..) | HostRequest::StopRecording(_) => false,
             HostRequest::DebugServer(_) | HostRequest::SavePrintout | HostRequest::Quit => false,
-            // the page has the clipboard, the worker does not
-            HostRequest::PasteClipboard | HostRequest::CopyScreenshot => false,
             HostRequest::StopCsl => self.csl_running,
             _ => true,
         }
@@ -136,7 +170,8 @@ impl WebUi {
             gui: Gui::new(),
             bus: CommandBus::default(),
             debugger: DebugServer::offline(),
-            applied: settings.clone(),
+            applied: PageSettings::of(&settings),
+            chords: Vec::new(),
             settings,
             requests: Vec::new(),
             page: Vec::new(),
@@ -145,6 +180,7 @@ impl WebUi {
             pixels_per_point: 1.0,
             start: js_sys::Date::now(),
             now: 0.0,
+            pending_textures: egui::TexturesDelta::default(),
         }
     }
 
@@ -203,6 +239,15 @@ impl WebUi {
             }
         }
         let taken = self.gui.wants_keyboard();
+        // the function keys of the commands (F8 pauses...), not the CPC's
+        if !taken && !(ctrl || alt || meta) {
+            if let Some(name) = FUNCTION_KEYS.iter().find(|name| **name == key) {
+                if pressed {
+                    self.chords.push((shift, name));
+                }
+                return true;
+            }
+        }
         if let Some(egui_key) = egui::Key::from_name(key).or_else(|| egui::Key::from_name(code.trim_start_matches("Key"))) {
             self.events.push(egui::Event::Key {
                 key: egui_key,
@@ -234,6 +279,26 @@ impl WebUi {
             requests: &mut self.requests,
             csl_running,
         };
+        for (shift, key) in std::mem::take(&mut self.chords) {
+            let chord = amsrust::commands::Chord {
+                ctrl: false,
+                shift,
+                alt: false,
+                key,
+            };
+            let found = amsrust::commands::shortcut_command(chord, &target).or_else(|| {
+                amsrust::commands::shortcut_command(
+                    amsrust::commands::Chord {
+                        shift: false,
+                        ..chord
+                    },
+                    &target,
+                )
+            });
+            if let Some(id) = found {
+                self.bus.push_id(id);
+            }
+        }
         self.bus.run(&mut target);
         let ppp = self.pixels_per_point;
         let raw = egui::RawInput {
@@ -248,7 +313,12 @@ impl WebUi {
             ..Default::default()
         };
         self.gui.context().set_pixels_per_point(ppp);
-        let output = self.gui.run(raw, &target, &mut self.bus);
+        let mut output = self.gui.run(raw, &target, &mut self.bus);
+        if !self.pending_textures.is_empty() {
+            let mut textures = std::mem::take(&mut self.pending_textures);
+            textures.append(std::mem::take(&mut output.textures_delta));
+            output.textures_delta = textures;
+        }
         for FileRequest {
             id,
             title,
@@ -279,6 +349,8 @@ impl WebUi {
                 HostRequest::OpenUrl(url) => Some(PageRequest::OpenUrl { url }),
                 HostRequest::RunCsl { text, .. } => Some(PageRequest::RunCsl { text }),
                 HostRequest::StopCsl => Some(PageRequest::StopCsl),
+                HostRequest::PasteClipboard => Some(PageRequest::Paste),
+                HostRequest::CopyScreenshot => Some(PageRequest::CopyScreenshot),
                 _ => None,
             });
         }
@@ -288,7 +360,8 @@ impl WebUi {
 
     /// The settings the page applies itself.
     fn apply(&mut self) {
-        let (wanted, applied) = (&self.settings, &self.applied);
+        let wanted = PageSettings::of(&self.settings);
+        let applied = self.applied;
         if wanted.speed != applied.speed {
             self.page.push(PageRequest::Speed {
                 value: match wanted.speed {
@@ -304,9 +377,36 @@ impl WebUi {
             });
         }
         if wanted.fullscreen != applied.fullscreen {
-            self.page.push(PageRequest::Fullscreen);
+            self.page.push(PageRequest::Fullscreen { on: wanted.fullscreen });
         }
-        self.applied = self.settings.clone();
+        self.applied = wanted;
+    }
+
+    /// The page changed the speed (F10, its own controls): the menus follow, nothing to send.
+    pub fn page_speed(&mut self, speed: Speed) {
+        self.settings.speed = speed;
+        self.applied.speed = speed;
+    }
+
+    /// The page went in or out of fullscreen (F11, Escape).
+    pub fn page_fullscreen(&mut self, on: bool) {
+        self.settings.fullscreen = on;
+        self.applied.fullscreen = on;
+    }
+
+    /// The page's volume (its own controls).
+    pub fn page_volume(&mut self, volume: f64, muted: bool) {
+        self.settings.volume = (volume * 100.0).round().clamp(0.0, 100.0) as u8;
+        self.settings.muted = muted;
+        self.applied.volume = self.settings.volume;
+        self.applied.muted = muted;
+    }
+
+    /// An output that was not drawn: its texture updates go with the next one.
+    pub fn not_drawn(&mut self, output: egui::FullOutput) {
+        let mut textures = std::mem::take(&mut self.pending_textures);
+        textures.append(output.textures_delta);
+        self.pending_textures = textures;
     }
 
     /// A file the page picked for the command `id`.

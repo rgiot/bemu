@@ -137,7 +137,7 @@ impl Gfx {
 
     /// Show `frame` (the monitor's 768x272 picture) as `mode` says, with CRT effects on the GPU.
     pub fn show(&mut self, frame: &RgbImage, mode: DisplayMode, curvature: f32) -> Result<(), String> {
-        self.show_with_ui(frame, mode, curvature, None)
+        self.show_with_ui(frame, mode, curvature, None).map(drop)
     }
 
     /// [`Self::show`], the interface drawn over the picture (on the GPU), the picture below its
@@ -148,14 +148,14 @@ impl Gfx {
         mode: DisplayMode,
         curvature: f32,
         ui: Option<(&amsrust::ui::Gui, egui::FullOutput)>
-    ) -> Result<(), String> {
+    ) -> Result<Option<egui::FullOutput>, String> {
         match self {
             Self::Gpu(gpu) => {
                 gpu.use_mode(mode, mode.warp(curvature));
                 gpu.frame.upload(&gpu.queue, frame);
                 gpu.draw(mode, ui)
             },
-            Self::Flat(flat) => flat.show(frame)
+            Self::Flat(flat) => flat.show(frame).map(|()| ui.map(|(_, output)| output))
         }
     }
 
@@ -287,14 +287,20 @@ impl Gpu {
     }
 
     /// Draw `mode`'s picture of the frame already uploaded.
-    fn draw(&mut self, mode: DisplayMode, ui: Option<(&amsrust::ui::Gui, egui::FullOutput)>) -> Result<(), String> {
+    /// Draw `mode`'s picture of the frame already uploaded, and the interface over it. The
+    /// interface's output comes back when it could not be drawn (its texture updates are kept).
+    fn draw(
+        &mut self,
+        mode: DisplayMode,
+        ui: Option<(&amsrust::ui::Gui, egui::FullOutput)>
+    ) -> Result<Option<egui::FullOutput>, String> {
         let surface_texture = match self.surface.get_current_texture() {
             Ok(texture) => texture,
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
                 self.surface.configure(&self.device, &self.config);
-                return Ok(());
+                return Ok(ui.map(|(_, output)| output));
             },
-            Err(wgpu::SurfaceError::Timeout) => return Ok(()),
+            Err(wgpu::SurfaceError::Timeout) => return Ok(ui.map(|(_, output)| output)),
             Err(e) => return Err(format!("cannot draw in the canvas: {e}"))
         };
         let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -346,6 +352,6 @@ impl Gpu {
         }
         self.queue.submit([encoder.finish()]);
         surface_texture.present();
-        Ok(())
+        Ok(None)
     }
 }

@@ -143,6 +143,7 @@ impl Palette {
     pub fn ask(&mut self, prompt: ArgPrompt) {
         self.query = match prompt.kind {
             ArgKind::Number { default, .. } => default.to_string(),
+            ArgKind::Decimal { default, .. } => default.to_string(),
             _ => String::new(),
         };
         self.step = Step::Argument(prompt);
@@ -410,6 +411,7 @@ impl Palette {
                 let hint = match prompt.kind {
                     ArgKind::Address => "&BE00, #38, 1000, or a symbol".to_owned(),
                     ArgKind::Number { min, max, .. } => format!("a number from {min} to {max}"),
+                    ArgKind::Decimal { min, max, .. } => format!("a number from {min} to {max}"),
                     _ => String::new(),
                 };
                 self.field(ui, &hint);

@@ -64,7 +64,7 @@ const PRINTER_CHARSETS: [&str; 9] = [
     "usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan",
 ];
 
-const VIEWS: [(&str, View); 14] = [
+const VIEWS: [(&str, View); 15] = [
     ("view-z80", View::Z80),
     ("view-stack", View::Stack),
     ("view-crtc", View::Crtc),
@@ -78,6 +78,7 @@ const VIEWS: [(&str, View); 14] = [
     ("view-symbols", View::Symbols),
     ("view-beam", View::Beam),
     ("view-breakpoints", View::Breakpoints),
+    ("view-counters", View::Counters),
     ("palette-open", View::Palette),
 ];
 
@@ -387,10 +388,12 @@ fn disc_state(id: &str, target: &dyn CommandTarget) -> Option<CommandState> {
     Some(match action {
         "select-disc" => CommandState::enabled(true),
         "new-disc" => CommandState::enabled(true),
+        // the files of a host (a page keeps no file it was given)
         "insert-recent" => CommandState::enabled(
-            target
-                .settings()
-                .is_some_and(|s| !s.media.recent_discs[index].is_empty()),
+            files
+                && target
+                    .settings()
+                    .is_some_and(|s| !s.media.recent_discs[index].is_empty()),
         ),
         "flip-disc" => CommandState::enabled(has_disc && !fdc.drive_kind(drive).is_double_sided()),
         "remove-disc" | "save-disc-as" => CommandState::enabled(has_disc),
@@ -552,11 +555,7 @@ fn rom_set_fitted(id: &str, mb: &Mb) -> bool {
 }
 
 fn total_ram_kb(mb: &Mb) -> usize {
-    if mb.has_ram_banking() {
-        64 * (1 + mb.extra_ram_pages())
-    } else {
-        64
-    }
+    mb.total_ram_kb()
 }
 
 fn model_ram_kb(model: CpcModel) -> usize {
@@ -704,6 +703,11 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             };
             mb.set_upper_rom(slot, rom.as_deref()).map_err(failed)?;
         }
+        // slot 7 was UniDOS: AMSDOS again (when the machine has a disc interface)
+        if id == "rom-set-unidos" && fitted {
+            let fitted = mb.has_disc_interface();
+            mb.set_disc_interface(fitted);
+        }
         if id == "rom-set-orgams" && !fitted && total_ram_kb(mb) < 576 {
             mb.set_total_ram_kb(Some(576)).map_err(failed)?;
         }
@@ -755,6 +759,9 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
         }
         "tape-eject" => {
             target.motherboard_mut().insert_tape(None);
+            if let Some(settings) = target.settings_mut() {
+                settings.media.tape = None;
+            }
             done()
         }
         "tape-play" | "tape-stop" | "tape-rewind" => {
@@ -924,7 +931,8 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                         "The Dandanator's romset",
                         ArgKind::OpenFile(&["rom", "bin"])
                     );
-                    files.dandanator = Some(arg.bytes()?);
+                    let (name, data) = arg.bytes()?;
+                    files.dandanator = Some((name, data.into()));
                 }
                 let Some((name, data)) = files.dandanator.clone() else {
                     settings(target)?.devices = files;
@@ -1035,8 +1043,12 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                 ArgKind::OpenFile(&["json"])
             );
             let (_, bytes) = arg.bytes()?;
-            super::config::load(target, &String::from_utf8_lossy(&bytes))?;
-            said("configuration loaded")
+            let notes = super::config::load(target, &String::from_utf8_lossy(&bytes))?;
+            if notes.is_empty() {
+                said("configuration loaded")
+            } else {
+                said(format!("configuration loaded, but: {}", notes.join("; ")))
+            }
         }
         "config-reset" => {
             super::config::load(target, "{}")?;
@@ -1115,17 +1127,25 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             let text = arg.text();
             let (line, nop) = text.split_once(',').unwrap_or((text.as_str(), "0"));
             let (debugger, mb) = debugger(target)?;
-            debugger
-                .api(
-                    "POST",
-                    "/api/raster_bp",
-                    &[("add", "1"), ("line", line.trim()), ("nop", nop.trim())],
-                    "",
-                    mb,
-                )
-                .map_err(CommandError::Invalid)?;
             if id == "debug-run-to-beam" {
-                debugger.set_paused(false);
+                let number = |text: &str| {
+                    Arg::Text(text.trim().to_owned())
+                        .number()
+                        .ok()
+                        .and_then(|n| usize::try_from(n).ok())
+                        .ok_or_else(|| CommandError::Invalid(format!("{text}: not a number")))
+                };
+                debugger.run_to_beam(number(line)?, number(nop)?);
+            } else {
+                debugger
+                    .api(
+                        "POST",
+                        "/api/raster_bp",
+                        &[("add", "1"), ("line", line.trim()), ("nop", nop.trim())],
+                        "",
+                        mb,
+                    )
+                    .map_err(CommandError::Invalid)?;
             }
             done()
         }
@@ -1598,7 +1618,7 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                 .load_font_rom(&bytes)
                 .map_err(failed)?;
             if let Some(settings) = target.settings_mut() {
-                settings.devices.dmp2000_rom = Some(bytes);
+                settings.devices.dmp2000_rom = Some(bytes.into());
             }
             done()
         }
@@ -1677,7 +1697,8 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                         if id == "willy-s2p-select-soundfont" || files.s2p_soundfont.is_none() =>
                     {
                         let arg = arg!(command, "The S2P's SoundFont", ArgKind::OpenFile(&["sf2"]));
-                        files.s2p_soundfont = Some(arg.bytes()?);
+                        let (name, data) = arg.bytes()?;
+                        files.s2p_soundfont = Some((name, data.into()));
                     }
                     _ => {}
                 }
@@ -1847,14 +1868,14 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
         }
         "screenshot-copy" => host(target, HostRequest::CopyScreenshot),
         "video-curvature-set" => {
-            let default = target.settings().map_or(1.0, |s| s.curvature);
+            let default = target.settings().map_or(1.0, |s| f64::from(s.curvature));
             let arg = arg!(
                 command,
                 "Curvature (0: flat, to 4)",
-                ArgKind::Number {
-                    min: 0,
-                    max: 4,
-                    default: default as i64
+                ArgKind::Decimal {
+                    min: 0.0,
+                    max: 4.0,
+                    default
                 }
             );
             let curvature: f32 = arg
@@ -2004,10 +2025,15 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
     if let Some(rest) = id.strip_prefix("machine-ram-") {
         let total = total_ram_kb(mb);
         let own = model_ram_kb(mb.model());
-        return CommandState::checked(match rest {
-            "default" => total == own,
-            kb => kb.parse() == Ok(total) && total != own,
-        });
+        // a 6128's own 128K is banked by its Gate Array: it cannot have less
+        let below_own = rest.parse::<usize>().is_ok_and(|kb| kb < own);
+        return CommandState {
+            enabled: !below_own,
+            checked: match rest {
+                "default" => total == own,
+                kb => kb.parse() == Ok(total) && total != own,
+            },
+        };
     }
     if let Some(rest) = id.strip_prefix("speed-") {
         return match settings {
@@ -2164,7 +2190,8 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
             enabled: has_settings && files,
             checked: settings.is_some_and(|s| s.watch_files),
         },
-        "exit" => CommandState::enabled(true),
+        // a page decides itself whether it closes (its embedder); the debug server quits
+        "exit" => CommandState::enabled(target.can(&HostRequest::Quit) || !has_settings),
         "debug-run" => CommandState::enabled(paused),
         "debug-pause" => CommandState::enabled(!paused),
         "debug-reset" | "machine-reset-soft" | "machine-reset-hard" => CommandState::enabled(true),
@@ -2324,8 +2351,9 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
         "screenshot-save" => host_can(target, HostRequest::Screenshot(None)),
         "screenshot-copy" => host_can(target, HostRequest::CopyScreenshot),
         "video-curvature-set" | "video-black-level-set" => needs_settings,
+        // a page always draws the CRT on the GPU (or raw on Canvas 2D)
         "video-crt-gpu-toggle" => CommandState {
-            enabled: has_settings && cfg!(feature = "crt-gpu"),
+            enabled: has_settings && cfg!(feature = "crt-gpu") && files,
             checked: settings.is_some_and(|s| s.crt_gpu),
         },
         "video-fullscreen-toggle" => toggle(settings.is_some_and(|s| s.fullscreen)),
