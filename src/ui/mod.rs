@@ -208,6 +208,18 @@ impl Gui {
 
     fn ui(&mut self, ctx: &egui::Context, target: &dyn CommandTarget, bus: &mut CommandBus) {
         self.shortcuts(ctx, target, bus);
+        // a command run from the palette asks its argument there (a file: in the browser)
+        if let Some(id) = self.palette.as_ref().and_then(palette::Palette::waiting) {
+            match bus.prompt() {
+                Some(question) if question.id == id && palette::Palette::asks(&question.kind) => {
+                    let question = bus.take_prompt().expect("a prompt");
+                    if let Some(palette) = &mut self.palette {
+                        palette.ask(question);
+                    }
+                }
+                _ => self.palette = None,
+            }
+        }
         // a command asks its argument
         if self.prompt.is_none() {
             if let Some(question) = bus.take_prompt() {
