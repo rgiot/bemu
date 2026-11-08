@@ -233,6 +233,12 @@ pub trait CrtcChip: Debug + Send {
 
     // ---- lines and frames ----
 
+    /// An R0 lowered, written during the character C0=R0 itself, still ends the line there
+    /// (CRTC 0: Overflow, Logon System; lowered below C0 later, C0 counts on to 255).
+    fn r0_lowered_on_c0_ends_line(&self) -> bool {
+        false
+    }
+
     /// CRTC 3/4: an R0 lowered below C0 ends the line at once (C0 >= R0); the other chips
     /// let C0 count on to 255 and wrap (AMSpiriT Lite and CPCSE, Shaker A3/A5-A7 R0 ruptures).
     fn line_ends_past_r0(&self) -> bool {

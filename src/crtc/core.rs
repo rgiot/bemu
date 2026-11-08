@@ -61,6 +61,8 @@ pub struct Core {
 
     /// Number of line ends (C0 back to 0 through R0) since reset; for tests and tools
     pub line_ends: u64,
+    pub r0_ends_line: bool,
+    pub r0_ends_at: u8,
     /// Motherboard ticks since the last character clock edge (0..15).
     pub(super) phase_ticks: u8,
     /// How many ticks late the running HSYNC rose compared to its C0=R2
@@ -142,6 +144,8 @@ impl Default for Core {
             fields: 0,
             light_pen_read: false,
             line_ends: 0,
+            r0_ends_line: false,
+            r0_ends_at: 0,
             phase_ticks: 0,
             hsync_late_ticks: 0,
             r1_latch: false,

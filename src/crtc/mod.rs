@@ -343,6 +343,13 @@ impl Crtc {
             r5: self.core.regs[5],
             r8: self.core.regs[8],
         };
+        if r == 0 && self.chip.r0_lowered_on_c0_ends_line() {
+            // written during the character C0=R0 itself, and not above it: too late to make C0
+            // go on, the line ends at this character (Overflow's R0=110 -> 63 on C0=110)
+            let old = self.core.regs[0];
+            self.core.r0_ends_line = self.core.hcc == old && (old > 1 || std::env::var_os("R0ALL").is_some());
+            self.core.r0_ends_at = old;
+        }
         self.chip.before_write(&mut self.core, r, v & mask);
         if let Some(register) = self.core.regs.get_mut(usize::from(r)) {
             *register = v & mask;
@@ -572,12 +579,14 @@ impl Crtc {
         // (ACCC §17.3) can make it true a second time on the same line. When the counter does not
         // reach R0+1 it wraps to 0 instead (ACCC §17.2.2: with R1>R0, VMA' is stuck).
         let line_end = core.hcc == core.regs[0].wrapping_add(1)
+            || (core.r0_ends_line && core.hcc == core.r0_ends_at.wrapping_add(1))
             || (chip.line_ends_past_r0() && core.regs[0] != 0xff && core.hcc > core.regs[0]);
         if core.hcc == core.regs[1] && !line_end {
             chip.r1_reached(core);
         }
 
         if line_end {
+            core.r0_ends_line = false;
             core.hcc = 0;
             core.line_ends += 1;
 

@@ -445,6 +445,10 @@ impl CrtcChip for Crtc0 {
         self.assess_additional_line(core);
     }
 
+    fn r0_lowered_on_c0_ends_line(&self) -> bool {
+        true
+    }
+
     fn c9_is_last(&self, core: &Core) -> bool {
         if core.ivm_lines {
             let r9 = core.regs[9];
