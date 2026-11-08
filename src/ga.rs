@@ -410,6 +410,10 @@ pub const HSYNC_GA_DELAY_TICKS: usize = 2;
 /// Shaker A3 rule out moving the interrupt or the CRTC writes instead).
 pub const PALETTE_LOOKUP_LAG_TICKS: usize = 21;
 
+/// Pushes of an unchanged palette after which every slot of the palette history is that palette
+/// (the history is [`GateArrayType::palette_write_delay_ticks`] + 1 long at most).
+const PALETTE_SETTLED_TICKS: u8 = 3;
+
 /// Ticks into a video byte at which the Gate Array takes DISPEN for the whole byte: a CRTC write
 /// that changes the display enable in the CRTC's sampling window (ACCC 4.4.4: from the start of the
 /// microsecond to 1.5 T-state after) acts on the character it lands in. ACCC 17.5.1: an `OUT R1,0`
@@ -1089,6 +1093,9 @@ pub struct GateArray {
     /// The palette as it was at the previous tick, for the chips whose writes are a tick late
     /// The palettes of the last ticks, newest first (see [`GateArrayType::palette_write_delay_ticks`])
     palette_ring: History<[Ink; 17], 3>,
+    /// Ticks the palette has been pushed unchanged, up to [`PALETTE_SETTLED_TICKS`]: from then
+    /// the ring holds the palette in every slot, so it is neither pushed nor read
+    palette_still: u8,
     /// The write of the current bus cycle was latched
     write_seen: bool,
 
@@ -1182,6 +1189,7 @@ impl Default for GateArray {
             shown_ring: History::new(Shown::Black),
             lookup_lag: PALETTE_LOOKUP_LAG_TICKS,
             palette_ring: History::new([Ink(0); 17]),
+            palette_still: 0,
             write_seen: false,
             current_mode: VideoMode::Mode0,
             pixel_automata: PixelAutomata::default(),
@@ -1386,12 +1394,18 @@ impl GateArray {
     }
 
     pub fn set_ink(&mut self, pen: Pen, ink: Ink) {
+        if self.palette_still >= PALETTE_SETTLED_TICKS {
+            // the ring was not kept: it held the palette as it was
+            self.palette_ring = History::new(self.palette);
+        }
+        self.palette_still = 0;
         self.palette[pen.value() as usize] = ink;
     }
 
     pub fn set_palette(&mut self, palette: [Ink; 17]) {
         self.palette = palette;
         self.palette_ring = History::new(palette);
+        self.palette_still = PALETTE_SETTLED_TICKS;
     }
 
     pub fn set_video_mode(&mut self, mode: VideoMode) {
@@ -1490,14 +1504,25 @@ impl GateArray {
         if self.byte_tick == DISPEN_LATCH_TICKS + 1 {
             self.latch_byte_dispen();
         }
-        self.palette_ring.push(self.palette);
-        let palette = &self
-            .palette_ring
-            .get(self.ga_type.palette_write_delay_ticks());
+        // (a palette unchanged for as many ticks as the ring is long is the ring's every slot)
+        let delayed = if self.palette_still >= PALETTE_SETTLED_TICKS {
+            None
+        } else {
+            self.palette_ring.push(self.palette);
+            self.palette_still += 1;
+            Some(
+                self.palette_ring
+                    .get(self.ga_type.palette_write_delay_ticks()),
+            )
+        };
         self.rgb = match (self.shown_ring.get(self.lookup_lag), &self.plus) {
             _ if sync_black => (0., 0., 0.).into(),
             (Shown::Black, _) => (0., 0., 0.).into(),
-            (Shown::Pen(pen), None) => palette[pen.value() as usize].into(),
+            (Shown::Pen(pen), None) => match &delayed {
+                None => self.palette[pen.value() as usize],
+                Some(palette) => palette[pen.value() as usize],
+            }
+            .into(),
             (Shown::Pen(pen), Some(plus)) => plus.rgb(pen.value() as usize),
             (Shown::Sprite(pen), Some(plus)) => plus.rgb(16 + pen as usize),
             (Shown::Sprite(_), None) => (0., 0., 0.).into(),

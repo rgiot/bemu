@@ -121,6 +121,9 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
 pub struct Crtc {
     core: Core,
     chip: Box<dyn CrtcChip>,
+    /// A write may be waiting in the chip (see [`CrtcChip::queue_write`]): its queue is only
+    /// looked at then, not through a virtual call on every tick
+    writes_queued: bool,
 }
 
 impl Deref for Crtc {
@@ -154,6 +157,7 @@ impl From<CrtcType> for Crtc {
         let mut crtc = Crtc {
             core: Core::default(),
             chip: from.new_chip(),
+            writes_queued: false,
         };
         crtc.reset();
         crtc
@@ -253,8 +257,12 @@ impl Crtc {
     pub fn write_crtc_register(&mut self) {
         let val = self.get_data_from_pins();
         let r = self.core.ar;
-        if self.is_register_writable(r) && !self.chip.queue_write(r, val) {
-            self.do_write_register(r, val);
+        if self.is_register_writable(r) {
+            if self.chip.queue_write(r, val) {
+                self.writes_queued = true;
+            } else {
+                self.do_write_register(r, val);
+            }
         }
     }
 
@@ -403,9 +411,14 @@ impl Crtc {
         if self.get_pin(CrtcPin::CS) || self.get_pin(CrtcPin::EN) || self.get_pin(CrtcPin::RW) {
             self.core.write_taken = false;
         }
-        if let Some(due) = self.chip.due_writes() {
-            for (r, v) in due {
-                self.do_write_register(r, v);
+        if self.writes_queued {
+            match self.chip.due_writes() {
+                Some(due) => {
+                    for (r, v) in due {
+                        self.do_write_register(r, v);
+                    }
+                },
+                None => self.writes_queued = false
             }
         }
     }

@@ -26,6 +26,28 @@ use std::fmt;
 /// VSYNC on PPI port B first, is seen as it is 10 ticks into that microsecond.
 const INPUT_LATCH_TICKS: u32 = 10;
 
+/// The CPU lines [`Motherboard::sync_chips_pins`] copies to the other chips, or decides from
+const CPU_BUS_PINS: u64 = Z80Pin::A8 as u64
+    | Z80Pin::A9 as u64
+    | Z80Pin::A10 as u64
+    | Z80Pin::A11 as u64
+    | Z80Pin::A13 as u64
+    | Z80Pin::A14 as u64
+    | Z80Pin::A15 as u64
+    | Z80Pin::D0 as u64
+    | Z80Pin::D1 as u64
+    | Z80Pin::D2 as u64
+    | Z80Pin::D3 as u64
+    | Z80Pin::D4 as u64
+    | Z80Pin::D5 as u64
+    | Z80Pin::D6 as u64
+    | Z80Pin::D7 as u64
+    | Z80Pin::Neg_IORQ as u64
+    | Z80Pin::Neg_MREQ as u64
+    | Z80Pin::Neg_RD as u64
+    | Z80Pin::Neg_WR as u64
+    | Z80Pin::Neg_M1 as u64;
+
 /// Motherboard of the AMstrad CPC
 /// Some component are emulated at the lowest level as possible (Z80/CRTC) while
 /// some others are partially emulated (GA/PAL) or totally ignored (RAM)
@@ -1414,7 +1436,12 @@ impl Motherboard {
         // itself drives from `crtc`, which is why that write is gated on
         // `crtc_changed` below, not folded into the GA section. If that
         // ever changes, these gates would need revisiting.
-        let cpu_changed = self.cpu.any_pin_changed();
+        // Only the CPU's bus lines count (not CLK, which the GA toggles every 2 ticks, nor the
+        // INT/WAIT/HALT lines): they are all the CPU-sourced block below copies or derives from
+        let cpu_changed = {
+            let &PinsBuffer(previous, current) = self.cpu.pins_buffer();
+            (previous ^ current) & CPU_BUS_PINS != 0
+        };
         let ga_changed = self.ga.any_pin_changed();
         let crtc_changed = self.crtc.any_pin_changed();
 

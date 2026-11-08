@@ -21,6 +21,8 @@ wgpu = { version = "27", default-features = false, features = ["wgsl", "webgpu",
 console_error_panic_hook = "0.1"
 
 [features]
+# a headless speed measure for node, see src/bench.rs
+bench = []
 default = ["playcity", "digiblaster", "willy"]
 # the sound expansions a page can ask for (config playcity / digiblaster / willyOpl3)
 playcity = ["amsrust/playcity"]
