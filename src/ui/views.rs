@@ -224,6 +224,52 @@ fn breakpoint_dot(ui: &mut egui::Ui, marked: bool) -> egui::Response {
     response
 }
 
+/// An address to click: the disassembly from it (a right click: the memory window there, or a
+/// breakpoint on it).
+fn address_link(
+    ui: &mut egui::Ui,
+    text: String,
+    address: u16,
+    state: &mut ViewState,
+    bus: &mut CommandBus,
+) {
+    let response = ui
+        .add(egui::Link::new(egui::RichText::new(text).monospace()))
+        .on_hover_text(format!("&{address:04X}: disassemble (right click: more)"));
+    if response.clicked() {
+        state.disassembly_address = format!("&{address:04X}");
+        push(bus, "view-disassembly", None);
+    }
+    response.context_menu(|ui| {
+        if ui.button("Disassemble from here").clicked() {
+            state.disassembly_address = format!("&{address:04X}");
+            push(bus, "view-disassembly", None);
+            ui.close();
+        }
+        if ui.button("Show in the memory window").clicked() {
+            state.memory_address = format!("&{address:04X}");
+            push(bus, "view-memory", None);
+            ui.close();
+        }
+        if ui.button("Toggle a breakpoint").clicked() {
+            push(
+                bus,
+                "breakpoint-toggle",
+                Some(Arg::Number(i64::from(address))),
+            );
+            ui.close();
+        }
+        if ui.button("Run to here").clicked() {
+            push(
+                bus,
+                "debug-run-to-address",
+                Some(Arg::Number(i64::from(address))),
+            );
+            ui.close();
+        }
+    });
+}
+
 fn inspect(target: &dyn CommandTarget, what: &str) -> Value {
     target.debugger().map_or(Value::Null, |debugger| {
         debugger.inspect(what, target.motherboard())
@@ -294,11 +340,25 @@ pub fn contents(
             }
             egui::Grid::new("calls").striped(true).show(ui, |ui| {
                 for frame in &frames {
-                    ui.monospace(name(frame.called));
-                    ui.weak(format!(
-                        "called at &{:04X}, returns to &{:04X}",
-                        frame.call_site, frame.return_address
-                    ));
+                    address_link(ui, name(frame.called), frame.called, state, bus);
+                    ui.horizontal(|ui| {
+                        ui.weak("called at");
+                        address_link(
+                            ui,
+                            format!("&{:04X}", frame.call_site),
+                            frame.call_site,
+                            state,
+                            bus,
+                        );
+                        ui.weak("returns to");
+                        address_link(
+                            ui,
+                            format!("&{:04X}", frame.return_address),
+                            frame.return_address,
+                            state,
+                            bus,
+                        );
+                    });
                     ui.end_row();
                 }
             });
@@ -309,7 +369,7 @@ pub fn contents(
                     let at = sp.wrapping_add(i * 2);
                     let word = mb.read_word(at);
                     ui.monospace(format!("&{at:04X}"));
-                    ui.monospace(format!("&{word:04X}"));
+                    address_link(ui, format!("&{word:04X}"), word, state, bus);
                     ui.weak(symbols.and_then(|s| s.describe(word)).unwrap_or_default());
                     ui.end_row();
                 }
@@ -638,7 +698,7 @@ pub fn contents(
                     .filter(|(name, _)| name.to_lowercase().contains(&filter))
                     .take(500)
                 {
-                    ui.monospace(format!("&{address:04X}"));
+                    address_link(ui, format!("&{address:04X}"), address, state, bus);
                     ui.label(name);
                     ui.end_row();
                 }
