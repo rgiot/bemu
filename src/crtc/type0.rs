@@ -90,6 +90,14 @@ impl Crtc0 {
         }
     }
 
+    /// The last two characters of a row's last line (the OUTI's 4th and 5th microseconds of
+    /// Shaker B6 A reach C0=R0-1 and R0 here): they compare R7 with the next row's C4.
+    fn ends_row_for_r7(&self, core: &Core) -> bool {
+        core.hcc.wrapping_add(1) >= core.regs[0]
+            && core.hcc <= core.regs[0]
+            && self.c9_is_last(core)
+    }
+
     /// ACCC 13.2.1: C0=2 on the last line decides the additional lines; an R5 programmed before
     /// C0=3 asks for them.
     fn assess_additional_line(&mut self, core: &Core) {
@@ -251,13 +259,14 @@ impl CrtcChip for Crtc0 {
     }
 
     /// ACCC 16.4.1.1: R7 given the value of C4 on C0=0/1 is a BLOCKED VSYNC: it does not start,
-    /// nor can it until C4 or R7 changes.
+    /// nor can it until C4 or R7 changes. On a row's last line, C0=R0 is already the next row's
+    /// C0<2 (ACCC 16.4; Shaker B6 A, "R7 LAST CHANCE 4TH uSec ON C0=0": the real CRTC 0 prints #1E).
     fn before_write(&mut self, core: &mut Core, r: u8, value: u8) {
         if r == 7
             && !core.vsync()
             && core.vcc.value() == value
             && core.vcc.value() != core.regs[7]
-            && core.hcc < BLOCKED_R7_C0
+            && (core.hcc < BLOCKED_R7_C0 || self.ends_row_for_r7(core))
         {
             self.r7_match = true;
         }

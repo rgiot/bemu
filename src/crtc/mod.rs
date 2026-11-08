@@ -417,8 +417,8 @@ impl Crtc {
                     for (r, v) in due {
                         self.do_write_register(r, v);
                     }
-                },
-                None => self.writes_queued = false
+                }
+                None => self.writes_queued = false,
             }
         }
     }
