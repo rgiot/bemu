@@ -14,11 +14,12 @@ use amsrust::commands::{
     self, Chord, CommandBus, CommandError, CommandTarget, HostRequest, HostSettings, Recording,
     Speed,
 };
+use amsrust::csl_runner::{CslReport, CslRunner, Progress};
 use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::display::DisplayMode;
 use amsrust::input::{HostInput, HostKey, HostKeyboard, KeyboardMapping};
 use amsrust::monitor::Monitor as CrtMonitor;
-use amsrust::motherboard::Motherboard;
+use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use amsrust::overlay::Overlay;
 
 use crate::cli::{Args, FrontendKind};
@@ -40,14 +41,26 @@ struct Core<'m> {
     recording: HashSet<Recording>,
     /// The window has the interface (menus, windows, clipboard).
     gui: bool,
+    /// The machine of the command line, which a CSL script's `reset` rebuilds.
+    builder: MotherboardBuilder,
+    /// The CSL script playing (File > CSL > Play), on a machine of its own: the window's
+    /// machine when it ends.
+    csl: Option<CslRunner>,
 }
 
 impl CommandTarget for Core<'_> {
+    /// The script's machine while one plays.
     fn motherboard(&self) -> &Motherboard {
-        self.motherboard
+        match &self.csl {
+            Some(runner) => runner.motherboard(),
+            None => self.motherboard,
+        }
     }
     fn motherboard_mut(&mut self) -> &mut Motherboard {
-        self.motherboard
+        match &mut self.csl {
+            Some(runner) => runner.motherboard_mut(),
+            None => self.motherboard,
+        }
     }
     fn debugger(&self) -> Option<&DebugServer> {
         Some(&self.debugger)
@@ -56,7 +69,11 @@ impl CommandTarget for Core<'_> {
         Some(&mut self.debugger)
     }
     fn debugger_and_motherboard(&mut self) -> Option<(&mut DebugServer, &mut Motherboard)> {
-        Some((&mut self.debugger, self.motherboard))
+        let motherboard = match &mut self.csl {
+            Some(runner) => runner.motherboard_mut(),
+            None => &mut *self.motherboard,
+        };
+        Some((&mut self.debugger, motherboard))
     }
     fn settings(&self) -> Option<&HostSettings> {
         Some(&self.settings)
@@ -85,9 +102,12 @@ impl CommandTarget for Core<'_> {
             | HostRequest::OpenUrl(_)
             | HostRequest::CopyScreenshot
             | HostRequest::PasteClipboard => self.gui,
-            // a CSL script drives a machine of its own (`amsrust::csl_runner`)
-            HostRequest::RunCsl { .. } | HostRequest::StopCsl => false,
+            HostRequest::RunCsl { .. } => self.csl.is_none(),
+            HostRequest::StopCsl => self.csl.is_some(),
         }
+    }
+    fn csl_running(&self) -> bool {
+        self.csl.is_some()
     }
     fn is_recording(&self, recording: Recording) -> bool {
         self.recording.contains(&recording)
@@ -154,6 +174,13 @@ struct Window {
     quit: bool,
     #[cfg(feature = "gui")]
     gui: Option<amsrust::ui::Gui>,
+}
+
+/// How much of a CSL script plays between two looks for its frame.
+const CSL_SLICE_T_STATES: usize = 20_000;
+
+fn fdc_drive(unit: usize) -> amsrust::fdc::FdcDrive {
+    [amsrust::fdc::FdcDrive::A, amsrust::fdc::FdcDrive::B][unit]
 }
 
 const FUNCTION_KEYS: [(HostKey, &str); 7] = [
@@ -289,7 +316,101 @@ impl Window {
                     .unwrap_or_else(|| "printout".into());
                 finish_printer_export(core.motherboard, &prefix);
             }
+            HostRequest::RunCsl { text, folder } => self.run_csl(&text, folder, core),
+            HostRequest::StopCsl => {
+                if let Some(runner) = core.csl.take() {
+                    self.adopt(runner, core);
+                    self.notify("CSL script stopped".into(), false);
+                }
+            }
             other => self.notify(format!("{other:?}: not available here"), true),
+        }
+    }
+
+    /// Play a CSL script on a machine of its own: the command line's (the script's
+    /// `crtc_select`... applied at its `reset`), its screenshots in the script's folder.
+    fn run_csl(&mut self, text: &str, folder: Option<PathBuf>, core: &mut Core) {
+        let folder = folder.unwrap_or_else(|| PathBuf::from("."));
+        let mut runner = CslRunner::new(&folder);
+        runner.set_machine(core.builder);
+        for unit in 0..2 {
+            let kind = core.motherboard.fdc().drive_kind(fdc_drive(unit));
+            runner.set_drive_kind(unit, kind);
+        }
+        runner
+            .motherboard_mut()
+            .psg_mut()
+            .take_audio_output_from(core.motherboard.psg_mut());
+        runner
+            .motherboard_mut()
+            .watch_io_writes(self.overlay.is_some());
+        match runner.start_text(text, &folder) {
+            Ok(()) => {
+                core.csl = Some(runner);
+                self.notify("CSL script playing".into(), false);
+            }
+            Err(e) => {
+                // the sound goes back
+                core.motherboard
+                    .psg_mut()
+                    .take_audio_output_from(runner.motherboard_mut().psg_mut());
+                self.notify(format!("CSL: {e}"), true);
+            }
+        }
+    }
+
+    /// The machine of a script that ends goes on as the window's.
+    fn adopt(&mut self, mut runner: CslRunner, core: &mut Core) {
+        *core.motherboard = std::mem::take(runner.motherboard_mut());
+        self.monitor = if self.exact_monitor {
+            let mut monitor = CrtMonitor::default();
+            monitor.keep_full_frames();
+            monitor
+        } else {
+            viewing_monitor(core.settings.black_level)
+        };
+    }
+
+    /// The script to its next frame (a frame's time at most): the frame, if one completed.
+    fn csl_frame(&mut self, core: &mut Core) -> Option<image::RgbImage> {
+        let runner = core.csl.as_mut()?;
+        let mut played = 0;
+        while played < FRAME_T_STATES {
+            match runner.advance(CSL_SLICE_T_STATES) {
+                Ok(Progress::Frame) => return runner.last_frame().cloned(),
+                Ok(Progress::Running) => played += CSL_SLICE_T_STATES,
+                Ok(Progress::Done(report)) => {
+                    self.csl_done(Ok(report), core);
+                    return None;
+                }
+                Err(e) => {
+                    self.csl_done(Err(e), core);
+                    return None;
+                }
+            }
+        }
+        None
+    }
+
+    fn csl_done(&mut self, result: Result<CslReport, String>, core: &mut Core) {
+        if let Some(runner) = core.csl.take() {
+            self.adopt(runner, core);
+        }
+        match result {
+            Ok(report) => {
+                for note in &report.ignored {
+                    eprintln!("CSL: {note}");
+                }
+                self.notify(
+                    format!(
+                        "CSL script over: {} screenshot(s), {} note(s)",
+                        report.screenshots.len(),
+                        report.ignored.len()
+                    ),
+                    false,
+                );
+            }
+            Err(e) => self.notify(format!("CSL: {e}"), true),
         }
     }
 
@@ -563,6 +684,7 @@ fn settings_of(args: &Args, sound: bool) -> HostSettings {
 /// The live window, until it is closed (or Ctrl+C, File > Exit, `POST /api/quit`).
 pub fn run_window(
     motherboard: &mut Motherboard,
+    builder: MotherboardBuilder,
     args: &Args,
     typist: &mut Option<Typist>,
     reloader: &mut Option<Reloader>,
@@ -602,6 +724,8 @@ pub fn run_window(
         requests: Vec::new(),
         recording: HashSet::new(),
         gui: false,
+        builder,
+        csl: None,
     };
     #[cfg(feature = "gui")]
     {
@@ -717,6 +841,7 @@ pub fn run_window(
         // frame's time, then the next loop. A recording and the debug server see every frame.
         let turbo = core.settings.speed.is_max();
         let unseen = turbo
+            && core.csl.is_none()
             && window.recorder.is_none()
             && window.series.is_none()
             && !core.debugger.is_active()
@@ -731,13 +856,18 @@ pub fn run_window(
             core.motherboard.take_io_writes().for_each(drop);
             continue;
         }
-        let Some(mut frame) = run_frame(
-            core.motherboard,
-            &mut window.monitor,
-            &mut core.debugger,
-            window.overlay.as_mut(),
-        ) else {
-            continue; // paused mid-frame
+        let frame = if core.csl.is_some() {
+            window.csl_frame(&mut core)
+        } else {
+            run_frame(
+                core.motherboard,
+                &mut window.monitor,
+                &mut core.debugger,
+                window.overlay.as_mut(),
+            )
+        };
+        let Some(mut frame) = frame else {
+            continue; // paused mid-frame, or the script's frame not over
         };
         if let Some(overlay) = &mut window.overlay {
             overlay.draw_and_clear(&mut frame);
@@ -749,8 +879,8 @@ pub fn run_window(
         if !window.direct || window.recorder.is_some() {
             window.filter.render(&frame, &mut window.buffer);
         }
-        let samples = core.motherboard.take_audio_samples();
-        export_samples(core.motherboard, &samples);
+        let samples = core.motherboard_mut().take_audio_samples();
+        export_samples(core.motherboard_mut(), &samples);
         if let Some((recorder, _)) = &mut window.recorder {
             let recorded = recorder
                 .samples(&samples)

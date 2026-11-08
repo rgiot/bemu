@@ -45,7 +45,7 @@ File,Snapshot,Version,Version 3,snapshot-version-3,,Write version 3 snapshots (t
 File,Machine,Load configuration,,config-load,,"Load a machine configuration (model, CRTC, RAM, ROMs, expansions, display)",Open a file browser if no file is provided,inp,,new,filled,"WinAPE, ACE, RVM"
 File,Machine,Save configuration,,config-save,,Save the current machine configuration to a file,Same file format as the command line (one option per line) is a possibility,inp,,new,filled,
 File,Machine,Restore default configuration,,config-reset,,"Go back to the default machine (6128, CRTC 0, GA 40010, raw display)",,act,,new,added,
-File,Load CSL,,,csl-load,,Play a CSL script (open a file browser if no file is provided),,inp,,web runCsl,draft,
+File,Load CSL,,,csl-load,,Play a CSL script (open a file browser if no file is provided),"Plays on a machine of its own (the command line's, the script's settings applied at its reset), which becomes the window's when the script ends; screenshots in the script's folder",inp,,web runCsl; desktop window,draft,
 File,Stop CSL,,,csl-stop,,Stop the running CSL script; the machine goes on,Enable only while a script plays,act,,web stopCsl(),added,
 File,Watch files for changes,,,files-watch-toggle,,"Load again the snapshot, discs and tape when their files change on the host",Checkable. Edit / assemble / see loop,tog,,--watch,added,
 File,Exit,,,exit,,Close the emulator,,act,F4 (window close),F4; /api/quit; monitor q,draft,all
@@ -53,7 +53,7 @@ Debug,Run,,,debug-run,,Resume the emulation,Enable only when paused,act,F8,F8; m
 Debug,Pause,,,debug-pause,,Pause the emulation,Enable only when running,act,F8,F8; /api/config paused=true,draft,
 Debug,Reset,,,debug-reset,,Press the CPC reset button (RAM kept),Alias of machine-reset-soft; keep one of the two menu entries if the duplication bothers you,act,,/api/config do_soft_reset,draft,
 Debug,Step-in,,,debug-step-in,,Run one instruction (enter calls),Pauses afterwards,act,,/api/step; monitor s,draft,all debuggers
-Debug,Step-out,,,debug-step-out,,Run until the current routine returns,NOT IMPLEMENTED (needs a call-depth tracker),act,,new,draft,all debuggers
+Debug,Step-out,,,debug-step-out,,Run until the current routine returns,Runs until the routine returns: SP back above its value at the start,act,,yes,draft,all debuggers
 Debug,Step over,,,debug-step-over,,"Run one instruction, running a CALL / RST / DJNZ loop as a whole","Label in the draft was cut at 'Step-', its command was 'debug-step'; renamed so the three step commands are in/out/over. monitor n = next",act,,monitor n,fixed,all debuggers
 Debug,Step one frame,,,debug-step-frame,,"Run until the next VSYNC, then pause",Enable only when paused,act,,web stepFrame(),added,
 Debug,Run to…,Address,,debug-run-to-address,,Run until a CPU address (or symbol) is reached,Asks the address / symbol,inp,,monitor r ADDR (sets PC and runs); /api/exec,added,

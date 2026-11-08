@@ -415,7 +415,14 @@ fn main() {
         ),
         None if args.window => {
             let server = start_debug_server(&args, &breakpoints, &mut motherboard);
-            session::run_window(&mut motherboard, &args, &mut typist, &mut reloader, server)
+            session::run_window(
+                &mut motherboard,
+                builder,
+                &args,
+                &mut typist,
+                &mut reloader,
+                server,
+            )
         }
         None if args.debug_server() => {
             let mut server = start_debug_server(&args, &breakpoints, &mut motherboard).unwrap();
