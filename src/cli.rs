@@ -146,27 +146,6 @@ pub struct Args {
     #[arg(long = "screenshot", value_name = "DIR", help_heading = RUN)]
     pub screenshot_dir: Option<String>,
 
-    /// Plays a CSL script headless (the machine, discs, keys and waits it says), saving the
-    /// screenshots it asks for (`screenshot`, SSM codes) in --screenshot's DIR (default: here),
-    /// rendered as --display, --curvature and --black-level say.
-    #[arg(long, value_name = "FILE.csl", help_heading = RUN)]
-    pub csl: Option<String>,
-
-    /// An archive (zip, 7z, tar.gz), a disc image, or a folder of them, the CSL's `disk_insert` finds
-    /// its disc in when it is not beside the script (repeatable).
-    #[arg(long = "csl-archive", value_name = "FILE", requires = "csl", help_heading = RUN)]
-    pub csl_archives: Vec<String>,
-
-    /// The format of the CSL's screenshots: png (a file per screenshot, named by the script), or
-    /// webp (lossless, about half the size: one SCRIPT.webp file, a still when the script takes one
-    /// screenshot, else an animation of them, see --frame-ms).
-    #[arg(long, value_name = "png|webp", default_value = "png", requires = "csl", help_heading = RUN)]
-    pub screenshot_format: String,
-
-    /// How long each frame of an animated webp is shown, in milliseconds.
-    #[arg(long, value_name = "MS", default_value_t = 1000, requires = "csl", help_heading = RUN)]
-    pub frame_ms: u32,
-
     /// How long a headless run (--screenshot, --record) lasts.
     #[arg(long, default_value_t = 30, help_heading = RUN)]
     pub seconds: u64,
@@ -283,6 +262,11 @@ pub struct Args {
     /// register selects grey, inks yellow (pen selects dark yellow), mode/ROMs magenta, RAM green.
     #[arg(long, help_heading = DISPLAY)]
     pub overlay: bool,
+
+    /// The window without its menu bar (Tools > Show menu bar, or the command palette,
+    /// Ctrl+Shift+P, shows it again).
+    #[arg(long, help_heading = DISPLAY)]
+    pub no_menu: bool,
 
     /// A PlayCity on the expansion port: two more AYs, right and left, and a CTC whose channel 1
     /// counts the CRTC's CURSOR to an NMI.
@@ -414,7 +398,11 @@ In the window: F10 toggles full speed (the emulation as fast as it can, silent, 
 told), F7 saves the machine's state in bemu_0000.sna (then 0001...) in the current directory,
 F9 cycles the displays (not while recording), F6 shows or hides the overlay, F5 turns the disc
 of drive A over (Shift+F5: drive B; 3\" drives), F12 switches the keyboard
-mapping, F4 closes it.";
+mapping, F4 closes it.
+
+The window (--frontend winit) has a menu bar with every command (--no-menu hides it) and a
+command palette, Ctrl+Shift+P: type a few letters of a command, Enter runs it. The machine is
+changed while it runs (Machine > CRTC, Memory expansion, Expansions...): it keeps its state.";
 
 /// `--every`: seconds apart, or frames apart.
 #[derive(Clone, Copy, Debug, PartialEq)]

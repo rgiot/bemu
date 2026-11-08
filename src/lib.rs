@@ -37,8 +37,6 @@ pub mod sound_cards;
 pub mod sound_export;
 pub mod symbols;
 pub mod tape;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod webp;
 #[cfg(feature = "willy")]
 pub mod willy;
 pub mod z80;
@@ -54,10 +52,12 @@ pub mod debug;
 // an HTTP server on a socket, with threads: not in a web page
 pub mod basic_program;
 pub mod breakpoints;
-#[cfg(not(target_arch = "wasm32"))]
+pub mod commands;
 pub mod debug_server;
 pub mod display;
 pub mod input;
+#[cfg(feature = "gui")]
+pub mod ui;
 
 mod bits;
 mod history;

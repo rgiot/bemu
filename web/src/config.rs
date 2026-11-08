@@ -41,7 +41,10 @@ pub struct Config {
     pub black_level: Option<u8>,
     /// "symbolic" (the default: a key types its character) or "positional" (a key presses the
     /// CPC key at its place, for games).
-    pub keyboard: Option<String>
+    pub keyboard: Option<String>,
+    /// The menu bar, the command palette (Ctrl+Shift+P) and the debugger's windows over the
+    /// picture: true by default on WebGPU / WebGL (never on Canvas 2D); false hides them.
+    pub menu: Option<bool>
 }
 
 /// `willyOpl3`: `true` (at &FEBC) or the base its jumper sets (`"&FEAC"`...).

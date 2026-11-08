@@ -195,8 +195,13 @@ impl ExpansionDevice for Nova {
 }
 
 fn host_seconds() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    // a page's clock: std's panics in a browser
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::time::{SystemTime, UNIX_EPOCH};
+    #[cfg(target_arch = "wasm32")]
+    use web_time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
 }
 

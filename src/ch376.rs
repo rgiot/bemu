@@ -1221,6 +1221,14 @@ impl Albireo {
         };
         Ok(Self::new(Some(volume)))
     }
+
+    /// The board with a FAT image given as bytes as its USB key (a page's upload): what the CPC
+    /// writes stays in memory.
+    pub fn with_image(image: Vec<u8>) -> Self {
+        Self::new(Some(Box::new(FatImage::new(Box::new(io::Cursor::new(
+            image,
+        ))))))
+    }
 }
 
 impl ExpansionDevice for Albireo {

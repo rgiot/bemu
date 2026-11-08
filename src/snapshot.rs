@@ -48,9 +48,21 @@ pub fn load_sna_bytes(
 /// large expansion card's), CRTC registers and counters, Gate Array, PSG, PPI, upper ROM, MMR,
 /// the model and the CRTC type, the disc motor and drive A's track.
 pub fn save_sna_bytes(motherboard: &Motherboard) -> Result<Vec<u8>, String> {
+    save_sna_bytes_version(motherboard, 3)
+}
+
+/// [`save_sna_bytes`] as a snapshot of `version` 1, 2 or 3 (the older ones keep less: no CRTC
+/// counters, no CPC+ chunk...).
+pub fn save_sna_bytes_version(motherboard: &Motherboard, version: u8) -> Result<Vec<u8>, String> {
+    let version = match version {
+        1 => SnapshotVersion::V1,
+        2 => SnapshotVersion::V2,
+        3 => SnapshotVersion::V3,
+        other => return Err(format!("snapshot version {other}: 1, 2 or 3")),
+    };
     let mut bytes = Vec::new();
     snapshot_of(motherboard)?
-        .write_all(&mut bytes, SnapshotVersion::V3)
+        .write_all(&mut bytes, version)
         .map_err(|e| format!("cannot write the snapshot: {e}"))?;
     Ok(bytes)
 }

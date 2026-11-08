@@ -10,37 +10,14 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let (Some(script), Some(output)) = (args.next(), args.next()) else {
         eprintln!(
-            "usage: run_csl <script.csl> <screenshot dir> [--drive-a 3|3.5] [--drive-b 3|3.5] [--display raw|ctm|..] [--curvature 0-4] [--black-level 0-255]"
+            "usage: run_csl <script.csl> <screenshot dir> [--drive-a 3|3.5] [--drive-b 3|3.5]"
         );
         std::process::exit(2);
     };
 
     let mut runner = CslRunner::new(output);
-    let (mut display, mut curvature, mut black_level) =
-        (amsrust::display::DisplayMode::Raw, 0.0f32, 0u8);
     while let Some(option) = args.next() {
         let unit = match option.as_str() {
-            "--display" | "--curvature" | "--black-level" => {
-                let value = args.next().unwrap_or_default();
-                let bad = |e: String| -> ! {
-                    eprintln!("{option}: {e}");
-                    std::process::exit(2)
-                };
-                match option.as_str() {
-                    "--display" => display = value.parse().unwrap_or_else(|e: String| bad(e)),
-                    "--curvature" => {
-                        curvature = value
-                            .parse()
-                            .unwrap_or_else(|e: std::num::ParseFloatError| bad(e.to_string()))
-                    }
-                    _ => {
-                        black_level = value
-                            .parse()
-                            .unwrap_or_else(|e: std::num::ParseIntError| bad(e.to_string()))
-                    }
-                }
-                continue;
-            }
             "--drive-a" => 0,
             "--drive-b" => 1,
             _ => {
@@ -58,8 +35,6 @@ fn main() {
             });
         runner.set_drive_kind(unit, kind);
     }
-    runner.set_display_filter((!display.is_raw()).then(|| display.filter_on(false, curvature)));
-    runner.set_black_level(black_level);
     runner.set_verbose(true);
     match runner.run_file(&script) {
         Ok(report) => {

@@ -39,10 +39,15 @@
 mod api_doc;
 
 use std::collections::{HashSet, VecDeque};
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use serde_json::{json, Value};
 
@@ -51,6 +56,7 @@ use crate::breakpoints::{
     AdvancedBreakpoint, BreakpointAccess, BreakpointKind, Condition, ConditionContext,
     CounterAction, RunMode,
 };
+use crate::commands::{Arg, Command, CommandTarget, Outcome};
 use crate::keyboard::CpcKey;
 use crate::memory::PhysicalAddress;
 use crate::monitor::Monitor;
@@ -266,7 +272,7 @@ impl Beam {
 
 /// A beam breakpoint: a position in the frame, or (no line) a position in
 /// every line.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct RasterBreakpoint {
     /// The line; `None`: every line.
     line: Option<usize>,
@@ -362,6 +368,22 @@ pub struct DebugServer {
     pending_basic: Option<PendingBasic>,
     /// Names of addresses, for the breakpoints and the history.
     symbols: crate::symbols::SymbolTable,
+    /// Run until the CPU reaches this address (step over, run to), then pause.
+    run_to: Option<u16>,
+    /// The beam kept is from before the debugger was idle (see `forget_beam`).
+    beam_stale: bool,
+    /// A typed key is held this long, then released this long (T-states).
+    key_press_t_states: usize,
+    key_gap_t_states: usize,
+    /// Run until the beam passes this position, once (Debug > Run to > Beam position).
+    run_to_beam: Option<RasterBreakpoint>,
+    /// Step out: pause once the stack is above this SP (the routine returned).
+    step_out_sp: Option<u16>,
+    /// Pause at the end of the frame.
+    step_frame: bool,
+    /// The HTTP server, when the API is served.
+    #[cfg(not(target_arch = "wasm32"))]
+    listener: Option<(u16, std::sync::Arc<tiny_http::Server>)>,
 }
 
 /// AMSpiriT's default depth of `GET /api/history`.
@@ -387,8 +409,10 @@ pub struct EventHub {
 }
 
 /// AMSpiriT's limits: 8 clients, 32 queued events each (oldest dropped).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
 const MAX_SSE_CLIENTS: usize = 8;
 const MAX_SSE_QUEUE: usize = 32;
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
 const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
 /// `frame` events are sent every 10 frames (~5Hz).
 const FRAME_EVENT_EVERY: u64 = 10;
@@ -422,6 +446,7 @@ impl EventHub {
         }
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
     fn subscribe(&self, topics: Option<Vec<String>>) -> Option<Arc<(Mutex<SseQueue>, Condvar)>> {
         let mut clients = self.clients.lock().unwrap();
         clients.retain(|client| !client.queue.0.lock().unwrap().closed);
@@ -439,17 +464,62 @@ impl EventHub {
 
 impl DebugServer {
     /// Listen on `127.0.0.1:port` (loopback only).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn start(port: u16) -> Result<Self, String> {
-        let server = tiny_http::Server::http(("127.0.0.1", port))
-            .map_err(|e| format!("debug server on port {port}: {e}"))?;
+        let mut debug_server = Self::offline();
+        debug_server.listen(port)?;
+        Ok(debug_server)
+    }
+
+    /// The debugger without a server: breakpoints, stepping, counters and history for the
+    /// window's menus (see [`crate::commands`]); [`Self::listen`] serves it later.
+    pub fn offline() -> Self {
+        Self::with_requests(mpsc::channel().1)
+    }
+
+    /// Serve the API on `127.0.0.1:port`, in place of the requests served so far.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn listen(&mut self, port: u16) -> Result<(), String> {
+        self.stop_listening();
+        // the server just stopped may hold the port a moment
+        let mut tries = 0;
+        let server = loop {
+            match tiny_http::Server::http(("127.0.0.1", port)) {
+                Ok(server) => break std::sync::Arc::new(server),
+                Err(_) if tries < 20 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                Err(e) => return Err(format!("debug server on port {port}: {e}")),
+            }
+        };
         let (sender, requests) = mpsc::channel();
-        let debug_server = Self::with_requests(requests);
-        let events = debug_server.events.clone();
+        self.requests = requests;
+        let events = self.events.clone();
+        let served = std::sync::Arc::clone(&server);
         std::thread::Builder::new()
             .name("debug-server".to_owned())
-            .spawn(move || serve(server, sender, events))
+            .spawn(move || serve(&served, sender, events))
             .map_err(|e| e.to_string())?;
-        Ok(debug_server)
+        self.listener = Some((port, server));
+        Ok(())
+    }
+
+    /// Stop serving the API (the debugger stays, breakpoints and all).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn stop_listening(&mut self) {
+        if let Some((_, server)) = self.listener.take() {
+            server.unblock();
+        }
+        self.requests = mpsc::channel().1;
+    }
+
+    /// The port the API is served on, if it is.
+    pub fn listening_port(&self) -> Option<u16> {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.listener.as_ref().map(|(port, _)| *port);
+        #[cfg(target_arch = "wasm32")]
+        None
     }
 
     /// A server fed by `requests` instead of a socket (tests, embedding).
@@ -487,6 +557,15 @@ impl DebugServer {
             basic_target: None,
             pending_basic: None,
             symbols: Default::default(),
+            run_to: None,
+            run_to_beam: None,
+            key_press_t_states: KEY_T_STATES,
+            key_gap_t_states: KEY_T_STATES,
+            beam_stale: false,
+            step_out_sp: None,
+            step_frame: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            listener: None,
         }
     }
 
@@ -503,7 +582,19 @@ impl DebugServer {
     /// event, as for a breakpoint.
     pub fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+        if paused {
+            self.cancel_run_targets();
+        }
         self.report_pause();
+    }
+
+    /// A stop (a breakpoint, a pause) ends a step over / out, a run to an address or a beam
+    /// position, a step of a frame: a later Run runs.
+    fn cancel_run_targets(&mut self) {
+        self.run_to = None;
+        self.run_to_beam = None;
+        self.step_out_sp = None;
+        self.step_frame = false;
     }
 
     /// Whether `POST /api/quit` asked the emulator to leave.
@@ -524,6 +615,9 @@ impl DebugServer {
     /// breakpoints.
     pub fn set_beam(&mut self, beam: Beam) {
         self.previous_beam = self.beam.replace(beam);
+        if std::mem::take(&mut self.beam_stale) {
+            self.previous_beam = None;
+        }
     }
 
     /// The breakpoint the CPU stopped on since the last call, if any.
@@ -627,6 +721,23 @@ impl DebugServer {
         if stepped {
             self.paused = true;
         }
+        if self.run_to == Some(pc) {
+            self.stop(motherboard, json!({ "kind": "run_to" }));
+        }
+        // the routine returned: the stack above where it was (SP may wrap past &FFFF)
+        if self
+            .step_out_sp
+            .is_some_and(|sp| (motherboard.sp().wrapping_sub(sp) as i16) > 0 && !stepped)
+        {
+            self.stop(motherboard, json!({ "kind": "step_out" }));
+        }
+        if let (Some(target), Some(before), Some(after)) =
+            (self.run_to_beam, self.previous_beam, self.beam)
+        {
+            if target.passed(before, after) {
+                self.stop(motherboard, json!({ "kind": "run_to_beam" }));
+            }
+        }
         self.fetched = Some((pc, instruction_bytes(motherboard, pc)));
         self.report_pause();
         self.type_due_keys(motherboard);
@@ -702,6 +813,7 @@ impl DebugServer {
 
     fn stop(&mut self, motherboard: &Motherboard, info: Value) {
         self.paused = true;
+        self.cancel_run_targets();
         self.last_stop = Some(motherboard.pc());
         let mut event = registers_event(motherboard);
         event["ticks"] = json!(motherboard.t_state_counter().value() / T_STATES_PER_NOP);
@@ -739,6 +851,7 @@ impl DebugServer {
         if let Some(reason) = reason {
             self.basic_target = None;
             self.paused = true;
+            self.cancel_run_targets();
             self.last_stop = Some(motherboard.pc());
             let mut event =
                 json!({ "line": line, "addr": hex16(state.stmt_addr), "reason": reason });
@@ -777,6 +890,10 @@ impl DebugServer {
     /// To call once per completed video frame.
     pub fn frame_completed(&mut self, motherboard: &Motherboard) {
         self.frames += 1;
+        if std::mem::take(&mut self.step_frame) {
+            self.paused = true;
+            self.report_pause();
+        }
         if self.frames.is_multiple_of(FRAME_EVENT_EVERY) && self.events.has_clients() {
             let mut event = registers_event(motherboard);
             merge(
@@ -803,6 +920,263 @@ impl DebugServer {
         self.cmd_seq += 1;
         self.unapplied = true;
         self.cmd_seq
+    }
+
+    // ------------------------------------------------- run control (commands)
+
+    /// Run one instruction, then pause (`POST /api/step`, Debug > Step-in).
+    pub fn step(&mut self) {
+        self.paused = false;
+        self.stepping = true;
+        self.command();
+    }
+
+    /// Run one instruction, a `CALL`, `RST` or a `DJNZ` / block loop as a whole: a temporary
+    /// breakpoint after it (Debug > Step over).
+    pub fn step_over(&mut self, motherboard: &Motherboard) {
+        let pc = motherboard.pc();
+        let next = motherboard.disassemble_next_instruction();
+        let opcode = motherboard.read_byte(pc);
+        let ed = motherboard.read_byte(pc.wrapping_add(1));
+        // the firmware's RST &08 (LOW JUMP), &10 (SIDE CALL) and &18 (FAR CALL) are followed by
+        // a 2-byte address and return after it; RST &00 (reset) and &28 (FIRM JUMP) don't return
+        let rst = (opcode & 0b1100_0111 == 0b1100_0111).then_some(opcode & 0x38);
+        let after = match rst {
+            Some(0x08 | 0x10 | 0x18) => Some(pc.wrapping_add(3)),
+            Some(0x00 | 0x28) => None,
+            Some(_) => Some(pc.wrapping_add(1)),
+            None => {
+                let runs_whole = opcode == 0xCD                     // CALL nn
+                    || opcode & 0b1100_0111 == 0b1100_0100          // CALL cc,nn
+                    || opcode == 0x10                               // DJNZ
+                    || (opcode == 0xED && matches!(ed, 0xB0..=0xB3 | 0xB8..=0xBB)); // LDIR...
+                runs_whole.then(|| pc.wrapping_add(next.len() as u16))
+            }
+        };
+        match after {
+            Some(address) => self.run_to(address),
+            None => self.step(),
+        }
+    }
+
+    /// Run until the current routine returns: the stack goes above where it is now (Debug >
+    /// Step-out).
+    pub fn step_out(&mut self, motherboard: &Motherboard) {
+        self.step_out_sp = Some(motherboard.sp());
+        self.paused = false;
+        self.command();
+    }
+
+    /// Run until the CPU reaches `address`, then pause.
+    pub fn run_to(&mut self, address: u16) {
+        self.run_to = Some(address);
+        self.paused = false;
+        self.command();
+    }
+
+    /// Run until the beam reaches `line` (of the frame, as the monitor counts them) and NOP
+    /// `nop` of it, once, then pause.
+    pub fn run_to_beam(&mut self, line: usize, nop: usize) {
+        self.run_to_beam = Some(RasterBreakpoint {
+            line: Some(line),
+            x: nop.min(NOPS_PER_LINE - 1) * BEAM_TICKS_PER_NOP,
+        });
+        self.forget_beam();
+        self.paused = false;
+        self.command();
+    }
+
+    /// The beam seen long ago is not the one before the next instruction (the debugger was
+    /// idle meanwhile): no raster stop compares against it.
+    fn forget_beam(&mut self) {
+        // the current one stays: positions in the picture are cropped against it; it is not
+        // the one before the next instruction
+        self.previous_beam = None;
+        self.beam_stale = true;
+    }
+
+    /// Run to the end of the frame, then pause.
+    pub fn step_frame(&mut self) {
+        self.step_frame = true;
+        self.paused = false;
+        self.command();
+    }
+
+    /// The number of instructions the history keeps (resizing empties it, as in AMSpiriT).
+    pub fn set_history_size(&mut self, size: usize) {
+        self.history_size = size.clamp(1, 100_000);
+        self.history.clear();
+    }
+
+    pub fn history_size(&self) -> usize {
+        self.history_size
+    }
+
+    /// The executed instructions, oldest first: (PC, the bytes as fetched).
+    pub fn history(&self) -> impl Iterator<Item = &(u16, [u8; 4])> {
+        self.history.iter()
+    }
+
+    /// Tell the debugger's clients the machine was reset.
+    pub fn reset_done(&mut self, hard: bool) {
+        self.events.publish("reset", &json!({ "hard": hard }));
+        self.command();
+    }
+
+    /// The emulator is asked to leave (`POST /api/quit`, File > Exit).
+    pub fn request_quit(&mut self) {
+        self.quit = true;
+        self.command();
+    }
+
+    /// The names known for addresses.
+    pub fn symbols(&self) -> &crate::symbols::SymbolTable {
+        &self.symbols
+    }
+
+    /// Every breakpoint gone: execution, memory / I/O, raster and BASIC ones.
+    pub fn clear_breakpoints(&mut self, motherboard: &mut Motherboard) {
+        self.exec_breakpoints.clear();
+        self.advanced.clear();
+        self.raster_breakpoints.clear();
+        self.basic_breakpoints.clear();
+        motherboard.watch_bus(false);
+        self.command();
+    }
+
+    /// Whether the debugger has something to do after each instruction (a server, a
+    /// breakpoint, a step, keys to type, a counter): the window calls
+    /// [`Self::after_instruction`] only then, the emulation running at full speed otherwise.
+    pub fn is_active(&self) -> bool {
+        self.listening_port().is_some()
+            || self.has_breakpoints()
+            || self.stepping
+            || self.run_to.is_some()
+            || self.run_to_beam.is_some()
+            || self.step_out_sp.is_some()
+            || self.step_frame
+            || self.is_typing()
+            || self.pending_basic.is_some()
+            || self.basic_target.is_some()
+            || !self.counters.is_empty()
+    }
+
+    /// Whether some breakpoint is set.
+    pub fn has_breakpoints(&self) -> bool {
+        !self.exec_breakpoints.is_empty()
+            || !self.advanced.is_empty()
+            || !self.raster_breakpoints.is_empty()
+            || !self.basic_breakpoints.is_empty()
+    }
+
+    /// Type `text` on the CPC's keyboard, a key every 2 frames (`POST /api/keytype`).
+    pub fn type_text(
+        &mut self,
+        text: &str,
+        layout: crate::keyboard::KeyboardLayout,
+    ) -> Result<(), String> {
+        let mut keys = Vec::new();
+        for c in text.chars() {
+            let c = if c == '\r' { '\n' } else { c };
+            keys.push(
+                layout
+                    .keys_of_char(c)
+                    .ok_or_else(|| format!("cannot type {c:?}"))?,
+            );
+        }
+        self.typing.extend(keys);
+        self.command();
+        Ok(())
+    }
+
+    /// Type the keys of `keys`, one combination after the other (see `csl_runner::keys_of_text`).
+    pub fn type_keys(&mut self, keys: Vec<Vec<CpcKey>>) {
+        self.typing.extend(keys);
+        self.command();
+    }
+
+    /// How long a typed key is held and the pause after it, in microseconds (2 frames each by
+    /// default, as AMSpiriT types).
+    pub fn set_key_delays(&mut self, press_us: u64, after_key_us: u64) {
+        self.key_press_t_states = (press_us as usize * T_STATES_PER_NOP).max(1);
+        self.key_gap_t_states = (after_key_us as usize * T_STATES_PER_NOP).max(1);
+    }
+
+    /// Whether typed keys are still to come.
+    pub fn is_typing(&self) -> bool {
+        !self.typing.is_empty() || self.typed_pressed.is_some()
+    }
+
+    /// The counters' names and NOPs, and whether each runs.
+    pub fn counters(&self) -> Vec<(String, u64, bool)> {
+        self.counters
+            .iter()
+            .map(|(name, c)| {
+                (
+                    name.clone(),
+                    c.t_states / T_STATES_PER_NOP as u64,
+                    c.running,
+                )
+            })
+            .collect()
+    }
+
+    /// What a `GET` route of the API shows, for the debugger's windows (the same data): `z80`,
+    /// `crtc`, `ga`, `psg`, `fdc`, `memmap`, `breakpoints`, `symbols`, `counters`, `raster_bp`,
+    /// `beam`, `state`, `basic_state`.
+    pub fn inspect(&self, what: &str, motherboard: &Motherboard) -> Value {
+        match what {
+            "z80" => z80(motherboard),
+            "crtc" => self.crtc(motherboard),
+            "ga" => ga(motherboard),
+            "psg" => psg(motherboard),
+            "fdc" => fdc(motherboard),
+            "memmap" => memmap(motherboard),
+            "breakpoints" => self.list_breakpoints(),
+            "symbols" => self.list_symbols(),
+            "counters" => self.list_counters(),
+            "raster_bp" => self.list_raster_breakpoints(),
+            "beam" => self.beam.map_or(Value::Null, beam_json),
+            "state" => self.state(motherboard),
+            "basic_state" => basic_state(motherboard),
+            _ => Value::Null,
+        }
+    }
+
+    /// Answer an API call made from inside the emulator (the menus): the same code as the
+    /// HTTP route, its JSON reply, or its error.
+    pub fn api(
+        &mut self,
+        method: &str,
+        path: &str,
+        query: &[(&str, &str)],
+        body: &str,
+        motherboard: &mut Motherboard,
+    ) -> Result<Value, String> {
+        let request = ApiRequest {
+            method: method.to_owned(),
+            path: path.to_owned(),
+            query: query
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            body: body.as_bytes().to_vec(),
+        };
+        let response = self.handle(&request, motherboard);
+        let text = String::from_utf8_lossy(&response.body).into_owned();
+        let value: Value = if response.content_type == "application/json" {
+            serde_json::from_str(&text).unwrap_or(Value::Null)
+        } else {
+            Value::String(text.clone())
+        };
+        if response.status == 200 {
+            Ok(value)
+        } else {
+            Err(value
+                .get("error")
+                .and_then(Value::as_str)
+                .map_or(text, str::to_owned))
+        }
     }
 
     /// Route `request`.
@@ -843,13 +1217,9 @@ impl DebugServer {
             ("GET", "/api/ram") => read_ram(request, motherboard),
             ("POST", "/api/ram") => self.write_ram(request, motherboard),
             ("POST", "/api/exec") => self.exec(request, motherboard),
-            ("POST", "/api/step") => {
-                self.paused = false;
-                self.stepping = true;
-                Ok(ApiResponse::ok(
-                    json!({ "ok": true, "cmd_seq": self.command() }),
-                ))
-            }
+            ("POST", "/api/step") => self
+                .run_command("debug-step-in", None, motherboard)
+                .map(|()| ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.cmd_seq }))),
             ("GET", "/api/config") => Ok(ApiResponse::ok(json!({
                 "crtc_type": motherboard.crtc().crtc_type() as u8,
                 "paused": self.paused,
@@ -866,12 +1236,9 @@ impl DebugServer {
             ("GET", "/api/events") => Err(ApiError::new("events are streamed by the HTTP server")),
             ("POST", "/api/keytype") => self.keytype(request, motherboard.keyboard_layout()),
             ("GET", "/api/doc") => doc(request),
-            ("POST", "/api/quit") => {
-                self.quit = true;
-                Ok(ApiResponse::ok(
-                    json!({ "ok": true, "cmd_seq": self.command() }),
-                ))
-            }
+            ("POST", "/api/quit") => self
+                .run_command("exit", None, motherboard)
+                .map(|()| ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.cmd_seq }))),
             ("GET", "/api/history") => self.history_list(request, motherboard),
             ("GET", "/api/screenshot") => self.screenshot(request, monitor),
             ("POST", "/api/media") => self.media(request, motherboard),
@@ -891,7 +1258,7 @@ impl DebugServer {
             ("GET", "/api/ga") => Ok(ApiResponse::ok(ga(motherboard))),
             ("GET", "/api/psg") => Ok(ApiResponse::ok(psg(motherboard))),
             ("GET", "/api/fdc") => Ok(ApiResponse::ok(fdc(motherboard))),
-            ("POST", "/api/drive") => drive_command(request, motherboard),
+            ("POST", "/api/drive") => self.drive_command(request, motherboard),
             ("GET", "/api/beam") => self.beam_position(request),
             ("GET", "/api/raster_bp") => Ok(ApiResponse::ok(self.list_raster_breakpoints())),
             ("POST", "/api/raster_bp") => self.set_raster_breakpoint(request),
@@ -1036,6 +1403,7 @@ impl DebugServer {
     /// (0-63) in `line` (0-311), `frame_nop` (0-19967); `nop` alone stops
     /// in every line, `line` alone at its start.
     fn set_raster_breakpoint(&mut self, request: &ApiRequest) -> ApiResult {
+        self.forget_beam();
         let param = |name: &str, max: usize| -> Result<Option<usize>, ApiError> {
             match request.param(name) {
                 None | Some("") => Ok(None),
@@ -1442,7 +1810,7 @@ impl DebugServer {
         let body = parse_body(&request.text())?;
         let addr = int_field(&body, "addr", 0, 0xffff)?
             .ok_or_else(|| ApiError::field("addr", "missing field \"addr\": the new PC"))?;
-        motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(addr as u16);
+        self.run_command("debug-set-pc", Some(Arg::Number(addr)), motherboard)?;
         self.ram_seq += 1;
         Ok(ApiResponse::ok(
             json!({ "ok": true, "seq": self.ram_seq, "cmd_seq": self.command() }),
@@ -1470,22 +1838,23 @@ impl DebugServer {
                 "no recognised field: supported are paused, do_soft_reset, do_hard_reset, history_size"
             ));
         }
+        // The same commands as the menus.
         if let Some(size) = history_size {
             // Resizing empties the history, as in AMSpiriT.
-            self.history_size = size as usize;
-            self.history.clear();
+            self.run_command("history-set-size", Some(Arg::Number(size)), motherboard)?;
         }
         if soft || hard {
             // Soft: the reset button (RAM kept). Hard: power off and on.
-            if hard {
-                motherboard.power_cycle();
+            let reset = if hard {
+                "machine-reset-hard"
             } else {
-                motherboard.restart();
-            }
-            self.events.publish("reset", &json!({ "hard": hard }));
+                "machine-reset-soft"
+            };
+            self.run_command(reset, None, motherboard)?;
         }
         if let Some(paused) = paused {
-            self.paused = paused;
+            let id = if paused { "debug-pause" } else { "debug-run" };
+            self.run_command(id, None, motherboard)?;
         }
         Ok(ApiResponse::ok(
             json!({ "ok": true, "cmd_seq": self.command() }),
@@ -1635,6 +2004,12 @@ impl DebugServer {
             .iter()
             .map(|(name, address)| json!({ "name": name, "address": address }))
             .collect::<Vec<_>>())
+    }
+
+    /// Whether an execution breakpoint is on the CPU address `address` (as mapped now).
+    pub fn has_exec_breakpoint(&self, address: u16, motherboard: &Motherboard) -> bool {
+        self.exec_breakpoints
+            .contains(&motherboard.physical_address(address))
     }
 
     /// An execution breakpoint on a CPU address, resolved now.
@@ -1910,7 +2285,12 @@ impl DebugServer {
             }
             self.typed_pressed = Some(keys);
         }
-        self.typing_next_at = now + KEY_T_STATES;
+        self.typing_next_at = now
+            + if self.typed_pressed.is_some() {
+                self.key_press_t_states
+            } else {
+                self.key_gap_t_states
+            };
     }
 }
 
@@ -2052,36 +2432,97 @@ fn fdc(motherboard: &Motherboard) -> Value {
 
 /// `POST /api/drive?drive=0|1[&kind=3|3.5][&flip=1]`: make a drive a 3" or a 3.5" one, turn the
 /// disc of a 3" drive over. Replies with the FDC state.
-fn drive_command(
-    request: &ApiRequest,
-    motherboard: &mut Motherboard,
-) -> Result<ApiResponse, ApiError> {
-    use crate::fdc::{DriveKind, FdcDrive};
-    let drive = match request.param("drive") {
-        None | Some("0") => FdcDrive::A,
-        Some("1") => FdcDrive::B,
-        Some(_) => {
-            return Err(ApiError::field(
-                "drive",
-                "parameter \"drive\" must be 0 or 1",
-            ))
+impl DebugServer {
+    /// `POST /api/drive`, through the commands of File > Drive A / B.
+    fn drive_command(
+        &mut self,
+        request: &ApiRequest,
+        motherboard: &mut Motherboard,
+    ) -> Result<ApiResponse, ApiError> {
+        use crate::fdc::DriveKind;
+        let drive = match request.param("drive") {
+            None | Some("0") => "drive-a",
+            Some("1") => "drive-b",
+            Some(_) => {
+                return Err(ApiError::field(
+                    "drive",
+                    "parameter \"drive\" must be 0 or 1",
+                ))
+            }
+        };
+        if let Some(kind) = request.param("kind") {
+            let kind: DriveKind = kind
+                .parse()
+                .map_err(|e: String| ApiError::field("kind", e))?;
+            let id = match kind {
+                DriveKind::ThreeInch => format!("{drive}-original"),
+                DriveKind::ThreeAndHalfInch => format!("{drive}-pc"),
+                DriveKind::Gotek => format!("{drive}-gotek"),
+            };
+            self.run_command(&id, None, motherboard)?;
         }
-    };
-    if let Some(kind) = request.param("kind") {
-        let kind: DriveKind = kind
-            .parse()
-            .map_err(|e: String| ApiError::field("kind", e))?;
-        motherboard.fdc_mut().set_drive_kind(drive, kind);
+        if request.param("flip").is_some_and(|v| v == "1")
+            && self
+                .run_command(&format!("{drive}-flip-disc"), None, motherboard)
+                .is_err()
+        {
+            return Err(ApiError::field(
+                "flip",
+                "only the disc of a 3\" drive with a disc in it can be turned over",
+            ));
+        }
+        Ok(ApiResponse::ok(fdc(motherboard)))
     }
-    if request.param("flip").is_some_and(|v| v == "1")
-        && motherboard.fdc_mut().flip_disc(drive).is_none()
-    {
-        return Err(ApiError::field(
-            "flip",
-            "only the disc of a 3\" drive with a disc in it can be turned over",
-        ));
+
+    /// Run the command `id` of the menus (see [`crate::commands`]): the API and the menus do
+    /// the same thing the same way.
+    fn run_command(
+        &mut self,
+        id: &str,
+        arg: Option<Arg>,
+        motherboard: &mut Motherboard,
+    ) -> Result<(), ApiError> {
+        let command = match arg {
+            Some(arg) => Command::with_arg(id, arg),
+            None => Command::new(id),
+        }
+        .map_err(|e| ApiError::new(e.to_string()))?;
+        let mut target = ServerTarget {
+            server: self,
+            motherboard,
+        };
+        match command.execute(&mut target) {
+            Ok(Outcome::Done(_)) => Ok(()),
+            Ok(Outcome::NeedsArg(prompt)) => {
+                Err(ApiError::new(format!("{}: missing", prompt.title)))
+            }
+            Err(error) => Err(ApiError::new(error.to_string())),
+        }
     }
-    Ok(ApiResponse::ok(fdc(motherboard)))
+}
+
+/// The commands' receiver for the API: the machine and the debugger, no window.
+struct ServerTarget<'a> {
+    server: &'a mut DebugServer,
+    motherboard: &'a mut Motherboard,
+}
+
+impl CommandTarget for ServerTarget<'_> {
+    fn motherboard(&self) -> &Motherboard {
+        self.motherboard
+    }
+    fn motherboard_mut(&mut self) -> &mut Motherboard {
+        self.motherboard
+    }
+    fn debugger(&self) -> Option<&DebugServer> {
+        Some(self.server)
+    }
+    fn debugger_mut(&mut self) -> Option<&mut DebugServer> {
+        Some(self.server)
+    }
+    fn debugger_and_motherboard(&mut self) -> Option<(&mut DebugServer, &mut Motherboard)> {
+        Some((self.server, self.motherboard))
+    }
 }
 
 /// `GET /api/memmap`: each 16K region of the CPU's view, with the ROM
@@ -2188,6 +2629,7 @@ fn parse_binary<'b>(name: &str, bytes: &'b [u8]) -> Result<Binary<'b>, String> {
 }
 
 /// Decode `%XX` and `+` in a query value.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -2637,8 +3079,9 @@ fn parse_hex(text: &str) -> Option<Vec<u8>> {
 // --------------------------------------------------------------- HTTP
 
 /// The HTTP thread: parse, hand to the emulation thread, write the answer.
+#[cfg(not(target_arch = "wasm32"))]
 fn serve(
-    server: tiny_http::Server,
+    server: &tiny_http::Server,
     sender: Sender<(ApiRequest, Sender<ApiResponse>)>,
     events: EventHub,
 ) {
@@ -2710,6 +3153,7 @@ fn serve(
 
 /// One SSE client's connection: HTTP/1.1 headers, then the events as they
 /// come, a `: ping` comment after 15s of silence.
+#[cfg(not(target_arch = "wasm32"))]
 fn stream_events(mut writer: Box<dyn Write + Send>, queue: Arc<(Mutex<SseQueue>, Condvar)>) {
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\
                 Access-Control-Allow-Origin: *\r\nConnection: keep-alive\r\n\r\n";
@@ -2739,6 +3183,7 @@ fn stream_events(mut writer: Box<dyn Write + Send>, queue: Arc<(Mutex<SseQueue>,
     queue.0.lock().unwrap().closed = true;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn header(name: &str, value: &str) -> tiny_http::Header {
     tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()).unwrap()
 }
