@@ -768,7 +768,7 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             let deck = target
                 .motherboard_mut()
                 .tape_deck_mut()
-                .ok_or_else(|| CommandError::Unavailable("no tape".into()))?;
+                .ok_or_else(|| CommandError::Unavailable("no tape inserted".into()))?;
             match id {
                 "tape-play" => deck.set_playing(true),
                 "tape-stop" => deck.set_playing(false),
@@ -975,7 +975,9 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             said(format!("snapshot {name} loaded"))
         }
         "snapshot-save" | "snapshot-update" | "snapshot-quick-save" => {
-            let bytes = crate::snapshot::save_sna_bytes(target.motherboard()).map_err(failed)?;
+            let version = target.settings().map_or(3, |s| s.snapshot_version);
+            let bytes = crate::snapshot::save_sna_bytes_version(target.motherboard(), version)
+                .map_err(failed)?;
             let arg = match id {
                 "snapshot-save" => arg!(
                     command,
@@ -1087,11 +1089,10 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
         "debug-pause" => set_paused(target, true),
         "debug-reset" | "machine-reset-soft" | "machine-reset-hard" => {
             let hard = id == "machine-reset-hard";
-            let mb = target.motherboard_mut();
             if hard {
-                mb.power_cycle();
+                target.power_cycle();
             } else {
-                mb.restart();
+                target.motherboard_mut().restart();
             }
             if let Some(debugger) = target.debugger_mut() {
                 debugger.reset_done(hard);
@@ -1922,10 +1923,45 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                 );
                 String::from_utf8_lossy(&arg.bytes()?.1).into_owned()
             };
-            let layout = target.motherboard().keyboard_layout();
-            let keys =
-                crate::csl_runner::keys_of_text(&text, layout).map_err(CommandError::Invalid)?;
-            debugger(target)?.0.type_keys(keys);
+            target.type_text(&text)?;
+            done()
+        }
+        "autotype-delays" => {
+            let arg = arg!(
+                command,
+                "Typing: PRESS [AFTER_KEY [AFTER_TEXT]] in µs (70000 70000 400000)",
+                ArgKind::Text
+            );
+            let delays: super::TypingDelays = arg.text().parse().map_err(CommandError::Invalid)?;
+            settings(target)?.typing = Some(delays);
+            if let Some(debugger) = target.debugger_mut() {
+                debugger.set_key_delays(delays.press_us, delays.after_key_us);
+            }
+            done()
+        }
+        "keyboard-write" => {
+            let arg = arg!(
+                command,
+                "Keyboard matrix: 10 rows, hexadecimal (FF: no key down)",
+                ArgKind::Text
+            );
+            let text = arg.text();
+            let rows = text
+                .split([' ', ','])
+                .filter(|word| !word.is_empty())
+                .map(|word| {
+                    u8::from_str_radix(word.trim_start_matches(['&', '#', '$']), 16)
+                        .map_err(|_| CommandError::Invalid(format!("{word}: a hexadecimal byte")))
+                })
+                .collect::<Result<Vec<u8>, _>>()?;
+            let lines: [u8; 10] = rows
+                .try_into()
+                .map_err(|_| CommandError::Invalid("10 rows".into()))?;
+            target.motherboard_mut().keyboard_mut().set_lines(lines);
+            done()
+        }
+        "snapshot-version-2" | "snapshot-version-3" => {
+            settings(target)?.snapshot_version = if id.ends_with('2') { 2 } else { 3 };
             done()
         }
         "autotype-paste" => host(target, HostRequest::PasteClipboard),
@@ -2358,6 +2394,11 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
         },
         "video-fullscreen-toggle" => toggle(settings.is_some_and(|s| s.fullscreen)),
         "autotype-paste" => host_can(target, HostRequest::PasteClipboard),
+        "autotype-delays" => needs_settings,
+        "keyboard-write" => CommandState::enabled(true),
+        "snapshot-version-2" | "snapshot-version-3" => toggle(
+            settings.is_some_and(|s| s.snapshot_version == if id.ends_with('2') { 2 } else { 3 }),
+        ),
         "tools-disc-catalog" => CommandState::enabled(true),
         "tools-disc-convert" => CommandState::enabled(true),
         "preferences-open" => host_can(target, HostRequest::Open(View::Preferences)),

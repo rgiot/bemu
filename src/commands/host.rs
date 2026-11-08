@@ -70,6 +70,50 @@ impl MediaPaths {
     }
 }
 
+/// How long a typed key is held, the pause after it and the pause after a whole text (after a
+/// RETURN), in emulated microseconds (CSL's `key_delay`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TypingDelays {
+    pub press_us: u64,
+    pub after_key_us: u64,
+    pub after_text_us: u64,
+}
+
+impl Default for TypingDelays {
+    /// The CSL standard's.
+    fn default() -> Self {
+        Self {
+            press_us: 70_000,
+            after_key_us: 70_000,
+            after_text_us: 400_000,
+        }
+    }
+}
+
+impl std::str::FromStr for TypingDelays {
+    type Err = String;
+
+    /// "PRESS [AFTER_KEY [AFTER_TEXT]]" in µs, as `key_delay`: the missing ones are the press.
+    fn from_str(text: &str) -> Result<Self, String> {
+        let numbers = text
+            .split([' ', ','])
+            .filter(|word| !word.is_empty())
+            .map(|word| {
+                word.parse::<u64>()
+                    .map_err(|_| format!("{word}: a number of microseconds"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let press = *numbers
+            .first()
+            .ok_or("PRESS [AFTER_KEY [AFTER_TEXT]], in microseconds")?;
+        Ok(Self {
+            press_us: press,
+            after_key_us: numbers.get(1).copied().unwrap_or(press),
+            after_text_us: numbers.get(2).copied().unwrap_or(press),
+        })
+    }
+}
+
 /// What the host shows and plays, changed by the commands and applied by the host.
 #[derive(Clone, Debug)]
 pub struct HostSettings {
@@ -104,6 +148,12 @@ pub struct HostSettings {
     /// The debug server's port.
     pub debug_port: u16,
     pub media: MediaPaths,
+    /// How fast the keys are typed (Tools > Auto-type > Typing speed, CSL's `key_delay`):
+    /// `None`, the host's own pace.
+    pub typing: Option<TypingDelays>,
+    /// The snapshot version written (2 or 3: File > Snapshot > Version, CSL's
+    /// `snapshot_version`).
+    pub snapshot_version: u8,
     /// What the cards are plugged with, to plug them again with a change.
     pub devices: DeviceFiles,
 }
@@ -183,6 +233,8 @@ impl Default for HostSettings {
             save_snapshot_on_exit: None,
             debug_port: DEFAULT_DEBUG_PORT,
             media: MediaPaths::default(),
+            typing: None,
+            snapshot_version: 3,
             devices: DeviceFiles::default(),
         }
     }

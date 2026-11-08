@@ -26,7 +26,8 @@ pub mod palette;
 
 pub use execute::{state, MACHINE_RAM_SIZES};
 pub use host::{
-    DeviceFiles, HostRequest, HostSettings, MediaPaths, Recording, Speed, View, DEFAULT_DEBUG_PORT,
+    DeviceFiles, HostRequest, HostSettings, MediaPaths, Recording, Speed, TypingDelays, View,
+    DEFAULT_DEBUG_PORT,
 };
 
 use std::collections::VecDeque;
@@ -327,6 +328,27 @@ pub trait CommandTarget {
     /// The CSL script running, if any.
     fn csl_running(&self) -> bool {
         false
+    }
+
+    /// Type `text` on the CPC's keyboard (Tools > Auto-type, CSL's `key_output`; `\(RET)`,
+    /// `\(WAIT n)`... as CSL writes them), at the pace of the settings' typing delays. By default
+    /// the debugger types it; a CSL player types it on its own clock.
+    fn type_text(&mut self, text: &str) -> Result<(), CommandError> {
+        let layout = self.motherboard().keyboard_layout();
+        let keys = crate::csl_runner::keys_of_text(text, layout).map_err(CommandError::Invalid)?;
+        let typing = self.settings().and_then(|s| s.typing);
+        let debugger = self.debugger_mut().ok_or(CommandError::Unsupported)?;
+        if let Some(typing) = typing {
+            debugger.set_key_delays(typing.press_us, typing.after_key_us);
+        }
+        debugger.type_keys(keys);
+        Ok(())
+    }
+
+    /// Switch the machine off and on (Machine > Power cycle, CSL's `reset`): RAM cleared. A
+    /// CSL player builds the machine again from its configuration.
+    fn power_cycle(&mut self) {
+        self.motherboard_mut().power_cycle();
     }
 }
 

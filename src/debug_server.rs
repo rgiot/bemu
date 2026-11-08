@@ -372,6 +372,9 @@ pub struct DebugServer {
     run_to: Option<u16>,
     /// The beam kept is from before the debugger was idle (see `forget_beam`).
     beam_stale: bool,
+    /// A typed key is held this long, then released this long (T-states).
+    key_press_t_states: usize,
+    key_gap_t_states: usize,
     /// Run until the beam passes this position, once (Debug > Run to > Beam position).
     run_to_beam: Option<RasterBreakpoint>,
     /// Step out: pause once the stack is above this SP (the routine returned).
@@ -556,6 +559,8 @@ impl DebugServer {
             symbols: Default::default(),
             run_to: None,
             run_to_beam: None,
+            key_press_t_states: KEY_T_STATES,
+            key_gap_t_states: KEY_T_STATES,
             beam_stale: false,
             step_out_sp: None,
             step_frame: false,
@@ -1088,6 +1093,13 @@ impl DebugServer {
     pub fn type_keys(&mut self, keys: Vec<Vec<CpcKey>>) {
         self.typing.extend(keys);
         self.command();
+    }
+
+    /// How long a typed key is held and the pause after it, in microseconds (2 frames each by
+    /// default, as AMSpiriT types).
+    pub fn set_key_delays(&mut self, press_us: u64, after_key_us: u64) {
+        self.key_press_t_states = (press_us as usize * T_STATES_PER_NOP).max(1);
+        self.key_gap_t_states = (after_key_us as usize * T_STATES_PER_NOP).max(1);
     }
 
     /// Whether typed keys are still to come.
@@ -2273,7 +2285,12 @@ impl DebugServer {
             }
             self.typed_pressed = Some(keys);
         }
-        self.typing_next_at = now + KEY_T_STATES;
+        self.typing_next_at = now
+            + if self.typed_pressed.is_some() {
+                self.key_press_t_states
+            } else {
+                self.key_gap_t_states
+            };
     }
 }
 

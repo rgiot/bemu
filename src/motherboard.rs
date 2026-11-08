@@ -449,6 +449,20 @@ impl MotherboardBuilder {
     }
 
     /// The CRTC chosen (the default one if unset).
+    /// The RAM it is built with, in KB (`None`: the model's own).
+    pub fn ram_kb(&self) -> Option<usize> {
+        match (self.large_ram_expansion_banks, self.extra_ram_pages) {
+            (Some(banks), _) => Some(64 + 64 * banks),
+            (None, Some(pages)) => Some(64 * (1 + pages)),
+            (None, None) => None,
+        }
+    }
+
+    /// The model chosen (the default one if unset).
+    pub fn model(&self) -> CpcModel {
+        self.model.unwrap_or_default()
+    }
+
     pub fn crtc(&self) -> CrtcType {
         self.crtc_type.unwrap_or_default()
     }
@@ -1950,6 +1964,9 @@ impl Motherboard {
     /// The RAM the CPU can reach in all, in KB: 64K without banking, else 64K and the extra
     /// pages.
     pub fn total_ram_kb(&self) -> usize {
+        if let Some(banks) = self.large_ram_expansion_bank_count() {
+            return 64 + 64 * banks;
+        }
         if self.ram_banking {
             64 * (1 + self.extra_ram_pages())
         } else {
@@ -1961,11 +1978,19 @@ impl Motherboard {
     /// ones kept keep what they hold. The model's own RAM (64K, 128K on a 6128) is
     /// `None`.
     pub fn set_total_ram_kb(&mut self, kb: Option<usize>) -> Result<(), String> {
+        // a 4M card (64 banks of 64K): its own RAM, the machine's extra page then out of reach
+        if kb == Some(4160) {
+            if self.large_ram_expansion_bank_count() != Some(64) {
+                self.plug_large_ram_expansion(64);
+            }
+            return Ok(());
+        }
+        self.unplug_large_ram_expansion();
         let pages = match kb {
             None if self.model.has_ram_banking() => 1,
             None => 0,
             Some(kb) if kb % 64 == 0 && (64..=576).contains(&kb) => kb / 64 - 1,
-            Some(kb) => return Err(format!("{kb}K: 64K to 576K, in steps of 64K")),
+            Some(kb) => return Err(format!("{kb}K: 64K to 576K in steps of 64K, or 4160K")),
         };
         self.set_extra_ram_pages(pages);
         // the 6128's own 128K banks RAM, with or without extension
@@ -2004,6 +2029,11 @@ impl Motherboard {
     /// afterwards, as the cartridge is changed with the power off.
     pub fn insert_cartridge(&mut self, cartridge: Option<crate::asic::Cartridge>) {
         self.memory.insert_cartridge(cartridge);
+    }
+
+    /// The cartridge in the slot of a CPC+ (`None`: its system cartridge, or a CPC).
+    pub fn cartridge(&self) -> Option<&crate::asic::Cartridge> {
+        self.memory.inserted_cartridge()
     }
 
     /// The CPC+'s ASIC.
