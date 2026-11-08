@@ -2457,6 +2457,7 @@ impl DebugServer {
             let id = match kind {
                 DriveKind::ThreeInch => format!("{drive}-original"),
                 DriveKind::ThreeAndHalfInch => format!("{drive}-pc"),
+                DriveKind::Gotek => format!("{drive}-gotek"),
             };
             self.run_command(&id, None, motherboard)?;
         }

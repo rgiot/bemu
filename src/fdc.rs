@@ -133,6 +133,9 @@ pub enum DriveKind {
     ThreeInch,
     /// A double-sided 3.5" drive: two heads, the FDC's side select chooses one, 80 tracks and more.
     ThreeAndHalfInch,
+    /// A Gotek (a USB floppy emulator in place of a drive): double sided like a 3.5" drive, 84
+    /// tracks, and no mechanics: its head steps and settles at once.
+    Gotek,
 }
 
 impl DriveKind {
@@ -141,18 +144,30 @@ impl DriveKind {
         match self {
             DriveKind::ThreeInch => 42,
             DriveKind::ThreeAndHalfInch => 82,
+            DriveKind::Gotek => 84,
         }
     }
 
     /// The drive has two heads: the FDC selects the side (and ST3 reports TS).
     pub fn is_double_sided(self) -> bool {
-        self == DriveKind::ThreeAndHalfInch
+        self != DriveKind::ThreeInch
+    }
+
+    /// How long a seek of `steps` tracks takes, the FDC stepping every `step_us`: a real
+    /// drive's head moves then settles, a Gotek's has nothing to move.
+    pub fn seek_us(self, steps: u64, step_us: u64) -> u64 {
+        match self {
+            DriveKind::Gotek => 1,
+            _ if steps > 0 => steps * step_us + SETTLE_US,
+            _ => 1_000,
+        }
     }
 
     pub fn name(self) -> &'static str {
         match self {
             DriveKind::ThreeInch => "3\"",
             DriveKind::ThreeAndHalfInch => "3.5\"",
+            DriveKind::Gotek => "Gotek",
         }
     }
 }
@@ -161,10 +176,15 @@ impl std::str::FromStr for DriveKind {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, String> {
+        if s.eq_ignore_ascii_case("gotek") {
+            return Ok(DriveKind::Gotek);
+        }
         match s.trim_end_matches(['"', 'i', 'n']) {
             "3" => Ok(DriveKind::ThreeInch),
             "3.5" => Ok(DriveKind::ThreeAndHalfInch),
-            _ => Err(format!("{s}: a drive is 3 (3 inch) or 3.5 (3.5 inch)")),
+            _ => Err(format!(
+                "{s}: a drive is 3 (3 inch), 3.5 (3.5 inch) or gotek"
+            )),
         }
     }
 }
@@ -626,7 +646,7 @@ impl Fdc {
         let drive = &self.drives[unit];
         match drive.kind {
             DriveKind::ThreeInch => u8::from(drive.flipped),
-            DriveKind::ThreeAndHalfInch => head,
+            DriveKind::ThreeAndHalfInch | DriveKind::Gotek => head,
         }
     }
 
@@ -879,8 +899,7 @@ impl Fdc {
             let steps = u64::from(from.abs_diff(to));
             // The READY line is tied high on a CPC: even without a disc the seek ends normally
             let st0 = st0::SE | unit as u8;
-            let done =
-                self.now_us + steps * self.step_us + if steps > 0 { SETTLE_US } else { 1_000 };
+            let done = self.now_us + self.drives[unit].kind.seek_us(steps, self.step_us);
             self.seeks.retain(|seek| seek.1 != unit);
             self.seeks.push((done, unit, to, st0));
             self.seeking |= 1 << unit;

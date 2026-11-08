@@ -375,7 +375,13 @@ fn disc_command(command: &Command, target: &mut dyn CommandTarget) -> Option<Com
                 .set_drive_kind(drive, DriveKind::ThreeAndHalfInch);
             done()
         }
-        "gotek" => Err(CommandError::NotImplemented),
+        "gotek" => {
+            target
+                .motherboard_mut()
+                .fdc_mut()
+                .set_drive_kind(drive, DriveKind::Gotek);
+            done()
+        }
         _ => Err(CommandError::Unknown(command.id.to_owned())),
     })())
 }
@@ -411,6 +417,7 @@ fn disc_state(id: &str, target: &dyn CommandTarget) -> Option<CommandState> {
         ),
         "original" => CommandState::checked(fdc.drive_kind(drive) == DriveKind::ThreeInch),
         "pc" => CommandState::checked(fdc.drive_kind(drive) == DriveKind::ThreeAndHalfInch),
+        "gotek" => CommandState::checked(fdc.drive_kind(drive) == DriveKind::Gotek),
         _ => CommandState::DISABLED, // gotek
     })
 }
@@ -567,12 +574,7 @@ fn model_ram_kb(model: CpcModel) -> usize {
 }
 
 /// The commands kept by the registry but with nothing behind them yet.
-const NOT_IMPLEMENTED: &[&str] = &[
-    "drive-a-gotek",
-    "drive-b-gotek",
-    "tape-record",
-    "tape-record-stop",
-];
+const NOT_IMPLEMENTED: &[&str] = &["tape-record", "tape-record-stop"];
 
 /// Whether `id` has a behaviour (every command of the registry must).
 #[cfg(test)]

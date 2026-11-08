@@ -14,6 +14,7 @@ __pycache__/
 shaker_results*
 m4sd
 *.csv
+!doc/menu-ui.csv
 *.sna
 *.mp4
 *.log

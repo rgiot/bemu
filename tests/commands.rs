@@ -324,3 +324,19 @@ fn a_configuration_runs_only_its_own_commands() {
     assert!(host.requests.is_empty(), "exit was not run");
     assert!(state("video-rendering-ctm", &host).checked);
 }
+
+#[test]
+fn a_drive_becomes_a_gotek() {
+    use amsrust::fdc::{DriveKind, FdcDrive};
+    let mut host = Host::new();
+    host.run("drive-a-gotek").unwrap();
+    assert!(state("drive-a-gotek", &host).checked);
+    assert!(!state("drive-a-original", &host).checked);
+    let kind = host.motherboard.fdc().drive_kind(FdcDrive::A);
+    assert_eq!(kind, DriveKind::Gotek);
+    // both heads, no head to move
+    assert!(kind.is_double_sided());
+    assert_eq!(kind.seek_us(40, 3_000), 1);
+    assert!(DriveKind::ThreeAndHalfInch.seek_us(40, 3_000) > 100_000);
+    assert_eq!("gotek".parse::<DriveKind>(), Ok(DriveKind::Gotek));
+}
