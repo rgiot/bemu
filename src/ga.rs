@@ -401,10 +401,11 @@ pub const HSYNC_GA_DELAY_TICKS: usize = 2;
 /// being output: the video byte is read from RAM about a microsecond before it is displayed, and the
 /// ink is looked up in the palette only on the way out. A palette write therefore acts on pixels
 /// already fetched, mid-byte and even the microsecond before, not at the next video byte; how far
-/// back depends on the chip, see [`GateArrayType::palette_write_delay_ticks`]: 20 ticks for the GA
-/// 40010, 21 for the 40007/8, which process the bits of the VRAM byte 1/16 us ahead (ACCC 9.1).
+/// back depends on the chip, see [`GateArrayType::palette_write_delay_ticks`]: 19 ticks for the GA
+/// 40010, 20 for the 40007/8, which process the bits of the VRAM byte 1/16 us ahead (ACCC 9.1).
 /// Measured on Rhino-Raster (validation/demos/rhino: pen switches timed to the microsecond after an
-/// EI+HALT): 20 matches ACE-DL exactly (0 pixels differ), 21 AMSpiriT Lite 1.13/1.16 (0 pixels
+/// EI+HALT, with the GA write latch of [`GA_WRITE_LATCH_CLOCK`]): 19 matches ACE-DL exactly (0 pixels
+/// differ), 20 AMSpiriT Lite 1.13/1.16 (0 pixels
 /// differ, its tiny black pixel included), with the interrupt timing left as it is (Dream End and
 /// Shaker A3 rule out moving the interrupt or the CRTC writes instead).
 pub const PALETTE_LOOKUP_LAG_TICKS: usize = 21;
@@ -976,8 +977,8 @@ impl GateArrayType {
     /// VRAM"), so their writes reach one more pixel back.
     pub fn palette_write_delay_ticks(&self) -> usize {
         match self {
-            GateArrayType::Ga40010 => 1,
-            GateArrayType::Ga40007_8 => 0,
+            GateArrayType::Ga40010 => 2,
+            GateArrayType::Ga40007_8 => 1,
         }
     }
 
@@ -1087,7 +1088,7 @@ pub struct GateArray {
     lookup_lag: usize,
     /// The palette as it was at the previous tick, for the chips whose writes are a tick late
     /// The palettes of the last ticks, newest first (see [`GateArrayType::palette_write_delay_ticks`])
-    palette_ring: History<[Ink; 17], 2>,
+    palette_ring: History<[Ink; 17], 3>,
     /// The write of the current bus cycle was latched
     write_seen: bool,
 
@@ -2215,7 +2216,7 @@ mod test {
     /// the 40010 than on the 40007/8.
     #[test]
     fn a_palette_write_acts_in_the_middle_of_a_byte() {
-        for (ga_type, ticks_to_show) in [(GateArrayType::Ga40007_8, 1), (GateArrayType::Ga40010, 2)]
+        for (ga_type, ticks_to_show) in [(GateArrayType::Ga40007_8, 2), (GateArrayType::Ga40010, 3)]
         {
             let mut ga = GateArray::default();
             ga.set_gate_array_type(ga_type);
