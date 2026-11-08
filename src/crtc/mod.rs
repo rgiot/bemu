@@ -121,6 +121,9 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
 pub struct Crtc {
     core: Core,
     chip: Box<dyn CrtcChip>,
+    /// A write may be waiting in the chip (see [`CrtcChip::queue_write`]): its queue is only
+    /// looked at then, not through a virtual call on every tick
+    writes_queued: bool,
 }
 
 impl Deref for Crtc {
@@ -154,6 +157,7 @@ impl From<CrtcType> for Crtc {
         let mut crtc = Crtc {
             core: Core::default(),
             chip: from.new_chip(),
+            writes_queued: false,
         };
         crtc.reset();
         crtc
@@ -253,8 +257,12 @@ impl Crtc {
     pub fn write_crtc_register(&mut self) {
         let val = self.get_data_from_pins();
         let r = self.core.ar;
-        if self.is_register_writable(r) && !self.chip.queue_write(r, val) {
-            self.do_write_register(r, val);
+        if self.is_register_writable(r) {
+            if self.chip.queue_write(r, val) {
+                self.writes_queued = true;
+            } else {
+                self.do_write_register(r, val);
+            }
         }
     }
 
@@ -341,6 +349,25 @@ impl Crtc {
         }
         self.chip.register_written(&mut self.core, r, previous);
 
+        // ACCC 19.2.1: the BORDER ON function (R8 skew 3) and its end are considered at once, not
+        // on the next character: the display stops or comes back where the OUT lands, half a
+        // character (8 mode 2 pixels) before or after the edge the character clock would give.
+        // Borderline (Pulpo Corrosivo) builds its letters with R8=#30/#00 every 4 us: lines
+        // started one character early and an 8 pixel strip of the wrong palette at each edge.
+        if r == 8 {
+            let before = self.chip.display_skew(previous.r8);
+            let now = self.chip.display_skew(self.core.regs[8]);
+            if before != now {
+                let horizontal_border = match now {
+                    DisplaySkew::Delayed(chars) => self.core.border_history[usize::from(chars)],
+                    DisplaySkew::Blanked => true,
+                };
+                let vertical_border = self.chip.border_r6(&mut self.core);
+                self.core
+                    .set_pin(CrtcPin::DE, !(horizontal_border || vertical_border));
+            }
+        }
+
         // R3.JIT, ACCC §14.4.4 / §14.5.4: R3l written (by an OUT(C),r8, on CRTC
         // 0, 1 and 2) with exactly the running C3l, while it was above it,
         // stops the HSYNC at once instead of letting the 4-bit counter wrap.
@@ -403,9 +430,14 @@ impl Crtc {
         if self.get_pin(CrtcPin::CS) || self.get_pin(CrtcPin::EN) || self.get_pin(CrtcPin::RW) {
             self.core.write_taken = false;
         }
-        if let Some(due) = self.chip.due_writes() {
-            for (r, v) in due {
-                self.do_write_register(r, v);
+        if self.writes_queued {
+            match self.chip.due_writes() {
+                Some(due) => {
+                    for (r, v) in due {
+                        self.do_write_register(r, v);
+                    }
+                }
+                None => self.writes_queued = false,
             }
         }
     }

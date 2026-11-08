@@ -103,8 +103,76 @@ fn without_feature(flag: &str, feature: &str) {
     std::process::exit(2);
 }
 
+/// `--csl`: the script's run, its screenshots rendered as `--display` says.
+fn run_csl(args: &Args, script: &str) {
+    use amsrust::csl_runner::{CslRunner, FsFiles};
+    use amsrust::webp::{Animation, PictureFiles, Pictures};
+
+    let mut files = FsFiles::default();
+    for archive in &args.csl_archives {
+        // a folder stands for the files it holds
+        let paths: Vec<std::path::PathBuf> = match std::fs::read_dir(archive) {
+            Ok(entries) => {
+                let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
+                paths.sort();
+                paths
+            }
+            Err(_) => vec![archive.into()],
+        };
+        for path in paths.iter().filter(|p| p.is_file()) {
+            let bytes = std::fs::read(path).unwrap_or_else(|e| {
+                eprintln!("--csl-archive {}: {e}", path.display());
+                std::process::exit(1)
+            });
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            files = files.with_archive(&name, bytes);
+        }
+    }
+    let animation = Animation::default();
+    let pictures = match args.screenshot_format.as_str() {
+        "png" => Pictures::Png,
+        "webp" => Pictures::Webp(animation.clone()),
+        other => {
+            eprintln!("--screenshot-format {other:?}: png or webp");
+            std::process::exit(2)
+        }
+    };
+    let dir = args.screenshot_dir.as_deref().unwrap_or(".");
+    let mut runner = CslRunner::with_io(Box::new(files), Box::new(PictureFiles(pictures)), dir);
+    runner.set_display_filter(
+        (!args.display.is_raw()).then(|| args.display.filter_on(args.gpu, args.curvature)),
+    );
+    runner.set_black_level(args.black_level);
+    runner.set_drive_kind(0, args.drive_a);
+    runner.set_drive_kind(1, args.drive_b);
+    runner.set_verbose(true);
+    match runner.run_file(script) {
+        Ok(report) => {
+            for ignored in report.ignored {
+                eprintln!("ignored: {ignored}");
+            }
+            if !animation.is_empty() {
+                let stem = std::path::Path::new(script).file_stem().unwrap_or_default();
+                let path = std::path::Path::new(dir).join(stem).with_extension("webp");
+                if let Err(e) = animation.write(&path, args.frame_ms) {
+                    eprintln!("{e}");
+                    std::process::exit(1)
+                }
+                eprintln!("{}: {} frame(s)", path.display(), animation.len());
+            }
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1)
+        }
+    }
+}
+
 fn main() {
     let args = parse_args();
+    if let Some(script) = &args.csl {
+        return run_csl(&args, script);
+    }
     let mut filter = args.display.filter_on(args.gpu, args.curvature);
     if args.record.is_some() {
         // Only when recording: elsewhere (the interactive monitor) Ctrl+C

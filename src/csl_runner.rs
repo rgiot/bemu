@@ -38,6 +38,9 @@ const T_STATES_PER_UNIT: usize = 4;
 /// synchronises.
 const MAX_FRAME_TICKS: usize = 4_000_000;
 
+/// How long a drive stays empty when a script changes its disc, in emulated microseconds.
+const DISC_CHANGE_US: u64 = 500_000;
+
 /// SSM code that releases `wait_ssm0000` (SSM standard).
 const SSM_WAIT_RELEASE: u16 = 0x0000;
 /// SSM code asking for a screenshot named by `screenshot_name`.
@@ -120,7 +123,19 @@ pub trait ScreenshotSink {
 /// The files of the file system, as the CSL players look them up: case-insensitively, in the
 /// script's directory and its parents.
 #[derive(Default)]
-pub struct FsFiles;
+pub struct FsFiles {
+    /// Archives (zip, 7z, tar.gz) whose discs `disk_insert` finds when no file of that name is on disc.
+    archives: Vec<(String, Vec<u8>)>,
+}
+
+impl FsFiles {
+    /// A file given as bytes, named `name`: an archive (a production's download) the discs are
+    /// looked up in, or a disc image itself, taken for a `disk_insert` of its name, after the folders.
+    pub fn with_archive(mut self, name: &str, bytes: Vec<u8>) -> Self {
+        self.archives.push((file_key(name), bytes));
+        self
+    }
+}
 
 impl CslFiles for FsFiles {
     fn script(&mut self, base_dir: &Path, name: &str) -> Result<(PathBuf, String), String> {
@@ -145,10 +160,20 @@ impl CslFiles for FsFiles {
     ) -> Result<Vec<u8>, String> {
         // The Shaker scripts sit in one directory per module while the disc
         // is shared by all of them: look in the parent directories too.
-        let path = base_dir
+        let on_disc = base_dir
             .ancestors()
             .take(3)
-            .find_map(|dir| find_case_insensitive(&resolve(dir, name)))
+            .find_map(|dir| find_case_insensitive(&resolve(dir, name)));
+        if on_disc.is_none() {
+            if let Some(bytes) = self.archives.iter().find_map(|(file, bytes)| {
+                (*file == file_key(name))
+                    .then(|| bytes.clone())
+                    .or_else(|| crate::disc_image::zip_entry_by_file_name(bytes, name))
+            }) {
+                return Ok(bytes);
+            }
+        }
+        let path = on_disc
             .or_else(|| only_disc_image_nearby(base_dir, name, notes))
             .unwrap_or_else(|| resolve(base_dir, name));
         std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
@@ -361,6 +386,8 @@ pub struct CslRunner {
     /// The beam is always followed, so that a screenshot is the last whole frame the
     /// monitor displayed when it was requested (what AMSpiriT saves).
     monitor: Monitor,
+    /// How screenshots are rendered (`None`: the monitor's frame as is).
+    display: Option<Box<dyn crate::display::DisplayFilter>>,
     last_frame: Option<image::RgbImage>,
     /// The monitor completed a frame since [`Self::advance`] last said so.
     new_frame: bool,
@@ -384,7 +411,7 @@ pub struct CslRunner {
 impl CslRunner {
     /// `output_dir` receives the screenshots; the files come from the file system.
     pub fn new(output_dir: impl Into<PathBuf>) -> Self {
-        Self::with_io(Box::new(FsFiles), Box::new(PngFiles), output_dir)
+        Self::with_io(Box::new(FsFiles::default()), Box::new(PngFiles), output_dir)
     }
 
     /// The files come from `files`, the screenshots (of `output_dir`) go to `screenshots`.
@@ -430,6 +457,7 @@ impl CslRunner {
             tape_dir: None,
             taken: HashMap::new(),
             monitor: Monitor::default(),
+            display: None,
             last_frame: None,
             new_frame: false,
             elapsed_before_reset_us: 0,
@@ -464,6 +492,17 @@ impl CslRunner {
                 .set_drive_kind(drive(unit), self.drive_kinds[unit]);
             self.motherboard.fdc_mut().insert_image(drive(unit), disc);
         }
+    }
+
+    /// Render the screenshots through `filter` (a CRT of [`crate::display::DisplayMode::filter_on`]...)
+    /// instead of saving the monitor's frame as is.
+    pub fn set_display_filter(&mut self, filter: Option<Box<dyn crate::display::DisplayFilter>>) {
+        self.display = filter;
+    }
+
+    /// The level a black ink is drawn at by the monitor (see `--black-level`).
+    pub fn set_black_level(&mut self, level: u8) {
+        self.monitor = std::mem::take(&mut self.monitor).with_black_level(level);
     }
 
     /// Make drive `unit` (0 = A, 1 = B) a 3" or a 3.5" one, now and after each `reset`.
@@ -823,6 +862,27 @@ impl CslRunner {
                     on: false,
                     deadline,
                 });
+            }
+            DiskInsert { drive, .. }
+                if self
+                    .motherboard
+                    .fdc()
+                    .has_disk(self::drive(drive_unit(*drive))) =>
+            {
+                // changing a disc is taking the first one out, then putting the other in: the
+                // drive stays empty (not ready) a moment, which is what a program asking for
+                // another disc waits for
+                let eject = match drive {
+                    Drive::A => "drive-a-remove-disc",
+                    Drive::B => "drive-b-remove-disc",
+                };
+                if let Err(error) = Command::new(eject).and_then(|command| command.execute(self)) {
+                    return Err(format!("{instruction}: {error}"));
+                }
+                self.script.push_front(instruction.clone());
+                let target = self.motherboard.t_state_counter().value()
+                    + DISC_CHANGE_US as usize * T_STATES_PER_UNIT;
+                self.waiting = Some(self::Wait::Until(target));
             }
             DiskDir(dir) => self.base_dir = resolve(&self.base_dir, dir.as_str()),
             ScreenshotName(name) => self.screenshot_name = Some(name.as_str().to_owned()),
@@ -1288,6 +1348,10 @@ impl CslRunner {
             self.new_frame |= self.last_frame.is_some();
         }
         let frame = self.last_frame.clone().unwrap();
+        let frame = match &mut self.display {
+            Some(filter) => filter.render_to_image(&frame),
+            None => frame,
+        };
 
         let stem = match (name, ssm_code) {
             (Some(name), _) => name.trim_end_matches(".png").to_owned(),
@@ -1461,6 +1525,13 @@ fn only_disc_image_nearby(
             Some(only.clone())
         }
         _ => None, // none, or too ambiguous to guess
+    }
+}
+
+fn drive_unit(drive: Drive) -> usize {
+    match drive {
+        Drive::A => 0,
+        Drive::B => 1,
     }
 }
 

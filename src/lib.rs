@@ -37,6 +37,8 @@ pub mod sound_cards;
 pub mod sound_export;
 pub mod symbols;
 pub mod tape;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod webp;
 #[cfg(feature = "willy")]
 pub mod willy;
 pub mod z80;

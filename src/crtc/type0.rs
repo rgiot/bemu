@@ -59,6 +59,12 @@ pub struct Crtc0 {
     /// (Shaker AT E: R2 moved during the pulse to where it ends does not start another one; CRTCs
     /// 1-4 start it, AT E and BCOPY A there).
     hsync_ended_on_char: bool,
+    /// C0 is at 0 or 1 after a 255 -> 0 wrap (R0 below C0): no line started, so the last-line
+    /// state is not assessed again (Overflow's previews write R0 = 15 at C0 = 183 on the frame's
+    /// last line, and AMSpiriT, like the real CPC, keeps that line's state through the wrap)
+    c0_wrapped: bool,
+    /// A line ended on this character (what tells C0 reaching 0 by a line end from a wrap)
+    line_just_ended: bool,
 }
 
 impl Crtc0 {
@@ -82,6 +88,14 @@ impl Crtc0 {
             self.additional_armed = self.last_line;
             self.additional_r5 = self.last_line && core.regs[5] > 0;
         }
+    }
+
+    /// The last two characters of a row's last line (the OUTI's 4th and 5th microseconds of
+    /// Shaker B6 A reach C0=R0-1 and R0 here): they compare R7 with the next row's C4.
+    fn ends_row_for_r7(&self, core: &Core) -> bool {
+        core.hcc.wrapping_add(1) >= core.regs[0]
+            && core.hcc <= core.regs[0]
+            && self.c9_is_last(core)
     }
 
     /// ACCC 13.2.1: C0=2 on the last line decides the additional lines; an R5 programmed before
@@ -245,13 +259,14 @@ impl CrtcChip for Crtc0 {
     }
 
     /// ACCC 16.4.1.1: R7 given the value of C4 on C0=0/1 is a BLOCKED VSYNC: it does not start,
-    /// nor can it until C4 or R7 changes.
+    /// nor can it until C4 or R7 changes. On a row's last line, C0=R0 is already the next row's
+    /// C0<2 (ACCC 16.4; Shaker B6 A, "R7 LAST CHANCE 4TH uSec ON C0=0": the real CRTC 0 prints #1E).
     fn before_write(&mut self, core: &mut Core, r: u8, value: u8) {
         if r == 7
             && !core.vsync()
             && core.vcc.value() == value
             && core.vcc.value() != core.regs[7]
-            && core.hcc < BLOCKED_R7_C0
+            && (core.hcc < BLOCKED_R7_C0 || self.ends_row_for_r7(core))
         {
             self.r7_match = true;
         }
@@ -369,6 +384,7 @@ impl CrtcChip for Crtc0 {
     // ---- lines and frames ----
 
     fn line_wraps(&mut self, core: &mut Core) {
+        self.line_just_ended = true;
         // ACCC §13.2.1/§13.2.4: with R0=0, C0 never reaches 1 and C9 stops being managed: the
         // first wrap to C0=0 updates the counters as usual (and arms C4 if C9 reached R9), the
         // second only moves C4 once, then everything is frozen.
@@ -419,7 +435,11 @@ impl CrtcChip for Crtc0 {
                 self.r0_enlarge_c9_to_r5 = true;
             }
         }
-        if core.hcc < 2 {
+        if core.hcc == 0 {
+            self.c0_wrapped = !self.line_just_ended;
+            self.line_just_ended = false;
+        }
+        if core.hcc < 2 && !self.c0_wrapped {
             self.assess_last_line(core);
         }
         self.assess_additional_line(core);

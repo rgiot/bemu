@@ -190,6 +190,22 @@ cargo run --release -- --window --dsk game.dsk --record game.mkv
 
 Ctrl+C stops a recording early; the file is still finished properly.
 
+## Screenshots of a CSL script
+
+`--csl script.csl` plays a CSL script headless: the machine, the discs, the keys typed and the
+waits it says, then the pictures it asks for with `screenshot` (or SSM codes). They are rendered as
+`--display`, `--curvature` and `--black-level` say, so a CRT's look is kept:
+
+```sh
+# one lossless WebP, DIR/demo.webp (a still for one screenshot, else an animation: --frame-ms each)
+amsrust --csl demo.csl --csl-archive downloads/ --screenshot DIR \
+        --screenshot-format webp --display ctm --curvature 1
+```
+
+`disk_insert` looks for its disc beside the script, then in the `--csl-archive` files, which are
+disc images, archives (zip, 7z, tar.gz) or folders of them. With `--screenshot-format png` (the
+default) each screenshot is a PNG named by the script (`screenshot_name`).
+
 ## Debug server
 
 `--debug-server` serves an HTTP debug API compatible with the

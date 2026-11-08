@@ -401,13 +401,18 @@ pub const HSYNC_GA_DELAY_TICKS: usize = 2;
 /// being output: the video byte is read from RAM about a microsecond before it is displayed, and the
 /// ink is looked up in the palette only on the way out. A palette write therefore acts on pixels
 /// already fetched, mid-byte and even the microsecond before, not at the next video byte; how far
-/// back depends on the chip, see [`GateArrayType::palette_write_delay_ticks`]: 20 ticks for the GA
-/// 40010, 21 for the 40007/8, which process the bits of the VRAM byte 1/16 us ahead (ACCC 9.1).
+/// back depends on the chip, see [`GateArrayType::palette_write_delay_ticks`]: 19 ticks for the GA
+/// 40010, 20 for the 40007/8, which process the bits of the VRAM byte 1/16 us ahead (ACCC 9.1).
 /// Measured on Rhino-Raster (validation/demos/rhino: pen switches timed to the microsecond after an
-/// EI+HALT): 20 matches ACE-DL exactly (0 pixels differ), 21 AMSpiriT Lite 1.13/1.16 (0 pixels
+/// EI+HALT, with the GA write latch of [`GA_WRITE_LATCH_CLOCK`]): 19 matches ACE-DL exactly (0 pixels
+/// differ), 20 AMSpiriT Lite 1.13/1.16 (0 pixels
 /// differ, its tiny black pixel included), with the interrupt timing left as it is (Dream End and
 /// Shaker A3 rule out moving the interrupt or the CRTC writes instead).
 pub const PALETTE_LOOKUP_LAG_TICKS: usize = 21;
+
+/// Pushes of an unchanged palette after which every slot of the palette history is that palette
+/// (the history is [`GateArrayType::palette_write_delay_ticks`] + 1 long at most).
+const PALETTE_SETTLED_TICKS: u8 = 3;
 
 /// Ticks into a video byte at which the Gate Array takes DISPEN for the whole byte: a CRTC write
 /// that changes the display enable in the CRTC's sampling window (ACCC 4.4.4: from the start of the
@@ -976,8 +981,8 @@ impl GateArrayType {
     /// VRAM"), so their writes reach one more pixel back.
     pub fn palette_write_delay_ticks(&self) -> usize {
         match self {
-            GateArrayType::Ga40010 => 1,
-            GateArrayType::Ga40007_8 => 0,
+            GateArrayType::Ga40010 => 2,
+            GateArrayType::Ga40007_8 => 1,
         }
     }
 
@@ -1087,7 +1092,10 @@ pub struct GateArray {
     lookup_lag: usize,
     /// The palette as it was at the previous tick, for the chips whose writes are a tick late
     /// The palettes of the last ticks, newest first (see [`GateArrayType::palette_write_delay_ticks`])
-    palette_ring: History<[Ink; 17], 2>,
+    palette_ring: History<[Ink; 17], 3>,
+    /// Ticks the palette has been pushed unchanged, up to [`PALETTE_SETTLED_TICKS`]: from then
+    /// the ring holds the palette in every slot, so it is neither pushed nor read
+    palette_still: u8,
     /// The write of the current bus cycle was latched
     write_seen: bool,
 
@@ -1181,6 +1189,7 @@ impl Default for GateArray {
             shown_ring: History::new(Shown::Black),
             lookup_lag: PALETTE_LOOKUP_LAG_TICKS,
             palette_ring: History::new([Ink(0); 17]),
+            palette_still: 0,
             write_seen: false,
             current_mode: VideoMode::Mode0,
             pixel_automata: PixelAutomata::default(),
@@ -1385,12 +1394,18 @@ impl GateArray {
     }
 
     pub fn set_ink(&mut self, pen: Pen, ink: Ink) {
+        if self.palette_still >= PALETTE_SETTLED_TICKS {
+            // the ring was not kept: it held the palette as it was
+            self.palette_ring = History::new(self.palette);
+        }
+        self.palette_still = 0;
         self.palette[pen.value() as usize] = ink;
     }
 
     pub fn set_palette(&mut self, palette: [Ink; 17]) {
         self.palette = palette;
         self.palette_ring = History::new(palette);
+        self.palette_still = PALETTE_SETTLED_TICKS;
     }
 
     pub fn set_video_mode(&mut self, mode: VideoMode) {
@@ -1404,6 +1419,7 @@ impl GateArray {
     /// There are 1024 mode 2 pixels per line and 312 lines per frame.
     /// Here, we do not care of where we are; it is up to the monitor to properly place these pixels at the right place thanks to other synchronization messages
     /// We assume that the automata is in a valid state
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn generate_pixel(&mut self) {
         let shown = if self.pixel_automata.is_done() {
             // the last pixel of a delayed (non MODE 2) byte still comes out
@@ -1489,14 +1505,25 @@ impl GateArray {
         if self.byte_tick == DISPEN_LATCH_TICKS + 1 {
             self.latch_byte_dispen();
         }
-        self.palette_ring.push(self.palette);
-        let palette = &self
-            .palette_ring
-            .get(self.ga_type.palette_write_delay_ticks());
+        // (a palette unchanged for as many ticks as the ring is long is the ring's every slot)
+        let delayed = if self.palette_still >= PALETTE_SETTLED_TICKS {
+            None
+        } else {
+            self.palette_ring.push(self.palette);
+            self.palette_still += 1;
+            Some(
+                self.palette_ring
+                    .get(self.ga_type.palette_write_delay_ticks()),
+            )
+        };
         self.rgb = match (self.shown_ring.get(self.lookup_lag), &self.plus) {
             _ if sync_black => (0., 0., 0.).into(),
             (Shown::Black, _) => (0., 0., 0.).into(),
-            (Shown::Pen(pen), None) => palette[pen.value() as usize].into(),
+            (Shown::Pen(pen), None) => match &delayed {
+                None => self.palette[pen.value() as usize],
+                Some(palette) => palette[pen.value() as usize],
+            }
+            .into(),
             (Shown::Pen(pen), Some(plus)) => plus.rgb(pen.value() as usize),
             (Shown::Sprite(pen), Some(plus)) => plus.rgb(16 + pen as usize),
             (Shown::Sprite(_), None) => (0., 0., 0.).into(),
@@ -1781,6 +1808,7 @@ impl Chip for GateArray {
     }
 
     /// Change the screen mode when hsync is set
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn pre_tick(&mut self) {
         self.abs_tick += 1;
         if self.get_pin(GateArrayPin::Neg_IORQ) {
@@ -2215,7 +2243,7 @@ mod test {
     /// the 40010 than on the 40007/8.
     #[test]
     fn a_palette_write_acts_in_the_middle_of_a_byte() {
-        for (ga_type, ticks_to_show) in [(GateArrayType::Ga40007_8, 1), (GateArrayType::Ga40010, 2)]
+        for (ga_type, ticks_to_show) in [(GateArrayType::Ga40007_8, 2), (GateArrayType::Ga40010, 3)]
         {
             let mut ga = GateArray::default();
             ga.set_gate_array_type(ga_type);

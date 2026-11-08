@@ -21,3 +21,7 @@ mod viewport;
 
 #[cfg(target_arch = "wasm32")]
 pub use emulator::Emulator;
+
+// a headless speed measure, to run the module in node (see `build.sh`'s BENCH note)
+#[cfg(all(target_arch = "wasm32", feature = "bench"))]
+mod bench;
