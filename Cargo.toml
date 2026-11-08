@@ -63,9 +63,6 @@ wgpu = { version = "27", optional = true, default-features = false, features = [
 # `--frontend winit`: a window drawn by the GPU, see src/frontend/winit_gpu.rs
 winit = { version = "0.30", optional = true }
 egui-winit = { version = "0.33", optional = true, default-features = false, features = ["clipboard", "links", "wayland", "x11"] }
-# `--features dap`: the debugger's windows with cpclib-dap's disassembly (NOP costs) and call
-# stack (see src/ui/views.rs)
-cpclib-dap = { path = "../rust.cpcdemotools/cpclib-dap", optional = true }
 
 # wgpu needs a native backend per OS; "vulkan" alone leaves macOS with none.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -146,6 +143,3 @@ crt-gpu = ["dep:wgpu", "dep:bytemuck"]
 gpu-window = ["crt-gpu", "dep:winit", "gui", "dep:egui-winit"]
 # The menu bar, the command palette and the debugger's windows (egui), drawn by the GPU.
 gui = ["crt-gpu", "dep:egui", "dep:egui-wgpu"]
-# The debugger's windows with cpclib-dap's views: NOP costs, the call stack (desktop for now:
-# cpclib-dap does not build for the web yet).
-dap = ["gui", "dep:cpclib-dap"]

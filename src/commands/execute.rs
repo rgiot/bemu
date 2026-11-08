@@ -81,6 +81,7 @@ const VIEWS: [(&str, View); 14] = [
     ("palette-open", View::Palette),
 ];
 
+#[cfg_attr(not(feature = "willy"), allow(dead_code))]
 const WILLY_BASES: &[(&str, &str)] = &[
     ("&FEBC", "&FEBC"),
     ("&FEAC", "&FEAC"),
@@ -412,6 +413,7 @@ fn disc_state(id: &str, target: &dyn CommandTarget) -> Option<CommandState> {
 }
 
 /// Plug again the card of type `T` with what `plug` makes (the card is unplugged first).
+#[allow(dead_code)] // used by the cards built in
 fn replug<T: crate::expansion_port::ExpansionDevice>(
     mb: &mut Mb,
     card: Result<T, String>,
@@ -1671,12 +1673,11 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                             files.s2p_base = base;
                         }
                     }
-                    "willy-s2p-toggle" | "willy-s2p-select-soundfont" => {
-                        if id == "willy-s2p-select-soundfont" || files.s2p_soundfont.is_none() {
-                            let arg =
-                                arg!(command, "The S2P's SoundFont", ArgKind::OpenFile(&["sf2"]));
-                            files.s2p_soundfont = Some(arg.bytes()?);
-                        }
+                    "willy-s2p-toggle" | "willy-s2p-select-soundfont"
+                        if id == "willy-s2p-select-soundfont" || files.s2p_soundfont.is_none() =>
+                    {
+                        let arg = arg!(command, "The S2P's SoundFont", ArgKind::OpenFile(&["sf2"]));
+                        files.s2p_soundfont = Some(arg.bytes()?);
                     }
                     _ => {}
                 }
@@ -2044,13 +2045,13 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
     }
     if let Some(rest) = id.strip_prefix("keyboard-host-layout-") {
         return match settings {
-            Some(s) => CommandState::checked(match (rest, s.host_layout) {
-                ("auto", None) => true,
-                ("qwerty", Some(HostLayout::Qwerty)) => true,
-                ("azerty", Some(HostLayout::Azerty)) => true,
-                ("qwertz", Some(HostLayout::Qwertz)) => true,
-                _ => false,
-            }),
+            Some(s) => CommandState::checked(matches!(
+                (rest, s.host_layout),
+                ("auto", None)
+                    | ("qwerty", Some(HostLayout::Qwerty))
+                    | ("azerty", Some(HostLayout::Azerty))
+                    | ("qwertz", Some(HostLayout::Qwertz))
+            )),
             None => CommandState::DISABLED,
         };
     }

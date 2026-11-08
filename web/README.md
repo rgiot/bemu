@@ -77,6 +77,7 @@ slower.
   | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'`, `'atari'` | `'raw'` |
   | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `0` |
   | `blackLevel` | `0` to `255`: the grey a black ink is drawn at | `8` |
+  | `menu` | `false` hides the menu bar, the command palette (Ctrl+Shift+P) and the debugger's windows drawn over the picture (WebGPU / WebGL only) | `true` |
   | `keyboard` | `'symbolic'`: a key types the character it types on your keyboard (whatever its language and the CPC's), for typing; `'positional'`: a key presses the CPC key at its place (`KeyboardEvent.code`), for games | `'symbolic'` |
 
 - **`options`**:
@@ -89,6 +90,14 @@ slower.
   - `fullscreenKey` (default `'F11'`, or `null` for none).
   - `turboKey` (default `'F10'`, or `null` for none): toggles full speed, see "Speed".
   - `autoStart` (default `false`).
+
+**Menus.** On WebGPU / WebGL the page shows the emulator's menu bar over the picture, with
+every command of the desktop window (see the top README), the command palette (Ctrl+Shift+P:
+type a few letters of a command, Enter runs it) and the debugger's windows. The menus change the
+running machine (CRTC, RAM, cards...) without resetting it. What only the page can do comes
+back as an `ui-request` event that `Bemu` handles: `pickFile` opens a file chooser, `download`
+saves a file, `volume`, `fullscreen`, `openUrl`, `speed`. The keys go to the menus while they
+have the focus, to the CPC otherwise.
 
 **Methods** (a file `source` is a URL, a `File`/`Blob`, an `ArrayBuffer` or a typed array):
 

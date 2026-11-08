@@ -77,6 +77,28 @@ same. `validation/demos/batman` has both: the 3" set and the one disc version fo
 cargo run --release -- --window --drive-a 3.5 --dsk 'batman_forever.zip#Batman Forever (One disk version).dsk'
 ```
 
+## Menus and command palette
+
+The window (`--window`, the default winit frontend) has a menu bar with every command of the
+emulator, from `doc/menu-ui.csv` (the menu specification, compiled into the binary by
+`build.rs`): media, debugger, machine, sound, video, tools. Ctrl+Shift+P opens the command
+palette: type a few letters of a command (`crtc 1`, `flip b`, `snapshot`), Enter runs it. A
+command that needs something asks it (an address, a value, a file in a small file browser).
+`--no-menu` hides the menu bar (Tools > Show menu bar, or the palette, shows it again).
+
+The machine changes while it runs: another CRTC takes over the registers and counters of the
+previous one, more or less RAM keeps what is in the RAM left, cards are plugged and unplugged
+with the power on, a CPC+ gives back its CRTC when it becomes a CPC again.
+
+The function keys, the menus, the palette and the debug server's routes all run the same
+commands (`src/commands`). Debug > View opens the debugger's windows (registers, CRTC, Gate
+Array, PSG, FDC, memory, disassembly, history, breakpoints, symbols); breakpoints, stepping (in,
+over, out, a frame) and counters work without the debug server, which Debug > Debug server
+starts on demand. The commands the emulator cannot do yet (a Gotek drive, recording a tape) are
+in the menus, greyed out.
+
+The minifb frontend (`--frontend minifb`) has no menu: its function keys run the same commands.
+
 ## CPC Booster+ and MiniBooster
 
 `--booster` plugs a CPC Booster+ (Antitec / Dirty Minds) on the expansion port, `--miniboster` its

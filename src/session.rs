@@ -22,7 +22,9 @@ use amsrust::motherboard::Motherboard;
 use amsrust::overlay::Overlay;
 
 use crate::cli::{Args, FrontendKind};
-use crate::frontend::{self, Frontend, MinifbFrontend};
+#[cfg(feature = "gpu-window")]
+use crate::frontend;
+use crate::frontend::{Frontend, MinifbFrontend};
 use crate::{
     export_samples, finish_printer_export, finish_wav, finish_ym, open_audio, play_frame_audio,
     recording_wav, recording_ym, start_wav, start_ym, stop_requested, type_due_keys,
