@@ -574,7 +574,7 @@ fn model_ram_kb(model: CpcModel) -> usize {
 }
 
 /// The commands kept by the registry but with nothing behind them yet.
-const NOT_IMPLEMENTED: &[&str] = &["tape-record", "tape-record-stop"];
+const NOT_IMPLEMENTED: &[&str] = &[];
 
 /// Whether `id` has a behaviour (every command of the registry must).
 #[cfg(test)]
@@ -765,6 +765,30 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                 settings.media.tape = None;
             }
             done()
+        }
+        "tape-record" => {
+            target.motherboard_mut().start_tape_recording();
+            said("recording the cassette port: SAVE on the CPC, then stop the recording")
+        }
+        "tape-record-stop" => {
+            if target.motherboard().tape_recorder().is_none() {
+                return Err(CommandError::Unavailable("not recording".into()));
+            }
+            let arg = arg!(
+                command,
+                "Save the recorded tape",
+                ArgKind::SaveFile(TAPE_FILES, "bemu.cdt")
+            );
+            let seconds = target
+                .motherboard()
+                .tape_recorder()
+                .map_or(0.0, |recorder| recorder.seconds());
+            let cdt = target
+                .motherboard_mut()
+                .stop_tape_recording()
+                .unwrap_or_default();
+            save(target, &arg, "bemu.cdt", cdt)?;
+            said(format!("{seconds:.1} s of tape recorded"))
         }
         "tape-play" | "tape-stop" | "tape-rewind" => {
             let deck = target
@@ -2155,6 +2179,11 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
             checked: settings.is_some_and(|s| s.save_discs),
         },
         "tape-insert" => CommandState::enabled(true),
+        "tape-record" => CommandState {
+            enabled: true,
+            checked: mb.tape_recorder().is_some(),
+        },
+        "tape-record-stop" => CommandState::enabled(mb.tape_recorder().is_some()),
         "tape-eject" | "tape-rewind" => CommandState::enabled(mb.tape_deck().is_some()),
         "tape-play" => CommandState {
             enabled: mb.tape_deck().is_some(),

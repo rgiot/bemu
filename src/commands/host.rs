@@ -270,8 +270,6 @@ pub enum Recording {
     Ym,
     Video,
     ScreenshotSeries,
-    /// What the CPC writes on its cassette port (not implemented yet).
-    Tape,
 }
 
 /// What only the host can do.

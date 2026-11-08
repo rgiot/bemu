@@ -47,6 +47,8 @@ pub struct Motherboard {
     fdc: Fdc,
     /// The cassette deck, with a tape in it.
     tape: Option<Box<crate::tape::TapeDeck>>,
+    /// The cassette recorder, recording what the CPC writes on its cassette port.
+    tape_recorder: Option<Box<crate::tape::TapeRecorder>>,
     /// What port B's bit 7 (the cassette input) reads with no tape playing: 0 on the CPCs with a
     /// cassette port, 1 on the CPC+ (CRTC 3), which has none (Shaker A4 prints port B as #DE/#DF on
     /// a real 6128+).
@@ -146,6 +148,7 @@ impl Default for Motherboard {
                 fdc
             },
             tape: None,
+            tape_recorder: None,
             cassette_idle: false,
             expansion_port: None,
             printer_port: None,
@@ -796,6 +799,20 @@ impl Motherboard {
         sound
     }
 
+    /// Record what the CPC writes on its cassette port (File > Tape > Record), from now.
+    pub fn start_tape_recording(&mut self) {
+        self.tape_recorder = Some(Box::default());
+    }
+
+    /// The recording, as a CDT (`None`: not recording).
+    pub fn stop_tape_recording(&mut self) -> Option<Vec<u8>> {
+        self.tape_recorder.take().map(|recorder| recorder.to_cdt())
+    }
+
+    pub fn tape_recorder(&self) -> Option<&crate::tape::TapeRecorder> {
+        self.tape_recorder.as_deref()
+    }
+
     pub fn tape_deck(&self) -> Option<&crate::tape::TapeDeck> {
         self.tape.as_deref()
     }
@@ -939,6 +956,10 @@ impl Motherboard {
                 // the cassette motor relay is port C's bit 4, the head's level port B's bit 7
                 tape.advance_us(self.ppi.get_pin(PpiPin::C4));
                 self.ppi.set_pin(PpiPin::B7, tape.level());
+            }
+            if let Some(recorder) = &mut self.tape_recorder {
+                // the cassette write line is port C's bit 5
+                recorder.advance_us(self.ppi.get_pin(PpiPin::C4), self.ppi.get_pin(PpiPin::C5));
             }
             self.us += 1;
             if let Some(from) = self.trace_pc_from {

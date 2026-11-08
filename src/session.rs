@@ -79,7 +79,7 @@ impl CommandTarget for Core<'_> {
             | HostRequest::DebugServer(_)
             | HostRequest::SaveFile { .. }
             | HostRequest::SavePrintout => true,
-            HostRequest::StartRecording(recording, _) => *recording != Recording::Tape,
+            HostRequest::StartRecording(..) => true,
             HostRequest::Open(_)
             | HostRequest::ShowText { .. }
             | HostRequest::OpenUrl(_)
@@ -329,7 +329,6 @@ impl Window {
                 }
                 self.series = Some(series);
             }
-            Recording::Tape => return,
         }
         core.recording.insert(recording);
         self.notify(format!("recording {text}"), false);
@@ -364,7 +363,6 @@ impl Window {
                     );
                 }
             }
-            Recording::Tape => {}
         }
         core.recording.remove(&recording);
     }

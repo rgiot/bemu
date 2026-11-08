@@ -23,7 +23,7 @@ File,Swap disc A and B,,,drives-swap,,Exchange the discs of drive A and drive B,
 File,Write modified discs back automatically,,,discs-save-automatically-toggle,,"Write a disc back to its file when the drive motor stops, when it is replaced and at exit",Checkable; off by default,tog,,--save-discs,added,
 File,Tape,Insert,,tape-insert,,Insert a CDT/TZX tape in the cassette deck (open a file browser if no file is provided),"Available only for a machine with a tape (CPC 464 and 464+ built in; on a 664/6128 the deck is the external one, so keep it enabled but note |TAPE)",inp,,--cdt; web insertTape,filled,"WinAPE, ACE, RVM"
 File,Tape,Eject,,tape-eject,,Remove the tape from the deck,Enable only when a tape is inserted,act,,web ejectTape(),filled,
-File,Tape,Record,,tape-record,tape-record-stop,Record what the CPC writes to the cassette port in a new CDT,NOT IMPLEMENTED: the tape code only plays. Toggle: starts / stops the recording,ss,,new,filled,"WinAPE, ACE"
+File,Tape,Record,,tape-record,tape-record-stop,Record what the CPC writes to the cassette port in a new CDT,"Toggle: starts / stops the recording; stop asks where to save the CDT (direct recording blocks, 2 µs samples; downloaded on the web)",ss,,yes,filled,"WinAPE, ACE"
 File,Tape,Play,,tape-play,,Press PLAY on the deck (the tape runs when the CPC starts the motor),Enable only when a tape is inserted,act,,web tapeControl('play'),added,"WinAPE, ACE"
 File,Tape,Stop,,tape-stop,,Press STOP on the deck,,act,,web tapeControl('stop'),added,
 File,Tape,Rewind,,tape-rewind,,Rewind the tape to its start,,act,,web tapeControl('rewind'),added,"WinAPE, ACE"
