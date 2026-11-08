@@ -340,6 +340,9 @@ const RECENT_COMMANDS: usize = 16;
 /// the result bytes the FDC answered (empty for commands with no result).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandRecord {
+    /// How many more times it ran right after, the same (a driver polling Sense Interrupt
+    /// Status): counted in [`Fdc::recent_commands`] only.
+    pub repeats: u32,
     pub command: Vec<u8>,
     pub result: Vec<u8>,
     /// Microseconds (with drive timing) when the command was complete and when its result began
@@ -844,17 +847,28 @@ impl Fdc {
 
     fn dispatch_command(&mut self) {
         self.t_cursor = self.now_us;
-        if self.recent.len() == RECENT_COMMANDS {
-            self.recent.pop_front();
+        match self.recent.back_mut() {
+            // the same again: counted, so that a polling loop does not push the rest out
+            Some(last) if last.command == self.command => {
+                last.repeats += 1;
+                last.start_us = self.now_us;
+            }
+            _ => {
+                if self.recent.len() == RECENT_COMMANDS {
+                    self.recent.pop_front();
+                }
+                self.recent.push_back(CommandRecord {
+                    repeats: 0,
+                    command: self.command.clone(),
+                    result: Vec::new(),
+                    start_us: self.now_us,
+                    end_us: 0,
+                });
+            }
         }
-        self.recent.push_back(CommandRecord {
-            command: self.command.clone(),
-            result: Vec::new(),
-            start_us: self.now_us,
-            end_us: 0,
-        });
         if let Some(log) = &mut self.command_log {
             log.push(CommandRecord {
+                repeats: 0,
                 command: self.command.clone(),
                 result: Vec::new(),
                 start_us: self.now_us,

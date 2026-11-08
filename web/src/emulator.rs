@@ -642,7 +642,7 @@ impl Emulator {
             motherboard.fdc_mut().insert_image(fdc_drive(unit), disc.clone());
         }
         // the deck keeps its tape, where it is
-        motherboard.take_tape_deck_from(&mut self.motherboard);
+        motherboard.take_cassette_and_watches_from(&mut self.motherboard);
         self.motherboard = motherboard;
         self.monitor = Monitor::default().with_black_level(self.config.black_level());
     }

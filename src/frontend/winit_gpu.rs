@@ -881,8 +881,30 @@ impl App {
         let Some((&key, view)) = self.views.iter_mut().find(|(_, v)| v.window.id() == id) else {
             return false;
         };
-        let _ = view.state.on_window_event(&view.window, event);
+        let response = view.state.on_window_event(&view.window, event);
         match event {
+            // the debugger's function keys (F7 step, F8 pause...) work there too, unless a
+            // field takes the key
+            WindowEvent::KeyboardInput { event: key, .. }
+                if key.state == ElementState::Pressed
+                    && !key.repeat
+                    && !response.consumed
+                    && matches!(
+                        key.logical_key,
+                        Key::Named(
+                            NamedKey::F5
+                                | NamedKey::F6
+                                | NamedKey::F7
+                                | NamedKey::F8
+                                | NamedKey::F9
+                                | NamedKey::F12
+                        )
+                    ) =>
+            {
+                if let Some(host) = host_key(key) {
+                    self.pressed.push(host);
+                }
+            }
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
                 self.views.remove(&key);
                 self.wanted_views.retain(|(wanted, ..)| *wanted != key);

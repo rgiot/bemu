@@ -323,6 +323,7 @@ pub fn tape(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
             let position = deck.position_seconds();
             ui.add(
                 egui::ProgressBar::new((position / duration.max(1e-6)) as f32)
+                    .desired_width(320.0)
                     .text(format!("{position:.1} s / {duration:.1} s")),
             );
             egui::Grid::new("tape").striped(true).show(ui, |ui| {
@@ -517,7 +518,11 @@ pub fn fdc(ui: &mut egui::Ui, mb: &Motherboard) {
             let mut any = false;
             for record in fdc.recent_commands().rev() {
                 any = true;
-                ui.monospace(record.name());
+                ui.monospace(if record.repeats > 0 {
+                    format!("{} ×{}", record.name(), record.repeats + 1)
+                } else {
+                    record.name()
+                });
                 ui.monospace(hex(&record.command));
                 ui.weak(if record.result.is_empty() {
                     String::new()

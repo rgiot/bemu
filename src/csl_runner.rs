@@ -1119,7 +1119,7 @@ impl CslRunner {
         motherboard
             .psg_mut()
             .take_audio_output_from(previous.psg_mut());
-        motherboard.take_tape_deck_from(previous);
+        motherboard.take_cassette_and_watches_from(previous);
         for unit in 0..2 {
             let fdc = motherboard.fdc_mut();
             fdc.set_drive_kind(drive(unit), self.drive_kinds[unit]);

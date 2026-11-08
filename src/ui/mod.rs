@@ -271,11 +271,8 @@ impl Gui {
 
     /// Whether the keys go to the interface (a field, the palette, a menu) rather than the CPC.
     pub fn wants_keyboard(&self) -> bool {
+        // (a field of a debugger's own window takes the keys of that window only)
         self.ctx.wants_keyboard_input()
-            || self
-                .view_contexts
-                .values()
-                .any(egui::Context::wants_keyboard_input)
             || self.palette.is_some()
             || self.prompt.is_some()
             || self.ctx.is_popup_open()

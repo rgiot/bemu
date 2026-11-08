@@ -686,6 +686,14 @@ impl Motherboard {
         self.tape = other.tape.take();
     }
 
+    /// What goes on when another machine replaces `other`: its tape deck, its tape recording
+    /// and whether its I/O writes are watched.
+    pub fn take_cassette_and_watches_from(&mut self, other: &mut Motherboard) {
+        self.take_tape_deck_from(other);
+        self.tape_recorder = other.tape_recorder.take();
+        self.watch_io_writes(other.io_writes.is_some());
+    }
+
     /// Plug a card on the expansion port (after the ones already there).
     pub fn plug_expansion(&mut self, device: Box<dyn ExpansionDevice>) {
         self.expansion_port
