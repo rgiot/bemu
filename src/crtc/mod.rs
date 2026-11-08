@@ -114,6 +114,10 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
     CrtcPin::CCLK,
 ];
 
+/// R0 values up to this one (a line of that many characters plus one) do not end the line when
+/// written on C0=R0 (see `do_write_register`).
+const R0_SHORT_LINE: u8 = 4;
+
 /// A CRTC: the shared 6845 machinery ([`Core`]) driven at each character clock, and the chip
 /// ([`CrtcChip`]: `type0.rs`, `type1.rs`, `type2.rs`, `asic.rs`) called wherever the chips
 /// differ. Reads through [`Core`] (counters, sync states) work on it directly.
@@ -344,10 +348,12 @@ impl Crtc {
             r8: self.core.regs[8],
         };
         if r == 0 && self.chip.r0_lowered_on_c0_ends_line() {
-            // written during the character C0=R0 itself, and not above it: too late to make C0
-            // go on, the line ends at this character (Overflow's R0=110 -> 63 on C0=110)
+            // An R0 written during the character C0=R0 itself is too late to make C0 go on: the
+            // line ends at this character (Overflow's R0=110 -> 63 on C0=110, 60 -> 63 on C0=60,
+            // 13 -> 24 on C0=13). Fitted on two demos against AMSpiriT Lite: lines of 5 characters or
+            // less are left alone (Madness' R0=4 then R0=58 on C0=4 makes lines of 59 characters).
             let old = self.core.regs[0];
-            self.core.r0_ends_line = self.core.hcc == old && (old > 1 || std::env::var_os("R0ALL").is_some());
+            self.core.r0_ends_line = self.core.hcc == old && old > R0_SHORT_LINE;
             self.core.r0_ends_at = old;
         }
         self.chip.before_write(&mut self.core, r, v & mask);
