@@ -146,6 +146,27 @@ pub struct Args {
     #[arg(long = "screenshot", value_name = "DIR", help_heading = RUN)]
     pub screenshot_dir: Option<String>,
 
+    /// Plays a CSL script headless (the machine, discs, keys and waits it says), saving the
+    /// screenshots it asks for (`screenshot`, SSM codes) in --screenshot's DIR (default: here),
+    /// rendered as --display, --curvature and --black-level say.
+    #[arg(long, value_name = "FILE.csl", help_heading = RUN)]
+    pub csl: Option<String>,
+
+    /// An archive (zip, 7z, tar.gz), a disc image, or a folder of them, the CSL's `disk_insert` finds
+    /// its disc in when it is not beside the script (repeatable).
+    #[arg(long = "csl-archive", value_name = "FILE", requires = "csl", help_heading = RUN)]
+    pub csl_archives: Vec<String>,
+
+    /// The format of the CSL's screenshots: png (a file per screenshot, named by the script), or
+    /// webp (lossless, about half the size: one SCRIPT.webp file, a still when the script takes one
+    /// screenshot, else an animation of them, see --frame-ms).
+    #[arg(long, value_name = "png|webp", default_value = "png", requires = "csl", help_heading = RUN)]
+    pub screenshot_format: String,
+
+    /// How long each frame of an animated webp is shown, in milliseconds.
+    #[arg(long, value_name = "MS", default_value_t = 1000, requires = "csl", help_heading = RUN)]
+    pub frame_ms: u32,
+
     /// How long a headless run (--screenshot, --record) lasts.
     #[arg(long, default_value_t = 30, help_heading = RUN)]
     pub seconds: u64,
