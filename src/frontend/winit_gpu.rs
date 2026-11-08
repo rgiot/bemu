@@ -71,7 +71,170 @@ struct UiLayer {
     top_pixels: f32,
 }
 
+/// A debugger's window, a window of the system: its surface on the main window's GPU device,
+/// its own interface.
+struct ViewWindow {
+    window: Arc<Window>,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    state: egui_winit::State,
+    ctx: egui::Context,
+    painter: Option<amsrust::ui::Painter>,
+    /// The size last asked for its content, in points.
+    fitted: Option<egui::Vec2>,
+}
+
+impl ViewWindow {
+    fn open(
+        event_loop: &ActiveEventLoop,
+        gfx: &Gfx,
+        title: &str,
+        ctx: egui::Context,
+    ) -> Result<Self, String> {
+        let attributes = Window::default_attributes()
+            .with_title(format!("bemu: {title}"))
+            .with_inner_size(LogicalSize::new(460.0, 520.0));
+        let window = Arc::new(
+            event_loop
+                .create_window(attributes)
+                .map_err(|e| format!("cannot open the {title} window: {e}"))?,
+        );
+        let surface = gfx
+            .instance
+            .create_surface(window.clone())
+            .map_err(|e| format!("cannot draw in the {title} window: {e}"))?;
+        let capabilities = surface.get_capabilities(&gfx.adapter);
+        let format = capabilities
+            .formats
+            .iter()
+            .copied()
+            .find(|f| !f.is_srgb())
+            .unwrap_or(capabilities.formats[0]);
+        let size = window.inner_size();
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: size.width.max(1),
+            height: size.height.max(1),
+            // it must not hold back the emulation: no wait for the refresh
+            present_mode: if capabilities
+                .present_modes
+                .contains(&wgpu::PresentMode::Mailbox)
+            {
+                wgpu::PresentMode::Mailbox
+            } else if capabilities
+                .present_modes
+                .contains(&wgpu::PresentMode::Immediate)
+            {
+                wgpu::PresentMode::Immediate
+            } else {
+                wgpu::PresentMode::Fifo
+            },
+            alpha_mode: capabilities.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&gfx.device, &config);
+        let state = egui_winit::State::new(
+            ctx.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            Some(gfx.device.limits().max_texture_dimension_2d as usize),
+        );
+        Ok(Self {
+            window,
+            surface,
+            config,
+            state,
+            ctx,
+            painter: None,
+            fitted: None,
+        })
+    }
+
+    /// As large as its content (`wanted` points), up to most of a screen: a longer one scrolls.
+    fn fit(&mut self, wanted: egui::Vec2) {
+        const MAX: egui::Vec2 = egui::vec2(1000.0, 900.0);
+        let size = wanted.max(egui::vec2(160.0, 60.0)).min(MAX).ceil();
+        // the user resized it, or it was fitted already: changes of a few points are left
+        if self
+            .fitted
+            .is_some_and(|fitted| (fitted - size).abs().max_elem() < 4.0)
+        {
+            return;
+        }
+        self.fitted = Some(size);
+        let _ = self
+            .window
+            .request_inner_size(LogicalSize::new(f64::from(size.x), f64::from(size.y)));
+    }
+
+    fn resize(&mut self, gfx: &Gfx, width: u32, height: u32) {
+        self.config.width = width.max(1);
+        self.config.height = height.max(1);
+        self.surface.configure(&gfx.device, &self.config);
+    }
+
+    /// Draw a frame of its interface.
+    fn draw(&mut self, gfx: &Gfx, mut output: egui::FullOutput) {
+        self.state
+            .handle_platform_output(&self.window, std::mem::take(&mut output.platform_output));
+        let surface_texture = match self.surface.get_current_texture() {
+            Ok(texture) => texture,
+            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                self.surface.configure(&gfx.device, &self.config);
+                return;
+            }
+            Err(_) => return,
+        };
+        let view = surface_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = gfx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        // the panel covers it all: a clear, then the shapes
+        drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("view"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        }));
+        let format = self.config.format;
+        let painter = self
+            .painter
+            .get_or_insert_with(|| amsrust::ui::Painter::new(&gfx.device, format));
+        painter.paint_shapes(
+            &gfx.device,
+            &gfx.queue,
+            &mut encoder,
+            &view,
+            [self.config.width, self.config.height],
+            &self.ctx,
+            output.shapes,
+            output.pixels_per_point,
+            &output.textures_delta,
+        );
+        gfx.queue.submit([encoder.finish()]);
+        surface_texture.present();
+    }
+}
+
 struct Gfx {
+    /// Kept for the surfaces of the debugger's windows.
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -125,6 +288,8 @@ impl Gfx {
         let blit = Blit::new(&device, format);
         let raw_bind_group = blit.bind_group(&device, frame.view(), false, Warp::FLAT);
         Ok(Self {
+            instance,
+            adapter,
             surface,
             device,
             queue,
@@ -550,6 +715,11 @@ struct App {
     ui: Option<UiLayer>,
     /// Fullscreen asked by a command (F11 is the window's): done on the next events.
     wanted_fullscreen: Option<bool>,
+    /// The debugger's windows open, by view, and the ones to have (opened in the event loop).
+    views: HashMap<u8, ViewWindow>,
+    wanted_views: Vec<(u8, &'static str, egui::Context)>,
+    /// The views whose window the user closed.
+    closed_views: Vec<u8>,
 }
 
 /// How many refreshes at `millihertz` show a CPC frame, if it is a multiple of 50 Hz (within
@@ -683,8 +853,55 @@ fn exclusive_fullscreen_works(event_loop: &ActiveEventLoop) -> bool {
     }
 }
 
+impl App {
+    /// Open the debugger's windows wanted, close the others.
+    fn sync_views(&mut self, event_loop: &ActiveEventLoop) {
+        let wanted = &self.wanted_views;
+        self.views
+            .retain(|key, _| wanted.iter().any(|(wanted, ..)| wanted == key));
+        let Some(gfx) = &self.gfx else { return };
+        for (key, title, ctx) in wanted {
+            if self.views.contains_key(key) {
+                continue;
+            }
+            match ViewWindow::open(event_loop, gfx, title, ctx.clone()) {
+                Ok(view) => {
+                    self.views.insert(*key, view);
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    self.closed_views.push(*key);
+                }
+            }
+        }
+    }
+
+    /// An event of a debugger's window: `true` when `id` is one.
+    fn view_event(&mut self, id: WindowId, event: &WindowEvent) -> bool {
+        let Some((&key, view)) = self.views.iter_mut().find(|(_, v)| v.window.id() == id) else {
+            return false;
+        };
+        let _ = view.state.on_window_event(&view.window, event);
+        match event {
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                self.views.remove(&key);
+                self.wanted_views.retain(|(wanted, ..)| *wanted != key);
+                self.closed_views.push(key);
+            }
+            WindowEvent::Resized(size) => {
+                if let Some(gfx) = &self.gfx {
+                    view.resize(gfx, size.width, size.height);
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+}
+
 impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.sync_views(event_loop);
         if let Some(on) = self.wanted_fullscreen.take() {
             let now = self.fullscreen
                 || self
@@ -729,7 +946,11 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // a debugger's window: its own interface, nothing for the CPC
+        if self.view_event(id, &event) {
+            return;
+        }
         // the interface first: what it takes (a click on a menu, a key in a field) is not the CPC's
         if let (Some(ui), Some(window)) = (&mut self.ui, &self.window) {
             if let Some(state) = &mut ui.state {
@@ -853,6 +1074,9 @@ impl WinitGpuFrontend {
                 modifiers: ModifiersState::empty(),
                 refreshes_per_frame: None,
                 wanted_fullscreen: None,
+                views: HashMap::new(),
+                wanted_views: Vec::new(),
+                closed_views: Vec::new(),
                 ui: ui.map(|ctx| UiLayer {
                     ctx,
                     state: None,
@@ -1030,6 +1254,32 @@ impl Frontend for WinitGpuFrontend {
             output.textures_delta = textures;
         }
         ui.output = Some(output);
+    }
+
+    fn has_view_windows(&self) -> bool {
+        true
+    }
+
+    fn sync_view_windows(&mut self, views: &[amsrust::ui::NativeView]) -> Vec<u8> {
+        let closed = std::mem::take(&mut self.app.closed_views);
+        self.app.wanted_views = views
+            .iter()
+            .filter(|view| !closed.contains(&view.key))
+            .map(|view| (view.key, view.title, view.ctx.clone()))
+            .collect();
+        closed
+    }
+
+    fn view_input(&mut self, key: u8) -> Option<egui::RawInput> {
+        let view = self.app.views.get_mut(&key)?;
+        Some(view.state.take_egui_input(&view.window))
+    }
+
+    fn set_view_output(&mut self, key: u8, output: egui::FullOutput, wanted: egui::Vec2) {
+        if let (Some(view), Some(gfx)) = (self.app.views.get_mut(&key), self.app.gfx.as_ref()) {
+            view.fit(wanted);
+            view.draw(gfx, output);
+        }
     }
 
     fn set_curvature(&mut self, curvature: f32) {

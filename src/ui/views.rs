@@ -147,7 +147,37 @@ pub fn show(
     bus: &mut CommandBus,
     state: &mut ViewState,
 ) {
-    let title = match view {
+    let title = title(view);
+    if title.is_empty() {
+        return;
+    }
+    // as large as its content, a long one scrolled
+    egui::Window::new(title)
+        .open(open)
+        .resizable(false)
+        .show(ctx, |ui| {
+            egui::ScrollArea::both()
+                .auto_shrink([true, true])
+                .max_height(560.0)
+                .max_width(760.0)
+                .show(ui, |ui| {
+                    contents(view, ui, target, bus, state);
+                });
+        });
+}
+
+/// The debugger's windows (the ones a desktop opens as windows of the system), not the
+/// preferences, the shortcuts or the about box.
+pub fn is_debugger(view: View) -> bool {
+    !matches!(
+        view,
+        View::Preferences | View::Shortcuts | View::About | View::Palette
+    )
+}
+
+/// The window's title ("" for the palette, which is no window).
+pub fn title(view: View) -> &'static str {
+    match view {
         View::Z80 => "Z80",
         View::Stack => "Stack",
         View::Crtc => "CRTC",
@@ -168,19 +198,8 @@ pub fn show(
         View::Preferences => "Preferences",
         View::Shortcuts => "Keyboard shortcuts",
         View::About => "About bemu",
-        View::Palette => return,
-    };
-    egui::Window::new(title)
-        .open(open)
-        .default_width(360.0)
-        .resizable(true)
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(520.0)
-                .show(ui, |ui| {
-                    contents(view, ui, target, bus, state);
-                });
-        });
+        View::Palette => "",
+    }
 }
 
 fn inspect(target: &dyn CommandTarget, what: &str) -> Value {
@@ -209,7 +228,7 @@ fn controls(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut CommandBus)
     ui.separator();
 }
 
-fn contents(
+pub fn contents(
     view: View,
     ui: &mut egui::Ui,
     target: &dyn CommandTarget,

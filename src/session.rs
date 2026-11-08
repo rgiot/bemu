@@ -627,6 +627,18 @@ impl Window {
                 let output = gui.run(raw, core, bus);
                 self.window.set_ui_output(output, gui.menu_height());
             }
+            // the debugger's windows, windows of the system
+            let views = gui.native_views();
+            for key in self.window.sync_view_windows(&views) {
+                gui.close_view(key);
+            }
+            for view in &views {
+                if let Some(raw) = self.window.view_input(view.key) {
+                    if let Some((output, wanted)) = gui.run_view(view.key, raw, core, bus) {
+                        self.window.set_view_output(view.key, output, wanted);
+                    }
+                }
+            }
             return gui.wants_keyboard();
         }
         let _ = (core, bus);
@@ -772,6 +784,11 @@ pub fn run_window(
         gui,
     };
     core.motherboard.watch_io_writes(args.overlay);
+    // the debugger's windows are windows of the system where the frontend opens several
+    #[cfg(feature = "gui")]
+    if let Some(gui) = &mut window.gui {
+        gui.set_native_views(window.window.has_view_windows());
+    }
     let fps = window.target_fps(&core.settings);
     window.window.set_target_fps(fps);
     if args.turbo {

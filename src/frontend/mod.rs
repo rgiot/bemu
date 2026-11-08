@@ -68,6 +68,33 @@ pub trait Frontend {
         let _ = (output, menu_height);
     }
 
+    /// Whether this frontend opens the debugger's windows as windows of the system.
+    #[cfg(feature = "gui")]
+    fn has_view_windows(&self) -> bool {
+        false
+    }
+
+    /// Open a window of the system for each of `views` (closing the others); returns the
+    /// views whose window the user closed.
+    #[cfg(feature = "gui")]
+    fn sync_view_windows(&mut self, views: &[amsrust::ui::NativeView]) -> Vec<u8> {
+        let _ = views;
+        Vec::new()
+    }
+
+    /// The input of the window of view `key` since the last call (`None`: not open yet).
+    #[cfg(feature = "gui")]
+    fn view_input(&mut self, key: u8) -> Option<egui::RawInput> {
+        let _ = key;
+        None
+    }
+
+    /// Draw the window of view `key`, sized to fit `wanted` points.
+    #[cfg(feature = "gui")]
+    fn set_view_output(&mut self, key: u8, output: egui::FullOutput, wanted: egui::Vec2) {
+        let _ = (key, output, wanted);
+    }
+
     /// The text of the host's clipboard.
     fn clipboard_text(&mut self) -> Option<String> {
         None

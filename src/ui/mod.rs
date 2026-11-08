@@ -20,7 +20,7 @@ mod views;
 
 pub use paint::Painter;
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::commands::{
     self, Arg, ArgKind, CommandBus, CommandError, CommandTarget, HostRequest, Report, View,
@@ -56,6 +56,26 @@ pub struct Gui {
     toasts: VecDeque<Toast>,
     file_requests: Vec<FileRequest>,
     menu_height: f32,
+    /// The debugger's windows are windows of the system (the desktop), each with its own
+    /// context, not windows drawn inside the main one (the web page).
+    native_views: bool,
+    view_contexts: BTreeMap<ViewKey, egui::Context>,
+}
+
+/// A debugger's window of the system: its key, title and context (see [`Gui::native_views`]).
+pub struct NativeView {
+    pub key: u8,
+    pub title: &'static str,
+    pub ctx: egui::Context,
+}
+
+fn new_context() -> egui::Context {
+    let ctx = egui::Context::default();
+    ctx.set_theme(egui::Theme::Dark);
+    ctx.style_mut(|style| {
+        style.interaction.tooltip_delay = 0.4;
+    });
+    ctx
 }
 
 /// [`View`] in a set.
@@ -102,11 +122,7 @@ impl Default for Gui {
 
 impl Gui {
     pub fn new() -> Self {
-        let ctx = egui::Context::default();
-        ctx.set_theme(egui::Theme::Dark);
-        ctx.style_mut(|style| {
-            style.interaction.tooltip_delay = 0.4;
-        });
+        let ctx = new_context();
         Self {
             ctx,
             palette: None,
@@ -117,7 +133,79 @@ impl Gui {
             toasts: VecDeque::new(),
             file_requests: Vec::new(),
             menu_height: 0.0,
+            native_views: false,
+            view_contexts: BTreeMap::new(),
         }
+    }
+
+    /// Open the debugger's windows as windows of the system (a host that can open several).
+    pub fn set_native_views(&mut self, native: bool) {
+        self.native_views = native;
+    }
+
+    /// The debugger's windows open, when they are windows of the system: the host opens one
+    /// for each (and closes the others), then runs [`Self::run_view`] with its input.
+    pub fn native_views(&mut self) -> Vec<NativeView> {
+        if !self.native_views {
+            return Vec::new();
+        }
+        let open: BTreeSet<ViewKey> = self
+            .views
+            .iter()
+            .copied()
+            .filter(|key| views::is_debugger(key.view()))
+            .collect();
+        self.view_contexts.retain(|key, _| open.contains(key));
+        open.into_iter()
+            .map(|key| NativeView {
+                key: key.0,
+                title: views::title(key.view()),
+                ctx: self
+                    .view_contexts
+                    .entry(key)
+                    .or_insert_with(new_context)
+                    .clone(),
+            })
+            .collect()
+    }
+
+    /// The window of the system of view `key` was closed.
+    pub fn close_view(&mut self, key: u8) {
+        self.views.remove(&ViewKey(key));
+        self.view_contexts.remove(&ViewKey(key));
+    }
+
+    /// Lay out one frame of the debugger's window `key` (a window of the system), and the size
+    /// its content wants, in points (the window takes it).
+    pub fn run_view(
+        &mut self,
+        key: u8,
+        raw: egui::RawInput,
+        target: &dyn CommandTarget,
+        bus: &mut CommandBus,
+    ) -> Option<(egui::FullOutput, egui::Vec2)> {
+        let key = ViewKey(key);
+        let ctx = self.view_contexts.get(&key)?.clone();
+        let state = &mut self.view_state;
+        let mut wanted = egui::Vec2::ZERO;
+        let output = ctx.run(raw, |ctx| {
+            let panel = egui::CentralPanel::default().show(ctx, |ui| {
+                // both ways: the lines keep their length (no wrapping to the window's width),
+                // so the content says how wide the window is to be
+                egui::ScrollArea::both()
+                    .auto_shrink([true, true])
+                    .show(ui, |ui| {
+                        views::contents(key.view(), ui, target, bus, state);
+                    })
+                    .content_size
+            });
+            // with the panel's margins
+            wanted = panel.inner
+                + egui::Frame::central_panel(&ctx.style())
+                    .total_margin()
+                    .sum();
+        });
+        Some((output, wanted))
     }
 
     pub fn context(&self) -> &egui::Context {
@@ -184,6 +272,10 @@ impl Gui {
     /// Whether the keys go to the interface (a field, the palette, a menu) rather than the CPC.
     pub fn wants_keyboard(&self) -> bool {
         self.ctx.wants_keyboard_input()
+            || self
+                .view_contexts
+                .values()
+                .any(egui::Context::wants_keyboard_input)
             || self.palette.is_some()
             || self.prompt.is_some()
             || self.ctx.is_popup_open()
@@ -283,7 +375,17 @@ impl Gui {
             }
         }
         let mut closed = Vec::new();
-        for key in self.views.iter().copied() {
+        let embedded = if self.native_views {
+            // the palette, the preferences... stay inside: they are not the debugger's
+            self.views
+                .iter()
+                .copied()
+                .filter(|key| !views::is_debugger(key.view()))
+                .collect()
+        } else {
+            self.views.clone()
+        };
+        for key in embedded {
             let mut open = true;
             views::show(
                 key.view(),
