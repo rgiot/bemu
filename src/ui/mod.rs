@@ -10,6 +10,7 @@
 //! the web page (`web/`, its input forwarded from the page): [`Gui::run`] takes egui's input and
 //! gives what to draw, [`Painter`] draws it with wgpu after the picture.
 
+mod breakpoints;
 mod chips;
 mod files;
 mod menu;
@@ -18,6 +19,7 @@ mod palette;
 mod prompt;
 mod screen;
 mod views;
+mod widgets;
 
 pub use paint::Painter;
 

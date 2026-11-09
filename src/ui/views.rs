@@ -9,6 +9,7 @@ use crate::commands::{self, Arg, Command, CommandBus, CommandTarget, View};
 /// What the windows remember between frames.
 #[derive(Default)]
 pub struct ViewState {
+    manager: super::breakpoints::Manager,
     screen: super::screen::ScreenState,
     /// The bytes the memory window showed last (its first address and them), to mark the
     /// changed ones.
@@ -19,39 +20,8 @@ pub struct ViewState {
     memory_poke: String,
     disassembly_address: String,
     symbol_filter: String,
-    breakpoint_address: String,
-    advanced: AdvancedForm,
     counter_name: String,
 }
-
-/// The fields of a memory / I/O breakpoint (`POST /api/breakpoints`).
-struct AdvancedForm {
-    kind: usize,
-    access: usize,
-    run: usize,
-    address: String,
-    mask: String,
-    value: String,
-    name: String,
-}
-
-impl Default for AdvancedForm {
-    fn default() -> Self {
-        Self {
-            kind: 1,
-            access: 1,
-            run: 0,
-            address: String::new(),
-            mask: "&FFFF".into(),
-            value: String::new(),
-            name: String::new(),
-        }
-    }
-}
-
-const KINDS: [&str; 3] = ["exec", "mem", "io"];
-const ACCESSES: [&str; 3] = ["r", "w", "rw"];
-const RUNS: [&str; 2] = ["stop", "watch"];
 
 fn push(bus: &mut CommandBus, id: &str, arg: Option<Arg>) {
     let command = match arg {
@@ -274,6 +244,85 @@ fn address_link(
     });
 }
 
+/// The CRTC's state as Caprice Forever's CRTC window shows it: the beam's position, VBL and
+/// HBL, each counter against the register it counts to, the address it outputs (a button to see
+/// it in the memory window), the Gate Array's interrupt counter, the sync counters.
+fn crtc_status(
+    ui: &mut egui::Ui,
+    mb: &crate::motherboard::Motherboard,
+    beam: &Value,
+    state: &mut ViewState,
+    bus: &mut CommandBus,
+) {
+    let crtc = mb.crtc();
+    let r = crtc.registers();
+    let c = crtc.counters();
+    let ma = crtc.vma();
+    // the byte the CRTC addresses: its page, its offset, the raster line's 2K block
+    let address = ((ma >> 12) & 3) * 0x4000 + ((ma & 0x3ff) << 1) + u16::from(c.vlc & 7) * 0x800;
+    let pair = |count: u8, register: u8| format!("&{count:02X} / &{register:02X}");
+    egui::Grid::new("crtc-status")
+        .striped(true)
+        .spacing([10.0, 3.0])
+        .show(ui, |ui| {
+            ui.label("Beam");
+            match (beam["x"].as_u64(), beam["line"].as_u64()) {
+                (Some(x), Some(line)) => {
+                    ui.monospace(format!("x {x} (NOP {}), line {line}", x / 16))
+                }
+                _ => ui.weak("no monitor"),
+            };
+            ui.end_row();
+            ui.label("Syncs");
+            ui.horizontal(|ui| {
+                let mut vbl = c.vsync;
+                let mut hbl = c.hsync;
+                ui.add_enabled(false, egui::Checkbox::new(&mut vbl, "VBL"));
+                ui.add_enabled(false, egui::Checkbox::new(&mut hbl, "HBL"));
+                if c.in_vertical_adjust {
+                    ui.weak("adjust");
+                }
+            });
+            ui.end_row();
+            ui.label("Char (C0 / R0)");
+            ui.monospace(pair(c.hcc, r[0]));
+            ui.end_row();
+            ui.label("Line (C4 / R4)");
+            ui.monospace(pair(c.vcc, r[4]));
+            ui.end_row();
+            ui.label("Raster (C9 / R9)");
+            ui.monospace(pair(c.vlc, r[9]));
+            ui.end_row();
+            ui.label("Memory (VMA)");
+            ui.horizontal(|ui| {
+                ui.monospace(format!("&{address:04X}"))
+                    .on_hover_text(format!("MA &{ma:04X}, RA {}", c.vlc & 7));
+                if ui
+                    .small_button("›MEM")
+                    .on_hover_text("Show it in the memory window")
+                    .clicked()
+                {
+                    state.memory_address = format!("&{address:04X}");
+                    push(bus, "view-memory", None);
+                }
+            });
+            ui.end_row();
+            let r52 = mb.ga().r52();
+            ui.label("IT (R52)");
+            ui.monospace(format!("{r52} (&{r52:02X})"));
+            ui.end_row();
+            ui.label("HSync (C3l)");
+            ui.monospace(format!("{} (&{:02X})", c.hsc, c.hsc));
+            ui.end_row();
+            ui.label("VSync (C3h)");
+            ui.monospace(format!("{} (&{:02X})", c.vsc, c.vsc));
+            ui.end_row();
+            ui.label("VTA");
+            ui.monospace(format!("{} (&{:02X})", c.vtac, c.vtac));
+            ui.end_row();
+        });
+}
+
 fn inspect(target: &dyn CommandTarget, what: &str) -> Value {
     target.debugger().map_or(Value::Null, |debugger| {
         debugger.inspect(what, target.motherboard())
@@ -386,15 +435,20 @@ pub fn contents(
                 mb.crtc().chip_name(),
                 mb.crtc().crtc_type() as u8
             ));
-            super::chips::crtc_registers(ui, mb);
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.strong("Registers");
+                    super::chips::crtc_registers(ui, mb);
+                });
+                ui.separator();
+                ui.vertical(|ui| {
+                    ui.strong("Status");
+                    crtc_status(ui, mb, &inspect(target, "beam"), state, bus);
+                });
+            });
             ui.separator();
             super::chips::crtc(ui, mb);
-            ui.separator();
-            let mut counters = crtc.clone();
-            if let Some(fields) = counters.as_object_mut() {
-                fields.remove("regs");
-            }
-            json_grid(ui, "crtc", &counters);
+            ui.collapsing("Raw (as /api/crtc)", |ui| json_grid(ui, "crtc", &crtc));
         }
         View::GateArray => {
             super::chips::gate_array(ui, mb);
@@ -733,84 +787,10 @@ pub fn contents(
         }
         View::Breakpoints => {
             controls(ui, target, bus);
-            ui.horizontal(|ui| {
-                ui.label("Execution");
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.breakpoint_address)
-                        .hint_text("address or symbol")
-                        .desired_width(140.0),
-                );
-                if ui.button("Add").clicked() {
-                    push(
-                        bus,
-                        "breakpoint-add",
-                        Some(Arg::Text(state.breakpoint_address.clone())),
-                    );
-                }
-            });
-            ui.collapsing("Memory / I/O breakpoint", |ui| {
-                let form = &mut state.advanced;
-                egui::Grid::new("advanced").show(ui, |ui| {
-                    ui.label("Kind");
-                    egui::ComboBox::from_id_salt("kind").show_index(
-                        ui,
-                        &mut form.kind,
-                        KINDS.len(),
-                        |i| KINDS[i],
-                    );
-                    ui.end_row();
-                    ui.label("Access");
-                    egui::ComboBox::from_id_salt("access").show_index(
-                        ui,
-                        &mut form.access,
-                        ACCESSES.len(),
-                        |i| ACCESSES[i],
-                    );
-                    ui.end_row();
-                    ui.label("On hit");
-                    egui::ComboBox::from_id_salt("run").show_index(
-                        ui,
-                        &mut form.run,
-                        RUNS.len(),
-                        |i| RUNS[i],
-                    );
-                    ui.end_row();
-                    for (label, field) in [
-                        ("Address", &mut form.address),
-                        ("Mask", &mut form.mask),
-                        ("Value", &mut form.value),
-                        ("Name", &mut form.name),
-                    ] {
-                        ui.label(label);
-                        ui.text_edit_singleline(field);
-                        ui.end_row();
-                    }
-                });
-                if ui.button("Add").clicked() {
-                    let mut body = serde_json::json!({
-                        "kind": KINDS[form.kind],
-                        "access": ACCESSES[form.access],
-                        "run": RUNS[form.run],
-                    });
-                    if let Some(address) = number(&form.address) {
-                        body["addr"] = address.into();
-                    }
-                    if let Some(mask) = number(&form.mask) {
-                        body["mask"] = mask.into();
-                    }
-                    if let Some(value) = number(&form.value) {
-                        body["value"] = value.into();
-                    }
-                    if !form.name.is_empty() {
-                        body["name"] = form.name.clone().into();
-                    }
-                    push(
-                        bus,
-                        "breakpoint-add-advanced",
-                        Some(Arg::Text(body.to_string())),
-                    );
-                }
-            });
+            // the manager (cpclib's VS Code one): its tabs, presets and form
+            let symbols = target.debugger().map(|d| d.symbols());
+            let resolve = |name: &str| symbols.and_then(|s| s.resolve(name));
+            super::breakpoints::show(ui, &mut state.manager, bus, &resolve);
             ui.separator();
             if let Some(debugger) = target.debugger() {
                 let symbols = debugger.symbols();
@@ -843,11 +823,8 @@ pub fn contents(
                     egui::Grid::new("advanced-bp").striped(true).show(ui, |ui| {
                         for (index, breakpoint) in list.iter().enumerate() {
                             ui.monospace(format!("#{index}"));
-                            let mut text = breakpoint.clone();
-                            if let Some(fields) = text.as_object_mut() {
-                                fields.remove("index");
-                            }
-                            ui.monospace(text.to_string());
+                            ui.monospace(super::breakpoints::summary(breakpoint))
+                                .on_hover_text(breakpoint.to_string());
                             if ui.small_button("Remove").clicked() {
                                 push(
                                     bus,
