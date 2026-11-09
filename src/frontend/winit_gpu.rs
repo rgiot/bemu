@@ -69,6 +69,8 @@ struct UiLayer {
     pixels_per_point: f32,
     /// The menu bar's height in pixels: the picture goes below.
     top_pixels: f32,
+    /// The status bar's height in pixels: the picture goes above.
+    bottom_pixels: f32,
 }
 
 /// A debugger's window, a window of the system: its surface on the main window's GPU device,
@@ -381,9 +383,10 @@ impl Gfx {
 
         // the picture, as large as the window allows below the menu bar, centred
         let top = ui.as_ref().map_or(0.0, |ui| ui.top_pixels);
+        let bottom = ui.as_ref().map_or(0.0, |ui| ui.bottom_pixels);
         let (window_w, window_h) = (
             self.config.width as f32,
-            (self.config.height as f32 - top).max(1.0),
+            (self.config.height as f32 - top - bottom).max(1.0),
         );
         let scale = (window_w / picture_w as f32).min(window_h / picture_h as f32);
         let (w, h) = (picture_w as f32 * scale, picture_h as f32 * scale);
@@ -1107,6 +1110,7 @@ impl WinitGpuFrontend {
                     shapes: Vec::new(),
                     pixels_per_point: 1.0,
                     top_pixels: 0.0,
+                    bottom_pixels: 0.0,
                 }),
             },
             frame_time: None,
@@ -1261,7 +1265,11 @@ impl Frontend for WinitGpuFrontend {
         )
     }
 
-    fn set_ui_output(&mut self, mut output: egui::FullOutput, menu_height: f32) {
+    fn set_ui_output(
+        &mut self,
+        mut output: egui::FullOutput,
+        (menu_height, status_height): (f32, f32),
+    ) {
         let (Some(ui), Some(window)) = (self.app.ui.as_mut(), self.app.window.as_ref()) else {
             return;
         };
@@ -1269,6 +1277,7 @@ impl Frontend for WinitGpuFrontend {
             state.handle_platform_output(window, std::mem::take(&mut output.platform_output));
         }
         ui.top_pixels = menu_height * output.pixels_per_point;
+        ui.bottom_pixels = status_height * output.pixels_per_point;
         // textures not drawn yet are kept for the next draw
         if let Some(previous) = ui.output.take() {
             let mut textures = previous.textures_delta;

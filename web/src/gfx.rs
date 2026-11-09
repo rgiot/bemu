@@ -320,8 +320,16 @@ impl Gpu {
             .as_ref()
             .map_or(0, |(gui, output)| (gui.menu_height() * output.pixels_per_point).ceil() as u32)
             .min(self.config.height.saturating_sub(1));
-        let (x, y, w, h, pixel_aligned) =
-            crate::viewport::fit((self.config.width, self.config.height - top), picture_size, integer);
+        // above the status bar
+        let bottom = ui
+            .as_ref()
+            .map_or(0, |(gui, output)| (gui.status_height() * output.pixels_per_point).ceil() as u32)
+            .min(self.config.height.saturating_sub(top + 1));
+        let (x, y, w, h, pixel_aligned) = crate::viewport::fit(
+            (self.config.width, self.config.height - top - bottom),
+            picture_size,
+            integer
+        );
         let y = y + top as f32;
         let bind_group = match crt {
             Some(crt) if pixel_aligned => &crt.pixel_bind_group,

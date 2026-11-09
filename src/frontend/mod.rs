@@ -61,11 +61,11 @@ pub trait Frontend {
         None
     }
 
-    /// What the user interface draws over the next picture, its menu bar `menu_height` points
-    /// high.
+    /// What the user interface draws over the next picture: its menu bar `bars.0` points high,
+    /// its status bar `bars.1`, the picture between.
     #[cfg(feature = "gui")]
-    fn set_ui_output(&mut self, output: egui::FullOutput, menu_height: f32) {
-        let _ = (output, menu_height);
+    fn set_ui_output(&mut self, output: egui::FullOutput, bars: (f32, f32)) {
+        let _ = (output, bars);
     }
 
     /// Whether this frontend opens the debugger's windows as windows of the system.
