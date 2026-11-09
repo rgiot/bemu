@@ -254,7 +254,11 @@ fn registers(ui: &mut egui::Ui, mb: &Motherboard, memory: &Memory, now: f64) {
                 egui::Align2::CENTER_BOTTOM,
                 format!("&{value:02X}"),
                 egui::FontId::monospace(12.0),
-                visuals.text_color(),
+                if lit {
+                    egui::Color32::BLACK
+                } else {
+                    visuals.text_color()
+                },
             );
             response.on_hover_text(format!(
                 "R{r}: {} = {value} ({value:#010b})",
