@@ -1007,8 +1007,10 @@ impl Motherboard {
                 }
             }
             // a register access present on the character clock edge is taken before the character
-            // is processed (an OUTI's I/O, from the start of its microsecond, counts for it)
-            if self.crtc.must_execute_tick() {
+            // is processed (an OUTI's I/O, from the start of its microsecond, counts for it) on the
+            // chips that take the wrap back (CRTC 1); the others take it with the character
+            // (see `CrtcChip::takes_edge_write_before_character`)
+            if self.crtc.takes_edge_write_before_character() && self.crtc.must_execute_tick() {
                 self.crtc.execute_tick();
             }
             if let Some(plus) = self.ga.plus() {

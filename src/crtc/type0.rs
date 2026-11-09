@@ -445,6 +445,10 @@ impl CrtcChip for Crtc0 {
         self.assess_additional_line(core);
     }
 
+    fn takes_edge_write_before_character(&self) -> bool {
+        false
+    }
+
     fn r0_lowered_on_c0_ends_line(&self) -> bool {
         true
     }

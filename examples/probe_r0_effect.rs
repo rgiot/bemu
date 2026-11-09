@@ -18,6 +18,8 @@ fn main() {
     let mut r0 = mb.crtc().r0();
     let mut seen = 0;
     let mut aligned_before = false;
+    let mut vsync_before = mb.crtc().vsync();
+    let mut last_vsync = 0u64;
     while seen < changes {
         mb.tick();
         ticks += 1;
@@ -26,18 +28,25 @@ fn main() {
             start = (ticks, mb.pc());
         }
         aligned_before = aligned;
+        let vsync_now = mb.crtc().vsync();
+        if vsync_now && !vsync_before {
+            last_vsync = ticks;
+        }
+        vsync_before = vsync_now;
         let now = mb.crtc().r0();
         if now != r0 {
             let pc = start.1;
             let bytes = [mb.read_byte(pc), mb.read_byte(pc.wrapping_add(1))];
             let since = ticks - start.0;
             println!(
-                "R0 {r0}->{now} by PC={pc:04X} [{:02X} {:02X}] {} us {} ticks after its start, C0={}",
+                "R0 {r0}->{now} by PC={pc:04X} [{:02X} {:02X}] {} us {} ticks after its start, C0={} at {} us, {} us after the VSYNC",
                 bytes[0],
                 bytes[1],
                 since / 16,
                 since % 16,
-                mb.crtc().hcc
+                mb.crtc().hcc,
+                ticks / 16,
+                (ticks - last_vsync) / 16
             );
             seen += 1;
             r0 = now;

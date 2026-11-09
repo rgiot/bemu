@@ -1,0 +1,32 @@
+csl_version 1.0
+crtc_select 0
+reset
+wait 3000000
+disk_insert 'pollphase.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"POLLPH"\(RET)'
+wait 6000000
+screenshot_name 'p0'
+screenshot
+wait 700000
+screenshot_name 'p1'
+screenshot
+wait 700000
+screenshot_name 'p2'
+screenshot
+wait 700000
+screenshot_name 'p3'
+screenshot
+wait 700000
+screenshot_name 'p4'
+screenshot
+wait 700000
+screenshot_name 'p5'
+screenshot
+wait 700000
+screenshot_name 'p6'
+screenshot
+wait 700000
+screenshot_name 'p7'
+screenshot
+wait 700000
