@@ -97,7 +97,10 @@ Debug,Counters,Show counters,,view-counters,,"Open the counters: their NOPs, sta
 Debug,Load symbols…,,,symbols-load,,Load a symbol file (name equ #4000 …) for the viewers and breakpoints,,inp,,--sym,added,"WinAPE, ACE, RVM"
 Debug,Poke memory…,,,memory-poke,,Write bytes at an address (or bank),,inp,,POST /api/ram,added,
 Debug,Set register…,,,z80-set-register,,Change a Z80 register,,inp,,POST /api/z80,added,
+Debug,Set ink…,,,ga-set-ink,,"Give a pen (0-15, B the border) an ink (0-26), as the Gate Array window does",Kept until the program writes the pen again,inp,,,added,
+Debug,Set screen mode…,,,ga-set-mode,,"Change the Gate Array's screen mode (0-3), from the next line","Under the firmware, its interrupt handler writes its own mode back",inp,,,added,
 Debug,Keyboard matrix…,,,keyboard-write,,Set the keyboard matrix (the 10 rows the PPI scans),"CSL's keyboard_write: 10 hexadecimal rows, a bit at 0 is a key down",inp,,new,added,
+Debug,Record the history,,,history-record-toggle,,"Keep the last instructions run, even with no breakpoint set",Checkable; off by default: the emulation then runs through the debugger,tog,,,added,
 Debug,Set history size…,,,history-set-size,,Number of instructions kept (1-100000),,inp,,POST /api/config history_size,added,
 Debug,BASIC,Export listing…,,basic-export,,Save the BASIC program in RAM as text,,inp,,GET /api/basic_export,added,
 Debug,BASIC,Step statement,,basic-step,,Run to the next BASIC statement,,act,,POST /api/basic_step,added,

@@ -1394,6 +1394,49 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             }
             said(format!("{} bytes at &{start:04X}", bytes.len()))
         }
+        "ga-set-ink" => {
+            let arg = arg!(
+                command,
+                "Pen (0-15, 16 or B the border) then ink (0-26): 1 24",
+                ArgKind::Text
+            );
+            let text = arg.text();
+            let mut words = text.split_whitespace();
+            let pen = match words.next().map(str::to_uppercase).as_deref() {
+                Some("B" | "BORDER") => 16,
+                Some(word) => word
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|&pen| pen <= 16)
+                    .ok_or_else(|| CommandError::Invalid(format!("{word}: not a pen")))?,
+                None => return Err(CommandError::Invalid("PEN INK".into())),
+            };
+            let ink = words
+                .next()
+                .and_then(|word| word.parse::<u8>().ok())
+                .filter(|&ink| ink <= 26)
+                .ok_or_else(|| CommandError::Invalid("an ink 0-26".into()))?;
+            target
+                .motherboard_mut()
+                .ga_mut()
+                .set_ink(crate::ga::Pen::from(pen), crate::ga::Ink::from(ink));
+            done()
+        }
+        "ga-set-mode" => {
+            let arg = arg!(command, "Screen mode (0-3)", ArgKind::Text);
+            let mode = arg
+                .text()
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|&mode| mode <= 3)
+                .ok_or_else(|| CommandError::Invalid("a mode 0-3".into()))?;
+            target
+                .motherboard_mut()
+                .ga_mut()
+                .set_video_mode(crate::ga::VideoMode::from(mode));
+            done()
+        }
         "z80-set-register" => {
             let arg = arg!(
                 command,
@@ -1429,6 +1472,11 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                         .map_err(CommandError::Invalid)?;
                 }
             }
+            done()
+        }
+        "history-record-toggle" => {
+            let debugger = target.debugger_mut().ok_or(CommandError::Unsupported)?;
+            debugger.set_recording_history(!debugger.records_history());
             done()
         }
         "history-set-size" => {
@@ -2000,7 +2048,11 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
         // --------------------------------------------------------------- Tools
         "autotype-text" | "autotype-file" => {
             let text = if id == "autotype-text" {
-                arg!(command, "Type (\\n: RETURN, \\(WAIT n)...)", ArgKind::Text).text()
+                // `\n` typed in a field is RETURN, as the prompt says (a CSL string has already
+                // turned its own into newlines)
+                arg!(command, "Type (\\n: RETURN, \\(WAIT n)...)", ArgKind::Text)
+                    .text()
+                    .replace("\\n", "\n")
             } else {
                 let arg = arg!(
                     command,
@@ -2313,6 +2365,10 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
             },
         ),
         "csl-stop" => CommandState::enabled(target.csl_running()),
+        "history-record-toggle" => CommandState {
+            enabled: debugger.is_some(),
+            checked: debugger.is_some_and(|d| d.records_history()),
+        },
         "files-watch-toggle" => CommandState {
             enabled: has_settings && files,
             checked: settings.is_some_and(|s| s.watch_files),
@@ -2342,7 +2398,9 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
         | "autotype-text"
         | "autotype-file" => needs_debugger,
         "debug-step-frame" => CommandState::enabled(debugger.is_some() && paused),
-        "debug-set-pc" | "memory-poke" | "z80-set-register" => CommandState::enabled(true),
+        "debug-set-pc" | "memory-poke" | "z80-set-register" | "ga-set-ink" | "ga-set-mode" => {
+            CommandState::enabled(true)
+        }
         "breakpoints-clear" => CommandState::enabled(debugger.is_some_and(|d| d.has_breakpoints())),
         "counter-toggle" | "counter-reset" | "counter-delete" => {
             CommandState::enabled(debugger.is_some_and(|d| !d.counters().is_empty()))

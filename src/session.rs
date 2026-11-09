@@ -633,6 +633,9 @@ impl Window {
             for key in self.window.sync_view_windows(&views) {
                 gui.close_view(key);
             }
+            for key in gui.take_focus_requests() {
+                self.window.focus_view_window(key);
+            }
             for view in &views {
                 if let Some(raw) = self.window.view_input(view.key) {
                     if let Some((output, wanted)) = gui.run_view(view.key, raw, core, bus) {
@@ -845,7 +848,11 @@ pub fn run_window(
         if let Some(reloader) = reloader {
             reloader.poll(core.motherboard, typist);
         }
-        window.host_keyboard.apply(core.motherboard, &input);
+        // while the debugger types (Tools > Auto-type, the palette, CSL's key_output), the host
+        // keyboard would release the key it holds down every frame
+        if !core.debugger.is_typing() {
+            window.host_keyboard.apply(core.motherboard, &input);
+        }
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, core.motherboard);
 
@@ -856,6 +863,15 @@ pub fn run_window(
         }
         if core.debugger.paused() {
             // stopped (F8, a breakpoint, the debugger): the window and its menus stay alive
+            // the beam where the monitor stopped: for the windows (CRTC, Beam)
+            let (x, line) = window.monitor.beam();
+            let (crop_x, crop_y) = window.monitor.crop_origin();
+            core.debugger.set_beam(Beam {
+                x,
+                line,
+                crop_x,
+                crop_y,
+            });
             window.show_paused(&core.settings);
             std::thread::sleep(std::time::Duration::from_millis(15));
             continue;
