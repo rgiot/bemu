@@ -1,0 +1,8 @@
+csl_version 1.0
+crtc_select 0
+reset
+wait 3000000
+disk_insert 'r0side.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"R0SIDE"\(RET)'
+wait 20000000
