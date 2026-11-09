@@ -88,6 +88,7 @@ Debug,View,Beam position,,view-beam,,Show the beam position and the CPU / CRTC c
 Debug,View,PPI,,view-ppi,,"Open the PPI: its ports decoded (VSYNC, brand, cassette, motor, PSG control) and the keyboard matrix",,act,,new,added,
 Debug,View,Tape,,view-tape,,"Open the cassette deck: position, duration, PLAY, motor, level, the recording",,act,,new,added,
 Debug,View,ASIC (CPC+),,view-asic,,"Open the CPC+ ASIC: lock, raster interrupt, split, DMA, its 32-colour palette",,act,,new,added,
+Debug,View,Screen memory,,view-screen,,"Open the video RAM as the CRTC and the Gate Array show it (or from an address, width, mode given)",,act,,new,added,
 Debug,Counters,New counter…,,counter-new,,Create a NOP counter,Asks the name,inp,,POST /api/counters,added,"ACE, RVM"
 Debug,Counters,Start / stop counter…,,counter-toggle,,Start or stop a counter,,inp,,POST /api/counters,added,
 Debug,Counters,Reset counter…,,counter-reset,,Reset a counter to 0,,inp,,POST /api/counters,added,

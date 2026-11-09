@@ -16,6 +16,7 @@ mod menu;
 mod paint;
 mod palette;
 mod prompt;
+mod screen;
 mod views;
 
 pub use paint::Painter;
@@ -84,7 +85,7 @@ fn new_context() -> egui::Context {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ViewKey(u8);
 
-const ALL_VIEWS: [View; 20] = [
+const ALL_VIEWS: [View; 21] = [
     View::Z80,
     View::Stack,
     View::Crtc,
@@ -102,6 +103,7 @@ const ALL_VIEWS: [View; 20] = [
     View::Ppi,
     View::Tape,
     View::Asic,
+    View::Screen,
     View::Preferences,
     View::Shortcuts,
     View::About,

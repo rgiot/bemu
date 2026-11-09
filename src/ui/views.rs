@@ -9,6 +9,7 @@ use crate::commands::{self, Arg, Command, CommandBus, CommandTarget, View};
 /// What the windows remember between frames.
 #[derive(Default)]
 pub struct ViewState {
+    screen: super::screen::ScreenState,
     /// The bytes the memory window showed last (its first address and them), to mark the
     /// changed ones.
     memory_seen: Option<(u16, Vec<u8>)>,
@@ -198,6 +199,7 @@ pub fn title(view: View) -> &'static str {
         View::Ppi => "PPI",
         View::Tape => "Tape",
         View::Asic => "ASIC (CPC+)",
+        View::Screen => "Screen memory",
         View::Preferences => "Preferences",
         View::Shortcuts => "Keyboard shortcuts",
         View::About => "About bemu",
@@ -422,6 +424,7 @@ pub fn contents(
         View::Ppi => super::chips::ppi(ui, mb),
         View::Tape => super::chips::tape(ui, mb, bus),
         View::Asic => super::chips::asic(ui, mb),
+        View::Screen => super::screen::show(ui, mb, &mut state.screen),
         View::Fdc => {
             super::chips::fdc(ui, mb);
             ui.collapsing("Raw (as /api/fdc)", |ui| {
@@ -494,10 +497,21 @@ pub fn contents(
                                 text = text.color(changed);
                             }
                             let address = at.wrapping_add(column);
+                            // a byte a label starts at: underlined, the label in its tooltip
+                            let label = symbols.and_then(|s| s.name_at(address));
+                            if label.is_some() {
+                                text = text.underline().strong();
+                            }
+                            let tooltip = match label {
+                                Some(label) => {
+                                    format!("{label}: &{address:04X}: {byte} ({byte:#010b})")
+                                }
+                                None => format!("&{address:04X}: {byte} ({byte:#010b})"),
+                            };
                             // a click: that address in the poke field
                             if ui
                                 .add(egui::Label::new(text).sense(egui::Sense::click()))
-                                .on_hover_text(format!("&{address:04X}: {byte} ({byte:#010b})"))
+                                .on_hover_text(tooltip)
                                 .clicked()
                             {
                                 state.memory_poke = format!("&{address:04X} ");
