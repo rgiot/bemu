@@ -66,6 +66,8 @@ Debug,Speed,50 %,,speed-50,,Run at 50 % of the real speed,Radio; the web library
 Debug,Speed,200 %,,speed-200,,Run at 200 % of the real speed,Radio; the web library accepts any factor,rad,,web setSpeed(factor),added,"ACE, RVM"
 Debug,Speed,400 %,,speed-400,,Run at 400 % of the real speed,Radio; the web library accepts any factor,rad,,web setSpeed(factor),added,"ACE, RVM"
 Debug,Breakpoints,Add execution breakpoint…,,breakpoint-add,,"Stop when the PC reaches an address or symbol (label, label+n, Bnn:hhhh)",Asks the address,inp,,monitor b; /api/z80_bp,added,all debuggers
+Debug,Breakpoints,Toggle breakpoint…,,breakpoint-toggle,,"Add the execution breakpoint at an address, or remove it if there is one",Asks the address; the disassembly's breakpoint column,inp,,new,added,all debuggers
+Debug,Breakpoints,Remove breakpoint…,,breakpoint-remove,,Remove an execution breakpoint (address or symbol) or memory / I/O breakpoint #N,Asks the address or #N,inp,,new,added,all debuggers
 Debug,Breakpoints,Add memory / I/O breakpoint…,,breakpoint-add-advanced,,"Stop, watch or count on a memory or I/O access, with mask / value / condition",Dialog,inp,,/api/breakpoints,added,"WinAPE, ACE, RVM"
 Debug,Breakpoints,Add raster breakpoint…,,breakpoint-add-raster,,Stop when the beam reaches a position,Asks x / y / NOP,inp,,/api/raster_bp,added,ACE
 Debug,Breakpoints,Add BASIC line breakpoint…,,breakpoint-add-basic,,Stop at a BASIC line,Asks the line,inp,,/api/basic_bp,added,
@@ -86,6 +88,7 @@ Debug,View,Beam position,,view-beam,,Show the beam position and the CPU / CRTC c
 Debug,View,PPI,,view-ppi,,"Open the PPI: its ports decoded (VSYNC, brand, cassette, motor, PSG control) and the keyboard matrix",,act,,new,added,
 Debug,View,Tape,,view-tape,,"Open the cassette deck: position, duration, PLAY, motor, level, the recording",,act,,new,added,
 Debug,View,ASIC (CPC+),,view-asic,,"Open the CPC+ ASIC: lock, raster interrupt, split, DMA, its 32-colour palette",,act,,new,added,
+Debug,View,Screen memory,,view-screen,,"Open the video RAM as the CRTC and the Gate Array show it (or from an address, width, mode given)",,act,,new,added,
 Debug,Counters,New counter…,,counter-new,,Create a NOP counter,Asks the name,inp,,POST /api/counters,added,"ACE, RVM"
 Debug,Counters,Start / stop counter…,,counter-toggle,,Start or stop a counter,,inp,,POST /api/counters,added,
 Debug,Counters,Reset counter…,,counter-reset,,Reset a counter to 0,,inp,,POST /api/counters,added,

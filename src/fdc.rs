@@ -595,6 +595,14 @@ impl Fdc {
         format!("{:?}", self.current_cmd)
     }
 
+    /// The drive the last command addressed (0 = A, 1 = B): the one whose LED the motor lights.
+    pub fn selected_drive(&self) -> usize {
+        // no command yet: drive A
+        self.command
+            .get(CMD_UNIT)
+            .map_or(0, |unit| usize::from(unit & 1))
+    }
+
     /// The cylinder the head of `unit` (0-3) is over.
     pub fn track(&self, unit: usize) -> u8 {
         self.drives[unit % NB_UNITS].track

@@ -2012,6 +2012,41 @@ impl DebugServer {
             .contains(&motherboard.physical_address(address))
     }
 
+    /// Remove the execution breakpoint on the CPU address `address` (as mapped now): whether
+    /// there was one.
+    pub fn remove_exec_breakpoint(&mut self, address: u16, motherboard: &Motherboard) -> bool {
+        self.exec_breakpoints
+            .remove(&motherboard.physical_address(address))
+    }
+
+    /// The execution breakpoints, as CPU addresses where they are mapped now (the others,
+    /// in a bank or a ROM not paged in, are left out).
+    pub fn exec_breakpoints_mapped(&self, motherboard: &Motherboard) -> Vec<u16> {
+        let offset = |location: &PhysicalAddress| match *location {
+            PhysicalAddress::Ram { offset, .. }
+            | PhysicalAddress::LowerRom { offset }
+            | PhysicalAddress::UpperRom { offset, .. } => offset,
+        };
+        let mut found: Vec<u16> = self
+            .exec_breakpoints
+            .iter()
+            .flat_map(|location| {
+                // where in the CPU's 64K the location is paged now: one of the 4 regions
+                (0..4u16)
+                    .map(move |region| region * 0x4000 + offset(location))
+                    .filter(|&address| motherboard.physical_address(address) == *location)
+            })
+            .collect();
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+
+    /// How many execution breakpoints there are, mapped or not.
+    pub fn exec_breakpoint_count(&self) -> usize {
+        self.exec_breakpoints.len()
+    }
+
     /// An execution breakpoint on a CPU address, resolved now.
     pub fn add_exec_breakpoint(&mut self, address: u16, motherboard: &Motherboard) {
         self.exec_breakpoints

@@ -625,7 +625,8 @@ impl Window {
         if let Some(gui) = &mut self.gui {
             if let Some(raw) = self.window.ui_input() {
                 let output = gui.run(raw, core, bus);
-                self.window.set_ui_output(output, gui.menu_height());
+                self.window
+                    .set_ui_output(output, (gui.menu_height(), gui.status_height()));
             }
             // the debugger's windows, windows of the system
             let views = gui.native_views();
@@ -645,10 +646,14 @@ impl Window {
         false
     }
 
-    fn show_again(&mut self) {
+    /// Paused: the frame being drawn up to the beam, the last one after it, the beam's lines
+    /// (`Monitor::paused_picture`).
+    fn show_paused(&mut self, settings: &HostSettings) {
+        let picture = self.monitor.paused_picture(self.last_frame.as_ref());
         let shown = if self.direct {
-            self.window.redraw()
+            self.window.present_frame(&picture, settings.display)
         } else {
+            self.filter.render(&picture, &mut self.buffer);
             self.window.present(&self.buffer, self.filter.output_size())
         };
         shown.unwrap_or_else(|e| panic!("{e}"));
@@ -700,7 +705,8 @@ pub fn run_window(
     args: &Args,
     typist: &mut Option<Typist>,
     reloader: &mut Option<Reloader>,
-    server: Option<DebugServer>,
+    // the debug server serving, or (`Err`) the window's own debugger, offline
+    server: Result<DebugServer, DebugServer>,
 ) {
     let sound = !args.mute;
     let record = args.record.as_deref();
@@ -728,10 +734,10 @@ pub fn run_window(
     let direct = window.direct();
     let gpu = args.gpu && !direct;
     let audio = open_audio(sound, motherboard);
-    let has_server = server.is_some();
+    let has_server = server.is_ok();
     let mut core = Core {
         motherboard,
-        debugger: server.unwrap_or_else(DebugServer::offline),
+        debugger: server.unwrap_or_else(|offline| offline),
         settings: settings_of(args, sound),
         requests: Vec::new(),
         recording: HashSet::new(),
@@ -850,7 +856,7 @@ pub fn run_window(
         }
         if core.debugger.paused() {
             // stopped (F8, a breakpoint, the debugger): the window and its menus stay alive
-            window.show_again();
+            window.show_paused(&core.settings);
             std::thread::sleep(std::time::Duration::from_millis(15));
             continue;
         }

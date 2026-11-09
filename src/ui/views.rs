@@ -9,6 +9,10 @@ use crate::commands::{self, Arg, Command, CommandBus, CommandTarget, View};
 /// What the windows remember between frames.
 #[derive(Default)]
 pub struct ViewState {
+    screen: super::screen::ScreenState,
+    /// The bytes the memory window showed last (its first address and them), to mark the
+    /// changed ones.
+    memory_seen: Option<(u16, Vec<u8>)>,
     memory_address: String,
     memory_poke: String,
     disassembly_address: String,
@@ -195,11 +199,77 @@ pub fn title(view: View) -> &'static str {
         View::Ppi => "PPI",
         View::Tape => "Tape",
         View::Asic => "ASIC (CPC+)",
+        View::Screen => "Screen memory",
         View::Preferences => "Preferences",
         View::Shortcuts => "Keyboard shortcuts",
         View::About => "About bemu",
         View::Palette => "",
     }
+}
+
+/// The breakpoint column of the disassembly: a red dot, or a ring to click (drawn: the fonts
+/// have no such glyphs).
+fn breakpoint_dot(ui: &mut egui::Ui, marked: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::click());
+    let center = rect.center();
+    let painter = ui.painter();
+    if marked {
+        painter.circle_filled(center, 5.0, egui::Color32::from_rgb(220, 50, 50));
+    } else {
+        let color = if response.hovered() {
+            egui::Color32::from_rgb(220, 50, 50)
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        painter.circle_stroke(center, 4.5, egui::Stroke::new(1.0_f32, color));
+    }
+    response
+}
+
+/// An address to click: the disassembly from it (a right click: the memory window there, or a
+/// breakpoint on it).
+fn address_link(
+    ui: &mut egui::Ui,
+    text: String,
+    address: u16,
+    state: &mut ViewState,
+    bus: &mut CommandBus,
+) {
+    let response = ui
+        .add(egui::Link::new(egui::RichText::new(text).monospace()))
+        .on_hover_text(format!("&{address:04X}: disassemble (right click: more)"));
+    if response.clicked() {
+        state.disassembly_address = format!("&{address:04X}");
+        push(bus, "view-disassembly", None);
+    }
+    response.context_menu(|ui| {
+        if ui.button("Disassemble from here").clicked() {
+            state.disassembly_address = format!("&{address:04X}");
+            push(bus, "view-disassembly", None);
+            ui.close();
+        }
+        if ui.button("Show in the memory window").clicked() {
+            state.memory_address = format!("&{address:04X}");
+            push(bus, "view-memory", None);
+            ui.close();
+        }
+        if ui.button("Toggle a breakpoint").clicked() {
+            push(
+                bus,
+                "breakpoint-toggle",
+                Some(Arg::Number(i64::from(address))),
+            );
+            ui.close();
+        }
+        if ui.button("Run to here").clicked() {
+            push(
+                bus,
+                "debug-run-to-address",
+                Some(Arg::Number(i64::from(address))),
+            );
+            ui.close();
+        }
+    });
 }
 
 fn inspect(target: &dyn CommandTarget, what: &str) -> Value {
@@ -241,14 +311,17 @@ pub fn contents(
             controls(ui, target, bus);
             let z80 = inspect(target, "z80");
             let flags = z80["F"].as_u64().unwrap_or(0) as u8;
-            ui.monospace(format!(
-                "F = {}",
-                cpclib_dap::inspect::describe_flags(flags)
+            super::chips::registers(ui, mb, bus);
+            ui.weak(format!(
+                "{}: IM {}, IFF1 {}, IFF2 {}",
+                cpclib_dap::inspect::describe_flags(flags),
+                z80["IM"],
+                z80["IFF1"],
+                z80["IFF2"]
             ));
-            json_grid(ui, "z80", &z80);
             ui.separator();
             super::chips::z80(ui, mb);
-            ui.label("Set: Debug > Set register… (HL=&C000)");
+            ui.collapsing("Raw (as /api/z80)", |ui| json_grid(ui, "z80", &z80));
         }
         View::Stack => {
             let sp = mb.sp();
@@ -269,11 +342,25 @@ pub fn contents(
             }
             egui::Grid::new("calls").striped(true).show(ui, |ui| {
                 for frame in &frames {
-                    ui.monospace(name(frame.called));
-                    ui.weak(format!(
-                        "called at &{:04X}, returns to &{:04X}",
-                        frame.call_site, frame.return_address
-                    ));
+                    address_link(ui, name(frame.called), frame.called, state, bus);
+                    ui.horizontal(|ui| {
+                        ui.weak("called at");
+                        address_link(
+                            ui,
+                            format!("&{:04X}", frame.call_site),
+                            frame.call_site,
+                            state,
+                            bus,
+                        );
+                        ui.weak("returns to");
+                        address_link(
+                            ui,
+                            format!("&{:04X}", frame.return_address),
+                            frame.return_address,
+                            state,
+                            bus,
+                        );
+                    });
                     ui.end_row();
                 }
             });
@@ -284,7 +371,7 @@ pub fn contents(
                     let at = sp.wrapping_add(i * 2);
                     let word = mb.read_word(at);
                     ui.monospace(format!("&{at:04X}"));
-                    ui.monospace(format!("&{word:04X}"));
+                    address_link(ui, format!("&{word:04X}"), word, state, bus);
                     ui.weak(symbols.and_then(|s| s.describe(word)).unwrap_or_default());
                     ui.end_row();
                 }
@@ -337,6 +424,7 @@ pub fn contents(
         View::Ppi => super::chips::ppi(ui, mb),
         View::Tape => super::chips::tape(ui, mb, bus),
         View::Asic => super::chips::asic(ui, mb),
+        View::Screen => super::screen::show(ui, mb, &mut state.screen),
         View::Fdc => {
             super::chips::fdc(ui, mb);
             ui.collapsing("Raw (as /api/fdc)", |ui| {
@@ -357,27 +445,88 @@ pub fn contents(
         View::Memory => {
             ui.horizontal(|ui| {
                 ui.label("Address");
-                ui.add(egui::TextEdit::singleline(&mut state.memory_address).desired_width(80.0));
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.memory_address)
+                        .hint_text("&C000 or a symbol")
+                        .desired_width(110.0),
+                );
+                for (name, value) in [
+                    ("PC", mb.pc()),
+                    ("SP", mb.sp()),
+                    ("HL", mb.hl()),
+                    ("IX", mb.ix()),
+                ] {
+                    if ui
+                        .small_button(name)
+                        .on_hover_text(format!("&{value:04X}"))
+                        .clicked()
+                    {
+                        state.memory_address = format!("&{value:04X}");
+                    }
+                }
             });
-            let start = number(&state.memory_address).unwrap_or(0) & 0xfff0;
-            let mut text = String::new();
-            for row in 0..32u16 {
-                let at = start.wrapping_add(row * 16);
-                let bytes: Vec<u8> = (0..16).map(|i| mb.read_byte(at.wrapping_add(i))).collect();
-                let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02X}")).collect();
-                let ascii: String = bytes
-                    .iter()
-                    .map(|&b| {
-                        if (0x20..0x7f).contains(&b) {
-                            b as char
-                        } else {
-                            '.'
+            let symbols = target.debugger().map(|d| d.symbols());
+            let start = number(&state.memory_address)
+                .or_else(|| symbols.and_then(|s| s.resolve(&state.memory_address)))
+                .unwrap_or(0)
+                & 0xfff0;
+            const ROWS: u16 = 32;
+            let bytes: Vec<u8> = (0..ROWS * 16)
+                .map(|i| mb.read_byte(start.wrapping_add(i)))
+                .collect();
+            // the bytes that changed since the last frame shown, highlighted
+            let seen = state
+                .memory_seen
+                .as_ref()
+                .filter(|(at, _)| *at == start)
+                .map(|(_, bytes)| bytes.clone());
+            let changed = ui.visuals().warn_fg_color;
+            egui::Grid::new("memory")
+                .spacing([6.0, 0.0])
+                .min_col_width(0.0)
+                .show(ui, |ui| {
+                    for row in 0..ROWS {
+                        let at = start.wrapping_add(row * 16);
+                        ui.monospace(format!("{at:04X}"));
+                        let mut ascii = String::new();
+                        for column in 0..16u16 {
+                            let index = usize::from(row * 16 + column);
+                            let byte = bytes[index];
+                            let mut text = egui::RichText::new(format!("{byte:02X}")).monospace();
+                            if seen.as_ref().is_some_and(|seen| seen[index] != byte) {
+                                text = text.color(changed);
+                            }
+                            let address = at.wrapping_add(column);
+                            // a byte a label starts at: underlined, the label in its tooltip
+                            let label = symbols.and_then(|s| s.name_at(address));
+                            if label.is_some() {
+                                text = text.underline().strong();
+                            }
+                            let tooltip = match label {
+                                Some(label) => {
+                                    format!("{label}: &{address:04X}: {byte} ({byte:#010b})")
+                                }
+                                None => format!("&{address:04X}: {byte} ({byte:#010b})"),
+                            };
+                            // a click: that address in the poke field
+                            if ui
+                                .add(egui::Label::new(text).sense(egui::Sense::click()))
+                                .on_hover_text(tooltip)
+                                .clicked()
+                            {
+                                state.memory_poke = format!("&{address:04X} ");
+                            }
+                            ascii.push(if (0x20..0x7f).contains(&byte) {
+                                byte as char
+                            } else {
+                                '.'
+                            });
                         }
-                    })
-                    .collect();
-                text.push_str(&format!("{at:04X}  {}  {ascii}\n", hex.join(" ")));
-            }
-            ui.add(egui::Label::new(egui::RichText::new(text).monospace()));
+                        ui.monospace(ascii);
+                        ui.end_row();
+                    }
+                });
+            state.memory_seen = Some((start, bytes));
             ui.horizontal(|ui| {
                 ui.label("Poke");
                 ui.add(
@@ -403,6 +552,15 @@ pub fn contents(
                         .hint_text("PC")
                         .desired_width(80.0),
                 );
+                if ui
+                    .add_enabled(
+                        !state.disassembly_address.is_empty(),
+                        egui::Button::new("Follow the PC"),
+                    )
+                    .clicked()
+                {
+                    state.disassembly_address.clear();
+                }
             });
             let pc = mb.pc();
             let symbols = target.debugger().map(|d| d.symbols());
@@ -417,24 +575,82 @@ pub fn contents(
                 .map(|i| mb.read_byte(at.wrapping_add(i)))
                 .collect();
             let instructions = cpclib_dap::disassemble::decode(at, &bytes, 32);
+            // the jumps and calls, drawn in a gutter left of the instructions
+            const GUTTER: f32 = 44.0;
+            let rows: Vec<(u16, &[u8])> = instructions
+                .iter()
+                .map(|i| (i.address, i.bytes.as_slice()))
+                .collect();
+            let arcs = super::chips::arcs(&rows, 6);
+            let mut rows_y = Vec::with_capacity(instructions.len());
+            let mut gutter = egui::Rect::NOTHING;
+            let name_at =
+                |address: u16| symbols.and_then(|s| s.name_at(address)).map(str::to_owned);
             egui::Grid::new("disassembly").striped(true).show(ui, |ui| {
                 for instruction in &instructions {
                     at = instruction.address;
+                    let (cell, _) =
+                        ui.allocate_exact_size(egui::vec2(GUTTER, 14.0), egui::Sense::hover());
+                    rows_y.push(cell.center().y);
+                    gutter = gutter.union(cell);
                     let marked = target
                         .debugger()
                         .is_some_and(|d| d.has_exec_breakpoint(at, mb));
-                    if ui
-                        .small_button(if marked { "●" } else { "○" })
-                        .on_hover_text("Breakpoint here")
+                    if breakpoint_dot(ui, marked)
+                        .on_hover_text(if marked {
+                            "Remove the breakpoint"
+                        } else {
+                            "Breakpoint here"
+                        })
                         .clicked()
                     {
-                        push(bus, "breakpoint-add", Some(Arg::Number(i64::from(at))));
+                        push(bus, "breakpoint-toggle", Some(Arg::Number(i64::from(at))));
                     }
                     let here = if at == pc { "▶" } else { " " };
-                    match symbols.and_then(|s| s.name_at(at)) {
-                        Some(name) => ui.monospace(format!("{here}{at:04X} {name}:")),
-                        None => ui.monospace(format!("{here}{at:04X}")),
+                    let label = match symbols.and_then(|s| s.name_at(at)) {
+                        Some(name) => format!("{here}{at:04X} {name}:"),
+                        None => format!("{here}{at:04X}"),
                     };
+                    // what can be done here: a right click
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(label).monospace())
+                            .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text("Right click: run to here, set the PC, breakpoint, memory")
+                    .context_menu(|ui| {
+                        if ui.button("Run to here").clicked() {
+                            push(
+                                bus,
+                                "debug-run-to-address",
+                                Some(Arg::Number(i64::from(at))),
+                            );
+                            ui.close();
+                        }
+                        if ui.button("Set the PC here").clicked() {
+                            push(bus, "debug-set-pc", Some(Arg::Number(i64::from(at))));
+                            ui.close();
+                        }
+                        if ui
+                            .button(if marked {
+                                "Remove the breakpoint"
+                            } else {
+                                "Add a breakpoint"
+                            })
+                            .clicked()
+                        {
+                            push(bus, "breakpoint-toggle", Some(Arg::Number(i64::from(at))));
+                            ui.close();
+                        }
+                        if ui.button("Disassemble from here").clicked() {
+                            state.disassembly_address = format!("&{at:04X}");
+                            ui.close();
+                        }
+                        if ui.button("Show in the memory window").clicked() {
+                            state.memory_address = format!("&{at:04X}");
+                            push(bus, "view-memory", None);
+                            ui.close();
+                        }
+                    });
                     let hex: Vec<String> = instruction
                         .bytes
                         .iter()
@@ -443,15 +659,14 @@ pub fn contents(
                     ui.weak(egui::RichText::new(hex.join(" ")).monospace());
                     // where it goes (its symbol), and at the PC whether the flags take it
                     let f = crate::z80::HasValue::value(mb.cpu().reg8(crate::z80::Reg8::F));
-                    let mut text = instruction.text.clone();
-                    if let Some((destination, taken)) =
-                        super::chips::branch(at, &instruction.bytes, f)
-                    {
-                        if let Some(name) =
-                            destination.and_then(|d| symbols.and_then(|s| s.name_at(d)))
-                        {
-                            text.push_str(&format!("  ; {name}"));
-                        }
+                    // the addresses with a label: the label
+                    let mut text = super::chips::with_labels(
+                        &instruction.text,
+                        at,
+                        &instruction.bytes,
+                        name_at,
+                    );
+                    if let Some((_, taken)) = super::chips::branch(at, &instruction.bytes, f) {
                         if let (true, Some(taken)) = (at == pc, taken) {
                             text.push_str(if taken { "  (taken)" } else { "  (not taken)" });
                         }
@@ -464,6 +679,10 @@ pub fn contents(
                     ui.end_row();
                 }
             });
+            if !rows_y.is_empty() {
+                let pc_row = instructions.iter().position(|i| i.address == pc);
+                super::chips::paint_arcs(ui.painter(), gutter, &rows_y, &arcs, pc_row);
+            }
         }
         View::History => {
             let Some(debugger) = target.debugger() else {
@@ -511,7 +730,7 @@ pub fn contents(
                     .filter(|(name, _)| name.to_lowercase().contains(&filter))
                     .take(500)
                 {
-                    ui.monospace(format!("&{address:04X}"));
+                    address_link(ui, format!("&{address:04X}"), address, state, bus);
                     ui.label(name);
                     ui.end_row();
                 }
@@ -598,8 +817,58 @@ pub fn contents(
                 }
             });
             ui.separator();
-            json_grid(ui, "breakpoints", &inspect(target, "breakpoints"));
-            json_grid(ui, "raster", &inspect(target, "raster_bp"));
+            if let Some(debugger) = target.debugger() {
+                let symbols = debugger.symbols();
+                ui.strong("Execution");
+                let mapped = debugger.exec_breakpoints_mapped(mb);
+                egui::Grid::new("exec-bp").striped(true).show(ui, |ui| {
+                    for address in &mapped {
+                        ui.monospace(format!("&{address:04X}"));
+                        ui.weak(symbols.describe(*address).unwrap_or_default());
+                        if ui.small_button("Remove").clicked() {
+                            push(
+                                bus,
+                                "breakpoint-remove",
+                                Some(Arg::Number(i64::from(*address))),
+                            );
+                        }
+                        ui.end_row();
+                    }
+                });
+                let hidden = debugger.exec_breakpoint_count() - mapped.len();
+                if hidden > 0 {
+                    ui.weak(format!("{hidden} more in banks or ROMs not paged in now"));
+                }
+                if debugger.exec_breakpoint_count() == 0 {
+                    ui.weak("none: click the disassembly's dot column, or Add above");
+                }
+                let advanced = inspect(target, "breakpoints");
+                if let Some(list) = advanced["advanced"].as_array().filter(|l| !l.is_empty()) {
+                    ui.strong("Memory / I/O");
+                    egui::Grid::new("advanced-bp").striped(true).show(ui, |ui| {
+                        for (index, breakpoint) in list.iter().enumerate() {
+                            ui.monospace(format!("#{index}"));
+                            let mut text = breakpoint.clone();
+                            if let Some(fields) = text.as_object_mut() {
+                                fields.remove("index");
+                            }
+                            ui.monospace(text.to_string());
+                            if ui.small_button("Remove").clicked() {
+                                push(
+                                    bus,
+                                    "breakpoint-remove",
+                                    Some(Arg::Text(format!("#{index}"))),
+                                );
+                            }
+                            ui.end_row();
+                        }
+                    });
+                }
+            }
+            ui.collapsing("Raw (as /api/breakpoints, /api/raster_bp)", |ui| {
+                json_grid(ui, "breakpoints", &inspect(target, "breakpoints"));
+                json_grid(ui, "raster", &inspect(target, "raster_bp"));
+            });
             if ui
                 .add_enabled(
                     commands::state("breakpoints-clear", target).enabled,
