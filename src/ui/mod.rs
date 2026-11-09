@@ -56,6 +56,8 @@ pub struct Gui {
     toasts: VecDeque<Toast>,
     file_requests: Vec<FileRequest>,
     menu_height: f32,
+    /// The status bar's height, in points (0 without it): the picture goes above.
+    status_height: f32,
     /// The debugger's windows are windows of the system (the desktop), each with its own
     /// context, not windows drawn inside the main one (the web page).
     native_views: bool,
@@ -133,6 +135,7 @@ impl Gui {
             toasts: VecDeque::new(),
             file_requests: Vec::new(),
             menu_height: 0.0,
+            status_height: 0.0,
             native_views: false,
             view_contexts: BTreeMap::new(),
         }
@@ -288,6 +291,11 @@ impl Gui {
         self.menu_height
     }
 
+    /// The height of the status bar, in points (0 without it): the picture goes above.
+    pub fn status_height(&self) -> f32 {
+        self.status_height
+    }
+
     /// Lay out one frame of the interface. Its commands are queued on `bus`.
     pub fn run(
         &mut self,
@@ -345,6 +353,16 @@ impl Gui {
         self.menu_height = if visible {
             egui::TopBottomPanel::top("menu")
                 .show(ctx, |ui| menu::bar(ui, target, bus))
+                .response
+                .rect
+                .height()
+        } else {
+            0.0
+        };
+        // the status bar, with the menus (shown and hidden together)
+        self.status_height = if visible {
+            egui::TopBottomPanel::bottom("status")
+                .show(ctx, |ui| chips::status_bar(ui, target))
                 .response
                 .rect
                 .height()

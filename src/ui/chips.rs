@@ -981,3 +981,179 @@ mod disassembly_test {
         assert_eq!((to(3).to, to(3).up), (None, false));
     }
 }
+
+/// A LED: lit (green, or red for a recording) or off.
+fn led(ui: &mut egui::Ui, lit: bool, color: egui::Color32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+    let fill = if lit {
+        color
+    } else {
+        ui.visuals().widgets.noninteractive.bg_fill
+    };
+    ui.painter().circle_filled(rect.center(), 4.0, fill);
+    ui.painter().circle_stroke(
+        rect.center(),
+        4.0,
+        egui::Stroke::new(1.0_f32, ui.visuals().weak_text_color()),
+    );
+    response
+}
+
+/// The file name of a path or a name given (`games.zip#side b.dsk` → `side b.dsk`).
+fn short_name(name: &str) -> &str {
+    let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    name.rsplit('#').next().unwrap_or(name)
+}
+
+/// The status bar of the main window: the machine's configuration, the drives with their LED,
+/// the tape, and whether it runs.
+pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget) {
+    use crate::fdc::FdcDrive;
+    let mb = target.motherboard();
+    let settings = target.settings();
+    const GREEN: egui::Color32 = egui::Color32::from_rgb(60, 220, 90);
+    const RED: egui::Color32 = egui::Color32::from_rgb(230, 60, 60);
+    ui.horizontal(|ui| {
+        // the drives: the LED lit while the motor turns for the drive addressed
+        let fdc = mb.fdc();
+        for (unit, drive) in [FdcDrive::A, FdcDrive::B].into_iter().enumerate() {
+            let lit = fdc.motor() && fdc.selected_drive() == unit;
+            let disc = settings
+                .and_then(|s| s.media.discs[unit].as_deref())
+                .map(short_name);
+            let text = match (fdc.has_disk(drive), disc) {
+                (true, Some(name)) => name.to_owned(),
+                (true, None) => "disc".to_owned(),
+                (false, _) => "empty".to_owned(),
+            };
+            led(ui, lit, GREEN).on_hover_text(if lit { "the motor turns" } else { "idle" });
+            let label = format!("{}: {text}", ["A", "B"][unit]);
+            let response = ui.label(if fdc.is_modified(drive) {
+                egui::RichText::new(format!("{label} *")).strong()
+            } else {
+                egui::RichText::new(label)
+            });
+            response.on_hover_text(format!(
+                "drive {}: {}, track {}{}",
+                ["A", "B"][unit],
+                fdc.drive_kind(drive).name(),
+                fdc.track(unit),
+                if fdc.is_modified(drive) {
+                    ", written to (not saved)"
+                } else {
+                    ""
+                }
+            ));
+            ui.separator();
+        }
+        // the tape and the recorder
+        let motor = mb.ppi().get_data_c_from_pins() & 0x10 != 0;
+        if let Some(deck) = mb.tape_deck() {
+            led(ui, motor && deck.playing(), GREEN);
+            let name = settings
+                .and_then(|s| s.media.tape.as_deref())
+                .map(short_name)
+                .unwrap_or("tape");
+            ui.label(format!(
+                "{name} {:.0}/{:.0} s",
+                deck.position_seconds(),
+                deck.tape().duration_seconds()
+            ));
+            ui.separator();
+        }
+        if let Some(recorder) = mb.tape_recorder() {
+            led(ui, motor, RED);
+            ui.label(format!("REC {:.1} s", recorder.seconds()));
+            ui.separator();
+        }
+        // the machine
+        let crtc = mb.crtc();
+        let ram = mb.total_ram_kb();
+        let ga = match mb.ga().gate_array_type() {
+            crate::ga::GateArrayType::Ga40010 => "GA 40010",
+            _ => "GA 40007/8",
+        };
+        let mut machine = format!(
+            "CPC {} · CRTC {} · {ga} · {ram}K",
+            mb.model().name(),
+            crtc.crtc_type() as u8
+        );
+        let mut cards: Vec<&str> = Vec::new();
+        #[cfg(feature = "playcity")]
+        if mb.has_expansion::<crate::sound_cards::PlayCity>() {
+            cards.push("PlayCity");
+        }
+        #[cfg(feature = "m4")]
+        if mb.has_expansion::<crate::m4::M4Board>() {
+            cards.push("M4");
+        }
+        #[cfg(feature = "albireo")]
+        if mb.has_expansion::<crate::ch376::Albireo>() {
+            cards.push("Albireo");
+        }
+        #[cfg(feature = "nova")]
+        if mb.has_expansion::<crate::nova::Nova>() {
+            cards.push("Nova");
+        }
+        #[cfg(feature = "dandanator")]
+        if mb.has_expansion::<crate::dandanator::Dandanator>() {
+            cards.push("Dandanator");
+        }
+        #[cfg(feature = "booster")]
+        if mb.has_expansion::<crate::booster::Booster>() {
+            cards.push("Booster");
+        }
+        #[cfg(feature = "willy")]
+        if mb.has_expansion::<crate::willy::Opl3Lpt>() {
+            cards.push("Willy");
+        }
+        if mb
+            .printer_port()
+            .and_then(|port| port.device_as::<crate::dmp2000::Dmp2000>())
+            .is_some()
+        {
+            cards.push("DMP2000");
+        }
+        #[cfg(feature = "digiblaster")]
+        if mb
+            .printer_port()
+            .and_then(|port| port.device_as::<crate::sound_cards::Digiblaster>())
+            .is_some()
+        {
+            cards.push("Digiblaster");
+        }
+        if !cards.is_empty() {
+            machine.push_str(&format!(" · {}", cards.join(", ")));
+        }
+        ui.label(machine).on_hover_text(format!(
+            "{} (CRTC type {}), {}K of RAM",
+            crtc.chip_name(),
+            crtc.crtc_type() as u8,
+            ram
+        ));
+        // how it runs, on the right
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let paused = target
+                .debugger()
+                .map_or(settings.is_some_and(|s| s.paused), |d| d.paused());
+            let state = if target.csl_running() {
+                "CSL script".to_owned()
+            } else if paused {
+                format!("paused at &{:04X}", mb.pc())
+            } else {
+                match settings.map(|s| s.speed) {
+                    Some(crate::commands::Speed::Max) => "full speed".to_owned(),
+                    Some(crate::commands::Speed::Factor(f)) if (f - 1.0).abs() > 1e-3 => {
+                        format!("{:.0} %", f * 100.0)
+                    }
+                    _ => "running".to_owned(),
+                }
+            };
+            ui.label(state);
+            if let Some(port) = target.debugger().and_then(|d| d.listening_port()) {
+                ui.separator();
+                ui.label(format!("debug server :{port}"));
+            }
+        });
+    });
+}

@@ -625,7 +625,8 @@ impl Window {
         if let Some(gui) = &mut self.gui {
             if let Some(raw) = self.window.ui_input() {
                 let output = gui.run(raw, core, bus);
-                self.window.set_ui_output(output, gui.menu_height());
+                self.window
+                    .set_ui_output(output, (gui.menu_height(), gui.status_height()));
             }
             // the debugger's windows, windows of the system
             let views = gui.native_views();
