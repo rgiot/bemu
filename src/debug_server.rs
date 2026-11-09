@@ -351,6 +351,9 @@ pub struct DebugServer {
     /// Executed instructions, oldest first: (PC, 4 bytes as fetched).
     history: VecDeque<(u16, [u8; 4])>,
     history_size: usize,
+    /// Record the history even with nothing else to do after each instruction (the History
+    /// window's Record): the emulation then runs through the debugger.
+    recording_history: bool,
     /// The instruction about to be executed, recorded once it has been.
     fetched: Option<(u16, [u8; 4])>,
     /// The last complete frame, for `GET /api/screenshot`.
@@ -546,6 +549,7 @@ impl DebugServer {
             quit: false,
             history: VecDeque::new(),
             history_size: DEFAULT_HISTORY_SIZE,
+            recording_history: false,
             fetched: None,
             last_frame: None,
             beam: None,
@@ -1059,6 +1063,16 @@ impl DebugServer {
             || self.pending_basic.is_some()
             || self.basic_target.is_some()
             || !self.counters.is_empty()
+            || self.recording_history
+    }
+
+    /// Record the instructions run while nothing else makes the debugger active.
+    pub fn set_recording_history(&mut self, record: bool) {
+        self.recording_history = record;
+    }
+
+    pub fn records_history(&self) -> bool {
+        self.recording_history
     }
 
     /// Whether some breakpoint is set.

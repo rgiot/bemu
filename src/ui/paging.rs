@@ -160,8 +160,6 @@ impl Paging {
 
 /// The form: follow or not, the paging chosen, its map and the registers.
 pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) {
-    const ROM: egui::Color32 = egui::Color32::from_rgb(200, 70, 50);
-    const RAM: egui::Color32 = egui::Color32::from_rgb(60, 150, 70);
     // following, the form shows the emulator's paging (greyed), ready to be changed from there
     if paging.follow {
         paging.synchronise(mb);
@@ -227,77 +225,90 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
         });
         // (a separator here would stretch to the whole scroll area's height)
         ui.add_space(16.0);
-        ui.vertical(|ui| {
-            // the map: what each block reads (ROM red, RAM green) and, when they differ, where
-            // writes go (a second cell); a block that reads and writes the same RAM has one cell
-            // as wide as both
-            const CELL: f32 = 72.0;
-            const GAP: f32 = 4.0;
-            let cell = |ui: &mut egui::Ui, text: String, fill: egui::Color32, width: f32| {
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(width, 18.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 2.0, fill);
-                ui.painter().text(
-                    rect.left_center() + egui::vec2(6.0, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    text,
-                    egui::FontId::proportional(13.0),
-                    egui::Color32::WHITE,
-                );
-            };
-            ui.horizontal(|ui| {
-                ui.add_space(52.0);
-                ui.weak("read");
-                ui.add_space(CELL - 22.0);
-                ui.weak("write");
-            });
-            for block in 0..4u16 {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = GAP;
-                    ui.monospace(format!("&{:04X}", block * 0x4000));
-                    let source = paging.source(mb, block);
-                    match source {
-                        Source::Ram(bank) => cell(ui, bank_name(bank), RAM, 2.0 * CELL + GAP),
-                        _ => {
-                            let text = match source {
-                                Source::UpperRom(slot) => format!("ROM {slot}"),
-                                _ => "Firmware".to_owned(),
-                            };
-                            cell(ui, text, ROM, CELL);
-                            // under a ROM, writes go to RAM
-                            let bank = paging.write_bank(mb, block);
-                            cell(ui, bank_name(bank), RAM, CELL);
-                        }
-                    }
-                });
-            }
-            // the RAM's value as the Gate Array is given it (&7Fxx: &C0 + 8 × page + config)
-            if let Some(mmr) = paging.mmr() {
-                ui.label(format!("RAM &{mmr:02X}"))
-                    .on_hover_text("The value written to &7Fxx: &C0 + 8 × page + configuration");
-            }
-            ui.weak(format!(
-                "RMR &{:02X} · upper ROM &{:02X}",
-                mb.ga().rmr(),
-                mb.upper_rom_number()
-            ));
-            // the CPC+'s secondary mapping: the lower ROM's cartridge page and where it is, or
-            // the ASIC's registers at &4000
-            if let Some(plus) = mb.ga().plus() {
-                let rmr2 = plus.rmr2;
-                let place = match rmr2 >> 3 & 3 {
-                    0 => "lower ROM at &0000".to_owned(),
-                    1 => "lower ROM at &4000".to_owned(),
-                    2 => "lower ROM at &8000".to_owned(),
-                    _ => "ASIC registers at &4000".to_owned(),
-                };
-                ui.weak(format!(
-                    "RMR2 &{rmr2:02X} · cartridge page {} · {place}",
-                    rmr2 & 7
-                ));
+        ui.vertical(|ui| map(ui, mb, paging));
+    });
+}
+
+/// The map of a paging: what each 16K block reads (ROM red, RAM green) and, under a ROM, the RAM
+/// a write reaches; the RAM's value and the registers under it.
+pub fn map(ui: &mut egui::Ui, mb: &Motherboard, paging: &Paging) {
+    const ROM: egui::Color32 = egui::Color32::from_rgb(200, 70, 50);
+    const RAM: egui::Color32 = egui::Color32::from_rgb(60, 150, 70);
+    // the map: what each block reads (ROM red, RAM green) and, when they differ, where
+    // writes go (a second cell); a block that reads and writes the same RAM has one cell
+    // as wide as both
+    const CELL: f32 = 72.0;
+    const GAP: f32 = 4.0;
+    let cell = |ui: &mut egui::Ui, text: String, fill: egui::Color32, width: f32| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 18.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 2.0, fill);
+        ui.painter().text(
+            rect.left_center() + egui::vec2(6.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            text,
+            egui::FontId::proportional(13.0),
+            egui::Color32::WHITE,
+        );
+    };
+    ui.horizontal(|ui| {
+        ui.add_space(52.0);
+        ui.weak("read");
+        ui.add_space(CELL - 22.0);
+        ui.weak("write");
+    });
+    for block in 0..4u16 {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = GAP;
+            ui.monospace(format!("&{:04X}", block * 0x4000));
+            let source = paging.source(mb, block);
+            match source {
+                Source::Ram(bank) => cell(ui, bank_name(bank), RAM, 2.0 * CELL + GAP),
+                _ => {
+                    let text = match source {
+                        Source::UpperRom(slot) => format!("ROM {slot}"),
+                        _ => "Firmware".to_owned(),
+                    };
+                    cell(ui, text, ROM, CELL);
+                    // under a ROM, writes go to RAM
+                    let bank = paging.write_bank(mb, block);
+                    cell(ui, bank_name(bank), RAM, CELL);
+                }
             }
         });
-    });
+    }
+    // the RAM's value as the Gate Array is given it (&7Fxx: &C0 + 8 × page + config)
+    // following, the emulator's value (the window's own fields may be older)
+    let shown = if paging.follow {
+        let mut shown = paging.clone();
+        shown.synchronise(mb);
+        shown
+    } else {
+        paging.clone()
+    };
+    if let Some(mmr) = shown.mmr() {
+        ui.label(format!("RAM &{mmr:02X}"))
+            .on_hover_text("The value written to &7Fxx: &C0 + 8 × page + configuration");
+    }
+    ui.weak(format!(
+        "RMR &{:02X} · upper ROM &{:02X}",
+        mb.ga().rmr(),
+        mb.upper_rom_number()
+    ));
+    // the CPC+'s secondary mapping: the lower ROM's cartridge page and where it is, or
+    // the ASIC's registers at &4000
+    if let Some(plus) = mb.ga().plus() {
+        let rmr2 = plus.rmr2;
+        let place = match rmr2 >> 3 & 3 {
+            0 => "lower ROM at &0000".to_owned(),
+            1 => "lower ROM at &4000".to_owned(),
+            2 => "lower ROM at &8000".to_owned(),
+            _ => "ASIC registers at &4000".to_owned(),
+        };
+        ui.weak(format!(
+            "RMR2 &{rmr2:02X} · cartridge page {} · {place}",
+            rmr2 & 7
+        ));
+    }
 }
 
 #[cfg(test)]
