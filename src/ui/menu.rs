@@ -4,10 +4,48 @@
 use crate::commands::{self, state, Arg, Command, CommandBus, CommandSpec, CommandTarget, Kind};
 
 /// The menu bar.
-pub fn bar(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut CommandBus) {
+/// What the Window menu asks.
+pub enum WindowAction {
+    Focus(u8),
+    CloseAll,
+}
+
+/// The menu bar: the registry's menus, then Window (the windows open, `windows`: their key and
+/// title).
+pub fn bar(
+    ui: &mut egui::Ui,
+    target: &dyn CommandTarget,
+    bus: &mut CommandBus,
+    windows: &[(u8, &'static str)],
+) -> Option<WindowAction> {
+    let mut action = None;
     egui::MenuBar::new().ui(ui, |ui| {
         level(ui, &[], target, bus);
+        ui.menu_button("Window", |ui| {
+            if windows.is_empty() {
+                ui.weak("No window open");
+            }
+            for (key, title) in windows {
+                if ui
+                    .button(*title)
+                    .on_hover_text("Bring it to the front (shown again if minimised)")
+                    .clicked()
+                {
+                    action = Some(WindowAction::Focus(*key));
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui
+                .add_enabled(!windows.is_empty(), egui::Button::new("Close all windows"))
+                .clicked()
+            {
+                action = Some(WindowAction::CloseAll);
+                ui.close();
+            }
+        });
     });
+    action
 }
 
 /// The items and submenus under `prefix`, as they first come in the registry.

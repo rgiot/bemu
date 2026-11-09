@@ -16,6 +16,10 @@ pub struct ScreenState {
     mode: Option<u8>,
     /// The bytes one after the other (a sprite sheet) rather than the CRTC's interleaving.
     linear: bool,
+    /// The window's own inks for some pens (firmware numbers): never written to the CPC.
+    overrides: [Option<u8>; 16],
+    /// The pen whose ink is being picked.
+    picking: Option<usize>,
     texture: Option<egui::TextureHandle>,
 }
 
@@ -91,6 +95,7 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
             };
         }
     });
+    pens(ui, mb, state);
     let start = number(&state.address).unwrap_or(crtc_start);
     let width = number(&state.width)
         .unwrap_or(crtc_width as u16)
@@ -131,7 +136,11 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
         &palette,
         &memory,
         usize::from(row_height),
-        &[],
+        &state
+            .overrides
+            .iter()
+            .map(|ink| ink.map(|n| cpclib::image::ga::Ink::INKS[usize::from(n)]))
+            .collect::<Vec<_>>(),
         encoding,
     ) {
         Ok(matrix) => matrix,
@@ -200,5 +209,75 @@ mod test {
             byte_address(0xc000, 80, 8, 7, 0x7ff),
             0xc000 | (0x3800 + 0x7ff)
         );
+    }
+}
+
+fn ink_color(firmware: u8) -> egui::Color32 {
+    let levels = crate::ga::RgbLevels::from(crate::ga::Ink::from(firmware));
+    let byte = |level: f32| (level * 255.0 / 100.0).round().clamp(0.0, 255.0) as u8;
+    egui::Color32::from_rgb(byte(levels.r()), byte(levels.g()), byte(levels.b()))
+}
+
+fn swatch(ui: &mut egui::Ui, color: egui::Color32, outlined: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 16.0), egui::Sense::click());
+    ui.painter().rect_filled(rect, 2.0, color);
+    let stroke = if outlined || response.hovered() {
+        egui::Stroke::new(2.0_f32, ui.visuals().selection.stroke.color)
+    } else {
+        egui::Stroke::new(1.0_f32, ui.visuals().weak_text_color())
+    };
+    ui.painter()
+        .rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Outside);
+    response
+}
+
+/// The pens as the window draws them: the Gate Array's inks, or the window's own for the pens
+/// clicked (cpclib's VS Code screen view: to read a sprite in other colours). A click on a pen
+/// shows the 27 inks to pick from.
+fn pens(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
+    let palette = mb.ga().palette();
+    ui.horizontal(|ui| {
+        ui.label("Pens");
+        for pen in 0..16 {
+            let ink = state.overrides[pen].unwrap_or_else(|| palette[pen].number());
+            let tooltip = match state.overrides[pen] {
+                Some(ink) => format!("pen {pen}: ink {ink} (the window's)"),
+                None => format!("pen {pen}: ink {ink} (the Gate Array's)"),
+            };
+            if swatch(ui, ink_color(ink), state.picking == Some(pen))
+                .on_hover_text(tooltip)
+                .clicked()
+            {
+                state.picking = (state.picking != Some(pen)).then_some(pen);
+            }
+        }
+        if ui
+            .add_enabled(
+                state.overrides.iter().any(Option::is_some),
+                egui::Button::new("The Gate Array's"),
+            )
+            .clicked()
+        {
+            state.overrides = [None; 16];
+            state.picking = None;
+        }
+    });
+    if let Some(pen) = state.picking {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(format!("Ink for pen {pen}"));
+            for ink in 0..27u8 {
+                if swatch(ui, ink_color(ink), false)
+                    .on_hover_text(format!("ink {ink}"))
+                    .clicked()
+                {
+                    state.overrides[pen] = Some(ink);
+                    state.picking = None;
+                }
+            }
+            if ui.button("Its own").clicked() {
+                state.overrides[pen] = None;
+                state.picking = None;
+            }
+        });
     }
 }

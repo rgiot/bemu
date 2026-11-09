@@ -82,6 +82,12 @@ pub trait Frontend {
         Vec::new()
     }
 
+    /// Bring the window of view `key` to the front (shown again if minimised).
+    #[cfg(feature = "gui")]
+    fn focus_view_window(&mut self, key: u8) {
+        let _ = key;
+    }
+
     /// The input of the window of view `key` since the last call (`None`: not open yet).
     #[cfg(feature = "gui")]
     fn view_input(&mut self, key: u8) -> Option<egui::RawInput> {

@@ -633,6 +633,9 @@ impl Window {
             for key in self.window.sync_view_windows(&views) {
                 gui.close_view(key);
             }
+            for key in gui.take_focus_requests() {
+                self.window.focus_view_window(key);
+            }
             for view in &views {
                 if let Some(raw) = self.window.view_input(view.key) {
                     if let Some((output, wanted)) = gui.run_view(view.key, raw, core, bus) {

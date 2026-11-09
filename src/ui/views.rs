@@ -14,6 +14,8 @@ pub struct ViewState {
     /// changed ones.
     memory_seen: Option<(u16, Vec<u8>)>,
     memory_address: String,
+    /// The memory window follows the registers: a few rows around each pointer.
+    memory_follow: bool,
     memory_poke: String,
     disassembly_address: String,
     symbol_filter: String,
@@ -384,24 +386,9 @@ pub fn contents(
                 mb.crtc().chip_name(),
                 mb.crtc().crtc_type() as u8
             ));
-            if let Some(regs) = crtc["regs"].as_array() {
-                egui::Grid::new("crtc-regs").striped(true).show(ui, |ui| {
-                    for (r, value) in regs.iter().enumerate() {
-                        ui.monospace(format!("R{r}"));
-                        ui.monospace(text_of(value));
-                        if r % 2 == 1 {
-                            ui.end_row();
-                        }
-                    }
-                });
-            }
+            super::chips::crtc_registers(ui, mb);
             ui.separator();
             super::chips::crtc(ui, mb);
-            let registers = mb.crtc().registers();
-            for warning in cpclib_dap::inspect::validate_crtc(&registers) {
-                let text = format!("{}: {}", warning.registers.join(", "), warning.message);
-                ui.colored_label(ui.visuals().warn_fg_color, text);
-            }
             ui.separator();
             let mut counters = crtc.clone();
             if let Some(fields) = counters.as_object_mut() {
@@ -464,8 +451,16 @@ pub fn contents(
                         state.memory_address = format!("&{value:04X}");
                     }
                 }
+                ui.checkbox(&mut state.memory_follow, "Follow the registers")
+                    .on_hover_text("PC, SP, HL, DE, BC, IX and IY: the bytes around each");
             });
             let symbols = target.debugger().map(|d| d.symbols());
+            if state.memory_follow {
+                super::chips::follow_registers(ui, mb, |address| {
+                    symbols.and_then(|s| s.describe(address))
+                });
+                return;
+            }
             let start = number(&state.memory_address)
                 .or_else(|| symbols.and_then(|s| s.resolve(&state.memory_address)))
                 .unwrap_or(0)
