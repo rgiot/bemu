@@ -270,6 +270,73 @@ impl Monitor {
         &self.texture
     }
 
+    /// What a paused machine shows (the debugger stopped it): from the top left to the beam,
+    /// the frame being drawn; after it, `previous` (the last whole frame); and the beam's place:
+    /// a vertical line at its column, a horizontal one at its line and a small square where they
+    /// cross, in magenta (no CPC ink is that bright), as cpclib's VS Code frame view draws it. A
+    /// beam outside the picture (in the borders and syncs the monitor does not show) has its
+    /// line dashed on the edge it is beyond.
+    pub fn paused_picture(&self, previous: Option<&RgbImage>) -> RgbImage {
+        let (x, line) = self.beam();
+        let (crop_x, crop_y) = self.crop_origin();
+        let column = x as isize - crop_x;
+        let row = line as isize - crop_y as isize;
+        let drawing = &self.texture;
+        let mut out = match previous.filter(|p| p.dimensions() == drawing.dimensions()) {
+            Some(previous) => {
+                let mut out = previous.clone();
+                let width = drawing.width() as usize * 3;
+                // the whole rows above the beam, then its row up to it
+                let above = row.clamp(0, drawing.height() as isize) as usize;
+                out.as_mut()[..above * width].copy_from_slice(&drawing.as_raw()[..above * width]);
+                if (0..drawing.height() as isize).contains(&row) {
+                    let start = above * width;
+                    let end = start + column.clamp(0, drawing.width() as isize) as usize * 3;
+                    out.as_mut()[start..end].copy_from_slice(&drawing.as_raw()[start..end]);
+                }
+                out
+            }
+            None => drawing.clone(),
+        };
+        let (width, height) = out.dimensions();
+        const MAGENTA: [u8; 3] = [255, 0, 255];
+        // 80 % magenta over the picture
+        let mark = |pixel: &mut image::Rgb<u8>| {
+            for (channel, magenta) in pixel.0.iter_mut().zip(MAGENTA) {
+                *channel = ((u16::from(*channel) + 4 * u16::from(magenta)) / 5) as u8;
+            }
+        };
+        // off the picture: the line on the edge it is beyond, dashed
+        let shown_column = column.clamp(0, width as isize - 2);
+        let shown_row = row.clamp(0, height as isize - 1);
+        let column_dashed = shown_column != column;
+        let row_dashed = shown_row != row;
+        let dash = |i: u32| i % 8 < 4;
+        // the column 2 pixels wide: a pixel is a 16th of a microsecond
+        let on_column = |x: isize| (shown_column..=shown_column + 1).contains(&x);
+        for x in [shown_column, shown_column + 1] {
+            for y in 0..height {
+                if !column_dashed || dash(y) {
+                    mark(out.get_pixel_mut(x as u32, y));
+                }
+            }
+        }
+        for x in 0..width {
+            if !on_column(x as isize) && (!row_dashed || dash(x)) {
+                mark(out.get_pixel_mut(x, shown_row as u32));
+            }
+        }
+        // the square on the beam, solid
+        for y in shown_row - 2..=shown_row + 2 {
+            for x in shown_column - 2..=shown_column + 3 {
+                if (0..width as isize).contains(&x) && (0..height as isize).contains(&y) {
+                    *out.get_pixel_mut(x as u32, y as u32) = image::Rgb(MAGENTA);
+                }
+            }
+        }
+        out
+    }
+
     /// Whether a whole frame is waiting to be taken.
     pub fn is_frame_complete(&self) -> bool {
         self.frame.is_some()
@@ -828,5 +895,40 @@ mod test {
             .filter(|&x| mon.texture.get_pixel(x, 40).0 == [0, 0, 0])
             .count();
         assert_eq!(blacks, 0);
+    }
+}
+
+#[cfg(test)]
+mod paused_picture_test {
+    use super::*;
+
+    #[test]
+    fn the_paused_picture_is_the_new_frame_before_the_beam_the_old_one_after() {
+        let mut monitor = Monitor::default();
+        let (w, h) = monitor.texture.dimensions();
+        for pixel in monitor.texture.pixels_mut() {
+            *pixel = image::Rgb([200, 0, 0]);
+        }
+        let previous = RgbImage::from_pixel(w, h, image::Rgb([0, 0, 200]));
+        let (crop_x, crop_y) = monitor.crop_origin();
+        monitor.x = (crop_x + 100) as usize;
+        monitor.line = crop_y + 50;
+        let picture = monitor.paused_picture(Some(&previous));
+        // before the beam: the new frame (above it, and on its line to its left)
+        assert_eq!(picture.get_pixel(10, 10).0, [200, 0, 0]);
+        assert_eq!(picture.get_pixel(150, 49).0, [200, 0, 0]);
+        // after it: the old frame (below, and on its line to its right)
+        assert_eq!(picture.get_pixel(150, 60).0, [0, 0, 200]);
+        assert_eq!(picture.get_pixel(10, 51).0, [0, 0, 200]);
+        // the lines: 80 % magenta over the picture; the square on the beam
+        assert_eq!(picture.get_pixel(50, 50).0, [244, 0, 204]);
+        assert_eq!(picture.get_pixel(150, 50).0, [204, 0, 244]);
+        assert_eq!(picture.get_pixel(100, 120).0, [204, 0, 244]);
+        assert_eq!(picture.get_pixel(100, 50).0, [255, 0, 255]);
+        // below the picture (in the bottom border): its line dashed on the last row
+        monitor.line = crop_y + h as usize + 20;
+        let picture = monitor.paused_picture(Some(&previous));
+        assert_eq!(picture.get_pixel(10, h - 1).0, [244, 0, 204]);
+        assert_eq!(picture.get_pixel(5, h - 1).0, [200, 0, 0]);
     }
 }

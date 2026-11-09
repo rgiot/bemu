@@ -561,9 +561,24 @@ pub fn contents(
                 .map(|i| mb.read_byte(at.wrapping_add(i)))
                 .collect();
             let instructions = cpclib_dap::disassemble::decode(at, &bytes, 32);
+            // the jumps and calls, drawn in a gutter left of the instructions
+            const GUTTER: f32 = 44.0;
+            let rows: Vec<(u16, &[u8])> = instructions
+                .iter()
+                .map(|i| (i.address, i.bytes.as_slice()))
+                .collect();
+            let arcs = super::chips::arcs(&rows, 6);
+            let mut rows_y = Vec::with_capacity(instructions.len());
+            let mut gutter = egui::Rect::NOTHING;
+            let name_at =
+                |address: u16| symbols.and_then(|s| s.name_at(address)).map(str::to_owned);
             egui::Grid::new("disassembly").striped(true).show(ui, |ui| {
                 for instruction in &instructions {
                     at = instruction.address;
+                    let (cell, _) =
+                        ui.allocate_exact_size(egui::vec2(GUTTER, 14.0), egui::Sense::hover());
+                    rows_y.push(cell.center().y);
+                    gutter = gutter.union(cell);
                     let marked = target
                         .debugger()
                         .is_some_and(|d| d.has_exec_breakpoint(at, mb));
@@ -630,15 +645,14 @@ pub fn contents(
                     ui.weak(egui::RichText::new(hex.join(" ")).monospace());
                     // where it goes (its symbol), and at the PC whether the flags take it
                     let f = crate::z80::HasValue::value(mb.cpu().reg8(crate::z80::Reg8::F));
-                    let mut text = instruction.text.clone();
-                    if let Some((destination, taken)) =
-                        super::chips::branch(at, &instruction.bytes, f)
-                    {
-                        if let Some(name) =
-                            destination.and_then(|d| symbols.and_then(|s| s.name_at(d)))
-                        {
-                            text.push_str(&format!("  ; {name}"));
-                        }
+                    // the addresses with a label: the label
+                    let mut text = super::chips::with_labels(
+                        &instruction.text,
+                        at,
+                        &instruction.bytes,
+                        name_at,
+                    );
+                    if let Some((_, taken)) = super::chips::branch(at, &instruction.bytes, f) {
                         if let (true, Some(taken)) = (at == pc, taken) {
                             text.push_str(if taken { "  (taken)" } else { "  (not taken)" });
                         }
@@ -651,6 +665,10 @@ pub fn contents(
                     ui.end_row();
                 }
             });
+            if !rows_y.is_empty() {
+                let pc_row = instructions.iter().position(|i| i.address == pc);
+                super::chips::paint_arcs(ui.painter(), gutter, &rows_y, &arcs, pc_row);
+            }
         }
         View::History => {
             let Some(debugger) = target.debugger() else {

@@ -555,7 +555,14 @@ impl Emulator {
             },
             None => None
         };
-        let result = match (&self.frame, ui) {
+        // paused (the debugger stopped it): the frame being drawn up to the beam, the last one
+        // after it, the beam's lines
+        let paused = ui
+            .as_ref()
+            .filter(|(ui, _)| ui.paused() && self.csl.is_none())
+            .map(|_| self.monitor.paused_picture(self.frame.as_ref()));
+        let shown_frame = paused.as_ref().or(self.frame.as_ref());
+        let result = match (shown_frame, ui) {
             (Some(frame), Some((mut ui, output))) => {
                 let shown = self.gfx.show_with_ui(frame, self.display, self.curvature, Some((&ui.gui, output)));
                 let shown = shown.map(|undrawn| {
