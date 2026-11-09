@@ -1244,6 +1244,7 @@ pub fn follow_registers(
     ui: &mut egui::Ui,
     mb: &Motherboard,
     describe: impl Fn(u16) -> Option<String>,
+    read: impl Fn(u16) -> u8,
 ) {
     let registers = [
         ("PC", mb.pc()),
@@ -1273,7 +1274,7 @@ pub fn follow_registers(
                     ui.monospace(format!("{at:04X}"));
                     for column in 0..16u16 {
                         let address = at.wrapping_add(column);
-                        let byte = mb.read_byte(address);
+                        let byte = read(address);
                         let mut text = egui::RichText::new(format!("{byte:02X}")).monospace();
                         if address == value {
                             text = text.color(pointed).strong().underline();

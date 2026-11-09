@@ -346,9 +346,18 @@ impl Palette {
                                         .zip(&states)
                                         .find(|(_, s)| s.checked)
                                         .map(|(item, _)| item.label());
-                                    let name = match current {
-                                        Some(current) => format!("{}…   = {current}", choice.label),
-                                        None => format!("{}…", choice.label),
+                                    // with an argument: the value Enter picks, else the current one
+                                    let picked = argument
+                                        .as_deref()
+                                        .and_then(|argument| choice_value(choice, argument));
+                                    let name = match (picked, current) {
+                                        (Some(picked), _) => {
+                                            format!("{}…   → {}", choice.label, picked.label())
+                                        }
+                                        (None, Some(current)) => {
+                                            format!("{}…   = {current}", choice.label)
+                                        }
+                                        (None, None) => format!("{}…", choice.label),
                                     };
                                     (
                                         CommandState::enabled(states.iter().any(|s| s.enabled)),

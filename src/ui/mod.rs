@@ -14,6 +14,7 @@ mod breakpoints;
 mod chips;
 mod files;
 mod menu;
+mod paging;
 mod paint;
 mod palette;
 mod prompt;

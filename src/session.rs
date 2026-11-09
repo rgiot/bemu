@@ -859,6 +859,15 @@ pub fn run_window(
         }
         if core.debugger.paused() {
             // stopped (F8, a breakpoint, the debugger): the window and its menus stay alive
+            // the beam where the monitor stopped: for the windows (CRTC, Beam)
+            let (x, line) = window.monitor.beam();
+            let (crop_x, crop_y) = window.monitor.crop_origin();
+            core.debugger.set_beam(Beam {
+                x,
+                line,
+                crop_x,
+                crop_y,
+            });
             window.show_paused(&core.settings);
             std::thread::sleep(std::time::Duration::from_millis(15));
             continue;

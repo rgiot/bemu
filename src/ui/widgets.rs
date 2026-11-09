@@ -100,3 +100,52 @@ pub fn hex_field(ui: &mut egui::Ui, value: &mut u16, digits: usize) -> bool {
     }
     changed
 }
+
+/// The addresses ACE's memory and disassembly windows go to: the registers that point (and
+/// the shadow ones), the screen's start (the CRTC's R12/R13) and the address it outputs now.
+pub fn goto_buttons(ui: &mut egui::Ui, mb: &crate::motherboard::Motherboard) -> Option<u16> {
+    use crate::z80::{HasValue, Reg16};
+    let cpu = mb.cpu();
+    let crtc = mb.crtc();
+    let registers = crtc.registers();
+    let video_base =
+        cpclib_dap::inspect::crtc_screen_start_address(registers[12], registers[13]) as u16;
+    let ma = crtc.vma();
+    let raster = crtc.counters().vlc & 7;
+    let video_now = ((ma >> 12) & 3) * 0x4000 + ((ma & 0x3ff) << 1) + u16::from(raster) * 0x800;
+    let mut chosen = None;
+    let mut button = |ui: &mut egui::Ui, name: &str, value: u16| {
+        if ui
+            .small_button(name)
+            .on_hover_text(format!("&{value:04X}"))
+            .clicked()
+        {
+            chosen = Some(value);
+        }
+    };
+    ui.horizontal(|ui| {
+        for (name, reg) in [("BC", Reg16::Bc), ("DE", Reg16::De), ("HL", Reg16::Hl)] {
+            button(ui, name, cpu.reg16(reg).value());
+        }
+        for (name, reg) in [
+            ("BC'", Reg16::Bc2),
+            ("DE'", Reg16::De2),
+            ("HL'", Reg16::Hl2),
+        ] {
+            button(ui, name, cpu.reg16(reg).value());
+        }
+        ui.separator();
+        for (name, reg) in [
+            ("IX", Reg16::Ix),
+            ("IY", Reg16::Iy),
+            ("SP", Reg16::Sp),
+            ("PC", Reg16::Pc),
+        ] {
+            button(ui, name, cpu.reg16(reg).value());
+        }
+        ui.separator();
+        button(ui, "Video base", video_base);
+        button(ui, "Video now", video_now);
+    });
+    chosen
+}

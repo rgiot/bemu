@@ -15,6 +15,14 @@ pub struct ViewState {
     /// changed ones.
     memory_seen: Option<(u16, Vec<u8>)>,
     memory_address: String,
+    /// The Memory window's paging, and the byte last clicked.
+    memory_paging: super::paging::Paging,
+    memory_selected: Option<u16>,
+    /// The Disassembly window's paging, its remembered addresses, and whether it shows the
+    /// numbers rather than the labels.
+    disassembly_paging: super::paging::Paging,
+    bookmarks: Vec<u16>,
+    no_labels: bool,
     /// The memory window follows the registers: a few rows around each pointer.
     memory_follow: bool,
     memory_poke: String,
@@ -270,7 +278,7 @@ fn crtc_status(
                 (Some(x), Some(line)) => {
                     ui.monospace(format!("x {x} (NOP {}), line {line}", x / 16))
                 }
-                _ => ui.weak("no monitor"),
+                _ => ui.weak("known while debugging (paused, stepping)"),
             };
             ui.end_row();
             ui.label("Syncs");
@@ -440,7 +448,7 @@ pub fn contents(
                     ui.strong("Registers");
                     super::chips::crtc_registers(ui, mb);
                 });
-                ui.separator();
+                ui.add_space(16.0);
                 ui.vertical(|ui| {
                     ui.strong("Status");
                     crtc_status(ui, mb, &inspect(target, "beam"), state, bus);
@@ -484,35 +492,35 @@ pub fn contents(
             json_grid(ui, "state", &inspect(target, "state"));
         }
         View::Memory => {
+            // ACE's form: the paging looked through, where to go
+            super::paging::show(ui, "memory", mb, &mut state.memory_paging);
+            ui.separator();
             ui.horizontal(|ui| {
-                ui.label("Address");
+                ui.label("Go to");
                 ui.add(
                     egui::TextEdit::singleline(&mut state.memory_address)
                         .hint_text("&C000 or a symbol")
                         .desired_width(110.0),
                 );
-                for (name, value) in [
-                    ("PC", mb.pc()),
-                    ("SP", mb.sp()),
-                    ("HL", mb.hl()),
-                    ("IX", mb.ix()),
-                ] {
-                    if ui
-                        .small_button(name)
-                        .on_hover_text(format!("&{value:04X}"))
-                        .clicked()
-                    {
-                        state.memory_address = format!("&{value:04X}");
-                    }
-                }
                 ui.checkbox(&mut state.memory_follow, "Follow the registers")
                     .on_hover_text("PC, SP, HL, DE, BC, IX and IY: the bytes around each");
             });
+            ui.horizontal(|ui| {
+                ui.label("Pointed by");
+                if let Some(address) = super::widgets::goto_buttons(ui, mb) {
+                    state.memory_address = format!("&{address:04X}");
+                    state.memory_follow = false;
+                }
+            });
             let symbols = target.debugger().map(|d| d.symbols());
+            let paging = state.memory_paging.clone();
             if state.memory_follow {
-                super::chips::follow_registers(ui, mb, |address| {
-                    symbols.and_then(|s| s.describe(address))
-                });
+                super::chips::follow_registers(
+                    ui,
+                    mb,
+                    |address| symbols.and_then(|s| s.describe(address)),
+                    |address| paging.read(mb, address),
+                );
                 return;
             }
             let start = number(&state.memory_address)
@@ -521,7 +529,7 @@ pub fn contents(
                 & 0xfff0;
             const ROWS: u16 = 32;
             let bytes: Vec<u8> = (0..ROWS * 16)
-                .map(|i| mb.read_byte(start.wrapping_add(i)))
+                .map(|i| paging.read(mb, start.wrapping_add(i)))
                 .collect();
             // the bytes that changed since the last frame shown, highlighted
             let seen = state
@@ -564,6 +572,7 @@ pub fn contents(
                                 .clicked()
                             {
                                 state.memory_poke = format!("&{address:04X} ");
+                                state.memory_selected = Some(address);
                             }
                             ascii.push(if (0x20..0x7f).contains(&byte) {
                                 byte as char
@@ -576,6 +585,16 @@ pub fn contents(
                     }
                 });
             state.memory_seen = Some((start, bytes));
+            // the byte clicked: its address, and the disassembly from it
+            if let Some(address) = state.memory_selected {
+                ui.horizontal(|ui| {
+                    ui.label(format!("Address &{address:04X} ({address})"));
+                    if ui.button("» Disassemble…").clicked() {
+                        state.disassembly_address = format!("&{address:04X}");
+                        push(bus, "view-disassembly", None);
+                    }
+                });
+            }
             ui.horizontal(|ui| {
                 ui.label("Poke");
                 ui.add(
@@ -594,34 +613,86 @@ pub fn contents(
         }
         View::Disassembly => {
             controls(ui, target, bus);
+            // ACE's form: the paging looked through, where to start, the addresses remembered
+            super::paging::show(ui, "disassembly", mb, &mut state.disassembly_paging);
+            ui.separator();
+            let pc = mb.pc();
             ui.horizontal(|ui| {
                 ui.label("From");
                 ui.add(
                     egui::TextEdit::singleline(&mut state.disassembly_address)
                         .hint_text("PC")
-                        .desired_width(80.0),
+                        .desired_width(90.0),
                 );
-                if ui
-                    .add_enabled(
-                        !state.disassembly_address.is_empty(),
-                        egui::Button::new("Follow the PC"),
-                    )
-                    .clicked()
-                {
-                    state.disassembly_address.clear();
+                ui.label("Set to");
+                for (name, value) in [
+                    ("PC", pc),
+                    ("HL", mb.hl()),
+                    ("IX", mb.ix()),
+                    ("IY", mb.iy()),
+                ] {
+                    if ui
+                        .small_button(name)
+                        .on_hover_text(format!("&{value:04X}"))
+                        .clicked()
+                    {
+                        state.disassembly_address = format!("&{value:04X}");
+                    }
                 }
+                let mut follow = state.disassembly_address.is_empty();
+                if ui.checkbox(&mut follow, "Follow PC").changed() {
+                    state.disassembly_address = if follow {
+                        String::new()
+                    } else {
+                        format!("&{pc:04X}")
+                    };
+                }
+                ui.checkbox(&mut state.no_labels, "Numbers, no labels");
             });
-            let pc = mb.pc();
-            let symbols = target.debugger().map(|d| d.symbols());
+            let symbols = target
+                .debugger()
+                .map(|d| d.symbols())
+                .filter(|_| !state.no_labels);
             let mut at = match state.disassembly_address.trim() {
                 "" => pc,
                 text => number(text)
                     .or_else(|| symbols.and_then(|s| s.resolve(text)))
                     .unwrap_or(pc),
             };
-            // cpclib-dap's disassembly: the text and the cost in NOPs
+            // the addresses remembered: a click goes there, + remembers this one
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Remembered");
+                let mut forget = None;
+                for (index, address) in state.bookmarks.iter().enumerate() {
+                    let response = ui
+                        .small_button(format!("&{address:04X}"))
+                        .on_hover_text("Go there (right click: forget it)");
+                    if response.clicked() {
+                        state.disassembly_address = format!("&{address:04X}");
+                    }
+                    if response.secondary_clicked() {
+                        forget = Some(index);
+                    }
+                }
+                if let Some(index) = forget {
+                    state.bookmarks.remove(index);
+                }
+                if ui
+                    .small_button("+")
+                    .on_hover_text(format!("Remember &{at:04X}"))
+                    .clicked()
+                    && !state.bookmarks.contains(&at)
+                {
+                    state.bookmarks.push(at);
+                    if state.bookmarks.len() > 8 {
+                        state.bookmarks.remove(0);
+                    }
+                }
+            });
+            // cpclib-dap's disassembly: the text and the cost in NOPs, through the paging chosen
+            let paging = state.disassembly_paging.clone();
             let bytes: Vec<u8> = (0..160u16)
-                .map(|i| mb.read_byte(at.wrapping_add(i)))
+                .map(|i| paging.read(mb, at.wrapping_add(i)))
                 .collect();
             let instructions = cpclib_dap::disassemble::decode(at, &bytes, 32);
             // the jumps and calls, drawn in a gutter left of the instructions
@@ -715,7 +786,8 @@ pub fn contents(
                         &instruction.bytes,
                         name_at,
                     );
-                    if let Some((_, taken)) = super::chips::branch(at, &instruction.bytes, f) {
+                    let branch = super::chips::branch(at, &instruction.bytes, f);
+                    if let Some((_, taken)) = branch {
                         if let (true, Some(taken)) = (at == pc, taken) {
                             text.push_str(if taken { "  (taken)" } else { "  (not taken)" });
                         }
@@ -725,6 +797,21 @@ pub fn contents(
                         Some(nops) => format!("{nops} NOP{}", if nops == 1 { "" } else { "s" }),
                         None => String::new(),
                     });
+                    // ACE's "» &1F25": the disassembly from where it goes
+                    match branch.and_then(|(target, _)| target) {
+                        Some(destination) => {
+                            if ui
+                                .small_button(format!("» &{destination:04X}"))
+                                .on_hover_text("Disassemble from there")
+                                .clicked()
+                            {
+                                state.disassembly_address = format!("&{destination:04X}");
+                            }
+                        }
+                        None => {
+                            ui.label("");
+                        }
+                    }
                     ui.end_row();
                 }
             });
@@ -732,6 +819,18 @@ pub fn contents(
                 let pc_row = instructions.iter().position(|i| i.address == pc);
                 super::chips::paint_arcs(ui.painter(), gutter, &rows_y, &arcs, pc_row);
             }
+            let first = instructions.first().map_or(at, |i| i.address);
+            ui.horizontal(|ui| {
+                ui.label(format!("From &{first:04X} ({first})"));
+                if ui
+                    .button("» Edit…")
+                    .on_hover_text("The memory window there")
+                    .clicked()
+                {
+                    state.memory_address = format!("&{first:04X}");
+                    push(bus, "view-memory", None);
+                }
+            });
         }
         View::History => {
             let Some(debugger) = target.debugger() else {
