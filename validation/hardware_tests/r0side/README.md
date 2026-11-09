@@ -33,3 +33,17 @@ raised above C0 cancels it, a write that makes R0 equal to C0 is not seen) repro
 `E.E.E` of the S rows for `OUT (C),C` and `OUT (n),A` exactly, which the committed rules do not (they give
 solid blocks), and the S OUTI row; but its R windows end 2 us before AMSpiriT's (R OUTI `...E..EEEEEEEEEEEEEEEEE`
 = AMSpiriT's shifted by 2). It does not yet satisfy Shaker B6 A and Overflow's 20352 us frame.
+
+With the committed rules of this version (an R0 raised by 16 or more on C0=R0 by an OUT is taken, a smaller one
+or a lowering still ends the line there; Overflow's raises are +3 and +11) amsrust gives, against the AMSpiriT
+rows above (whole rows shift by one sample between AMS runs, boot phase):
+
+    R OUT(C),C   .....E.EE.EEEEEEEEEEEEEEE.E.E..................E.EE.EEEEEEEEEEEE
+    R OUTI       .....E..EEEEEEEEEEEEEEE........................E..EEEEEEEEEEEEEE
+    R OUT(n),A   .........E..E.EEEEEEEEEEEEE.E...E...................E.E.EEEEEEEE
+    S OUT(C),C   ......E.EE.E.E.E.E.E.E.E.E......E.E.E.E.E.E.E.E.E...............
+    S OUTI       ....E..EEEEEEEEEEEEEEEEE........................................
+    S OUT(n),A   .........E.E.E.E.E.E.E.E.E.E.E......E...E...E...E...E...........
+
+The S rows now alternate like AMSpiriT's (they were solid blocks). Compare the numeric words (word - control),
+not only E/. : the alternation is a feedback through the frame length (the poll exit phase after a frame).

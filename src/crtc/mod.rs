@@ -118,6 +118,9 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
 const R0_SHORT_LINE: u8 = 4;
 /// The tick of the character at which an OUT (C),r8 reaches the CRTC (an OUTI is on tick 0).
 const R0_OUT_PHASE_TICKS: u8 = 4;
+/// An R0 raised by this much or more on C0=R0 is taken (R0SIDE: 41 -> 61), a smaller one still ends the line
+/// (Overflow: 60 -> 63, 13 -> 24).
+const R0_RAISE_TAKEN: u16 = 16;
 
 /// A CRTC: the shared 6845 machinery ([`Core`]) driven at each character clock, and the chip
 /// ([`CrtcChip`]: `type0.rs`, `type1.rs`, `type2.rs`, `asic.rs`) called wherever the chips
@@ -356,10 +359,13 @@ impl Crtc {
             // later (the demo's code is about a microsecond off the CRTC here, the cause is not
             // found): lines of 5 characters or less are left alone (Madness' R0=4 -> 58 makes lines
             // of 59 characters), and an OUTI (on the edge) enlarges the line (Shaker B6 A, ACCC 13.6.1).
+            // A raise written on that character is not an end: it is taken, the line goes on (R0SIDE's
+            // S rows, AMSpiriT: the alternating E.E.E come from these raises landing on C0=R0).
             let old = self.core.regs[0];
             self.core.r0_ends_line = self.core.hcc == old
                 && old > R0_SHORT_LINE
-                && self.core.phase_ticks == R0_OUT_PHASE_TICKS;
+                && self.core.phase_ticks == R0_OUT_PHASE_TICKS
+                && u16::from(v & mask) < u16::from(old) + R0_RAISE_TAKEN;
             self.core.r0_ends_at = old;
         }
         self.chip.before_write(&mut self.core, r, v & mask);
