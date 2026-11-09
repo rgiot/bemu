@@ -487,9 +487,12 @@ pub fn contents(
             });
         }
         View::Beam => {
-            json_grid(ui, "beam", &inspect(target, "beam"));
-            ui.separator();
-            json_grid(ui, "state", &inspect(target, "state"));
+            super::chips::beam_map(ui, mb);
+            ui.collapsing("Raw (as /api/beam and /api/state)", |ui| {
+                json_grid(ui, "beam", &inspect(target, "beam"));
+                ui.separator();
+                json_grid(ui, "state", &inspect(target, "state"));
+            });
         }
         View::Memory => {
             // ACE's form: the paging looked through, where to go
