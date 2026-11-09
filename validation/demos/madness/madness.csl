@@ -1,0 +1,55 @@
+csl_version 1.0
+crtc_select 1
+reset
+wait 3000000
+disk_insert 'madness.dsk'
+key_delay 70000 70000 400000
+key_output 'RUN"MADNESS"\(RET)'
+wait 5000000
+screenshot_name 'madness_01'
+screenshot
+wait 5000000
+screenshot_name 'madness_02'
+screenshot
+wait 5000000
+screenshot_name 'madness_03'
+screenshot
+wait 5000000
+screenshot_name 'madness_04'
+screenshot
+wait 5000000
+screenshot_name 'madness_05'
+screenshot
+wait 5000000
+screenshot_name 'madness_06'
+screenshot
+wait 5000000
+screenshot_name 'madness_07'
+screenshot
+wait 5000000
+screenshot_name 'madness_08'
+screenshot
+wait 5000000
+screenshot_name 'madness_09'
+screenshot
+wait 5000000
+screenshot_name 'madness_10'
+screenshot
+wait 5000000
+screenshot_name 'madness_11'
+screenshot
+wait 5000000
+screenshot_name 'madness_12'
+screenshot
+wait 5000000
+screenshot_name 'madness_13'
+screenshot
+wait 5000000
+screenshot_name 'madness_14'
+screenshot
+wait 5000000
+screenshot_name 'madness_15'
+screenshot
+wait 5000000
+screenshot_name 'madness_16'
+screenshot
