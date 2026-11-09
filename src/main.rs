@@ -483,13 +483,22 @@ fn main() {
         ),
         None if args.window => {
             let server = start_debug_server(&args, &breakpoints, &mut motherboard);
+            // without the server, the window's own debugger: the same symbols and breakpoints
+            let debugger = match server {
+                Some(server) => Ok(server),
+                None => {
+                    let mut debugger = DebugServer::offline();
+                    prime_debugger(&mut debugger, &breakpoints, &mut motherboard);
+                    Err(debugger)
+                }
+            };
             session::run_window(
                 &mut motherboard,
                 builder,
                 &args,
                 &mut typist,
                 &mut reloader,
-                server,
+                debugger,
             )
         }
         None if args.debug_server() => {
@@ -1194,6 +1203,21 @@ fn run_recording(
 }
 
 /// Start the debug server if asked, with the snapshot's breakpoints set.
+/// The symbols (`--sym`, a snapshot's chunks) and the snapshot's breakpoints, in a debugger.
+fn prime_debugger(
+    debugger: &mut DebugServer,
+    breakpoints: &amsrust::snapshot::SnapshotBreakpoints,
+    motherboard: &mut Motherboard,
+) {
+    debugger.add_symbols(&breakpoints.symbols);
+    for breakpoint in &breakpoints.exec {
+        debugger.add_exec_breakpoint(breakpoint.address, motherboard);
+    }
+    for breakpoint in &breakpoints.advanced {
+        debugger.add_advanced_breakpoint(breakpoint.clone(), motherboard);
+    }
+}
+
 fn start_debug_server(
     args: &Args,
     breakpoints: &amsrust::snapshot::SnapshotBreakpoints,
@@ -1217,13 +1241,7 @@ fn start_debug_server(
                 "debug server: http://127.0.0.1:{}/api/doc",
                 args.debug_port()
             );
-            server.add_symbols(&breakpoints.symbols);
-            for breakpoint in &breakpoints.exec {
-                server.add_exec_breakpoint(breakpoint.address, motherboard);
-            }
-            for breakpoint in &breakpoints.advanced {
-                server.add_advanced_breakpoint(breakpoint.clone(), motherboard);
-            }
+            prime_debugger(&mut server, breakpoints, motherboard);
             if args.debug_paused {
                 // Nothing has run yet: the debugger arms its breakpoints,
                 // then resumes (POST /api/config {"paused":false}).
