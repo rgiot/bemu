@@ -840,26 +840,65 @@ pub fn contents(
                 ui.label("No debugger");
                 return;
             };
-            ui.label(format!(
-                "The last {} instructions (Debug > Set history size)",
-                debugger.history_size()
-            ));
-            let mut text = String::new();
-            for (pc, bytes) in debugger.history() {
-                let name = debugger.symbols().describe(*pc).unwrap_or_default();
-                let decoded = cpclib_dap::disassemble::decode(*pc, bytes, 1);
-                let (code, cost) = decoded.first().map_or_else(
-                    || (String::from("?"), String::new()),
-                    |i| {
-                        (
-                            i.text.clone(),
-                            i.cost.map_or(String::new(), |n| format!("{n} NOPs")),
-                        )
-                    },
-                );
-                text.push_str(&format!("{pc:04X}  {code:<20} {cost:<8} {name}\n"));
+            let history: Vec<_> = debugger.history().cloned().collect();
+            let symbols = debugger.symbols();
+            let name_at = |address: u16| symbols.name_at(address).map(str::to_owned);
+            let total: usize = history
+                .iter()
+                .filter_map(|(pc, bytes)| {
+                    cpclib_dap::disassemble::decode(*pc, bytes, 1)
+                        .first()
+                        .and_then(|i| i.cost)
+                })
+                .sum();
+            let mut recording = debugger.records_history();
+            if ui
+                .checkbox(&mut recording, "Record")
+                .on_hover_text(
+                    "Keep the instructions run even with no breakpoint (Debug > Record the history)",
+                )
+                .changed()
+            {
+                push(bus, "history-record-toggle", None);
             }
-            ui.add(egui::Label::new(egui::RichText::new(text).monospace()));
+            ui.label(format!(
+                "The last {} instructions, the newest at the bottom: {total} NOPs (Debug > Set history size)",
+                history.len()
+            ));
+            // at least 20 rows tall when there are more: the window sizes to it
+            egui::ScrollArea::vertical()
+                .max_height(480.0)
+                .min_scrolled_height(400.0)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    egui::Grid::new("history").striped(true).show(ui, |ui| {
+                        for (pc, bytes) in &history {
+                            if let Some(label) = name_at(*pc) {
+                                ui.label(
+                                    egui::RichText::new(format!("{label}:"))
+                                        .monospace()
+                                        .color(ui.visuals().warn_fg_color),
+                                );
+                                ui.end_row();
+                            }
+                            let decoded = cpclib_dap::disassemble::decode(*pc, bytes, 1);
+                            let (code, cost) = decoded.first().map_or_else(
+                                || (String::from("?"), String::new()),
+                                |i| {
+                                    (
+                                        super::chips::with_labels(&i.text, *pc, bytes, name_at),
+                                        i.cost.map_or(String::new(), |n| format!("{n}")),
+                                    )
+                                },
+                            );
+                            address_link(ui, format!("{pc:04X}"), *pc, state, bus);
+                            ui.monospace(code);
+                            ui.weak(egui::RichText::new(cost).monospace())
+                                .on_hover_text("NOPs");
+                            ui.end_row();
+                        }
+                    });
+                });
         }
         View::Symbols => {
             let Some(debugger) = target.debugger() else {

@@ -436,3 +436,18 @@ fn a_pen_gets_an_ink_and_the_screen_a_mode() {
     // from the next line (the firmware puts its own back at its next interrupt)
     assert_eq!(host.motherboard.ga().next_video_mode() as u8, 2);
 }
+
+#[test]
+fn the_history_is_recorded_on_demand() {
+    let mut host = Host::new();
+    assert!(!host.debugger.is_active());
+    host.run("history-record-toggle").unwrap();
+    assert!(host.debugger.is_active());
+    for _ in 0..100 {
+        host.motherboard.execute_next_opcode_no_video();
+        host.debugger.after_instruction(&mut host.motherboard);
+    }
+    assert!(host.debugger.history().count() > 0);
+    host.run("history-record-toggle").unwrap();
+    assert!(!host.debugger.is_active());
+}

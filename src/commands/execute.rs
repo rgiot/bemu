@@ -1474,6 +1474,11 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             }
             done()
         }
+        "history-record-toggle" => {
+            let debugger = target.debugger_mut().ok_or(CommandError::Unsupported)?;
+            debugger.set_recording_history(!debugger.records_history());
+            done()
+        }
         "history-set-size" => {
             let arg = arg!(
                 command,
@@ -2360,6 +2365,10 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
             },
         ),
         "csl-stop" => CommandState::enabled(target.csl_running()),
+        "history-record-toggle" => CommandState {
+            enabled: debugger.is_some(),
+            checked: debugger.is_some_and(|d| d.records_history()),
+        },
         "files-watch-toggle" => CommandState {
             enabled: has_settings && files,
             checked: settings.is_some_and(|s| s.watch_files),
