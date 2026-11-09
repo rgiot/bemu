@@ -260,6 +260,7 @@ pub enum View {
     Ppi,
     Tape,
     Asic,
+    Screen,
     Palette,
     Preferences,
     Shortcuts,
