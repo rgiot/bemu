@@ -848,7 +848,11 @@ pub fn run_window(
         if let Some(reloader) = reloader {
             reloader.poll(core.motherboard, typist);
         }
-        window.host_keyboard.apply(core.motherboard, &input);
+        // while the debugger types (Tools > Auto-type, the palette, CSL's key_output), the host
+        // keyboard would release the key it holds down every frame
+        if !core.debugger.is_typing() {
+            window.host_keyboard.apply(core.motherboard, &input);
+        }
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, core.motherboard);
 

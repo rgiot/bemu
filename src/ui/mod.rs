@@ -18,6 +18,7 @@ mod paging;
 mod paint;
 mod palette;
 mod prompt;
+mod psg;
 mod screen;
 mod views;
 mod widgets;

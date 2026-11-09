@@ -2000,7 +2000,11 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
         // --------------------------------------------------------------- Tools
         "autotype-text" | "autotype-file" => {
             let text = if id == "autotype-text" {
-                arg!(command, "Type (\\n: RETURN, \\(WAIT n)...)", ArgKind::Text).text()
+                // `\n` typed in a field is RETURN, as the prompt says (a CSL string has already
+                // turned its own into newlines)
+                arg!(command, "Type (\\n: RETURN, \\(WAIT n)...)", ArgKind::Text)
+                    .text()
+                    .replace("\\n", "\n")
             } else {
                 let arg = arg!(
                     command,

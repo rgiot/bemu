@@ -96,96 +96,6 @@ pub fn gate_array(ui: &mut egui::Ui, mb: &Motherboard) {
     });
 }
 
-/// Note name of a frequency (A4 = 440 Hz).
-fn note(frequency: f64) -> String {
-    if !(16.0..20_000.0).contains(&frequency) {
-        return String::new();
-    }
-    const NAMES: [&str; 12] = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    let midi = (69.0 + 12.0 * (frequency / 440.0).log2()).round() as i32;
-    format!("{}{}", NAMES[midi.rem_euclid(12) as usize], midi / 12 - 1)
-}
-
-/// The envelope shapes (R13), as the AY's datasheet draws them.
-const SHAPES: [&str; 16] = [
-    "\\___", "\\___", "\\___", "\\___", "/___", "/___", "/___", "/___", "\\\\\\\\", "\\___",
-    "\\/\\/", "\\¯¯¯", "////", "/¯¯¯", "/\\/\\", "/___",
-];
-
-/// The AY's clock on a CPC: 1 MHz.
-const PSG_HZ: f64 = 1_000_000.0;
-
-/// The PSG: per channel the note, the mixer and the volume or envelope, then the noise and
-/// the envelope.
-pub fn psg(ui: &mut egui::Ui, mb: &Motherboard) {
-    let psg = mb.psg();
-    let reg = |r: u8| psg.register(r);
-    let mixer = reg(7);
-    let levels = psg.channel_levels();
-    egui::Grid::new("psg-channels")
-        .striped(true)
-        .show(ui, |ui| {
-            for heading in [
-                "",
-                "Period",
-                "Frequency",
-                "Note",
-                "Tone",
-                "Noise",
-                "Volume",
-                "Level",
-            ] {
-                ui.strong(heading);
-            }
-            ui.end_row();
-            for channel in 0..3u8 {
-                let period =
-                    u16::from(reg(channel * 2)) | u16::from(reg(channel * 2 + 1) & 0x0f) << 8;
-                let frequency = PSG_HZ / (16.0 * f64::from(period.max(1)));
-                let volume = reg(8 + channel);
-                ui.strong(["A", "B", "C"][usize::from(channel)]);
-                ui.monospace(format!("{period}"));
-                ui.monospace(format!("{frequency:.1} Hz"));
-                ui.monospace(note(frequency));
-                ui.monospace(yes(mixer & (1 << channel) == 0));
-                ui.monospace(yes(mixer & (8 << channel) == 0));
-                ui.monospace(if volume & 0x10 != 0 {
-                    "envelope".to_owned()
-                } else {
-                    format!("{}", volume & 0x0f)
-                });
-                ui.add(
-                    egui::ProgressBar::new(levels[usize::from(channel)].clamp(0.0, 1.0))
-                        .desired_width(80.0),
-                );
-                ui.end_row();
-            }
-        });
-    let noise = reg(6) & 0x1f;
-    let envelope = u16::from(reg(11)) | u16::from(reg(12)) << 8;
-    let shape = reg(13) & 0x0f;
-    egui::Grid::new("psg-other").striped(true).show(ui, |ui| {
-        ui.label("Noise");
-        ui.monospace(format!(
-            "period {noise}: {:.0} Hz",
-            PSG_HZ / (16.0 * f64::from(noise.max(1)))
-        ));
-        ui.end_row();
-        ui.label("Envelope");
-        ui.monospace(format!(
-            "period {envelope}: {:.2} Hz, shape {shape} {}",
-            PSG_HZ / (256.0 * f64::from(envelope.max(1))),
-            SHAPES[usize::from(shape)]
-        ));
-        ui.end_row();
-        ui.label("Port A (R14)");
-        ui.monospace(format!("&{:02X}", reg(14)));
-        ui.end_row();
-    });
-}
-
 /// The CRTC: the counters' flags and what the registers make (timings, screen address).
 pub fn crtc(ui: &mut egui::Ui, mb: &Motherboard) {
     let crtc = mb.crtc();
@@ -601,7 +511,7 @@ pub fn memory_map(ui: &mut egui::Ui, mb: &Motherboard) {
     let name = |address: PhysicalAddress| match address {
         PhysicalAddress::LowerRom { .. } => "lower ROM".to_owned(),
         PhysicalAddress::UpperRom { rom, .. } => format!("upper ROM {rom}"),
-        PhysicalAddress::Ram { bank, .. } => format!("RAM bank {bank}"),
+        PhysicalAddress::Ram { bank, .. } => format!("RAM {}", super::paging::bank_name(bank)),
     };
     egui::Grid::new("memmap-regions")
         .striped(true)

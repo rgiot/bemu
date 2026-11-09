@@ -1,5 +1,5 @@
-//! Small pieces the debugger's windows share: colour swatches, the ink picker, a hexadecimal
-//! field, a register's go-to buttons.
+//! Small pieces the debugger's windows share: colour swatches, the ink picker, a register's
+//! go-to buttons.
 
 /// The colour of firmware ink `firmware` (0-26).
 pub fn ink_color(firmware: u8) -> egui::Color32 {
@@ -81,24 +81,6 @@ pub fn ink_picker(
     }
     ui.data_mut(|d| d.insert_temp(open_id, open));
     picked
-}
-
-/// A hexadecimal value of `digits` digits, typed (`&` shown before it); `true` when changed.
-pub fn hex_field(ui: &mut egui::Ui, value: &mut u16, digits: usize) -> bool {
-    let mut edited = u32::from(*value);
-    let max = (1u32 << (4 * digits as u32)) - 1;
-    let changed = ui
-        .add(
-            egui::DragValue::new(&mut edited)
-                .range(0..=max)
-                .hexadecimal(digits, false, true)
-                .prefix("&"),
-        )
-        .changed();
-    if changed {
-        *value = edited as u16;
-    }
-    changed
 }
 
 /// The addresses ACE's memory and disassembly windows go to: the registers that point (and

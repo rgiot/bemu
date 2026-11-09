@@ -399,3 +399,20 @@ fn a_breakpoint_of_the_manager_is_accepted() {
     host.run_with("breakpoint-add-raster", Arg::Text("156,0".into()))
         .unwrap();
 }
+
+#[test]
+fn a_typed_backslash_n_is_return() {
+    // as typed in the palette: `\n` written with a backslash
+    let mut host = Host::new();
+    host.run_with("autotype-text", Arg::Text(r"POKE &9000,42\n".into()))
+        .unwrap();
+    for _ in 0..40_000_000 {
+        if !host.debugger.is_typing() {
+            break;
+        }
+        host.motherboard.execute_next_opcode_no_video();
+        host.debugger.after_instruction(&mut host.motherboard);
+    }
+    host.frames(10);
+    assert_eq!(host.motherboard.read_byte(0x9000), 42);
+}

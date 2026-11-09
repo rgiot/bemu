@@ -4,9 +4,10 @@
 
 use crate::motherboard::Motherboard;
 
-/// The RAM configurations (the value's bits 0-2): the bank of each 16K block, 4-7 being the
-/// banks of the extra 64K page chosen (bits 3-5). The value written to &7Fxx is
-/// &C0 + 8 × page + configuration: &C0-&C7 for page 0, &C8-&CF for page 1... &F8-&FF for page 7.
+/// The RAM configurations (the value's bits 0-2): the bank of each 16K block, 0-3 the main
+/// 64K's (MB0-MB3), 4-7 the blocks of the expansion's 64K page chosen (bits 3-5:
+/// P<page>B0-B3). The value written to &7Fxx is &C0 + 8 × page + configuration: &C0-&C7 for
+/// page 0, &C8-&CF for page 1... &F8-&FF for page 7.
 const CONFIGS: [[u8; 4]; 8] = [
     [0, 1, 2, 3],
     [0, 1, 2, 7],
@@ -17,6 +18,16 @@ const CONFIGS: [[u8; 4]; 8] = [
     [0, 6, 2, 3],
     [0, 7, 2, 3],
 ];
+
+/// A 16K RAM bank by its page and block: the main 64K is page M (`MB0`-`MB3`), an expansion's
+/// 64K pages are P0-P7... (the value's bits 3-5: `P0B0`-`P0B3`, `P1B0`...): physical bank 4 is
+/// `P0B0`, 9 is `P1B1`.
+pub fn bank_name(bank: u16) -> String {
+    match bank {
+        0..=3 => format!("MB{bank}"),
+        _ => format!("P{}B{}", (bank - 4) / 4, (bank - 4) % 4),
+    }
+}
 
 /// A window's paging: the emulator's, or its own.
 #[derive(Clone)]
@@ -114,7 +125,7 @@ impl Paging {
     fn ram_text(&self) -> String {
         let banks = CONFIGS[usize::from(self.ram_config)]
             .iter()
-            .map(|&bank| self.physical(bank).to_string())
+            .map(|&bank| bank_name(self.physical(bank)))
             .collect::<Vec<_>>()
             .join("-");
         match self.mmr() {
@@ -151,6 +162,10 @@ impl Paging {
 pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) {
     const ROM: egui::Color32 = egui::Color32::from_rgb(200, 70, 50);
     const RAM: egui::Color32 = egui::Color32::from_rgb(60, 150, 70);
+    // following, the form shows the emulator's paging (greyed), ready to be changed from there
+    if paging.follow {
+        paging.synchronise(mb);
+    }
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
@@ -242,7 +257,7 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
                     ui.monospace(format!("&{:04X}", block * 0x4000));
                     let source = paging.source(mb, block);
                     match source {
-                        Source::Ram(bank) => cell(ui, format!("RAM{bank}"), RAM, 2.0 * CELL + GAP),
+                        Source::Ram(bank) => cell(ui, bank_name(bank), RAM, 2.0 * CELL + GAP),
                         _ => {
                             let text = match source {
                                 Source::UpperRom(slot) => format!("ROM {slot}"),
@@ -251,22 +266,16 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
                             cell(ui, text, ROM, CELL);
                             // under a ROM, writes go to RAM
                             let bank = paging.write_bank(mb, block);
-                            cell(ui, format!("RAM{bank}"), RAM, CELL);
+                            cell(ui, bank_name(bank), RAM, CELL);
                         }
                     }
                 });
             }
             // the RAM's value as the Gate Array is given it (&7Fxx: &C0 + 8 × page + config)
-            // and its banks, for the paging shown
-            let shown = if paging.follow {
-                let mut shown = paging.clone();
-                shown.synchronise(mb);
-                shown
-            } else {
-                paging.clone()
-            };
-            ui.label(format!("RAM {}", shown.ram_text()))
-                .on_hover_text("The value written to &7Fxx (&C0 + 8 × page + configuration) and the 4 banks it pages");
+            if let Some(mmr) = paging.mmr() {
+                ui.label(format!("RAM &{mmr:02X}"))
+                    .on_hover_text("The value written to &7Fxx: &C0 + 8 × page + configuration");
+            }
             ui.weak(format!(
                 "RMR &{:02X} · upper ROM &{:02X}",
                 mb.ga().rmr(),
@@ -345,8 +354,8 @@ mod test {
         while mb.t_state_counter().value() < 4_000_000 {
             mb.execute_next_opcode_no_video();
         }
-        // the banks of each configuration in page 0 (&C0-&C7: banks 4-7); page 3 (&D8-&DF) has
-        // banks 16-19 in their place
+        // the banks of each configuration with page 0 (&C0-&C7: 4-7 are P0B0-P0B3); with page 3
+        // (&D8-&DF), P3B0-P3B3 (physical 16-19) in their place
         let expected: [[u16; 4]; 8] = [
             [0, 1, 2, 3],
             [0, 1, 2, 7],
@@ -414,11 +423,11 @@ mod test {
             ram_config,
             ..Paging::default()
         };
-        assert_eq!(paging(0, 0).ram_text(), "&C0 · 0-1-2-3");
-        assert_eq!(paging(0, 3).ram_text(), "&C3 · 0-3-2-7");
-        assert_eq!(paging(1, 2).ram_text(), "&CA · 8-9-10-11");
-        assert_eq!(paging(3, 3).ram_text(), "&DB · 0-3-2-19");
-        assert_eq!(paging(7, 7).ram_text(), "&FF · 0-35-2-3");
+        assert_eq!(paging(0, 0).ram_text(), "&C0 · MB0-MB1-MB2-MB3");
+        assert_eq!(paging(0, 3).ram_text(), "&C3 · MB0-MB3-MB2-P0B3");
+        assert_eq!(paging(1, 2).ram_text(), "&CA · P1B0-P1B1-P1B2-P1B3");
+        assert_eq!(paging(3, 3).ram_text(), "&DB · MB0-MB3-MB2-P3B3");
+        assert_eq!(paging(7, 7).ram_text(), "&FF · MB0-P7B3-MB2-MB3");
     }
 
     #[test]

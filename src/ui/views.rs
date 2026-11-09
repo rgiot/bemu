@@ -465,7 +465,7 @@ pub fn contents(
             });
         }
         View::Psg => {
-            super::chips::psg(ui, mb);
+            super::psg::show(ui, mb);
             ui.collapsing("Raw (as /api/psg)", |ui| {
                 json_grid(ui, "psg", &inspect(target, "psg"))
             });

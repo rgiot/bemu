@@ -744,6 +744,10 @@ impl Emulator {
             typed: std::mem::take(&mut self.typed),
             placed: self.placed.values().copied().collect()
         };
+        // the debugger types (Auto-type, the palette): the host keyboard would release its key
+        if self.ui.as_ref().is_some_and(|ui| ui.debugger.is_typing()) {
+            return;
+        }
         self.keyboard.apply(&mut self.motherboard, &input);
     }
 }
