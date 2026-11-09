@@ -96,96 +96,6 @@ pub fn gate_array(ui: &mut egui::Ui, mb: &Motherboard) {
     });
 }
 
-/// Note name of a frequency (A4 = 440 Hz).
-fn note(frequency: f64) -> String {
-    if !(16.0..20_000.0).contains(&frequency) {
-        return String::new();
-    }
-    const NAMES: [&str; 12] = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    let midi = (69.0 + 12.0 * (frequency / 440.0).log2()).round() as i32;
-    format!("{}{}", NAMES[midi.rem_euclid(12) as usize], midi / 12 - 1)
-}
-
-/// The envelope shapes (R13), as the AY's datasheet draws them.
-const SHAPES: [&str; 16] = [
-    "\\___", "\\___", "\\___", "\\___", "/___", "/___", "/___", "/___", "\\\\\\\\", "\\___",
-    "\\/\\/", "\\¯¯¯", "////", "/¯¯¯", "/\\/\\", "/___",
-];
-
-/// The AY's clock on a CPC: 1 MHz.
-const PSG_HZ: f64 = 1_000_000.0;
-
-/// The PSG: per channel the note, the mixer and the volume or envelope, then the noise and
-/// the envelope.
-pub fn psg(ui: &mut egui::Ui, mb: &Motherboard) {
-    let psg = mb.psg();
-    let reg = |r: u8| psg.register(r);
-    let mixer = reg(7);
-    let levels = psg.channel_levels();
-    egui::Grid::new("psg-channels")
-        .striped(true)
-        .show(ui, |ui| {
-            for heading in [
-                "",
-                "Period",
-                "Frequency",
-                "Note",
-                "Tone",
-                "Noise",
-                "Volume",
-                "Level",
-            ] {
-                ui.strong(heading);
-            }
-            ui.end_row();
-            for channel in 0..3u8 {
-                let period =
-                    u16::from(reg(channel * 2)) | u16::from(reg(channel * 2 + 1) & 0x0f) << 8;
-                let frequency = PSG_HZ / (16.0 * f64::from(period.max(1)));
-                let volume = reg(8 + channel);
-                ui.strong(["A", "B", "C"][usize::from(channel)]);
-                ui.monospace(format!("{period}"));
-                ui.monospace(format!("{frequency:.1} Hz"));
-                ui.monospace(note(frequency));
-                ui.monospace(yes(mixer & (1 << channel) == 0));
-                ui.monospace(yes(mixer & (8 << channel) == 0));
-                ui.monospace(if volume & 0x10 != 0 {
-                    "envelope".to_owned()
-                } else {
-                    format!("{}", volume & 0x0f)
-                });
-                ui.add(
-                    egui::ProgressBar::new(levels[usize::from(channel)].clamp(0.0, 1.0))
-                        .desired_width(80.0),
-                );
-                ui.end_row();
-            }
-        });
-    let noise = reg(6) & 0x1f;
-    let envelope = u16::from(reg(11)) | u16::from(reg(12)) << 8;
-    let shape = reg(13) & 0x0f;
-    egui::Grid::new("psg-other").striped(true).show(ui, |ui| {
-        ui.label("Noise");
-        ui.monospace(format!(
-            "period {noise}: {:.0} Hz",
-            PSG_HZ / (16.0 * f64::from(noise.max(1)))
-        ));
-        ui.end_row();
-        ui.label("Envelope");
-        ui.monospace(format!(
-            "period {envelope}: {:.2} Hz, shape {shape} {}",
-            PSG_HZ / (256.0 * f64::from(envelope.max(1))),
-            SHAPES[usize::from(shape)]
-        ));
-        ui.end_row();
-        ui.label("Port A (R14)");
-        ui.monospace(format!("&{:02X}", reg(14)));
-        ui.end_row();
-    });
-}
-
 /// The CRTC: the counters' flags and what the registers make (timings, screen address).
 pub fn crtc(ui: &mut egui::Ui, mb: &Motherboard) {
     let crtc = mb.crtc();
@@ -601,7 +511,7 @@ pub fn memory_map(ui: &mut egui::Ui, mb: &Motherboard) {
     let name = |address: PhysicalAddress| match address {
         PhysicalAddress::LowerRom { .. } => "lower ROM".to_owned(),
         PhysicalAddress::UpperRom { rom, .. } => format!("upper ROM {rom}"),
-        PhysicalAddress::Ram { bank, .. } => format!("RAM bank {bank}"),
+        PhysicalAddress::Ram { bank, .. } => format!("RAM {}", super::paging::bank_name(bank)),
     };
     egui::Grid::new("memmap-regions")
         .striped(true)
@@ -1156,4 +1066,134 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
             }
         });
     });
+}
+
+/// The CRTC's registers as boxes (cpclib's VS Code CRTC view): the name over the value, the
+/// selected register outlined, and the registers of a known-bad setting (cpclib-dap's
+/// `validate_crtc`) bordered red (the picture is lost) or yellow (not what is likely meant),
+/// the reasons below.
+pub fn crtc_registers(ui: &mut egui::Ui, mb: &Motherboard) {
+    use cpclib_dap::inspect::CrtcSeverity;
+    let crtc = mb.crtc();
+    let registers = crtc.registers();
+    let selected = usize::from(crtc.selected_register());
+    let warnings = cpclib_dap::inspect::validate_crtc(&registers);
+    const ERROR: egui::Color32 = egui::Color32::from_rgb(220, 60, 60);
+    const WARNING: egui::Color32 = egui::Color32::from_rgb(220, 180, 40);
+    egui::Grid::new("crtc-boxes")
+        .spacing([4.0, 4.0])
+        .show(ui, |ui| {
+            for (r, value) in registers.iter().enumerate() {
+                let name = format!("R{r}");
+                let mine: Vec<_> = warnings
+                    .iter()
+                    .filter(|w| w.registers.contains(&name.as_str()))
+                    .collect();
+                let border = if mine.iter().any(|w| w.severity == CrtcSeverity::Error) {
+                    Some(ERROR)
+                } else if mine.is_empty() {
+                    None
+                } else {
+                    Some(WARNING)
+                };
+                let stroke = match border {
+                    Some(color) => egui::Stroke::new(2.0_f32, color),
+                    None if r == selected => {
+                        egui::Stroke::new(1.5_f32, ui.visuals().selection.stroke.color)
+                    }
+                    None => egui::Stroke::new(
+                        1.0_f32,
+                        ui.visuals().widgets.noninteractive.bg_stroke.color,
+                    ),
+                };
+                let fill = match border {
+                    Some(color) => color.gamma_multiply(0.18),
+                    None => ui.visuals().extreme_bg_color,
+                };
+                let response = egui::Frame::new()
+                    .stroke(stroke)
+                    .fill(fill)
+                    .corner_radius(3.0)
+                    .inner_margin(egui::Margin::symmetric(6, 2))
+                    .show(ui, |ui| {
+                        ui.set_min_width(40.0);
+                        ui.vertical_centered(|ui| {
+                            ui.small(name.as_str());
+                            ui.monospace(format!("&{value:02X}"));
+                        });
+                    })
+                    .response;
+                let mut tooltip = format!("{name} = {value} (&{value:02X})");
+                if r == selected {
+                    tooltip.push_str(", the register selected");
+                }
+                for warning in &mine {
+                    tooltip.push_str(&format!("\n{}", warning.message));
+                }
+                response.on_hover_text(tooltip);
+                if r % 6 == 5 {
+                    ui.end_row();
+                }
+            }
+        });
+    for warning in &warnings {
+        let color = match warning.severity {
+            CrtcSeverity::Error => ERROR,
+            CrtcSeverity::Warning => WARNING,
+        };
+        ui.colored_label(
+            color,
+            format!("{}: {}", warning.registers.join(", "), warning.message),
+        );
+    }
+}
+
+/// The memory around each register that points somewhere (cpclib's VS Code `-mv all,follow`):
+/// two rows of 16 bytes, the byte pointed at outlined, the symbol of the address named.
+pub fn follow_registers(
+    ui: &mut egui::Ui,
+    mb: &Motherboard,
+    describe: impl Fn(u16) -> Option<String>,
+    read: impl Fn(u16) -> u8,
+) {
+    let registers = [
+        ("PC", mb.pc()),
+        ("SP", mb.sp()),
+        ("HL", mb.hl()),
+        ("DE", mb.de()),
+        ("BC", mb.bc()),
+        ("IX", mb.ix()),
+        ("IY", mb.iy()),
+    ];
+    let pointed = ui.visuals().selection.stroke.color;
+    for (name, value) in registers {
+        ui.horizontal(|ui| {
+            ui.strong(name);
+            ui.monospace(format!("&{value:04X}"));
+            if let Some(symbol) = describe(value) {
+                ui.weak(symbol);
+            }
+        });
+        let start = value & 0xfff0;
+        egui::Grid::new(("follow", name))
+            .spacing([6.0, 0.0])
+            .min_col_width(0.0)
+            .show(ui, |ui| {
+                for row in 0..2u16 {
+                    let at = start.wrapping_add(row * 16);
+                    ui.monospace(format!("{at:04X}"));
+                    for column in 0..16u16 {
+                        let address = at.wrapping_add(column);
+                        let byte = read(address);
+                        let mut text = egui::RichText::new(format!("{byte:02X}")).monospace();
+                        if address == value {
+                            text = text.color(pointed).strong().underline();
+                        }
+                        ui.label(text);
+                    }
+                    ui.end_row();
+                }
+            });
+        ui.add_space(4.0);
+    }
 }

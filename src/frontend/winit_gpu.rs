@@ -1301,6 +1301,14 @@ impl Frontend for WinitGpuFrontend {
         closed
     }
 
+    fn focus_view_window(&mut self, key: u8) {
+        if let Some(view) = self.app.views.get(&key) {
+            view.window.set_minimized(false);
+            view.window.set_visible(true);
+            view.window.focus_window();
+        }
+    }
+
     fn view_input(&mut self, key: u8) -> Option<egui::RawInput> {
         let view = self.app.views.get_mut(&key)?;
         Some(view.state.take_egui_input(&view.window))

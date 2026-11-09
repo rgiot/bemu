@@ -386,3 +386,33 @@ fn a_register_and_a_flag_are_set_from_the_window() {
     host.run_with("z80-set-register", Arg::Text("I=63".into()))
         .unwrap();
 }
+
+#[test]
+fn a_breakpoint_of_the_manager_is_accepted() {
+    // what the Breakpoints window's manager posts (cpclib-dap's ManagerBreakpoint::body)
+    let mut host = Host::new();
+    let body = r#"{"id":0,"label":"ink","kind":"io","access":"w","run":"stop","addr":16384,
+        "mask":49152,"size":1,"value":64,"valmask":192,"condition":"A=1","after":2,"name":"ink"}"#;
+    host.run_with("breakpoint-add-advanced", Arg::Text(body.into()))
+        .unwrap();
+    assert!(host.debugger.has_breakpoints());
+    host.run_with("breakpoint-add-raster", Arg::Text("156,0".into()))
+        .unwrap();
+}
+
+#[test]
+fn a_typed_backslash_n_is_return() {
+    // as typed in the palette: `\n` written with a backslash
+    let mut host = Host::new();
+    host.run_with("autotype-text", Arg::Text(r"POKE &9000,42\n".into()))
+        .unwrap();
+    for _ in 0..40_000_000 {
+        if !host.debugger.is_typing() {
+            break;
+        }
+        host.motherboard.execute_next_opcode_no_video();
+        host.debugger.after_instruction(&mut host.motherboard);
+    }
+    host.frames(10);
+    assert_eq!(host.motherboard.read_byte(0x9000), 42);
+}

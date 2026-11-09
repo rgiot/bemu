@@ -16,6 +16,8 @@ pub struct ScreenState {
     mode: Option<u8>,
     /// The bytes one after the other (a sprite sheet) rather than the CRTC's interleaving.
     linear: bool,
+    /// The window's own inks for some pens (firmware numbers): never written to the CPC.
+    overrides: [Option<u8>; 16],
     texture: Option<egui::TextureHandle>,
 }
 
@@ -91,6 +93,7 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
             };
         }
     });
+    pens(ui, mb, state);
     let start = number(&state.address).unwrap_or(crtc_start);
     let width = number(&state.width)
         .unwrap_or(crtc_width as u16)
@@ -131,7 +134,11 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
         &palette,
         &memory,
         usize::from(row_height),
-        &[],
+        &state
+            .overrides
+            .iter()
+            .map(|ink| ink.map(|n| cpclib::image::ga::Ink::INKS[usize::from(n)]))
+            .collect::<Vec<_>>(),
         encoding,
     ) {
         Ok(matrix) => matrix,
@@ -201,4 +208,37 @@ mod test {
             0xc000 | (0x3800 + 0x7ff)
         );
     }
+}
+
+/// The pens as the window draws them: the Gate Array's inks, or the window's own for the pens
+/// clicked (cpclib's VS Code screen view: to read a sprite in other colours). A click on a pen
+/// shows the 27 inks to pick from.
+fn pens(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
+    use super::widgets::{ink_picker, Picked};
+    let palette = mb.ga().palette();
+    ui.horizontal(|ui| {
+        ui.label("Pens");
+        for pen in 0..16 {
+            let ink = state.overrides[pen].unwrap_or_else(|| palette[pen].number());
+            let tooltip = match state.overrides[pen] {
+                Some(ink) => format!("pen {pen}: ink {ink} (the window's; a click: another)"),
+                None => format!("pen {pen}: ink {ink} (the Gate Array's; a click: another)"),
+            };
+            let id = egui::Id::new(("screen-pen", pen));
+            match ink_picker(ui, id, ink, state.overrides[pen].is_some(), true, &tooltip) {
+                Some(Picked::Ink(ink)) => state.overrides[pen] = Some(ink),
+                Some(Picked::Reset) => state.overrides[pen] = None,
+                None => {}
+            }
+        }
+        if ui
+            .add_enabled(
+                state.overrides.iter().any(Option::is_some),
+                egui::Button::new("The Gate Array's"),
+            )
+            .clicked()
+        {
+            state.overrides = [None; 16];
+        }
+    });
 }

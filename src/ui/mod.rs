@@ -10,14 +10,18 @@
 //! the web page (`web/`, its input forwarded from the page): [`Gui::run`] takes egui's input and
 //! gives what to draw, [`Painter`] draws it with wgpu after the picture.
 
+mod breakpoints;
 mod chips;
 mod files;
 mod menu;
+mod paging;
 mod paint;
 mod palette;
 mod prompt;
+mod psg;
 mod screen;
 mod views;
+mod widgets;
 
 pub use paint::Painter;
 
@@ -63,6 +67,9 @@ pub struct Gui {
     /// context, not windows drawn inside the main one (the web page).
     native_views: bool,
     view_contexts: BTreeMap<ViewKey, egui::Context>,
+    /// The windows to bring to the front: the embedded ones at the next frame, the system's
+    /// by the host ([`Self::take_focus_requests`]).
+    focus: Vec<ViewKey>,
 }
 
 /// A debugger's window of the system: its key, title and context (see [`Gui::native_views`]).
@@ -140,6 +147,7 @@ impl Gui {
             status_height: 0.0,
             native_views: false,
             view_contexts: BTreeMap::new(),
+            focus: Vec::new(),
         }
     }
 
@@ -172,6 +180,21 @@ impl Gui {
                     .clone(),
             })
             .collect()
+    }
+
+    /// The windows of the system to bring to the front (the Window menu, a view opened again).
+    pub fn take_focus_requests(&mut self) -> Vec<u8> {
+        if !self.native_views {
+            return Vec::new();
+        }
+        let keys: Vec<u8> = self
+            .focus
+            .iter()
+            .filter(|key| views::is_debugger(key.view()))
+            .map(|key| key.0)
+            .collect();
+        self.focus.retain(|key| !views::is_debugger(key.view()));
+        keys
     }
 
     /// The window of the system of view `key` was closed.
@@ -225,7 +248,11 @@ impl Gui {
                 true
             }
             HostRequest::Open(view) => {
-                self.views.insert(ViewKey::of(*view));
+                // open, or brought to the front when it is already
+                let key = ViewKey::of(*view);
+                if !self.views.insert(key) {
+                    self.focus.push(key);
+                }
                 true
             }
             HostRequest::ShowText { title, text } => {
@@ -353,11 +380,22 @@ impl Gui {
         }
         let visible = target.settings().is_none_or(|s| s.menu_visible);
         self.menu_height = if visible {
-            egui::TopBottomPanel::top("menu")
-                .show(ctx, |ui| menu::bar(ui, target, bus))
-                .response
-                .rect
-                .height()
+            let windows: Vec<(u8, &'static str)> = self
+                .views
+                .iter()
+                .map(|key| (key.0, views::title(key.view())))
+                .collect();
+            let panel = egui::TopBottomPanel::top("menu")
+                .show(ctx, |ui| menu::bar(ui, target, bus, &windows));
+            match panel.inner {
+                Some(menu::WindowAction::Focus(key)) => self.focus.push(ViewKey(key)),
+                Some(menu::WindowAction::CloseAll) => {
+                    self.views.clear();
+                    self.view_contexts.clear();
+                }
+                None => {}
+            }
+            panel.response.rect.height()
         } else {
             0.0
         };
@@ -419,6 +457,17 @@ impl Gui {
         for key in closed {
             self.views.remove(&key);
         }
+        // the embedded windows asked for: in front (the system's ones: the host's)
+        let native = self.native_views;
+        self.focus.retain(|key| {
+            if native && views::is_debugger(key.view()) {
+                return true;
+            }
+            let layer =
+                egui::LayerId::new(egui::Order::Middle, egui::Id::new(views::title(key.view())));
+            ctx.move_to_top(layer);
+            false
+        });
         self.texts.retain_mut(|(title, text)| {
             let mut open = true;
             egui::Window::new(title.as_str())

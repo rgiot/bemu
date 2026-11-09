@@ -9,47 +9,27 @@ use crate::commands::{self, Arg, Command, CommandBus, CommandTarget, View};
 /// What the windows remember between frames.
 #[derive(Default)]
 pub struct ViewState {
+    manager: super::breakpoints::Manager,
     screen: super::screen::ScreenState,
     /// The bytes the memory window showed last (its first address and them), to mark the
     /// changed ones.
     memory_seen: Option<(u16, Vec<u8>)>,
     memory_address: String,
+    /// The Memory window's paging, and the byte last clicked.
+    memory_paging: super::paging::Paging,
+    memory_selected: Option<u16>,
+    /// The Disassembly window's paging, its remembered addresses, and whether it shows the
+    /// numbers rather than the labels.
+    disassembly_paging: super::paging::Paging,
+    bookmarks: Vec<u16>,
+    no_labels: bool,
+    /// The memory window follows the registers: a few rows around each pointer.
+    memory_follow: bool,
     memory_poke: String,
     disassembly_address: String,
     symbol_filter: String,
-    breakpoint_address: String,
-    advanced: AdvancedForm,
     counter_name: String,
 }
-
-/// The fields of a memory / I/O breakpoint (`POST /api/breakpoints`).
-struct AdvancedForm {
-    kind: usize,
-    access: usize,
-    run: usize,
-    address: String,
-    mask: String,
-    value: String,
-    name: String,
-}
-
-impl Default for AdvancedForm {
-    fn default() -> Self {
-        Self {
-            kind: 1,
-            access: 1,
-            run: 0,
-            address: String::new(),
-            mask: "&FFFF".into(),
-            value: String::new(),
-            name: String::new(),
-        }
-    }
-}
-
-const KINDS: [&str; 3] = ["exec", "mem", "io"];
-const ACCESSES: [&str; 3] = ["r", "w", "rw"];
-const RUNS: [&str; 2] = ["stop", "watch"];
 
 fn push(bus: &mut CommandBus, id: &str, arg: Option<Arg>) {
     let command = match arg {
@@ -272,6 +252,85 @@ fn address_link(
     });
 }
 
+/// The CRTC's state as Caprice Forever's CRTC window shows it: the beam's position, VBL and
+/// HBL, each counter against the register it counts to, the address it outputs (a button to see
+/// it in the memory window), the Gate Array's interrupt counter, the sync counters.
+fn crtc_status(
+    ui: &mut egui::Ui,
+    mb: &crate::motherboard::Motherboard,
+    beam: &Value,
+    state: &mut ViewState,
+    bus: &mut CommandBus,
+) {
+    let crtc = mb.crtc();
+    let r = crtc.registers();
+    let c = crtc.counters();
+    let ma = crtc.vma();
+    // the byte the CRTC addresses: its page, its offset, the raster line's 2K block
+    let address = ((ma >> 12) & 3) * 0x4000 + ((ma & 0x3ff) << 1) + u16::from(c.vlc & 7) * 0x800;
+    let pair = |count: u8, register: u8| format!("&{count:02X} / &{register:02X}");
+    egui::Grid::new("crtc-status")
+        .striped(true)
+        .spacing([10.0, 3.0])
+        .show(ui, |ui| {
+            ui.label("Beam");
+            match (beam["x"].as_u64(), beam["line"].as_u64()) {
+                (Some(x), Some(line)) => {
+                    ui.monospace(format!("x {x} (NOP {}), line {line}", x / 16))
+                }
+                _ => ui.weak("known while debugging (paused, stepping)"),
+            };
+            ui.end_row();
+            ui.label("Syncs");
+            ui.horizontal(|ui| {
+                let mut vbl = c.vsync;
+                let mut hbl = c.hsync;
+                ui.add_enabled(false, egui::Checkbox::new(&mut vbl, "VBL"));
+                ui.add_enabled(false, egui::Checkbox::new(&mut hbl, "HBL"));
+                if c.in_vertical_adjust {
+                    ui.weak("adjust");
+                }
+            });
+            ui.end_row();
+            ui.label("Char (C0 / R0)");
+            ui.monospace(pair(c.hcc, r[0]));
+            ui.end_row();
+            ui.label("Line (C4 / R4)");
+            ui.monospace(pair(c.vcc, r[4]));
+            ui.end_row();
+            ui.label("Raster (C9 / R9)");
+            ui.monospace(pair(c.vlc, r[9]));
+            ui.end_row();
+            ui.label("Memory (VMA)");
+            ui.horizontal(|ui| {
+                ui.monospace(format!("&{address:04X}"))
+                    .on_hover_text(format!("MA &{ma:04X}, RA {}", c.vlc & 7));
+                if ui
+                    .small_button("›MEM")
+                    .on_hover_text("Show it in the memory window")
+                    .clicked()
+                {
+                    state.memory_address = format!("&{address:04X}");
+                    push(bus, "view-memory", None);
+                }
+            });
+            ui.end_row();
+            let r52 = mb.ga().r52();
+            ui.label("IT (R52)");
+            ui.monospace(format!("{r52} (&{r52:02X})"));
+            ui.end_row();
+            ui.label("HSync (C3l)");
+            ui.monospace(format!("{} (&{:02X})", c.hsc, c.hsc));
+            ui.end_row();
+            ui.label("VSync (C3h)");
+            ui.monospace(format!("{} (&{:02X})", c.vsc, c.vsc));
+            ui.end_row();
+            ui.label("VTA");
+            ui.monospace(format!("{} (&{:02X})", c.vtac, c.vtac));
+            ui.end_row();
+        });
+}
+
 fn inspect(target: &dyn CommandTarget, what: &str) -> Value {
     target.debugger().map_or(Value::Null, |debugger| {
         debugger.inspect(what, target.motherboard())
@@ -384,30 +443,20 @@ pub fn contents(
                 mb.crtc().chip_name(),
                 mb.crtc().crtc_type() as u8
             ));
-            if let Some(regs) = crtc["regs"].as_array() {
-                egui::Grid::new("crtc-regs").striped(true).show(ui, |ui| {
-                    for (r, value) in regs.iter().enumerate() {
-                        ui.monospace(format!("R{r}"));
-                        ui.monospace(text_of(value));
-                        if r % 2 == 1 {
-                            ui.end_row();
-                        }
-                    }
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.strong("Registers");
+                    super::chips::crtc_registers(ui, mb);
                 });
-            }
+                ui.add_space(16.0);
+                ui.vertical(|ui| {
+                    ui.strong("Status");
+                    crtc_status(ui, mb, &inspect(target, "beam"), state, bus);
+                });
+            });
             ui.separator();
             super::chips::crtc(ui, mb);
-            let registers = mb.crtc().registers();
-            for warning in cpclib_dap::inspect::validate_crtc(&registers) {
-                let text = format!("{}: {}", warning.registers.join(", "), warning.message);
-                ui.colored_label(ui.visuals().warn_fg_color, text);
-            }
-            ui.separator();
-            let mut counters = crtc.clone();
-            if let Some(fields) = counters.as_object_mut() {
-                fields.remove("regs");
-            }
-            json_grid(ui, "crtc", &counters);
+            ui.collapsing("Raw (as /api/crtc)", |ui| json_grid(ui, "crtc", &crtc));
         }
         View::GateArray => {
             super::chips::gate_array(ui, mb);
@@ -416,7 +465,7 @@ pub fn contents(
             });
         }
         View::Psg => {
-            super::chips::psg(ui, mb);
+            super::psg::show(ui, mb);
             ui.collapsing("Raw (as /api/psg)", |ui| {
                 json_grid(ui, "psg", &inspect(target, "psg"))
             });
@@ -443,36 +492,44 @@ pub fn contents(
             json_grid(ui, "state", &inspect(target, "state"));
         }
         View::Memory => {
+            // ACE's form: the paging looked through, where to go
+            super::paging::show(ui, "memory", mb, &mut state.memory_paging);
+            ui.separator();
             ui.horizontal(|ui| {
-                ui.label("Address");
+                ui.label("Go to");
                 ui.add(
                     egui::TextEdit::singleline(&mut state.memory_address)
                         .hint_text("&C000 or a symbol")
                         .desired_width(110.0),
                 );
-                for (name, value) in [
-                    ("PC", mb.pc()),
-                    ("SP", mb.sp()),
-                    ("HL", mb.hl()),
-                    ("IX", mb.ix()),
-                ] {
-                    if ui
-                        .small_button(name)
-                        .on_hover_text(format!("&{value:04X}"))
-                        .clicked()
-                    {
-                        state.memory_address = format!("&{value:04X}");
-                    }
+                ui.checkbox(&mut state.memory_follow, "Follow the registers")
+                    .on_hover_text("PC, SP, HL, DE, BC, IX and IY: the bytes around each");
+            });
+            ui.horizontal(|ui| {
+                ui.label("Pointed by");
+                if let Some(address) = super::widgets::goto_buttons(ui, mb) {
+                    state.memory_address = format!("&{address:04X}");
+                    state.memory_follow = false;
                 }
             });
             let symbols = target.debugger().map(|d| d.symbols());
+            let paging = state.memory_paging.clone();
+            if state.memory_follow {
+                super::chips::follow_registers(
+                    ui,
+                    mb,
+                    |address| symbols.and_then(|s| s.describe(address)),
+                    |address| paging.read(mb, address),
+                );
+                return;
+            }
             let start = number(&state.memory_address)
                 .or_else(|| symbols.and_then(|s| s.resolve(&state.memory_address)))
                 .unwrap_or(0)
                 & 0xfff0;
             const ROWS: u16 = 32;
             let bytes: Vec<u8> = (0..ROWS * 16)
-                .map(|i| mb.read_byte(start.wrapping_add(i)))
+                .map(|i| paging.read(mb, start.wrapping_add(i)))
                 .collect();
             // the bytes that changed since the last frame shown, highlighted
             let seen = state
@@ -515,6 +572,7 @@ pub fn contents(
                                 .clicked()
                             {
                                 state.memory_poke = format!("&{address:04X} ");
+                                state.memory_selected = Some(address);
                             }
                             ascii.push(if (0x20..0x7f).contains(&byte) {
                                 byte as char
@@ -527,6 +585,16 @@ pub fn contents(
                     }
                 });
             state.memory_seen = Some((start, bytes));
+            // the byte clicked: its address, and the disassembly from it
+            if let Some(address) = state.memory_selected {
+                ui.horizontal(|ui| {
+                    ui.label(format!("Address &{address:04X} ({address})"));
+                    if ui.button("» Disassemble…").clicked() {
+                        state.disassembly_address = format!("&{address:04X}");
+                        push(bus, "view-disassembly", None);
+                    }
+                });
+            }
             ui.horizontal(|ui| {
                 ui.label("Poke");
                 ui.add(
@@ -545,34 +613,86 @@ pub fn contents(
         }
         View::Disassembly => {
             controls(ui, target, bus);
+            // ACE's form: the paging looked through, where to start, the addresses remembered
+            super::paging::show(ui, "disassembly", mb, &mut state.disassembly_paging);
+            ui.separator();
+            let pc = mb.pc();
             ui.horizontal(|ui| {
                 ui.label("From");
                 ui.add(
                     egui::TextEdit::singleline(&mut state.disassembly_address)
                         .hint_text("PC")
-                        .desired_width(80.0),
+                        .desired_width(90.0),
                 );
-                if ui
-                    .add_enabled(
-                        !state.disassembly_address.is_empty(),
-                        egui::Button::new("Follow the PC"),
-                    )
-                    .clicked()
-                {
-                    state.disassembly_address.clear();
+                ui.label("Set to");
+                for (name, value) in [
+                    ("PC", pc),
+                    ("HL", mb.hl()),
+                    ("IX", mb.ix()),
+                    ("IY", mb.iy()),
+                ] {
+                    if ui
+                        .small_button(name)
+                        .on_hover_text(format!("&{value:04X}"))
+                        .clicked()
+                    {
+                        state.disassembly_address = format!("&{value:04X}");
+                    }
                 }
+                let mut follow = state.disassembly_address.is_empty();
+                if ui.checkbox(&mut follow, "Follow PC").changed() {
+                    state.disassembly_address = if follow {
+                        String::new()
+                    } else {
+                        format!("&{pc:04X}")
+                    };
+                }
+                ui.checkbox(&mut state.no_labels, "Numbers, no labels");
             });
-            let pc = mb.pc();
-            let symbols = target.debugger().map(|d| d.symbols());
+            let symbols = target
+                .debugger()
+                .map(|d| d.symbols())
+                .filter(|_| !state.no_labels);
             let mut at = match state.disassembly_address.trim() {
                 "" => pc,
                 text => number(text)
                     .or_else(|| symbols.and_then(|s| s.resolve(text)))
                     .unwrap_or(pc),
             };
-            // cpclib-dap's disassembly: the text and the cost in NOPs
+            // the addresses remembered: a click goes there, + remembers this one
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Remembered");
+                let mut forget = None;
+                for (index, address) in state.bookmarks.iter().enumerate() {
+                    let response = ui
+                        .small_button(format!("&{address:04X}"))
+                        .on_hover_text("Go there (right click: forget it)");
+                    if response.clicked() {
+                        state.disassembly_address = format!("&{address:04X}");
+                    }
+                    if response.secondary_clicked() {
+                        forget = Some(index);
+                    }
+                }
+                if let Some(index) = forget {
+                    state.bookmarks.remove(index);
+                }
+                if ui
+                    .small_button("+")
+                    .on_hover_text(format!("Remember &{at:04X}"))
+                    .clicked()
+                    && !state.bookmarks.contains(&at)
+                {
+                    state.bookmarks.push(at);
+                    if state.bookmarks.len() > 8 {
+                        state.bookmarks.remove(0);
+                    }
+                }
+            });
+            // cpclib-dap's disassembly: the text and the cost in NOPs, through the paging chosen
+            let paging = state.disassembly_paging.clone();
             let bytes: Vec<u8> = (0..160u16)
-                .map(|i| mb.read_byte(at.wrapping_add(i)))
+                .map(|i| paging.read(mb, at.wrapping_add(i)))
                 .collect();
             let instructions = cpclib_dap::disassemble::decode(at, &bytes, 32);
             // the jumps and calls, drawn in a gutter left of the instructions
@@ -666,7 +786,8 @@ pub fn contents(
                         &instruction.bytes,
                         name_at,
                     );
-                    if let Some((_, taken)) = super::chips::branch(at, &instruction.bytes, f) {
+                    let branch = super::chips::branch(at, &instruction.bytes, f);
+                    if let Some((_, taken)) = branch {
                         if let (true, Some(taken)) = (at == pc, taken) {
                             text.push_str(if taken { "  (taken)" } else { "  (not taken)" });
                         }
@@ -676,6 +797,21 @@ pub fn contents(
                         Some(nops) => format!("{nops} NOP{}", if nops == 1 { "" } else { "s" }),
                         None => String::new(),
                     });
+                    // ACE's "» &1F25": the disassembly from where it goes
+                    match branch.and_then(|(target, _)| target) {
+                        Some(destination) => {
+                            if ui
+                                .small_button(format!("» &{destination:04X}"))
+                                .on_hover_text("Disassemble from there")
+                                .clicked()
+                            {
+                                state.disassembly_address = format!("&{destination:04X}");
+                            }
+                        }
+                        None => {
+                            ui.label("");
+                        }
+                    }
                     ui.end_row();
                 }
             });
@@ -683,6 +819,18 @@ pub fn contents(
                 let pc_row = instructions.iter().position(|i| i.address == pc);
                 super::chips::paint_arcs(ui.painter(), gutter, &rows_y, &arcs, pc_row);
             }
+            let first = instructions.first().map_or(at, |i| i.address);
+            ui.horizontal(|ui| {
+                ui.label(format!("From &{first:04X} ({first})"));
+                if ui
+                    .button("» Edit…")
+                    .on_hover_text("The memory window there")
+                    .clicked()
+                {
+                    state.memory_address = format!("&{first:04X}");
+                    push(bus, "view-memory", None);
+                }
+            });
         }
         View::History => {
             let Some(debugger) = target.debugger() else {
@@ -738,84 +886,10 @@ pub fn contents(
         }
         View::Breakpoints => {
             controls(ui, target, bus);
-            ui.horizontal(|ui| {
-                ui.label("Execution");
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.breakpoint_address)
-                        .hint_text("address or symbol")
-                        .desired_width(140.0),
-                );
-                if ui.button("Add").clicked() {
-                    push(
-                        bus,
-                        "breakpoint-add",
-                        Some(Arg::Text(state.breakpoint_address.clone())),
-                    );
-                }
-            });
-            ui.collapsing("Memory / I/O breakpoint", |ui| {
-                let form = &mut state.advanced;
-                egui::Grid::new("advanced").show(ui, |ui| {
-                    ui.label("Kind");
-                    egui::ComboBox::from_id_salt("kind").show_index(
-                        ui,
-                        &mut form.kind,
-                        KINDS.len(),
-                        |i| KINDS[i],
-                    );
-                    ui.end_row();
-                    ui.label("Access");
-                    egui::ComboBox::from_id_salt("access").show_index(
-                        ui,
-                        &mut form.access,
-                        ACCESSES.len(),
-                        |i| ACCESSES[i],
-                    );
-                    ui.end_row();
-                    ui.label("On hit");
-                    egui::ComboBox::from_id_salt("run").show_index(
-                        ui,
-                        &mut form.run,
-                        RUNS.len(),
-                        |i| RUNS[i],
-                    );
-                    ui.end_row();
-                    for (label, field) in [
-                        ("Address", &mut form.address),
-                        ("Mask", &mut form.mask),
-                        ("Value", &mut form.value),
-                        ("Name", &mut form.name),
-                    ] {
-                        ui.label(label);
-                        ui.text_edit_singleline(field);
-                        ui.end_row();
-                    }
-                });
-                if ui.button("Add").clicked() {
-                    let mut body = serde_json::json!({
-                        "kind": KINDS[form.kind],
-                        "access": ACCESSES[form.access],
-                        "run": RUNS[form.run],
-                    });
-                    if let Some(address) = number(&form.address) {
-                        body["addr"] = address.into();
-                    }
-                    if let Some(mask) = number(&form.mask) {
-                        body["mask"] = mask.into();
-                    }
-                    if let Some(value) = number(&form.value) {
-                        body["value"] = value.into();
-                    }
-                    if !form.name.is_empty() {
-                        body["name"] = form.name.clone().into();
-                    }
-                    push(
-                        bus,
-                        "breakpoint-add-advanced",
-                        Some(Arg::Text(body.to_string())),
-                    );
-                }
-            });
+            // the manager (cpclib's VS Code one): its tabs, presets and form
+            let symbols = target.debugger().map(|d| d.symbols());
+            let resolve = |name: &str| symbols.and_then(|s| s.resolve(name));
+            super::breakpoints::show(ui, &mut state.manager, bus, &resolve);
             ui.separator();
             if let Some(debugger) = target.debugger() {
                 let symbols = debugger.symbols();
@@ -848,11 +922,8 @@ pub fn contents(
                     egui::Grid::new("advanced-bp").striped(true).show(ui, |ui| {
                         for (index, breakpoint) in list.iter().enumerate() {
                             ui.monospace(format!("#{index}"));
-                            let mut text = breakpoint.clone();
-                            if let Some(fields) = text.as_object_mut() {
-                                fields.remove("index");
-                            }
-                            ui.monospace(text.to_string());
+                            ui.monospace(super::breakpoints::summary(breakpoint))
+                                .on_hover_text(breakpoint.to_string());
                             if ui.small_button("Remove").clicked() {
                                 push(
                                     bus,

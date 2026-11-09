@@ -118,6 +118,32 @@ struct Keys {
     enter: bool,
     escape: bool,
     backspace: bool,
+    /// Tab: complete the command chosen.
+    tab: bool,
+}
+
+/// The query split: the command's id typed whole, then its argument (`debug-set-pc &4000`,
+/// `machine-crtc 2`); `None` when the query is not an id and an argument.
+fn id_and_argument(query: &str) -> Option<(&str, &str)> {
+    let (id, argument) = query.trim_start().split_once(char::is_whitespace)?;
+    let argument = argument.trim();
+    let known = crate::commands::spec(id).is_some()
+        || crate::commands::palette::entries()
+            .iter()
+            .any(|entry| entry.id() == id);
+    (known && !argument.is_empty()).then_some((id, argument))
+}
+
+/// The value of `choice` an argument names: its id's end (`2` for `machine-crtc-2`), else the
+/// best match of its values.
+fn choice_value(choice: &Choice, argument: &str) -> Option<&'static CommandSpec> {
+    let wanted = format!("{}-{}", choice.id, argument.to_lowercase());
+    choice
+        .items
+        .iter()
+        .copied()
+        .find(|item| item.id == wanted)
+        .or_else(|| search_values(choice, argument).into_iter().next())
 }
 
 impl Palette {
@@ -185,6 +211,7 @@ impl Palette {
             enter: i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
             escape: i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
             backspace: empty && i.key_pressed(egui::Key::Backspace),
+            tab: i.consume_key(egui::Modifiers::NONE, egui::Key::Tab),
         });
         if keys.escape {
             return false;
@@ -274,9 +301,24 @@ impl Palette {
     ) -> bool {
         match &self.step {
             Step::Search => {
-                self.field(ui, "Type a command's name, id or what it does");
+                self.field(
+                    ui,
+                    "A command's name, id or what it does (Tab completes; id then argument runs it)",
+                );
+                // `id argument`: the command alone listed, run with its argument
+                let typed = id_and_argument(&self.query);
+                let (query, argument) = match typed {
+                    Some((id, argument)) => (id.to_owned(), Some(argument.to_owned())),
+                    None => (self.query.clone(), None),
+                };
                 // the query as typed this frame (Enter may come with the last letters)
-                let found = search(&self.query, recent);
+                let mut found = search(&query, recent);
+                if argument.is_some() {
+                    found.retain(|entry| entry.id() == query);
+                }
+                if let Some(argument) = &argument {
+                    ui.weak(format!("argument: {argument}"));
+                }
                 self.select(keys, found.len().min(SHOWN));
                 ui.separator();
                 if found.is_empty() {
@@ -304,9 +346,18 @@ impl Palette {
                                         .zip(&states)
                                         .find(|(_, s)| s.checked)
                                         .map(|(item, _)| item.label());
-                                    let name = match current {
-                                        Some(current) => format!("{}…   = {current}", choice.label),
-                                        None => format!("{}…", choice.label),
+                                    // with an argument: the value Enter picks, else the current one
+                                    let picked = argument
+                                        .as_deref()
+                                        .and_then(|argument| choice_value(choice, argument));
+                                    let name = match (picked, current) {
+                                        (Some(picked), _) => {
+                                            format!("{}…   → {}", choice.label, picked.label())
+                                        }
+                                        (None, Some(current)) => {
+                                            format!("{}…   = {current}", choice.label)
+                                        }
+                                        (None, None) => format!("{}…", choice.label),
                                     };
                                     (
                                         CommandState::enabled(states.iter().any(|s| s.enabled)),
@@ -330,15 +381,51 @@ impl Palette {
                             }
                         }
                     });
-                match chosen {
-                    Some(Entry::Choice(choice)) => self.enter_step(Step::Value(choice)),
-                    Some(Entry::Command(spec)) => {
+                // Tab: the query becomes the command chosen's id, ready for its argument
+                if keys.tab {
+                    if let Some(entry) = found.get(self.selected) {
+                        let wants_argument = match entry {
+                            Entry::Choice(_) => true,
+                            Entry::Command(spec) => spec.kind == Kind::Input,
+                        };
+                        self.query = if wants_argument {
+                            format!("{} ", entry.id())
+                        } else {
+                            entry.id().to_owned()
+                        };
+                        self.selected = 0;
+                        self.focus = true;
+                    }
+                }
+                match (chosen, argument) {
+                    // the value named after the family's id: chosen, no list
+                    (Some(Entry::Choice(choice)), Some(argument)) => {
+                        match choice_value(choice, &argument) {
+                            Some(value) => {
+                                bus.push_id(value.id);
+                                return false;
+                            }
+                            None => self.enter_step(Step::Value(choice)),
+                        }
+                    }
+                    (Some(Entry::Choice(choice)), None) => self.enter_step(Step::Value(choice)),
+                    // the argument typed: run with it, no question
+                    (Some(Entry::Command(spec)), Some(argument)) => {
+                        // (a number, an address, a path: the command reads it from the text)
+                        let arg = Arg::Text(argument);
+                        match Command::with_arg(spec.id, arg) {
+                            Ok(command) => bus.push(command),
+                            Err(_) => bus.push_id(spec.id),
+                        }
+                        self.step = Step::Waiting(spec.id);
+                    }
+                    (Some(Entry::Command(spec)), None) => {
                         let id = run_id(spec, state(spec.id, target));
                         bus.push_id(id);
                         // it may ask an argument: asked here, the next frame
                         self.step = Step::Waiting(spec.id);
                     }
-                    None => {}
+                    (None, _) => {}
                 }
                 true
             }
@@ -438,5 +525,36 @@ impl Palette {
             }
             Step::Waiting(_) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod argument_test {
+    use super::*;
+
+    #[test]
+    fn an_id_then_an_argument_runs_with_it() {
+        assert_eq!(
+            id_and_argument("debug-set-pc &4000"),
+            Some(("debug-set-pc", "&4000"))
+        );
+        assert_eq!(
+            id_and_argument("machine-crtc  2 "),
+            Some(("machine-crtc", "2"))
+        );
+        // words that are not an id: a search
+        assert_eq!(id_and_argument("set pc"), None);
+        assert_eq!(id_and_argument("debug-set-pc"), None);
+        let crtc = crate::commands::palette::entries()
+            .into_iter()
+            .find_map(|entry| match entry {
+                Entry::Choice(choice) if choice.id == "machine-crtc" => Some(choice),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            choice_value(crtc, "2").map(|s| s.id),
+            Some("machine-crtc-2")
+        );
     }
 }
