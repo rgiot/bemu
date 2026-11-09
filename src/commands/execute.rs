@@ -1137,6 +1137,8 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             }
             if let Some(debugger) = target.debugger_mut() {
                 debugger.reset_done(hard);
+                // a reset starts the machine again, even stopped in the debugger
+                debugger.set_paused(false);
             }
             done()
         }

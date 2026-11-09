@@ -233,6 +233,18 @@ impl Ppi {
         self.clears_ports_on_mode_set = clears;
     }
 
+    /// The CPC's RESET line on the 8255: every port an input in mode 0, the latches cleared (the
+    /// tape motor, the PSG's control and the keyboard row all released). The hardwired port B
+    /// bits (the brand, 50/60 Hz) and the chip's variant stay.
+    pub fn reset_line(&mut self) {
+        let (brand, refresh, clears) = (self.brand, self.refresh, self.clears_ports_on_mode_set);
+        *self = Self::default();
+        self.brand = brand;
+        self.refresh = refresh;
+        self.clears_ports_on_mode_set = clears;
+        self.drive_hardwired_port_b_bits();
+    }
+
     /// Set which manufacturer's name the firmware reads back from port B
     /// bits 1-3 (and therefore which one appears in the boot banner).
     pub fn brand(&self) -> Brand {

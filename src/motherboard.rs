@@ -935,6 +935,11 @@ impl Motherboard {
             asic.reset();
         }
         self.pal.reset();
+        // the RESET line also reaches the PPI, the PSG and the FDC (a program may have left the
+        // ports, the sound or the disc motor in any state)
+        self.ppi.reset_line();
+        self.psg.reset();
+        self.fdc.reset_line();
         if let Some(expansion) = &mut self.large_ram_expansion {
             expansion.reset();
         }

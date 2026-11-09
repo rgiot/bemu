@@ -513,6 +513,19 @@ impl Fdc {
         self.go_to_command_phase();
     }
 
+    /// The CPC's RESET line: the controller starts again (no command, motor off, no interrupt
+    /// pending), but the heads stay where they are: only a recalibrate moves them.
+    pub fn reset_line(&mut self) {
+        let heads: Vec<(u8, usize)> = self.drives.iter().map(|d| (d.track, d.cursor)).collect();
+        self.reset();
+        // ready for a command at once, as at power on (no gap after a previous phase)
+        self.rqm_at = 0;
+        for (drive, (track, cursor)) in self.drives.iter_mut().zip(heads) {
+            drive.track = track;
+            drive.cursor = cursor;
+        }
+    }
+
     /// Start recording every command (and its result) from now on.
     pub fn start_command_log(&mut self) {
         self.command_log = Some(Vec::new());

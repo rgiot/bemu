@@ -451,3 +451,49 @@ fn the_history_is_recorded_on_demand() {
     host.run("history-record-toggle").unwrap();
     assert!(!host.debugger.is_active());
 }
+
+/// Run with the debugger's checks, as the window does when it is active.
+fn run_t_states(host: &mut Host, t_states: usize) {
+    let end = host.motherboard.t_state_counter().value() + t_states;
+    while host.motherboard.t_state_counter().value() < end {
+        if host.debugger.paused() {
+            return;
+        }
+        host.motherboard.execute_next_opcode_no_video();
+        host.debugger.after_instruction(&mut host.motherboard);
+    }
+}
+
+#[test]
+fn a_reset_starts_basic_again_even_paused_after_a_program() {
+    let mut host = Host::new();
+    // the program: copy itself to P0B2, page &C2 (the main 64K gone) and loop, interrupts off
+    let code = [
+        0xf3, 0x01, 0xc6, 0x7f, 0xed, 0x49, 0x21, 0x00, 0x80, 0x11, 0x00, 0x40, 0x01, 0x20, 0x00,
+        0xed, 0xb0, 0x01, 0xc2, 0x7f, 0xed, 0x49, 0xc3, 0x16, 0x80,
+    ];
+    host.motherboard.write_buffer(0x8000, &code);
+    host.motherboard.tick_until_next_instruction();
+    host.motherboard.set_pc(0x8000);
+    run_t_states(&mut host, 100_000);
+    assert_eq!(host.motherboard.mmr() & 0x3f, 2);
+    // stopped in the debugger, then reset
+    host.run("debug-pause").unwrap();
+    for id in ["machine-reset-soft", "machine-reset-hard"] {
+        host.run("debug-pause").unwrap();
+        host.run(id).unwrap();
+        assert!(!host.debugger.paused(), "{id}: still paused");
+        assert_eq!(host.motherboard.mmr() & 0x3f, 0, "{id}: the RAM paged back");
+        // BASIC up again: it takes a typed POKE
+        run_t_states(&mut host, 4_000_000);
+        host.run_with("autotype-text", Arg::Text(r"POKE &9000,42\n".into()))
+            .unwrap();
+        run_t_states(&mut host, 8_000_000);
+        assert_eq!(
+            host.motherboard.read_byte(0x9000),
+            42,
+            "{id}: BASIC does not run"
+        );
+        host.motherboard.write_buffer(0x9000, &[0]);
+    }
+}
