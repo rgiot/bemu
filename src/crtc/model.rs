@@ -157,6 +157,16 @@ pub trait CrtcChip: Debug + Send {
         true
     }
 
+    /// Whether a register access present on the character clock edge (an OUTI's I/O, from the
+    /// start of its microsecond) is taken before the character is counted: the write then still
+    /// counts for the line the edge ends (an R0 written on the edge takes C0's wrap back, CRTC 1:
+    /// ACCC 13.3 note 3), or after it, so that it belongs to the character that begins (CRTC 0,
+    /// 2: Shaker B6 A, "OUTI ON R0.JIT 5TH uSec ON C0=0" on AMSpiriT Lite, CPCSyntaxError and a real
+    /// CPC).
+    fn takes_edge_write_before_character(&self) -> bool {
+        true
+    }
+
     /// A write the chip applies later (the ASICs): true when it is queued.
     fn queue_write(&mut self, _r: u8, _v: u8) -> bool {
         false
