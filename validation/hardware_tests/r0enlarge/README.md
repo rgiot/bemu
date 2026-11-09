@@ -8,17 +8,22 @@ the next VSYNC); one too late changes nothing. Row 1 uses `OUT (C),C` (effect on
 `OUTI` (5th us); `E` = enlarged, one character per us of delay. The time of a trial does not depend on
 the delay and nothing is printed between trials, so the VSYNC polling loops keep their phase.
 
-Results on a CRTC 0, `E` window (delay in us from the first character):
+Results on a CRTC 0 (the sweep starts 12 us before the expected boundary: column n = a delay of n us;
+the `E.E.E` runs before the solid block come from the restore write, the block is the useful part):
 
-| | `OUT (C),C` | `OUTI` |
+| | `OUT (C),C`: solid `E` block | `OUTI`: solid `E` block |
 |---|---|---|
-| AMSpiriT Lite 1.16 | 1..7 | 0..5 |
-| amsrust 2026-11-09 | 1..7 | 0..3 |
+| AMSpiriT Lite 1.16 | columns 13..19 | columns 5..17 |
+| amsrust 2026-11-09 | columns 14..17 | columns 6..16 |
 
-(each row also has one or two stray `E` around 38-41: not explained, the same in both emulators.)
-So `OUT (C),r` agrees to the microsecond; on amsrust an `OUTI` writing R0 lands 2 us later than on
-AMSpiriT (4 us after the `OUT (C),r` of the same slot instead of 2). ACCC 13.6.1 (CRTC 0, 2): an R0
-taking effect on C0=R0 is still in time, one character later too late.
+So on amsrust the last write that still enlarges the line is 2 us earlier than on AMSpiriT for
+`OUT (C),C` (17 against 19) and 1 us earlier for `OUTI` (16 against 17); the first useful write is 1 us
+later in both (the restore write decides that one). `probe_r0_effect` (examples) shows where amsrust
+takes the register inside the instruction: `OUT (C),C` 2 us 9 ticks after its start (the 3rd us),
+`OUTI` 4 us 5 ticks (the 5th). A first sweep that started too late to show the beginning of the `OUTI`
+window gave a wrong impression that `OUT (C),r` agreed. ACCC 13.6.1 (CRTC 0, 2): an R0 taking effect
+on C0=R0 is still in time, one character later too late. The line states of Overflow's and Madness'
+R0 writes (see validation/demos) are not explained by this: they write with `OUT (C),r` and AMSpiriT
+ends there the lines amsrust enlarges (Overflow), or enlarges those a threshold had to protect (Madness).
 
-To photograph on a real CPC: compare the two rows with the table (the windows are 7 and 6 characters
-wide on AMSpiriT).
+To photograph on a real CPC: the solid blocks of the two rows, against the table.

@@ -16,7 +16,7 @@
 
 TXT_OUTPUT equ #bb5a
 KM_WAIT_CHAR equ #bb06
-BASE equ 1900               ; us from the VSYNC detection to the first delay's end for d=0
+BASE equ 1888               ; us from the VSYNC detection to the first delay's end for d=0
 TOTAL equ 80                ; the second delay is TOTAL-d us
 
         org #4000
