@@ -4,8 +4,9 @@
 
 use crate::motherboard::Motherboard;
 
-/// The RAM configurations (the MMR's bits 0-2): the bank of each 16K block, 4-7 being the
-/// extra 64K page chosen.
+/// The RAM configurations (the value's bits 0-2): the bank of each 16K block, 4-7 being the
+/// banks of the extra 64K page chosen (bits 3-5). The value written to &7Fxx is
+/// &C0 + 8 × page + configuration: &C0-&C7 for page 0, &C8-&CF for page 1... &F8-&FF for page 7.
 const CONFIGS: [[u8; 4]; 8] = [
     [0, 1, 2, 3],
     [0, 1, 2, 7],
@@ -22,6 +23,9 @@ const CONFIGS: [[u8; 4]; 8] = [
 pub struct Paging {
     /// Follow the emulator's paging (the CPU's view).
     pub follow: bool,
+    /// Show what a write reaches (the RAM under the ROMs), not what a read gives (WinAPE's and
+    /// MacCPC's Read / Write).
+    pub writes: bool,
     ram_config: u8,
     page: u8,
     lower_rom: bool,
@@ -33,6 +37,7 @@ impl Default for Paging {
     fn default() -> Self {
         Self {
             follow: true,
+            writes: false,
             ram_config: 0,
             page: 0,
             lower_rom: true,
@@ -43,7 +48,7 @@ impl Default for Paging {
 }
 
 /// Where a block of 16K reads from.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Source {
     LowerRom,
     UpperRom(u8),
@@ -87,8 +92,44 @@ impl Paging {
         }
     }
 
-    /// The byte at `address` through this paging.
+    /// The RAM bank a write to `block` reaches.
+    fn write_bank(&self, mb: &Motherboard, block: u16) -> u16 {
+        if self.follow {
+            match mb.physical_address_for_write(block * 0x4000) {
+                crate::memory::PhysicalAddress::Ram { bank, .. } => bank,
+                _ => 0,
+            }
+        } else {
+            self.physical(CONFIGS[usize::from(self.ram_config)][usize::from(block)])
+        }
+    }
+
+    /// The PAL's value for this configuration and page (`&C0`-`&FF`), `None` beyond the 8 pages
+    /// the MMR names.
+    fn mmr(&self) -> Option<u8> {
+        (self.page < 8).then(|| 0xc0 | (self.page << 3) | self.ram_config)
+    }
+
+    /// "&C3 · 0-3-2-7": the configuration and the banks it puts in the 4 blocks.
+    fn ram_text(&self) -> String {
+        let banks = CONFIGS[usize::from(self.ram_config)]
+            .iter()
+            .map(|&bank| self.physical(bank).to_string())
+            .collect::<Vec<_>>()
+            .join("-");
+        match self.mmr() {
+            Some(mmr) => format!("&{mmr:02X} · {banks}"),
+            None => format!("page {} C{} · {banks}", self.page, self.ram_config),
+        }
+    }
+
+    /// The byte at `address` through this paging: what a read gives, or what a write reaches.
     pub fn read(&self, mb: &Motherboard, address: u16) -> u8 {
+        if self.writes {
+            return mb
+                .read_bank_byte(self.write_bank(mb, address >> 14), address & 0x3fff)
+                .unwrap_or(0xff);
+        }
         if self.follow {
             return mb.read_byte(address);
         }
@@ -113,6 +154,11 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
+                ui.selectable_value(&mut paging.writes, false, "Read")
+                    .on_hover_text("What the CPU reads: the ROMs where they are paged");
+                ui.selectable_value(&mut paging.writes, true, "Write")
+                    .on_hover_text("What a write reaches: the RAM, under the ROMs too");
+                ui.separator();
                 ui.checkbox(&mut paging.follow, "Follow the emulator's paging");
                 if ui
                     .button("Resynchronise")
@@ -127,34 +173,30 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
                     .spacing([6.0, 3.0])
                     .show(ui, |ui| {
                         ui.label("RAM");
-                        ui.horizontal(|ui| {
-                            egui::ComboBox::from_id_salt((id, "config"))
-                                .selected_text(format!("C{}", paging.ram_config))
-                                .show_ui(ui, |ui| {
-                                    for (config, banks) in CONFIGS.iter().enumerate() {
-                                        ui.selectable_value(
-                                            &mut paging.ram_config,
-                                            config as u8,
-                                            format!("C{config}: banks {banks:?}"),
-                                        );
-                                    }
-                                });
-                            let pages = (mb.physical_bank_count().saturating_sub(4) / 4).max(1);
-                            egui::ComboBox::from_id_salt((id, "page"))
-                                .selected_text(format!("page {}", paging.page))
-                                .show_ui(ui, |ui| {
-                                    for page in 0..pages.min(64) as u8 {
-                                        ui.selectable_value(
-                                            &mut paging.page,
+                        // one field, as WinAPE's and Caprice Forever's: the PAL's value and its banks
+                        let pages =
+                            (mb.physical_bank_count().saturating_sub(4) / 4).clamp(1, 64) as u8;
+                        egui::ComboBox::from_id_salt((id, "ram"))
+                            .selected_text(paging.ram_text())
+                            .height(360.0)
+                            .show_ui(ui, |ui| {
+                                for page in 0..pages {
+                                    for config in 0..8 {
+                                        let choice = Paging {
                                             page,
-                                            format!(
-                                                "page {page} (+{}K)",
-                                                64 + 64 * u32::from(page)
-                                            ),
-                                        );
+                                            ram_config: config,
+                                            ..paging.clone()
+                                        };
+                                        let chosen =
+                                            paging.page == page && paging.ram_config == config;
+                                        if ui.selectable_label(chosen, choice.ram_text()).clicked()
+                                        {
+                                            paging.page = page;
+                                            paging.ram_config = config;
+                                        }
                                     }
-                                });
-                        });
+                                }
+                            });
                         ui.end_row();
                         ui.label("Lower ROM");
                         ui.checkbox(&mut paging.lower_rom, "in &0000-&3FFF");
@@ -208,27 +250,43 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
                             };
                             cell(ui, text, ROM, CELL);
                             // under a ROM, writes go to RAM
-                            let bank = if paging.follow {
-                                match mb.physical_address_for_write(block * 0x4000) {
-                                    crate::memory::PhysicalAddress::Ram { bank, .. } => bank,
-                                    _ => 0,
-                                }
-                            } else {
-                                paging.physical(
-                                    CONFIGS[usize::from(paging.ram_config)][usize::from(block)],
-                                )
-                            };
+                            let bank = paging.write_bank(mb, block);
                             cell(ui, format!("RAM{bank}"), RAM, CELL);
                         }
                     }
                 });
             }
+            // the RAM's value as the Gate Array is given it (&7Fxx: &C0 + 8 × page + config)
+            // and its banks, for the paging shown
+            let shown = if paging.follow {
+                let mut shown = paging.clone();
+                shown.synchronise(mb);
+                shown
+            } else {
+                paging.clone()
+            };
+            ui.label(format!("RAM {}", shown.ram_text()))
+                .on_hover_text("The value written to &7Fxx (&C0 + 8 × page + configuration) and the 4 banks it pages");
             ui.weak(format!(
-                "MMR &{:02X} · RMR &{:02X} · upper ROM &{:02X}",
-                mb.mmr(),
+                "RMR &{:02X} · upper ROM &{:02X}",
                 mb.ga().rmr(),
                 mb.upper_rom_number()
             ));
+            // the CPC+'s secondary mapping: the lower ROM's cartridge page and where it is, or
+            // the ASIC's registers at &4000
+            if let Some(plus) = mb.ga().plus() {
+                let rmr2 = plus.rmr2;
+                let place = match rmr2 >> 3 & 3 {
+                    0 => "lower ROM at &0000".to_owned(),
+                    1 => "lower ROM at &4000".to_owned(),
+                    2 => "lower ROM at &8000".to_owned(),
+                    _ => "ASIC registers at &4000".to_owned(),
+                };
+                ui.weak(format!(
+                    "RMR2 &{rmr2:02X} · cartridge page {} · {place}",
+                    rmr2 & 7
+                ));
+            }
         });
     });
 }
@@ -236,6 +294,142 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::z80::HasValue;
+
+    /// The map the window draws: (read, write bank) per block.
+    fn map(paging: &Paging, mb: &Motherboard) -> Vec<(Source, u16)> {
+        (0..4u16)
+            .map(|block| {
+                let write = if paging.follow {
+                    match mb.physical_address_for_write(block * 0x4000) {
+                        crate::memory::PhysicalAddress::Ram { bank, .. } => bank,
+                        _ => unreachable!(),
+                    }
+                } else {
+                    paging.physical(CONFIGS[usize::from(paging.ram_config)][usize::from(block)])
+                };
+                (paging.source(mb, block), write)
+            })
+            .collect()
+    }
+
+    /// The CPC pages its RAM itself: a program at &8000 (in every bank) writes
+    /// `mmr` to the PAL, then loops.
+    fn page_with_out(mb: &mut Motherboard, mmr: u8) {
+        let source = format!(" org &8000\n di\n ld bc,&7f{mmr:02x}\n out (c),c\n jp $\n");
+        let code = cpclib_asm::assemble(&source).unwrap_or_else(|e| panic!("{e}"));
+        // in every bank: C2 pages bank 6 at &8000, so the loop must be there after the OUT too
+        for bank in 0..mb.physical_bank_count() {
+            for (offset, byte) in code.iter().enumerate() {
+                mb.write_bank_byte(bank, offset as u16, *byte);
+            }
+        }
+        mb.tick_until_next_instruction();
+        mb.set_pc(0x8000);
+        // an interrupt may come before the DI: the firmware takes it and comes back
+        let pc = |mb: &Motherboard| mb.cpu().reg16(crate::z80::Reg16::Pc).value();
+        for _ in 0..100_000 {
+            if pc(mb) == 0x8006 {
+                return;
+            }
+            mb.execute_next_opcode_no_video();
+        }
+        panic!("the OUT program did not reach its loop: PC &{:04X}", pc(mb));
+    }
+
+    #[test]
+    fn every_ram_configuration_maps_as_the_emulator_pages() {
+        let mut mb = crate::motherboard::Motherboard::default();
+        mb.set_total_ram_kb(Some(576)).unwrap();
+        // to BASIC's prompt: the firmware's interrupt handler is in place
+        while mb.t_state_counter().value() < 4_000_000 {
+            mb.execute_next_opcode_no_video();
+        }
+        // the banks of each configuration in page 0 (&C0-&C7: banks 4-7); page 3 (&D8-&DF) has
+        // banks 16-19 in their place
+        let expected: [[u16; 4]; 8] = [
+            [0, 1, 2, 3],
+            [0, 1, 2, 7],
+            [4, 5, 6, 7],
+            [0, 3, 2, 7],
+            [0, 4, 2, 3],
+            [0, 5, 2, 3],
+            [0, 6, 2, 3],
+            [0, 7, 2, 3],
+        ];
+        for page in [0u8, 3] {
+            for (config, banks) in expected.iter().enumerate() {
+                let mmr = 0xc0 | (page << 3) | config as u8;
+                page_with_out(&mut mb, mmr);
+                assert_eq!(mb.mmr() & 0x3f, mmr & 0x3f);
+                // a byte of its own in every bank, to tell them apart
+                for bank in 0..mb.physical_bank_count() {
+                    mb.write_bank_byte(bank, 0x123, bank as u8);
+                }
+                let shift = |bank: u16| {
+                    if bank < 4 {
+                        bank
+                    } else {
+                        bank + 4 * u16::from(page)
+                    }
+                };
+                let mut follow = Paging::default();
+                let mut own = Paging {
+                    follow: false,
+                    ..Paging::default()
+                };
+                own.synchronise(&mb);
+                follow.follow = true;
+                // ROMs off: every block reads its RAM
+                own.lower_rom = false;
+                own.upper_rom = false;
+                for block in 0..4u16 {
+                    let bank = shift(banks[usize::from(block)]);
+                    let address = block * 0x4000 + 0x123;
+                    assert_eq!(own.read(&mb, address), bank as u8, "&{mmr:02X}");
+                    assert_eq!(
+                        map(&own, &mb)[usize::from(block)],
+                        (Source::Ram(bank), bank)
+                    );
+                }
+                // the emulator's paging (the lower ROM on after the reset): the same map
+                let followed = map(&follow, &mb);
+                own.lower_rom = mb.ga().rmr() & 4 == 0;
+                own.upper_rom = mb.ga().rmr() & 8 == 0;
+                assert_eq!(followed, map(&own, &mb), "&{mmr:02X}");
+                // under the lower ROM, writes go to the configuration's first bank
+                assert_eq!(followed[0].1, shift(banks[0]), "&{mmr:02X}");
+                for block in 1..3 {
+                    let bank = shift(banks[block]);
+                    assert_eq!(followed[block], (Source::Ram(bank), bank), "&{mmr:02X}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_ram_is_named_by_the_value_given_to_the_gate_array() {
+        let paging = |page, ram_config| Paging {
+            page,
+            ram_config,
+            ..Paging::default()
+        };
+        assert_eq!(paging(0, 0).ram_text(), "&C0 · 0-1-2-3");
+        assert_eq!(paging(0, 3).ram_text(), "&C3 · 0-3-2-7");
+        assert_eq!(paging(1, 2).ram_text(), "&CA · 8-9-10-11");
+        assert_eq!(paging(3, 3).ram_text(), "&DB · 0-3-2-19");
+        assert_eq!(paging(7, 7).ram_text(), "&FF · 0-35-2-3");
+    }
+
+    #[test]
+    fn a_write_view_shows_the_ram_under_the_rom() {
+        let mut mb = crate::motherboard::Motherboard::default();
+        mb.write_bank_byte(0, 0, 0x42);
+        let mut paging = Paging::default();
+        assert_eq!(paging.read(&mb, 0), mb.read_lower_rom_byte(0));
+        paging.writes = true;
+        assert_eq!(paging.read(&mb, 0), 0x42);
+    }
 
     #[test]
     fn a_paging_of_its_own_reads_the_bank_it_names() {
