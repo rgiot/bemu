@@ -33,20 +33,41 @@ fn yes(on: bool) -> &'static str {
 }
 
 /// The Gate Array: the inks as colours, the modes, the ROM and interrupt state.
-pub fn gate_array(ui: &mut egui::Ui, mb: &Motherboard) {
+pub fn gate_array(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
+    use super::widgets::{ink_picker, Picked};
     let ga = mb.ga();
     let palette = ga.palette();
     let pen = ga.selected_pen();
     let mode = |mode: crate::ga::VideoMode| mode as u8;
-    ui.label(format!(
-        "{}: mode {} (next line: mode {})",
-        match ga.gate_array_type() {
-            crate::ga::GateArrayType::Ga40010 => "40010",
-            _ => "40007/40008",
-        },
-        mode(ga.active_video_mode()),
-        mode(ga.next_video_mode())
-    ));
+    ui.horizontal(|ui| {
+        ui.label(format!(
+            "{}: mode",
+            match ga.gate_array_type() {
+                crate::ga::GateArrayType::Ga40010 => "40010",
+                _ => "40007/40008",
+            }
+        ));
+        // the mode, changed from the next line (a command)
+        let active = mode(ga.active_video_mode());
+        for wanted in 0..4u8 {
+            if ui
+                .selectable_label(active == wanted, wanted.to_string())
+                .on_hover_text(format!("Mode {wanted} from the next line"))
+                .clicked()
+                && active != wanted
+            {
+                if let Ok(command) = Command::with_arg("ga-set-mode", Arg::Text(wanted.to_string()))
+                {
+                    bus.push(command);
+                }
+            }
+        }
+        if mode(ga.next_video_mode()) != active {
+            ui.weak(format!("(next line: mode {})", mode(ga.next_video_mode())));
+        }
+    });
+    ui.weak("A click on a pen gives it another ink, until the program writes it again")
+        .on_hover_text("The firmware sends its own inks again at each flash period: a change lasts under BASIC only while the firmware is stopped");
     egui::Grid::new("ga-inks")
         .spacing([4.0, 6.0])
         .show(ui, |ui| {
@@ -58,12 +79,31 @@ pub fn gate_array(ui: &mut egui::Ui, mb: &Motherboard) {
                         index.to_string()
                     };
                     ui.small(label);
-                    swatch(ui, color(RgbLevels::from(*ink)), usize::from(pen) == index)
-                        .on_hover_text(format!(
-                            "pen {index}: ink {} (hardware &{:02X})",
-                            ink.number(),
-                            ink.hardware_number()
-                        ));
+                    let tooltip = format!(
+                        "pen {index}: ink {} (hardware &{:02X})",
+                        ink.number(),
+                        ink.hardware_number()
+                    );
+                    let id = egui::Id::new(("ga-pen", index));
+                    if let Some(Picked::Ink(new)) = ink_picker(
+                        ui,
+                        id,
+                        ink.number(),
+                        usize::from(pen) == index,
+                        false,
+                        &tooltip,
+                    ) {
+                        let pen = if index == 16 {
+                            "B".to_owned()
+                        } else {
+                            index.to_string()
+                        };
+                        if let Ok(command) =
+                            Command::with_arg("ga-set-ink", Arg::Text(format!("{pen} {new}")))
+                        {
+                            bus.push(command);
+                        }
+                    }
                 });
                 if index == 8 {
                     ui.end_row();

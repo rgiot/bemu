@@ -416,3 +416,23 @@ fn a_typed_backslash_n_is_return() {
     host.frames(10);
     assert_eq!(host.motherboard.read_byte(0x9000), 42);
 }
+
+#[test]
+fn a_pen_gets_an_ink_and_the_screen_a_mode() {
+    let mut host = Host::new();
+    host.run_with("ga-set-ink", Arg::Text("3 6".into()))
+        .unwrap();
+    host.run_with("ga-set-ink", Arg::Text("B 26".into()))
+        .unwrap();
+    assert_eq!(host.motherboard.ga().palette()[3].number(), 6);
+    assert_eq!(host.motherboard.ga().palette()[16].number(), 26);
+    assert!(host
+        .run_with("ga-set-ink", Arg::Text("17 0".into()))
+        .is_err());
+    assert!(host
+        .run_with("ga-set-ink", Arg::Text("1 27".into()))
+        .is_err());
+    host.run_with("ga-set-mode", Arg::Text("2".into())).unwrap();
+    // from the next line (the firmware puts its own back at its next interrupt)
+    assert_eq!(host.motherboard.ga().next_video_mode() as u8, 2);
+}

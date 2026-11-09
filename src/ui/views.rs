@@ -459,7 +459,7 @@ pub fn contents(
             ui.collapsing("Raw (as /api/crtc)", |ui| json_grid(ui, "crtc", &crtc));
         }
         View::GateArray => {
-            super::chips::gate_array(ui, mb);
+            super::chips::gate_array(ui, mb, bus);
             ui.collapsing("Raw (as /api/ga)", |ui| {
                 json_grid(ui, "ga", &inspect(target, "ga"))
             });
