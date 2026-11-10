@@ -832,6 +832,12 @@ pub fn run_window(
             if core.settings().is_some_and(|s| s.joystick_2 == JoystickSource::Simulated) {
                 input.joysticks.joy1 = sim.joy1;
             }
+            // the virtual keyboard window drives the host keys it holds down
+            for host in gui.virtual_keys_held() {
+                if !input.down.contains(&host) {
+                    input.down.push(host);
+                }
+            }
         }
         window.shortcuts(&input, &core, &mut bus);
         bus.run(&mut core);

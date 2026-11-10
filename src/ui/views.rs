@@ -5,7 +5,9 @@
 use serde_json::Value;
 
 use crate::commands::{self, Arg, Command, CommandBus, CommandTarget, View};
+use crate::input::HostKey;
 use crate::joystick::Joysticks;
+use crate::keyboard::CpcKey;
 
 /// What the windows remember between frames.
 #[derive(Default)]
@@ -14,6 +16,10 @@ pub struct ViewState {
     screen: super::screen::ScreenState,
     /// The simulated joystick window's state (stick position + fire buttons).
     pub simulated_joysticks: Joysticks,
+    /// The CPC host keys currently held down by the virtual keyboard (mouse held on a key).
+    /// Filled during the keyboard view's egui frame, read by the session loop to inject into
+    /// `HostInput` before applying the host keyboard.
+    pub virtual_keys_held: Vec<HostKey>,
     /// The bytes the memory window showed last (its first address and them), to mark the
     /// changed ones.
     memory_seen: Option<(u16, Vec<u8>)>,
@@ -188,6 +194,7 @@ pub fn title(view: View) -> &'static str {
         View::About => "About bemu",
         View::Palette => "",
         View::Joystick => "Joystick",
+        View::Keyboard => "Keyboard",
     }
 }
 
@@ -1050,6 +1057,9 @@ pub fn contents(
         View::Joystick => {
             simulated_joystick(ui, target, bus, state);
         }
+        View::Keyboard => {
+            keyboard_view(ui, target, bus, state);
+        }
         View::Palette => {}
     }
 }
@@ -1249,4 +1259,204 @@ fn simulated_joystick(
     joy.joy1.x = stick.x;
     joy.joy1.y = stick.y;
     joy.joy1.fire = stick.fire;
+}
+
+/// A friendly label for a CPC key on the virtual keyboard.
+fn key_label(key: CpcKey) -> &'static str {
+    use CpcKey::*;
+    match key {
+        CursorUp => "↑",
+        CursorDown => "↓",
+        CursorLeft => "←",
+        CursorRight => "→",
+        Return => "Enter",
+        Shift => "Shift",
+        Control => "Ctrl",
+        Copy => "Copy",
+        Clr => "Clr",
+        CapsLock => "Caps",
+        Tab => "Tab",
+        Esc => "Esc",
+        Space => "Spc",
+        Dot => ".",
+        Comma => ",",
+        Semicolon => ";",
+        Colon => ":",
+        Slash => "/",
+        Backslash => "\\",
+        At => "@",
+        Caret => "^",
+        Minus => "-",
+        Equal => "=",
+        OpenBracket => "[",
+        CloseBracket => "]",
+        Apostrophe => "'",
+        Backquote => "`",
+        Digit0 => "0",
+        Digit1 => "1",
+        Digit2 => "2",
+        Digit3 => "3",
+        Digit4 => "4",
+        Digit5 => "5",
+        Digit6 => "6",
+        Digit7 => "7",
+        Digit8 => "8",
+        Digit9 => "9",
+        A => "A",
+        B => "B",
+        C => "C",
+        D => "D",
+        E => "E",
+        F => "F",
+        G => "G",
+        H => "H",
+        I => "I",
+        J => "J",
+        K => "K",
+        L => "L",
+        M => "M",
+        N => "N",
+        O => "O",
+        P => "P",
+        Q => "Q",
+        R => "R",
+        S => "S",
+        T => "T",
+        U => "U",
+        V => "V",
+        W => "W",
+        X => "X",
+        Y => "Y",
+        Z => "Z",
+        Keypad0 => "KP0",
+        Keypad1 => "KP1",
+        Keypad2 => "KP2",
+        Keypad3 => "KP3",
+        Keypad4 => "KP4",
+        Keypad5 => "KP5",
+        Keypad6 => "KP6",
+        Keypad7 => "KP7",
+        Keypad8 => "KP8",
+        Keypad9 => "KP9",
+        KeypadDot => "KP.",
+        KeypadEnter => "KPent",
+        Joy0Up => "J0↑",
+        Joy0Down => "J0↓",
+        Joy0Left => "J0←",
+        Joy0Right => "J0→",
+        Joy0Fire1 => "J0F1",
+        Joy0Fire2 => "J0F2",
+        Joy0Fire3 => "J0F3",
+        Joy1Up => "J1↑",
+        Joy1Down => "J1↓",
+        Joy1Left => "J1←",
+        Joy1Right => "J1→",
+        Joy1Fire1 => "J1F1",
+        Joy1Fire2 => "J1F2",
+        Joy1Fire3 => "J1F3",
+        Del => "Del",
+        _ => "?",
+    }
+}
+
+/// The reverse map CPC key -> host key, for clicking a virtual key to press its host key.
+/// Built from [`crate::input::HOST_KEY_MAP`]: when several host keys map to one CPC key
+/// (e.g. both shifts to `Shift`), the first one wins.
+fn cpc_key_to_host_key() -> Vec<(CpcKey, HostKey)> {
+    use crate::input::HOST_KEY_MAP;
+    let mut map: Vec<(CpcKey, HostKey)> = Vec::new();
+    for (host, cpc) in HOST_KEY_MAP.iter().copied() {
+        if !map.iter().any(|(c, _)| *c == cpc) {
+            map.push((cpc, host));
+        }
+    }
+    map
+}
+
+/// The host key to press when a virtual CPC key is clicked, or `None` if unmapped.
+fn host_key_for_cpc_key(key: CpcKey) -> Option<HostKey> {
+    cpc_key_to_host_key()
+        .into_iter()
+        .find(|(c, _)| *c == key)
+        .map(|(_, h)| h)
+}
+
+/// The virtual keyboard: shows the CPC matrix keys, lights the ones pressed (by the real
+/// keyboard or by clicking a virtual key), and clicking a virtual key presses its host key.
+fn keyboard_view(
+    ui: &mut egui::Ui,
+    target: &dyn CommandTarget,
+    _bus: &mut CommandBus,
+    state: &mut ViewState,
+) {
+    use crate::input::HOST_KEY_MAP;
+
+    // Reset the virtual keys held this frame; rebuilt below from mouse-over + button down.
+    state.virtual_keys_held.clear();
+
+    let mb = target.motherboard();
+    let matrix = mb.keyboard();
+
+    ui.heading("Keyboard");
+    ui.label("Keys lit in red are pressed (real keyboard or virtual click). Click a key to press its host key.");
+    ui.separator();
+
+    // Group keys by matrix line (0-9): each line is a row of the virtual keyboard.
+    let mut rows: [Vec<CpcKey>; 10] = [
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+    ];
+    for key in crate::keyboard::ALL_KEYS {
+        let (line, _bit) = key.matrix_position();
+        if line < 10 {
+            rows[line as usize].push(*key);
+        }
+    }
+
+    let primary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+
+    for (line, keys) in rows.iter().enumerate() {
+        if keys.is_empty() {
+            continue;
+        }
+        ui.horizontal(|ui| {
+            ui.label(format!("Line {line}:"));
+            for key in keys {
+                let label = key_label(*key);
+                let physically_pressed = matrix.is_pressed(*key);
+                let virtually_held = state
+                    .virtual_keys_held
+                    .iter()
+                    .any(|h| host_key_for_cpc_key(*key) == Some(*h));
+                let lit = physically_pressed || virtually_held;
+
+                let button = egui::Button::new(label);
+                let button = if lit {
+                    button.fill(egui::Color32::from_rgb(220, 50, 50))
+                } else {
+                    button
+                };
+                let response = ui.add(button);
+
+                // If the mouse is down over this virtual key, record its host key as held.
+                if primary_down && response.hovered() {
+                    if let Some(host) = host_key_for_cpc_key(*key) {
+                        state.virtual_keys_held.push(host);
+                    }
+                }
+
+                // Tooltip: matrix position + host key(s).
+                let (l, b) = key.matrix_position();
+                let hosts: Vec<String> = HOST_KEY_MAP
+                    .iter()
+                    .filter(|(_, c)| *c == *key)
+                    .map(|(h, _)| format!("{h:?}"))
+                    .collect();
+                response.on_hover_text(format!(
+                    "{key:?}: matrix line {l} bit {b}, host keys {}",
+                    hosts.join(", ")
+                ));
+            }
+        });
+    }
 }

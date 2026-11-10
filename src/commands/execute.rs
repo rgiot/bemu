@@ -65,7 +65,7 @@ const PRINTER_CHARSETS: [&str; 9] = [
     "usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan",
 ];
 
-const VIEWS: [(&str, View); 20] = [
+const VIEWS: [(&str, View); 21] = [
     ("view-z80", View::Z80),
     ("view-stack", View::Stack),
     ("view-crtc", View::Crtc),
@@ -86,6 +86,7 @@ const VIEWS: [(&str, View); 20] = [
     ("view-screen", View::Screen),
     ("palette-open", View::Palette),
     ("joystick-simulated-window", View::Joystick),
+    ("keyboard-view", View::Keyboard),
 ];
 
 #[cfg_attr(not(feature = "willy"), allow(dead_code))]
@@ -2488,6 +2489,7 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
             CommandState::checked(settings.is_some_and(|s| s.joystick_2 == source.parse().unwrap_or_default()))
         }
         "joystick-simulated-window" => CommandState::enabled(true),
+        "keyboard-view" => CommandState::enabled(true),
         #[cfg(feature = "nova")]
         "expansion-nova-toggle" => CommandState {
             enabled: true,

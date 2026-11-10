@@ -30,6 +30,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::commands::{
     self, Arg, ArgKind, CommandBus, CommandError, CommandTarget, HostRequest, Report, View,
 };
+use crate::input::HostKey;
 use crate::joystick::Joysticks;
 
 /// A file the host is asked to pick (a web page opens its file chooser): the command `id` then
@@ -93,7 +94,7 @@ fn new_context() -> egui::Context {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ViewKey(u8);
 
-const ALL_VIEWS: [View; 22] = [
+const ALL_VIEWS: [View; 23] = [
     View::Z80,
     View::Stack,
     View::Crtc,
@@ -116,6 +117,7 @@ const ALL_VIEWS: [View; 22] = [
     View::Shortcuts,
     View::About,
     View::Joystick,
+    View::Keyboard,
 ];
 
 impl ViewKey {
@@ -273,6 +275,11 @@ impl Gui {
     /// The simulated joystick window's current state (stick + fire buttons).
     pub fn simulated_joysticks(&self) -> Joysticks {
         self.view_state.simulated_joysticks
+    }
+
+    /// The host keys currently held down by the virtual keyboard (mouse held on a key).
+    pub fn virtual_keys_held(&self) -> Vec<HostKey> {
+        self.view_state.virtual_keys_held.clone()
     }
 
     /// Show a message for a few seconds.

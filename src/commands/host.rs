@@ -273,6 +273,7 @@ pub enum View {
     Shortcuts,
     About,
     Joystick,
+    Keyboard,
 }
 
 /// What the host records.
