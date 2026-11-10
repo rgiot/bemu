@@ -2,6 +2,18 @@
 
 Amstrad CPC emulator written in Rust.
 
+## Downloads
+
+The **Build distributions** workflow runs on pushes, pull requests and manual dispatch. Download
+its artifacts from a successful run's **Artifacts** section in GitHub Actions: Linux x86-64,
+macOS ARM64 and Windows x86-64 archives contain the executable; `bemu-web` contains the web
+package and demo. Extract the Unix tarballs to preserve executable permissions. Artifacts expire
+according to the repository's Actions retention policy.
+
+The builds use the current default branch of `cpcsdk/rust.cpclib` as the sibling
+`rust.cpcdemotools` checkout. See [NOTICE.md](NOTICE.md) for the bundled ROMs and library licences.
+The web demo must be served over HTTP, as described in [web/README.md](web/README.md).
+
 ## Running the emulator
 
 Use the example binary below to test the emulator:
