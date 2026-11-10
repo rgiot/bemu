@@ -1,0 +1,107 @@
+name: Build distributions
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Desktop (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            executable: amsrust
+          - name: macos-arm64
+            runner: macos-15
+            executable: amsrust
+          - name: windows-x86_64
+            runner: windows-2022
+            executable: amsrust.exe
+    defaults:
+      run:
+        working-directory: bemu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bemu
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cpcsdk/rust.cpclib
+          path: rust.cpcdemotools
+          submodules: recursive
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libudev-dev libx11-dev libxkbcommon-dev libwayland-dev
+      - name: Build
+        run: cargo build --release --features gui
+      - name: Prepare distribution
+        shell: bash
+        run: |
+          mkdir dist
+          cp "target/release/${{ matrix.executable }}" README.md NOTICE.md LICENSE-MIT LICENSE-APACHE dist/
+      - name: Archive Unix distribution
+        if: runner.os != 'Windows'
+        run: tar -czf "bemu-${{ matrix.name }}.tar.gz" -C dist .
+      - name: Archive Windows distribution
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/* -DestinationPath "bemu-${{ matrix.name }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bemu-${{ matrix.name }}
+          path: bemu/bemu-${{ matrix.name }}.*
+          if-no-files-found: error
+
+  web:
+    name: Web
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: bemu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bemu
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cpcsdk/rust.cpclib
+          path: rust.cpcdemotools
+          submodules: recursive
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install Binaryen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binaryen
+      - name: Install matching wasm-bindgen
+        run: |
+          cargo fetch --manifest-path web/Cargo.toml
+          version=$(python3 -c 'import tomllib; packages = tomllib.load(open("web/Cargo.lock", "rb"))["package"]; versions = [p["version"] for p in packages if p["name"] == "wasm-bindgen"]; assert len(versions) == 1, versions; print(versions[0])')
+          cargo install wasm-bindgen-cli --version "$version" --locked
+      - name: Build web package
+        run: web/build.sh
+      - name: Prepare distribution
+        run: |
+          mkdir -p dist
+          cp -R web/pkg web/demo dist/
+          cp web/README.md NOTICE.md LICENSE-MIT LICENSE-APACHE dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bemu-web
+          path: bemu/dist/
+          if-no-files-found: error
