@@ -258,7 +258,7 @@ impl KeyboardMatrix {
 
     pub fn is_pressed(&self, key: CpcKey) -> bool {
         let (line, bit) = key.matrix_position();
-        self.lines[line as usize] & (1 << bit) == 0
+        self.line(line) & (1 << bit) == 0
     }
 
     /// The raw byte for one matrix line (0-9), as PSG register 14 would
@@ -266,8 +266,39 @@ impl KeyboardMatrix {
     /// line-select nibble can address 16 lines but only 10 are wired
     /// to anything - selecting one of the others floats the bus high
     /// (nothing pressed), exactly like every wired line reads when idle.
+    ///
+    /// The CPC keyboard matrix has no diodes: pressing keys on several lines
+    /// at once creates phantom (keyclash) readings. When line `line` is
+    /// selected, a path key(line,B1)+key(other,B1)+key(other,B2) pulls bit B2
+    /// low on `line` even though no key on `line` is wired to B2.
     pub fn line(&self, line: u8) -> u8 {
-        self.lines.get(line as usize).copied().unwrap_or(0xff)
+        let line = line as usize;
+        let mut result = self.lines.get(line).copied().unwrap_or(0xff);
+        // Keyclash: without diodes, cross-line paths create phantom keys.
+        // key(line,B1) + key(other,B1) + key(other,B2) => bit B2 reads low on `line`.
+        for other in 0..NB_LINES {
+            if other == line {
+                continue;
+            }
+            let other_line = self.lines[other];
+            // Bits pressed on both this line and the other line (shared bits).
+            let shared = (!result) & (!other_line);
+            if shared == 0 {
+                continue;
+            }
+            let other_pressed = !other_line;
+            if shared.count_ones() >= 2 {
+                // Two or more shared bits: every pressed bit on `other`
+                // becomes a phantom on `line`.
+                result &= !other_pressed;
+            } else {
+                // Exactly one shared bit B1: every other pressed bit on `other`
+                // becomes a phantom on `line`.
+                let b1 = shared.trailing_zeros();
+                result &= !(other_pressed & !(1 << b1));
+            }
+        }
+        result
     }
 
     /// Directly set every line - the wire format for
@@ -338,6 +369,71 @@ mod test {
     #[test]
     fn unwired_lines_read_as_nothing_pressed() {
         assert_eq!(KeyboardMatrix::default().line(12), 0xff);
+    }
+
+    #[test]
+    fn keyclash_three_keys_create_phantom() {
+        // A: line 8, bit 5; Joy1Fire2: line 6, bit 5 (shares bit 5 with A on another line);
+        // Digit5: line 6, bit 1. Path A(8,5)+Joy1Fire2(6,5)+Digit5(6,1) pulls bit 1 low
+        // on line 8: Digit2 (line 8, bit 1) reads as a phantom.
+        let mut matrix = KeyboardMatrix::default();
+        matrix.set_pressed(CpcKey::A, true);
+        matrix.set_pressed(CpcKey::Joy1Fire2, true);
+        matrix.set_pressed(CpcKey::Digit5, true);
+        assert_eq!(matrix.line(6), !((1 << 5) | (1 << 1)));
+        // Phantom on line 8: A (bit 5) direct, Digit2 (bit 1) via keyclash.
+        assert_eq!(matrix.line(8), !((1 << 5) | (1 << 1)));
+        assert!(matrix.is_pressed(CpcKey::Digit2));
+    }
+
+    #[test]
+    fn keyclash_requires_three_keys() {
+        // Only two keys sharing a bit: no third key to complete the path, no phantom.
+        let mut matrix = KeyboardMatrix::default();
+        matrix.set_pressed(CpcKey::A, true);        // line 8, bit 5
+        matrix.set_pressed(CpcKey::Joy1Fire2, true); // line 6, bit 5 (shared bit)
+        assert_eq!(matrix.line(8), !(1 << 5));
+        assert!(!matrix.is_pressed(CpcKey::Digit2));
+    }
+
+    #[test]
+    fn keyclash_joystick_0_and_1_on_shared_bit() {
+        // Joy0Up (line 9, bit 0) + Joy1Up (line 6, bit 0) share bit 0.
+        // Add Joy1Right (line 6, bit 3): reading line 9 shows phantom Joy0Right (bit 3).
+        let mut matrix = KeyboardMatrix::default();
+        matrix.set_pressed(CpcKey::Joy0Up, true);
+        matrix.set_pressed(CpcKey::Joy1Up, true);
+        matrix.set_pressed(CpcKey::Joy1Right, true);
+        assert!(matrix.is_pressed(CpcKey::Joy0Up));
+        assert!(matrix.is_pressed(CpcKey::Joy1Up));
+        assert!(matrix.is_pressed(CpcKey::Joy1Right));
+        // Phantom: Joy0Right appears pressed on line 9 due to keyclash.
+        assert!(matrix.is_pressed(CpcKey::Joy0Right));
+        assert_eq!(matrix.line(9), !((1 << 0) | (1 << 3)));
+    }
+
+    #[test]
+    fn keyclash_joystick_1_and_keyboard_on_line_6() {
+        // Joy1 and keyboard keys share line 6. Joy1Up (line 6, bit 0) is the same
+        // matrix position as Digit6 (line 6, bit 0).
+        let mut matrix = KeyboardMatrix::default();
+        matrix.set_pressed(CpcKey::Joy1Up, true);
+        matrix.set_pressed(CpcKey::Digit5, true); // line 6, bit 1
+        // Same line: both combine directly, no cross-line keyclash needed.
+        assert!(matrix.is_pressed(CpcKey::Joy1Up));
+        assert!(matrix.is_pressed(CpcKey::Digit5));
+        assert_eq!(matrix.line(6), !((1 << 0) | (1 << 1)));
+    }
+
+    #[test]
+    fn keyclash_single_line_no_phantom() {
+        // Keys on only one line: no cross-line path, no phantom.
+        let mut matrix = KeyboardMatrix::default();
+        matrix.set_pressed(CpcKey::A, true); // line 8, bit 5
+        matrix.set_pressed(CpcKey::Z, true); // line 8, bit 7
+        assert_eq!(matrix.line(8), !((1 << 5) | (1 << 7)));
+        // Reading any other line shows nothing (no keys there, no shared bits).
+        assert_eq!(matrix.line(0), 0xff);
     }
 }
 
