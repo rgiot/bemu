@@ -18,6 +18,7 @@ use amsrust::csl_runner::{CslReport, CslRunner, Progress};
 use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::display::DisplayMode;
 use amsrust::input::{HostInput, HostKey, HostKeyboard, KeyboardMapping};
+use amsrust::joystick::JoystickSource;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use amsrust::overlay::Overlay;
@@ -821,6 +822,16 @@ pub fn run_window(
         let keyboard_taken = window.interface(&core, &mut bus);
         if keyboard_taken {
             input = HostInput::default();
+        }
+        // the simulated joystick window drives the joysticks set to Simulated
+        if let Some(gui) = &window.gui {
+            let sim = gui.simulated_joysticks();
+            if core.settings().is_some_and(|s| s.joystick_1 == JoystickSource::Simulated) {
+                input.joysticks.joy0 = sim.joy0;
+            }
+            if core.settings().is_some_and(|s| s.joystick_2 == JoystickSource::Simulated) {
+                input.joysticks.joy1 = sim.joy1;
+            }
         }
         window.shortcuts(&input, &core, &mut bus);
         bus.run(&mut core);

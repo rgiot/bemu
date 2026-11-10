@@ -31,6 +31,8 @@ use amsrust::display::{
     wait_for, Blit, CrtParams, CrtPass, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH,
 };
 use amsrust::input::{HostInput, HostKey};
+use amsrust::joystick::Joysticks;
+use gilrs::{Event, EventType, GamepadId, Gilrs};
 use image::RgbImage;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -705,6 +707,13 @@ struct App {
     /// The keys pressed since the last poll, held or not by then (a press and its release
     /// between two frames still counts).
     pressed: Vec<HostKey>,
+    /// The state of both joysticks, from host-connected joysticks.
+    joysticks: Joysticks,
+    /// gilrs polls the host's joypads; `None` when it could not start.
+    gilrs: Option<Gilrs>,
+    /// Which connected gamepad is mapped to joystick 0 / 1.
+    joy0_id: Option<GamepadId>,
+    joy1_id: Option<GamepadId>,
     closed: bool,
     error: Option<String>,
     /// F11 asked for fullscreen (kept here: the window manager may refuse it).
@@ -1042,6 +1051,7 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => {
                 self.held.clear();
                 self.placed.clear();
+                self.joysticks = Joysticks::default();
             }
             _ => {}
         }
@@ -1093,6 +1103,10 @@ impl WinitGpuFrontend {
                 placed: HashMap::new(),
                 typed: Vec::new(),
                 pressed: Vec::new(),
+                joysticks: Joysticks::default(),
+                gilrs: Gilrs::new().ok(),
+                joy0_id: None,
+                joy1_id: None,
                 closed: false,
                 error: None,
                 fullscreen: false,
@@ -1198,10 +1212,86 @@ impl Frontend for WinitGpuFrontend {
                 down.push(key);
             }
         }
+        // poll gilrs for host joypads: buttons -> fire, axes -> digital direction
+        if let Some(gilrs) = &mut self.app.gilrs {
+            while let Some(gilrs::Event { id, event, .. }) = gilrs.next_event() {
+                match event {
+                    EventType::Connected => {
+                        if self.app.joy0_id.is_none() {
+                            self.app.joy0_id = Some(id);
+                        } else if self.app.joy1_id.is_none() {
+                            self.app.joy1_id = Some(id);
+                        }
+                    }
+                    EventType::Disconnected => {
+                        if self.app.joy0_id == Some(id) {
+                            self.app.joy0_id = None;
+                            self.app.joysticks.joy0 = Default::default();
+                        } else if self.app.joy1_id == Some(id) {
+                            self.app.joy1_id = None;
+                            self.app.joysticks.joy1 = Default::default();
+                        }
+                    }
+                    EventType::ButtonPressed(button, _) => {
+                        let joy = match id {
+                            id if self.app.joy0_id == Some(id) => &mut self.app.joysticks.joy0,
+                            id if self.app.joy1_id == Some(id) => &mut self.app.joysticks.joy1,
+                            _ => continue,
+                        };
+                        match button {
+                            gilrs::Button::South => joy.fire[0] = true,
+                            gilrs::Button::East => joy.fire[1] = true,
+                            gilrs::Button::West => joy.fire[2] = true,
+                            _ => {}
+                        }
+                    }
+                    EventType::ButtonReleased(button, _) => {
+                        let joy = match id {
+                            id if self.app.joy0_id == Some(id) => &mut self.app.joysticks.joy0,
+                            id if self.app.joy1_id == Some(id) => &mut self.app.joysticks.joy1,
+                            _ => continue,
+                        };
+                        match button {
+                            gilrs::Button::South => joy.fire[0] = false,
+                            gilrs::Button::East => joy.fire[1] = false,
+                            gilrs::Button::West => joy.fire[2] = false,
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // digital direction: one axis at a time, from current axis state
+            for (id, gamepad) in gilrs.gamepads() {
+                let joy = match id {
+                    id if self.app.joy0_id == Some(id) => &mut self.app.joysticks.joy0,
+                    id if self.app.joy1_id == Some(id) => &mut self.app.joysticks.joy1,
+                    _ => continue,
+                };
+                let raw_x = gamepad.value(gilrs::Axis::LeftStickX) as f64;
+                let raw_y = gamepad.value(gilrs::Axis::LeftStickY) as f64;
+                let dead = 0.5;
+                let dx = if raw_x.abs() > dead { raw_x.signum() as i8 } else { 0 };
+                let dy = if raw_y.abs() > dead { raw_y.signum() as i8 } else { 0 };
+                if dx != 0 && dy != 0 {
+                    if raw_x.abs() >= raw_y.abs() {
+                        joy.x = dx;
+                        joy.y = 0;
+                    } else {
+                        joy.x = 0;
+                        joy.y = dy;
+                    }
+                } else {
+                    joy.x = dx;
+                    joy.y = dy;
+                }
+            }
+        }
         HostInput {
             down,
             typed: std::mem::take(&mut self.app.typed),
             placed: self.app.placed.values().copied().collect(),
+            joysticks: self.app.joysticks,
         }
     }
 

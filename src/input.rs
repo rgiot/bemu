@@ -7,6 +7,7 @@
 //! same CPC key, the layout-aware typed-character handling - lives here and
 //! is testable without any window.
 
+use crate::joystick::Joysticks;
 use crate::keyboard::{CpcKey, KeyboardLayout};
 use crate::motherboard::Motherboard;
 use std::collections::VecDeque;
@@ -166,6 +167,9 @@ pub struct HostInput {
     /// positional mapping: on an AZERTY host the key labelled A is [`HostKey::Q`] here. Empty
     /// when the frontend can't tell (minifb): `down` stands in.
     pub placed: Vec<HostKey>,
+    /// The state of both joysticks, as polled by the frontend (host joysticks) or driven by
+    /// the simulated joystick window.
+    pub joysticks: Joysticks,
 }
 
 /// Queue of characters typed on the host keyboard.
@@ -333,6 +337,11 @@ impl HostKeyboard {
         if std::mem::take(&mut self.switched) {
             motherboard.keyboard_mut().release_all();
         }
+        // the joysticks drive the Joy0 (line 9) and Joy1 (line 6) matrix keys;
+        // they are not in HOST_KEY_MAP so nothing above touches them. Run first so
+        // the keyboard mapping can override shared matrix positions (Joy1 shares
+        // line 6 with Digit6, Digit5, R, T, G, F, B).
+        input.joysticks.apply_to_matrix(motherboard);
         match self.mapping {
             KeyboardMapping::Symbolic => self.apply_symbolic(motherboard, input),
             KeyboardMapping::Positional => apply_positional(motherboard, input),
@@ -1208,6 +1217,7 @@ mod test {
             down: down.to_vec(),
             placed: placed.to_vec(),
             typed: typed.chars().collect(),
+            joysticks: Joysticks::default(),
         };
         keyboard.apply(&mut motherboard, &input(&[HostKey::A], &[HostKey::Q], "a"));
         assert!(motherboard.keyboard().is_pressed(CpcKey::Q));
@@ -1471,6 +1481,7 @@ mod test {
                 down,
                 typed,
                 placed,
+                joysticks: Joysticks::default(),
             },
         );
         for (key, pressed) in [

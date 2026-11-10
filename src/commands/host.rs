@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::display::DisplayMode;
 use crate::input::{HostLayout, KeyboardMapping};
+use crate::joystick::JoystickSource;
 
 /// The debug server's port (AMSpiriT's).
 pub const DEFAULT_DEBUG_PORT: u16 = crate::debug_server::DEFAULT_PORT;
@@ -133,6 +134,10 @@ pub struct HostSettings {
     pub keyboard: KeyboardMapping,
     /// The host keyboard's layout, for the positional mapping (`None`: automatic).
     pub host_layout: Option<HostLayout>,
+    /// Where joystick 1's state comes from (none / host / simulated window).
+    pub joystick_1: JoystickSource,
+    /// Where joystick 2's state comes from (none / host / simulated window).
+    pub joystick_2: JoystickSource,
     pub stereo: bool,
     pub muted: bool,
     /// 0-100 %.
@@ -224,6 +229,8 @@ impl Default for HostSettings {
             overlay: false,
             keyboard: KeyboardMapping::default(),
             host_layout: None,
+            joystick_1: JoystickSource::default(),
+            joystick_2: JoystickSource::default(),
             stereo: true,
             muted: false,
             volume: 100,
@@ -265,6 +272,7 @@ pub enum View {
     Preferences,
     Shortcuts,
     About,
+    Joystick,
 }
 
 /// What the host records.

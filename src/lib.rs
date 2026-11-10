@@ -58,6 +58,7 @@ pub mod commands;
 pub mod debug_server;
 pub mod display;
 pub mod input;
+pub mod joystick;
 #[cfg(feature = "gui")]
 pub mod ui;
 

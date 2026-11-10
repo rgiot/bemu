@@ -2,6 +2,7 @@
 
 use super::Frontend;
 use amsrust::input::{HostInput, HostKey, HostLayout, HostPlaces};
+use amsrust::joystick::Joysticks;
 use minifb::{InputCallback, Key, Window, WindowOptions};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -92,6 +93,7 @@ impl Frontend for MinifbFrontend {
             down,
             typed,
             placed,
+            joysticks: Joysticks::default(),
         }
     }
 

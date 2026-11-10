@@ -30,6 +30,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::commands::{
     self, Arg, ArgKind, CommandBus, CommandError, CommandTarget, HostRequest, Report, View,
 };
+use crate::joystick::Joysticks;
 
 /// A file the host is asked to pick (a web page opens its file chooser): the command `id` then
 /// runs with it.
@@ -92,7 +93,7 @@ fn new_context() -> egui::Context {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ViewKey(u8);
 
-const ALL_VIEWS: [View; 21] = [
+const ALL_VIEWS: [View; 22] = [
     View::Z80,
     View::Stack,
     View::Crtc,
@@ -114,6 +115,7 @@ const ALL_VIEWS: [View; 21] = [
     View::Preferences,
     View::Shortcuts,
     View::About,
+    View::Joystick,
 ];
 
 impl ViewKey {
@@ -266,6 +268,11 @@ impl Gui {
     /// Whether the interface answers `request` (for [`CommandTarget::can`]).
     pub fn can(request: &HostRequest) -> bool {
         matches!(request, HostRequest::Open(_) | HostRequest::ShowText { .. })
+    }
+
+    /// The simulated joystick window's current state (stick + fire buttons).
+    pub fn simulated_joysticks(&self) -> Joysticks {
+        self.view_state.simulated_joysticks
     }
 
     /// Show a message for a few seconds.

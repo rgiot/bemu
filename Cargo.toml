@@ -64,6 +64,8 @@ minifb = "0.28.0"
 cpal = { version = "0.18.2", optional = true }
 ctrlc = { version = "3.5.2", features = ["termination"] }
 tiny_http = "0.12"
+# Host-connected joypads, polled with gilrs on the winit frontend (`--frontend winit`).
+gilrs = { version = "0.11", optional = true }
 # GPU CRT filter (`--features crt-gpu`), see src/display/gpu.rs
 wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "vulkan"] }
 # `--frontend winit`: a window drawn by the GPU, see src/frontend/winit_gpu.rs
@@ -146,6 +148,6 @@ audio = ["dep:cpal"]
 # The CRT display filter on the GPU (wgpu), besides the CPU one.
 crt-gpu = ["dep:wgpu", "dep:bytemuck"]
 # A winit + wgpu window that shows the (CRT) picture without reading it back.
-gpu-window = ["crt-gpu", "dep:winit", "gui", "dep:egui-winit"]
+gpu-window = ["crt-gpu", "dep:winit", "gui", "dep:egui-winit", "dep:gilrs"]
 # The menu bar, the command palette and the debugger's windows (egui), drawn by the GPU.
 gui = ["crt-gpu", "dep:egui", "dep:egui-wgpu", "dep:cpclib-dap"]

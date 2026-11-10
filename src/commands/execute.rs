@@ -11,6 +11,7 @@ use crate::display::{crt::CrtProfile, DisplayMode};
 use crate::fdc::{DriveKind, FdcDrive};
 use crate::ga::GateArrayType;
 use crate::input::{HostLayout, KeyboardMapping};
+use crate::joystick::JoystickSource;
 use crate::keyboard::KeyboardLayout;
 use crate::motherboard::{CpcModel, Motherboard};
 use crate::ppi::Brand;
@@ -64,7 +65,7 @@ const PRINTER_CHARSETS: [&str; 9] = [
     "usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan",
 ];
 
-const VIEWS: [(&str, View); 19] = [
+const VIEWS: [(&str, View); 20] = [
     ("view-z80", View::Z80),
     ("view-stack", View::Stack),
     ("view-crtc", View::Crtc),
@@ -84,6 +85,7 @@ const VIEWS: [(&str, View); 19] = [
     ("view-asic", View::Asic),
     ("view-screen", View::Screen),
     ("palette-open", View::Palette),
+    ("joystick-simulated-window", View::Joystick),
 ];
 
 #[cfg_attr(not(feature = "willy"), allow(dead_code))]
@@ -1684,6 +1686,27 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             };
             said(format!("keyboard: {}", settings.keyboard.name()))
         }
+        "joystick-1-none" | "joystick-1-host" | "joystick-1-simulated"
+        | "joystick-2-none" | "joystick-2-host" | "joystick-2-simulated" => {
+            let settings = settings(target)?;
+            let (slot, value) = match id {
+                "joystick-1-none" => (&mut settings.joystick_1, JoystickSource::None),
+                "joystick-1-host" => (&mut settings.joystick_1, JoystickSource::Host),
+                "joystick-1-simulated" => (&mut settings.joystick_1, JoystickSource::Simulated),
+                "joystick-2-none" => (&mut settings.joystick_2, JoystickSource::None),
+                "joystick-2-host" => (&mut settings.joystick_2, JoystickSource::Host),
+                _ => (&mut settings.joystick_2, JoystickSource::Simulated),
+            };
+            *slot = value;
+            if value == JoystickSource::Simulated {
+                target.request(HostRequest::Open(View::Joystick)).ok();
+            }
+            said(format!("joystick {}: {}", id.trim_start_matches("joystick-"), value.name()))
+        }
+        "joystick-simulated-window" => host(
+            target,
+            HostRequest::Open(View::Joystick),
+        ),
         "expansion-nova-toggle" | "nova-select-file" => {
             #[cfg(feature = "nova")]
             {
@@ -2456,6 +2479,15 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
             toggle(settings.is_some_and(|s| s.keyboard == KeyboardMapping::Positional))
         }
         "keyboard-mapping-toggle" => needs_settings,
+        "joystick-1-none" | "joystick-1-host" | "joystick-1-simulated" => {
+            let source = id.strip_prefix("joystick-1-").unwrap();
+            CommandState::checked(settings.is_some_and(|s| s.joystick_1 == source.parse().unwrap_or_default()))
+        }
+        "joystick-2-none" | "joystick-2-host" | "joystick-2-simulated" => {
+            let source = id.strip_prefix("joystick-2-").unwrap();
+            CommandState::checked(settings.is_some_and(|s| s.joystick_2 == source.parse().unwrap_or_default()))
+        }
+        "joystick-simulated-window" => CommandState::enabled(true),
         #[cfg(feature = "nova")]
         "expansion-nova-toggle" => CommandState {
             enabled: true,

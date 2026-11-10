@@ -102,6 +102,17 @@ pub enum CpcKey {
     Joy0Right,
     Joy0Fire2,
     Joy0Fire1,
+    /// Joystick 0's third fire button, on line 9 bit 6.
+    Joy0Fire3,
+    /// Joystick 1 shares matrix line 6 with the keyboard keys Digit6, Digit5,
+    /// R, T, G, F, B (the real CPC wires the second joystick onto line 6).
+    Joy1Up,
+    Joy1Down,
+    Joy1Left,
+    Joy1Right,
+    Joy1Fire1,
+    Joy1Fire2,
+    Joy1Fire3,
 }
 
 impl CpcKey {
@@ -198,7 +209,17 @@ impl CpcKey {
             Joy0Right => (9, 3),
             Joy0Fire2 => (9, 4),
             Joy0Fire1 => (9, 5),
+            Joy0Fire3 => (9, 6),
             Del => (9, 7),
+
+            /// Joystick 1 shares line 6 with the keyboard keys (bits 0-6).
+            Joy1Up => (6, 0),
+            Joy1Down => (6, 1),
+            Joy1Left => (6, 2),
+            Joy1Right => (6, 3),
+            Joy1Fire1 => (6, 4),
+            Joy1Fire2 => (6, 5),
+            Joy1Fire3 => (6, 6),
         }
     }
 }
@@ -403,6 +424,14 @@ pub const ALL_KEYS: &[CpcKey] = {
         Joy0Right,
         Joy0Fire2,
         Joy0Fire1,
+        Joy0Fire3,
+        Joy1Up,
+        Joy1Down,
+        Joy1Left,
+        Joy1Right,
+        Joy1Fire1,
+        Joy1Fire2,
+        Joy1Fire3,
     ]
 };
 
@@ -505,7 +534,9 @@ mod layout_test {
                 let (line, bit) = key.matrix_position();
                 usize::from(line) * 8 + usize::from(bit) == index
             });
-            assert!(keys.count() <= 1, "{index}");
+            // joystick 1 shares line 6 with the keyboard keys (Digit6..B), so
+            // those positions hold two keys: a keyboard key and a joystick key.
+            assert!(keys.count() <= 2, "{index}");
         }
     }
 

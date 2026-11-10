@@ -72,7 +72,7 @@ pub struct Emulator {
     /// The menus, the palette and the debugger (`config.menu`, WebGPU / WebGL only).
     ui: Option<WebUi>,
     /// The CRTC / Gate Array writes drawn on the picture (Debug > Overlay).
-    overlay: Option<amsrust::overlay::Overlay>
+    overlay: Option<amsrust::overlay::Overlay>,
 }
 
 #[wasm_bindgen]
@@ -118,7 +118,7 @@ impl Emulator {
             typed: Vec::new(),
             frames: 0,
             ui,
-            overlay: None
+            overlay: None,
         })
     }
 
@@ -739,16 +739,80 @@ impl Emulator {
 impl Emulator {
     /// The host keyboard to the page's machine, once a frame.
     fn apply_keyboard(&mut self) {
-        let input = HostInput {
+        let mut input = HostInput {
             down: self.held.values().copied().collect(),
             typed: std::mem::take(&mut self.typed),
-            placed: self.placed.values().copied().collect()
+            placed: self.placed.values().copied().collect(),
+            joysticks: amsrust::joystick::Joysticks::default(),
         };
+        self.apply_gamepads(&mut input);
         // the debugger types (Auto-type, the palette): the host keyboard would release its key
         if self.ui.as_ref().is_some_and(|ui| ui.debugger.is_typing()) {
             return;
         }
         self.keyboard.apply(&mut self.motherboard, &input);
+    }
+
+    /// The browser's gamepads (`navigator.getGamepads()`) to `input`'s joysticks, once a frame.
+    /// Gamepad 0 → joystick 0 (line 9), gamepad 1 → joystick 1 (line 6).
+    fn apply_gamepads(&mut self, input: &mut HostInput) {
+        use web_sys::GamepadButton;
+        let Some(window) = web_sys::window() else { return };
+        let navigator = window.navigator();
+        let Some(gamepads) = navigator.get_gamepads() else { return };
+        for slot in 0..2u32 {
+            let joy = match slot {
+                0 => &mut input.joysticks.joy0,
+                _ => &mut input.joysticks.joy1,
+            };
+            let Some(gamepad) = gamepads.get(slot) else {
+                *joy = Default::default();
+                continue;
+            };
+            if !gamepad.connected() {
+                *joy = Default::default();
+                continue;
+            }
+            // left stick: axes 0 = X, 1 = Y (digital: one axis at a time)
+            if let Some(axes) = gamepad.axes() {
+                let raw_x = if axes.length() > 0 { axes.get_index(0) } else { 0.0 };
+                let raw_y = if axes.length() > 1 { axes.get_index(1) } else { 0.0 };
+                let dead = 0.5;
+                let dx = if raw_x.abs() > dead { raw_x.signum() as i8 } else { 0 };
+                let dy = if raw_y.abs() > dead { raw_y.signum() as i8 } else { 0 };
+                if dx != 0 && dy != 0 {
+                    if raw_x.abs() >= raw_y.abs() {
+                        joy.x = dx;
+                        joy.y = 0;
+                    } else {
+                        joy.x = 0;
+                        joy.y = dy;
+                    }
+                } else {
+                    joy.x = dx;
+                    joy.y = dy;
+                }
+            }
+            // buttons 0/1/2 → fire1/fire2/fire3 (South/East/West on typical gamepads)
+            if let Some(buttons) = gamepad.buttons() {
+                if let Ok(Some(iter)) = js_sys::try_iter(&buttons) {
+                    for (j, val) in iter.enumerate() {
+                        if j >= 3 {
+                            break;
+                        }
+                        if let Ok(val) = val {
+                            let button: GamepadButton = val.into();
+                            match j {
+                                0 => joy.fire[0] = button.pressed(),
+                                1 => joy.fire[1] = button.pressed(),
+                                2 => joy.fire[2] = button.pressed(),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

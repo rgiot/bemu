@@ -5,12 +5,15 @@
 use serde_json::Value;
 
 use crate::commands::{self, Arg, Command, CommandBus, CommandTarget, View};
+use crate::joystick::Joysticks;
 
 /// What the windows remember between frames.
 #[derive(Default)]
 pub struct ViewState {
     manager: super::breakpoints::Manager,
     screen: super::screen::ScreenState,
+    /// The simulated joystick window's state (stick position + fire buttons).
+    pub simulated_joysticks: Joysticks,
     /// The bytes the memory window showed last (its first address and them), to mark the
     /// changed ones.
     memory_seen: Option<(u16, Vec<u8>)>,
@@ -184,6 +187,7 @@ pub fn title(view: View) -> &'static str {
         View::Shortcuts => "Keyboard shortcuts",
         View::About => "About bemu",
         View::Palette => "",
+        View::Joystick => "Joystick",
     }
 }
 
@@ -1043,6 +1047,9 @@ pub fn contents(
             ui.label(env!("CARGO_PKG_AUTHORS"));
             ui.label("Licence: MIT or Apache-2.0");
         }
+        View::Joystick => {
+            simulated_joystick(ui, target, bus, state);
+        }
         View::Palette => {}
     }
 }
@@ -1142,4 +1149,104 @@ fn preferences(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut CommandB
                 ui.end_row();
             }
         });
+}
+
+/// The simulated joystick window: direction pad and three fire buttons.
+fn simulated_joystick(
+    ui: &mut egui::Ui,
+    target: &dyn CommandTarget,
+    _bus: &mut CommandBus,
+    state: &mut ViewState,
+) {
+    use crate::joystick::JoystickSource;
+    let settings = match target.settings() {
+        Some(s) => s,
+        None => {
+            ui.label("No settings");
+            return;
+        }
+    };
+    let joy0_sim = settings.joystick_1 == JoystickSource::Simulated;
+    let joy1_sim = settings.joystick_2 == JoystickSource::Simulated;
+
+    if !joy0_sim && !joy1_sim {
+        ui.label("No joystick is set to Simulated.");
+        ui.label("Open Machine > Joystick and set Joystick 1 or 2 to Simulated.");
+        return;
+    }
+
+    ui.heading("Simulated joystick");
+    ui.label("Hold a direction button to press it; release to let go.");
+    ui.separator();
+
+    let joy = &mut state.simulated_joysticks;
+    let stick = &mut joy.joy0;
+
+    // Reset to centre each frame; direction buttons set it while held.
+    stick.x = 0;
+    stick.y = 0;
+
+    // Cross-shaped direction pad (momentary: pressed only while held).
+    ui.label("Direction");
+    let mut up_hovered = false;
+    let mut down_hovered = false;
+    let mut left_hovered = false;
+    let mut right_hovered = false;
+    egui::Grid::new("joystick_dpad").num_columns(3).spacing(egui::vec2(10.0, 10.0)).show(ui, |ui| {
+        ui.add(egui::Button::new(""));
+        if ui.add(egui::Button::new("Up")).hovered() {
+            up_hovered = true;
+        }
+        ui.add(egui::Button::new(""));
+        ui.end_row();
+        if ui.add(egui::Button::new("Left")).hovered() {
+            left_hovered = true;
+        }
+        ui.add(egui::Button::new(""));
+        if ui.add(egui::Button::new("Right")).hovered() {
+            right_hovered = true;
+        }
+        ui.end_row();
+        ui.add(egui::Button::new(""));
+        if ui.add(egui::Button::new("Down")).hovered() {
+            down_hovered = true;
+        }
+        ui.add(egui::Button::new(""));
+    });
+
+    let primary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+    if primary_down {
+        if up_hovered {
+            stick.x = 0;
+            stick.y = -1;
+        } else if down_hovered {
+            stick.x = 0;
+            stick.y = 1;
+        } else if left_hovered {
+            stick.x = -1;
+            stick.y = 0;
+        } else if right_hovered {
+            stick.x = 1;
+            stick.y = 0;
+        }
+    }
+
+    // Fire buttons: momentary too.
+    ui.separator();
+    ui.label("Fire");
+    ui.horizontal(|ui| {
+        let mut fire_hovered = [false; 3];
+        for (i, label) in ["Fire 1", "Fire 2", "Fire 3"].iter().enumerate() {
+            if ui.add(egui::Button::new(*label)).hovered() {
+                fire_hovered[i] = true;
+            }
+        }
+        for (i, label) in ["Fire 1", "Fire 2", "Fire 3"].iter().enumerate() {
+            stick.fire[i] = primary_down && fire_hovered[i];
+        }
+    });
+
+    joy.joy1.x = stick.x;
+    joy.joy1.y = stick.y;
+    joy.joy1.fire = stick.fire;
 }
