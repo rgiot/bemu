@@ -84,6 +84,7 @@ struct ViewWindow {
     state: egui_winit::State,
     ctx: egui::Context,
     painter: Option<amsrust::ui::Painter>,
+    fit_content: bool,
     /// The size last asked for its content, in points.
     fitted: Option<egui::Vec2>,
 }
@@ -95,9 +96,14 @@ impl ViewWindow {
         title: &str,
         ctx: egui::Context,
     ) -> Result<Self, String> {
+        let initial_size = if title == "Keyboard" {
+            LogicalSize::new(820.0, 300.0)
+        } else {
+            LogicalSize::new(460.0, 520.0)
+        };
         let attributes = Window::default_attributes()
             .with_title(format!("bemu: {title}"))
-            .with_inner_size(LogicalSize::new(460.0, 520.0));
+            .with_inner_size(initial_size);
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -154,12 +160,16 @@ impl ViewWindow {
             state,
             ctx,
             painter: None,
+            fit_content: title != "Keyboard",
             fitted: None,
         })
     }
 
     /// As large as its content (`wanted` points), up to most of a screen: a longer one scrolls.
     fn fit(&mut self, wanted: egui::Vec2) {
+        if !self.fit_content {
+            return;
+        }
         const MAX: egui::Vec2 = egui::vec2(1000.0, 900.0);
         let size = wanted.max(egui::vec2(160.0, 60.0)).min(MAX).ceil();
         // the user resized it, or it was fitted already: changes of a few points are left

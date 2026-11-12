@@ -32,6 +32,7 @@ use crate::commands::{
 };
 use crate::input::HostKey;
 use crate::joystick::Joysticks;
+use crate::keyboard::CpcKey;
 
 /// A file the host is asked to pick (a web page opens its file chooser): the command `id` then
 /// runs with it.
@@ -277,9 +278,14 @@ impl Gui {
         self.view_state.simulated_joysticks
     }
 
-    /// The host keys currently held down by the virtual keyboard (mouse held on a key).
-    pub fn virtual_keys_held(&self) -> Vec<HostKey> {
+    /// The CPC keys currently held down by the virtual keyboard (mouse held on a key).
+    pub fn virtual_keys_held(&self) -> Vec<CpcKey> {
         self.view_state.virtual_keys_held.clone()
+    }
+
+    /// Whether Ctrl is being used as a mouse modifier on the virtual Shift key.
+    pub fn virtual_keyboard_ctrl_click(&self) -> bool {
+        self.view_state.virtual_keyboard_ctrl_click
     }
 
     /// Show a message for a few seconds.

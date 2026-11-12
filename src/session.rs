@@ -825,18 +825,17 @@ pub fn run_window(
         }
         // the simulated joystick window drives the joysticks set to Simulated
         if let Some(gui) = &window.gui {
+            if gui.virtual_keyboard_ctrl_click() {
+                input
+                    .down
+                    .retain(|host| !matches!(host, HostKey::LeftCtrl | HostKey::RightCtrl));
+            }
             let sim = gui.simulated_joysticks();
             if core.settings().is_some_and(|s| s.joystick_1 == JoystickSource::Simulated) {
                 input.joysticks.joy0 = sim.joy0;
             }
             if core.settings().is_some_and(|s| s.joystick_2 == JoystickSource::Simulated) {
                 input.joysticks.joy1 = sim.joy1;
-            }
-            // the virtual keyboard window drives the host keys it holds down
-            for host in gui.virtual_keys_held() {
-                if !input.down.contains(&host) {
-                    input.down.push(host);
-                }
             }
         }
         window.shortcuts(&input, &core, &mut bus);
@@ -869,6 +868,12 @@ pub fn run_window(
         // keyboard would release the key it holds down every frame
         if !core.debugger.is_typing() {
             window.host_keyboard.apply(core.motherboard, &input);
+            #[cfg(feature = "gui")]
+            if let Some(gui) = &window.gui {
+                window
+                    .host_keyboard
+                    .apply_virtual_keys(core.motherboard, &gui.virtual_keys_held());
+            }
         }
         // After the host keyboard, which would release the typed keys.
         type_due_keys(typist, core.motherboard);

@@ -5,7 +5,6 @@
 use serde_json::Value;
 
 use crate::commands::{self, Arg, Command, CommandBus, CommandTarget, View};
-use crate::input::HostKey;
 use crate::joystick::Joysticks;
 use crate::keyboard::CpcKey;
 
@@ -16,10 +15,12 @@ pub struct ViewState {
     screen: super::screen::ScreenState,
     /// The simulated joystick window's state (stick position + fire buttons).
     pub simulated_joysticks: Joysticks,
-    /// The CPC host keys currently held down by the virtual keyboard (mouse held on a key).
-    /// Filled during the keyboard view's egui frame, read by the session loop to inject into
-    /// `HostInput` before applying the host keyboard.
-    pub virtual_keys_held: Vec<HostKey>,
+    /// CPC matrix keys held by the virtual keyboard.
+    pub virtual_keys_held: Vec<CpcKey>,
+    /// Shift stays held after Ctrl-clicking a virtual Shift key, until the next key is pressed.
+    virtual_shift_latched: bool,
+    /// Ctrl is a mouse modifier while Ctrl-clicking a virtual Shift key, not CPC input.
+    pub(super) virtual_keyboard_ctrl_click: bool,
     /// The bytes the memory window showed last (its first address and them), to mark the
     /// changed ones.
     memory_seen: Option<(u16, Vec<u8>)>,
@@ -145,18 +146,23 @@ pub fn show(
         return;
     }
     // as large as its content, a long one scrolled
-    egui::Window::new(title)
+    let window = egui::Window::new(title)
         .open(open)
-        .resizable(false)
-        .show(ctx, |ui| {
-            egui::ScrollArea::both()
-                .auto_shrink([true, true])
-                .max_height(560.0)
-                .max_width(760.0)
-                .show(ui, |ui| {
-                    contents(view, ui, target, bus, state);
-                });
-        });
+        .resizable(view == View::Keyboard);
+    let window = if view == View::Keyboard {
+        window.default_size(egui::vec2(820.0, 320.0))
+    } else {
+        window
+    };
+    window.show(ctx, |ui| {
+        egui::ScrollArea::both()
+            .auto_shrink([true, true])
+            .max_height(560.0)
+            .max_width(760.0)
+            .show(ui, |ui| {
+                contents(view, ui, target, bus, state);
+            });
+    });
 }
 
 /// The debugger's windows (the ones a desktop opens as windows of the system), not the
@@ -1202,27 +1208,30 @@ fn simulated_joystick(
     let mut down_hovered = false;
     let mut left_hovered = false;
     let mut right_hovered = false;
-    egui::Grid::new("joystick_dpad").num_columns(3).spacing(egui::vec2(10.0, 10.0)).show(ui, |ui| {
-        ui.add(egui::Button::new(""));
-        if ui.add(egui::Button::new("Up")).hovered() {
-            up_hovered = true;
-        }
-        ui.add(egui::Button::new(""));
-        ui.end_row();
-        if ui.add(egui::Button::new("Left")).hovered() {
-            left_hovered = true;
-        }
-        ui.add(egui::Button::new(""));
-        if ui.add(egui::Button::new("Right")).hovered() {
-            right_hovered = true;
-        }
-        ui.end_row();
-        ui.add(egui::Button::new(""));
-        if ui.add(egui::Button::new("Down")).hovered() {
-            down_hovered = true;
-        }
-        ui.add(egui::Button::new(""));
-    });
+    egui::Grid::new("joystick_dpad")
+        .num_columns(3)
+        .spacing(egui::vec2(10.0, 10.0))
+        .show(ui, |ui| {
+            ui.add(egui::Button::new(""));
+            if ui.add(egui::Button::new("Up")).hovered() {
+                up_hovered = true;
+            }
+            ui.add(egui::Button::new(""));
+            ui.end_row();
+            if ui.add(egui::Button::new("Left")).hovered() {
+                left_hovered = true;
+            }
+            ui.add(egui::Button::new(""));
+            if ui.add(egui::Button::new("Right")).hovered() {
+                right_hovered = true;
+            }
+            ui.end_row();
+            ui.add(egui::Button::new(""));
+            if ui.add(egui::Button::new("Down")).hovered() {
+                down_hovered = true;
+            }
+            ui.add(egui::Button::new(""));
+        });
 
     let primary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
     if primary_down {
@@ -1251,7 +1260,7 @@ fn simulated_joystick(
                 fire_hovered[i] = true;
             }
         }
-        for (i, label) in ["Fire 1", "Fire 2", "Fire 3"].iter().enumerate() {
+        for i in 0..3 {
             stick.fire[i] = primary_down && fire_hovered[i];
         }
     });
@@ -1261,202 +1270,329 @@ fn simulated_joystick(
     joy.joy1.fire = stick.fire;
 }
 
-/// A friendly label for a CPC key on the virtual keyboard.
-fn key_label(key: CpcKey) -> &'static str {
-    use CpcKey::*;
-    match key {
-        CursorUp => "↑",
-        CursorDown => "↓",
-        CursorLeft => "←",
-        CursorRight => "→",
-        Return => "Enter",
-        Shift => "Shift",
-        Control => "Ctrl",
-        Copy => "Copy",
-        Clr => "Clr",
-        CapsLock => "Caps",
-        Tab => "Tab",
-        Esc => "Esc",
-        Space => "Spc",
-        Dot => ".",
-        Comma => ",",
-        Semicolon => ";",
-        Colon => ":",
-        Slash => "/",
-        Backslash => "\\",
-        At => "@",
-        Caret => "^",
-        Minus => "-",
-        Equal => "=",
-        OpenBracket => "[",
-        CloseBracket => "]",
-        Apostrophe => "'",
-        Backquote => "`",
-        Digit0 => "0",
-        Digit1 => "1",
-        Digit2 => "2",
-        Digit3 => "3",
-        Digit4 => "4",
-        Digit5 => "5",
-        Digit6 => "6",
-        Digit7 => "7",
-        Digit8 => "8",
-        Digit9 => "9",
-        A => "A",
-        B => "B",
-        C => "C",
-        D => "D",
-        E => "E",
-        F => "F",
-        G => "G",
-        H => "H",
-        I => "I",
-        J => "J",
-        K => "K",
-        L => "L",
-        M => "M",
-        N => "N",
-        O => "O",
-        P => "P",
-        Q => "Q",
-        R => "R",
-        S => "S",
-        T => "T",
-        U => "U",
-        V => "V",
-        W => "W",
-        X => "X",
-        Y => "Y",
-        Z => "Z",
-        Keypad0 => "KP0",
-        Keypad1 => "KP1",
-        Keypad2 => "KP2",
-        Keypad3 => "KP3",
-        Keypad4 => "KP4",
-        Keypad5 => "KP5",
-        Keypad6 => "KP6",
-        Keypad7 => "KP7",
-        Keypad8 => "KP8",
-        Keypad9 => "KP9",
-        KeypadDot => "KP.",
-        KeypadEnter => "KPent",
-        Joy0Up => "J0↑",
-        Joy0Down => "J0↓",
-        Joy0Left => "J0←",
-        Joy0Right => "J0→",
-        Joy0Fire1 => "J0F1",
-        Joy0Fire2 => "J0F2",
-        Joy0Fire3 => "J0F3",
-        Joy1Up => "J1↑",
-        Joy1Down => "J1↓",
-        Joy1Left => "J1←",
-        Joy1Right => "J1→",
-        Joy1Fire1 => "J1F1",
-        Joy1Fire2 => "J1F2",
-        Joy1Fire3 => "J1F3",
-        Del => "Del",
-        _ => "?",
-    }
-}
-
-/// The reverse map CPC key -> host key, for clicking a virtual key to press its host key.
-/// Built from [`crate::input::HOST_KEY_MAP`]: when several host keys map to one CPC key
-/// (e.g. both shifts to `Shift`), the first one wins.
-fn cpc_key_to_host_key() -> Vec<(CpcKey, HostKey)> {
-    use crate::input::HOST_KEY_MAP;
-    let mut map: Vec<(CpcKey, HostKey)> = Vec::new();
-    for (host, cpc) in HOST_KEY_MAP.iter().copied() {
-        if !map.iter().any(|(c, _)| *c == cpc) {
-            map.push((cpc, host));
-        }
-    }
-    map
-}
-
-/// The host key to press when a virtual CPC key is clicked, or `None` if unmapped.
-fn host_key_for_cpc_key(key: CpcKey) -> Option<HostKey> {
-    cpc_key_to_host_key()
-        .into_iter()
-        .find(|(c, _)| *c == key)
-        .map(|(_, h)| h)
-}
-
-/// The virtual keyboard: shows the CPC matrix keys, lights the ones pressed (by the real
-/// keyboard or by clicking a virtual key), and clicking a virtual key presses its host key.
+/// The virtual keyboard, scaled to the window while retaining the website keyboard's proportions.
 fn keyboard_view(
     ui: &mut egui::Ui,
     target: &dyn CommandTarget,
     _bus: &mut CommandBus,
     state: &mut ViewState,
 ) {
-    use crate::input::HOST_KEY_MAP;
-
     // Reset the virtual keys held this frame; rebuilt below from mouse-over + button down.
     state.virtual_keys_held.clear();
+    state.virtual_keyboard_ctrl_click = false;
 
     let mb = target.motherboard();
     let matrix = mb.keyboard();
 
     ui.heading("Keyboard");
-    ui.label("Keys lit in red are pressed (real keyboard or virtual click). Click a key to press its host key.");
+    ui.label("Click a key to press it. Ctrl-click Shift to latch it for the next key.");
     ui.separator();
 
-    // Group keys by matrix line (0-9): each line is a row of the virtual keyboard.
-    let mut rows: [Vec<CpcKey>; 10] = [
-        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
-        Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+    // Key widths use quarter-key units so the CPC's uneven modifier widths line up.
+    struct K {
+        label: &'static str,
+        key: CpcKey,
+        width: u32,
+        rows: u32,
+    }
+
+    // Main block from the CPC 6128 layout in bnd_website/emulator/emulator.js.
+    macro_rules! key {
+        ($label:literal, $key:ident, $width:literal) => {
+            Some(K {
+                label: $label,
+                key: CpcKey::$key,
+                width: $width,
+                rows: 1,
+            })
+        };
+        ($label:literal, $key:ident, $width:literal, $rows:literal) => {
+            Some(K {
+                label: $label,
+                key: CpcKey::$key,
+                width: $width,
+                rows: $rows,
+            })
+        };
+    }
+
+    // Each row spans 15 key widths (60 quarter units).
+    let rows: [Vec<Option<K>>; 5] = [
+        // ESC, digits and editing keys.
+        vec![
+            key!("ESC", Esc, 4),
+            key!("!\n1", Digit1, 4),
+            key!("\"\n2", Digit2, 4),
+            key!("#\n3", Digit3, 4),
+            key!("$\n4", Digit4, 4),
+            key!("%\n5", Digit5, 4),
+            key!("&\n6", Digit6, 4),
+            key!("'\n7", Digit7, 4),
+            key!("(\n8", Digit8, 4),
+            key!(")\n9", Digit9, 4),
+            key!("_\n0", Digit0, 4),
+            key!("=\n-", Minus, 4),
+            key!("£\n^", Caret, 4),
+            key!("CLR", Clr, 4),
+            key!("DEL", Del, 4),
+        ],
+        // Typing row; return occupies two rows.
+        vec![
+            key!("TAB", Tab, 6),
+            key!("Q", Q, 4),
+            key!("W", W, 4),
+            key!("E", E, 4),
+            key!("R", R, 4),
+            key!("T", T, 4),
+            key!("Y", Y, 4),
+            key!("U", U, 4),
+            key!("I", I, 4),
+            key!("O", O, 4),
+            key!("P", P, 4),
+            key!("|\n@", At, 4),
+            key!("{\n[", OpenBracket, 4),
+            key!("RETURN", Return, 6, 2),
+        ],
+        // Home row.
+        vec![
+            key!("CAPS\nLOCK", CapsLock, 7),
+            key!("A", A, 4),
+            key!("S", S, 4),
+            key!("D", D, 4),
+            key!("F", F, 4),
+            key!("G", G, 4),
+            key!("H", H, 4),
+            key!("J", J, 4),
+            key!("K", K, 4),
+            key!("L", L, 4),
+            key!("*\n:", Colon, 4),
+            key!("+\n;", Semicolon, 4),
+            key!("}\n]", CloseBracket, 4),
+        ],
+        // Bottom letter row.
+        vec![
+            key!("SHIFT", Shift, 9),
+            key!("Z", Z, 4),
+            key!("X", X, 4),
+            key!("C", C, 4),
+            key!("V", V, 4),
+            key!("B", B, 4),
+            key!("N", N, 4),
+            key!("M", M, 4),
+            key!("<\n,", Comma, 4),
+            key!(">\n.", Dot, 4),
+            key!("?\n/", Slash, 4),
+            key!("`\n\\", Backslash, 4),
+            key!("SHIFT", Shift, 7),
+        ],
+        // Modifiers and space bar.
+        vec![
+            key!("CONTROL", Control, 9),
+            key!("COPY", Copy, 7),
+            key!("SPACE", Space, 32),
+            key!("ENTER", Return, 12),
+        ],
     ];
-    for key in crate::keyboard::ALL_KEYS {
-        let (line, _bit) = key.matrix_position();
-        if line < 10 {
-            rows[line as usize].push(*key);
+
+    let primary_pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
+    let control_down = ui.input(|i| i.modifiers.ctrl);
+    let board_padding = 8.0;
+    let blocks_gap = 12.0;
+    let row_gap = 3.0;
+    let key_height_ratio = 0.74;
+    let key_width = 40.0;
+    let key_height = key_width * key_height_ratio;
+    let quarter_width = key_width / 4.0;
+    let board_size = egui::vec2(
+        board_padding * 2.0 + key_width * 18.0 + blocks_gap,
+        board_padding * 2.0 + key_height * 5.0 + row_gap * 4.0,
+    );
+    let (rect, _response) = ui.allocate_exact_size(board_size, egui::Sense::hover());
+    let painter = ui.painter();
+
+    // Match the website's dark case, pale keys, raised key edges and active-key colour.
+    let case = egui::Color32::from_rgb(32, 22, 36);
+    let key_bg = egui::Color32::from_rgb(207, 205, 199);
+    let key_edge = egui::Color32::from_rgb(141, 139, 134);
+    let key_text = egui::Color32::from_rgb(38, 38, 38);
+    let key_lit = egui::Color32::from_rgb(255, 242, 122);
+    let key_hover = egui::Color32::from_rgb(224, 222, 216);
+    painter.rect_filled(rect, egui::CornerRadius::same(8), case);
+
+    if state.virtual_shift_latched {
+        state.virtual_keys_held.push(CpcKey::Shift);
+    }
+    let mut paint_key =
+        |key_rect: egui::Rect, key: CpcKey, key_id: u32, label: &str, tall: bool| {
+            let response = ui.interact(
+                key_rect,
+                egui::Id::new(("virtual-key", key_id)),
+                egui::Sense::click_and_drag(),
+            );
+            let lit = matrix.is_pressed(key) || state.virtual_keys_held.contains(&key);
+            let hovered = response.hovered();
+            let fill = if lit {
+                key_lit
+            } else if hovered {
+                key_hover
+            } else {
+                key_bg
+            };
+            painter.rect_filled(
+                key_rect.translate(egui::vec2(0.0, 2.0)),
+                egui::CornerRadius::same(3),
+                key_edge,
+            );
+            painter.rect_filled(key_rect, egui::CornerRadius::same(3), fill);
+            painter.rect_stroke(
+                key_rect,
+                egui::CornerRadius::same(3),
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(242, 240, 234)),
+                egui::epaint::StrokeKind::Inside,
+            );
+
+            let font_size = (key_height * if tall { 0.24 } else { 0.30 }).clamp(7.0, 13.0);
+            let text_color = key_text;
+            if let Some((dx, dy)) = match label {
+                "up" => Some((0.0, -1.0)),
+                "down" => Some((0.0, 1.0)),
+                "left" => Some((-1.0, 0.0)),
+                "right" => Some((1.0, 0.0)),
+                _ => None,
+            } {
+                let center = key_rect.center();
+                let scale = key_height * 0.25;
+                let tip = egui::pos2(center.x + dx * scale, center.y + dy * scale);
+                let shaft_start = egui::pos2(center.x - dx * scale, center.y - dy * scale);
+                let wing_a = egui::pos2(
+                    tip.x - dx * scale * 0.7 - dy * scale * 0.7,
+                    tip.y - dy * scale * 0.7 + dx * scale * 0.7,
+                );
+                let wing_b = egui::pos2(
+                    tip.x - dx * scale * 0.7 + dy * scale * 0.7,
+                    tip.y - dy * scale * 0.7 - dx * scale * 0.7,
+                );
+                let arrow_stroke = egui::Stroke::new(2.0_f32, text_color);
+                painter.line_segment([shaft_start, tip], arrow_stroke);
+                painter.line_segment([tip, wing_a], arrow_stroke);
+                painter.line_segment([tip, wing_b], arrow_stroke);
+            } else if let Some((top, bottom)) = label.split_once('\n') {
+                let offset = key_height * 0.20;
+                painter.text(
+                    egui::pos2(key_rect.center().x, key_rect.center().y - offset),
+                    egui::Align2::CENTER_CENTER,
+                    top,
+                    egui::FontId::proportional(font_size),
+                    text_color,
+                );
+                painter.text(
+                    egui::pos2(key_rect.center().x, key_rect.center().y + offset),
+                    egui::Align2::CENTER_CENTER,
+                    bottom,
+                    egui::FontId::proportional(font_size),
+                    text_color,
+                );
+            } else {
+                painter.text(
+                    key_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    label,
+                    egui::FontId::proportional(font_size),
+                    text_color,
+                );
+            }
+
+            if primary_pressed && hovered && key == CpcKey::Shift && control_down {
+                state.virtual_shift_latched = !state.virtual_shift_latched;
+                if !state.virtual_shift_latched {
+                    state
+                        .virtual_keys_held
+                        .retain(|held| *held != CpcKey::Shift);
+                }
+            } else if primary_pressed && hovered && !control_down && state.virtual_shift_latched {
+                state.virtual_shift_latched = false;
+            }
+
+            if response.is_pointer_button_down_on() && key == CpcKey::Shift && control_down {
+                state.virtual_keyboard_ctrl_click = true;
+            }
+
+            if response.is_pointer_button_down_on() && !(key == CpcKey::Shift && control_down) {
+                if !state.virtual_keys_held.contains(&key) {
+                    state.virtual_keys_held.push(key);
+                }
+            }
+        };
+
+    let main_left = rect.left() + board_padding;
+    let main_top = rect.top() + board_padding;
+    let mut key_id = 0;
+    for (row_index, row) in rows.iter().enumerate() {
+        let mut quarter_column = 0u32;
+        for key in row.iter() {
+            let Some(k) = key else {
+                quarter_column += 4;
+                continue;
+            };
+            let key_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    main_left + quarter_column as f32 * quarter_width,
+                    main_top + row_index as f32 * (key_height + row_gap),
+                ),
+                egui::vec2(
+                    k.width as f32 * quarter_width - 2.0,
+                    k.rows as f32 * key_height + (k.rows - 1) as f32 * row_gap - 2.0,
+                ),
+            );
+            paint_key(key_rect, k.key, key_id, k.label, k.rows > 1);
+            key_id += 1;
+
+            quarter_column += k.width;
         }
     }
 
-    let primary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
-
-    for (line, keys) in rows.iter().enumerate() {
-        if keys.is_empty() {
-            continue;
+    let keypad_labels = [
+        [
+            ("f7", CpcKey::Keypad7),
+            ("f8", CpcKey::Keypad8),
+            ("f9", CpcKey::Keypad9),
+        ],
+        [
+            ("f4", CpcKey::Keypad4),
+            ("f5", CpcKey::Keypad5),
+            ("f6", CpcKey::Keypad6),
+        ],
+        [
+            ("f1", CpcKey::Keypad1),
+            ("f2", CpcKey::Keypad2),
+            ("f3", CpcKey::Keypad3),
+        ],
+        [
+            ("f0", CpcKey::Keypad0),
+            ("up", CpcKey::CursorUp),
+            (".", CpcKey::KeypadDot),
+        ],
+        [
+            ("left", CpcKey::CursorLeft),
+            ("down", CpcKey::CursorDown),
+            ("right", CpcKey::CursorRight),
+        ],
+    ];
+    let keypad_left = main_left + key_width * 15.0 + blocks_gap;
+    for (row, keys) in keypad_labels.iter().enumerate() {
+        for (column, (label, key)) in keys.iter().enumerate() {
+            let key_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    keypad_left + column as f32 * key_width,
+                    main_top + row as f32 * (key_height + row_gap),
+                ),
+                egui::vec2(key_width - 2.0, key_height - 2.0),
+            );
+            paint_key(key_rect, *key, key_id, label, false);
+            key_id += 1;
         }
-        ui.horizontal(|ui| {
-            ui.label(format!("Line {line}:"));
-            for key in keys {
-                let label = key_label(*key);
-                let physically_pressed = matrix.is_pressed(*key);
-                let virtually_held = state
-                    .virtual_keys_held
-                    .iter()
-                    .any(|h| host_key_for_cpc_key(*key) == Some(*h));
-                let lit = physically_pressed || virtually_held;
-
-                let button = egui::Button::new(label);
-                let button = if lit {
-                    button.fill(egui::Color32::from_rgb(220, 50, 50))
-                } else {
-                    button
-                };
-                let response = ui.add(button);
-
-                // If the mouse is down over this virtual key, record its host key as held.
-                if primary_down && response.hovered() {
-                    if let Some(host) = host_key_for_cpc_key(*key) {
-                        state.virtual_keys_held.push(host);
-                    }
-                }
-
-                // Tooltip: matrix position + host key(s).
-                let (l, b) = key.matrix_position();
-                let hosts: Vec<String> = HOST_KEY_MAP
-                    .iter()
-                    .filter(|(_, c)| *c == *key)
-                    .map(|(h, _)| format!("{h:?}"))
-                    .collect();
-                response.on_hover_text(format!(
-                    "{key:?}: matrix line {l} bit {b}, host keys {}",
-                    hosts.join(", ")
-                ));
-            }
-        });
+    }
+    if state.virtual_shift_latched && !state.virtual_keys_held.contains(&CpcKey::Shift) {
+        state.virtual_keys_held.push(CpcKey::Shift);
     }
 }

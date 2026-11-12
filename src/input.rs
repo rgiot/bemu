@@ -348,6 +348,14 @@ impl HostKeyboard {
         }
     }
 
+    /// Press CPC keys from the virtual keyboard after translating physical host input.
+    pub fn apply_virtual_keys(&self, motherboard: &mut Motherboard, keys: &[CpcKey]) {
+        let matrix = motherboard.keyboard_mut();
+        for &key in keys {
+            matrix.set_pressed(key, true);
+        }
+    }
+
     fn apply_symbolic(&mut self, motherboard: &mut Motherboard, input: &HostInput) {
         let layout = motherboard.keyboard_layout();
         self.learn(input, layout);
@@ -1245,9 +1253,26 @@ mod test {
             keyboard.apply(&mut motherboard, &input(&[], &[], ""));
             assert!(!motherboard.keyboard().is_pressed(cpc), "{host:?} released");
         }
+
         // a frontend that can't tell the places (minifb): the keys it reports
         keyboard.apply(&mut motherboard, &input(&[HostKey::Z], &[], "z"));
         assert!(motherboard.keyboard().is_pressed(CpcKey::Z));
+    }
+
+    #[test]
+    fn virtual_keyboard_presses_cpc_keys_independent_of_host_layout() {
+        let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+        let mut keyboard = HostKeyboard::new(KeyboardMapping::Symbolic);
+        keyboard.apply(&mut motherboard, &HostInput::default());
+        keyboard.apply_virtual_keys(&mut motherboard, &[CpcKey::X, CpcKey::Shift]);
+
+        assert!(motherboard.keyboard().is_pressed(CpcKey::X));
+        assert!(motherboard.keyboard().is_pressed(CpcKey::Shift));
+        assert!(!motherboard.keyboard().is_pressed(CpcKey::D));
+
+        keyboard.apply(&mut motherboard, &HostInput::default());
+        assert!(!motherboard.keyboard().is_pressed(CpcKey::X));
+        assert!(!motherboard.keyboard().is_pressed(CpcKey::Shift));
     }
 
     /// Symbolic: a character the CPC types without Shift, typed with the host's Shift (`@` is
