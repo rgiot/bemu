@@ -3,12 +3,12 @@
 //! The CPC has two joystick ports. Joystick 1 is read from matrix line 9
 //! (PPI port C selects line 9, PSG register 14 reads it back), joystick 2
 //! from matrix line 6 - which it shares with the keyboard keys Digit6, Digit5,
-//! R, T, G, F, B. Each joystick reports a direction (up/down/left/right/none)
+//! R, T, G, F, B. Each joystick reports its horizontal and vertical directions
 //! and three fire buttons.
 //!
 //! A joystick's state is a direction plus three fire buttons. The direction is
-//! expressed as an axis pair (-1..=1 each) for the simulated joystick's stick,
-//! and snapped to the four cardinal directions (plus centre) for the matrix.
+//! expressed as an axis pair (-1..=1 each). The virtual stick can press two
+//! directions together for diagonal movement.
 
 use crate::keyboard::CpcKey;
 use crate::motherboard::Motherboard;

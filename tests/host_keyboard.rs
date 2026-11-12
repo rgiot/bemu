@@ -2,6 +2,7 @@
 //! Shift down before the key (src/input.rs's HostKeyboard, a frame at a time).
 
 use amsrust::input::{HostInput, HostKey, HostKeyboard, KeyboardMapping};
+use amsrust::joystick::JoystickState;
 use amsrust::keyboard::KeyboardLayout;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 
@@ -31,6 +32,22 @@ fn screen_after_with(
     mapping: KeyboardMapping,
     frames: &[Frame],
 ) -> Vec<u8> {
+    let inputs: Vec<_> = frames
+        .iter()
+        .map(|(down, typed)| HostInput {
+            down: down.clone(),
+            typed: typed.clone(),
+            ..Default::default()
+        })
+        .collect();
+    screen_after_inputs(layout, mapping, &inputs)
+}
+
+fn screen_after_inputs(
+    layout: KeyboardLayout,
+    mapping: KeyboardMapping,
+    inputs: &[HostInput],
+) -> Vec<u8> {
     let mut motherboard = MotherboardBuilder::default()
         .set_keyboard_layout(layout)
         .build();
@@ -38,15 +55,8 @@ fn screen_after_with(
         frame(&mut motherboard);
     }
     let mut keyboard = HostKeyboard::new(mapping);
-    for (down, typed) in frames {
-        keyboard.apply(
-            &mut motherboard,
-            &HostInput {
-                down: down.clone(),
-                typed: typed.clone(),
-                ..Default::default()
-            },
-        );
+    for input in inputs {
+        keyboard.apply(&mut motherboard, input);
         frame(&mut motherboard);
     }
     for _ in 0..10 {
@@ -56,6 +66,92 @@ fn screen_after_with(
     (0xc000..=0xffffu16)
         .map(|address| motherboard.read_byte(address))
         .collect()
+}
+
+#[test]
+fn joystick_2_types_the_shared_keys_in_basic() {
+    let controls = [
+        (
+            JoystickState {
+                y: -1,
+                ..Default::default()
+            },
+            HostKey::Key6,
+            '6',
+        ),
+        (
+            JoystickState {
+                y: 1,
+                ..Default::default()
+            },
+            HostKey::Key5,
+            '5',
+        ),
+        (
+            JoystickState {
+                x: -1,
+                ..Default::default()
+            },
+            HostKey::R,
+            'r',
+        ),
+        (
+            JoystickState {
+                x: 1,
+                ..Default::default()
+            },
+            HostKey::T,
+            't',
+        ),
+        (
+            JoystickState {
+                fire: [true, false, false],
+                ..Default::default()
+            },
+            HostKey::F,
+            'f',
+        ),
+        (
+            JoystickState {
+                fire: [false, true, false],
+                ..Default::default()
+            },
+            HostKey::G,
+            'g',
+        ),
+        (
+            JoystickState {
+                fire: [false, false, true],
+                ..Default::default()
+            },
+            HostKey::B,
+            'b',
+        ),
+    ];
+    let mut joystick = Vec::new();
+    let mut keys = Vec::new();
+    for (stick, host, character) in controls {
+        joystick.extend((0..5).map(|_| {
+            let mut input = HostInput::default();
+            input.joysticks.joy1 = stick;
+            input
+        }));
+        joystick.extend(std::iter::repeat_with(HostInput::default).take(3));
+        keys.extend(key(host, Some(character)));
+    }
+    for mapping in [KeyboardMapping::Symbolic, KeyboardMapping::Positional] {
+        let expected = screen_after_with(KeyboardLayout::Uk, mapping, &keys);
+        assert_eq!(
+            screen_after_inputs(KeyboardLayout::Uk, mapping, &joystick),
+            expected,
+            "{mapping:?}: joystick 2 should type 65rtfgb"
+        );
+        assert_ne!(
+            expected,
+            screen_after_inputs(KeyboardLayout::Uk, mapping, &[]),
+            "{mapping:?}: expected output must differ from an untouched screen"
+        );
+    }
 }
 
 /// Shift held alone a frame, then with `key` typing `c`, then released.

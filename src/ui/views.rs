@@ -5,7 +5,7 @@
 use serde_json::Value;
 
 use crate::commands::{self, Arg, Command, CommandBus, CommandTarget, View};
-use crate::joystick::Joysticks;
+use crate::joystick::{JoystickState, Joysticks};
 use crate::keyboard::CpcKey;
 
 /// What the windows remember between frames.
@@ -1167,7 +1167,175 @@ fn preferences(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut CommandB
         });
 }
 
-/// The simulated joystick window: direction pad and three fire buttons.
+fn joystick_direction(offset: egui::Vec2, dead_zone: f32) -> (i8, i8) {
+    if offset.length() <= dead_zone {
+        return (0, 0);
+    }
+    let horizontal = offset.x.abs();
+    let vertical = offset.y.abs();
+    let x = if horizontal > vertical * 0.414_213_57 {
+        if offset.x < 0.0 {
+            -1
+        } else {
+            1
+        }
+    } else {
+        0
+    };
+    let y = if vertical > horizontal * 0.414_213_57 {
+        if offset.y < 0.0 {
+            -1
+        } else {
+            1
+        }
+    } else {
+        0
+    };
+    (x, y)
+}
+
+fn joystick_controls(ui: &mut egui::Ui, capture_id: egui::Id) -> JoystickState {
+    let mut stick = JoystickState::default();
+    let focused = ui.input(|input| input.focused);
+    let (primary_down, primary_pressed, secondary_down) = ui.input(|input| {
+        (
+            input.pointer.primary_down(),
+            input.pointer.button_pressed(egui::PointerButton::Primary),
+            input.pointer.secondary_down(),
+        )
+    });
+    ui.horizontal(|ui| {
+        let size = egui::vec2(210.0, 210.0);
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+        let center = rect.center();
+        let radius = 95.0;
+        let dead_zone = 18.0;
+        let captured = ui.ctx().data_mut(|data| {
+            let captured = focused
+                && primary_down
+                && (data.get_temp::<bool>(capture_id).unwrap_or(false)
+                    || (primary_pressed && response.is_pointer_button_down_on()));
+            data.insert_temp(capture_id, captured);
+            captured
+        });
+        let pointer = if captured {
+            ui.input(|input| input.pointer.hover_pos())
+        } else {
+            response.interact_pointer_pos()
+        };
+        let active = focused && (captured || response.clicked()) && pointer.is_some();
+        let offset = if active {
+            pointer.map_or(egui::Vec2::ZERO, |pos| pos - center)
+        } else {
+            egui::Vec2::ZERO
+        };
+        (stick.x, stick.y) = joystick_direction(offset, dead_zone);
+        stick.fire[0] = active && secondary_down;
+
+        let painter = ui.painter();
+        let case = egui::Color32::from_rgb(39, 38, 45);
+        let rim = egui::Color32::from_rgb(94, 92, 102);
+        let accent = egui::Color32::from_rgb(255, 202, 79);
+        painter.circle_filled(center, radius, case);
+        painter.circle_stroke(center, radius, egui::Stroke::new(3.0_f32, rim));
+        painter.circle_stroke(center, dead_zone, egui::Stroke::new(1.0_f32, rim));
+        for (dir, selected) in [
+            (egui::vec2(0.0, -1.0), stick.y < 0),
+            (egui::vec2(1.0, 0.0), stick.x > 0),
+            (egui::vec2(0.0, 1.0), stick.y > 0),
+            (egui::vec2(-1.0, 0.0), stick.x < 0),
+        ] {
+            let tip = center + dir * 82.0;
+            let base = center + dir * 66.0;
+            let side = egui::vec2(-dir.y, dir.x) * 8.0;
+            painter.add(egui::Shape::convex_polygon(
+                vec![tip, base + side, base - side],
+                if selected { accent } else { rim },
+                egui::Stroke::NONE,
+            ));
+        }
+        let knob_offset = if offset.length() > radius - 30.0 {
+            offset.normalized() * (radius - 30.0)
+        } else {
+            offset
+        };
+        let knob = center + knob_offset;
+        painter.circle_filled(knob + egui::vec2(0.0, 3.0), 24.0, egui::Color32::BLACK);
+        painter.circle_filled(
+            knob,
+            24.0,
+            if active {
+                accent
+            } else {
+                egui::Color32::from_gray(180)
+            },
+        );
+        painter.circle_stroke(knob, 24.0, egui::Stroke::new(2.0_f32, rim));
+
+        ui.add_space(16.0);
+        ui.vertical(|ui| {
+            ui.add_space(10.0);
+            ui.label("FIRE");
+            ui.add_space(8.0);
+            for (index, pressed) in stick.fire.iter_mut().enumerate() {
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(150.0, 46.0), egui::Sense::click_and_drag());
+                *pressed |= focused
+                    && (response.clicked()
+                        || (primary_down
+                            && response.is_pointer_button_down_on()
+                            && response
+                                .interact_pointer_pos()
+                                .is_some_and(|p| rect.contains(p))));
+                let painter = ui.painter();
+                painter.rect_filled(
+                    rect,
+                    egui::CornerRadius::same(18),
+                    if *pressed {
+                        accent
+                    } else if response.hovered() {
+                        egui::Color32::from_rgb(170, 72, 67)
+                    } else {
+                        egui::Color32::from_rgb(135, 49, 48)
+                    },
+                );
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    format!("FIRE {}", index + 1),
+                    egui::FontId::proportional(15.0),
+                    if *pressed { case } else { egui::Color32::WHITE },
+                );
+            }
+        });
+    });
+    stick
+}
+
+fn simulated_joystick_controls(ui: &mut egui::Ui, enabled: [bool; 2]) -> Joysticks {
+    let mut sticks = [JoystickState::default(); 2];
+    ui.horizontal_top(|ui| {
+        for (index, enabled) in enabled.into_iter().enumerate() {
+            ui.push_id(index, |ui| {
+                let capture_id = ui.make_persistent_id("joystick-stick-capture");
+                ui.vertical(|ui| {
+                    if enabled {
+                        ui.strong(format!("Joystick {}", index + 1));
+                        sticks[index] = joystick_controls(ui, capture_id);
+                    } else {
+                        ui.ctx().data_mut(|data| data.remove::<bool>(capture_id));
+                    }
+                });
+            });
+        }
+    });
+    Joysticks {
+        joy0: sticks[0],
+        joy1: sticks[1],
+    }
+}
+
+/// The simulated joystick window: mouse-controlled stick and three fire buttons.
 fn simulated_joystick(
     ui: &mut egui::Ui,
     target: &dyn CommandTarget,
@@ -1178,6 +1346,7 @@ fn simulated_joystick(
     let settings = match target.settings() {
         Some(s) => s,
         None => {
+            state.simulated_joysticks = simulated_joystick_controls(ui, [false, false]);
             ui.label("No settings");
             return;
         }
@@ -1186,88 +1355,17 @@ fn simulated_joystick(
     let joy1_sim = settings.joystick_2 == JoystickSource::Simulated;
 
     if !joy0_sim && !joy1_sim {
+        state.simulated_joysticks = simulated_joystick_controls(ui, [false, false]);
         ui.label("No joystick is set to Simulated.");
         ui.label("Open Machine > Joystick and set Joystick 1 or 2 to Simulated.");
         return;
     }
 
     ui.heading("Simulated joystick");
-    ui.label("Hold a direction button to press it; release to let go.");
+    ui.label("Click or drag the stick. Right-click while holding it for Fire 1.");
     ui.separator();
 
-    let joy = &mut state.simulated_joysticks;
-    let stick = &mut joy.joy0;
-
-    // Reset to centre each frame; direction buttons set it while held.
-    stick.x = 0;
-    stick.y = 0;
-
-    // Cross-shaped direction pad (momentary: pressed only while held).
-    ui.label("Direction");
-    let mut up_hovered = false;
-    let mut down_hovered = false;
-    let mut left_hovered = false;
-    let mut right_hovered = false;
-    egui::Grid::new("joystick_dpad")
-        .num_columns(3)
-        .spacing(egui::vec2(10.0, 10.0))
-        .show(ui, |ui| {
-            ui.add(egui::Button::new(""));
-            if ui.add(egui::Button::new("Up")).hovered() {
-                up_hovered = true;
-            }
-            ui.add(egui::Button::new(""));
-            ui.end_row();
-            if ui.add(egui::Button::new("Left")).hovered() {
-                left_hovered = true;
-            }
-            ui.add(egui::Button::new(""));
-            if ui.add(egui::Button::new("Right")).hovered() {
-                right_hovered = true;
-            }
-            ui.end_row();
-            ui.add(egui::Button::new(""));
-            if ui.add(egui::Button::new("Down")).hovered() {
-                down_hovered = true;
-            }
-            ui.add(egui::Button::new(""));
-        });
-
-    let primary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
-    if primary_down {
-        if up_hovered {
-            stick.x = 0;
-            stick.y = -1;
-        } else if down_hovered {
-            stick.x = 0;
-            stick.y = 1;
-        } else if left_hovered {
-            stick.x = -1;
-            stick.y = 0;
-        } else if right_hovered {
-            stick.x = 1;
-            stick.y = 0;
-        }
-    }
-
-    // Fire buttons: momentary too.
-    ui.separator();
-    ui.label("Fire");
-    ui.horizontal(|ui| {
-        let mut fire_hovered = [false; 3];
-        for (i, label) in ["Fire 1", "Fire 2", "Fire 3"].iter().enumerate() {
-            if ui.add(egui::Button::new(*label)).hovered() {
-                fire_hovered[i] = true;
-            }
-        }
-        for i in 0..3 {
-            stick.fire[i] = primary_down && fire_hovered[i];
-        }
-    });
-
-    joy.joy1.x = stick.x;
-    joy.joy1.y = stick.y;
-    joy.joy1.fire = stick.fire;
+    state.simulated_joysticks = simulated_joystick_controls(ui, [joy0_sim, joy1_sim]);
 }
 
 /// The virtual keyboard, scaled to the window while retaining the website keyboard's proportions.
@@ -1594,5 +1692,263 @@ fn keyboard_view(
     }
     if state.virtual_shift_latched && !state.virtual_keys_held.contains(&CpcKey::Shift) {
         state.virtual_keys_held.push(CpcKey::Shift);
+    }
+}
+
+#[cfg(test)]
+mod joystick_tests {
+    use super::*;
+
+    fn frame(ctx: &egui::Context, events: Vec<egui::Event>, focused: bool) -> JoystickState {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(500.0, 300.0),
+            )),
+            focused,
+            events,
+            ..Default::default()
+        };
+        let mut stick = JoystickState::default();
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ctx, |ui| {
+                    stick = joystick_controls(ui, egui::Id::new("test-stick"))
+                });
+        });
+        stick
+    }
+
+    fn button(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn two_stick_frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        enabled: [bool; 2],
+    ) -> (Joysticks, Vec<egui::Pos2>, Vec<egui::Rect>) {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(840.0, 340.0),
+            )),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        let mut sticks = Joysticks::default();
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                egui::ScrollArea::both()
+                    .auto_shrink([true, true])
+                    .show(ui, |ui| {
+                        ui.heading("Simulated joystick");
+                        ui.label(
+                            "Click or drag the stick. Right-click while holding it for Fire 1.",
+                        );
+                        ui.separator();
+                        sticks = simulated_joystick_controls(ui, enabled);
+                    });
+            });
+        });
+        let centers = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Circle(circle)
+                    if circle.radius == 95.0 && circle.fill != egui::Color32::TRANSPARENT =>
+                {
+                    Some(circle.center)
+                }
+                _ => None,
+            })
+            .collect();
+        let buttons = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Rect(rect)
+                    if rect.fill == egui::Color32::from_rgb(135, 49, 48)
+                        || rect.fill == egui::Color32::from_rgb(170, 72, 67)
+                        || rect.fill == egui::Color32::from_rgb(255, 202, 79) =>
+                {
+                    assert!(shape.clip_rect.contains(rect.rect.min));
+                    assert!(shape.clip_rect.contains(rect.rect.max));
+                    Some(rect.rect)
+                }
+                _ => None,
+            })
+            .collect();
+        (sticks, centers, buttons)
+    }
+
+    #[test]
+    fn simulated_joysticks_are_visible_and_controlled_independently() {
+        let ctx = egui::Context::default();
+        let (_, centers, buttons) = two_stick_frame(&ctx, vec![], [true, true]);
+        assert_eq!(centers.len(), 2);
+        assert_eq!(buttons.len(), 6);
+        for center in &centers {
+            assert!(center.x >= 95.0 && center.x + 95.0 < 840.0);
+            assert!(center.y >= 95.0 && center.y + 95.0 < 340.0);
+        }
+        assert!(centers[1].x - centers[0].x > 210.0);
+
+        let left = centers[0] + egui::vec2(-70.0, 0.0);
+        let (sticks, _, _) = two_stick_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(left), button(left, true)],
+            [true, true],
+        );
+        assert_eq!(sticks.joy0.direction(), Some((-1, 0)));
+        assert_eq!(sticks.joy1, JoystickState::default());
+        two_stick_frame(&ctx, vec![button(left, false)], [true, true]);
+        two_stick_frame(&ctx, vec![], [true, true]);
+
+        let right = centers[1] + egui::vec2(70.0, 0.0);
+        let (sticks, _, _) = two_stick_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(right), button(right, true)],
+            [true, true],
+        );
+        assert_eq!(sticks.joy0, JoystickState::default());
+        assert_eq!(sticks.joy1.direction(), Some((1, 0)));
+        let (sticks, _, _) = two_stick_frame(&ctx, vec![], [true, false]);
+        assert_eq!(sticks, Joysticks::default());
+        let (sticks, _, _) = two_stick_frame(&ctx, vec![], [true, true]);
+        assert_eq!(sticks, Joysticks::default());
+        two_stick_frame(&ctx, vec![button(right, false)], [true, true]);
+        two_stick_frame(&ctx, vec![], [true, true]);
+        let fire = buttons[4].center();
+        let (sticks, _, _) = two_stick_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(fire), button(fire, true)],
+            [true, true],
+        );
+        assert_eq!(sticks.joy0, JoystickState::default());
+        assert_eq!(sticks.joy1.fire, [false, true, false]);
+    }
+
+    #[test]
+    fn second_simulated_joystick_works_when_first_is_disabled() {
+        let ctx = egui::Context::default();
+        let (_, centers, _) = two_stick_frame(&ctx, vec![], [false, true]);
+        assert_eq!(centers.len(), 1);
+        let up = centers[0] + egui::vec2(0.0, -70.0);
+        let (sticks, _, _) = two_stick_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(up), button(up, true)],
+            [false, true],
+        );
+        assert_eq!(sticks.joy0, JoystickState::default());
+        assert_eq!(sticks.joy1.direction(), Some((0, -1)));
+    }
+
+    #[test]
+    fn joystick_drag_tracks_direction_and_releases() {
+        let ctx = egui::Context::default();
+        let center = egui::pos2(105.0, 105.0);
+        frame(&ctx, vec![], true);
+        let stick = frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(center), button(center, true)],
+            true,
+        );
+        assert_eq!((stick.x, stick.y), (0, 0));
+        let diagonal = egui::pos2(175.0, 35.0);
+        let stick = frame(&ctx, vec![egui::Event::PointerMoved(diagonal)], true);
+        assert_eq!((stick.x, stick.y), (1, -1));
+        let stick = frame(
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: diagonal,
+                button: egui::PointerButton::Secondary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            true,
+        );
+        assert_eq!((stick.x, stick.y), (1, -1));
+        assert!(stick.fire[0]);
+        let stick = frame(
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: diagonal,
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            true,
+        );
+        assert!(!stick.fire[0]);
+        let outside = egui::pos2(300.0, 105.0);
+        let stick = frame(&ctx, vec![egui::Event::PointerMoved(outside)], true);
+        assert_eq!((stick.x, stick.y), (1, 0));
+        let stick = frame(&ctx, vec![button(outside, false)], true);
+        assert_eq!((stick.x, stick.y), (0, 0));
+    }
+
+    #[test]
+    fn joystick_direction_has_dead_zone_and_eight_sectors() {
+        assert_eq!(joystick_direction(egui::vec2(4.0, -4.0), 18.0), (0, 0));
+        for (offset, direction) in [
+            ((0.0, -70.0), (0, -1)),
+            ((70.0, -70.0), (1, -1)),
+            ((70.0, 0.0), (1, 0)),
+            ((70.0, 70.0), (1, 1)),
+            ((0.0, 70.0), (0, 1)),
+            ((-70.0, 70.0), (-1, 1)),
+            ((-70.0, 0.0), (-1, 0)),
+            ((-70.0, -70.0), (-1, -1)),
+        ] {
+            assert_eq!(
+                joystick_direction(egui::vec2(offset.0, offset.1), 18.0),
+                direction
+            );
+        }
+    }
+
+    #[test]
+    fn joystick_quick_click_and_focus_loss_are_momentary() {
+        let ctx = egui::Context::default();
+        let up = egui::pos2(105.0, 35.0);
+        frame(&ctx, vec![], true);
+        let stick = frame(
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(up),
+                button(up, true),
+                button(up, false),
+            ],
+            true,
+        );
+        assert_eq!((stick.x, stick.y), (0, -1));
+        assert_eq!(frame(&ctx, vec![], true).direction(), None);
+        let stick = frame(&ctx, vec![button(up, true)], true);
+        assert_eq!((stick.x, stick.y), (0, -1));
+        assert_eq!(frame(&ctx, vec![], false), JoystickState::default());
+    }
+
+    #[test]
+    fn joystick_fire_button_is_momentary() {
+        let ctx = egui::Context::default();
+        let fire = egui::pos2(315.0, 60.0);
+        frame(&ctx, vec![], true);
+        let stick = frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(fire), button(fire, true)],
+            true,
+        );
+        assert_eq!(stick.fire, [true, false, false]);
+        let stick = frame(&ctx, vec![button(fire, false)], true);
+        assert_eq!(stick.fire, [true, false, false]);
+        assert_eq!(frame(&ctx, vec![], true).fire, [false; 3]);
     }
 }

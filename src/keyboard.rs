@@ -212,13 +212,13 @@ impl CpcKey {
             Joy0Fire3 => (9, 6),
             Del => (9, 7),
 
-            /// Joystick 1 shares line 6 with the keyboard keys (bits 0-6).
+            // Joystick 1 shares line 6 with the keyboard keys (bits 0-6).
             Joy1Up => (6, 0),
             Joy1Down => (6, 1),
             Joy1Left => (6, 2),
             Joy1Right => (6, 3),
-            Joy1Fire1 => (6, 4),
-            Joy1Fire2 => (6, 5),
+            Joy1Fire1 => (6, 5),
+            Joy1Fire2 => (6, 4),
             Joy1Fire3 => (6, 6),
         }
     }
@@ -373,12 +373,12 @@ mod test {
 
     #[test]
     fn keyclash_three_keys_create_phantom() {
-        // A: line 8, bit 5; Joy1Fire2: line 6, bit 5 (shares bit 5 with A on another line);
-        // Digit5: line 6, bit 1. Path A(8,5)+Joy1Fire2(6,5)+Digit5(6,1) pulls bit 1 low
+        // A: line 8, bit 5; Joy1Fire1: line 6, bit 5 (shares bit 5 with A on another line);
+        // Digit5: line 6, bit 1. Path A(8,5)+Joy1Fire1(6,5)+Digit5(6,1) pulls bit 1 low
         // on line 8: Digit2 (line 8, bit 1) reads as a phantom.
         let mut matrix = KeyboardMatrix::default();
         matrix.set_pressed(CpcKey::A, true);
-        matrix.set_pressed(CpcKey::Joy1Fire2, true);
+        matrix.set_pressed(CpcKey::Joy1Fire1, true);
         matrix.set_pressed(CpcKey::Digit5, true);
         assert_eq!(matrix.line(6), !((1 << 5) | (1 << 1)));
         // Phantom on line 8: A (bit 5) direct, Digit2 (bit 1) via keyclash.
@@ -391,7 +391,7 @@ mod test {
         // Only two keys sharing a bit: no third key to complete the path, no phantom.
         let mut matrix = KeyboardMatrix::default();
         matrix.set_pressed(CpcKey::A, true);        // line 8, bit 5
-        matrix.set_pressed(CpcKey::Joy1Fire2, true); // line 6, bit 5 (shared bit)
+        matrix.set_pressed(CpcKey::Joy1Fire1, true); // line 6, bit 5 (shared bit)
         assert_eq!(matrix.line(8), !(1 << 5));
         assert!(!matrix.is_pressed(CpcKey::Digit2));
     }

@@ -204,6 +204,9 @@ impl Gui {
 
     /// The window of the system of view `key` was closed.
     pub fn close_view(&mut self, key: u8) {
+        if ViewKey(key).view() == View::Joystick {
+            self.view_state.simulated_joysticks = Joysticks::default();
+        }
         self.views.remove(&ViewKey(key));
         self.view_contexts.remove(&ViewKey(key));
     }
@@ -412,6 +415,7 @@ impl Gui {
                 Some(menu::WindowAction::CloseAll) => {
                     self.views.clear();
                     self.view_contexts.clear();
+                    self.view_state.simulated_joysticks = Joysticks::default();
                 }
                 None => {}
             }
@@ -475,6 +479,9 @@ impl Gui {
             }
         }
         for key in closed {
+            if key.view() == View::Joystick {
+                self.view_state.simulated_joysticks = Joysticks::default();
+            }
             self.views.remove(&key);
         }
         // the embedded windows asked for: in front (the system's ones: the host's)
@@ -640,6 +647,16 @@ mod tests {
             assert_eq!(gui.views.len(), 1, "{view:?}");
             gui.views.clear();
         }
+    }
+
+    #[test]
+    fn closing_native_joystick_window_releases_controls() {
+        let mut gui = Gui::new();
+        gui.handle(&HostRequest::Open(View::Joystick));
+        gui.view_state.simulated_joysticks.joy0.x = 1;
+        gui.view_state.simulated_joysticks.joy1.fire[0] = true;
+        gui.close_view(ViewKey::of(View::Joystick).0);
+        assert_eq!(gui.simulated_joysticks(), Joysticks::default());
     }
 
     #[test]

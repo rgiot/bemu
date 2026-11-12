@@ -337,15 +337,18 @@ impl HostKeyboard {
         if std::mem::take(&mut self.switched) {
             motherboard.keyboard_mut().release_all();
         }
-        // the joysticks drive the Joy0 (line 9) and Joy1 (line 6) matrix keys;
-        // they are not in HOST_KEY_MAP so nothing above touches them. Run first so
-        // the keyboard mapping can override shared matrix positions (Joy1 shares
-        // line 6 with Digit6, Digit5, R, T, G, F, B).
-        input.joysticks.apply_to_matrix(motherboard);
         match self.mapping {
             KeyboardMapping::Symbolic => self.apply_symbolic(motherboard, input),
             KeyboardMapping::Positional => apply_positional(motherboard, input),
         }
+        // Joystick 2 and the keyboard share physical switches on line 6: either
+        // input holding a switch must keep its active-low bit pressed.
+        let keyboard_line = motherboard.keyboard().lines()[6];
+        input.joysticks.apply_to_matrix(motherboard);
+        let matrix = motherboard.keyboard_mut();
+        let mut lines = matrix.lines();
+        lines[6] &= keyboard_line;
+        matrix.set_lines(lines);
     }
 
     /// Press CPC keys from the virtual keyboard after translating physical host input.
@@ -1273,6 +1276,109 @@ mod test {
         keyboard.apply(&mut motherboard, &HostInput::default());
         assert!(!motherboard.keyboard().is_pressed(CpcKey::X));
         assert!(!motherboard.keyboard().is_pressed(CpcKey::Shift));
+    }
+
+    #[test]
+    fn joystick_2_and_keyboard_share_matrix_switches() {
+        use crate::joystick::JoystickState;
+
+        for mapping in [KeyboardMapping::Symbolic, KeyboardMapping::Positional] {
+            let mut motherboard = crate::motherboard::MotherboardBuilder::default().build();
+            let mut keyboard = HostKeyboard::new(mapping);
+            for (stick, expected_key) in [
+                (
+                    JoystickState {
+                        y: -1,
+                        ..Default::default()
+                    },
+                    CpcKey::Digit6,
+                ),
+                (
+                    JoystickState {
+                        y: 1,
+                        ..Default::default()
+                    },
+                    CpcKey::Digit5,
+                ),
+                (
+                    JoystickState {
+                        x: -1,
+                        ..Default::default()
+                    },
+                    CpcKey::R,
+                ),
+                (
+                    JoystickState {
+                        x: 1,
+                        ..Default::default()
+                    },
+                    CpcKey::T,
+                ),
+                (
+                    JoystickState {
+                        fire: [true, false, false],
+                        ..Default::default()
+                    },
+                    CpcKey::F,
+                ),
+                (
+                    JoystickState {
+                        fire: [false, true, false],
+                        ..Default::default()
+                    },
+                    CpcKey::G,
+                ),
+                (
+                    JoystickState {
+                        fire: [false, false, true],
+                        ..Default::default()
+                    },
+                    CpcKey::B,
+                ),
+            ] {
+                let mut input = HostInput::default();
+                input.joysticks.joy1 = stick;
+                keyboard.apply(&mut motherboard, &input);
+                assert!(
+                    motherboard.keyboard().is_pressed(expected_key),
+                    "{mapping:?}: {expected_key:?}"
+                );
+                keyboard.apply(&mut motherboard, &HostInput::default());
+                assert!(
+                    !motherboard.keyboard().is_pressed(expected_key),
+                    "{mapping:?}: {expected_key:?} released"
+                );
+            }
+
+            let mut input = HostInput {
+                down: vec![HostKey::R],
+                ..Default::default()
+            };
+            input.joysticks.joy1.x = -1;
+            for _ in 0..=HostKeyboard::WAIT_POLLS {
+                keyboard.apply(&mut motherboard, &input);
+            }
+            assert!(motherboard.keyboard().is_pressed(CpcKey::R));
+            input.joysticks.joy1.x = 0;
+            keyboard.apply(&mut motherboard, &input);
+            assert!(
+                motherboard.keyboard().is_pressed(CpcKey::R),
+                "{mapping:?}: keyboard still held"
+            );
+            input.joysticks.joy1.x = -1;
+            input.down.clear();
+            keyboard.apply(&mut motherboard, &input);
+            assert!(
+                motherboard.keyboard().is_pressed(CpcKey::R),
+                "{mapping:?}: joystick still held"
+            );
+            input.joysticks.joy1.x = 0;
+            keyboard.apply(&mut motherboard, &input);
+            assert!(
+                !motherboard.keyboard().is_pressed(CpcKey::R),
+                "{mapping:?}: both released"
+            );
+        }
     }
 
     /// Symbolic: a character the CPC types without Shift, typed with the host's Shift (`@` is

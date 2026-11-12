@@ -96,10 +96,10 @@ impl ViewWindow {
         title: &str,
         ctx: egui::Context,
     ) -> Result<Self, String> {
-        let initial_size = if title == "Keyboard" {
-            LogicalSize::new(820.0, 300.0)
-        } else {
-            LogicalSize::new(460.0, 520.0)
+        let initial_size = match title {
+            "Keyboard" => LogicalSize::new(820.0, 300.0),
+            "Joystick" => LogicalSize::new(840.0, 340.0),
+            _ => LogicalSize::new(460.0, 520.0),
         };
         let attributes = Window::default_attributes()
             .with_title(format!("bemu: {title}"))
@@ -160,7 +160,7 @@ impl ViewWindow {
             state,
             ctx,
             painter: None,
-            fit_content: title != "Keyboard",
+            fit_content: !matches!(title, "Keyboard" | "Joystick"),
             fitted: None,
         })
     }
