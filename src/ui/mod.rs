@@ -365,8 +365,7 @@ impl Gui {
         if !target.settings().is_some_and(|s| s.fullscreen) {
             return true;
         }
-        let busy =
-            ctx.memory(|m| m.any_popup_open()) || self.palette.is_some() || self.prompt.is_some();
+        let busy = egui::Popup::is_any_open(ctx) || self.palette.is_some() || self.prompt.is_some();
         let shown = busy || now - self.pointer_seen < BARS_HIDE_S;
         if shown {
             // to hide them on time even without events

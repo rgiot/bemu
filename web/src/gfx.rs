@@ -5,7 +5,7 @@
 //! blit scales the picture, letterboxed, to the canvas (as the desktop's `--frontend winit`
 //! window does). Canvas 2D shows the raw picture only.
 
-use amsrust::display::{Blit, CrtParams, CrtPass, CrtProfile, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH};
+use amsrust::display::{Blit, CrtParams, CrtPass, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH};
 use image::RgbImage;
 use wasm_bindgen::{Clamped, JsCast};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, OffscreenCanvas, OffscreenCanvasRenderingContext2d};
@@ -24,6 +24,8 @@ struct CrtState {
 }
 
 pub struct Gpu {
+    /// The picture fills the canvas at any zoom (Video > Fill the window), else by whole factors.
+    free_zoom: bool,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -117,6 +119,13 @@ impl Gfx {
             }
         };
         Ok(Self::Flat(Flat { context, source, source_context, size, rgba: vec![255; RAW_WIDTH * RAW_HEIGHT * 4] }))
+    }
+
+    /// Let the picture fill the canvas at any zoom (`on`), or by whole factors only.
+    pub fn set_free_zoom(&mut self, on: bool) {
+        if let Self::Gpu(gpu) = self {
+            gpu.free_zoom = on;
+        }
     }
 
     /// "webgpu" or "canvas2d".
@@ -257,7 +266,7 @@ impl Gpu {
         let frame = FrameTexture::new(&device);
         let blit = Blit::new(&device, format);
         let raw_bind_group = blit.bind_group(&device, frame.view(), false, Warp::FLAT);
-        Ok(Self { surface, device, queue, config, frame, blit, raw_bind_group, crt: None, painter: None })
+        Ok(Self { free_zoom: false, surface, device, queue, config, frame, blit, raw_bind_group, crt: None, painter: None })
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -314,7 +323,8 @@ impl Gpu {
             _ => ((RAW_WIDTH, RAW_HEIGHT), None)
         };
 
-        let integer = matches!(mode, DisplayMode::Raw | DisplayMode::Crt(CrtProfile::Ctm644));
+        // by whole factors (every CPC pixel the same size) unless asked otherwise
+        let integer = !self.free_zoom;
         // below the menu bar
         let top = ui
             .as_ref()
