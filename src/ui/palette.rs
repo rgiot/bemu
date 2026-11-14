@@ -502,6 +502,40 @@ impl Palette {
                     _ => String::new(),
                 };
                 self.field(ui, &hint);
+                // a number with limits: a slider too, kept in step with the text
+                match prompt.kind {
+                    ArgKind::Number { min, max, default } => {
+                        let mut value = Arg::Text(self.query.clone())
+                            .number()
+                            .unwrap_or(default)
+                            .clamp(min, max);
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut value, min..=max)
+                                    .logarithmic(max - min > 1000)
+                                    .show_value(false),
+                            )
+                            .changed()
+                        {
+                            self.query = value.to_string();
+                        }
+                    }
+                    ArgKind::Decimal { min, max, default } => {
+                        let mut value = self
+                            .query
+                            .trim()
+                            .parse::<f64>()
+                            .unwrap_or(default)
+                            .clamp(min, max);
+                        if ui
+                            .add(egui::Slider::new(&mut value, min..=max).show_value(false))
+                            .changed()
+                        {
+                            self.query = format!("{value:.2}");
+                        }
+                    }
+                    _ => {}
+                }
                 if let (ArgKind::Address, Some(debugger)) = (&prompt.kind, target.debugger()) {
                     if let Some(address) = debugger.symbols().resolve(self.query.trim()) {
                         ui.weak(format!("= &{address:04X}"));

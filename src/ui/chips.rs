@@ -1052,44 +1052,11 @@ fn short_name(name: &str) -> &str {
 /// The status bar of the main window: the machine's configuration, the drives with their LED,
 /// the tape, and whether it runs.
 pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget) {
-    use crate::fdc::FdcDrive;
     let mb = target.motherboard();
     let settings = target.settings();
     const GREEN: egui::Color32 = egui::Color32::from_rgb(60, 220, 90);
     const RED: egui::Color32 = egui::Color32::from_rgb(230, 60, 60);
     ui.horizontal(|ui| {
-        // the drives: the LED lit while the motor turns for the drive addressed
-        let fdc = mb.fdc();
-        for (unit, drive) in [FdcDrive::A, FdcDrive::B].into_iter().enumerate() {
-            let lit = fdc.motor() && fdc.selected_drive() == unit;
-            let disc = settings
-                .and_then(|s| s.media.discs[unit].as_deref())
-                .map(short_name);
-            let text = match (fdc.has_disk(drive), disc) {
-                (true, Some(name)) => name.to_owned(),
-                (true, None) => "disc".to_owned(),
-                (false, _) => "empty".to_owned(),
-            };
-            led(ui, lit, GREEN).on_hover_text(if lit { "the motor turns" } else { "idle" });
-            let label = format!("{}: {text}", ["A", "B"][unit]);
-            let response = ui.label(if fdc.is_modified(drive) {
-                egui::RichText::new(format!("{label} *")).strong()
-            } else {
-                egui::RichText::new(label)
-            });
-            response.on_hover_text(format!(
-                "drive {}: {}, track {}{}",
-                ["A", "B"][unit],
-                fdc.drive_kind(drive).name(),
-                fdc.track(unit),
-                if fdc.is_modified(drive) {
-                    ", written to (not saved)"
-                } else {
-                    ""
-                }
-            ));
-            ui.separator();
-        }
         // the tape and the recorder
         let motor = mb.ppi().get_data_c_from_pins() & 0x10 != 0;
         if let Some(deck) = mb.tape_deck() {
@@ -1175,8 +1142,10 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
             crtc.crtc_type() as u8,
             ram
         ));
-        // how it runs, on the right
+        // on the right, from the right edge: the drives, then how it runs
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            drive_leds(ui, target);
+            ui.separator();
             let paused = target
                 .debugger()
                 .map_or(settings.is_some_and(|s| s.paused), |d| d.paused());
@@ -1200,6 +1169,79 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
             }
         });
     });
+}
+
+/// The drives, right to left (B at the edge): the LED lit while the motor turns for the drive
+/// addressed, blinking a moment when its head changes track; the disc's name (bold and `*` once
+/// written to).
+fn drive_leds(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget) {
+    use crate::fdc::FdcDrive;
+    const GREEN: egui::Color32 = egui::Color32::from_rgb(60, 220, 90);
+    /// How long the LED blinks after a step.
+    const BLINK_S: f64 = 0.25;
+    let mb = target.motherboard();
+    let settings = target.settings();
+    let fdc = mb.fdc();
+    let now = ui.input(|i| i.time);
+    // each drive's track and when it last changed
+    let id = egui::Id::new("status-drive-tracks");
+    let mut tracks: [(u8, f64); 2] = ui.data(|d| d.get_temp(id)).unwrap_or([
+        (fdc.track(0), f64::NEG_INFINITY),
+        (fdc.track(1), f64::NEG_INFINITY),
+    ]);
+    for (unit, drive) in [(1usize, FdcDrive::B), (0, FdcDrive::A)] {
+        let track = fdc.track(unit);
+        if track != tracks[unit].0 {
+            tracks[unit] = (track, now);
+        }
+        let stepping = now - tracks[unit].1 < BLINK_S;
+        let motor = fdc.motor() && fdc.selected_drive() == unit;
+        // blinking: 20 half-periods a second
+        let lit = if stepping {
+            (now * 20.0) as i64 % 2 == 0
+        } else {
+            motor
+        };
+        if stepping {
+            ui.ctx().request_repaint();
+        }
+        let disc = settings
+            .and_then(|s| s.media.discs[unit].as_deref())
+            .map(short_name);
+        let text = match (fdc.has_disk(drive), disc) {
+            (true, Some(name)) => name.to_owned(),
+            (true, None) => "disc".to_owned(),
+            (false, _) => "empty".to_owned(),
+        };
+        let label = format!("{}: {text}", ["A", "B"][unit]);
+        let response = ui.label(if fdc.is_modified(drive) {
+            egui::RichText::new(format!("{label} *")).strong()
+        } else {
+            egui::RichText::new(label)
+        });
+        response.on_hover_text(format!(
+            "drive {}: {}, track {}{}",
+            ["A", "B"][unit],
+            fdc.drive_kind(drive).name(),
+            track,
+            if fdc.is_modified(drive) {
+                ", written to (not saved)"
+            } else {
+                ""
+            }
+        ));
+        led(ui, lit, GREEN).on_hover_text(if stepping {
+            "the head changes track"
+        } else if motor {
+            "the motor turns"
+        } else {
+            "idle"
+        });
+        if unit == 1 {
+            ui.add_space(6.0);
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(id, tracks));
 }
 
 /// The CRTC's registers as boxes (cpclib's VS Code CRTC view): the name over the value, the

@@ -59,11 +59,21 @@ fn main() {
          pub static COMMANDS: &[CommandSpec] = &[\n",
     );
     let mut seen = std::collections::HashSet::new();
+    // a `sep` row: a line in its menu before the next item there (the menu's depth: its path)
+    let mut separators: Vec<(String, usize)> = Vec::new();
+    let mut pending_separator: Option<usize> = None;
     for row in rows.iter().skip(1) {
         let cell = |i: usize| row.get(i).map(|s| s.trim()).unwrap_or("");
+        if cell(8) == "sep" {
+            pending_separator = Some((0..4).map(cell).filter(|s| !s.is_empty()).count());
+            continue;
+        }
         let id = cell(4);
         if id.is_empty() {
             continue;
+        }
+        if let Some(depth) = pending_separator.take() {
+            separators.push((id.to_owned(), depth));
         }
         assert!(seen.insert(id.to_owned()), "doc/menu-ui.csv: {id} twice");
         let path: Vec<&str> = (0..4).map(cell).filter(|s| !s.is_empty()).collect();
@@ -93,6 +103,14 @@ fn main() {
             aim = cell(6),
             note = cell(7),
         );
+    }
+    out.push_str("];\n");
+    out.push_str(
+        "/// The menu separators: a line before command `id` in the menu of depth `depth`.\n\
+         pub static SEPARATORS: &[(&str, usize)] = &[\n",
+    );
+    for (id, depth) in &separators {
+        let _ = writeln!(out, "    ({id:?}, {depth}),");
     }
     out.push_str("];\n");
     let dest = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("commands_table.rs");

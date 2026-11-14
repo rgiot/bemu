@@ -27,7 +27,7 @@ pub fn bar(
             }
             for (key, title) in windows {
                 if ui
-                    .button(*title)
+                    .add(egui::Button::new((indent(ui), *title)))
                     .on_hover_text("Bring it to the front (shown again if minimised)")
                     .clicked()
                 {
@@ -37,7 +37,10 @@ pub fn bar(
             }
             ui.separator();
             if ui
-                .add_enabled(!windows.is_empty(), egui::Button::new("Close all windows"))
+                .add_enabled(
+                    !windows.is_empty(),
+                    egui::Button::new((indent(ui), "Close all windows")),
+                )
                 .clicked()
             {
                 action = Some(WindowAction::CloseAll);
@@ -48,34 +51,59 @@ pub fn bar(
     action
 }
 
-/// The items and submenus under `prefix`, as they first come in the registry.
+/// The items and submenus under `prefix`, as they first come in the registry, a line between
+/// their groups (the specification's `sep` rows, and after a radio group).
 fn level(ui: &mut egui::Ui, prefix: &[&str], target: &dyn CommandTarget, bus: &mut CommandBus) {
     let depth = prefix.len();
     let mut submenus: Vec<&str> = Vec::new();
     let mut previous_group: Option<&[&str]> = None;
+    // no line at the top, nor two in a row
+    let mut after_line = true;
+    let line = |ui: &mut egui::Ui, after_line: &mut bool| {
+        if !*after_line {
+            ui.separator();
+            *after_line = true;
+        }
+    };
     for spec in commands::all() {
         if spec.path.len() <= depth || spec.path[..depth] != *prefix {
             continue;
         }
+        if commands::SEPARATORS.contains(&(spec.id, depth)) {
+            line(ui, &mut after_line);
+        }
         if spec.path.len() == depth + 1 {
             // a line between a radio group and what follows
-            if previous_group.is_some_and(|g| g != spec.group()) && spec.kind != Kind::Radio {
-                ui.separator();
+            if previous_group.is_some_and(|g| g != spec.group()) {
+                line(ui, &mut after_line);
             }
             previous_group = (spec.kind == Kind::Radio).then(|| spec.group());
             item(ui, spec, target, bus);
+            after_line = false;
         } else {
             let name = spec.path[depth];
             if submenus.contains(&name) {
                 continue;
             }
+            if previous_group.is_some() {
+                line(ui, &mut after_line);
+            }
             submenus.push(name);
             previous_group = None;
-            ui.menu_button(name, |ui| {
+            ui.menu_button((indent(ui), name), |ui| {
                 level(ui, &spec.path[..=depth], target, bus);
             });
+            after_line = false;
         }
     }
+}
+
+/// A blank as wide as a check box less the button's padding: a plain item's text starts where a
+/// check box's or a radio button's does.
+fn indent(ui: &egui::Ui) -> egui::Atom<'static> {
+    let spacing = ui.spacing();
+    let width = (spacing.icon_width - spacing.button_padding.x).max(0.0);
+    egui::Atom::custom(egui::Id::new("menu-indent"), egui::vec2(width, 0.0))
 }
 
 fn hover(spec: &CommandSpec) -> String {
@@ -112,7 +140,7 @@ fn item(
             .map(|s| s.media.recent_discs[drive].clone())
             .unwrap_or_default();
         ui.add_enabled_ui(!recent.is_empty(), |ui| {
-            ui.menu_button(label, |ui| {
+            ui.menu_button((indent(ui), label), |ui| {
                 for path in recent {
                     if ui.button(&path).clicked() {
                         if let Ok(command) = Command::with_arg(spec.id, Arg::Text(path)) {
@@ -125,7 +153,7 @@ fn item(
         });
         return;
     }
-    let mut button = egui::Button::new(label);
+    let mut button = egui::Button::new((indent(ui), label));
     if let Some(shortcut) = spec.shortcut {
         button = button.shortcut_text(shortcut);
     }

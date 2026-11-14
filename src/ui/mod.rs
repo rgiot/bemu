@@ -222,6 +222,7 @@ impl Gui {
     ) -> Option<(egui::FullOutput, egui::Vec2)> {
         let key = ViewKey(key);
         let ctx = self.view_contexts.get(&key)?.clone();
+        apply_zoom(&ctx, target);
         let state = &mut self.view_state;
         let mut wanted = egui::Vec2::ZERO;
         let output = ctx.run(raw, |ctx| {
@@ -356,6 +357,7 @@ impl Gui {
         bus: &mut CommandBus,
     ) -> egui::FullOutput {
         let ctx = self.ctx.clone();
+        apply_zoom(&ctx, target);
         ctx.run(raw, |ctx| self.ui(ctx, target, bus))
     }
 
@@ -585,6 +587,16 @@ impl Gui {
                 }
             });
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
+}
+
+/// The interface's zoom (Video > Interface zoom), on a context before its pass: the menus and
+/// every window follow it at once. egui's own Ctrl +/- zoom is off: the setting is the one zoom.
+fn apply_zoom(ctx: &egui::Context, target: &dyn CommandTarget) {
+    let zoom = target.settings().map_or(1.0, |s| s.ui_zoom);
+    ctx.options_mut(|o| o.zoom_with_keyboard = false);
+    if (ctx.zoom_factor() - zoom).abs() > 1e-3 {
+        ctx.set_zoom_factor(zoom);
     }
 }
 

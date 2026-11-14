@@ -258,6 +258,8 @@ struct Gfx {
     raw_bind_group: wgpu::BindGroup,
     /// How curved the CRTs' glass is, see `DisplayMode::warp`.
     curvature: f32,
+    /// The picture zoomed by any factor (else by a whole one), see `HostSettings::free_zoom`.
+    free_zoom: bool,
     crt: Option<CrtState>,
     /// What the last frame showed, for [`Frontend::redraw`].
     shown: Option<DisplayMode>,
@@ -312,6 +314,7 @@ impl Gfx {
             blit,
             raw_bind_group,
             curvature,
+            free_zoom: false,
             crt: None,
             shown: None,
         })
@@ -400,8 +403,16 @@ impl Gfx {
             self.config.width as f32,
             (self.config.height as f32 - top - bottom).max(1.0),
         );
-        let scale = (window_w / picture_w as f32).min(window_h / picture_h as f32);
-        let (w, h) = (picture_w as f32 * scale, picture_h as f32 * scale);
+        let scale = picture_scale(
+            (window_w, window_h),
+            (picture_w as f32, picture_h as f32),
+            self.free_zoom,
+        );
+        // whole pixels: the picture's pixels fall on the window's
+        let (w, h) = (
+            (picture_w as f32 * scale).round(),
+            (picture_h as f32 * scale).round(),
+        );
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("window"),
@@ -419,8 +430,8 @@ impl Gfx {
                 occlusion_query_set: None,
             });
             pass.set_viewport(
-                (window_w - w) / 2.0,
-                top + (window_h - h) / 2.0,
+                ((window_w - w) / 2.0).floor(),
+                (top + (window_h - h) / 2.0).floor(),
                 w,
                 h,
                 0.0,
@@ -458,6 +469,18 @@ impl Gfx {
         surface_texture.present();
         self.shown = Some(mode);
         Ok(true)
+    }
+}
+
+/// How much the picture is zoomed in a window's room: the largest factor that fits, a whole one
+/// unless `free` (each CPC pixel the same size, no moiré). A room smaller than the picture shrinks
+/// it by any factor (the blit's filter averages then).
+fn picture_scale(room: (f32, f32), picture: (f32, f32), free: bool) -> f32 {
+    let fit = (room.0 / picture.0).min(room.1 / picture.1);
+    if free || fit < 1.0 {
+        fit
+    } else {
+        fit.floor()
     }
 }
 
@@ -706,6 +729,8 @@ struct App {
     size: (f64, f64),
     /// See `Gfx::curvature`.
     curvature: f32,
+    /// See `Gfx::free_zoom`.
+    free_zoom: bool,
     window: Option<Arc<Window>>,
     gfx: Option<Gfx>,
     /// Keys held, by physical key, so that a release is matched with its
@@ -1107,6 +1132,7 @@ impl WinitGpuFrontend {
             app: App {
                 size,
                 curvature,
+                free_zoom: false,
                 window: None,
                 gfx: None,
                 held: HashMap::new(),
@@ -1281,8 +1307,16 @@ impl Frontend for WinitGpuFrontend {
                 let raw_x = gamepad.value(gilrs::Axis::LeftStickX) as f64;
                 let raw_y = gamepad.value(gilrs::Axis::LeftStickY) as f64;
                 let dead = 0.5;
-                let dx = if raw_x.abs() > dead { raw_x.signum() as i8 } else { 0 };
-                let dy = if raw_y.abs() > dead { raw_y.signum() as i8 } else { 0 };
+                let dx = if raw_x.abs() > dead {
+                    raw_x.signum() as i8
+                } else {
+                    0
+                };
+                let dy = if raw_y.abs() > dead {
+                    raw_y.signum() as i8
+                } else {
+                    0
+                };
                 if dx != 0 && dy != 0 {
                     if raw_x.abs() >= raw_y.abs() {
                         joy.x = dx;
@@ -1314,7 +1348,9 @@ impl Frontend for WinitGpuFrontend {
     }
 
     fn present_frame(&mut self, frame: &RgbImage, mode: DisplayMode) -> Result<(), String> {
+        let free_zoom = self.app.free_zoom;
         let gfx = self.gfx()?;
+        gfx.free_zoom = free_zoom;
         gfx.use_mode(mode);
         gfx.frame.upload(&gfx.queue, frame);
         let gfx = self
@@ -1348,6 +1384,7 @@ impl Frontend for WinitGpuFrontend {
             .gfx
             .as_mut()
             .ok_or_else(|| "no window".to_owned())?;
+        gfx.free_zoom = self.app.free_zoom;
         let mode = gfx.shown.unwrap_or_default();
         gfx.use_mode(mode);
         gfx.draw(mode, false, self.app.ui.as_mut()).map(|_| ())
@@ -1421,6 +1458,13 @@ impl Frontend for WinitGpuFrontend {
         }
     }
 
+    fn set_free_zoom(&mut self, on: bool) {
+        self.app.free_zoom = on;
+        if let Some(gfx) = &mut self.app.gfx {
+            gfx.free_zoom = on;
+        }
+    }
+
     fn set_curvature(&mut self, curvature: f32) {
         if let Some(gfx) = &mut self.app.gfx {
             if gfx.curvature != curvature {
@@ -1450,6 +1494,19 @@ impl Frontend for WinitGpuFrontend {
 #[cfg(test)]
 mod test {
     use super::refreshes_per_frame;
+
+    #[test]
+    fn the_picture_is_zoomed_by_a_whole_factor_unless_free() {
+        use super::picture_scale;
+        let picture = (768.0, 544.0);
+        // 1920 x 1080: 1.98 fits, 1 is whole
+        assert_eq!(picture_scale((1920.0, 1080.0), picture, false), 1.0);
+        assert!((picture_scale((1920.0, 1080.0), picture, true) - 1080.0 / 544.0).abs() < 1e-4);
+        // 4K: 3
+        assert_eq!(picture_scale((3840.0, 2160.0), picture, false), 3.0);
+        // smaller than the picture: shrunk as needed
+        assert_eq!(picture_scale((384.0, 272.0), picture, false), 0.5);
+    }
 
     #[test]
     fn multiples_of_50_hz_show_each_frame_on_their_refreshes() {

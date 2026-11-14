@@ -540,6 +540,9 @@ impl Window {
         if wanted.fullscreen != applied.fullscreen {
             self.window.set_fullscreen(wanted.fullscreen);
         }
+        if wanted.free_zoom != applied.free_zoom {
+            self.window.set_free_zoom(wanted.free_zoom);
+        }
         // the files of the media in use, inserted from the command line or the menus
         let media = &wanted.media;
         let watched = [
@@ -831,10 +834,16 @@ pub fn run_window(
                     .retain(|host| !matches!(host, HostKey::LeftCtrl | HostKey::RightCtrl));
             }
             let sim = gui.simulated_joysticks();
-            if core.settings().is_some_and(|s| s.joystick_1 == JoystickSource::Simulated) {
+            if core
+                .settings()
+                .is_some_and(|s| s.joystick_1 == JoystickSource::Simulated)
+            {
                 input.joysticks.joy0 = sim.joy0;
             }
-            if core.settings().is_some_and(|s| s.joystick_2 == JoystickSource::Simulated) {
+            if core
+                .settings()
+                .is_some_and(|s| s.joystick_2 == JoystickSource::Simulated)
+            {
                 input.joysticks.joy1 = sim.joy1;
             }
         }

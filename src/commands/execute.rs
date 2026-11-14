@@ -1428,14 +1428,21 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             done()
         }
         "ga-set-mode" => {
-            let arg = arg!(command, "Screen mode (0-3)", ArgKind::Text);
+            let arg = arg!(
+                command,
+                "Screen mode",
+                ArgKind::Number {
+                    min: 0,
+                    max: 3,
+                    default: 1
+                }
+            );
             let mode = arg
-                .text()
-                .trim()
-                .parse::<u8>()
+                .number()
                 .ok()
-                .filter(|&mode| mode <= 3)
-                .ok_or_else(|| CommandError::Invalid("a mode 0-3".into()))?;
+                .filter(|mode| (0..=3).contains(mode))
+                .ok_or_else(|| CommandError::Invalid("a mode 0-3".into()))?
+                as u8;
             target
                 .motherboard_mut()
                 .ga_mut()
@@ -1687,8 +1694,12 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             };
             said(format!("keyboard: {}", settings.keyboard.name()))
         }
-        "joystick-1-none" | "joystick-1-host" | "joystick-1-simulated"
-        | "joystick-2-none" | "joystick-2-host" | "joystick-2-simulated" => {
+        "joystick-1-none"
+        | "joystick-1-host"
+        | "joystick-1-simulated"
+        | "joystick-2-none"
+        | "joystick-2-host"
+        | "joystick-2-simulated" => {
             let settings = settings(target)?;
             let (slot, value) = match id {
                 "joystick-1-none" => (&mut settings.joystick_1, JoystickSource::None),
@@ -1702,12 +1713,13 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
             if value == JoystickSource::Simulated {
                 target.request(HostRequest::Open(View::Joystick)).ok();
             }
-            said(format!("joystick {}: {}", id.trim_start_matches("joystick-"), value.name()))
+            said(format!(
+                "joystick {}: {}",
+                id.trim_start_matches("joystick-"),
+                value.name()
+            ))
         }
-        "joystick-simulated-window" => host(
-            target,
-            HostRequest::Open(View::Joystick),
-        ),
+        "joystick-simulated-window" => host(target, HostRequest::Open(View::Joystick)),
         "expansion-nova-toggle" | "nova-select-file" => {
             #[cfg(feature = "nova")]
             {
@@ -2064,6 +2076,20 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
         "video-crt-gpu-toggle" => {
             let settings = settings(target)?;
             settings.crt_gpu = !settings.crt_gpu;
+            done()
+        }
+        "video-free-zoom-toggle" => {
+            let settings = settings(target)?;
+            settings.free_zoom = !settings.free_zoom;
+            done()
+        }
+        "ui-zoom-in" | "ui-zoom-out" | "ui-zoom-reset" => {
+            let settings = settings(target)?;
+            settings.ui_zoom = match id {
+                "ui-zoom-in" => ui_zoom_step(settings.ui_zoom, 1),
+                "ui-zoom-out" => ui_zoom_step(settings.ui_zoom, -1),
+                _ => 1.0,
+            };
             done()
         }
         "video-fullscreen-toggle" => {
@@ -2482,11 +2508,15 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
         "keyboard-mapping-toggle" => needs_settings,
         "joystick-1-none" | "joystick-1-host" | "joystick-1-simulated" => {
             let source = id.strip_prefix("joystick-1-").unwrap();
-            CommandState::checked(settings.is_some_and(|s| s.joystick_1 == source.parse().unwrap_or_default()))
+            CommandState::checked(
+                settings.is_some_and(|s| s.joystick_1 == source.parse().unwrap_or_default()),
+            )
         }
         "joystick-2-none" | "joystick-2-host" | "joystick-2-simulated" => {
             let source = id.strip_prefix("joystick-2-").unwrap();
-            CommandState::checked(settings.is_some_and(|s| s.joystick_2 == source.parse().unwrap_or_default()))
+            CommandState::checked(
+                settings.is_some_and(|s| s.joystick_2 == source.parse().unwrap_or_default()),
+            )
         }
         "joystick-simulated-window" => CommandState::enabled(true),
         "keyboard-view" => CommandState::enabled(true),
@@ -2582,6 +2612,12 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
             checked: settings.is_some_and(|s| s.crt_gpu),
         },
         "video-fullscreen-toggle" => toggle(settings.is_some_and(|s| s.fullscreen)),
+        "video-free-zoom-toggle" => toggle(settings.is_some_and(|s| s.free_zoom)),
+        "ui-zoom-in" => CommandState::enabled(settings.is_some_and(|s| s.ui_zoom < UI_ZOOM_MAX)),
+        "ui-zoom-out" => CommandState::enabled(settings.is_some_and(|s| s.ui_zoom > UI_ZOOM_MIN)),
+        "ui-zoom-reset" => {
+            CommandState::enabled(settings.is_some_and(|s| (s.ui_zoom - 1.0).abs() > 1e-3))
+        }
         "autotype-paste" => host_can(target, HostRequest::PasteClipboard),
         "autotype-delays" => needs_settings,
         "keyboard-write" => CommandState::enabled(true),
@@ -2596,5 +2632,43 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
         "ui-menu-toggle" => toggle(settings.is_some_and(|s| s.menu_visible)),
         // a card left out of this build
         _ => CommandState::DISABLED,
+    }
+}
+
+/// The interface's zoom: 50 % to 300 %.
+const UI_ZOOM_MIN: f32 = 0.5;
+const UI_ZOOM_MAX: f32 = 3.0;
+
+/// The next zoom up (`direction` 1) or down (-1): the steps of 10 % (25 % above 200 %).
+fn ui_zoom_step(zoom: f32, direction: i32) -> f32 {
+    let percent = (zoom * 100.0).round() as i32;
+    let step = if percent > 200 || (percent == 200 && direction > 0) {
+        25
+    } else {
+        10
+    };
+    // to the next multiple of the step, so 115 % goes to 120 % or 110 %
+    let next = if direction > 0 {
+        (percent / step + 1) * step
+    } else {
+        (percent + step - 1) / step * step - step
+    };
+    (next as f32 / 100.0).clamp(UI_ZOOM_MIN, UI_ZOOM_MAX)
+}
+
+#[cfg(test)]
+mod ui_zoom_test {
+    use super::ui_zoom_step;
+
+    #[test]
+    fn the_interface_zooms_by_steps() {
+        assert_eq!(ui_zoom_step(1.0, 1), 1.1);
+        assert_eq!(ui_zoom_step(1.0, -1), 0.9);
+        assert_eq!(ui_zoom_step(1.15, 1), 1.2);
+        assert_eq!(ui_zoom_step(1.15, -1), 1.1);
+        assert_eq!(ui_zoom_step(2.0, 1), 2.25);
+        assert_eq!(ui_zoom_step(2.25, -1), 2.0);
+        assert_eq!(ui_zoom_step(0.5, -1), 0.5);
+        assert_eq!(ui_zoom_step(3.0, 1), 3.0);
     }
 }

@@ -73,10 +73,10 @@ impl Prompt {
                     }
                     ArgKind::Decimal { min, max, .. } => {
                         ui.horizontal(|ui| {
+                            // the slider and its field (typed in, or dragged)
                             ui.add(
-                                egui::DragValue::new(&mut self.decimal)
-                                    .range(*min..=*max)
-                                    .speed(0.05),
+                                egui::Slider::new(&mut self.decimal, *min..=*max)
+                                    .clamping(egui::SliderClamping::Always),
                             );
                             if ui.button("OK").clicked()
                                 || ui.input(|i| i.key_pressed(egui::Key::Enter))
@@ -87,7 +87,11 @@ impl Prompt {
                     }
                     ArgKind::Number { min, max, .. } => {
                         ui.horizontal(|ui| {
-                            ui.add(egui::DragValue::new(&mut self.number).range(*min..=*max));
+                            ui.add(
+                                egui::Slider::new(&mut self.number, *min..=*max)
+                                    .logarithmic(*max - *min > 1000)
+                                    .clamping(egui::SliderClamping::Always),
+                            );
                             if ui.button("OK").clicked()
                                 || ui.input(|i| i.key_pressed(egui::Key::Enter))
                             {

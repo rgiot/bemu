@@ -75,6 +75,9 @@ struct WarpUniforms {
     k: [f32; 2],
     corner: f32,
     edged: f32,
+    /// 1: the texels kept sharp at any zoom (`blit.wgsl`).
+    sharp: f32,
+    pad: [f32; 3],
 }
 
 /// The last pass of a frontend drawing on the GPU (`blit.wgsl`): a picture, the monitor's frame
@@ -82,7 +85,6 @@ struct WarpUniforms {
 pub struct Blit {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
-    nearest: wgpu::Sampler,
     linear: wgpu::Sampler,
 }
 
@@ -157,20 +159,17 @@ impl Blit {
                 ..Default::default()
             })
         };
-        let (nearest, linear) = (
-            sampler(wgpu::FilterMode::Nearest),
-            sampler(wgpu::FilterMode::Linear),
-        );
+        let linear = sampler(wgpu::FilterMode::Linear);
         Self {
             pipeline,
             layout,
-            nearest,
             linear,
         }
     }
 
-    /// What draws `view`: sampled linearly if `smooth` (a CRT's picture), else as is (the raw
-    /// one), through `warp`.
+    /// What draws `view` through `warp`: a CRT's picture (`smooth`) or the raw one, both sampled
+    /// so their texels stay sharp blocks at any zoom (`blit.wgsl`: exactly nearest at a whole
+    /// zoom, the edges mixed over one screen pixel otherwise).
     pub fn bind_group(
         &self,
         device: &wgpu::Device,
@@ -182,7 +181,10 @@ impl Blit {
             k: [warp.k.0, warp.k.1],
             corner: warp.corner,
             edged: if warp.is_flat() { 0.0 } else { 1.0 },
+            sharp: 1.0,
+            pad: [0.0; 3],
         };
+        let _ = smooth;
         let buffer = wgpu::util::DeviceExt::create_buffer_init(
             device,
             &wgpu::util::BufferInitDescriptor {
@@ -191,7 +193,8 @@ impl Blit {
                 usage: wgpu::BufferUsages::UNIFORM,
             },
         );
-        let sampler = if smooth { &self.linear } else { &self.nearest };
+        // linear: the shader places the samples itself
+        let sampler = &self.linear;
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.layout,
