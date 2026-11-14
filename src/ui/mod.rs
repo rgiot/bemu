@@ -64,6 +64,9 @@ pub struct Gui {
     toasts: VecDeque<Toast>,
     file_requests: Vec<FileRequest>,
     menu_height: f32,
+    /// When the pointer was last used (moved, clicked, scrolled): in fullscreen the bars hide
+    /// [`BARS_HIDE_S`] after it.
+    pointer_seen: f64,
     /// The status bar's height, in points (0 without it): the picture goes above.
     status_height: f32,
     /// The debugger's windows are windows of the system (the desktop), each with its own
@@ -149,6 +152,7 @@ impl Gui {
             toasts: VecDeque::new(),
             file_requests: Vec::new(),
             menu_height: 0.0,
+            pointer_seen: 0.0,
             status_height: 0.0,
             native_views: false,
             view_contexts: BTreeMap::new(),
@@ -344,6 +348,37 @@ impl Gui {
         self.menu_height
     }
 
+    /// Whether the menu and status bars are shown: always in a window; in fullscreen while the
+    /// pointer is used, and [`BARS_HIDE_S`] after, or while a menu, the palette or a question is
+    /// open. Hidden, the pointer is too.
+    fn bars_shown(&mut self, ctx: &egui::Context, target: &dyn CommandTarget) -> bool {
+        let now = ctx.input(|i| i.time);
+        let used = ctx.input(|i| {
+            i.pointer.delta() != egui::Vec2::ZERO
+                || i.pointer.any_down()
+                || i.pointer.any_click()
+                || i.raw_scroll_delta != egui::Vec2::ZERO
+        });
+        if used {
+            self.pointer_seen = now;
+        }
+        if !target.settings().is_some_and(|s| s.fullscreen) {
+            return true;
+        }
+        let busy =
+            ctx.memory(|m| m.any_popup_open()) || self.palette.is_some() || self.prompt.is_some();
+        let shown = busy || now - self.pointer_seen < BARS_HIDE_S;
+        if shown {
+            // to hide them on time even without events
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+                (BARS_HIDE_S - (now - self.pointer_seen)).max(0.05),
+            ));
+        } else {
+            ctx.set_cursor_icon(egui::CursorIcon::None);
+        }
+        shown
+    }
+
     /// The height of the status bar, in points (0 without it): the picture goes above.
     pub fn status_height(&self) -> f32 {
         self.status_height
@@ -403,7 +438,8 @@ impl Gui {
                 }
             }
         }
-        let visible = target.settings().is_none_or(|s| s.menu_visible);
+        let visible =
+            target.settings().is_none_or(|s| s.menu_visible) && self.bars_shown(ctx, target);
         self.menu_height = if visible {
             let windows: Vec<(u8, &'static str)> = self
                 .views
@@ -589,6 +625,9 @@ impl Gui {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
     }
 }
+
+/// In fullscreen, the bars hide this many seconds after the pointer was last used.
+const BARS_HIDE_S: f64 = 3.0;
 
 /// The interface's zoom (Video > Interface zoom), on a context before its pass: the menus and
 /// every window follow it at once. egui's own Ctrl +/- zoom is off: the setting is the one zoom.

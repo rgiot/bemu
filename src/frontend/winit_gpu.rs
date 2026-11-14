@@ -195,6 +195,15 @@ impl ViewWindow {
     fn draw(&mut self, gfx: &Gfx, mut output: egui::FullOutput) {
         self.state
             .handle_platform_output(&self.window, std::mem::take(&mut output.platform_output));
+        // the surface at the window's size now (a resize may not have been reported yet: a
+        // surface of the old size would be stretched to the window)
+        let size = self.window.inner_size();
+        if (size.width, size.height) != (self.config.width, self.config.height)
+            && size.width > 0
+            && size.height > 0
+        {
+            self.resize(gfx, size.width, size.height);
+        }
         let surface_texture = match self.surface.get_current_texture() {
             Ok(texture) => texture,
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
@@ -961,6 +970,16 @@ impl App {
                 if let Some(gfx) = &self.gfx {
                     view.resize(gfx, size.width, size.height);
                 }
+                // not the size it asked for: the user resized it, it keeps that size from now on
+                let logical: LogicalSize<f32> = size.to_logical(view.window.scale_factor());
+                if view.fitted.is_some_and(|fitted| {
+                    (fitted - egui::vec2(logical.width, logical.height))
+                        .abs()
+                        .max_elem()
+                        >= 8.0
+                }) {
+                    view.fit_content = false;
+                }
             }
             _ => {}
         }
@@ -1349,8 +1368,13 @@ impl Frontend for WinitGpuFrontend {
 
     fn present_frame(&mut self, frame: &RgbImage, mode: DisplayMode) -> Result<(), String> {
         let free_zoom = self.app.free_zoom;
+        let size = self.app.window.as_ref().map(|w| w.inner_size());
         let gfx = self.gfx()?;
         gfx.free_zoom = free_zoom;
+        // the surface at the window's size now: one of the old size would be stretched
+        if let Some(size) = size {
+            gfx.resize(size.width, size.height);
+        }
         gfx.use_mode(mode);
         gfx.frame.upload(&gfx.queue, frame);
         let gfx = self
@@ -1385,6 +1409,9 @@ impl Frontend for WinitGpuFrontend {
             .as_mut()
             .ok_or_else(|| "no window".to_owned())?;
         gfx.free_zoom = self.app.free_zoom;
+        if let Some(size) = self.app.window.as_ref().map(|w| w.inner_size()) {
+            gfx.resize(size.width, size.height);
+        }
         let mode = gfx.shown.unwrap_or_default();
         gfx.use_mode(mode);
         gfx.draw(mode, false, self.app.ui.as_mut()).map(|_| ())
