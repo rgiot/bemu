@@ -985,15 +985,9 @@ fn simulated_joystick(ui: &mut egui::Ui, target: &dyn CommandTarget, input: &mut
             return;
         }
     };
-    let joy0_sim = settings.joystick_1 == JoystickSource::Simulated;
     let joy1_sim = settings.joystick_2 == JoystickSource::Simulated;
-
-    if !joy0_sim && !joy1_sim {
-        input.joysticks = simulated_joystick_controls(ui, [false, false]);
-        ui.label("No joystick is set to Simulated.");
-        ui.label("Open Machine > Joystick and set Joystick 1 or 2 to Simulated.");
-        return;
-    }
+    // with no joystick set to Simulated the window drives joystick 1 (Machine > Joystick changes it)
+    let joy0_sim = settings.joystick_1 == JoystickSource::Simulated || !joy1_sim;
 
     ui.heading("Simulated joystick");
     ui.label("Click or drag the stick. Right-click while holding it for Fire 1.");

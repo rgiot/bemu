@@ -823,9 +823,14 @@ pub fn run_window(
                     .retain(|host| !matches!(host, HostKey::LeftCtrl | HostKey::RightCtrl));
             }
             let sim = gui.simulated_joysticks();
+            // (with no joystick set to Simulated, the window still drives joystick 1 while it is used)
+            let sim_unset = core.settings().is_some_and(|s| {
+                s.joystick_1 != JoystickSource::Simulated && s.joystick_2 != JoystickSource::Simulated
+            });
             if core
                 .settings()
                 .is_some_and(|s| s.joystick_1 == JoystickSource::Simulated)
+                || (sim_unset && sim.joy0 != Default::default())
             {
                 input.joysticks.joy0 = sim.joy0;
             }
