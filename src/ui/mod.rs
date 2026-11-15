@@ -69,7 +69,7 @@ pub struct Gui {
     file_requests: Vec<FileRequest>,
     menu_height: f32,
     /// The machine was paused at the last frame: a pause (the button, F8, a breakpoint) shows
-    /// the Z80 window.
+    /// the Disassembly window.
     was_paused: bool,
     /// When the pointer was last used (moved, clicked, scrolled): in fullscreen the bars hide
     /// [`BARS_HIDE_S`] after it.
@@ -418,10 +418,14 @@ impl Gui {
 
     fn ui(&mut self, ctx: &egui::Context, target: &dyn CommandTarget, bus: &mut CommandBus) {
         self.shortcuts(ctx, target, bus);
-        // stopped (Pause, F8, a breakpoint, a step done): the registers are what one looks at
+        // stopped (Pause, F8, a breakpoint, a step done): the code where it stopped is what one
+        // looks at, the first Disassembly window back on the PC, in front
         let paused = target.debugger().is_some_and(|d| d.paused());
         if paused && !self.was_paused {
-            self.views.insert(ViewKey::of(View::Z80));
+            self.windows
+                .get(ViewKey::of(View::Disassembly))
+                .go_to(String::new());
+            self.open_copy(View::Disassembly, 0);
         }
         self.was_paused = paused;
         // a command run from the palette asks its argument there (a file: in the browser)
@@ -712,6 +716,29 @@ mod tests {
             assert_eq!(gui.views.len(), 1, "{view:?}");
             gui.views.clear();
         }
+    }
+
+    /// A pause shows the code where the machine stopped: the first Disassembly window, back on
+    /// the PC.
+    #[test]
+    fn a_pause_opens_the_disassembly_on_the_pc() {
+        let mut target = Target(
+            Motherboard::default(),
+            DebugServer::offline(),
+            HostSettings::default(),
+        );
+        let mut bus = CommandBus::default();
+        let mut gui = Gui::new();
+        let key = ViewKey::of(View::Disassembly);
+        gui.windows.get(key).go_to("&4000".into());
+        frame(&mut gui, &target, &mut bus, 0.0);
+        assert!(!gui.views.contains(&key));
+        target.1.set_paused(true);
+        frame(&mut gui, &target, &mut bus, 0.02);
+        assert!(gui.views.contains(&key));
+        assert!(!gui.views.contains(&ViewKey::of(View::Z80)));
+        let window = gui.windows.state::<window::Disassembly>(key).expect("open");
+        assert_eq!(window.window.address, "");
     }
 
     /// The address Memory window `copy` shows.

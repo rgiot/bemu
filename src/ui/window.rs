@@ -73,9 +73,9 @@ impl ViewWindow for Memory {
     }
 }
 
-struct Disassembly {
+pub struct Disassembly {
     id: String,
-    window: DisassemblyWindow,
+    pub window: DisassemblyWindow,
 }
 
 impl ViewWindow for Disassembly {
