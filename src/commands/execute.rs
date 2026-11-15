@@ -1471,6 +1471,25 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                 "HL" => mb.set_hl(value),
                 "IX" => mb.set_ix(value),
                 "IY" => mb.set_iy(value),
+                // a shadow pair: its two halves (A2 and F2...), as the debug API names them
+                "AF'" | "BC'" | "DE'" | "HL'" => {
+                    let (high, low) = match name.as_str() {
+                        "AF'" => ("A2", "F2"),
+                        "BC'" => ("B2", "C2"),
+                        "DE'" => ("D2", "E2"),
+                        _ => ("H2", "L2"),
+                    };
+                    let (debugger, mb) = debugger(target)?;
+                    debugger
+                        .api(
+                            "POST",
+                            "/api/z80",
+                            &[],
+                            &format!("{{\"{high}\":{},\"{low}\":{}}}", value >> 8, value & 0xff),
+                            mb,
+                        )
+                        .map_err(CommandError::Invalid)?;
+                }
                 _ => {
                     let (debugger, mb) = debugger(target)?;
                     debugger

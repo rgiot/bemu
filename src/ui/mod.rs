@@ -64,6 +64,9 @@ pub struct Gui {
     toasts: VecDeque<Toast>,
     file_requests: Vec<FileRequest>,
     menu_height: f32,
+    /// The machine was paused at the last frame: a pause (the button, F8, a breakpoint) shows
+    /// the Z80 window.
+    was_paused: bool,
     /// When the pointer was last used (moved, clicked, scrolled): in fullscreen the bars hide
     /// [`BARS_HIDE_S`] after it.
     pointer_seen: f64,
@@ -153,6 +156,7 @@ impl Gui {
             file_requests: Vec::new(),
             menu_height: 0.0,
             pointer_seen: 0.0,
+            was_paused: false,
             status_height: 0.0,
             native_views: false,
             view_contexts: BTreeMap::new(),
@@ -400,6 +404,12 @@ impl Gui {
 
     fn ui(&mut self, ctx: &egui::Context, target: &dyn CommandTarget, bus: &mut CommandBus) {
         self.shortcuts(ctx, target, bus);
+        // stopped (Pause, F8, a breakpoint, a step done): the registers are what one looks at
+        let paused = target.debugger().is_some_and(|d| d.paused());
+        if paused && !self.was_paused {
+            self.views.insert(ViewKey::of(View::Z80));
+        }
+        self.was_paused = paused;
         // a command run from the palette asks its argument there (a file: in the browser)
         if let Some(id) = self.palette.as_ref().and_then(palette::Palette::waiting) {
             match bus.prompt() {

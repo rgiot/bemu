@@ -497,3 +497,15 @@ fn a_reset_starts_basic_again_even_paused_after_a_program() {
         host.motherboard.write_buffer(0x9000, &[0]);
     }
 }
+
+#[test]
+fn a_shadow_register_is_set() {
+    use amsrust::z80::{HasValue, Reg16};
+    let mut host = Host::new();
+    host.run_with("z80-set-register", Arg::Text("BC'=&1234".into()))
+        .unwrap();
+    host.run_with("z80-set-register", Arg::Text("AF'=43981".into()))
+        .unwrap();
+    assert_eq!(host.motherboard.cpu().reg16(Reg16::Bc2).value(), 0x1234);
+    assert_eq!(host.motherboard.cpu().reg16(Reg16::Af2).value(), 43981);
+}

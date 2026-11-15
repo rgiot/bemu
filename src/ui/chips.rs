@@ -716,54 +716,74 @@ fn run(bus: &mut CommandBus, id: &str, arg: Arg) {
     }
 }
 
-/// The Z80's registers, each a field: dragged or typed, the register is set (Debug > Set
-/// register).
+/// The Z80's registers, editable (each change a `z80-set-register` command): the flags first,
+/// each a check box; then each pair beside its shadow (AF / AF'...), the index registers, SP and
+/// PC, I and R.
 pub fn registers(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
     use crate::z80::{HasValue, Reg16, Reg8};
     let cpu = mb.cpu();
-    let pairs = [
-        ("PC", cpu.reg16(Reg16::Pc).value()),
-        ("SP", cpu.reg16(Reg16::Sp).value()),
-        ("AF", cpu.reg16(Reg16::Af).value()),
-        ("BC", cpu.reg16(Reg16::Bc).value()),
-        ("DE", cpu.reg16(Reg16::De).value()),
-        ("HL", cpu.reg16(Reg16::Hl).value()),
-        ("IX", cpu.reg16(Reg16::Ix).value()),
-        ("IY", cpu.reg16(Reg16::Iy).value()),
-    ];
-    let shadows = [
-        ("AF'", cpu.reg16(Reg16::Af2).value()),
-        ("BC'", cpu.reg16(Reg16::Bc2).value()),
-        ("DE'", cpu.reg16(Reg16::De2).value()),
-        ("HL'", cpu.reg16(Reg16::Hl2).value()),
-    ];
+    // the flags, each a check box: F set again with that bit changed
+    let af = cpu.reg16(Reg16::Af).value();
+    let f = af as u8;
+    ui.horizontal(|ui| {
+        ui.strong("Flags");
+        for (bit, name) in ["S", "Z", "Y", "H", "X", "P/V", "N", "C"]
+            .iter()
+            .enumerate()
+        {
+            let mask = 0x80u8 >> bit;
+            let mut on = f & mask != 0;
+            if ui.checkbox(&mut on, *name).changed() {
+                let flags = if on { f | mask } else { f & !mask };
+                run(
+                    bus,
+                    "z80-set-register",
+                    Arg::Text(format!("AF={}", (af & 0xff00) | u16::from(flags))),
+                );
+            }
+        }
+    });
+    ui.add_space(4.0);
+    // a 16-bit register to edit: its name, its field, its value in decimal
+    let word = |ui: &mut egui::Ui, bus: &mut CommandBus, name: &str, value: u16| {
+        ui.monospace(name);
+        let mut edited = u32::from(value);
+        let response = ui.add(
+            egui::DragValue::new(&mut edited)
+                .range(0..=0xffff)
+                .hexadecimal(4, false, true)
+                .prefix("&")
+                .speed(1.0),
+        );
+        if response.changed() && edited != u32::from(value) {
+            run(
+                bus,
+                "z80-set-register",
+                Arg::Text(format!("{name}={edited}")),
+            );
+        }
+        ui.weak(format!("{value:5}"));
+    };
     egui::Grid::new("z80-registers")
         .spacing([10.0, 4.0])
         .show(ui, |ui| {
-            for (row, (name, value)) in pairs.iter().enumerate() {
-                ui.monospace(*name);
-                let mut edited = u32::from(*value);
-                let response = ui.add(
-                    egui::DragValue::new(&mut edited)
-                        .range(0..=0xffff)
-                        .hexadecimal(4, false, true)
-                        .prefix("&")
-                        .speed(1.0),
-                );
-                if response.changed() && edited != u32::from(*value) {
-                    run(
-                        bus,
-                        "z80-set-register",
-                        Arg::Text(format!("{name}={edited}")),
-                    );
-                }
-                ui.weak(format!("{value}"));
-                if let Some((shadow, value)) = shadows.get(row) {
-                    ui.monospace(*shadow);
-                    ui.monospace(format!("&{value:04X}"));
-                }
+            // each pair on the row of its shadow
+            for (name, reg, shadow, shadow_reg) in [
+                ("AF", Reg16::Af, "AF'", Reg16::Af2),
+                ("BC", Reg16::Bc, "BC'", Reg16::Bc2),
+                ("DE", Reg16::De, "DE'", Reg16::De2),
+                ("HL", Reg16::Hl, "HL'", Reg16::Hl2),
+            ] {
+                word(ui, bus, name, cpu.reg16(reg).value());
+                word(ui, bus, shadow, cpu.reg16(shadow_reg).value());
                 ui.end_row();
             }
+            word(ui, bus, "IX", cpu.reg16(Reg16::Ix).value());
+            word(ui, bus, "IY", cpu.reg16(Reg16::Iy).value());
+            ui.end_row();
+            word(ui, bus, "SP", cpu.reg16(Reg16::Sp).value());
+            word(ui, bus, "PC", cpu.reg16(Reg16::Pc).value());
+            ui.end_row();
             for (name, reg) in [("I", Reg8::I), ("R", Reg8::R)] {
                 let value = cpu.reg8(reg).value();
                 ui.monospace(name);
@@ -784,30 +804,10 @@ pub fn registers(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
                         Arg::Text(format!("{name}={edited}")),
                     );
                 }
-                ui.end_row();
+                ui.weak(format!("{value:5}"));
             }
+            ui.end_row();
         });
-    // the flags, each a check box: F set again with that bit changed
-    let af = cpu.reg16(Reg16::Af).value();
-    let f = af as u8;
-    ui.horizontal(|ui| {
-        ui.label("F");
-        for (bit, name) in ["S", "Z", "Y", "H", "X", "P/V", "N", "C"]
-            .iter()
-            .enumerate()
-        {
-            let mask = 0x80u8 >> bit;
-            let mut on = f & mask != 0;
-            if ui.checkbox(&mut on, *name).changed() {
-                let flags = if on { f | mask } else { f & !mask };
-                run(
-                    bus,
-                    "z80-set-register",
-                    Arg::Text(format!("AF={}", (af & 0xff00) | u16::from(flags))),
-                );
-            }
-        }
-    });
 }
 
 /// `text` (cpclib-dap's: `CALL 0xbb5a`, `LD HL, (0xbe00)`) with the addresses it names written
