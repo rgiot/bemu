@@ -717,3 +717,227 @@ mod test {
         assert!(off < gpu.len() / 500, "{off} pixels differ");
     }
 }
+
+/// The uniforms of `resample.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ResampleParams {
+    src: [f32; 2],
+    dst: [f32; 2],
+    axis: f32,
+    /// The blur before the Lanczos, in source texels ([`super::resize::blur_sigma`]).
+    sigma: f32,
+    pad: [f32; 2],
+}
+
+/// A picture resized by any factor without moiré (`resample.wgsl`: the Benediction website's
+/// thumbnails - a Gaussian blur of a third of the reduction, then Lanczos), in two passes: along x
+/// into a texture of its own ([`Self::prepare`]), then along y into the caller's pass and
+/// viewport ([`Self::draw`]).
+pub struct Resampler {
+    along_x: wgpu::RenderPipeline,
+    along_y: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    x_params: wgpu::Buffer,
+    y_params: wgpu::Buffer,
+    /// The first pass's picture: the destination's width, the source's height.
+    middle: Option<(wgpu::Texture, wgpu::TextureView, (u32, u32))>,
+    y_bind_group: Option<wgpu::BindGroup>,
+}
+
+impl Resampler {
+    /// The format of the first pass's texture.
+    const MIDDLE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+    /// A resampler drawing into targets of `format`.
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("resample"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("resample.wgsl").into()),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resample"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("resample"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = |format: wgpu::TextureFormat| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("resample"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(format.into())],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
+        };
+        let buffer = || {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("resample"),
+                size: std::mem::size_of::<ResampleParams>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        Self {
+            along_x: pipeline(Self::MIDDLE),
+            along_y: pipeline(format),
+            x_params: buffer(),
+            y_params: buffer(),
+            layout,
+            middle: None,
+            y_bind_group: None,
+        }
+    }
+
+    /// The first pass: `source` (`src` texels) resized along x to `dst`'s width; [`Self::draw`]
+    /// then draws it `dst` large.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::TextureView,
+        src: (u32, u32),
+        dst: (u32, u32),
+    ) {
+        let middle_size = (dst.0.max(1), src.1.max(1));
+        if self
+            .middle
+            .as_ref()
+            .is_none_or(|(.., size)| *size != middle_size)
+        {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("resample along x"),
+                size: wgpu::Extent3d {
+                    width: middle_size.0,
+                    height: middle_size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: Self::MIDDLE,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.y_bind_group = Some(self.bind_group(device, &view, &self.y_params));
+            self.middle = Some((texture, view, middle_size));
+        }
+        let params = |src: (u32, u32), dst: (u32, u32), axis: f32| {
+            let (n_src, n_dst) = if axis < 0.5 {
+                (src.0, dst.0)
+            } else {
+                (src.1, dst.1)
+            };
+            ResampleParams {
+                src: [src.0 as f32, src.1 as f32],
+                dst: [dst.0 as f32, dst.1 as f32],
+                axis,
+                sigma: super::resize::blur_sigma(n_src as f32 / n_dst.max(1) as f32),
+                pad: [0.0; 2],
+            }
+        };
+        queue.write_buffer(
+            &self.x_params,
+            0,
+            bytemuck::bytes_of(&params(src, middle_size, 0.0)),
+        );
+        queue.write_buffer(
+            &self.y_params,
+            0,
+            bytemuck::bytes_of(&params(middle_size, dst, 1.0)),
+        );
+        let x_bind_group = self.bind_group(device, source, &self.x_params);
+        let (_, middle_view, _) = self.middle.as_ref().expect("made above");
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("resample along x"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: middle_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&self.along_x);
+        pass.set_bind_group(0, &x_bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    /// The second pass, along y, over `pass`'s viewport (the `dst` of [`Self::prepare`]).
+    pub fn draw(&self, pass: &mut wgpu::RenderPass) {
+        if let Some(bind_group) = &self.y_bind_group {
+            pass.set_pipeline(&self.along_y);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    fn bind_group(
+        &self,
+        device: &wgpu::Device,
+        view: &wgpu::TextureView,
+        params: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("resample"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: params.as_entire_binding(),
+                },
+            ],
+        })
+    }
+}

@@ -15,6 +15,7 @@ pub mod crt;
 mod curved;
 #[cfg(feature = "crt-gpu")]
 mod gpu;
+pub mod resize;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use cpu::CpuCrt;
@@ -24,7 +25,7 @@ pub use curved::Curved;
 #[cfg(all(feature = "crt-gpu", not(target_arch = "wasm32")))]
 pub use gpu::{wait_for, GpuCrt};
 #[cfg(feature = "crt-gpu")]
-pub use gpu::{Blit, CrtPass, FrameTexture};
+pub use gpu::{Blit, CrtPass, FrameTexture, Resampler};
 
 use image::RgbImage;
 use std::str::FromStr;

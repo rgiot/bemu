@@ -168,8 +168,39 @@ fn run_csl(args: &Args, script: &str) {
     }
 }
 
+/// `--thumbnails`: each picture's thumbnails, then exit (an error: the status 1).
+fn make_thumbnails(args: &Args) {
+    let mut failed = false;
+    for source in &args.thumbnails {
+        let out_dir = match &args.thumbnail_dir {
+            Some(dir) => dir.clone(),
+            None => source
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("thumbs"),
+        };
+        match amsrust::webp::thumbnails(source, &out_dir, &args.thumbnail_widths, args.frame_ms) {
+            Ok(written) => {
+                for path in written {
+                    println!("{}", path.display());
+                }
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        std::process::exit(1);
+    }
+}
+
 fn main() {
     let args = parse_args();
+    if !args.thumbnails.is_empty() {
+        return make_thumbnails(&args);
+    }
     if let Some(script) = &args.csl {
         return run_csl(&args, script);
     }

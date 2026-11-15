@@ -11,6 +11,9 @@ struct Warp {
     edged: f32,
     // 1 to keep the texels sharp at any zoom (sharp bilinear), 0 for a plain linear sample
     sharp: f32,
+    // to 32 bytes: WebGL wants uniforms of a multiple of 16
+    pad0: f32,
+    pad1: vec2<f32>,
 }
 
 @group(0) @binding(0) var picture: texture_2d<f32>;

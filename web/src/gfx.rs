@@ -26,6 +26,8 @@ struct CrtState {
 pub struct Gpu {
     /// The picture fills the canvas at any zoom (Video > Fill the window), else by whole factors.
     free_zoom: bool,
+    /// The picture resized without moiré (a CRT's at a fractional zoom, any below x1).
+    resampler: Option<amsrust::display::Resampler>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -266,7 +268,7 @@ impl Gpu {
         let frame = FrameTexture::new(&device);
         let blit = Blit::new(&device, format);
         let raw_bind_group = blit.bind_group(&device, frame.view(), false, Warp::FLAT);
-        Ok(Self { free_zoom: false, surface, device, queue, config, frame, blit, raw_bind_group, crt: None, painter: None })
+        Ok(Self { free_zoom: false, resampler: None, surface, device, queue, config, frame, blit, raw_bind_group, crt: None, painter: None })
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -341,6 +343,24 @@ impl Gpu {
             integer
         );
         let y = y + top as f32;
+        // shrunk, or a CRT's scanlines and mask at a fractional zoom: the website's resampling
+        let resampled = !pixel_aligned && (crt.is_some() || w < picture_size.0 as f32);
+        if resampled {
+            let (source, size) = match crt {
+                Some(crt) => (
+                    crt.target.create_view(&wgpu::TextureViewDescriptor::default()),
+                    (crt.size.0 as u32, crt.size.1 as u32)
+                ),
+                None => (
+                    self.frame.view().clone(),
+                    (amsrust::display::crt::SRC_WIDTH as u32, amsrust::display::crt::SRC_HEIGHT as u32)
+                )
+            };
+            let (device, format) = (&self.device, self.config.format);
+            self.resampler
+                .get_or_insert_with(|| amsrust::display::Resampler::new(device, format))
+                .prepare(&self.device, &self.queue, &mut encoder, &source, size, (w.round() as u32, h.round() as u32));
+        }
         let bind_group = match crt {
             Some(crt) if pixel_aligned => &crt.pixel_bind_group,
             Some(crt) => &crt.bind_group,
@@ -360,7 +380,10 @@ impl Gpu {
                 occlusion_query_set: None
             });
             pass.set_viewport(x, y, w, h, 0.0, 1.0);
-            self.blit.draw(&mut pass, bind_group);
+            match (&self.resampler, resampled) {
+                (Some(resampler), true) => resampler.draw(&mut pass),
+                _ => self.blit.draw(&mut pass, bind_group)
+            }
         }
         if let Some((gui, output)) = ui {
             let painter = self
