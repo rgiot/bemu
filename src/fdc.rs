@@ -625,6 +625,12 @@ impl Fdc {
         self.motor
     }
 
+    /// The index, in the list of sectors of the track under its head, of the sector that will pass
+    /// under the head of `unit` next.
+    pub fn sector_under_head(&self, unit: usize) -> usize {
+        self.drives[unit % NB_UNITS].cursor
+    }
+
     /// How many commands reached their execution phase so far (wrapping): a change means a transfer.
     pub fn executions(&self) -> u32 {
         self.executions

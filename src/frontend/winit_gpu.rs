@@ -84,9 +84,61 @@ struct ViewWindow {
     state: egui_winit::State,
     ctx: egui::Context,
     painter: Option<amsrust::ui::Painter>,
-    fit_content: bool,
-    /// The size last asked for its content, in points.
+    fitting: Fitting,
+}
+
+/// A window sized to its content until the user resizes it.
+#[derive(Debug)]
+struct Fitting {
+    /// Still fitted (the user has not resized it).
+    enabled: bool,
+    /// The size last asked for its content, in logical pixels.
     fitted: Option<egui::Vec2>,
+    /// When that size was asked, until the window reaches it: a `Resized` meanwhile is the
+    /// system's (the window's first size, a late event), not the user's.
+    pending: Option<std::time::Instant>,
+}
+
+impl Fitting {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            fitted: None,
+            pending: None,
+        }
+    }
+
+    /// The size to ask for a content of `size` (logical pixels), if any: none once the user
+    /// resized it, nor for a change of a few pixels (a scroll bar coming and going).
+    fn request(&mut self, size: egui::Vec2) -> Option<egui::Vec2> {
+        if !self.enabled
+            || self
+                .fitted
+                .is_some_and(|fitted| (fitted - size).abs().max_elem() < 4.0)
+        {
+            return None;
+        }
+        self.fitted = Some(size);
+        self.pending = Some(std::time::Instant::now());
+        Some(size)
+    }
+
+    /// The window has `size` (logical pixels) now: the size asked reached, or, with no request
+    /// pending, the user resized it - it keeps that size from now on.
+    fn resized(&mut self, size: egui::Vec2) {
+        let reached = self
+            .fitted
+            .is_some_and(|fitted| (fitted - size).abs().max_elem() < 8.0);
+        // a request is pending until reached, or for half a second (a system that changes it)
+        let pending = self
+            .pending
+            .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(500));
+        if reached {
+            self.pending = None;
+        } else if !pending && self.fitted.is_some() {
+            self.enabled = false;
+        }
+    }
 }
 
 impl ViewWindow {
@@ -160,29 +212,43 @@ impl ViewWindow {
             state,
             ctx,
             painter: None,
-            fit_content: !matches!(title, "Keyboard" | "Joystick"),
-            fitted: None,
+            // the keyboard scales to its window; the others, the joystick's included (one or two
+            // sticks), are as large as their content
+            fitting: Fitting::new(title != "Keyboard"),
         })
     }
 
-    /// As large as its content (`wanted` points), up to most of a screen: a longer one scrolls.
-    fn fit(&mut self, wanted: egui::Vec2) {
-        if !self.fit_content {
-            return;
-        }
-        const MAX: egui::Vec2 = egui::vec2(1000.0, 900.0);
-        let size = wanted.max(egui::vec2(160.0, 60.0)).min(MAX).ceil();
-        // the user resized it, or it was fitted already: changes of a few points are left
-        if self
-            .fitted
-            .is_some_and(|fitted| (fitted - size).abs().max_elem() < 4.0)
-        {
-            return;
-        }
-        self.fitted = Some(size);
-        let _ = self
+    /// As large as its content (`wanted` points at the interface's `zoom`), up to most of its
+    /// screen: a larger content scrolls. Until the user resizes it.
+    fn fit(&mut self, wanted: egui::Vec2, zoom: f32) {
+        // most of the screen it is on, in logical pixels
+        let max = self
             .window
-            .request_inner_size(LogicalSize::new(f64::from(size.x), f64::from(size.y)));
+            .current_monitor()
+            .map(|monitor| {
+                let size: LogicalSize<f32> = monitor.size().to_logical(monitor.scale_factor());
+                egui::vec2(size.width, size.height) * 0.9
+            })
+            .unwrap_or(egui::vec2(1000.0, 900.0));
+        let size = (wanted * zoom).max(egui::vec2(160.0, 60.0)).min(max).ceil();
+        // BEMU_FIT_DEBUG=1: what each window measured and asked (to report a wrong size)
+        if std::env::var_os("BEMU_FIT_DEBUG").is_some() {
+            eprintln!(
+                "fit {:?}: wanted {wanted:?} zoom {zoom} -> {size:?} {:?}",
+                self.window.title(),
+                self.fitting
+            );
+        }
+        if let Some(size) = self.fitting.request(size) {
+            // applied at once (some systems): reached
+            if self
+                .window
+                .request_inner_size(LogicalSize::new(f64::from(size.x), f64::from(size.y)))
+                .is_some()
+            {
+                self.fitting.resized(size);
+            }
+        }
     }
 
     fn resize(&mut self, gfx: &Gfx, width: u32, height: u32) {
@@ -812,7 +878,7 @@ struct App {
     wanted_fullscreen: Option<bool>,
     /// The debugger's windows open, by view, and the ones to have (opened in the event loop).
     views: HashMap<u8, ViewWindow>,
-    wanted_views: Vec<(u8, &'static str, egui::Context)>,
+    wanted_views: Vec<(u8, String, egui::Context)>,
     /// The views whose window the user closed.
     closed_views: Vec<u8>,
 }
@@ -1009,16 +1075,9 @@ impl App {
                 if let Some(gfx) = &self.gfx {
                     view.resize(gfx, size.width, size.height);
                 }
-                // not the size it asked for: the user resized it, it keeps that size from now on
                 let logical: LogicalSize<f32> = size.to_logical(view.window.scale_factor());
-                if view.fitted.is_some_and(|fitted| {
-                    (fitted - egui::vec2(logical.width, logical.height))
-                        .abs()
-                        .max_elem()
-                        >= 8.0
-                }) {
-                    view.fit_content = false;
-                }
+                view.fitting
+                    .resized(egui::vec2(logical.width, logical.height));
             }
             _ => {}
         }
@@ -1499,7 +1558,7 @@ impl Frontend for WinitGpuFrontend {
         self.app.wanted_views = views
             .iter()
             .filter(|view| !closed.contains(&view.key))
-            .map(|view| (view.key, view.title, view.ctx.clone()))
+            .map(|view| (view.key, view.title.clone(), view.ctx.clone()))
             .collect();
         closed
     }
@@ -1519,7 +1578,8 @@ impl Frontend for WinitGpuFrontend {
 
     fn set_view_output(&mut self, key: u8, output: egui::FullOutput, wanted: egui::Vec2) {
         if let (Some(view), Some(gfx)) = (self.app.views.get_mut(&key), self.app.gfx.as_ref()) {
-            view.fit(wanted);
+            let zoom = view.ctx.zoom_factor();
+            view.fit(wanted, zoom);
             view.draw(gfx, output);
         }
     }
@@ -1560,6 +1620,28 @@ impl Frontend for WinitGpuFrontend {
 #[cfg(test)]
 mod test {
     use super::refreshes_per_frame;
+
+    #[test]
+    fn a_window_is_fitted_until_the_user_resizes_it() {
+        use super::Fitting;
+        let content = egui::vec2(803.0, 415.0);
+        let mut fitting = Fitting::new(true);
+        assert_eq!(fitting.request(content), Some(content));
+        // the window's first size, reported late (macOS): not the user's
+        fitting.resized(egui::vec2(460.0, 520.0));
+        assert!(fitting.enabled);
+        // the size asked, reached
+        fitting.resized(egui::vec2(803.0, 415.0));
+        assert!(fitting.enabled);
+        // the content grows: fitted again; a scroll bar's few pixels are left
+        assert_eq!(fitting.request(egui::vec2(803.0, 417.0)), None);
+        assert!(fitting.request(egui::vec2(803.0, 600.0)).is_some());
+        fitting.resized(egui::vec2(803.0, 600.0));
+        // the user resizes it: it keeps that size
+        fitting.resized(egui::vec2(500.0, 300.0));
+        assert!(!fitting.enabled);
+        assert_eq!(fitting.request(egui::vec2(900.0, 900.0)), None);
+    }
 
     #[test]
     fn the_picture_is_zoomed_by_a_whole_factor_unless_free() {

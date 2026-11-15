@@ -40,7 +40,19 @@ pub fn ink_picker(
     resettable: bool,
     tooltip: &str,
 ) -> Option<Picked> {
-    let response = swatch(ui, ink_color(ink), outlined).on_hover_text(tooltip);
+    colour_picker(ui, id, ink_color(ink), outlined, resettable, tooltip)
+}
+
+/// [`ink_picker`] for a swatch of any colour (a CPC+'s 12-bit one): the 27 inks to pick from.
+pub fn colour_picker(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    colour: egui::Color32,
+    outlined: bool,
+    resettable: bool,
+    tooltip: &str,
+) -> Option<Picked> {
+    let response = swatch(ui, colour, outlined).on_hover_text(tooltip);
     let open_id = id.with("open");
     let mut open = ui.data(|d| d.get_temp::<bool>(open_id).unwrap_or(false));
     if response.clicked() {
@@ -130,4 +142,19 @@ pub fn goto_buttons(ui: &mut egui::Ui, mb: &crate::motherboard::Motherboard) -> 
         button(ui, "Video now", video_now);
     });
     chosen
+}
+
+/// A separator that takes no width: in a column, a line across what is shown of the window
+/// (the window is sized to its content: a `ui.separator()` would take the window's whole width
+/// and keep it from ever getting narrower); in a row, the usual one.
+pub fn rule(ui: &mut egui::Ui) {
+    if ui.layout().main_dir().is_horizontal() {
+        ui.separator();
+        return;
+    }
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(0.0, 6.0), egui::Sense::hover());
+    let clip = ui.clip_rect();
+    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+    ui.painter()
+        .hline(clip.left()..=clip.right(), rect.center().y, stroke);
 }

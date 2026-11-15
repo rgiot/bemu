@@ -65,7 +65,7 @@ const PRINTER_CHARSETS: [&str; 9] = [
     "usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan",
 ];
 
-const VIEWS: [(&str, View); 21] = [
+const VIEWS: [(&str, View); 22] = [
     ("view-z80", View::Z80),
     ("view-stack", View::Stack),
     ("view-crtc", View::Crtc),
@@ -82,6 +82,7 @@ const VIEWS: [(&str, View); 21] = [
     ("view-counters", View::Counters),
     ("view-ppi", View::Ppi),
     ("view-tape", View::Tape),
+    ("view-csl-log", View::CslLog),
     ("view-asic", View::Asic),
     ("view-screen", View::Screen),
     ("palette-open", View::Palette),
@@ -1471,6 +1472,25 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                 "HL" => mb.set_hl(value),
                 "IX" => mb.set_ix(value),
                 "IY" => mb.set_iy(value),
+                // a shadow pair: its two halves (A2 and F2...), as the debug API names them
+                "AF'" | "BC'" | "DE'" | "HL'" => {
+                    let (high, low) = match name.as_str() {
+                        "AF'" => ("A2", "F2"),
+                        "BC'" => ("B2", "C2"),
+                        "DE'" => ("D2", "E2"),
+                        _ => ("H2", "L2"),
+                    };
+                    let (debugger, mb) = debugger(target)?;
+                    debugger
+                        .api(
+                            "POST",
+                            "/api/z80",
+                            &[],
+                            &format!("{{\"{high}\":{},\"{low}\":{}}}", value >> 8, value & 0xff),
+                            mb,
+                        )
+                        .map_err(CommandError::Invalid)?;
+                }
                 _ => {
                     let (debugger, mb) = debugger(target)?;
                     debugger
@@ -2195,6 +2215,8 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                 )
             }
         }
+        "view-memory-new" => host(target, HostRequest::OpenAnother(View::Memory)),
+        "view-disassembly-new" => host(target, HostRequest::OpenAnother(View::Disassembly)),
         "preferences-open" => host(target, HostRequest::Open(View::Preferences)),
         "help-shortcuts" => host(target, HostRequest::Open(View::Shortcuts)),
         "help-about" => host(target, HostRequest::Open(View::About)),
@@ -2225,7 +2247,15 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
     let debugger = target.debugger();
     let paused = paused(target);
     if let Some((_, view)) = VIEWS.iter().find(|(name, _)| *name == id) {
-        return host_can(target, HostRequest::Open(*view));
+        // a CPC+ has the ASIC, a CPC the Gate Array
+        let plus = mb.model().is_plus();
+        let fits = match view {
+            View::GateArray => !plus,
+            View::Asic => plus,
+            _ => true,
+        };
+        let state = host_can(target, HostRequest::Open(*view));
+        return CommandState::enabled(state.enabled && fits);
     }
     if let Some(rest) = id.strip_prefix("machine-crtc-") {
         let n: u8 = rest.parse().unwrap_or(0);
@@ -2626,6 +2656,8 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
         ),
         "tools-disc-catalog" => CommandState::enabled(true),
         "tools-disc-convert" => CommandState::enabled(true),
+        "view-memory-new" => host_can(target, HostRequest::OpenAnother(View::Memory)),
+        "view-disassembly-new" => host_can(target, HostRequest::OpenAnother(View::Disassembly)),
         "preferences-open" => host_can(target, HostRequest::Open(View::Preferences)),
         "help-shortcuts" => host_can(target, HostRequest::Open(View::Shortcuts)),
         "help-about" => host_can(target, HostRequest::Open(View::About)),

@@ -5,6 +5,11 @@ use crate::commands::{Arg, Command, CommandBus};
 use crate::ga::RgbLevels;
 use crate::motherboard::Motherboard;
 
+/// A colour of the CPC's levels (0-100 each).
+pub fn rgb_color(levels: RgbLevels) -> egui::Color32 {
+    color(levels)
+}
+
 fn color(levels: RgbLevels) -> egui::Color32 {
     let byte = |level: f32| (level * 255.0 / 100.0).round().clamp(0.0, 255.0) as u8;
     egui::Color32::from_rgb(byte(levels.r()), byte(levels.g()), byte(levels.b()))
@@ -32,22 +37,27 @@ fn yes(on: bool) -> &'static str {
     }
 }
 
-/// The Gate Array: the inks as colours, the modes, the ROM and interrupt state.
+/// The Gate Array: its mode (changed with a command), its pens (each opens the 27 inks), its
+/// registers. A CPC+ has the ASIC's instead: [`asic`].
 pub fn gate_array(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
-    use super::widgets::{ink_picker, Picked};
+    ga_mode(ui, mb, bus);
+    ga_inks(ui, mb, bus);
+    ga_state(ui, mb);
+}
+
+/// The chip and the screen mode, a button per mode (`ga-set-mode`, from the next line).
+fn ga_mode(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
     let ga = mb.ga();
-    let palette = ga.palette();
-    let pen = ga.selected_pen();
     let mode = |mode: crate::ga::VideoMode| mode as u8;
     ui.horizontal(|ui| {
         ui.label(format!(
             "{}: mode",
-            match ga.gate_array_type() {
-                crate::ga::GateArrayType::Ga40010 => "40010",
+            match (ga.plus(), ga.gate_array_type()) {
+                (Some(_), _) => "ASIC",
+                (None, crate::ga::GateArrayType::Ga40010) => "40010",
                 _ => "40007/40008",
             }
         ));
-        // the mode, changed from the next line (a command)
         let active = mode(ga.active_video_mode());
         for wanted in 0..4u8 {
             if ui
@@ -66,6 +76,14 @@ pub fn gate_array(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
             ui.weak(format!("(next line: mode {})", mode(ga.next_video_mode())));
         }
     });
+}
+
+/// The 16 pens and the border, each a swatch that opens the 27 inks (`ga-set-ink`).
+fn ga_inks(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
+    use super::widgets::{ink_picker, Picked};
+    let ga = mb.ga();
+    let palette = ga.palette();
+    let pen = ga.selected_pen();
     ui.weak("A click on a pen gives it another ink, until the program writes it again")
         .on_hover_text("The firmware sends its own inks again at each flash period: a change lasts under BASIC only while the firmware is stopped");
     egui::Grid::new("ga-inks")
@@ -110,6 +128,12 @@ pub fn gate_array(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
                 }
             }
         });
+}
+
+/// The selected pen, RMR decoded, the upper ROM, the interrupt counter.
+fn ga_state(ui: &mut egui::Ui, mb: &Motherboard) {
+    let ga = mb.ga();
+    let pen = ga.selected_pen();
     let rmr = ga.rmr();
     egui::Grid::new("ga-state").striped(true).show(ui, |ui| {
         ui.label("Selected pen");
@@ -243,7 +267,7 @@ pub fn ppi(ui: &mut egui::Ui, mb: &Motherboard) {
         ));
         ui.end_row();
     });
-    ui.separator();
+    super::widgets::rule(ui);
     ui.strong("Keyboard matrix (X: key down)");
     let lines = mb.keyboard().lines();
     egui::Grid::new("ppi-keyboard")
@@ -312,7 +336,7 @@ pub fn tape(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
             ));
         }
     }
-    ui.separator();
+    super::widgets::rule(ui);
     match mb.tape_recorder() {
         Some(recorder) => {
             ui.label(format!("Recording: {:.1} s of tape", recorder.seconds()));
@@ -328,12 +352,51 @@ pub fn tape(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
     }
 }
 
-/// The CPC+'s ASIC: lock, interrupts, split, and its 32 colours.
-pub fn asic(ui: &mut egui::Ui, mb: &Motherboard) {
+/// The ASIC of a CPC+ (the Gate Array's part, then its own): the mode and the Gate Array's
+/// registers, the 32 palette entries (12 bits: pens, border, sprite colours), the raster
+/// interrupt, the split, the soft scroll, RMR2, the DMA channels, the hardware sprites.
+pub fn asic(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
     let (Some(asic), Some(video)) = (mb.asic(), mb.ga().plus()) else {
         ui.weak("a CPC+ has one (Machine > Platform)");
         return;
     };
+    ga_mode(ui, mb, bus);
+    // the palette: pens 0-15, the border, the sprite colours 1-15
+    ui.strong("Palette (12 bits: &GRB)");
+    let pen = usize::from(mb.ga().selected_pen());
+    egui::Grid::new("asic-palette")
+        .spacing([4.0, 6.0])
+        .show(ui, |ui| {
+            for index in 0..32 {
+                let entry = video.palette_entry(index);
+                ui.vertical_centered(|ui| {
+                    ui.small(match index {
+                        16 => "B".to_owned(),
+                        17.. => format!("S{}", index - 16),
+                        _ => index.to_string(),
+                    });
+                    swatch(ui, color(video.rgb(index)), index == pen).on_hover_text(format!(
+                        "{}: &{entry:03X} (green {}, red {}, blue {})",
+                        match index {
+                            16 => "border".to_owned(),
+                            17.. => format!("sprite colour {}", index - 16),
+                            _ => format!("pen {index}"),
+                        },
+                        (entry >> 8) & 15,
+                        (entry >> 4) & 15,
+                        entry & 15
+                    ));
+                });
+                // the pens, then the border and the sprite colours
+                if index == 15 {
+                    ui.end_row();
+                }
+            }
+        });
+    ga_state(ui, mb);
+    super::widgets::rule(ui);
+    let rmr2 = video.rmr2();
+    let sscr = video.sscr();
     egui::Grid::new("asic").striped(true).show(ui, |ui| {
         ui.label("Registers");
         ui.monospace(if asic.unlocked() {
@@ -343,7 +406,10 @@ pub fn asic(ui: &mut egui::Ui, mb: &Motherboard) {
         });
         ui.end_row();
         ui.label("Raster interrupt (PRI)");
-        ui.monospace(yes(asic.programmable_raster()));
+        ui.monospace(match asic.pri() {
+            0 => "off (the Gate Array's interrupts)".to_owned(),
+            line => format!("line {line}"),
+        });
         ui.end_row();
         ui.label("Split (SPLT, SSA)");
         ui.monospace(match asic.split() {
@@ -351,25 +417,138 @@ pub fn asic(ui: &mut egui::Ui, mb: &Motherboard) {
             None => "no".to_owned(),
         });
         ui.end_row();
-        ui.label("DMA interrupt");
-        ui.monospace(yes(asic.dma_interrupt()));
+        ui.label("Soft scroll (SSCR)");
+        ui.monospace(format!(
+            "&{sscr:02X}: {} pixels right, {} lines down{}",
+            sscr & 15,
+            (sscr >> 4) & 7,
+            if sscr & 0x80 != 0 {
+                ", border over the first byte"
+            } else {
+                ""
+            }
+        ));
+        ui.end_row();
+        ui.label("RMR2");
+        ui.monospace(format!(
+            "&{rmr2:02X}: cartridge page {} {}",
+            rmr2 & 7,
+            match (rmr2 >> 3) & 3 {
+                0 => "at &0000",
+                1 => "at &4000",
+                2 => "at &8000",
+                _ => "at &0000, the registers at &4000",
+            }
+        ));
+        ui.end_row();
+        ui.label("Interrupt vector (IVR)");
+        ui.monospace(format!(
+            "&{:02X}{}",
+            asic.ivr() & 0xf8,
+            if asic.ivr() & 1 != 0 {
+                ", DMA interrupts cleared by the acknowledge"
+            } else {
+                ""
+            }
+        ));
         ui.end_row();
     });
-    ui.separator();
-    ui.strong("Palette: pens, border, sprite colours");
-    egui::Grid::new("asic-palette")
-        .spacing([4.0, 6.0])
+    super::widgets::rule(ui);
+    ui.strong("DMA (sound)");
+    egui::Grid::new("asic-dma").striped(true).show(ui, |ui| {
+        for heading in [
+            "",
+            "On",
+            "Address",
+            "Prescaler",
+            "Pause",
+            "Repeat",
+            "Interrupt",
+        ] {
+            ui.weak(heading);
+        }
+        ui.end_row();
+        for (n, channel) in asic.dma_channels().iter().enumerate() {
+            ui.monospace(n.to_string());
+            ui.monospace(yes(channel.enabled));
+            ui.monospace(format!("&{:04X}", channel.address));
+            ui.monospace(channel.prescaler.to_string());
+            ui.monospace(channel.pause.to_string());
+            ui.monospace(channel.loop_count.to_string());
+            ui.monospace(yes(channel.interrupt));
+            ui.end_row();
+        }
+    });
+    super::widgets::rule(ui);
+    ui.strong("Hardware sprites");
+    asic_sprites(ui, video);
+}
+
+/// The 16 hardware sprites: each drawn in its colours (a transparent pixel checked), its
+/// position and magnification; a hidden one (magnification 0) greyed.
+fn asic_sprites(ui: &mut egui::Ui, video: &crate::asic::AsicVideo) {
+    const PIXEL: f32 = 3.0;
+    let zoom = |z: u8| match z {
+        0 => "-".to_owned(),
+        z => format!("x{}", 1 << (z - 1)),
+    };
+    egui::Grid::new("asic-sprites")
+        .spacing([10.0, 8.0])
         .show(ui, |ui| {
-            for index in 0..32 {
-                ui.vertical_centered(|ui| {
-                    ui.small(match index {
-                        16 => "B".to_owned(),
-                        17.. => format!("S{}", index - 16),
-                        _ => index.to_string(),
-                    });
-                    swatch(ui, color(video.rgb(index)), false);
+            for n in 0..16 {
+                let sprite = video.sprite(n);
+                ui.vertical(|ui| {
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(16.0 * PIXEL, 16.0 * PIXEL),
+                        egui::Sense::hover(),
+                    );
+                    let painter = ui.painter_at(rect);
+                    for (i, &pen) in sprite.pixels.iter().enumerate() {
+                        let (x, y) = ((i % 16) as f32, (i / 16) as f32);
+                        let cell = egui::Rect::from_min_size(
+                            rect.min + egui::vec2(x * PIXEL, y * PIXEL),
+                            egui::vec2(PIXEL, PIXEL),
+                        );
+                        let fill = if pen == 0 {
+                            // transparent: a checker
+                            if (i % 16 + i / 16) % 2 == 0 {
+                                egui::Color32::from_gray(40)
+                            } else {
+                                egui::Color32::from_gray(60)
+                            }
+                        } else {
+                            color(video.rgb(16 + usize::from(pen & 15)))
+                        };
+                        painter.rect_filled(
+                            cell,
+                            0.0,
+                            if sprite.shown() {
+                                fill
+                            } else {
+                                fill.gamma_multiply(0.35)
+                            },
+                        );
+                    }
+                    response.on_hover_text(format!(
+                        "sprite {n}: x {}, y {}, magnification {} x {}{}",
+                        sprite.x,
+                        sprite.y,
+                        zoom(sprite.zoom_x),
+                        zoom(sprite.zoom_y),
+                        if sprite.shown() { "" } else { " (hidden)" }
+                    ));
+                    ui.small(format!(
+                        "{n}: {},{} {}",
+                        sprite.x,
+                        sprite.y,
+                        if sprite.shown() {
+                            format!("{}{}", zoom(sprite.zoom_x), zoom(sprite.zoom_y))
+                        } else {
+                            "off".to_owned()
+                        }
+                    ));
                 });
-                if index % 11 == 10 {
+                if n % 8 == 7 {
                     ui.end_row();
                 }
             }
@@ -388,6 +567,179 @@ fn bits(value: u8, names: [&str; 8]) -> String {
         "-".to_owned()
     } else {
         set.join(" ")
+    }
+}
+
+/// The format a track's sector IDs name: AMSDOS's Data (&C1-&C9), System (&41-&49) or IBM
+/// (&01-&08), else its sectors and their IDs ("10 sectors &C1-&CA").
+fn format_name(track: &crate::disc_image::Track) -> String {
+    let ids: Vec<u8> = track.sectors.iter().map(|s| s.r).collect();
+    let all = |range: std::ops::RangeInclusive<u8>| {
+        ids.len() == range.clone().count() && ids.iter().all(|r| range.contains(r))
+    };
+    if all(0xc1..=0xc9) {
+        "Data".to_owned()
+    } else if all(0x41..=0x49) {
+        "System".to_owned()
+    } else if all(0x01..=0x08) {
+        "IBM".to_owned()
+    } else if let (Some(first), Some(last)) = (ids.iter().min(), ids.iter().max()) {
+        format!("{} sectors &{first:02X}-&{last:02X}", ids.len())
+    } else {
+        "no sector".to_owned()
+    }
+}
+
+/// A track in a word: unformatted, the standard 9 sectors of 512 bytes, or another layout (a
+/// protection, a more packed format), weak sectors (several copies of their data) above all.
+fn track_kind(track: Option<&crate::disc_image::Track>) -> (&'static str, egui::Color32) {
+    match track {
+        None => ("unformatted", egui::Color32::from_gray(45)),
+        Some(track) if track.sectors.iter().any(|s| s.copies() > 1) => {
+            ("weak sectors", egui::Color32::from_rgb(200, 60, 60))
+        }
+        Some(track) if track.sectors.len() == 9 && track.sectors.iter().all(|s| s.n == 2) => {
+            ("9 x 512", egui::Color32::from_rgb(60, 150, 70))
+        }
+        Some(track) if track.sectors.is_empty() => ("no sector", egui::Color32::from_gray(80)),
+        Some(_) => ("another layout", egui::Color32::from_rgb(210, 150, 40)),
+    }
+}
+
+/// The disc in a drive as the head sees it: its format, a map of the tracks of the side read
+/// (the head on it), the sectors of the track under the head (the next one marked), its
+/// catalogue.
+fn disc_details(ui: &mut egui::Ui, mb: &Motherboard, unit: usize) {
+    use crate::fdc::FdcDrive;
+    let drive = if unit == 0 { FdcDrive::A } else { FdcDrive::B };
+    let fdc = mb.fdc();
+    let Some(disc) = fdc.image(drive) else {
+        return;
+    };
+    let side = fdc.disc_side(drive).min(disc.nb_heads().saturating_sub(1));
+    let head_track = fdc.track(unit);
+    let under = disc.track(side, head_track);
+    ui.strong(format!(
+        "Drive {}: {} {}, {} tracks, {}, side {} read",
+        ["A", "B"][unit],
+        if disc.is_bitstream() { "HFE" } else { "DSK" },
+        under.map_or("unformatted".to_owned(), format_name),
+        disc.nb_tracks(),
+        if disc.is_double_sided() {
+            "double sided"
+        } else {
+            "single sided"
+        },
+        ["A", "B"][usize::from(side & 1)]
+    ));
+    // the tracks of the side read, the head's outlined
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 1.0;
+        for track in 0..disc.nb_tracks() {
+            let image = disc.track(side, track);
+            let (kind, fill) = track_kind(image);
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(7.0, 18.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 1.0, fill);
+            if track == head_track {
+                ui.painter().rect_stroke(
+                    rect.expand(1.0),
+                    1.0,
+                    egui::Stroke::new(2.0_f32, egui::Color32::WHITE),
+                    egui::StrokeKind::Outside,
+                );
+            }
+            response.on_hover_text(match image {
+                Some(t) => format!(
+                    "track {track}: {kind}, {} sector(s): {}",
+                    t.sectors.len(),
+                    t.sectors
+                        .iter()
+                        .map(|s| format!("&{:02X}", s.r))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ),
+                None => format!("track {track}: unformatted"),
+            });
+        }
+    });
+    ui.horizontal(|ui| {
+        for (kind, fill) in [
+            track_kind(None),
+            ("9 x 512", egui::Color32::from_rgb(60, 150, 70)),
+            ("another layout", egui::Color32::from_rgb(210, 150, 40)),
+            ("weak sectors", egui::Color32::from_rgb(200, 60, 60)),
+        ] {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 1.0, fill);
+            ui.weak(kind);
+        }
+        ui.weak(format!("· head over track {head_track}"));
+    });
+    // the sectors under the head, in their order on the track
+    match under {
+        Some(track) if !track.sectors.is_empty() => {
+            let next = fdc.sector_under_head(unit) % track.sectors.len();
+            egui::Grid::new(("fdc-sectors", unit))
+                .striped(true)
+                .show(ui, |ui| {
+                    for heading in ["", "C", "H", "R", "N", "Size", "Data", "Notes"] {
+                        ui.weak(heading);
+                    }
+                    ui.end_row();
+                    for (index, sector) in track.sectors.iter().enumerate() {
+                        ui.monospace(if index == next { "▶" } else { " " })
+                            .on_hover_text(if index == next {
+                                "The next sector under the head"
+                            } else {
+                                ""
+                            });
+                        ui.monospace(format!("&{:02X}", sector.c));
+                        ui.monospace(format!("&{:02X}", sector.h));
+                        ui.monospace(format!("&{:02X}", sector.r));
+                        ui.monospace(format!("{}", sector.n));
+                        ui.monospace(format!("{}", sector.nominal_len()));
+                        ui.monospace(format!("{}", sector.data.len()));
+                        let mut notes = Vec::new();
+                        if sector.copies() > 1 {
+                            notes.push(format!("weak: {} copies", sector.copies()));
+                        }
+                        if sector.is_deleted() {
+                            notes.push("deleted".to_owned());
+                        }
+                        if sector.c != head_track {
+                            notes.push(format!("ID of track {}", sector.c));
+                        }
+                        if sector.data.len() != sector.nominal_len() && sector.copies() <= 1 {
+                            notes.push("odd size".to_owned());
+                        }
+                        ui.weak(notes.join(", "));
+                        ui.end_row();
+                    }
+                });
+        }
+        _ => {
+            ui.weak(format!("track {head_track}: unformatted"));
+        }
+    }
+    let catalogue = disc.amsdos_catalog();
+    if !catalogue.is_empty() {
+        ui.collapsing(format!("Catalogue ({} entries)", catalogue.len()), |ui| {
+            egui::Grid::new(("fdc-catalogue", unit))
+                .striped(true)
+                .show(ui, |ui| {
+                    for entry in catalogue.iter().take(64) {
+                        ui.monospace(format!("{}.{}", entry.name.trim(), entry.extension.trim()));
+                        ui.weak(format!(
+                            "user {}{}, {}K",
+                            entry.user,
+                            if entry.hidden { ", hidden" } else { "" },
+                            (u32::from(entry.records) * 128).div_ceil(1024)
+                        ));
+                        ui.end_row();
+                    }
+                });
+        });
     }
 }
 
@@ -437,7 +789,7 @@ pub fn fdc(ui: &mut egui::Ui, mb: &Motherboard) {
         ui.monospace(if fdc.motor() { "on" } else { "off" });
         ui.end_row();
     });
-    ui.separator();
+    super::widgets::rule(ui);
     egui::Grid::new("fdc-drives").striped(true).show(ui, |ui| {
         for heading in ["Drive", "Kind", "Disc", "Track", "Side up", "Modified"] {
             ui.strong(heading);
@@ -453,7 +805,14 @@ pub fn fdc(ui: &mut egui::Ui, mb: &Motherboard) {
             ui.end_row();
         }
     });
-    ui.separator();
+    // each disc as the head sees it
+    for unit in 0..2 {
+        if fdc.has_disk(if unit == 0 { FdcDrive::A } else { FdcDrive::B }) {
+            super::widgets::rule(ui);
+            disc_details(ui, mb, unit);
+        }
+    }
+    super::widgets::rule(ui);
     ui.strong("Last commands (the last first)");
     let hex = |bytes: &[u8]| {
         bytes
@@ -477,7 +836,7 @@ pub fn fdc(ui: &mut egui::Ui, mb: &Motherboard) {
                 ui.weak(if record.result.is_empty() {
                     String::new()
                 } else {
-                    format!("→ {}", hex(&record.result))
+                    format!("= {}", hex(&record.result))
                 });
                 ui.end_row();
             }
@@ -611,6 +970,62 @@ pub fn memory_map(ui: &mut egui::Ui, mb: &Motherboard) {
             }
         });
     ui.add_space(6.0);
+    // a CPC+: its cartridge (the system one, or one inserted), each page by its ROM name
+    if let Some(cartridge) = mb.any_cartridge() {
+        let system = mb.cartridge().is_none();
+        ui.strong(format!(
+            "Cartridge: {}, {} pages of 16K",
+            if system { "the system one" } else { "inserted" },
+            cartridge.page_count()
+        ));
+        let lower = mb.ga().plus().map(|plus| plus.rmr2() & 7);
+        let upper = mb.cartridge_page_of_upper_rom(mb.upper_rom_number());
+        // the pages 8 a row, the lower and upper ROMs' lit; a page's name on hover
+        egui::Grid::new("memmap-cartridge")
+            .spacing([4.0, 4.0])
+            .show(ui, |ui| {
+                for page in 0..cartridge.page_count().min(32) as u8 {
+                    let role = match (lower == Some(page), upper == Some(page)) {
+                        (true, true) => "lower and upper ROM",
+                        (true, false) => "lower ROM",
+                        (false, true) => "upper ROM",
+                        _ => "",
+                    };
+                    let fill = if role.is_empty() {
+                        ui.visuals().extreme_bg_color
+                    } else {
+                        egui::Color32::from_rgb(200, 70, 50)
+                    };
+                    let (rect, response) =
+                        ui.allocate_exact_size(egui::vec2(34.0, 20.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 2.0, fill);
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        page.to_string(),
+                        egui::FontId::monospace(12.0),
+                        if role.is_empty() {
+                            ui.visuals().weak_text_color()
+                        } else {
+                            egui::Color32::WHITE
+                        },
+                    );
+                    let bytes: Vec<u8> = (0..0x400u16)
+                        .filter_map(|offset| mb.read_cartridge_byte(page, offset))
+                        .collect();
+                    let name = rom_name(&bytes)
+                        .unwrap_or_else(|| super::paging::cartridge_page_name(mb, page));
+                    response.on_hover_text(if role.is_empty() {
+                        format!("page {page}: {name}")
+                    } else {
+                        format!("page {page}: {name} ({role})")
+                    });
+                    if page % 8 == 7 {
+                        ui.end_row();
+                    }
+                }
+            });
+    }
     ui.strong("ROMs");
     egui::Grid::new("memmap-roms").striped(true).show(ui, |ui| {
         let selected = mb.upper_rom_number();
@@ -716,54 +1131,74 @@ fn run(bus: &mut CommandBus, id: &str, arg: Arg) {
     }
 }
 
-/// The Z80's registers, each a field: dragged or typed, the register is set (Debug > Set
-/// register).
+/// The Z80's registers, editable (each change a `z80-set-register` command): the flags first,
+/// each a check box; then each pair beside its shadow (AF / AF'...), the index registers, SP and
+/// PC, I and R.
 pub fn registers(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
     use crate::z80::{HasValue, Reg16, Reg8};
     let cpu = mb.cpu();
-    let pairs = [
-        ("PC", cpu.reg16(Reg16::Pc).value()),
-        ("SP", cpu.reg16(Reg16::Sp).value()),
-        ("AF", cpu.reg16(Reg16::Af).value()),
-        ("BC", cpu.reg16(Reg16::Bc).value()),
-        ("DE", cpu.reg16(Reg16::De).value()),
-        ("HL", cpu.reg16(Reg16::Hl).value()),
-        ("IX", cpu.reg16(Reg16::Ix).value()),
-        ("IY", cpu.reg16(Reg16::Iy).value()),
-    ];
-    let shadows = [
-        ("AF'", cpu.reg16(Reg16::Af2).value()),
-        ("BC'", cpu.reg16(Reg16::Bc2).value()),
-        ("DE'", cpu.reg16(Reg16::De2).value()),
-        ("HL'", cpu.reg16(Reg16::Hl2).value()),
-    ];
+    // the flags, each a check box: F set again with that bit changed
+    let af = cpu.reg16(Reg16::Af).value();
+    let f = af as u8;
+    ui.horizontal(|ui| {
+        ui.strong("Flags");
+        for (bit, name) in ["S", "Z", "Y", "H", "X", "P/V", "N", "C"]
+            .iter()
+            .enumerate()
+        {
+            let mask = 0x80u8 >> bit;
+            let mut on = f & mask != 0;
+            if ui.checkbox(&mut on, *name).changed() {
+                let flags = if on { f | mask } else { f & !mask };
+                run(
+                    bus,
+                    "z80-set-register",
+                    Arg::Text(format!("AF={}", (af & 0xff00) | u16::from(flags))),
+                );
+            }
+        }
+    });
+    ui.add_space(4.0);
+    // a 16-bit register to edit: its name, its field, its value in decimal
+    let word = |ui: &mut egui::Ui, bus: &mut CommandBus, name: &str, value: u16| {
+        ui.monospace(name);
+        let mut edited = u32::from(value);
+        let response = ui.add(
+            egui::DragValue::new(&mut edited)
+                .range(0..=0xffff)
+                .hexadecimal(4, false, true)
+                .prefix("&")
+                .speed(1.0),
+        );
+        if response.changed() && edited != u32::from(value) {
+            run(
+                bus,
+                "z80-set-register",
+                Arg::Text(format!("{name}={edited}")),
+            );
+        }
+        ui.weak(format!("{value:5}"));
+    };
     egui::Grid::new("z80-registers")
         .spacing([10.0, 4.0])
         .show(ui, |ui| {
-            for (row, (name, value)) in pairs.iter().enumerate() {
-                ui.monospace(*name);
-                let mut edited = u32::from(*value);
-                let response = ui.add(
-                    egui::DragValue::new(&mut edited)
-                        .range(0..=0xffff)
-                        .hexadecimal(4, false, true)
-                        .prefix("&")
-                        .speed(1.0),
-                );
-                if response.changed() && edited != u32::from(*value) {
-                    run(
-                        bus,
-                        "z80-set-register",
-                        Arg::Text(format!("{name}={edited}")),
-                    );
-                }
-                ui.weak(format!("{value}"));
-                if let Some((shadow, value)) = shadows.get(row) {
-                    ui.monospace(*shadow);
-                    ui.monospace(format!("&{value:04X}"));
-                }
+            // each pair on the row of its shadow
+            for (name, reg, shadow, shadow_reg) in [
+                ("AF", Reg16::Af, "AF'", Reg16::Af2),
+                ("BC", Reg16::Bc, "BC'", Reg16::Bc2),
+                ("DE", Reg16::De, "DE'", Reg16::De2),
+                ("HL", Reg16::Hl, "HL'", Reg16::Hl2),
+            ] {
+                word(ui, bus, name, cpu.reg16(reg).value());
+                word(ui, bus, shadow, cpu.reg16(shadow_reg).value());
                 ui.end_row();
             }
+            word(ui, bus, "IX", cpu.reg16(Reg16::Ix).value());
+            word(ui, bus, "IY", cpu.reg16(Reg16::Iy).value());
+            ui.end_row();
+            word(ui, bus, "SP", cpu.reg16(Reg16::Sp).value());
+            word(ui, bus, "PC", cpu.reg16(Reg16::Pc).value());
+            ui.end_row();
             for (name, reg) in [("I", Reg8::I), ("R", Reg8::R)] {
                 let value = cpu.reg8(reg).value();
                 ui.monospace(name);
@@ -784,30 +1219,10 @@ pub fn registers(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
                         Arg::Text(format!("{name}={edited}")),
                     );
                 }
-                ui.end_row();
+                ui.weak(format!("{value:5}"));
             }
+            ui.end_row();
         });
-    // the flags, each a check box: F set again with that bit changed
-    let af = cpu.reg16(Reg16::Af).value();
-    let f = af as u8;
-    ui.horizontal(|ui| {
-        ui.label("F");
-        for (bit, name) in ["S", "Z", "Y", "H", "X", "P/V", "N", "C"]
-            .iter()
-            .enumerate()
-        {
-            let mask = 0x80u8 >> bit;
-            let mut on = f & mask != 0;
-            if ui.checkbox(&mut on, *name).changed() {
-                let flags = if on { f | mask } else { f & !mask };
-                run(
-                    bus,
-                    "z80-set-register",
-                    Arg::Text(format!("AF={}", (af & 0xff00) | u16::from(flags))),
-                );
-            }
-        }
-    });
 }
 
 /// `text` (cpclib-dap's: `CALL 0xbb5a`, `LD HL, (0xbe00)`) with the addresses it names written
@@ -974,6 +1389,28 @@ mod disassembly_test {
     use super::*;
 
     #[test]
+    fn a_track_is_named_by_its_sectors() {
+        use crate::disc_image::{Sector, Track};
+        let track = |ids: &[u8], n: u8| Track {
+            sectors: ids.iter().map(|&r| Sector::new(0, 0, r, n, 0xe5)).collect(),
+            track: 0,
+            head: 0,
+            gap3: 0x4e,
+            filler: 0xe5,
+        };
+        let data = track(&[0xc1, 0xc6, 0xc2, 0xc7, 0xc3, 0xc8, 0xc4, 0xc9, 0xc5], 2);
+        assert_eq!(format_name(&data), "Data");
+        assert_eq!(track_kind(Some(&data)).0, "9 x 512");
+        let packed = track(
+            &[0xc1, 0xc6, 0xc2, 0xc7, 0xc3, 0xc8, 0xc4, 0xc9, 0xc5, 0xca],
+            2,
+        );
+        assert_eq!(format_name(&packed), "10 sectors &C1-&CA");
+        assert_eq!(track_kind(Some(&packed)).0, "another layout");
+        assert_eq!(track_kind(None).0, "unformatted");
+    }
+
+    #[test]
     fn a_rom_is_named_from_its_header() {
         // a background ROM 1.2.3, its table at &C010, its first name "MYROM"
         let mut rom = vec![0u8; 0x40];
@@ -1070,18 +1507,19 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
                 deck.position_seconds(),
                 deck.tape().duration_seconds()
             ));
-            ui.separator();
+            super::widgets::rule(ui);
         }
         if let Some(recorder) = mb.tape_recorder() {
             led(ui, motor, RED);
             ui.label(format!("REC {:.1} s", recorder.seconds()));
-            ui.separator();
+            super::widgets::rule(ui);
         }
         // the machine
         let crtc = mb.crtc();
         let ram = mb.total_ram_kb();
-        let ga = match mb.ga().gate_array_type() {
-            crate::ga::GateArrayType::Ga40010 => "GA 40010",
+        let ga = match (mb.ga().plus(), mb.ga().gate_array_type()) {
+            (Some(_), _) => "ASIC",
+            (None, crate::ga::GateArrayType::Ga40010) => "GA 40010",
             _ => "GA 40007/8",
         };
         let mut machine = format!(
@@ -1145,7 +1583,7 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
         // on the right, from the right edge: the drives, then how it runs
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             drive_leds(ui, target);
-            ui.separator();
+            super::widgets::rule(ui);
             let paused = target
                 .debugger()
                 .map_or(settings.is_some_and(|s| s.paused), |d| d.paused());
@@ -1164,7 +1602,7 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
             };
             ui.label(state);
             if let Some(port) = target.debugger().and_then(|d| d.listening_port()) {
-                ui.separator();
+                super::widgets::rule(ui);
                 ui.label(format!("debug server :{port}"));
             }
         });

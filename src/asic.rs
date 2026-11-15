@@ -116,6 +116,42 @@ const RASTER_INTERRUPT_DELAY: u8 = 2;
 /// Microseconds a DMA LOAD lasts (Arnold V 2.6: "at least 8 cycles").
 const DMA_LOAD_US: u8 = 8;
 
+/// A DMA channel seen from outside (see [`Asic::dma_channels`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DmaState {
+    /// SAR: the next instruction's address.
+    pub address: u16,
+    /// PPR: a PAUSE tick is this + 1 HSYNCs.
+    pub prescaler: u8,
+    pub enabled: bool,
+    /// PAUSE ticks left.
+    pub pause: u16,
+    /// REPEAT's counter.
+    pub loop_count: u16,
+    /// The channel requests an interrupt.
+    pub interrupt: bool,
+}
+
+/// A hardware sprite seen from outside (see [`AsicVideo::sprite`]).
+#[derive(Debug, Clone, Copy)]
+pub struct SpriteState<'a> {
+    /// Its position, in the ASIC's coordinates (X 10 bits, Y 9 bits).
+    pub x: u16,
+    pub y: u16,
+    /// The magnification: 0 hides it, 1 / 2 / 3 make each pixel 1 / 2 / 4 wide or high.
+    pub zoom_x: u8,
+    pub zoom_y: u8,
+    /// Its 16 x 16 pens (0: transparent, n: sprite colour n, palette entry 16 + n).
+    pub pixels: &'a [u8; 256],
+}
+
+impl SpriteState<'_> {
+    /// Shown: neither magnification is 0.
+    pub fn shown(&self) -> bool {
+        self.zoom_x != 0 && self.zoom_y != 0
+    }
+}
+
 /// One sound "DMA" channel (Arnold V 2.6).
 #[derive(Debug, Clone, Copy, Default)]
 struct DmaChannel {
@@ -264,6 +300,31 @@ impl Asic {
     /// A DMA channel requests an interrupt.
     pub fn dma_interrupt(&self) -> bool {
         self.dma_interrupts != 0
+    }
+
+    /// PRI: the line of the programmable raster interrupt (0: none, the Gate Array's).
+    pub fn pri(&self) -> u8 {
+        self.pri
+    }
+
+    /// IVR: the interrupt vector's bits 7-3, bit 0 the DMA interrupts' automatic clear.
+    pub fn ivr(&self) -> u8 {
+        self.ivr
+    }
+
+    /// The DMA channels as they stand (the debugger's ASIC window).
+    pub fn dma_channels(&self) -> [DmaState; 3] {
+        std::array::from_fn(|n| {
+            let channel = &self.dma[n];
+            DmaState {
+                address: channel.address,
+                prescaler: channel.prescaler,
+                enabled: channel.enabled,
+                pause: channel.pause,
+                loop_count: channel.loop_count,
+                interrupt: self.dma_interrupts & (1 << n) != 0,
+            }
+        })
     }
 
     /// The Gate Array's interrupt request, sampled outside the acknowledge cycles (the Gate
@@ -525,8 +586,9 @@ impl Asic {
         // start on that line, or from the line start when the previous line's HSYNC runs over
         // into it (ACE-DL: R2=51 and a width of 14, the HSYNC ending on C0=0; RE-WIRED, Benediction
         // 2026, writes its split line for each line just after this interrupt and relies on it)
-        let matches =
-            hsync && self.pri != 0 && line_number(counters.vcc, counters.vlc) == u16::from(self.pri);
+        let matches = hsync
+            && self.pri != 0
+            && line_number(counters.vcc, counters.vlc) == u16::from(self.pri);
         if matches && !self.raster_match {
             self.raster_countdown = Some(RASTER_INTERRUPT_DELAY);
         }
@@ -767,6 +829,35 @@ impl AsicVideo {
 
     /// Palette entry `index` (0-15 pens, 16 border, 17-31 sprite colours 1-15) as levels for the
     /// monitor (0 to 100).
+    /// Hardware sprite `n` (0-15).
+    pub fn sprite(&self, n: usize) -> SpriteState<'_> {
+        let magnification = self.sprite_magnification[n & 15];
+        SpriteState {
+            x: self.sprite_x(n & 15),
+            y: self.sprite_y(n & 15),
+            zoom_x: magnification >> 2,
+            zoom_y: magnification & 3,
+            pixels: &self.sprite_data[n & 15],
+        }
+    }
+
+    /// RMR2: bits 4-3 where the lower ROM is (or the register page at &4000), bits 2-0 its
+    /// cartridge page.
+    pub fn rmr2(&self) -> u8 {
+        self.rmr2
+    }
+
+    /// SSCR: bit 7 the border extended over the first byte, bits 6-4 the vertical scroll (in
+    /// lines), bits 3-0 the horizontal one (in mode 2 pixels).
+    pub fn sscr(&self) -> u8 {
+        self.sscr
+    }
+
+    /// Palette entry `index` as its 12 bits (&GRB).
+    pub fn palette_entry(&self, index: usize) -> u16 {
+        self.palette[index & 31]
+    }
+
     pub fn rgb(&self, index: usize) -> crate::ga::RgbLevels {
         let entry = self.palette[index];
         let level = |nibble: u16| f32::from((nibble & 0x0f) as u8) * 100.0 / 15.0;

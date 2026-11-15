@@ -1,6 +1,7 @@
 //! The paging form of the Memory and Disassembly windows, after ACE's: follow the CPU's paging,
-//! or look through another (a RAM configuration and page, the lower ROM, an upper ROM); the map
-//! of the 4 blocks of 16K and the registers that page them.
+//! or look through another (a RAM configuration and page, the lower ROM, an upper ROM; on a CPC+
+//! the cartridge page of the lower ROM and where it is, the ASIC's register page); the map of the
+//! 4 blocks of 16K and the registers that page them.
 
 use crate::motherboard::Motherboard;
 
@@ -42,6 +43,11 @@ pub struct Paging {
     lower_rom: bool,
     upper_rom: bool,
     upper_number: u8,
+    /// A CPC+ (RMR2): the cartridge page of the lower ROM, the block it is in (0-2: &0000,
+    /// &4000, &8000), the ASIC's register page at &4000.
+    lower_page: u8,
+    lower_block: u8,
+    registers: bool,
 }
 
 impl Default for Paging {
@@ -54,6 +60,9 @@ impl Default for Paging {
             lower_rom: true,
             upper_rom: false,
             upper_number: 0,
+            lower_page: 0,
+            lower_block: 0,
+            registers: false,
         }
     }
 }
@@ -61,8 +70,14 @@ impl Default for Paging {
 /// Where a block of 16K reads from.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Source {
+    /// A CPC's lower ROM (the firmware).
     LowerRom,
+    /// A ROM of its own in an upper ROM slot.
     UpperRom(u8),
+    /// A page of a CPC+'s cartridge (the lower ROM, or an upper ROM number that selects it).
+    Cartridge(u8),
+    /// A CPC+'s ASIC registers (&4000-&7FFF, RMR2): RAM where no register answers.
+    Registers,
     Ram(u16),
 }
 
@@ -76,6 +91,15 @@ impl Paging {
         self.lower_rom = rmr & 4 == 0;
         self.upper_rom = rmr & 8 == 0;
         self.upper_number = mb.upper_rom_number();
+        if let Some(plus) = mb.ga().plus() {
+            let rmr2 = plus.rmr2();
+            self.lower_page = rmr2 & 7;
+            self.lower_block = match (rmr2 >> 3) & 3 {
+                3 => 0,
+                block => block,
+            };
+            self.registers = (rmr2 >> 3) & 3 == 3;
+        }
     }
 
     /// The physical 16K RAM bank of `bank` (0-7 in a configuration) in this page.
@@ -87,16 +111,39 @@ impl Paging {
     }
 
     fn source(&self, mb: &Motherboard, block: u16) -> Source {
+        let cartridge = mb.any_cartridge().is_some();
+        // an upper ROM number: a ROM of its own, or (a CPC+) the cartridge page it selects
+        let upper = |number: u8| match mb.cartridge_page_of_upper_rom(number) {
+            Some(page) => Source::Cartridge(page),
+            None => Source::UpperRom(number),
+        };
         if self.follow {
+            if block == 1 && mb.register_page_mapped() {
+                return Source::Registers;
+            }
+            let lower_page = mb.ga().plus().map_or(0, |plus| plus.rmr2() & 7);
             return match mb.physical_address(block * 0x4000) {
+                crate::memory::PhysicalAddress::LowerRom { .. } if cartridge => {
+                    Source::Cartridge(lower_page)
+                }
                 crate::memory::PhysicalAddress::LowerRom { .. } => Source::LowerRom,
-                crate::memory::PhysicalAddress::UpperRom { rom, .. } => Source::UpperRom(rom),
+                crate::memory::PhysicalAddress::UpperRom { rom, .. } => upper(rom),
                 crate::memory::PhysicalAddress::Ram { bank, .. } => Source::Ram(bank),
             };
         }
+        if cartridge && block == 1 && self.registers {
+            return Source::Registers;
+        }
+        let lower_block = if cartridge { self.lower_block } else { 0 };
         match block {
-            0 if self.lower_rom => Source::LowerRom,
-            3 if self.upper_rom => Source::UpperRom(self.upper_number),
+            _ if self.lower_rom && block == u16::from(lower_block) => {
+                if cartridge {
+                    Source::Cartridge(self.lower_page)
+                } else {
+                    Source::LowerRom
+                }
+            }
+            3 if self.upper_rom => upper(self.upper_number),
             _ => Source::Ram(
                 self.physical(CONFIGS[usize::from(self.ram_config)][usize::from(block)]),
             ),
@@ -145,7 +192,14 @@ impl Paging {
             return mb.read_byte(address);
         }
         let offset = address & 0x3fff;
+        let ram = |mb: &Motherboard| {
+            mb.read_bank_byte(self.write_bank(mb, address >> 14), offset)
+                .unwrap_or(0xff)
+        };
         match self.source(mb, address >> 14) {
+            Source::Cartridge(page) => mb.read_cartridge_byte(page, offset).unwrap_or(0xff),
+            // a register where one answers, the RAM elsewhere
+            Source::Registers => mb.read_register_page(address).unwrap_or_else(|| ram(mb)),
             Source::LowerRom => mb.read_lower_rom_byte(offset),
             // an empty slot reads as BASIC's (slot 0), as on the CPC
             Source::UpperRom(slot) => mb
@@ -171,7 +225,7 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
                     .on_hover_text("What the CPU reads: the ROMs where they are paged");
                 ui.selectable_value(&mut paging.writes, true, "Write")
                     .on_hover_text("What a write reaches: the RAM, under the ROMs too");
-                ui.separator();
+                super::widgets::rule(ui);
                 ui.checkbox(&mut paging.follow, "Follow the emulator's paging");
                 if ui
                     .button("Resynchronise")
@@ -212,12 +266,52 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
                             });
                         ui.end_row();
                         ui.label("Lower ROM");
-                        ui.checkbox(&mut paging.lower_rom, "in &0000-&3FFF");
+                        if mb.any_cartridge().is_some() {
+                            // a CPC+ (RMR2): a cartridge page, at &0000, &4000 or &8000
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut paging.lower_rom, "cartridge page");
+                                ui.add(egui::DragValue::new(&mut paging.lower_page).range(0..=7));
+                                egui::ComboBox::from_id_salt((id, "lower-block"))
+                                    .selected_text(format!("at &{:04X}", u16::from(paging.lower_block) * 0x4000))
+                                    .show_ui(ui, |ui| {
+                                        for block in 0..3u8 {
+                                            ui.selectable_value(
+                                                &mut paging.lower_block,
+                                                block,
+                                                format!("at &{:04X}", u16::from(block) * 0x4000),
+                                            );
+                                        }
+                                    });
+                            });
+                            ui.end_row();
+                            ui.label("ASIC");
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut paging.registers, "registers at &4000-&7FFF");
+                                let unlocked = mb.ga().plus().is_some_and(|plus| plus.unlocked);
+                                if unlocked {
+                                    ui.weak("(unlocked)");
+                                } else {
+                                    ui.weak("(locked)").on_hover_text(
+                                        "Locked, the CPU cannot change RMR2: the registers stay \
+                                         where the program left them (paged in before it \
+                                         locked again, they are still there). This window can \
+                                         show them either way.",
+                                    );
+                                }
+                            });
+                        } else {
+                            ui.checkbox(&mut paging.lower_rom, "in &0000-&3FFF");
+                        }
                         ui.end_row();
                         ui.label("Upper ROM");
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut paging.upper_rom, "in &C000-&FFFF, slot");
-                            ui.add(egui::DragValue::new(&mut paging.upper_number).range(0..=255));
+                            ui.add(egui::DragValue::new(&mut paging.upper_number).range(0..=255))
+                                .on_hover_text(if mb.any_cartridge().is_some() {
+                                    "128-159: the cartridge's pages 0-31; another number without a ROM of its own: BASIC (page 1)"
+                                } else {
+                                    "An empty slot reads as BASIC (slot 0)"
+                                });
                         });
                         ui.end_row();
                     });
@@ -229,15 +323,29 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
     });
 }
 
+/// A cartridge page by its number: `Cart 3`, and for the system cartridge what it holds
+/// (`Cart 1 BASIC`).
+pub fn cartridge_page_name(mb: &Motherboard, page: u8) -> String {
+    // the system cartridge: the firmware, BASIC, Burnin' Rubber's pages, AMSDOS
+    let system = mb.cartridge().is_none();
+    match (system, page) {
+        (true, 0) => "Cart 0 OS".to_owned(),
+        (true, 1) => "Cart 1 BASIC".to_owned(),
+        (true, 3) => "Cart 3 DOS".to_owned(),
+        _ => format!("Cart {page}"),
+    }
+}
+
 /// The map of a paging: what each 16K block reads (ROM red, RAM green) and, under a ROM, the RAM
 /// a write reaches; the RAM's value and the registers under it.
 pub fn map(ui: &mut egui::Ui, mb: &Motherboard, paging: &Paging) {
     const ROM: egui::Color32 = egui::Color32::from_rgb(200, 70, 50);
     const RAM: egui::Color32 = egui::Color32::from_rgb(60, 150, 70);
+    const REGISTERS: egui::Color32 = egui::Color32::from_rgb(130, 80, 190);
     // the map: what each block reads (ROM red, RAM green) and, when they differ, where
     // writes go (a second cell); a block that reads and writes the same RAM has one cell
     // as wide as both
-    const CELL: f32 = 72.0;
+    const CELL: f32 = 96.0;
     const GAP: f32 = 4.0;
     let cell = |ui: &mut egui::Ui, text: String, fill: egui::Color32, width: f32| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 18.0), egui::Sense::hover());
@@ -263,9 +371,12 @@ pub fn map(ui: &mut egui::Ui, mb: &Motherboard, paging: &Paging) {
             let source = paging.source(mb, block);
             match source {
                 Source::Ram(bank) => cell(ui, bank_name(bank), RAM, 2.0 * CELL + GAP),
+                // reads and writes the registers (the RAM where none answers)
+                Source::Registers => cell(ui, "ASIC regs".to_owned(), REGISTERS, 2.0 * CELL + GAP),
                 _ => {
                     let text = match source {
                         Source::UpperRom(slot) => format!("ROM {slot}"),
+                        Source::Cartridge(page) => cartridge_page_name(mb, page),
                         _ => "Firmware".to_owned(),
                     };
                     cell(ui, text, ROM, CELL);
@@ -449,6 +560,40 @@ mod test {
         assert_eq!(paging.read(&mb, 0), mb.read_lower_rom_byte(0));
         paging.writes = true;
         assert_eq!(paging.read(&mb, 0), 0x42);
+    }
+
+    #[test]
+    fn a_cpc_plus_pages_its_cartridge_and_registers() {
+        let mut mb = crate::motherboard::MotherboardBuilder::default()
+            .set_model(crate::motherboard::CpcModel::Cpc6128Plus)
+            .build();
+        // the lower ROM is the cartridge's page 0 after the reset
+        let follow = Paging::default();
+        assert_eq!(follow.source(&mb, 0), Source::Cartridge(0));
+        assert_eq!(
+            follow.read(&mb, 0x10),
+            mb.read_cartridge_byte(0, 0x10).unwrap()
+        );
+        // a paging of its own: page 1 (BASIC) at &0000, then the registers at &4000
+        let mut own = Paging {
+            follow: false,
+            lower_page: 1,
+            ..Paging::default()
+        };
+        assert_eq!(own.source(&mb, 0), Source::Cartridge(1));
+        assert_eq!(
+            own.read(&mb, 0x20),
+            mb.read_cartridge_byte(1, 0x20).unwrap()
+        );
+        own.registers = true;
+        assert_eq!(own.source(&mb, 1), Source::Registers);
+        // upper ROM 128+n: the cartridge's page n
+        own.upper_rom = true;
+        own.upper_number = 0x83;
+        assert_eq!(own.source(&mb, 3), Source::Cartridge(3));
+        mb.write_bank_byte(1, 0x123, 0x5a);
+        own.registers = false;
+        assert_eq!(own.read(&mb, 0x4123), 0x5a);
     }
 
     #[test]

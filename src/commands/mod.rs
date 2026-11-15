@@ -329,6 +329,10 @@ pub trait CommandTarget {
     fn csl_running(&self) -> bool {
         false
     }
+    /// What the CSL script playing, or the last one, played (Debug > View > CSL log).
+    fn csl_log(&self) -> Option<crate::csl_runner::CslLog> {
+        None
+    }
 
     /// Type `text` on the CPC's keyboard (Tools > Auto-type, CSL's `key_output`; `\(RET)`,
     /// `\(WAIT n)`... as CSL writes them), at the pace of the settings' typing delays. By default

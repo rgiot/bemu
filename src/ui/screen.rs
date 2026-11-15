@@ -18,6 +18,9 @@ pub struct ScreenState {
     linear: bool,
     /// The window's own inks for some pens (firmware numbers): never written to the CPC.
     overrides: [Option<u8>; 16],
+    /// Read through a paging of its own (the paging form), not the RAM the CRTC shows.
+    own_paging: bool,
+    paging: super::paging::Paging,
     texture: Option<egui::TextureHandle>,
 }
 
@@ -93,6 +96,15 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
             };
         }
     });
+    // the bytes: the main 64K, as the CRTC reads them, or through a paging of one's own (another
+    // bank, a ROM, a CPC+'s cartridge page)
+    ui.checkbox(&mut state.own_paging, "Read through a paging of its own")
+        .on_hover_text(
+            "Unchecked: the main 64K, what the CRTC shows whatever the CPU has paged in",
+        );
+    if state.own_paging {
+        super::paging::show(ui, "screen", mb, &mut state.paging);
+    }
     pens(ui, mb, state);
     let start = number(&state.address).unwrap_or(crtc_start);
     let width = number(&state.width)
@@ -106,19 +118,31 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
         .clamp(1, 64);
     let mode = state.mode.unwrap_or(ga_mode);
     let lines = rows * row_height;
-    // the RAM the CRTC reads: the base 64K, whatever the CPU has paged in
+    // the RAM the CRTC reads (the base 64K, whatever the CPU has paged in), or the window's paging
     let memory: Vec<u8> = (0..=0xffffu16)
         .map(|address| {
-            mb.read_bank_byte(address / 0x4000, address & 0x3fff)
-                .unwrap_or(0)
+            if state.own_paging {
+                state.paging.read(mb, address)
+            } else {
+                mb.read_bank_byte(address / 0x4000, address & 0x3fff)
+                    .unwrap_or(0)
+            }
         })
         .collect();
-    let pens: Vec<u8> = mb
-        .ga()
-        .palette()
-        .iter()
-        .map(|ink| ink.hardware_number() & 0x1f)
-        .collect();
+    // a CPC+: each pen a distinct ink, read back as the pen, then coloured by the ASIC's 12-bit
+    // palette (the 27 inks cannot say its 4096 colours)
+    let plus = mb.ga().plus();
+    let pens: Vec<u8> = match plus {
+        Some(_) => (0..17)
+            .map(|pen| cpclib::image::ga::Ink::INKS[pen].gate_array_value() & 0x1f)
+            .collect(),
+        None => mb
+            .ga()
+            .palette()
+            .iter()
+            .map(|ink| ink.hardware_number() & 0x1f)
+            .collect(),
+    };
     let palette =
         cpclib_dap::inspect::palette_from_raw_ga(&pens.try_into().expect("16 pens and the border"));
     let encoding = if state.linear {
@@ -134,11 +158,16 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
         &palette,
         &memory,
         usize::from(row_height),
-        &state
-            .overrides
-            .iter()
-            .map(|ink| ink.map(|n| cpclib::image::ga::Ink::INKS[usize::from(n)]))
-            .collect::<Vec<_>>(),
+        &if plus.is_some() {
+            // the overrides are coloured below, with the pens read back
+            Vec::new()
+        } else {
+            state
+                .overrides
+                .iter()
+                .map(|ink| ink.map(|n| cpclib::image::ga::Ink::INKS[usize::from(n)]))
+                .collect::<Vec<_>>()
+        },
         encoding,
     ) {
         Ok(matrix) => matrix,
@@ -147,7 +176,29 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
             return;
         }
     };
-    let picture = matrix.as_image();
+    let mut picture = matrix.as_image();
+    if let Some(video) = plus {
+        // the marker inks back to their pens, coloured as the ASIC (or the window) has them
+        let marker = |pen: usize| cpclib::image::ink::INKS_RGB_VALUES[pen].0;
+        let markers: Vec<[u8; 3]> = (0..17).map(marker).collect();
+        let colours: Vec<[u8; 3]> = (0..17)
+            .map(|pen| match state.overrides.get(pen).copied().flatten() {
+                Some(ink) => {
+                    let c = super::widgets::ink_color(ink);
+                    [c.r(), c.g(), c.b()]
+                }
+                None => {
+                    let c = super::chips::rgb_color(video.rgb(pen));
+                    [c.r(), c.g(), c.b()]
+                }
+            })
+            .collect();
+        for pixel in picture.pixels_mut() {
+            if let Some(pen) = markers.iter().position(|m| *m == pixel.0) {
+                pixel.0 = colours[pen];
+            }
+        }
+    }
     let (w, h) = (picture.width() as usize, picture.height() as usize);
     let image = egui::ColorImage::from_rgb([w, h], picture.as_raw());
     let texture = match &mut state.texture {
@@ -214,18 +265,42 @@ mod test {
 /// clicked (cpclib's VS Code screen view: to read a sprite in other colours). A click on a pen
 /// shows the 27 inks to pick from.
 fn pens(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
-    use super::widgets::{ink_picker, Picked};
+    use super::widgets::{colour_picker, ink_color, Picked};
     let palette = mb.ga().palette();
+    let plus = mb.ga().plus();
     ui.horizontal(|ui| {
         ui.label("Pens");
         for pen in 0..16 {
-            let ink = state.overrides[pen].unwrap_or_else(|| palette[pen].number());
-            let tooltip = match state.overrides[pen] {
-                Some(ink) => format!("pen {pen}: ink {ink} (the window's; a click: another)"),
-                None => format!("pen {pen}: ink {ink} (the Gate Array's; a click: another)"),
+            // the window's ink, else the machine's colour (a CPC+'s 12 bits)
+            let (colour, tooltip) = match (state.overrides[pen], plus) {
+                (Some(ink), _) => (
+                    ink_color(ink),
+                    format!("pen {pen}: ink {ink} (the window's; a click: another)"),
+                ),
+                (None, Some(video)) => (
+                    super::chips::rgb_color(video.rgb(pen)),
+                    format!(
+                        "pen {pen}: &{:03X} (the ASIC's; a click: an ink instead)",
+                        video.palette_entry(pen)
+                    ),
+                ),
+                (None, None) => (
+                    ink_color(palette[pen].number()),
+                    format!(
+                        "pen {pen}: ink {} (the Gate Array's; a click: another)",
+                        palette[pen].number()
+                    ),
+                ),
             };
             let id = egui::Id::new(("screen-pen", pen));
-            match ink_picker(ui, id, ink, state.overrides[pen].is_some(), true, &tooltip) {
+            match colour_picker(
+                ui,
+                id,
+                colour,
+                state.overrides[pen].is_some(),
+                true,
+                &tooltip,
+            ) {
                 Some(Picked::Ink(ink)) => state.overrides[pen] = Some(ink),
                 Some(Picked::Reset) => state.overrides[pen] = None,
                 None => {}
@@ -234,7 +309,11 @@ fn pens(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
         if ui
             .add_enabled(
                 state.overrides.iter().any(Option::is_some),
-                egui::Button::new("The Gate Array's"),
+                egui::Button::new(if plus.is_some() {
+                    "The ASIC's"
+                } else {
+                    "The Gate Array's"
+                }),
             )
             .clicked()
         {

@@ -67,6 +67,47 @@ pub struct Screenshot {
     pub at_us: u64,
 }
 
+/// One line of the CSL log: an instruction the script played (or an SSM code that took a
+/// picture), when, and the picture it took.
+#[derive(Debug, Clone)]
+pub struct CslLogEntry {
+    /// Emulated microseconds since the runner started.
+    pub at_us: u64,
+    pub text: String,
+    /// The screenshot it took (its file, a copy of at most [`LOG_PICTURE_WIDTH`] pixels wide).
+    pub picture: Option<(PathBuf, std::sync::Arc<image::RgbImage>)>,
+}
+
+/// The pictures of the log are kept this wide at most (hundreds of them in a Shaker run).
+pub const LOG_PICTURE_WIDTH: u32 = 400;
+
+/// The instructions a script played, in order: shared with the window that shows them, kept by
+/// the host once the runner is gone.
+#[derive(Debug, Clone, Default)]
+pub struct CslLog(std::sync::Arc<std::sync::Mutex<Vec<CslLogEntry>>>);
+
+impl CslLog {
+    /// The entries, locked while the guard lives.
+    pub fn entries(&self) -> std::sync::MutexGuard<'_, Vec<CslLogEntry>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Tells two logs apart (another script, another log).
+    pub fn id(&self) -> usize {
+        std::sync::Arc::as_ptr(&self.0) as usize
+    }
+
+    fn push(&self, at_us: u64, text: String) {
+        self.entries().push(CslLogEntry {
+            at_us,
+            text,
+            picture: None,
+        });
+    }
+}
+
 /// What happened during a script.
 #[derive(Debug, Clone, Default)]
 pub struct CslReport {
@@ -406,6 +447,8 @@ pub struct CslRunner {
     /// See [`Self::set_wait_timeout_us`].
     wait_timeout_us: u64,
     report: CslReport,
+    /// What the script played (see [`Self::log`]).
+    log: CslLog,
     /// The SSM codes raised while the last `key_output` was typed, for the `wait_ssm` after it.
     ssm_while_typing: Vec<u16>,
 }
@@ -468,6 +511,7 @@ impl CslRunner {
             module: None,
             manifest: None,
             wait_timeout_us: DEFAULT_WAIT_TIMEOUT_US,
+            log: CslLog::default(),
             report: CslReport::default(),
             ssm_while_typing: Vec::new(),
         }
@@ -675,12 +719,27 @@ impl CslRunner {
 
     /// Play the script for about `t_states` T-states of emulated time, stopping early when the
     /// monitor completes a frame or the script ends.
+    /// The instructions played so far, and their pictures: the host keeps it to show it.
+    pub fn log(&self) -> CslLog {
+        self.log.clone()
+    }
+
     pub fn advance(&mut self, t_states: usize) -> Result<Progress, String> {
         let mut spent = 0usize;
         loop {
             match &self.waiting {
                 None => match self.script.pop_front() {
-                    Some(instruction) => self.execute(&instruction)?,
+                    Some(instruction) => {
+                        if !matches!(
+                            instruction,
+                            CslInstruction::Comment(_)
+                                | CslInstruction::Empty
+                                | CslInstruction::CslVersion(_)
+                        ) {
+                            self.log.push(self.elapsed_us(), instruction.to_string());
+                        }
+                        self.execute(&instruction)?
+                    }
                     None => {
                         self.report.elapsed_us = self.elapsed_us();
                         return Ok(Progress::Done(std::mem::take(&mut self.report)));
@@ -1399,6 +1458,20 @@ impl CslRunner {
         if self.verbose {
             eprintln!("[{:>9} µs] {}", self.elapsed_us(), path.display());
         }
+        // in the log: on the instruction that asked for it, on a line of its own for an SSM code
+        let picture = if frame.width() > LOG_PICTURE_WIDTH {
+            let height = (frame.height() * LOG_PICTURE_WIDTH / frame.width()).max(1);
+            crate::display::resize::resize(&frame, LOG_PICTURE_WIDTH, height)
+        } else {
+            frame
+        };
+        if let Some(code) = ssm_code {
+            self.log
+                .push(self.elapsed_us(), format!("SSM &{code:04X}: screenshot"));
+        }
+        if let Some(entry) = self.log.entries().last_mut() {
+            entry.picture = Some((path.clone(), std::sync::Arc::new(picture)));
+        }
         self.report.screenshots.push(Screenshot {
             path,
             ssm_code,
@@ -1963,6 +2036,30 @@ mod test {
         assert_eq!(shots[2].0, "AMSRUST_0-200.png");
         assert_eq!(shots[3].0, "small.png");
         assert_eq!(shots[3].1.width(), w / 2);
+    }
+
+    /// The log lists the instructions played (not the comments), each screenshot on the
+    /// instruction that took it, in a small copy.
+    #[test]
+    fn the_log_lists_the_instructions_and_their_pictures() {
+        let script = "csl_version 1.0\n; a comment\nreset\nwait 1000000\nscreenshot\n";
+        let mut runner = CslRunner::with_io(
+            Box::new(MemFiles::default()),
+            Box::new(Collected::default()),
+            "out",
+        );
+        let log = runner.log();
+        runner.run_text(script, ".").unwrap();
+        let entries = log.entries();
+        let texts: Vec<&str> = entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts.len(), 3, "{texts:?}");
+        assert!(texts[0].starts_with("reset"), "{texts:?}");
+        assert!(texts[2].starts_with("screenshot"), "{texts:?}");
+        assert!(entries[0].picture.is_none());
+        let (path, picture) = entries[2].picture.as_ref().expect("its picture");
+        assert_eq!(path, &Path::new("out").join("AMSRUST_0.png"));
+        assert!(picture.width() <= LOG_PICTURE_WIDTH);
+        assert!(entries[1].at_us < entries[2].at_us);
     }
 
     /// Played a little at a time, a script does exactly what it does in one go: the same

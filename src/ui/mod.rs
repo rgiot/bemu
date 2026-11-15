@@ -12,6 +12,8 @@
 
 mod breakpoints;
 mod chips;
+mod code_views;
+mod csl_log;
 mod files;
 mod menu;
 mod paging;
@@ -64,6 +66,9 @@ pub struct Gui {
     toasts: VecDeque<Toast>,
     file_requests: Vec<FileRequest>,
     menu_height: f32,
+    /// The machine was paused at the last frame: a pause (the button, F8, a breakpoint) shows
+    /// the Z80 window.
+    was_paused: bool,
     /// When the pointer was last used (moved, clicked, scrolled): in fullscreen the bars hide
     /// [`BARS_HIDE_S`] after it.
     pointer_seen: f64,
@@ -81,7 +86,7 @@ pub struct Gui {
 /// A debugger's window of the system: its key, title and context (see [`Gui::native_views`]).
 pub struct NativeView {
     pub key: u8,
-    pub title: &'static str,
+    pub title: String,
     pub ctx: egui::Context,
 }
 
@@ -98,7 +103,7 @@ fn new_context() -> egui::Context {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ViewKey(u8);
 
-const ALL_VIEWS: [View; 23] = [
+const ALL_VIEWS: [View; 24] = [
     View::Z80,
     View::Stack,
     View::Crtc,
@@ -115,6 +120,7 @@ const ALL_VIEWS: [View; 23] = [
     View::Counters,
     View::Ppi,
     View::Tape,
+    View::CslLog,
     View::Asic,
     View::Screen,
     View::Preferences,
@@ -124,14 +130,32 @@ const ALL_VIEWS: [View; 23] = [
     View::Keyboard,
 ];
 
+/// A window's key: its view in the low 5 bits, which of its windows above (0: the first; a
+/// Memory or Disassembly window can be opened several times, [`COPIES`] at most).
 impl ViewKey {
     fn of(view: View) -> Self {
-        Self(ALL_VIEWS.iter().position(|v| *v == view).unwrap_or(0) as u8)
+        Self::copy(view, 0)
+    }
+    fn copy(view: View, copy: u8) -> Self {
+        Self(ALL_VIEWS.iter().position(|v| *v == view).unwrap_or(0) as u8 | (copy << 5))
     }
     fn view(self) -> View {
-        ALL_VIEWS[usize::from(self.0)]
+        ALL_VIEWS[usize::from(self.0 & 31)]
+    }
+    fn copy_number(self) -> u8 {
+        self.0 >> 5
+    }
+    /// Its title: the view's, numbered from the second ("Memory 2").
+    fn title(self) -> String {
+        match self.copy_number() {
+            0 => views::title(self.view()).to_owned(),
+            n => format!("{} {}", views::title(self.view()), n + 1),
+        }
     }
 }
+
+/// The windows of one view at most (the key's 3 high bits).
+const COPIES: u8 = 8;
 
 impl Default for Gui {
     fn default() -> Self {
@@ -153,6 +177,7 @@ impl Gui {
             file_requests: Vec::new(),
             menu_height: 0.0,
             pointer_seen: 0.0,
+            was_paused: false,
             status_height: 0.0,
             native_views: false,
             view_contexts: BTreeMap::new(),
@@ -181,7 +206,7 @@ impl Gui {
         open.into_iter()
             .map(|key| NativeView {
                 key: key.0,
-                title: views::title(key.view()),
+                title: key.title(),
                 ctx: self
                     .view_contexts
                     .entry(key)
@@ -189,6 +214,53 @@ impl Gui {
                     .clone(),
             })
             .collect()
+    }
+
+    /// What the windows asked of the others (`views::ViewState::links`): the Memory or
+    /// Disassembly window (the first, or a new one) at the address, open and in front.
+    fn follow_links(&mut self) {
+        for link in std::mem::take(&mut self.view_state.links) {
+            let copy = if link.new {
+                match self.free_copy(link.view) {
+                    Some(copy) => copy,
+                    None => continue,
+                }
+            } else {
+                0
+            };
+            let text = format!("&{:04X}", link.address);
+            match link.view {
+                View::Memory => {
+                    let window = self.view_state.memories.entry(copy).or_default();
+                    if link.new {
+                        *window = Default::default();
+                    }
+                    window.go_to(text);
+                }
+                View::Disassembly => {
+                    let window = self.view_state.disassemblies.entry(copy).or_default();
+                    if link.new {
+                        *window = Default::default();
+                    }
+                    window.go_to(text);
+                }
+                _ => {}
+            }
+            self.open_copy(link.view, copy);
+        }
+    }
+
+    /// The first window number of `view` not open (`None`: [`COPIES`] are).
+    fn free_copy(&self, view: View) -> Option<u8> {
+        (0..COPIES).find(|&copy| !self.views.contains(&ViewKey::copy(view, copy)))
+    }
+
+    /// Window `copy` of `view` open, and in front.
+    fn open_copy(&mut self, view: View, copy: u8) {
+        let key = ViewKey::copy(view, copy);
+        if !self.views.insert(key) {
+            self.focus.push(key);
+        }
     }
 
     /// The windows of the system to bring to the front (the Window menu, a view opened again).
@@ -236,7 +308,10 @@ impl Gui {
                 egui::ScrollArea::both()
                     .auto_shrink([true, true])
                     .show(ui, |ui| {
-                        views::contents(key.view(), ui, target, bus, state);
+                        // no text wraps to the window's width: the content's size is its own,
+                        // whatever the window's (the window is then sized to it)
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        views::contents(key.view(), key.copy_number(), ui, target, bus, state);
                     })
                     .content_size
             });
@@ -246,6 +321,7 @@ impl Gui {
                     .total_margin()
                     .sum();
         });
+        self.follow_links();
         Some((output, wanted))
     }
 
@@ -258,6 +334,15 @@ impl Gui {
         match request {
             HostRequest::Open(View::Palette) => {
                 self.palette = Some(palette::Palette::default());
+                true
+            }
+            // another Memory or Disassembly window, of its own
+            HostRequest::OpenAnother(view) => {
+                if let Some(copy) = self.free_copy(*view) {
+                    self.view_state.memories.remove(&copy);
+                    self.view_state.disassemblies.remove(&copy);
+                    self.open_copy(*view, copy);
+                }
                 true
             }
             HostRequest::Open(view) => {
@@ -392,11 +477,19 @@ impl Gui {
     ) -> egui::FullOutput {
         let ctx = self.ctx.clone();
         apply_zoom(&ctx, target);
-        ctx.run(raw, |ctx| self.ui(ctx, target, bus))
+        let output = ctx.run(raw, |ctx| self.ui(ctx, target, bus));
+        self.follow_links();
+        output
     }
 
     fn ui(&mut self, ctx: &egui::Context, target: &dyn CommandTarget, bus: &mut CommandBus) {
         self.shortcuts(ctx, target, bus);
+        // stopped (Pause, F8, a breakpoint, a step done): the registers are what one looks at
+        let paused = target.debugger().is_some_and(|d| d.paused());
+        if paused && !self.was_paused {
+            self.views.insert(ViewKey::of(View::Z80));
+        }
+        self.was_paused = paused;
         // a command run from the palette asks its argument there (a file: in the browser)
         if let Some(id) = self.palette.as_ref().and_then(palette::Palette::waiting) {
             match bus.prompt() {
@@ -440,11 +533,8 @@ impl Gui {
         let visible =
             target.settings().is_none_or(|s| s.menu_visible) && self.bars_shown(ctx, target);
         self.menu_height = if visible {
-            let windows: Vec<(u8, &'static str)> = self
-                .views
-                .iter()
-                .map(|key| (key.0, views::title(key.view())))
-                .collect();
+            let windows: Vec<(u8, String)> =
+                self.views.iter().map(|key| (key.0, key.title())).collect();
             let panel = egui::TopBottomPanel::top("menu")
                 .show(ctx, |ui| menu::bar(ui, target, bus, &windows));
             match panel.inner {
@@ -505,6 +595,8 @@ impl Gui {
             let mut open = true;
             views::show(
                 key.view(),
+                key.copy_number(),
+                &key.title(),
                 &mut open,
                 ctx,
                 target,
@@ -527,8 +619,7 @@ impl Gui {
             if native && views::is_debugger(key.view()) {
                 return true;
             }
-            let layer =
-                egui::LayerId::new(egui::Order::Middle, egui::Id::new(views::title(key.view())));
+            let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::new(key.title()));
             ctx.move_to_top(layer);
             false
         });
@@ -697,6 +788,52 @@ mod tests {
             assert_eq!(gui.views.len(), 1, "{view:?}");
             gui.views.clear();
         }
+    }
+
+    #[test]
+    fn memory_windows_open_several_each_its_own() {
+        use code_views::Link;
+        let target = Target(
+            Motherboard::default(),
+            DebugServer::offline(),
+            HostSettings::default(),
+        );
+        let mut bus = CommandBus::default();
+        let mut gui = Gui::new();
+        for address in [0x4000, 0xc000] {
+            gui.view_state.links.push(Link {
+                view: View::Memory,
+                address,
+                new: true,
+            });
+            gui.follow_links();
+        }
+        frame(&mut gui, &target, &mut bus, 0.0);
+        let keys: Vec<ViewKey> = gui.views.iter().copied().collect();
+        assert_eq!(
+            keys,
+            vec![
+                ViewKey::copy(View::Memory, 0),
+                ViewKey::copy(View::Memory, 1)
+            ]
+        );
+        assert_eq!(keys[1].title(), "Memory 2");
+        assert_eq!(gui.view_state.memories[&0].address, "&4000");
+        assert_eq!(gui.view_state.memories[&1].address, "&C000");
+        // the first window, not a new one
+        gui.view_state.links.push(Link {
+            view: View::Memory,
+            address: 0x1234,
+            new: false,
+        });
+        gui.follow_links();
+        assert_eq!(gui.views.len(), 2);
+        assert_eq!(gui.view_state.memories[&0].address, "&1234");
+        // 8 at most
+        for _ in 0..10 {
+            gui.handle(&HostRequest::OpenAnother(View::Memory));
+        }
+        assert_eq!(gui.views.len(), usize::from(COPIES));
     }
 
     #[test]
