@@ -15,6 +15,7 @@ pub mod crt;
 mod curved;
 #[cfg(feature = "crt-gpu")]
 mod gpu;
+pub mod resize;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use cpu::CpuCrt;

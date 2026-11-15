@@ -725,7 +725,9 @@ struct ResampleParams {
     src: [f32; 2],
     dst: [f32; 2],
     axis: f32,
-    pad: [f32; 3],
+    /// The blur before the Lanczos, in source texels ([`super::resize::blur_sigma`]).
+    sigma: f32,
+    pad: [f32; 2],
 }
 
 /// A picture resized by any factor without moiré (`resample.wgsl`: the Benediction website's
@@ -838,7 +840,11 @@ impl Resampler {
         dst: (u32, u32),
     ) {
         let middle_size = (dst.0.max(1), src.1.max(1));
-        if self.middle.as_ref().is_none_or(|(.., size)| *size != middle_size) {
+        if self
+            .middle
+            .as_ref()
+            .is_none_or(|(.., size)| *size != middle_size)
+        {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("resample along x"),
                 size: wgpu::Extent3d {
@@ -858,11 +864,19 @@ impl Resampler {
             self.y_bind_group = Some(self.bind_group(device, &view, &self.y_params));
             self.middle = Some((texture, view, middle_size));
         }
-        let params = |src: (u32, u32), dst: (u32, u32), axis: f32| ResampleParams {
-            src: [src.0 as f32, src.1 as f32],
-            dst: [dst.0 as f32, dst.1 as f32],
-            axis,
-            pad: [0.0; 3],
+        let params = |src: (u32, u32), dst: (u32, u32), axis: f32| {
+            let (n_src, n_dst) = if axis < 0.5 {
+                (src.0, dst.0)
+            } else {
+                (src.1, dst.1)
+            };
+            ResampleParams {
+                src: [src.0 as f32, src.1 as f32],
+                dst: [dst.0 as f32, dst.1 as f32],
+                axis,
+                sigma: super::resize::blur_sigma(n_src as f32 / n_dst.max(1) as f32),
+                pad: [0.0; 2],
+            }
         };
         queue.write_buffer(
             &self.x_params,

@@ -11,9 +11,10 @@ struct Params {
     dst: vec2<f32>,
     // 0: along x, 1: along y
     axis: f32,
+    // the blur before the Lanczos, in source texels (`display::resize::blur_sigma`)
+    sigma: f32,
     // to 32 bytes: WebGL wants uniforms of a multiple of 16
-    pad0: f32,
-    pad1: vec2<f32>,
+    pad: vec2<f32>,
 }
 
 @group(0) @binding(0) var source: texture_2d<f32>;
@@ -63,12 +64,7 @@ fn fs(v: Vertex) -> @location(0) vec4<f32> {
     let zoom = n_dst / n_src;
     // the Lanczos at the output's scale when reducing, the source's when enlarging
     let s = clamp(zoom, 0.25, 1.0);
-    // the website's blur, a source pixel's fraction per reduction factor: 0.37 there, for
-    // thumbnails 3 times smaller, where the mask is far below a pixel; 0.6 here, where a window
-    // shrinks the picture only a little: the mask then falls just above two pixels, at the edge
-    // of what the screen shows, and 0.37 leaves it beating against the pixels (measured: 25 grey
-    // levels of stripes at x0.71, 11 with 0.6, the text as sharp)
-    let sigma = select(0.0, 0.6 / zoom, zoom < 1.0);
+    let sigma = params.sigma;
     let lanczos_r = 3.0 / s;
     let gauss_r = i32(ceil(3.0 * sigma));
     let k0 = i32(floor(p - lanczos_r));
