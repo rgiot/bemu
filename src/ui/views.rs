@@ -476,7 +476,12 @@ pub fn contents(
             ui.collapsing("Raw (as /api/crtc)", |ui| json_grid(ui, "crtc", &crtc));
         }
         View::GateArray => {
-            super::chips::gate_array(ui, mb, bus);
+            // a CPC+ has the ASIC (a window left open across a change of model)
+            if mb.model().is_plus() {
+                super::chips::asic(ui, mb, bus);
+            } else {
+                super::chips::gate_array(ui, mb, bus);
+            }
             ui.collapsing("Raw (as /api/ga)", |ui| {
                 json_grid(ui, "ga", &inspect(target, "ga"))
             });
@@ -489,7 +494,7 @@ pub fn contents(
         }
         View::Ppi => super::chips::ppi(ui, mb),
         View::Tape => super::chips::tape(ui, mb, bus),
-        View::Asic => super::chips::asic(ui, mb),
+        View::Asic => super::chips::asic(ui, mb, bus),
         View::Screen => super::screen::show(ui, mb, &mut state.screen),
         View::Fdc => {
             super::chips::fdc(ui, mb);

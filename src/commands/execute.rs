@@ -2244,7 +2244,15 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
     let debugger = target.debugger();
     let paused = paused(target);
     if let Some((_, view)) = VIEWS.iter().find(|(name, _)| *name == id) {
-        return host_can(target, HostRequest::Open(*view));
+        // a CPC+ has the ASIC, a CPC the Gate Array
+        let plus = mb.model().is_plus();
+        let fits = match view {
+            View::GateArray => !plus,
+            View::Asic => plus,
+            _ => true,
+        };
+        let state = host_can(target, HostRequest::Open(*view));
+        return CommandState::enabled(state.enabled && fits);
     }
     if let Some(rest) = id.strip_prefix("machine-crtc-") {
         let n: u8 = rest.parse().unwrap_or(0);
