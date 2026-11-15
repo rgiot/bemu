@@ -19,6 +19,7 @@ use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::display::DisplayMode;
 use amsrust::frame::ScriptStep;
 use amsrust::input::{HostInput, HostKey, HostKeyboard, KeyboardMapping};
+#[cfg(feature = "gui")]
 use amsrust::joystick::JoystickSource;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
@@ -814,6 +815,7 @@ pub fn run_window(
             input = HostInput::default();
         }
         // the simulated joystick window drives the joysticks set to Simulated
+        #[cfg(feature = "gui")]
         if let Some(gui) = &window.gui {
             if gui.virtual_keyboard_ctrl_click() {
                 input
