@@ -4,31 +4,11 @@
 
 use serde_json::Value;
 
+use super::code_views::Link;
+use super::window::{Cx, ViewWindow, VirtualInput};
 use crate::commands::{self, Arg, Command, CommandBus, CommandTarget, View};
 use crate::joystick::{JoystickState, Joysticks};
 use crate::keyboard::CpcKey;
-
-/// What the windows remember between frames.
-#[derive(Default)]
-pub struct ViewState {
-    manager: super::breakpoints::Manager,
-    screen: super::screen::ScreenState,
-    /// The simulated joystick window's state (stick position + fire buttons).
-    pub simulated_joysticks: Joysticks,
-    /// CPC matrix keys held by the virtual keyboard.
-    pub virtual_keys_held: Vec<CpcKey>,
-    /// Shift stays held after Ctrl-clicking a virtual Shift key, until the next key is pressed.
-    virtual_shift_latched: bool,
-    /// Ctrl is a mouse modifier while Ctrl-clicking a virtual Shift key, not CPC input.
-    pub(super) virtual_keyboard_ctrl_click: bool,
-    /// Each Memory and Disassembly window's own settings, by its number.
-    pub(super) memories: std::collections::BTreeMap<u8, super::code_views::MemoryWindow>,
-    pub(super) disassemblies: std::collections::BTreeMap<u8, super::code_views::DisassemblyWindow>,
-    /// What the windows asked of the others this frame (the interface follows them).
-    pub(super) links: Vec<super::code_views::Link>,
-    symbol_filter: String,
-    counter_name: String,
-}
 
 pub(super) fn push(bus: &mut CommandBus, id: &str, arg: Option<Arg>) {
     let command = match arg {
@@ -121,81 +101,6 @@ pub(super) fn number(text: &str) -> Option<u16> {
         .and_then(|n| u16::try_from(n).ok())
 }
 
-/// Show the window of `view`.
-#[allow(clippy::too_many_arguments)]
-pub fn show(
-    view: View,
-    copy: u8,
-    title: &str,
-    open: &mut bool,
-    ctx: &egui::Context,
-    target: &dyn CommandTarget,
-    bus: &mut CommandBus,
-    state: &mut ViewState,
-) {
-    if title.is_empty() {
-        return;
-    }
-    // as large as its content, a long one scrolled
-    let window = egui::Window::new(title)
-        .open(open)
-        .resizable(view == View::Keyboard);
-    let window = if view == View::Keyboard {
-        window.default_size(egui::vec2(820.0, 320.0))
-    } else {
-        window
-    };
-    window.show(ctx, |ui| {
-        egui::ScrollArea::both()
-            .auto_shrink([true, true])
-            .max_height(560.0)
-            .max_width(760.0)
-            .show(ui, |ui| {
-                contents(view, copy, ui, target, bus, state);
-            });
-    });
-}
-
-/// The debugger's windows (the ones a desktop opens as windows of the system), not the
-/// preferences, the shortcuts or the about box.
-pub fn is_debugger(view: View) -> bool {
-    !matches!(
-        view,
-        View::Preferences | View::Shortcuts | View::About | View::Palette
-    )
-}
-
-/// The window's title ("" for the palette, which is no window).
-pub fn title(view: View) -> &'static str {
-    match view {
-        View::Z80 => "Z80",
-        View::Stack => "Stack",
-        View::Crtc => "CRTC",
-        View::GateArray => "Gate Array",
-        View::Psg => "PSG",
-        View::Fdc => "FDC",
-        View::MemoryMap => "Memory map",
-        View::Memory => "Memory",
-        View::Disassembly => "Disassembly",
-        View::History => "Instruction history",
-        View::Symbols => "Symbols",
-        View::Beam => "Beam",
-        View::Breakpoints => "Breakpoints",
-        View::Counters => "Counters",
-        View::Ppi => "PPI",
-        View::Tape => "Tape",
-        View::CslLog => "CSL log",
-        View::Asic => "ASIC (CPC+)",
-        View::Screen => "Screen memory",
-        View::Preferences => "Preferences",
-        View::Shortcuts => "Keyboard shortcuts",
-        View::About => "About bemu",
-        View::Palette => "",
-        View::Joystick => "Joystick",
-        View::Keyboard => "Keyboard",
-    }
-}
-
 /// The breakpoint column of the disassembly: a red dot, or a ring to click (drawn: the fonts
 /// have no such glyphs).
 pub(super) fn breakpoint_dot(ui: &mut egui::Ui, marked: bool) -> egui::Response {
@@ -221,10 +126,10 @@ fn address_link(
     ui: &mut egui::Ui,
     text: String,
     address: u16,
-    state: &mut ViewState,
+    links: &mut Vec<Link>,
     bus: &mut CommandBus,
 ) {
-    address_link_to(ui, text, address, state, bus, false);
+    address_link_to(ui, text, address, links, bus, false);
 }
 
 /// [`address_link`], its click disassembling in a new window (`new`) or the first one.
@@ -232,11 +137,10 @@ fn address_link_to(
     ui: &mut egui::Ui,
     text: String,
     address: u16,
-    state: &mut ViewState,
+    links: &mut Vec<Link>,
     bus: &mut CommandBus,
     new: bool,
 ) {
-    use super::code_views::Link;
     let response = ui
         .add(egui::Link::new(egui::RichText::new(text).monospace()))
         .on_hover_text(if new {
@@ -245,7 +149,7 @@ fn address_link_to(
             format!("&{address:04X}: disassemble (right click: more)")
         });
     if response.clicked() {
-        state.links.push(Link {
+        links.push(Link {
             view: View::Disassembly,
             address,
             new,
@@ -253,7 +157,7 @@ fn address_link_to(
     }
     response.context_menu(|ui| {
         if ui.button("Disassemble from here").clicked() {
-            state.links.push(Link {
+            links.push(Link {
                 view: View::Disassembly,
                 address,
                 new: false,
@@ -264,7 +168,7 @@ fn address_link_to(
             .button("Disassemble from here, in another window")
             .clicked()
         {
-            state.links.push(Link {
+            links.push(Link {
                 view: View::Disassembly,
                 address,
                 new: true,
@@ -272,7 +176,7 @@ fn address_link_to(
             ui.close();
         }
         if ui.button("Show in the memory window").clicked() {
-            state.links.push(Link {
+            links.push(Link {
                 view: View::Memory,
                 address,
                 new: false,
@@ -305,8 +209,7 @@ fn crtc_status(
     ui: &mut egui::Ui,
     mb: &crate::motherboard::Motherboard,
     beam: &Value,
-    state: &mut ViewState,
-    bus: &mut CommandBus,
+    links: &mut Vec<Link>,
 ) {
     let crtc = mb.crtc();
     let r = crtc.registers();
@@ -356,7 +259,7 @@ fn crtc_status(
                     .on_hover_text("Show it in the memory window")
                     .clicked()
                 {
-                    state.links.push(super::code_views::Link {
+                    links.push(Link {
                         view: View::Memory,
                         address,
                         new: false,
@@ -406,382 +309,407 @@ pub(super) fn controls(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut 
     super::widgets::rule(ui);
 }
 
-pub fn contents(
-    view: View,
-    copy: u8,
-    ui: &mut egui::Ui,
-    target: &dyn CommandTarget,
-    bus: &mut CommandBus,
-    state: &mut ViewState,
-) {
+/// The Z80's registers, those changed lately lit.
+#[derive(Default)]
+pub(super) struct Z80 {
+    heat: super::chips::RegisterHeat,
+}
+
+impl ViewWindow for Z80 {
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx) {
+        let (target, bus, _) = cx.parts();
+        let mb = target.motherboard();
+        controls(ui, target, bus);
+        let z80 = inspect(target, "z80");
+        let flags = z80["F"].as_u64().unwrap_or(0) as u8;
+        super::chips::registers(ui, mb, bus, &mut self.heat);
+        ui.weak(format!(
+            "{}: IM {}, IFF1 {}, IFF2 {}",
+            cpclib_dap::inspect::describe_flags(flags),
+            z80["IM"],
+            z80["IFF1"],
+            z80["IFF2"]
+        ));
+        super::widgets::rule(ui);
+        super::chips::z80(ui, mb);
+        ui.collapsing("Raw (as /api/z80)", |ui| json_grid(ui, "z80", &z80));
+    }
+}
+
+pub(super) fn stack(ui: &mut egui::Ui, cx: &mut Cx) {
+    let (target, bus, links) = cx.parts();
     let mb = target.motherboard();
-    match view {
-        View::Z80 => {
-            controls(ui, target, bus);
-            let z80 = inspect(target, "z80");
-            let flags = z80["F"].as_u64().unwrap_or(0) as u8;
-            super::chips::registers(ui, mb, bus);
-            ui.weak(format!(
-                "{}: IM {}, IFF1 {}, IFF2 {}",
-                cpclib_dap::inspect::describe_flags(flags),
-                z80["IM"],
-                z80["IFF1"],
-                z80["IFF2"]
-            ));
-            super::widgets::rule(ui);
-            super::chips::z80(ui, mb);
-            ui.collapsing("Raw (as /api/z80)", |ui| json_grid(ui, "z80", &z80));
-        }
-        View::Stack => {
-            let sp = mb.sp();
-            let symbols = target.debugger().map(|d| d.symbols());
-            let name = |address: u16| {
-                symbols
-                    .and_then(|s| s.describe(address))
-                    .unwrap_or_else(|| format!("&{address:04X}"))
-            };
-            // the calls the stack holds (cpclib-dap's walk: the return addresses after a CALL)
-            let stack: Vec<u8> = (0..256u16)
-                .map(|i| mb.read_byte(sp.wrapping_add(i)))
-                .collect();
-            let frames = cpclib_dap::callstack::walk(&stack, |address| Some(mb.read_byte(address)));
-            ui.strong(format!("Calls (SP = &{sp:04X})"));
-            if frames.is_empty() {
-                ui.weak("no CALL found on the stack");
-            }
-            egui::Grid::new("calls").striped(true).show(ui, |ui| {
-                for frame in &frames {
-                    address_link(ui, name(frame.called), frame.called, state, bus);
-                    ui.horizontal(|ui| {
-                        ui.weak("called at");
-                        address_link(
-                            ui,
-                            format!("&{:04X}", frame.call_site),
-                            frame.call_site,
-                            state,
-                            bus,
-                        );
-                        ui.weak("returns to");
-                        address_link(
-                            ui,
-                            format!("&{:04X}", frame.return_address),
-                            frame.return_address,
-                            state,
-                            bus,
-                        );
-                    });
-                    ui.end_row();
-                }
-            });
-            super::widgets::rule(ui);
-            ui.strong("Words");
-            egui::Grid::new("stack").striped(true).show(ui, |ui| {
-                for i in 0..16u16 {
-                    let at = sp.wrapping_add(i * 2);
-                    let word = mb.read_word(at);
-                    ui.monospace(format!("&{at:04X}"));
-                    address_link(ui, format!("&{word:04X}"), word, state, bus);
-                    ui.weak(symbols.and_then(|s| s.describe(word)).unwrap_or_default());
-                    ui.end_row();
-                }
-            });
-        }
-        View::Crtc => {
-            let crtc = inspect(target, "crtc");
-            ui.label(format!(
-                "{} ({})",
-                mb.crtc().chip_name(),
-                mb.crtc().crtc_type() as u8
-            ));
-            ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    ui.strong("Registers");
-                    super::chips::crtc_registers(ui, mb);
-                });
-                ui.add_space(16.0);
-                ui.vertical(|ui| {
-                    ui.strong("Status");
-                    crtc_status(ui, mb, &inspect(target, "beam"), state, bus);
-                });
-            });
-            super::widgets::rule(ui);
-            super::chips::crtc(ui, mb);
-            ui.collapsing("Raw (as /api/crtc)", |ui| json_grid(ui, "crtc", &crtc));
-        }
-        View::GateArray => {
-            // a CPC+ has the ASIC (a window left open across a change of model)
-            if mb.model().is_plus() {
-                super::chips::asic(ui, mb, bus);
-            } else {
-                super::chips::gate_array(ui, mb, bus);
-            }
-            ui.collapsing("Raw (as /api/ga)", |ui| {
-                json_grid(ui, "ga", &inspect(target, "ga"))
-            });
-        }
-        View::Psg => {
-            super::psg::show(ui, mb);
-            ui.collapsing("Raw (as /api/psg)", |ui| {
-                json_grid(ui, "psg", &inspect(target, "psg"))
-            });
-        }
-        View::Ppi => super::chips::ppi(ui, mb),
-        View::Tape => super::chips::tape(ui, mb, bus),
-        View::CslLog => super::csl_log::csl_log(ui, target, bus),
-        View::Asic => super::chips::asic(ui, mb, bus),
-        View::Screen => super::screen::show(ui, mb, &mut state.screen),
-        View::Fdc => {
-            super::chips::fdc(ui, mb);
-            ui.collapsing("Raw (as /api/fdc)", |ui| {
-                json_grid(ui, "fdc", &inspect(target, "fdc"))
-            });
-        }
-        View::MemoryMap => {
-            super::chips::memory_map(ui, mb);
-            ui.collapsing("Raw (as /api/memmap)", |ui| {
-                json_grid(ui, "memmap", &inspect(target, "memmap"))
-            });
-        }
-        View::Beam => {
-            super::chips::beam_map(ui, mb);
-            ui.collapsing("Raw (as /api/beam and /api/state)", |ui| {
-                json_grid(ui, "beam", &inspect(target, "beam"));
-                super::widgets::rule(ui);
-                json_grid(ui, "state", &inspect(target, "state"));
-            });
-        }
-        View::Memory => {
-            let mut window = state.memories.remove(&copy).unwrap_or_default();
-            let id = format!("memory-{copy}");
-            super::code_views::memory(ui, target, bus, &mut window, &mut state.links, &id);
-            state.memories.insert(copy, window);
-        }
-        View::Disassembly => {
-            let mut window = state.disassemblies.remove(&copy).unwrap_or_default();
-            let id = format!("disassembly-{copy}");
-            super::code_views::disassembly(ui, target, bus, &mut window, &mut state.links, &id);
-            state.disassemblies.insert(copy, window);
-        }
-        View::History => {
-            let Some(debugger) = target.debugger() else {
-                ui.label("No debugger");
-                return;
-            };
-            let history: Vec<_> = debugger.history().cloned().collect();
-            let symbols = debugger.symbols();
-            let name_at = |address: u16| symbols.name_at(address).map(str::to_owned);
-            let total: usize = history
-                .iter()
-                .filter_map(|(pc, bytes)| {
-                    cpclib_dap::disassemble::decode(*pc, bytes, 1)
-                        .first()
-                        .and_then(|i| i.cost)
-                })
-                .sum();
-            let mut recording = debugger.records_history();
-            if ui
-                .checkbox(&mut recording, "Record")
-                .on_hover_text(
-                    "Keep the instructions run even with no breakpoint (Debug > Record the history)",
-                )
-                .changed()
-            {
-                push(bus, "history-record-toggle", None);
-            }
-            ui.label(format!(
-                "The last {} instructions, the newest at the bottom: {total} NOPs (Debug > Set history size)",
-                history.len()
-            ));
-            // at least 20 rows tall when there are more: the window sizes to it
-            egui::ScrollArea::vertical()
-                .max_height(480.0)
-                .min_scrolled_height(400.0)
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    egui::Grid::new("history").striped(true).show(ui, |ui| {
-                        for (pc, bytes) in &history {
-                            if let Some(label) = name_at(*pc) {
-                                ui.label(
-                                    egui::RichText::new(format!("{label}:"))
-                                        .monospace()
-                                        .color(ui.visuals().warn_fg_color),
-                                );
-                                ui.end_row();
-                            }
-                            let decoded = cpclib_dap::disassemble::decode(*pc, bytes, 1);
-                            let (code, cost) = decoded.first().map_or_else(
-                                || (String::from("?"), String::new()),
-                                |i| {
-                                    (
-                                        super::chips::with_labels(&i.text, *pc, bytes, name_at),
-                                        i.cost.map_or(String::new(), |n| format!("{n}")),
-                                    )
-                                },
-                            );
-                            // each address in a disassembly window of its own
-                            address_link_to(ui, format!("{pc:04X}"), *pc, state, bus, true);
-                            ui.monospace(code);
-                            ui.weak(egui::RichText::new(cost).monospace())
-                                .on_hover_text("NOPs");
-                            ui.end_row();
-                        }
-                    });
-                });
-        }
-        View::Symbols => {
-            let Some(debugger) = target.debugger() else {
-                ui.label("No debugger");
-                return;
-            };
+    let sp = mb.sp();
+    let symbols = target.debugger().map(|d| d.symbols());
+    let name = |address: u16| {
+        symbols
+            .and_then(|s| s.describe(address))
+            .unwrap_or_else(|| format!("&{address:04X}"))
+    };
+    // the calls the stack holds (cpclib-dap's walk: the return addresses after a CALL)
+    let stack: Vec<u8> = (0..256u16)
+        .map(|i| mb.read_byte(sp.wrapping_add(i)))
+        .collect();
+    let frames = cpclib_dap::callstack::walk(&stack, |address| Some(mb.read_byte(address)));
+    ui.strong(format!("Calls (SP = &{sp:04X})"));
+    if frames.is_empty() {
+        ui.weak("no CALL found on the stack");
+    }
+    egui::Grid::new("calls").striped(true).show(ui, |ui| {
+        for frame in &frames {
+            address_link(ui, name(frame.called), frame.called, links, bus);
             ui.horizontal(|ui| {
-                ui.label("Filter");
-                ui.text_edit_singleline(&mut state.symbol_filter);
-                if ui.button("Load…").clicked() {
-                    push(bus, "symbols-load", None);
-                }
+                ui.weak("called at");
+                address_link(
+                    ui,
+                    format!("&{:04X}", frame.call_site),
+                    frame.call_site,
+                    links,
+                    bus,
+                );
+                ui.weak("returns to");
+                address_link(
+                    ui,
+                    format!("&{:04X}", frame.return_address),
+                    frame.return_address,
+                    links,
+                    bus,
+                );
             });
-            let filter = state.symbol_filter.to_lowercase();
-            egui::Grid::new("symbols").striped(true).show(ui, |ui| {
-                for (name, address) in debugger
-                    .symbols()
-                    .iter()
-                    .filter(|(name, _)| name.to_lowercase().contains(&filter))
-                    .take(500)
-                {
-                    address_link(ui, format!("&{address:04X}"), address, state, bus);
-                    ui.label(name);
+            ui.end_row();
+        }
+    });
+    super::widgets::rule(ui);
+    ui.strong("Words");
+    egui::Grid::new("stack").striped(true).show(ui, |ui| {
+        for i in 0..16u16 {
+            let at = sp.wrapping_add(i * 2);
+            let word = mb.read_word(at);
+            ui.monospace(format!("&{at:04X}"));
+            address_link(ui, format!("&{word:04X}"), word, links, bus);
+            ui.weak(symbols.and_then(|s| s.describe(word)).unwrap_or_default());
+            ui.end_row();
+        }
+    });
+}
+
+pub(super) fn crtc(ui: &mut egui::Ui, cx: &mut Cx) {
+    let (target, _, links) = cx.parts();
+    let mb = target.motherboard();
+    let crtc = inspect(target, "crtc");
+    ui.label(format!(
+        "{} ({})",
+        mb.crtc().chip_name(),
+        mb.crtc().crtc_type() as u8
+    ));
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.strong("Registers");
+            super::chips::crtc_registers(ui, mb);
+        });
+        ui.add_space(16.0);
+        ui.vertical(|ui| {
+            ui.strong("Status");
+            crtc_status(ui, mb, &inspect(target, "beam"), links);
+        });
+    });
+    super::widgets::rule(ui);
+    super::chips::crtc(ui, mb);
+    ui.collapsing("Raw (as /api/crtc)", |ui| json_grid(ui, "crtc", &crtc));
+}
+
+pub(super) fn gate_array(ui: &mut egui::Ui, cx: &mut Cx) {
+    let (target, bus, _) = cx.parts();
+    let mb = target.motherboard();
+    // a CPC+ has the ASIC (a window left open across a change of model)
+    if mb.model().is_plus() {
+        super::chips::asic(ui, mb, bus);
+    } else {
+        super::chips::gate_array(ui, mb, bus);
+    }
+    ui.collapsing("Raw (as /api/ga)", |ui| {
+        json_grid(ui, "ga", &inspect(target, "ga"))
+    });
+}
+
+pub(super) fn psg(ui: &mut egui::Ui, cx: &mut Cx) {
+    let target = cx.target;
+    let mb = target.motherboard();
+    super::psg::show(ui, mb);
+    ui.collapsing("Raw (as /api/psg)", |ui| {
+        json_grid(ui, "psg", &inspect(target, "psg"))
+    });
+}
+
+pub(super) fn fdc(ui: &mut egui::Ui, cx: &mut Cx) {
+    let target = cx.target;
+    let mb = target.motherboard();
+    super::chips::fdc(ui, mb);
+    ui.collapsing("Raw (as /api/fdc)", |ui| {
+        json_grid(ui, "fdc", &inspect(target, "fdc"))
+    });
+}
+
+pub(super) fn memory_map(ui: &mut egui::Ui, cx: &mut Cx) {
+    let target = cx.target;
+    let mb = target.motherboard();
+    super::chips::memory_map(ui, mb);
+    ui.collapsing("Raw (as /api/memmap)", |ui| {
+        json_grid(ui, "memmap", &inspect(target, "memmap"))
+    });
+}
+
+pub(super) fn beam(ui: &mut egui::Ui, cx: &mut Cx) {
+    let target = cx.target;
+    let mb = target.motherboard();
+    super::chips::beam_map(ui, mb);
+    ui.collapsing("Raw (as /api/beam and /api/state)", |ui| {
+        json_grid(ui, "beam", &inspect(target, "beam"));
+        super::widgets::rule(ui);
+        json_grid(ui, "state", &inspect(target, "state"));
+    });
+}
+
+pub(super) fn history(ui: &mut egui::Ui, cx: &mut Cx) {
+    let (target, bus, links) = cx.parts();
+    let Some(debugger) = target.debugger() else {
+        ui.label("No debugger");
+        return;
+    };
+    let history: Vec<_> = debugger.history().cloned().collect();
+    let symbols = debugger.symbols();
+    let name_at = |address: u16| symbols.name_at(address).map(str::to_owned);
+    let total: usize = history
+        .iter()
+        .filter_map(|(pc, bytes)| {
+            cpclib_dap::disassemble::decode(*pc, bytes, 1)
+                .first()
+                .and_then(|i| i.cost)
+        })
+        .sum();
+    let mut recording = debugger.records_history();
+    if ui
+        .checkbox(&mut recording, "Record")
+        .on_hover_text(
+            "Keep the instructions run even with no breakpoint (Debug > Record the history)",
+        )
+        .changed()
+    {
+        push(bus, "history-record-toggle", None);
+    }
+    ui.label(format!(
+        "The last {} instructions, the newest at the bottom: {total} NOPs (Debug > Set history size)",
+        history.len()
+    ));
+    // at least 20 rows tall when there are more: the window sizes to it
+    egui::ScrollArea::vertical()
+        .max_height(480.0)
+        .min_scrolled_height(400.0)
+        .stick_to_bottom(true)
+        .show(ui, |ui| {
+            egui::Grid::new("history").striped(true).show(ui, |ui| {
+                for (pc, bytes) in &history {
+                    if let Some(label) = name_at(*pc) {
+                        ui.label(
+                            egui::RichText::new(format!("{label}:"))
+                                .monospace()
+                                .color(ui.visuals().warn_fg_color),
+                        );
+                        ui.end_row();
+                    }
+                    let decoded = cpclib_dap::disassemble::decode(*pc, bytes, 1);
+                    let (code, cost) = decoded.first().map_or_else(
+                        || (String::from("?"), String::new()),
+                        |i| {
+                            (
+                                super::chips::with_labels(&i.text, *pc, bytes, name_at),
+                                i.cost.map_or(String::new(), |n| format!("{n}")),
+                            )
+                        },
+                    );
+                    // each address in a disassembly window of its own
+                    address_link_to(ui, format!("{pc:04X}"), *pc, links, bus, true);
+                    ui.monospace(code);
+                    ui.weak(egui::RichText::new(cost).monospace())
+                        .on_hover_text("NOPs");
                     ui.end_row();
                 }
             });
+        });
+}
+
+pub(super) fn shortcuts(ui: &mut egui::Ui, _: &mut Cx) {
+    egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
+        for spec in commands::all().iter().filter(|s| s.shortcut.is_some()) {
+            ui.monospace(spec.shortcut.unwrap_or_default());
+            ui.label(format!("{} ({})", spec.label(), spec.menus().join(" › ")));
+            ui.end_row();
         }
-        View::Breakpoints => {
-            controls(ui, target, bus);
-            // the manager (cpclib's VS Code one): its tabs, presets and form
-            let symbols = target.debugger().map(|d| d.symbols());
-            let resolve = |name: &str| symbols.and_then(|s| s.resolve(name));
-            super::breakpoints::show(ui, &mut state.manager, bus, &resolve);
-            super::widgets::rule(ui);
-            if let Some(debugger) = target.debugger() {
-                let symbols = debugger.symbols();
-                ui.strong("Execution");
-                let mapped = debugger.exec_breakpoints_mapped(mb);
-                egui::Grid::new("exec-bp").striped(true).show(ui, |ui| {
-                    for address in &mapped {
-                        ui.monospace(format!("&{address:04X}"));
-                        ui.weak(symbols.describe(*address).unwrap_or_default());
+        ui.monospace("F1-F3");
+        ui.label("Keypad 1-3, for the hosts without a keypad");
+        ui.end_row();
+    });
+}
+
+pub(super) fn about(ui: &mut egui::Ui, _: &mut Cx) {
+    ui.heading(format!("bemu {}", env!("CARGO_PKG_VERSION")));
+    ui.label("An Amstrad CPC, CPC+ and GX4000 emulator.");
+    ui.label(env!("CARGO_PKG_AUTHORS"));
+    ui.label("Licence: MIT or Apache-2.0");
+}
+
+/// The symbols, filtered by name.
+#[derive(Default)]
+pub(super) struct Symbols {
+    filter: String,
+}
+
+impl ViewWindow for Symbols {
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx) {
+        let (target, bus, links) = cx.parts();
+        let Some(debugger) = target.debugger() else {
+            ui.label("No debugger");
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.label("Filter");
+            ui.text_edit_singleline(&mut self.filter);
+            if ui.button("Load…").clicked() {
+                push(bus, "symbols-load", None);
+            }
+        });
+        let filter = self.filter.to_lowercase();
+        egui::Grid::new("symbols").striped(true).show(ui, |ui| {
+            for (name, address) in debugger
+                .symbols()
+                .iter()
+                .filter(|(name, _)| name.to_lowercase().contains(&filter))
+                .take(500)
+            {
+                address_link(ui, format!("&{address:04X}"), address, links, bus);
+                ui.label(name);
+                ui.end_row();
+            }
+        });
+    }
+}
+
+/// The NOP counters, and a name for a new one.
+#[derive(Default)]
+pub(super) struct Counters {
+    name: String,
+}
+
+impl ViewWindow for Counters {
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx) {
+        let (target, bus, _) = cx.parts();
+        let Some(debugger) = target.debugger() else {
+            ui.label("No debugger");
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut self.name);
+            if ui.button("New").clicked() && !self.name.is_empty() {
+                push(bus, "counter-new", Some(Arg::Text(self.name.clone())));
+            }
+        });
+        egui::Grid::new("counters").striped(true).show(ui, |ui| {
+            for (name, nops, running) in debugger.counters() {
+                ui.label(&name);
+                ui.monospace(format!("{nops} NOPs"));
+                if ui.button(if running { "Stop" } else { "Start" }).clicked() {
+                    push(bus, "counter-toggle", Some(Arg::Text(name.clone())));
+                }
+                if ui.button("Reset").clicked() {
+                    push(bus, "counter-reset", Some(Arg::Text(name.clone())));
+                }
+                if ui.button("Delete").clicked() {
+                    push(bus, "counter-delete", Some(Arg::Text(name)));
+                }
+                ui.end_row();
+            }
+        });
+    }
+}
+
+/// The breakpoints: cpclib's manager, then the list.
+#[derive(Default)]
+pub(super) struct Breakpoints {
+    manager: super::breakpoints::Manager,
+}
+
+impl ViewWindow for Breakpoints {
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx) {
+        let (target, bus, _) = cx.parts();
+        let mb = target.motherboard();
+        controls(ui, target, bus);
+        // the manager (cpclib's VS Code one): its tabs, presets and form
+        let symbols = target.debugger().map(|d| d.symbols());
+        let resolve = |name: &str| symbols.and_then(|s| s.resolve(name));
+        super::breakpoints::show(ui, &mut self.manager, bus, &resolve);
+        super::widgets::rule(ui);
+        if let Some(debugger) = target.debugger() {
+            let symbols = debugger.symbols();
+            ui.strong("Execution");
+            let mapped = debugger.exec_breakpoints_mapped(mb);
+            egui::Grid::new("exec-bp").striped(true).show(ui, |ui| {
+                for address in &mapped {
+                    ui.monospace(format!("&{address:04X}"));
+                    ui.weak(symbols.describe(*address).unwrap_or_default());
+                    if ui.small_button("Remove").clicked() {
+                        push(
+                            bus,
+                            "breakpoint-remove",
+                            Some(Arg::Number(i64::from(*address))),
+                        );
+                    }
+                    ui.end_row();
+                }
+            });
+            let hidden = debugger.exec_breakpoint_count() - mapped.len();
+            if hidden > 0 {
+                ui.weak(format!("{hidden} more in banks or ROMs not paged in now"));
+            }
+            if debugger.exec_breakpoint_count() == 0 {
+                ui.weak("none: click the disassembly's dot column, or Add above");
+            }
+            let advanced = inspect(target, "breakpoints");
+            if let Some(list) = advanced["advanced"].as_array().filter(|l| !l.is_empty()) {
+                ui.strong("Memory / I/O");
+                egui::Grid::new("advanced-bp").striped(true).show(ui, |ui| {
+                    for (index, breakpoint) in list.iter().enumerate() {
+                        ui.monospace(format!("#{index}"));
+                        ui.monospace(super::breakpoints::summary(breakpoint))
+                            .on_hover_text(breakpoint.to_string());
                         if ui.small_button("Remove").clicked() {
                             push(
                                 bus,
                                 "breakpoint-remove",
-                                Some(Arg::Number(i64::from(*address))),
+                                Some(Arg::Text(format!("#{index}"))),
                             );
                         }
                         ui.end_row();
                     }
                 });
-                let hidden = debugger.exec_breakpoint_count() - mapped.len();
-                if hidden > 0 {
-                    ui.weak(format!("{hidden} more in banks or ROMs not paged in now"));
-                }
-                if debugger.exec_breakpoint_count() == 0 {
-                    ui.weak("none: click the disassembly's dot column, or Add above");
-                }
-                let advanced = inspect(target, "breakpoints");
-                if let Some(list) = advanced["advanced"].as_array().filter(|l| !l.is_empty()) {
-                    ui.strong("Memory / I/O");
-                    egui::Grid::new("advanced-bp").striped(true).show(ui, |ui| {
-                        for (index, breakpoint) in list.iter().enumerate() {
-                            ui.monospace(format!("#{index}"));
-                            ui.monospace(super::breakpoints::summary(breakpoint))
-                                .on_hover_text(breakpoint.to_string());
-                            if ui.small_button("Remove").clicked() {
-                                push(
-                                    bus,
-                                    "breakpoint-remove",
-                                    Some(Arg::Text(format!("#{index}"))),
-                                );
-                            }
-                            ui.end_row();
-                        }
-                    });
-                }
-            }
-            ui.collapsing("Raw (as /api/breakpoints, /api/raster_bp)", |ui| {
-                json_grid(ui, "breakpoints", &inspect(target, "breakpoints"));
-                json_grid(ui, "raster", &inspect(target, "raster_bp"));
-            });
-            if ui
-                .add_enabled(
-                    commands::state("breakpoints-clear", target).enabled,
-                    egui::Button::new("Remove all"),
-                )
-                .clicked()
-            {
-                push(bus, "breakpoints-clear", None);
             }
         }
-        View::Counters => {
-            let Some(debugger) = target.debugger() else {
-                ui.label("No debugger");
-                return;
-            };
-            ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut state.counter_name);
-                if ui.button("New").clicked() && !state.counter_name.is_empty() {
-                    push(
-                        bus,
-                        "counter-new",
-                        Some(Arg::Text(state.counter_name.clone())),
-                    );
-                }
-            });
-            egui::Grid::new("counters").striped(true).show(ui, |ui| {
-                for (name, nops, running) in debugger.counters() {
-                    ui.label(&name);
-                    ui.monospace(format!("{nops} NOPs"));
-                    if ui.button(if running { "Stop" } else { "Start" }).clicked() {
-                        push(bus, "counter-toggle", Some(Arg::Text(name.clone())));
-                    }
-                    if ui.button("Reset").clicked() {
-                        push(bus, "counter-reset", Some(Arg::Text(name.clone())));
-                    }
-                    if ui.button("Delete").clicked() {
-                        push(bus, "counter-delete", Some(Arg::Text(name)));
-                    }
-                    ui.end_row();
-                }
-            });
+        ui.collapsing("Raw (as /api/breakpoints, /api/raster_bp)", |ui| {
+            json_grid(ui, "breakpoints", &inspect(target, "breakpoints"));
+            json_grid(ui, "raster", &inspect(target, "raster_bp"));
+        });
+        if ui
+            .add_enabled(
+                commands::state("breakpoints-clear", target).enabled,
+                egui::Button::new("Remove all"),
+            )
+            .clicked()
+        {
+            push(bus, "breakpoints-clear", None);
         }
-        View::Preferences => preferences(ui, target, bus),
-        View::Shortcuts => {
-            egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
-                for spec in commands::all().iter().filter(|s| s.shortcut.is_some()) {
-                    ui.monospace(spec.shortcut.unwrap_or_default());
-                    ui.label(format!("{} ({})", spec.label(), spec.menus().join(" › ")));
-                    ui.end_row();
-                }
-                ui.monospace("F1-F3");
-                ui.label("Keypad 1-3, for the hosts without a keypad");
-                ui.end_row();
-            });
-        }
-        View::About => {
-            ui.heading(format!("bemu {}", env!("CARGO_PKG_VERSION")));
-            ui.label("An Amstrad CPC, CPC+ and GX4000 emulator.");
-            ui.label(env!("CARGO_PKG_AUTHORS"));
-            ui.label("Licence: MIT or Apache-2.0");
-        }
-        View::Joystick => {
-            simulated_joystick(ui, target, bus, state);
-        }
-        View::Keyboard => {
-            keyboard_view(ui, target, bus, state);
-        }
-        View::Palette => {}
     }
 }
 
-fn preferences(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut CommandBus) {
+pub(super) fn preferences(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut CommandBus) {
     let Some(settings) = target.settings() else {
         ui.label("No preferences here");
         return;
@@ -1047,17 +975,12 @@ fn simulated_joystick_controls(ui: &mut egui::Ui, enabled: [bool; 2]) -> Joystic
 }
 
 /// The simulated joystick window: mouse-controlled stick and three fire buttons.
-fn simulated_joystick(
-    ui: &mut egui::Ui,
-    target: &dyn CommandTarget,
-    _bus: &mut CommandBus,
-    state: &mut ViewState,
-) {
+fn simulated_joystick(ui: &mut egui::Ui, target: &dyn CommandTarget, input: &mut VirtualInput) {
     use crate::joystick::JoystickSource;
     let settings = match target.settings() {
         Some(s) => s,
         None => {
-            state.simulated_joysticks = simulated_joystick_controls(ui, [false, false]);
+            input.joysticks = simulated_joystick_controls(ui, [false, false]);
             ui.label("No settings");
             return;
         }
@@ -1066,7 +989,7 @@ fn simulated_joystick(
     let joy1_sim = settings.joystick_2 == JoystickSource::Simulated;
 
     if !joy0_sim && !joy1_sim {
-        state.simulated_joysticks = simulated_joystick_controls(ui, [false, false]);
+        input.joysticks = simulated_joystick_controls(ui, [false, false]);
         ui.label("No joystick is set to Simulated.");
         ui.label("Open Machine > Joystick and set Joystick 1 or 2 to Simulated.");
         return;
@@ -1076,19 +999,19 @@ fn simulated_joystick(
     ui.label("Click or drag the stick. Right-click while holding it for Fire 1.");
     super::widgets::rule(ui);
 
-    state.simulated_joysticks = simulated_joystick_controls(ui, [joy0_sim, joy1_sim]);
+    input.joysticks = simulated_joystick_controls(ui, [joy0_sim, joy1_sim]);
 }
 
 /// The virtual keyboard, scaled to the window while retaining the website keyboard's proportions.
 fn keyboard_view(
     ui: &mut egui::Ui,
     target: &dyn CommandTarget,
-    _bus: &mut CommandBus,
-    state: &mut ViewState,
+    input: &mut VirtualInput,
+    shift_latched: &mut bool,
 ) {
     // Reset the virtual keys held this frame; rebuilt below from mouse-over + button down.
-    state.virtual_keys_held.clear();
-    state.virtual_keyboard_ctrl_click = false;
+    input.keys_held.clear();
+    input.ctrl_click = false;
 
     let mb = target.motherboard();
     let matrix = mb.keyboard();
@@ -1228,8 +1151,8 @@ fn keyboard_view(
     let key_hover = egui::Color32::from_rgb(224, 222, 216);
     painter.rect_filled(rect, egui::CornerRadius::same(8), case);
 
-    if state.virtual_shift_latched {
-        state.virtual_keys_held.push(CpcKey::Shift);
+    if *shift_latched {
+        input.keys_held.push(CpcKey::Shift);
     }
     let mut paint_key =
         |key_rect: egui::Rect, key: CpcKey, key_id: u32, label: &str, tall: bool| {
@@ -1238,7 +1161,7 @@ fn keyboard_view(
                 egui::Id::new(("virtual-key", key_id)),
                 egui::Sense::click_and_drag(),
             );
-            let lit = matrix.is_pressed(key) || state.virtual_keys_held.contains(&key);
+            let lit = matrix.is_pressed(key) || input.keys_held.contains(&key);
             let hovered = response.hovered();
             let fill = if lit {
                 key_lit
@@ -1312,23 +1235,21 @@ fn keyboard_view(
             }
 
             if primary_pressed && hovered && key == CpcKey::Shift && control_down {
-                state.virtual_shift_latched = !state.virtual_shift_latched;
-                if !state.virtual_shift_latched {
-                    state
-                        .virtual_keys_held
-                        .retain(|held| *held != CpcKey::Shift);
+                *shift_latched = !*shift_latched;
+                if !*shift_latched {
+                    input.keys_held.retain(|held| *held != CpcKey::Shift);
                 }
-            } else if primary_pressed && hovered && !control_down && state.virtual_shift_latched {
-                state.virtual_shift_latched = false;
+            } else if primary_pressed && hovered && !control_down && *shift_latched {
+                *shift_latched = false;
             }
 
             if response.is_pointer_button_down_on() && key == CpcKey::Shift && control_down {
-                state.virtual_keyboard_ctrl_click = true;
+                input.ctrl_click = true;
             }
 
             if response.is_pointer_button_down_on() && !(key == CpcKey::Shift && control_down) {
-                if !state.virtual_keys_held.contains(&key) {
-                    state.virtual_keys_held.push(key);
+                if !input.keys_held.contains(&key) {
+                    input.keys_held.push(key);
                 }
             }
         };
@@ -1401,8 +1322,34 @@ fn keyboard_view(
             key_id += 1;
         }
     }
-    if state.virtual_shift_latched && !state.virtual_keys_held.contains(&CpcKey::Shift) {
-        state.virtual_keys_held.push(CpcKey::Shift);
+    if *shift_latched && !input.keys_held.contains(&CpcKey::Shift) {
+        input.keys_held.push(CpcKey::Shift);
+    }
+}
+
+/// The simulated joysticks: what the window's sticks say goes to the machine (see
+/// [`VirtualInput::joysticks`]), released when it closes.
+#[derive(Default)]
+pub(super) struct Joystick;
+
+impl ViewWindow for Joystick {
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx) {
+        simulated_joystick(ui, cx.target, cx.input);
+    }
+    fn closed(&mut self, input: &mut VirtualInput) {
+        input.joysticks = Joysticks::default();
+    }
+}
+
+/// The virtual keyboard, and its Shift latched by a Ctrl-click.
+#[derive(Default)]
+pub(super) struct Keyboard {
+    shift_latched: bool,
+}
+
+impl ViewWindow for Keyboard {
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx) {
+        keyboard_view(ui, cx.target, cx.input, &mut self.shift_latched);
     }
 }
 

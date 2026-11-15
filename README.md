@@ -98,6 +98,13 @@ palette: type a few letters of a command (`crtc 1`, `flip b`, `snapshot`), Enter
 command that needs something asks it (an address, a value, a file in a small file browser).
 `--no-menu` hides the menu bar (Tools > Show menu bar, or the palette, shows it again).
 
+Each row of `doc/menu-ui.csv` is a menu item: its menu path, its id (`area-verb`, the name the
+palette, CSL, the configurations and the web API use), its type (`act`, `tog`, `rad`, `inp`,
+`ss` start/stop, `sub`, or `sep` for a line in the menu), its aim and note (the tooltips: the note
+also says why an item is greyed) and its shortcut, one command a key (F8 pauses or resumes, F10
+switches between the maximum speed and real time). Where each command came from (the options
+and API routes it replaced, the emulators that have it) is kept in `doc/menu-ui-origins.csv`.
+
 The machine changes while it runs: another CRTC takes over the registers and counters of the
 previous one, more or less RAM keeps what is in the RAM left, cards are plugged and unplugged
 with the power on, a CPC+ gives back its CRTC when it becomes a CPC again.

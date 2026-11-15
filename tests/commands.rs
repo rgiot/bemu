@@ -144,18 +144,28 @@ fn a_cpc_plus_keeps_the_ram_and_gives_back_its_crtc() {
 }
 
 #[test]
-fn shortcuts_pick_the_command_of_the_moment() {
+fn shortcuts_toggle_what_they_name() {
     let mut host = Host::new();
     let f10 = commands::Chord::parse("F10").unwrap();
-    assert_eq!(commands::shortcut_command(f10, &host), Some("speed-max"));
-    host.run("speed-max").unwrap();
+    assert_eq!(
+        commands::shortcut_command(f10, &host),
+        Some("speed-max-toggle")
+    );
+    host.run("speed-max-toggle").unwrap();
     assert_eq!(host.settings.speed, Speed::Max);
-    assert_eq!(commands::shortcut_command(f10, &host), Some("speed-normal"));
+    assert!(state("speed-max-toggle", &host).checked);
+    host.run("speed-max-toggle").unwrap();
+    assert_eq!(host.settings.speed, Speed::Factor(1.0));
     let f8 = commands::Chord::parse("F8").unwrap();
-    assert_eq!(commands::shortcut_command(f8, &host), Some("debug-pause"));
-    host.run("debug-pause").unwrap();
+    assert_eq!(
+        commands::shortcut_command(f8, &host),
+        Some("debug-pause-toggle")
+    );
+    host.run("debug-pause-toggle").unwrap();
     assert!(host.debugger.paused());
-    assert_eq!(commands::shortcut_command(f8, &host), Some("debug-run"));
+    assert!(state("debug-pause-toggle", &host).checked);
+    host.run("debug-pause-toggle").unwrap();
+    assert!(!host.debugger.paused());
 }
 
 #[test]
