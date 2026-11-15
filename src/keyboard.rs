@@ -390,7 +390,7 @@ mod test {
     fn keyclash_requires_three_keys() {
         // Only two keys sharing a bit: no third key to complete the path, no phantom.
         let mut matrix = KeyboardMatrix::default();
-        matrix.set_pressed(CpcKey::A, true);        // line 8, bit 5
+        matrix.set_pressed(CpcKey::A, true); // line 8, bit 5
         matrix.set_pressed(CpcKey::Joy1Fire1, true); // line 6, bit 5 (shared bit)
         assert_eq!(matrix.line(8), !(1 << 5));
         assert!(!matrix.is_pressed(CpcKey::Digit2));
@@ -419,7 +419,7 @@ mod test {
         let mut matrix = KeyboardMatrix::default();
         matrix.set_pressed(CpcKey::Joy1Up, true);
         matrix.set_pressed(CpcKey::Digit5, true); // line 6, bit 1
-        // Same line: both combine directly, no cross-line keyclash needed.
+                                                  // Same line: both combine directly, no cross-line keyclash needed.
         assert!(matrix.is_pressed(CpcKey::Joy1Up));
         assert!(matrix.is_pressed(CpcKey::Digit5));
         assert_eq!(matrix.line(6), !((1 << 0) | (1 << 1)));

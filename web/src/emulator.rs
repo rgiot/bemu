@@ -567,6 +567,7 @@ impl Emulator {
         let shown_frame = paused.as_ref().or(self.frame.as_ref());
         let result = match (shown_frame, ui) {
             (Some(frame), Some((mut ui, output))) => {
+                self.gfx.set_free_zoom(ui.settings.free_zoom);
                 let shown = self.gfx.show_with_ui(frame, self.display, self.curvature, Some((&ui.gui, output)));
                 let shown = shown.map(|undrawn| {
                     if let Some(output) = undrawn {

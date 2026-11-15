@@ -117,6 +117,11 @@ pub trait Frontend {
         let _ = curvature;
     }
 
+    /// Let the picture fill the window at any zoom (`on`), or zoom it by a whole factor only.
+    fn set_free_zoom(&mut self, on: bool) {
+        let _ = on;
+    }
+
     /// Go fullscreen, or back to the window.
     fn set_fullscreen(&mut self, on: bool) {
         let _ = on;

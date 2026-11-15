@@ -128,6 +128,9 @@ pub struct HostSettings {
     pub black_level: u8,
     /// The CRT drawn by the GPU.
     pub crt_gpu: bool,
+    /// The picture fills the window at any zoom (Video > Fill the window): by default it is
+    /// zoomed by a whole factor, every CPC pixel the same size.
+    pub free_zoom: bool,
     pub fullscreen: bool,
     /// The CRTC / Gate Array writes drawn on the picture.
     pub overlay: bool,
@@ -144,6 +147,8 @@ pub struct HostSettings {
     pub volume: u8,
     /// The menu bar shown.
     pub menu_visible: bool,
+    /// The interface's zoom (menus, windows), 0.5-3: the emulator's picture keeps its size.
+    pub ui_zoom: f32,
     /// The modified discs written back to their files.
     pub save_discs: bool,
     /// The files reloaded when they change.
@@ -224,7 +229,9 @@ impl Default for HostSettings {
             display: DisplayMode::default(),
             curvature: 1.0,
             black_level: 8,
+            ui_zoom: 1.0,
             crt_gpu: false,
+            free_zoom: false,
             fullscreen: false,
             overlay: false,
             keyboard: KeyboardMapping::default(),
