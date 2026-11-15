@@ -63,67 +63,11 @@ fn encode_with(frames: &[RgbImage], frame_ms: u32, lossy: Option<f32>) -> Result
     Ok(data.to_vec())
 }
 
-/// The frames of a WebP file (one for a still).
-pub fn decode(data: &[u8]) -> Result<Vec<RgbImage>, String> {
-    let decoder = webp_animation::Decoder::new(data).map_err(|e| e.to_string())?;
-    decoder
-        .into_iter()
-        .map(|frame| {
-            let (width, height) = frame.dimensions();
-            let rgb: Vec<u8> = frame
-                .data()
-                .chunks_exact(4)
-                .flat_map(|p| [p[0], p[1], p[2]])
-                .collect();
-            RgbImage::from_raw(width, height, rgb).ok_or_else(|| "a frame of the wrong size".into())
-        })
-        .collect()
-}
-
-/// The thumbnails of a screenshot (a PNG, or a WebP still or animation): one `<name>-<width>.webp`
-/// per width in `out_dir`, resized without moiré ([`crate::display::resize`]), lossy (quality 92
-/// for a still, 82 for the frames of an animation, each shown `frame_ms`), as the Benediction
-/// website shows them. The files written.
-pub fn thumbnails(
-    source: &Path,
-    out_dir: &Path,
-    widths: &[u32],
-    frame_ms: u32,
-) -> Result<Vec<PathBuf>, String> {
-    use crate::display::resize::{height_at, resize};
-    let bytes = std::fs::read(source).map_err(|e| format!("{}: {e}", source.display()))?;
-    let frames = if bytes.get(8..12) == Some(b"WEBP".as_slice()) {
-        decode(&bytes)?
-    } else {
-        vec![image::load_from_memory(&bytes)
-            .map_err(|e| format!("{}: {e}", source.display()))?
-            .to_rgb8()]
-    };
-    let stem = source
-        .file_stem()
-        .ok_or_else(|| format!("{}: no file name", source.display()))?
-        .to_string_lossy();
-    std::fs::create_dir_all(out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
-    let quality = if frames.len() == 1 { 92.0 } else { 82.0 };
-    let mut written = Vec::new();
-    for &width in widths {
-        let small: Vec<RgbImage> = frames
-            .iter()
-            .map(|frame| resize(frame, width, height_at(frame, width)))
-            .collect();
-        let target = out_dir.join(format!("{stem}-{width}.webp"));
-        let data = encode_with(&small, frame_ms, Some(quality))?;
-        std::fs::write(&target, data).map_err(|e| format!("{}: {e}", target.display()))?;
-        written.push(target);
-    }
-    Ok(written)
-}
-
 /// What the CSL runner's screenshots become.
 pub enum Pictures {
     /// One PNG file each.
     Png,
-    /// The frames of one lossless WebP file, kept here for [`Animation::write`].
+    /// The frames of the WebP files, kept here for [`Animation::write`].
     Webp(Animation),
 }
 
@@ -140,10 +84,43 @@ impl Animation {
         self.len() == 0
     }
 
-    /// The animation, each frame shown `frame_ms`, in `path`.
-    pub fn write(&self, path: &Path, frame_ms: u32) -> Result<(), String> {
-        let bytes = encode(&self.0.borrow(), frame_ms)?;
-        std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
+    /// The animations, each frame shown `frame_ms`: the frames of the picture's own size in
+    /// `path` (lossless), those a `screenshot` zoomed down (`screenshot 440px`: thumbnails) in
+    /// `<stem>-<width>.webp` beside it, a file per width, lossy (quality 92 for a still, 82 for
+    /// the frames of an animation, as the Benediction website shows them). The files written,
+    /// with their frame counts.
+    pub fn write(&self, path: &Path, frame_ms: u32) -> Result<Vec<(PathBuf, usize)>, String> {
+        let frames = self.0.borrow();
+        let full = frames.iter().map(RgbImage::width).max().unwrap_or(0);
+        // the widths, in the order they came
+        let mut widths: Vec<u32> = Vec::new();
+        for frame in frames.iter() {
+            if !widths.contains(&frame.width()) {
+                widths.push(frame.width());
+            }
+        }
+        let mut written = Vec::new();
+        for width in widths {
+            let group: Vec<RgbImage> = frames
+                .iter()
+                .filter(|frame| frame.width() == width)
+                .cloned()
+                .collect();
+            let (target, lossy) = if width == full {
+                (path.to_path_buf(), None)
+            } else {
+                let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+                let quality = if group.len() == 1 { 92.0 } else { 82.0 };
+                (
+                    path.with_file_name(format!("{stem}-{width}.webp")),
+                    Some(quality),
+                )
+            };
+            let bytes = encode_with(&group, frame_ms, lossy)?;
+            std::fs::write(&target, bytes).map_err(|e| format!("{}: {e}", target.display()))?;
+            written.push((target, group.len()));
+        }
+        Ok(written)
     }
 }
 
@@ -178,19 +155,28 @@ mod tests {
     }
 
     #[test]
-    fn thumbnails_are_made_of_each_frame() {
-        let dir = std::env::temp_dir().join(format!("bemu-thumbs-{}", std::process::id()));
+    fn zoomed_screenshots_make_animations_of_their_own() {
+        let dir = std::env::temp_dir().join(format!("bemu-anim-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let full = dir.join("shot.webp");
-        let frame =
-            |n: u8| RgbImage::from_fn(880, 544, |x, _| image::Rgb([n, (x % 3) as u8 * 100, 0]));
-        std::fs::write(&full, encode(&[frame(10), frame(200)], 500).unwrap()).unwrap();
-        let written = thumbnails(&full, &dir.join("thumbs"), &[440, 220], 500).unwrap();
+        let animation = Animation::default();
+        let mut sink = PictureFiles(Pictures::Webp(animation.clone()));
+        let sized =
+            |w: u32, seed: u8| RgbImage::from_fn(w, w / 2, |x, _| image::Rgb([seed, x as u8, 0]));
+        // two moments, each the full picture and its thumbnail
+        for seed in [10, 200] {
+            sink.save(&dir, "a.png", &sized(64, seed)).unwrap();
+            sink.save(&dir, "a-16.png", &sized(16, seed)).unwrap();
+        }
+        let written = animation.write(&dir.join("shot.webp"), 500).unwrap();
         assert_eq!(written.len(), 2);
-        let small = decode(&std::fs::read(&written[0]).unwrap()).unwrap();
-        assert_eq!(small.len(), 2);
-        assert_eq!(small[0].dimensions(), (440, 272));
-        assert!(written[1].ends_with("shot-220.webp"));
+        assert!(written[0].0.ends_with("shot.webp") && written[0].1 == 2);
+        assert!(written[1].0.ends_with("shot-16.webp") && written[1].1 == 2);
+        let full = std::fs::read(&written[0].0).unwrap();
+        assert_eq!(full.windows(4).filter(|w| *w == b"ANMF").count(), 2);
+        // the thumbnails are lossy (VP8 frames, not VP8L)
+        let small = std::fs::read(&written[1].0).unwrap();
+        assert!(small.windows(4).any(|w| w == b"VP8 "));
+        assert!(!full.windows(4).any(|w| w == b"VP8 "));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
