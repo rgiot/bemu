@@ -41,6 +41,8 @@ pub struct DisassemblyWindow {
     /// Instructions shown before the start, and from it.
     before: usize,
     rows: usize,
+    /// The registers changed lately (its Registers section).
+    heat: super::chips::RegisterHeat,
 }
 
 impl MemoryWindow {
@@ -68,6 +70,7 @@ impl Default for DisassemblyWindow {
             no_labels: false,
             before: 0,
             rows: 32,
+            heat: Default::default(),
         }
     }
 }
@@ -266,6 +269,13 @@ pub fn disassembly(
 ) {
     let mb = target.motherboard();
     controls(ui, target, bus);
+    // the registers where it stopped, those changed lately lit: folded away when not wanted
+    egui::CollapsingHeader::new("Registers")
+        .id_salt((id, "registers"))
+        .default_open(true)
+        .show(ui, |ui| {
+            super::chips::registers(ui, mb, bus, &mut window.heat);
+        });
     super::paging::show(ui, id, mb, &mut window.paging);
     super::widgets::rule(ui);
     let pc = mb.pc();
