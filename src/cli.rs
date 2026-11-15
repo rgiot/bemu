@@ -159,29 +159,15 @@ pub struct Args {
 
     /// The format of the CSL's screenshots: png (a file per screenshot, named by the script), or
     /// webp (lossless, about half the size: one SCRIPT.webp file, a still when the script takes one
-    /// screenshot, else an animation of them, see --frame-ms).
+    /// screenshot, else an animation of them, see --frame-ms). The screenshots a script zooms down
+    /// (`screenshot 440px`, `screenshot 0.5`: thumbnails, resized without moiré) make a
+    /// SCRIPT-WIDTH.webp of their own per width, lossy.
     #[arg(long, value_name = "png|webp", default_value = "png", requires = "csl", help_heading = RUN)]
     pub screenshot_format: String,
 
-    /// How long each frame of an animated webp is shown, in milliseconds (the CSL's screenshots,
-    /// the thumbnails).
-    #[arg(long, value_name = "MS", default_value_t = 1000, help_heading = RUN)]
+    /// How long each frame of an animated webp is shown, in milliseconds.
+    #[arg(long, value_name = "MS", default_value_t = 1000, requires = "csl", help_heading = RUN)]
     pub frame_ms: u32,
-
-    /// Make the thumbnails of a screenshot (a PNG, or a WebP still or animation) and exit: one
-    /// NAME-WIDTH.webp per --thumbnail-widths in --thumbnail-dir, lossy, resized without the moiré a
-    /// CRT's scanlines and mask make (a Gaussian blur of the reduction, then Lanczos: the
-    /// Benediction website's thumbnails, as the window resizes the picture). Repeatable.
-    #[arg(long = "thumbnails", value_name = "FILE", help_heading = RUN)]
-    pub thumbnails: Vec<std::path::PathBuf>,
-
-    /// Where --thumbnails writes (default: a thumbs folder beside each picture).
-    #[arg(long, value_name = "DIR", requires = "thumbnails", help_heading = RUN)]
-    pub thumbnail_dir: Option<std::path::PathBuf>,
-
-    /// The widths of the --thumbnails, in pixels.
-    #[arg(long, value_name = "W,W...", value_delimiter = ',', default_values_t = [440u32, 880], requires = "thumbnails", help_heading = RUN)]
-    pub thumbnail_widths: Vec<u32>,
 
     /// How long a headless run (--screenshot, --record) lasts.
     #[arg(long, default_value_t = 30, help_heading = RUN)]

@@ -372,6 +372,8 @@ pub struct CslRunner {
     /// When the last scheduled key event is over, in T-states of this machine.
     keys_busy_until: usize,
     screenshot_name: Option<String>,
+    /// The zoom of the screenshot being taken (`screenshot 0.5`, `screenshot 440px`).
+    screenshot_scale: Option<cpclib_csl::ScreenshotScale>,
     screenshot_dir: PathBuf,
     /// The name `snapshot_name` gives the snapshots (`bemu` otherwise).
     snapshot_name: Option<String>,
@@ -450,6 +452,7 @@ impl CslRunner {
             key_events: VecDeque::new(),
             keys_busy_until: 0,
             screenshot_name: None,
+            screenshot_scale: None,
             screenshot_dir: output_dir.into(),
             snapshot_name: None,
             base_dir: PathBuf::from("."),
@@ -1031,7 +1034,11 @@ impl CslRunner {
                 None,
             )?],
             // named by the runner (see the request)
-            Screenshot { .. } => vec![command("screenshot-save", Some(Arg::Path(PathBuf::new())))?],
+            Screenshot { scale, .. } => {
+                // the zoom for the request the command makes
+                self.screenshot_scale = *scale;
+                vec![command("screenshot-save", Some(Arg::Path(PathBuf::new())))?]
+            }
             KeyDelay {
                 press_delay,
                 delay_after_key,
@@ -1219,7 +1226,7 @@ impl CslRunner {
                     let name = (code == SSM_NAMED_SCREENSHOT)
                         .then(|| self.screenshot_name.clone())
                         .flatten();
-                    if let Err(error) = self.screenshot(Some(code), name.as_deref()) {
+                    if let Err(error) = self.screenshot(Some(code), name.as_deref(), None) {
                         self.report
                             .ignored
                             .push(format!("screenshot {code:04X}: {error}"));
@@ -1315,7 +1322,14 @@ impl CslRunner {
     // --------------------------------------------------------- screenshots
 
     /// Save the last whole frame the monitor displayed (the next one when there is none yet).
-    fn screenshot(&mut self, ssm_code: Option<u16>, name: Option<&str>) -> Result<(), String> {
+    /// Zoomed by `scale` when given (resized without moiré, [`crate::display::resize`]), the file
+    /// named with its width (`<name>-<width>`) unless the script named it.
+    fn screenshot(
+        &mut self,
+        ssm_code: Option<u16>,
+        name: Option<&str>,
+        scale: Option<cpclib_csl::ScreenshotScale>,
+    ) -> Result<(), String> {
         let mut ticks = 0;
         while self.last_frame.is_none() {
             if ticks > MAX_FRAME_TICKS {
@@ -1352,6 +1366,13 @@ impl CslRunner {
             Some(filter) => filter.render_to_image(&frame),
             None => frame,
         };
+        let frame = match scale {
+            Some(scale) => {
+                let (width, height) = scale.apply(frame.width(), frame.height());
+                crate::display::resize::resize(&frame, width, height)
+            }
+            None => frame,
+        };
 
         let stem = match (name, ssm_code) {
             (Some(name), _) => name.trim_end_matches(".png").to_owned(),
@@ -1360,6 +1381,11 @@ impl CslRunner {
                 _ => format!("AMSRUST_{}_{code:04X}", self.crtc as u8),
             },
             (None, None) => format!("AMSRUST_{}", self.crtc as u8),
+        };
+        // a zoomed picture the script did not name: its width tells it from the full one
+        let stem = match (scale, name) {
+            (Some(_), None) => format!("{stem}-{}", frame.width()),
+            _ => stem,
         };
         let count = self.taken.entry(stem.clone()).or_insert(0);
         let file = if *count == 0 {
@@ -1419,7 +1445,8 @@ impl CommandTarget for CslRunner {
                     .filter(|path| !path.as_os_str().is_empty())
                     .map(|path| path.display().to_string())
                     .or_else(|| self.screenshot_name.clone());
-                if let Err(error) = self.screenshot(None, name.as_deref()) {
+                let scale = self.screenshot_scale.take();
+                if let Err(error) = self.screenshot(None, name.as_deref(), scale) {
                     self.note(format!("screenshot: {error}"));
                 }
                 Ok(())
@@ -1910,6 +1937,29 @@ mod test {
             self.0.borrow_mut().push((file.to_owned(), frame.clone()));
             Ok(dir.join(file))
         }
+    }
+
+    /// `screenshot 0.25` and `screenshot 200px` take the same frame, zoomed down and named by
+    /// their width; `screenshot_name` names a zoomed one as it says.
+    #[test]
+    fn a_screenshot_is_zoomed_as_the_script_says() {
+        let script = "csl_version 1.0\nreset\nwait 1000000\nscreenshot\nscreenshot 0.25\n\
+                      screenshot 200px\nscreenshot_name 'small'\nscreenshot vsync 0.5\n";
+        let shots = Collected::default();
+        let mut runner =
+            CslRunner::with_io(Box::new(MemFiles::default()), Box::new(shots.clone()), "out");
+        runner.run_text(script, ".").unwrap();
+        let shots = shots.0.borrow();
+        assert_eq!(shots.len(), 4);
+        let (name, full) = &shots[0];
+        let (w, h) = full.dimensions();
+        assert_eq!(name, "AMSRUST_0.png");
+        assert_eq!(shots[1].1.dimensions(), (w / 4, h / 4));
+        assert_eq!(shots[1].0, format!("AMSRUST_0-{}.png", w / 4));
+        assert_eq!(shots[2].1.width(), 200);
+        assert_eq!(shots[2].0, "AMSRUST_0-200.png");
+        assert_eq!(shots[3].0, "small.png");
+        assert_eq!(shots[3].1.width(), w / 2);
     }
 
     /// Played a little at a time, a script does exactly what it does in one go: the same
