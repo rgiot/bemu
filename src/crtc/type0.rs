@@ -346,8 +346,13 @@ impl CrtcChip for Crtc0 {
 
     /// R3l=2: the Gate Array blanks and takes the mode a character before the pulse (AMSpiriT
     /// probe on HBL's R3=2 pulses), the pulse itself keeps its place for the interrupt counter.
+    /// The character before the pulse is the last of the line when R2=0 (Overflow's "Hi-Tech"
+    /// preview, R0=24 and R3=2 at R2=0: the pulse was not blanked, a block of the screen showed
+    /// where AMSpiriT and CPCEC have black).
     fn before_hsync_check(&mut self, core: &mut Core) {
-        if self.hsync_is_two_wide(core) && core.hcc.wrapping_add(1) == core.regs[2] && !core.hsync()
+        if self.hsync_is_two_wide(core)
+            && (if core.hcc == core.regs[0] { 0 } else { core.hcc.wrapping_add(1) }) == core.regs[2]
+            && !core.hsync()
         {
             self.early_blank_chars = 2;
             self.two_wide_pulse = true;
