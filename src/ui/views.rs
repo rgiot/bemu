@@ -324,14 +324,14 @@ impl ViewWindow for Z80 {
         let mb = target.motherboard();
         controls(ui, target, bus);
         // the same values as /api/z80
-        let z80 = crate::state::Z80State::of(mb);
+        let z80 = crate::state::z80(mb);
         super::chips::registers(ui, mb, bus, &mut self.heat);
         ui.weak(format!(
             "{}: IM {}, IFF1 {}, IFF2 {}",
-            cpclib_dap::inspect::describe_flags(z80.f),
-            z80.im,
-            z80.iff1,
-            z80.iff2
+            cpclib_dap::inspect::describe_flags(z80.F),
+            z80.IM,
+            z80.IFF1,
+            z80.IFF2
         ));
         super::widgets::rule(ui);
         super::chips::z80(ui, mb, &z80);
@@ -1015,15 +1015,9 @@ fn simulated_joystick(ui: &mut egui::Ui, target: &dyn CommandTarget, input: &mut
             return;
         }
     };
-    let joy0_sim = settings.joystick_1 == JoystickSource::Simulated;
     let joy1_sim = settings.joystick_2 == JoystickSource::Simulated;
-
-    if !joy0_sim && !joy1_sim {
-        input.joysticks = simulated_joystick_controls(ui, [false, false]);
-        ui.label("No joystick is set to Simulated.");
-        ui.label("Open Machine > Joystick and set Joystick 1 or 2 to Simulated.");
-        return;
-    }
+    // with no joystick set to Simulated the window drives joystick 1 (Machine > Joystick changes it)
+    let joy0_sim = settings.joystick_1 == JoystickSource::Simulated || !joy1_sim;
 
     ui.heading("Simulated joystick");
     ui.label("Click or drag the stick. Right-click while holding it for Fire 1.");

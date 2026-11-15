@@ -19,7 +19,7 @@ fn kind_colour(kind: crate::state::TrackKind) -> egui::Color32 {
 /// next one marked), its catalogue.
 fn disc_details(ui: &mut egui::Ui, mb: &Motherboard, unit: usize) {
     use crate::state::TrackKind;
-    let Some(disc) = crate::state::DiscState::of(mb, unit) else {
+    let Some(disc) = crate::state::disc(mb, unit) else {
         return;
     };
     let head_track = disc.head_track;

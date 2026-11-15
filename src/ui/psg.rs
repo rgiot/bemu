@@ -86,7 +86,7 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard) {
     registers(ui, mb, &memory);
     ui.add_space(4.0);
     // the same values as /api/psg
-    let state = crate::state::PsgState::of(mb);
+    let state = crate::state::psg(mb);
     let notes: [Option<i32>; 3] = std::array::from_fn(|c| state.channels[c].sounding());
     egui::Grid::new("psg-channels")
         .striped(true)

@@ -3,7 +3,7 @@
 use super::*;
 
 /// The Z80's state beyond its registers: HALT, WZ, the bytes the pointers point at.
-pub fn z80(ui: &mut egui::Ui, mb: &Motherboard, state: &crate::state::Z80State) {
+pub fn z80(ui: &mut egui::Ui, mb: &Motherboard, state: &crate::state::Z80Registers) {
     use crate::z80::{HasValue, Reg16};
     let cpu = mb.cpu();
     let r16 = |reg: Reg16| cpu.reg16(reg).value();
@@ -16,7 +16,7 @@ pub fn z80(ui: &mut egui::Ui, mb: &Motherboard, state: &crate::state::Z80State) 
         });
         ui.end_row();
         ui.label("WZ (MEMPTR)");
-        ui.monospace(format!("&{:04X}", state.wz));
+        ui.monospace(format!("&{:04X}", state.WZ));
         ui.end_row();
         for (name, reg) in [
             ("(HL)", Reg16::Hl),

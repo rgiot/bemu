@@ -869,6 +869,8 @@ struct App {
     /// Which connected gamepad is mapped to joystick 0 / 1.
     joy0_id: Option<GamepadId>,
     joy1_id: Option<GamepadId>,
+    /// The d-pad buttons held (up, down, left, right) of each of the two gamepads.
+    dpad: [[bool; 4]; 2],
     closed: bool,
     error: Option<String>,
     /// F11 asked for fullscreen (kept here: the window manager may refuse it).
@@ -1266,6 +1268,7 @@ impl WinitGpuFrontend {
                 gilrs: Gilrs::new().ok(),
                 joy0_id: None,
                 joy1_id: None,
+                dpad: [[false; 4]; 2],
                 closed: false,
                 error: None,
                 fullscreen: false,
@@ -1403,6 +1406,14 @@ impl Frontend for WinitGpuFrontend {
                             gilrs::Button::West => joy.fire[2] = true,
                             _ => {}
                         }
+                        let slot = usize::from(self.app.joy0_id != Some(id));
+                        match button {
+                            gilrs::Button::DPadUp => self.app.dpad[slot][0] = true,
+                            gilrs::Button::DPadDown => self.app.dpad[slot][1] = true,
+                            gilrs::Button::DPadLeft => self.app.dpad[slot][2] = true,
+                            gilrs::Button::DPadRight => self.app.dpad[slot][3] = true,
+                            _ => {}
+                        }
                     }
                     EventType::ButtonReleased(button, _) => {
                         let joy = match id {
@@ -1416,19 +1427,40 @@ impl Frontend for WinitGpuFrontend {
                             gilrs::Button::West => joy.fire[2] = false,
                             _ => {}
                         }
+                        let slot = usize::from(self.app.joy0_id != Some(id));
+                        match button {
+                            gilrs::Button::DPadUp => self.app.dpad[slot][0] = false,
+                            gilrs::Button::DPadDown => self.app.dpad[slot][1] = false,
+                            gilrs::Button::DPadLeft => self.app.dpad[slot][2] = false,
+                            gilrs::Button::DPadRight => self.app.dpad[slot][3] = false,
+                            _ => {}
+                        }
                     }
                     _ => {}
                 }
             }
+            // a gamepad that was plugged in before the window's first poll gets no Connected event
+            for (id, _) in gilrs.gamepads() {
+                if self.app.joy0_id != Some(id) && self.app.joy1_id != Some(id) {
+                    if self.app.joy0_id.is_none() {
+                        self.app.joy0_id = Some(id);
+                    } else if self.app.joy1_id.is_none() {
+                        self.app.joy1_id = Some(id);
+                    }
+                }
+            }
             // digital direction: one axis at a time, from current axis state
             for (id, gamepad) in gilrs.gamepads() {
+                let slot = usize::from(self.app.joy0_id != Some(id));
+                let dpad = self.app.dpad[slot];
                 let joy = match id {
                     id if self.app.joy0_id == Some(id) => &mut self.app.joysticks.joy0,
                     id if self.app.joy1_id == Some(id) => &mut self.app.joysticks.joy1,
                     _ => continue,
                 };
                 let raw_x = gamepad.value(gilrs::Axis::LeftStickX) as f64;
-                let raw_y = gamepad.value(gilrs::Axis::LeftStickY) as f64;
+                // gilrs has up positive; the joystick's Y is -1 for up
+                let raw_y = -(gamepad.value(gilrs::Axis::LeftStickY) as f64);
                 let dead = 0.5;
                 let dx = if raw_x.abs() > dead {
                     raw_x.signum() as i8
@@ -1451,6 +1483,13 @@ impl Frontend for WinitGpuFrontend {
                 } else {
                     joy.x = dx;
                     joy.y = dy;
+                }
+                // the d-pad's buttons, where the stick is centred
+                if joy.x == 0 {
+                    joy.x = i8::from(dpad[3]) - i8::from(dpad[2]);
+                }
+                if joy.y == 0 {
+                    joy.y = i8::from(dpad[1]) - i8::from(dpad[0]);
                 }
             }
         }

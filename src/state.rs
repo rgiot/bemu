@@ -1,103 +1,62 @@
-//! The machine's state as the debugger's windows and its API show it: one typed snapshot a
-//! chip, read from the machine, that the windows draw and the API serves as JSON
-//! (`serde_json::to_value`). What a window learns to show goes here, and so reaches the API (and
-//! any other interface) too.
+//! The machine's state as the debugger's windows and its API show it: the API's reply types
+//! (`bemu-api`), read from the machine here. The windows draw them and the API serves them, so
+//! what a window learns to show reaches the API (and any other interface) too.
 
-use serde::Serialize;
+pub use bemu_api::{
+    Asic, AsicDma, AsicSprite, CatalogueEntry, Disc, DiscSector, Fdc, FdcDrive, Psg, PsgChannel,
+    TrackKind, Z80Registers,
+};
 
 use crate::motherboard::Motherboard;
 use crate::z80::{HasValue, InterruptMode, Reg16, Reg8};
 
 // ------------------------------------------------------------------- Z80
 
-/// `GET /api/z80`: the registers (AMSpiriT's names), the interrupts, the time.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub struct Z80State {
-    pub pc: u16,
-    pub sp: u16,
-    pub a: u8,
-    pub f: u8,
-    pub b: u8,
-    pub c: u8,
-    pub d: u8,
-    pub e: u8,
-    pub h: u8,
-    pub l: u8,
-    pub a2: u8,
-    pub f2: u8,
-    pub b2: u8,
-    pub c2: u8,
-    pub d2: u8,
-    pub e2: u8,
-    pub h2: u8,
-    pub l2: u8,
-    pub ix: u16,
-    pub iy: u16,
-    pub i: u8,
-    pub r: u8,
-    pub iff1: u8,
-    pub iff2: u8,
-    pub im: u8,
-    /// NOPs since the machine started.
-    #[serde(rename = "ticks")]
-    pub ticks: usize,
-    /// WZ (MEMPTR).
-    pub wz: u16,
-    /// The flags set, by name (`SZ-H-PNC`, a dash for a clear one).
-    #[serde(rename = "flags")]
-    pub flags: String,
-    /// On a HALT, waiting for an interrupt.
-    #[serde(rename = "halted")]
-    pub halted: bool,
-}
-
-impl Z80State {
-    pub fn of(mb: &Motherboard) -> Self {
-        let cpu = mb.cpu();
-        let r8 = |reg: Reg8| cpu.reg8(reg).value();
-        let r16 = |reg: Reg16| cpu.reg16(reg).value();
-        let pc = r16(Reg16::Pc);
-        Self {
-            pc,
-            sp: r16(Reg16::Sp),
-            a: r8(Reg8::A),
-            f: r8(Reg8::F),
-            b: r8(Reg8::B),
-            c: r8(Reg8::C),
-            d: r8(Reg8::D),
-            e: r8(Reg8::E),
-            h: r8(Reg8::H),
-            l: r8(Reg8::L),
-            a2: r8(Reg8::A2),
-            f2: r8(Reg8::F2),
-            b2: r8(Reg8::B2),
-            c2: r8(Reg8::C2),
-            d2: r8(Reg8::D2),
-            e2: r8(Reg8::E2),
-            h2: r8(Reg8::H2),
-            l2: r8(Reg8::L2),
-            ix: r16(Reg16::Ix),
-            iy: r16(Reg16::Iy),
-            i: r8(Reg8::I),
-            r: r8(Reg8::R),
-            iff1: cpu.iff1() as u8,
-            iff2: cpu.iff2() as u8,
-            im: match cpu.im() {
-                InterruptMode::Mode0 => 0,
-                InterruptMode::Mode1 => 1,
-                InterruptMode::Mode2 => 2,
-            },
-            ticks: mb.t_state_counter().value() / 4,
-            wz: r16(Reg16::Wz),
-            flags: flag_names(r8(Reg8::F)),
-            // a HALT runs again until an interrupt: the PC stays on it
-            halted: mb.read_byte(pc) == 0x76,
-        }
+/// `GET /api/z80`: the registers, the interrupts, the time, WZ, the flags by name, HALT.
+pub fn z80(mb: &Motherboard) -> Z80Registers {
+    let cpu = mb.cpu();
+    let r8 = |reg: Reg8| cpu.reg8(reg).value();
+    let r16 = |reg: Reg16| cpu.reg16(reg).value();
+    let pc = r16(Reg16::Pc);
+    Z80Registers {
+        PC: pc,
+        SP: r16(Reg16::Sp),
+        IX: r16(Reg16::Ix),
+        IY: r16(Reg16::Iy),
+        A: r8(Reg8::A),
+        F: r8(Reg8::F),
+        B: r8(Reg8::B),
+        C: r8(Reg8::C),
+        D: r8(Reg8::D),
+        E: r8(Reg8::E),
+        H: r8(Reg8::H),
+        L: r8(Reg8::L),
+        A2: r8(Reg8::A2),
+        F2: r8(Reg8::F2),
+        B2: r8(Reg8::B2),
+        C2: r8(Reg8::C2),
+        D2: r8(Reg8::D2),
+        E2: r8(Reg8::E2),
+        H2: r8(Reg8::H2),
+        L2: r8(Reg8::L2),
+        I: r8(Reg8::I),
+        R: r8(Reg8::R),
+        IFF1: cpu.iff1() as u8,
+        IFF2: cpu.iff2() as u8,
+        IM: match cpu.im() {
+            InterruptMode::Mode0 => 0,
+            InterruptMode::Mode1 => 1,
+            InterruptMode::Mode2 => 2,
+        },
+        ticks: (mb.t_state_counter().value() / 4) as u64,
+        WZ: r16(Reg16::Wz),
+        flags: flag_names(r8(Reg8::F)),
+        // a HALT runs again until an interrupt: the PC stays on it
+        halted: mb.read_byte(pc) == 0x76,
     }
 }
 
-/// The flags of `f` by name: `SZ-H-PNC` order (bits 7-0), a dash for a clear one.
+/// The flags of `f` by name: `SZYHXPNC` (bits 7-0), a dash for a clear one.
 pub fn flag_names(f: u8) -> String {
     "SZYHXPNC"
         .chars()
@@ -139,98 +98,50 @@ pub fn note_name(midi: i32) -> String {
     )
 }
 
-/// One tone channel as a musician reads it.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct PsgChannel {
-    pub period: u16,
-    pub frequency_hz: f64,
-    /// The nearest note, how far from it (cents), its MIDI number: `None` out of hearing.
-    pub note: Option<String>,
-    pub cents: Option<i32>,
-    pub midi: Option<i32>,
-    /// Its tone and the noise are mixed in.
-    pub tone: bool,
-    pub noise: bool,
-    /// Its volume (0-15), or the envelope's.
-    pub volume: u8,
-    pub envelope: bool,
-}
-
-impl PsgChannel {
-    /// It sounds a note: its tone on, a volume.
-    pub fn sounding(&self) -> Option<i32> {
-        self.midi
-            .filter(|_| self.tone && (self.envelope || self.volume != 0))
-    }
-}
-
 /// `GET /api/psg`: AMSpiriT's fields, the 16 registers, and the channels read.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct PsgState {
-    pub period_a: u16,
-    pub vol_a: u8,
-    pub period_b: u16,
-    pub vol_b: u8,
-    pub period_c: u16,
-    pub vol_c: u8,
-    pub mixer: u8,
-    pub noise: u8,
-    pub env_period: u16,
-    pub env_shape: u8,
-    pub regs: Vec<u8>,
-    pub selected_reg: Option<u8>,
-    pub channels: Vec<PsgChannel>,
-    pub noise_hz: f64,
-    pub envelope_hz: f64,
-    /// Port A reads (the keyboard), else writes.
-    pub port_a_input: bool,
-}
-
-impl PsgState {
-    pub fn of(mb: &Motherboard) -> Self {
-        let psg = mb.psg();
-        let reg = |r: u8| psg.register(r);
-        let word = |low: u8| u16::from_le_bytes([reg(low), reg(low + 1)]);
-        let mixer = reg(7);
-        let channels = (0..3u8)
-            .map(|channel| {
-                let period = word(channel * 2) & 0xfff;
-                let frequency_hz = tone_hz(period);
-                let note = nearest_note(frequency_hz);
-                let volume = reg(8 + channel);
-                PsgChannel {
-                    period,
-                    frequency_hz,
-                    note: note.map(|(midi, _)| note_name(midi)),
-                    cents: note.map(|(_, cents)| cents),
-                    midi: note.map(|(midi, _)| midi),
-                    tone: mixer & (1 << channel) == 0,
-                    noise: mixer & (8 << channel) == 0,
-                    volume: volume & 0x0f,
-                    envelope: volume & 0x10 != 0,
-                }
-            })
-            .collect();
-        let noise = reg(6) & 0x1f;
-        let env_period = word(11);
-        Self {
-            period_a: word(0) & 0xfff,
-            vol_a: reg(8) & 0x1f,
-            period_b: word(2) & 0xfff,
-            vol_b: reg(9) & 0x1f,
-            period_c: word(4) & 0xfff,
-            vol_c: reg(10) & 0x1f,
-            mixer,
-            noise,
-            env_period,
-            env_shape: reg(13) & 0x0f,
-            regs: (0..16).map(reg).collect(),
-            selected_reg: psg.selected_register(),
-            channels,
-            noise_hz: PSG_HZ / (16.0 * f64::from(noise.max(1))),
-            envelope_hz: PSG_HZ / (256.0 * f64::from(env_period.max(1))),
-            port_a_input: psg.port_a_is_input(),
-        }
+pub fn psg(mb: &Motherboard) -> Psg {
+    let psg = mb.psg();
+    let reg = |r: u8| psg.register(r);
+    let word = |low: u8| u16::from_le_bytes([reg(low), reg(low + 1)]);
+    let mixer = reg(7);
+    let channels = (0..3u8)
+        .map(|channel| {
+            let period = word(channel * 2) & 0xfff;
+            let frequency_hz = tone_hz(period);
+            let note = nearest_note(frequency_hz);
+            let volume = reg(8 + channel);
+            PsgChannel {
+                period,
+                frequency_hz,
+                note: note.map(|(midi, _)| note_name(midi)),
+                cents: note.map(|(_, cents)| cents),
+                midi: note.map(|(midi, _)| midi),
+                tone: mixer & (1 << channel) == 0,
+                noise: mixer & (8 << channel) == 0,
+                volume: volume & 0x0f,
+                envelope: volume & 0x10 != 0,
+            }
+        })
+        .collect();
+    let noise = reg(6) & 0x1f;
+    let env_period = word(11);
+    Psg {
+        period_a: word(0) & 0xfff,
+        vol_a: reg(8) & 0x1f,
+        period_b: word(2) & 0xfff,
+        vol_b: reg(9) & 0x1f,
+        period_c: word(4) & 0xfff,
+        vol_c: reg(10) & 0x1f,
+        mixer,
+        noise,
+        env_period,
+        env_shape: reg(13) & 0x0f,
+        regs: (0..16).map(reg).collect(),
+        selected_reg: psg.selected_register(),
+        channels,
+        noise_hz: PSG_HZ / (16.0 * f64::from(noise.max(1))),
+        envelope_hz: PSG_HZ / (256.0 * f64::from(env_period.max(1))),
+        port_a_input: psg.port_a_is_input(),
     }
 }
 
@@ -258,300 +169,164 @@ pub fn format_name(track: &crate::disc_image::Track) -> String {
 
 /// A track in a word: unformatted, the standard 9 sectors of 512 bytes, or another layout (a
 /// protection, a more packed format), weak sectors (several copies of their data) above all.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TrackKind {
-    Unformatted,
-    WeakSectors,
-    Standard,
-    NoSector,
-    AnotherLayout,
-}
-
-impl TrackKind {
-    pub fn of(track: Option<&crate::disc_image::Track>) -> Self {
-        match track {
-            None => Self::Unformatted,
-            Some(track) if track.sectors.iter().any(|s| s.copies() > 1) => Self::WeakSectors,
-            Some(track) if track.sectors.len() == 9 && track.sectors.iter().all(|s| s.n == 2) => {
-                Self::Standard
-            }
-            Some(track) if track.sectors.is_empty() => Self::NoSector,
-            Some(_) => Self::AnotherLayout,
+pub fn track_kind(track: Option<&crate::disc_image::Track>) -> TrackKind {
+    match track {
+        None => TrackKind::Unformatted,
+        Some(track) if track.sectors.iter().any(|s| s.copies() > 1) => TrackKind::WeakSectors,
+        Some(track) if track.sectors.len() == 9 && track.sectors.iter().all(|s| s.n == 2) => {
+            TrackKind::Standard
         }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Unformatted => "unformatted",
-            Self::WeakSectors => "weak sectors",
-            Self::Standard => "9 x 512",
-            Self::NoSector => "no sector",
-            Self::AnotherLayout => "another layout",
-        }
+        Some(track) if track.sectors.is_empty() => TrackKind::NoSector,
+        Some(_) => TrackKind::AnotherLayout,
     }
 }
 
-/// A sector of the track under the head.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct SectorState {
-    pub c: u8,
-    pub h: u8,
-    pub r: u8,
-    pub n: u8,
-    /// The size its N announces, and the data the image holds.
-    pub size: usize,
-    pub data_len: usize,
-    /// What is special about it: weak (several copies), deleted, another track's ID, odd size.
-    pub notes: Vec<String>,
-}
-
-/// A file of the disc's AMSDOS catalogue.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct CatalogueEntry {
-    pub name: String,
-    pub user: u8,
-    pub hidden: bool,
-    pub kilobytes: u32,
-}
-
-/// The disc in a drive as the head sees it.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct DiscState {
-    /// DSK or HFE.
-    pub image: &'static str,
-    /// The format of the track under the head (see [`format_name`]).
-    pub format: String,
-    pub tracks: u8,
-    pub double_sided: bool,
-    /// The side read: A or B.
-    pub side: &'static str,
-    pub head_track: u8,
-    /// Each track of the side read.
-    pub track_kinds: Vec<TrackKind>,
-    /// Each track's sector IDs (R), in their order on the track.
-    pub track_sectors: Vec<Vec<u8>>,
-    /// The track under the head, in the order its sectors pass, the next one's index.
-    pub sectors: Vec<SectorState>,
-    pub next_sector: Option<usize>,
-    pub catalogue: Vec<CatalogueEntry>,
-}
-
-impl DiscState {
-    /// The disc of drive `unit` (`None`: no disc).
-    pub fn of(mb: &Motherboard, unit: usize) -> Option<Self> {
-        use crate::fdc::FdcDrive;
-        let drive = if unit == 0 { FdcDrive::A } else { FdcDrive::B };
-        let fdc = mb.fdc();
-        let disc = fdc.image(drive)?;
-        let side = fdc.disc_side(drive).min(disc.nb_heads().saturating_sub(1));
-        let head_track = fdc.track(unit);
-        let under = disc.track(side, head_track);
-        let sectors: Vec<SectorState> = under
-            .map(|track| {
-                track
-                    .sectors
-                    .iter()
-                    .map(|sector| {
-                        let mut notes = Vec::new();
-                        if sector.copies() > 1 {
-                            notes.push(format!("weak: {} copies", sector.copies()));
-                        }
-                        if sector.is_deleted() {
-                            notes.push("deleted".to_owned());
-                        }
-                        if sector.c != head_track {
-                            notes.push(format!("ID of track {}", sector.c));
-                        }
-                        if sector.data.len() != sector.nominal_len() && sector.copies() <= 1 {
-                            notes.push("odd size".to_owned());
-                        }
-                        SectorState {
-                            c: sector.c,
-                            h: sector.h,
-                            r: sector.r,
-                            n: sector.n,
-                            size: sector.nominal_len(),
-                            data_len: sector.data.len(),
-                            notes,
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let next_sector =
-            (!sectors.is_empty()).then(|| fdc.sector_under_head(unit) % sectors.len());
-        Some(Self {
-            image: if disc.is_bitstream() { "HFE" } else { "DSK" },
-            format: under.map_or("unformatted".to_owned(), format_name),
-            tracks: disc.nb_tracks(),
-            double_sided: disc.is_double_sided(),
-            side: ["A", "B"][usize::from(side & 1)],
-            head_track,
-            track_kinds: (0..disc.nb_tracks())
-                .map(|track| TrackKind::of(disc.track(side, track)))
-                .collect(),
-            track_sectors: (0..disc.nb_tracks())
-                .map(|track| {
-                    disc.track(side, track)
-                        .map(|t| t.sectors.iter().map(|s| s.r).collect())
-                        .unwrap_or_default()
-                })
-                .collect(),
-            sectors,
-            next_sector,
-            catalogue: disc
-                .amsdos_catalog()
+/// The disc of drive `unit` as the head sees it (`None`: no disc).
+pub fn disc(mb: &Motherboard, unit: usize) -> Option<Disc> {
+    use crate::fdc::FdcDrive as Drive;
+    let drive = if unit == 0 { Drive::A } else { Drive::B };
+    let fdc = mb.fdc();
+    let disc = fdc.image(drive)?;
+    let side = fdc.disc_side(drive).min(disc.nb_heads().saturating_sub(1));
+    let head_track = fdc.track(unit);
+    let under = disc.track(side, head_track);
+    let sectors: Vec<DiscSector> = under
+        .map(|track| {
+            track
+                .sectors
                 .iter()
-                .map(|entry| CatalogueEntry {
-                    name: format!("{}.{}", entry.name.trim(), entry.extension.trim()),
-                    user: entry.user,
-                    hidden: entry.hidden,
-                    kilobytes: (u32::from(entry.records) * 128).div_ceil(1024),
+                .map(|sector| {
+                    let mut notes = Vec::new();
+                    if sector.copies() > 1 {
+                        notes.push(format!("weak: {} copies", sector.copies()));
+                    }
+                    if sector.is_deleted() {
+                        notes.push("deleted".to_owned());
+                    }
+                    if sector.c != head_track {
+                        notes.push(format!("ID of track {}", sector.c));
+                    }
+                    if sector.data.len() != sector.nominal_len() && sector.copies() <= 1 {
+                        notes.push("odd size".to_owned());
+                    }
+                    DiscSector {
+                        c: sector.c,
+                        h: sector.h,
+                        r: sector.r,
+                        n: sector.n,
+                        size: sector.nominal_len(),
+                        data_len: sector.data.len(),
+                        notes,
+                    }
                 })
-                .collect(),
+                .collect()
         })
-    }
-}
-
-/// A drive of `GET /api/fdc`.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct DriveState {
-    pub connected: bool,
-    /// 3 or 3.5 (inches).
-    pub kind: &'static str,
-    pub disk: bool,
-    pub side: &'static str,
-    pub track: u8,
-    /// Its disc as the head sees it.
-    pub disc: Option<DiscState>,
+        .unwrap_or_default();
+    let next_sector = (!sectors.is_empty()).then(|| fdc.sector_under_head(unit) % sectors.len());
+    Some(Disc {
+        image: if disc.is_bitstream() { "HFE" } else { "DSK" }.to_owned(),
+        format: under.map_or("unformatted".to_owned(), format_name),
+        tracks: disc.nb_tracks(),
+        double_sided: disc.is_double_sided(),
+        side: ["A", "B"][usize::from(side & 1)].to_owned(),
+        head_track,
+        track_kinds: (0..disc.nb_tracks())
+            .map(|track| track_kind(disc.track(side, track)))
+            .collect(),
+        track_sectors: (0..disc.nb_tracks())
+            .map(|track| {
+                disc.track(side, track)
+                    .map(|t| t.sectors.iter().map(|s| s.r).collect())
+                    .unwrap_or_default()
+            })
+            .collect(),
+        sectors,
+        next_sector,
+        catalogue: disc
+            .amsdos_catalog()
+            .iter()
+            .map(|entry| CatalogueEntry {
+                name: format!("{}.{}", entry.name.trim(), entry.extension.trim()),
+                user: entry.user,
+                hidden: entry.hidden,
+                kilobytes: (u32::from(entry.records) * 128).div_ceil(1024),
+            })
+            .collect(),
+    })
 }
 
 /// `GET /api/fdc`: the status registers, the phase, the drives and their discs.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct FdcState {
-    pub msr: u8,
-    pub sr0: u8,
-    pub sr1: u8,
-    pub sr2: u8,
-    pub motor: bool,
-    pub phase: &'static str,
-    pub command: String,
-    pub drives: Vec<DriveState>,
-}
-
-impl FdcState {
-    pub fn of(mb: &Motherboard) -> Self {
-        use crate::fdc::FdcDrive;
-        let fdc = mb.fdc();
-        let [st0, st1, st2] = fdc.status_registers();
-        Self {
-            msr: fdc.read_status(),
-            sr0: st0,
-            sr1: st1,
-            sr2: st2,
-            motor: fdc.motor(),
-            phase: fdc.phase_name(),
-            command: fdc.command_name(),
-            drives: [FdcDrive::A, FdcDrive::B]
-                .iter()
-                .enumerate()
-                .map(|(unit, &drive)| DriveState {
-                    connected: true,
-                    kind: if fdc.drive_kind(drive).is_double_sided() {
-                        "3.5"
-                    } else {
-                        "3"
-                    },
-                    disk: fdc.has_disk(drive),
-                    side: if fdc.disc_side(drive) == 0 { "A" } else { "B" },
-                    track: fdc.track(unit),
-                    disc: DiscState::of(mb, unit),
-                })
-                .collect(),
-        }
+pub fn fdc(mb: &Motherboard) -> Fdc {
+    use crate::fdc::FdcDrive as Drive;
+    let fdc = mb.fdc();
+    let [st0, st1, st2] = fdc.status_registers();
+    Fdc {
+        msr: fdc.read_status(),
+        sr0: st0,
+        sr1: st1,
+        sr2: st2,
+        motor: fdc.motor(),
+        phase: fdc.phase_name().to_owned(),
+        command: fdc.command_name().to_string(),
+        drives: [Drive::A, Drive::B]
+            .iter()
+            .enumerate()
+            .map(|(unit, &drive)| FdcDrive {
+                connected: true,
+                kind: if fdc.drive_kind(drive).is_double_sided() {
+                    "3.5"
+                } else {
+                    "3"
+                }
+                .to_owned(),
+                disk: fdc.has_disk(drive),
+                side: if fdc.disc_side(drive) == 0 { "A" } else { "B" }.to_owned(),
+                track: fdc.track(unit),
+                disc: disc(mb, unit),
+            })
+            .collect(),
     }
 }
 
 // ------------------------------------------------------------------- ASIC
 
-/// A DMA channel of the ASIC.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct DmaChannel {
-    pub address: u16,
-    pub prescaler: u8,
-    pub enabled: bool,
-    pub pause: u16,
-    pub loop_count: u16,
-    pub interrupt: bool,
-}
-
-/// A hardware sprite of the ASIC.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Sprite {
-    pub x: u16,
-    pub y: u16,
-    pub zoom_x: u8,
-    pub zoom_y: u8,
-    pub shown: bool,
-    /// Its 16 x 16 pens, row by row (0: transparent).
-    pub pixels: Vec<u8>,
-}
-
-/// `GET /api/asic` (a CPC+): the lock, the palette, its registers, the DMA and the sprites.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct AsicState {
-    pub unlocked: bool,
-    /// The 32 palette entries (12 bits, &GRB): pens 0-15, the border, sprite colours 1-15.
-    pub palette: Vec<u16>,
-    pub pri: u8,
-    pub splt: u8,
-    pub sscr: u8,
-    pub ivr: u8,
-    pub rmr2: u8,
-    pub dma: Vec<DmaChannel>,
-    pub sprites: Vec<Sprite>,
-}
-
-impl AsicState {
-    /// `None` on a CPC.
-    pub fn of(mb: &Motherboard) -> Option<Self> {
-        let (asic, video) = (mb.asic()?, mb.ga().plus()?);
-        Some(Self {
-            unlocked: video.unlocked,
-            palette: (0..32).map(|i| video.palette_entry(i)).collect(),
-            pri: asic.pri(),
-            splt: asic.splt(),
-            sscr: video.sscr(),
-            ivr: asic.ivr(),
-            rmr2: video.rmr2(),
-            dma: asic
-                .dma_channels()
-                .iter()
-                .map(|c| DmaChannel {
-                    address: c.address,
-                    prescaler: c.prescaler,
-                    enabled: c.enabled,
-                    pause: c.pause,
-                    loop_count: c.loop_count,
-                    interrupt: c.interrupt,
-                })
-                .collect(),
-            sprites: (0..16)
-                .map(|n| {
-                    let sprite = video.sprite(n);
-                    Sprite {
-                        x: sprite.x,
-                        y: sprite.y,
-                        zoom_x: sprite.zoom_x,
-                        zoom_y: sprite.zoom_y,
-                        shown: sprite.zoom_x != 0 && sprite.zoom_y != 0,
-                        pixels: sprite.pixels.to_vec(),
-                    }
-                })
-                .collect(),
-        })
-    }
+/// `GET /api/asic`: a CPC+'s ASIC (`None` on a CPC).
+pub fn asic(mb: &Motherboard) -> Option<Asic> {
+    let (asic, video) = (mb.asic()?, mb.ga().plus()?);
+    Some(Asic {
+        unlocked: video.unlocked,
+        palette: (0..32).map(|i| video.palette_entry(i)).collect(),
+        pri: asic.pri(),
+        splt: asic.splt(),
+        sscr: video.sscr(),
+        ivr: asic.ivr(),
+        rmr2: video.rmr2(),
+        dma: asic
+            .dma_channels()
+            .iter()
+            .map(|c| AsicDma {
+                address: c.address,
+                prescaler: c.prescaler,
+                enabled: c.enabled,
+                pause: c.pause,
+                loop_count: c.loop_count,
+                interrupt: c.interrupt,
+            })
+            .collect(),
+        sprites: (0..16)
+            .map(|n| {
+                let sprite = video.sprite(n);
+                AsicSprite {
+                    x: sprite.x,
+                    y: sprite.y,
+                    zoom_x: sprite.zoom_x,
+                    zoom_y: sprite.zoom_y,
+                    shown: sprite.zoom_x != 0 && sprite.zoom_y != 0,
+                    pixels: sprite.pixels.to_vec(),
+                }
+            })
+            .collect(),
+    })
 }
 
 #[cfg(test)]
@@ -570,13 +345,13 @@ mod tests {
         };
         let data = track(&[0xc1, 0xc6, 0xc2, 0xc7, 0xc3, 0xc8, 0xc4, 0xc9, 0xc5], 2);
         assert_eq!(format_name(&data), "Data");
-        assert_eq!(TrackKind::of(Some(&data)), TrackKind::Standard);
+        assert_eq!(track_kind(Some(&data)), TrackKind::Standard);
         let packed = track(
             &[0xc1, 0xc6, 0xc2, 0xc7, 0xc3, 0xc8, 0xc4, 0xc9, 0xc5, 0xca],
             2,
         );
         assert_eq!(format_name(&packed), "10 sectors &C1-&CA");
-        assert_eq!(TrackKind::of(Some(&packed)), TrackKind::AnotherLayout);
+        assert_eq!(track_kind(Some(&packed)), TrackKind::AnotherLayout);
         assert_eq!(
             format_name(&track(
                 &[0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49],
@@ -584,7 +359,7 @@ mod tests {
             )),
             "System"
         );
-        assert_eq!(TrackKind::of(None), TrackKind::Unformatted);
+        assert_eq!(track_kind(None), TrackKind::Unformatted);
     }
 
     #[test]
@@ -604,7 +379,7 @@ mod tests {
     /// The API's names stay those of AMSpiriT (and the windows read the same values).
     #[test]
     fn the_z80_keeps_its_api_names() {
-        let value = serde_json::to_value(Z80State::of(&Motherboard::default())).unwrap();
+        let value = serde_json::to_value(z80(&Motherboard::default())).unwrap();
         for key in [
             "PC", "SP", "A2", "IFF1", "IM", "ticks", "WZ", "flags", "halted",
         ] {
@@ -614,10 +389,10 @@ mod tests {
 
     #[test]
     fn a_cpc_has_no_asic_a_plus_has_one() {
-        assert!(AsicState::of(&Motherboard::default()).is_none());
+        assert!(asic(&Motherboard::default()).is_none());
         let mut builder = crate::motherboard::MotherboardBuilder::default();
         builder.set_model(crate::motherboard::CpcModel::Cpc6128Plus);
-        let asic = AsicState::of(&builder.build()).expect("an ASIC");
+        let asic = asic(&builder.build()).expect("an ASIC");
         assert_eq!((asic.palette.len(), asic.sprites.len()), (32, 16));
     }
 }
