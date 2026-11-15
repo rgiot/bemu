@@ -192,7 +192,8 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/crtc", methods: &["GET"], summary: "CRTC registers, selected register and counters", extension: false },
     Route { path: "/api/ga", methods: &["GET"], summary: "Gate Array: mode, pens, inks, RMR and banking", extension: false },
     Route { path: "/api/psg", methods: &["GET"], summary: "PSG registers, decoded", extension: false },
-    Route { path: "/api/fdc", methods: &["GET"], summary: "FDC status registers, phase, motor and heads", extension: false },
+    Route { path: "/api/fdc", methods: &["GET"], summary: "FDC status registers, phase, motor and heads; the discs as the head sees them", extension: false },
+    Route { path: "/api/asic", methods: &["GET"], summary: "CPC+ ASIC: lock, palette, registers, DMA channels, sprites", extension: true },
     Route { path: "/api/drive", methods: &["POST"], summary: "a drive (?drive=0|1): its kind (kind=3|3.5), turn its disc over (flip=1, 3\" drive)", extension: true },
     Route { path: "/api/beam", methods: &["GET"], summary: "beam position (?crop=1: relative to the screenshot), also in NOPs: nop, line, frame_nop", extension: false },
     Route { path: "/api/raster_bp", methods: &["GET", "POST"], summary: "beam breakpoint: ?x=&y= (or line=, nop=, frame_nop=), enable=0 clears, add=1 keeps the others", extension: false },
@@ -1145,6 +1146,7 @@ impl DebugServer {
             "ga" => ga(motherboard),
             "psg" => psg(motherboard),
             "fdc" => fdc(motherboard),
+            "asic" => asic(motherboard),
             "memmap" => memmap(motherboard),
             "breakpoints" => self.list_breakpoints(),
             "symbols" => self.list_symbols(),
@@ -1155,6 +1157,11 @@ impl DebugServer {
             "basic_state" => basic_state(motherboard),
             _ => Value::Null,
         }
+    }
+
+    /// The beam, while the debugger follows it (paused, stepping).
+    pub fn beam(&self) -> Option<Beam> {
+        self.beam
     }
 
     /// Answer an API call made from inside the emulator (the menus): the same code as the
@@ -1272,6 +1279,7 @@ impl DebugServer {
             ("GET", "/api/ga") => Ok(ApiResponse::ok(ga(motherboard))),
             ("GET", "/api/psg") => Ok(ApiResponse::ok(psg(motherboard))),
             ("GET", "/api/fdc") => Ok(ApiResponse::ok(fdc(motherboard))),
+            ("GET", "/api/asic") => Ok(ApiResponse::ok(asic(motherboard))),
             ("POST", "/api/drive") => self.drive_command(request, motherboard),
             ("GET", "/api/beam") => self.beam_position(request),
             ("GET", "/api/raster_bp") => Ok(ApiResponse::ok(self.list_raster_breakpoints())),
@@ -2443,40 +2451,16 @@ fn ga(motherboard: &Motherboard) -> Value {
 }
 
 fn psg(motherboard: &Motherboard) -> Value {
-    let psg = motherboard.psg();
-    let word = |low: u8| u16::from_le_bytes([psg.register(low), psg.register(low + 1)]);
-    json!({
-        "period_a": word(0) & 0xfff, "vol_a": psg.register(8) & 0x1f,
-        "period_b": word(2) & 0xfff, "vol_b": psg.register(9) & 0x1f,
-        "period_c": word(4) & 0xfff, "vol_c": psg.register(10) & 0x1f,
-        "mixer": psg.register(7), "noise": psg.register(6) & 0x1f,
-        "env_period": word(11), "env_shape": psg.register(13) & 0x0f,
-        // Extension: the 16 registers as they are, the selected one.
-        "regs": (0..16).map(|r| psg.register(r)).collect::<Vec<_>>(),
-        "selected_reg": psg.selected_register()
-    })
+    serde_json::to_value(crate::state::PsgState::of(motherboard)).unwrap_or_default()
 }
 
 fn fdc(motherboard: &Motherboard) -> Value {
-    use crate::fdc::FdcDrive;
-    let fdc = motherboard.fdc();
-    let [st0, st1, st2] = fdc.status_registers();
-    json!({
-        "msr": fdc.read_status(),
-        "sr0": st0,
-        "sr1": st1,
-        "sr2": st2,
-        "motor": fdc.motor(),
-        "phase": fdc.phase_name(),
-        "command": fdc.command_name(),
-        "drives": ([FdcDrive::A, FdcDrive::B]).iter().enumerate().map(|(unit, &drive)| json!({
-            "connected": true,
-            "kind": if fdc.drive_kind(drive).is_double_sided() { "3.5" } else { "3" },
-            "disk": fdc.has_disk(drive),
-            "side": if fdc.disc_side(drive) == 0 { "A" } else { "B" },
-            "track": fdc.track(unit)
-        })).collect::<Vec<_>>()
-    })
+    serde_json::to_value(crate::state::FdcState::of(motherboard)).unwrap_or_default()
+}
+
+/// `GET /api/asic`: a CPC+'s ASIC (`null` on a CPC).
+fn asic(motherboard: &Motherboard) -> Value {
+    serde_json::to_value(crate::state::AsicState::of(motherboard)).unwrap_or_default()
 }
 
 /// `POST /api/drive?drive=0|1[&kind=3|3.5][&flip=1]`: make a drive a 3" or a 3.5" one, turn the
@@ -2614,20 +2598,7 @@ fn memmap(motherboard: &Motherboard) -> Value {
 }
 
 fn z80(motherboard: &Motherboard) -> Value {
-    let cpu = motherboard.cpu();
-    let r8 = |reg: Reg8| cpu.reg8(reg).get();
-    let r16 = |reg: Reg16| cpu.reg16(reg).get();
-    json!({
-        "PC": r16(Reg16::Pc), "SP": r16(Reg16::Sp),
-        "A": r8(Reg8::A), "F": r8(Reg8::F), "B": r8(Reg8::B), "C": r8(Reg8::C),
-        "D": r8(Reg8::D), "E": r8(Reg8::E), "H": r8(Reg8::H), "L": r8(Reg8::L),
-        "A2": r8(Reg8::A2), "F2": r8(Reg8::F2), "B2": r8(Reg8::B2), "C2": r8(Reg8::C2),
-        "D2": r8(Reg8::D2), "E2": r8(Reg8::E2), "H2": r8(Reg8::H2), "L2": r8(Reg8::L2),
-        "IX": r16(Reg16::Ix), "IY": r16(Reg16::Iy), "I": r8(Reg8::I), "R": r8(Reg8::R),
-        "IFF1": cpu.iff1() as u8, "IFF2": cpu.iff2() as u8,
-        "IM": match cpu.im() { InterruptMode::Mode0 => 0, InterruptMode::Mode1 => 1, InterruptMode::Mode2 => 2 },
-        "ticks": motherboard.t_state_counter().value() / T_STATES_PER_NOP
-    })
+    serde_json::to_value(crate::state::Z80State::of(motherboard)).unwrap_or_default()
 }
 
 /// A binary to load: where, what, and where to start.

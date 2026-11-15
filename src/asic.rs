@@ -307,6 +307,11 @@ impl Asic {
         self.pri
     }
 
+    /// SPLT: the line of the split screen (0: none).
+    pub fn splt(&self) -> u8 {
+        self.splt
+    }
+
     /// IVR: the interrupt vector's bits 7-3, bit 0 the DMA interrupts' automatic clear.
     pub fn ivr(&self) -> u8 {
         self.ivr

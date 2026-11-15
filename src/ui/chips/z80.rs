@@ -3,22 +3,20 @@
 use super::*;
 
 /// The Z80's state beyond its registers: HALT, WZ, the bytes the pointers point at.
-pub fn z80(ui: &mut egui::Ui, mb: &Motherboard) {
+pub fn z80(ui: &mut egui::Ui, mb: &Motherboard, state: &crate::state::Z80State) {
     use crate::z80::{HasValue, Reg16};
     let cpu = mb.cpu();
     let r16 = |reg: Reg16| cpu.reg16(reg).value();
-    let pc = r16(Reg16::Pc);
     egui::Grid::new("z80-more").striped(true).show(ui, |ui| {
         ui.label("State");
-        // a HALT runs again until an interrupt: the PC stays on it
-        ui.monospace(if mb.read_byte(pc) == 0x76 {
+        ui.monospace(if state.halted {
             "HALT, waiting for an interrupt"
         } else {
             "running"
         });
         ui.end_row();
         ui.label("WZ (MEMPTR)");
-        ui.monospace(format!("&{:04X}", r16(Reg16::Wz)));
+        ui.monospace(format!("&{:04X}", state.wz));
         ui.end_row();
         for (name, reg) in [
             ("(HL)", Reg16::Hl),

@@ -5,17 +5,15 @@
 use std::collections::VecDeque;
 
 use crate::motherboard::Motherboard;
+#[cfg(test)]
+use crate::state::{nearest_note, tone_hz};
+use crate::state::{note_name, PSG_HZ};
 
-/// The AY's clock on a CPC: 1 MHz.
-const PSG_HZ: f64 = 1_000_000.0;
 /// The channels' colours, on the keyboard and the levels.
 const COLOURS: [egui::Color32; 3] = [
     egui::Color32::from_rgb(230, 80, 80),
     egui::Color32::from_rgb(80, 200, 100),
     egui::Color32::from_rgb(90, 140, 240),
-];
-const NAMES: [&str; 12] = [
-    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
 /// How many frames of levels the strip keeps.
 const HISTORY: usize = 150;
@@ -28,25 +26,6 @@ struct Memory {
     levels: VecDeque<[f32; 3]>,
     /// The machine's time of the last levels kept: a paused machine adds none.
     t_state: u64,
-}
-
-/// A tone's period (R0-R5) as a frequency.
-pub fn tone_hz(period: u16) -> f64 {
-    PSG_HZ / (16.0 * f64::from(period.max(1)))
-}
-
-/// The nearest note (MIDI number) and how far from it, in cents; `None` out of hearing.
-pub fn nearest_note(frequency: f64) -> Option<(i32, i32)> {
-    if !(16.0..20_000.0).contains(&frequency) {
-        return None;
-    }
-    let exact = 69.0 + 12.0 * (frequency / 440.0).log2();
-    let midi = exact.round();
-    Some((midi as i32, ((exact - midi) * 100.0).round() as i32))
-}
-
-fn note_name(midi: i32) -> String {
-    format!("{}{}", NAMES[midi.rem_euclid(12) as usize], midi / 12 - 1)
 }
 
 /// The envelope's level (0-15) along 3 periods of `shape` (R13), 32 steps a period, as the AY
@@ -106,8 +85,9 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard) {
 
     registers(ui, mb, &memory);
     ui.add_space(4.0);
-    let mixer = reg(7);
-    let mut notes = [None; 3];
+    // the same values as /api/psg
+    let state = crate::state::PsgState::of(mb);
+    let notes: [Option<i32>; 3] = std::array::from_fn(|c| state.channels[c].sounding());
     egui::Grid::new("psg-channels")
         .striped(true)
         .show(ui, |ui| {
@@ -115,39 +95,24 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard) {
                 ui.strong(heading);
             }
             ui.end_row();
-            for channel in 0..3u8 {
-                let period =
-                    u16::from(reg(channel * 2)) | u16::from(reg(channel * 2 + 1) & 0x0f) << 8;
-                let frequency = tone_hz(period);
-                let volume = reg(8 + channel);
-                let tone = mixer & (1 << channel) == 0;
+            for (index, channel) in state.channels.iter().enumerate() {
+                let period = channel.period;
                 ui.colored_label(
-                    COLOURS[usize::from(channel)],
-                    egui::RichText::new(["A", "B", "C"][usize::from(channel)]).strong(),
+                    COLOURS[index],
+                    egui::RichText::new(["A", "B", "C"][index]).strong(),
                 );
                 ui.monospace(format!("{period} (&{period:03X})"));
-                ui.monospace(format!("{frequency:.1} Hz"));
-                match nearest_note(frequency) {
-                    Some((midi, cents)) => {
-                        ui.monospace(format!("{} {cents:+}¢", note_name(midi)));
-                        if tone && volume != 0 {
-                            notes[usize::from(channel)] = Some(midi);
-                        }
-                    }
-                    None => {
-                        ui.monospace("-");
-                    }
-                }
-                ui.monospace(if tone { "on" } else { "off" });
-                ui.monospace(if mixer & (8 << channel) == 0 {
-                    "on"
-                } else {
-                    "off"
-                });
-                ui.monospace(if volume & 0x10 != 0 {
+                ui.monospace(format!("{:.1} Hz", channel.frequency_hz));
+                match (&channel.note, channel.cents) {
+                    (Some(note), Some(cents)) => ui.monospace(format!("{note} {cents:+}¢")),
+                    _ => ui.monospace("-"),
+                };
+                ui.monospace(if channel.tone { "on" } else { "off" });
+                ui.monospace(if channel.noise { "on" } else { "off" });
+                ui.monospace(if channel.envelope {
                     "envelope".to_owned()
                 } else {
-                    format!("{}", volume & 0x0f)
+                    format!("{}", channel.volume)
                 });
                 ui.end_row();
             }
@@ -157,23 +122,21 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard) {
     ui.add_space(4.0);
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            let noise = reg(6) & 0x1f;
-            let envelope = u16::from(reg(11)) | u16::from(reg(12)) << 8;
-            let shape = reg(13) & 0x0f;
+            let (noise, envelope, shape) = (state.noise, state.env_period, state.env_shape);
             ui.monospace(format!(
                 "Noise     period {noise:2}: {:.0} Hz",
-                PSG_HZ / (16.0 * f64::from(noise.max(1)))
+                state.noise_hz
             ));
             ui.monospace(format!(
                 "Envelope  period {envelope}: {:.2} Hz ({:.1} ms), shape {shape}",
-                PSG_HZ / (256.0 * f64::from(envelope.max(1))),
-                256.0 * f64::from(envelope.max(1)) / 1000.0
+                state.envelope_hz,
+                1000.0 / state.envelope_hz
             ));
             envelope_graph(ui, shape);
             ui.monospace(format!(
                 "Port A    &{:02X} ({})",
                 reg(14),
-                if psg.port_a_is_input() {
+                if state.port_a_input {
                     "input: the keyboard"
                 } else {
                     "output"

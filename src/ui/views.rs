@@ -208,7 +208,7 @@ fn address_link_to(
 fn crtc_status(
     ui: &mut egui::Ui,
     mb: &crate::motherboard::Motherboard,
-    beam: &Value,
+    beam: Option<crate::debug_server::Beam>,
     links: &mut Vec<Link>,
 ) {
     let crtc = mb.crtc();
@@ -223,11 +223,14 @@ fn crtc_status(
         .spacing([10.0, 3.0])
         .show(ui, |ui| {
             ui.label("Beam");
-            match (beam["x"].as_u64(), beam["line"].as_u64()) {
-                (Some(x), Some(line)) => {
-                    ui.monospace(format!("x {x} (NOP {}), line {line}", x / 16))
-                }
-                _ => ui.weak("known while debugging (paused, stepping)"),
+            match beam {
+                Some(beam) => ui.monospace(format!(
+                    "x {} (NOP {}), line {}",
+                    beam.x,
+                    beam.x / 16,
+                    beam.line
+                )),
+                None => ui.weak("known while debugging (paused, stepping)"),
             };
             ui.end_row();
             ui.label("Syncs");
@@ -320,19 +323,21 @@ impl ViewWindow for Z80 {
         let (target, bus, _) = cx.parts();
         let mb = target.motherboard();
         controls(ui, target, bus);
-        let z80 = inspect(target, "z80");
-        let flags = z80["F"].as_u64().unwrap_or(0) as u8;
+        // the same values as /api/z80
+        let z80 = crate::state::Z80State::of(mb);
         super::chips::registers(ui, mb, bus, &mut self.heat);
         ui.weak(format!(
             "{}: IM {}, IFF1 {}, IFF2 {}",
-            cpclib_dap::inspect::describe_flags(flags),
-            z80["IM"],
-            z80["IFF1"],
-            z80["IFF2"]
+            cpclib_dap::inspect::describe_flags(z80.f),
+            z80.im,
+            z80.iff1,
+            z80.iff2
         ));
         super::widgets::rule(ui);
-        super::chips::z80(ui, mb);
-        ui.collapsing("Raw (as /api/z80)", |ui| json_grid(ui, "z80", &z80));
+        super::chips::z80(ui, mb, &z80);
+        ui.collapsing("Raw (as /api/z80)", |ui| {
+            json_grid(ui, "z80", &inspect(target, "z80"))
+        });
     }
 }
 
@@ -404,7 +409,6 @@ pub(super) fn stack(ui: &mut egui::Ui, cx: &mut Cx) {
 pub(super) fn crtc(ui: &mut egui::Ui, cx: &mut Cx) {
     let (target, _, links) = cx.parts();
     let mb = target.motherboard();
-    let crtc = inspect(target, "crtc");
     ui.label(format!(
         "{} ({})",
         mb.crtc().chip_name(),
@@ -418,12 +422,14 @@ pub(super) fn crtc(ui: &mut egui::Ui, cx: &mut Cx) {
         ui.add_space(16.0);
         ui.vertical(|ui| {
             ui.strong("Status");
-            crtc_status(ui, mb, &inspect(target, "beam"), links);
+            crtc_status(ui, mb, target.debugger().and_then(|d| d.beam()), links);
         });
     });
     super::widgets::rule(ui);
     super::chips::crtc(ui, mb);
-    ui.collapsing("Raw (as /api/crtc)", |ui| json_grid(ui, "crtc", &crtc));
+    ui.collapsing("Raw (as /api/crtc)", |ui| {
+        json_grid(ui, "crtc", &inspect(target, "crtc"))
+    });
 }
 
 pub(super) fn gate_array(ui: &mut egui::Ui, cx: &mut Cx) {
