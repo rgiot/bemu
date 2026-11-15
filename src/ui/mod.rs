@@ -232,8 +232,8 @@ impl Gui {
         bus: &mut CommandBus,
     ) -> Option<(egui::FullOutput, egui::Vec2)> {
         let key = ViewKey(key);
+        // the interface zoom is the emulator window's: the debugger's windows keep their size
         let ctx = self.view_contexts.get(&key)?.clone();
-        apply_zoom(&ctx, target);
         let windows = &mut self.windows;
         let mut wanted = egui::Vec2::ZERO;
         let output = ctx.run(raw, |ctx| {
