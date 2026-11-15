@@ -148,23 +148,12 @@ const CONVENTIONS: &[&str] = &[
 ];
 
 pub(super) const OPERATIONS: &[Operation] = &[
-    op("GET", "/api/ping", "Is the server there; the emulator's description.", "{ok, emu: {cpc_model, crtc_type, paused, frames, fps, ticks (T-states run), applied_cmd_seq, ram_apply_seq, autotyping, autotype_remaining}, frontend: \"bemu\", version, features: [step_modes, run_to, z80_bp_edit, stop_reason, register_pairs, raster_names]}"),
     op(
         "GET",
         "/api/state",
         "Everything at once: the Z80 registers, the Gate Array, the CRTC, the PSG, the FDC, the beam and the emulator.",
         "{z80, ga, crtc, psg, fdc, beam (null without a monitor), emu}: as the endpoints of the same names"
     ),
-    op("GET", "/api/z80", "The Z80 registers.", "{PC, SP, IX, IY, A, F, B, C, D, E, H, L, A2..L2, I, R, IFF1, IFF2, IM, ticks}"),
-    op("POST", "/api/z80", "Set Z80 registers; all are checked before any changes.", OK)
-        .params(&[
-            b("PC", "integer", "any 16-bit register by name: PC, SP, AF, BC, DE, HL, IX, IY, AF2, BC2, DE2, HL2 (a pair sets its two halves)"),
-            b("A", "integer", "any 8-bit register by name: A, F, B, C, D, E, H, L, the A2..L2 alternates, I, R"),
-            b("IFF1", "integer", "0 or 1"),
-            b("IFF2", "integer", "0 or 1"),
-            b("IM", "integer", "interrupt mode, 0 to 2")
-        ])
-        .example("", r#"{"BC":"0x7f10","A":84}"#),
     op("GET", "/api/ram", "Read memory as hex.", "{addr, len, hex, view?}")
         .params(&[
             q("addr", "integer", "first byte (default 0)"),
@@ -185,15 +174,6 @@ pub(super) const OPERATIONS: &[Operation] = &[
     op("POST", "/api/exec", "Set PC.", "{ok, seq, cmd_seq}")
         .params(&[b("addr", "integer", "the new PC").required()])
         .example("", r#"{"addr":"0x4000"}"#),
-    op(
-        "POST",
-        "/api/step",
-        "Run one instruction, then pause (a z80_bp event, reason step); or step over it (a CALL, RST, DJNZ or block \
-         loop run whole: reason run_to), out of the routine (reason step_out), or to the end of the frame (a pause event).",
-        OK
-    )
-    .params(&[q("mode", "string", "in (default), over, out or frame")])
-    .example("mode=over", ""),
     op(
         "POST",
         "/api/run_to",
@@ -458,6 +438,24 @@ fn operations_of(path: &str) -> impl Iterator<Item = &'static Operation> + '_ {
     OPERATIONS.iter().filter(move |o| o.path == path)
 }
 
+/// The OpenAPI description generated from the typed routes' types (see `http.rs`), `Null` where
+/// the API is not served over HTTP (the web page).
+fn typed() -> Value {
+    #[cfg(not(target_arch = "wasm32"))]
+    return super::http::openapi();
+    #[cfg(target_arch = "wasm32")]
+    Value::Null
+}
+
+/// A typed route's operation, as the generated description has it.
+fn typed_operation<'t>(typed: &'t Value, method: &str, path: &str) -> Option<&'t Value> {
+    typed
+        .get("paths")?
+        .get(path)?
+        .get(method.to_ascii_lowercase())
+        .filter(|op| op.is_object())
+}
+
 fn doc_link(route: &Route) -> String {
     format!(
         "/api/doc?endpoint={}",
@@ -495,10 +493,28 @@ pub(super) fn endpoint(name: &str) -> Option<Value> {
     let route = ROUTES
         .iter()
         .find(|r| r.path.trim_start_matches("/api/") == name)?;
+    let typed = typed();
+    let operations: Vec<Value> = route
+        .methods
+        .iter()
+        .filter_map(|method| {
+            match operations_of(route.path).find(|o| o.method == *method) {
+                Some(operation) => Some(operation_json(operation)),
+                // generated from its types: the operation as OpenAPI describes it
+                None => typed_operation(&typed, method, route.path).map(|op| {
+                    json!({
+                        "method": method,
+                        "description": op.get("description").or(op.get("summary")),
+                        "openapi": op
+                    })
+                }),
+            }
+        })
+        .collect();
     let mut value = json!({
         "path": route.path,
         "summary": route.summary,
-        "operations": operations_of(route.path).map(operation_json).collect::<Vec<_>>()
+        "operations": operations
     });
     if route.extension {
         value["extension"] = json!(true);
@@ -516,8 +532,37 @@ fn schema_of(kind: &str) -> Value {
     }
 }
 
-/// `GET /api/doc?format=openapi`: an OpenAPI 3.0 description.
+/// `GET /api/doc?format=openapi`: an OpenAPI 3.1 description, the typed routes' generated from
+/// their types, the others' from the operations above.
 pub(super) fn openapi() -> Value {
+    let mut api = documented_openapi();
+    let typed = typed();
+    if let (Some(paths), Some(typed_paths)) = (
+        api["paths"].as_object_mut(),
+        typed.get("paths").and_then(Value::as_object),
+    ) {
+        for (path, item) in typed_paths {
+            let entry = paths.entry(path.clone()).or_insert_with(|| json!({}));
+            if let (Some(entry), Some(item)) = (entry.as_object_mut(), item.as_object()) {
+                for (method, operation) in item {
+                    entry.insert(method.clone(), operation.clone());
+                }
+            }
+        }
+    }
+    if let (Some(schemas), Some(typed_schemas)) = (
+        api["components"]["schemas"].as_object_mut(),
+        typed["components"]["schemas"].as_object(),
+    ) {
+        for (name, schema) in typed_schemas {
+            schemas.insert(name.clone(), schema.clone());
+        }
+    }
+    api
+}
+
+/// The operations documented above, as OpenAPI.
+fn documented_openapi() -> Value {
     let mut paths = Map::new();
     for route in ROUTES {
         let mut item = Map::new();
@@ -603,7 +648,7 @@ pub(super) fn openapi() -> Value {
         paths.insert(route.path.to_owned(), Value::Object(item));
     }
     json!({
-        "openapi": "3.0.3",
+        "openapi": "3.1.0",
         "info": {
             "title": "bemu debug server",
             "version": env!("CARGO_PKG_VERSION"),
@@ -647,7 +692,8 @@ pub(super) fn html() -> String {
     );
     page.push_str(&format!(
         "<p>The AMSpiriT-Lite debug API, with bemu's extensions (marked <span class=ext>extension</span>). \
-         Also as <a href=\"/api/doc\">JSON</a> and <a href=\"/api/doc?format=openapi\">OpenAPI 3</a>. Version {}.</p><ul>",
+         Also as <a href=\"/api/doc\">JSON</a>, <a href=\"/api/doc?format=openapi\">OpenAPI 3.1</a> and \
+         <a href=\"/api/doc/ui\">an interactive reference</a>. Version {}.</p><ul>",
         env!("CARGO_PKG_VERSION")
     ));
     for convention in CONVENTIONS {
@@ -668,6 +714,21 @@ pub(super) fn html() -> String {
             page.push_str(" <span class=ext>extension</span>");
         }
         page.push_str("</h2>");
+        let typed = typed();
+        for method in route.methods {
+            if operations_of(route.path).any(|o| o.method == *method) {
+                continue;
+            }
+            if let Some(op) = typed_operation(&typed, method, route.path) {
+                let text = op.get("description").or(op.get("summary")).and_then(Value::as_str).unwrap_or("");
+                page.push_str(&format!(
+                    "<h3><code>{method} {}</code></h3><p>{}</p><p>Generated from its types: \
+                     see <a href=\"/api/doc/ui\">the interactive reference</a>.</p>",
+                    route.path,
+                    escape(text)
+                ));
+            }
+        }
         for operation in operations_of(route.path) {
             page.push_str(&format!(
                 "<h3><code>{} {}</code></h3><p>{}</p>",
@@ -734,12 +795,14 @@ mod test {
 
     #[test]
     fn every_route_and_method_is_documented_once() {
+        let typed = typed();
         for route in ROUTES {
             for method in route.methods {
                 let count = OPERATIONS
                     .iter()
                     .filter(|o| o.path == route.path && o.method == *method)
-                    .count();
+                    .count()
+                    + usize::from(typed_operation(&typed, method, route.path).is_some());
                 assert_eq!(count, 1, "{method} {}", route.path);
             }
         }
@@ -848,7 +911,14 @@ mod test {
         assert_eq!(get("format=yaml").status, 400);
 
         let openapi: Value = serde_json::from_slice(&get("format=openapi").body).unwrap();
-        assert_eq!(openapi["openapi"], "3.0.3");
+        assert_eq!(openapi["openapi"], "3.1.0");
+        // The typed routes, from their types.
+        assert_eq!(openapi["paths"]["/api/step"]["post"]["parameters"][0]["name"], "mode");
+        assert!(openapi["components"]["schemas"]["SetZ80"].is_object());
+        assert!(openapi["components"]["schemas"]["Error"].is_object());
+        let step: Value = serde_json::from_slice(&get("endpoint=step").body).unwrap();
+        assert_eq!(step["operations"][0]["method"], "POST", "{step}");
+        assert!(step["operations"][0]["openapi"]["parameters"].is_array(), "{step}");
         let breakpoints = &openapi["paths"]["/api/breakpoints"];
         assert_eq!(breakpoints["post"]["x-bemu-extension"], true);
         assert_eq!(

@@ -37,10 +37,10 @@
 //! run. Replies identify this emulator with `"frontend":"bemu"`.
 
 mod api_doc;
+#[cfg(not(target_arch = "wasm32"))]
+mod http;
 
 use std::collections::{HashSet, VecDeque};
-#[cfg(not(target_arch = "wasm32"))]
-use std::io::Write;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -49,6 +49,7 @@ use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
+use bemu_api::{CommandAck, EmuState, Int, Ping, SetZ80, StepMode, StepQuery, Z80Registers, FEATURES};
 use serde_json::{json, Value};
 
 use crate::basic_program::{self, BasicState};
@@ -206,20 +207,6 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/basic_bp", methods: &["GET", "POST"], summary: "BASIC line breakpoints: comma-separated line numbers, empty clears", extension: false },
     Route { path: "/api/basic_runto", methods: &["POST"], summary: "run to a BASIC line (?line=) or statement (?addr=), once", extension: false },
     Route { path: "/api/doc", methods: &["GET"], summary: "this documentation: ?endpoint= one in detail, ?format=openapi|html", extension: false }
-];
-
-/// What a client can count on, beyond the AMSpiriT API, said in `/api/ping`'s `features`:
-/// `step_modes` (`/api/step?mode=over|out|frame`), `run_to` (`/api/run_to`), `z80_bp_edit`
-/// (`/api/z80_bp?add=1`, `DELETE /api/z80_bp`), `stop_reason` (a `reason` and the `cmd_seq` in
-/// the stop and pause events), `register_pairs` (`POST /api/z80` takes `HL`, `BC2`...),
-/// `raster_names` (a raster breakpoint's `name`, and its `index` in its stop event).
-const FEATURES: &[&str] = &[
-    "step_modes",
-    "run_to",
-    "z80_bp_edit",
-    "stop_reason",
-    "register_pairs",
-    "raster_names",
 ];
 
 /// Where a BASIC step or run-to stops.
@@ -406,7 +393,7 @@ pub struct DebugServer {
     step_frame: bool,
     /// The HTTP server, when the API is served.
     #[cfg(not(target_arch = "wasm32"))]
-    listener: Option<(u16, std::sync::Arc<tiny_http::Server>)>,
+    listener: Option<http::Listener>,
 }
 
 /// AMSpiriT's default depth of `GET /api/history`.
@@ -504,43 +491,24 @@ impl DebugServer {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn listen(&mut self, port: u16) -> Result<(), String> {
         self.stop_listening();
-        // the server just stopped may hold the port a moment
-        let mut tries = 0;
-        let server = loop {
-            match tiny_http::Server::http(("127.0.0.1", port)) {
-                Ok(server) => break std::sync::Arc::new(server),
-                Err(_) if tries < 20 => {
-                    tries += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(25));
-                }
-                Err(e) => return Err(format!("debug server on port {port}: {e}")),
-            }
-        };
         let (sender, requests) = mpsc::channel();
+        self.listener = Some(http::listen(port, sender, self.events.clone())?);
         self.requests = requests;
-        let events = self.events.clone();
-        let served = std::sync::Arc::clone(&server);
-        std::thread::Builder::new()
-            .name("debug-server".to_owned())
-            .spawn(move || serve(&served, sender, events))
-            .map_err(|e| e.to_string())?;
-        self.listener = Some((port, server));
         Ok(())
     }
 
     /// Stop serving the API (the debugger stays, breakpoints and all).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn stop_listening(&mut self) {
-        if let Some((_, server)) = self.listener.take() {
-            server.unblock();
-        }
+        // dropped: stopped
+        self.listener = None;
         self.requests = mpsc::channel().1;
     }
 
     /// The port the API is served on, if it is.
     pub fn listening_port(&self) -> Option<u16> {
         #[cfg(not(target_arch = "wasm32"))]
-        return self.listener.as_ref().map(|(port, _)| *port);
+        return self.listener.as_ref().map(|listener| listener.port);
         #[cfg(target_arch = "wasm32")]
         None
     }
@@ -1252,28 +1220,14 @@ impl DebugServer {
             return response;
         }
         let result = match (request.method.as_str(), request.path.as_str()) {
-            ("GET", "/api/ping") => Ok(ApiResponse::ok(json!({
-                "ok": true,
-                "emu": self.emu(motherboard),
-                "frontend": "bemu",
-                "version": env!("CARGO_PKG_VERSION"),
-                "features": FEATURES
-            }))),
+            ("GET", "/api/ping") => Ok(ApiResponse::ok(to_json(&self.ping(motherboard)))),
             ("GET", "/api/state") => Ok(ApiResponse::ok(self.state(motherboard))),
-            ("GET", "/api/z80") => Ok(ApiResponse::ok(z80(motherboard))),
+            ("GET", "/api/z80") => Ok(ApiResponse::ok(to_json(&z80_registers(motherboard)))),
             ("POST", "/api/z80") => self.set_z80(request, motherboard),
             ("GET", "/api/ram") => read_ram(request, motherboard),
             ("POST", "/api/ram") => self.write_ram(request, motherboard),
             ("POST", "/api/exec") => self.exec(request, motherboard),
-            ("POST", "/api/step") => match request.param("mode").unwrap_or("in") {
-                mode @ ("in" | "over" | "out" | "frame") => self
-                    .run_command(&format!("debug-step-{mode}"), None, motherboard)
-                    .map(|()| ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.cmd_seq }))),
-                other => Err(ApiError::field(
-                    "mode",
-                    format!("{other}: expected in, over, out or frame"),
-                )),
-            },
+            ("POST", "/api/step") => self.step_request(request, motherboard),
             ("POST", "/api/run_to") => self.run_to_request(request, motherboard),
             ("GET", "/api/config") => Ok(ApiResponse::ok(json!({
                 "crtc_type": motherboard.crtc().crtc_type() as u8,
@@ -1380,19 +1334,19 @@ impl DebugServer {
 
     // ------------------------------------------------------------ state
 
-    fn emu(&self, motherboard: &Motherboard) -> Value {
-        json!({
-            "fps": self.fps,
-            "frames": self.frames,
-            "ticks": motherboard.t_state_counter().value() / T_STATES_PER_NOP,
-            "paused": self.paused,
-            "cpc_model": motherboard.model().name(),
-            "crtc_type": motherboard.crtc().crtc_type() as u8,
-            "autotyping": !self.typing.is_empty() || self.typed_pressed.is_some(),
-            "autotype_remaining": self.typing.len(),
-            "ram_apply_seq": self.ram_seq,
-            "applied_cmd_seq": self.applied_cmd_seq
-        })
+    fn emu(&self, motherboard: &Motherboard) -> EmuState {
+        EmuState {
+            fps: self.fps,
+            frames: self.frames,
+            ticks: (motherboard.t_state_counter().value() / T_STATES_PER_NOP) as u64,
+            paused: self.paused,
+            cpc_model: motherboard.model().name().to_string(),
+            crtc_type: motherboard.crtc().crtc_type() as u8,
+            autotyping: !self.typing.is_empty() || self.typed_pressed.is_some(),
+            autotype_remaining: self.typing.len() as u64,
+            ram_apply_seq: self.ram_seq,
+            applied_cmd_seq: self.applied_cmd_seq,
+        }
     }
 
     fn state(&self, motherboard: &Motherboard) -> Value {
@@ -1403,7 +1357,7 @@ impl DebugServer {
             "psg": psg(motherboard),
             "fdc": fdc(motherboard),
             "beam": self.beam.map(beam_json),
-            "emu": self.emu(motherboard)
+            "emu": to_json(&self.emu(motherboard))
         })
     }
 
@@ -1719,67 +1673,83 @@ impl DebugServer {
 
     // --------------------------------------------------------- commands
 
+    /// `POST /api/z80`.
     fn set_z80(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.text())?;
+        let set: SetZ80 = body_as(request)?;
+        let ack = self.apply_z80(&set, motherboard)?;
+        Ok(ApiResponse::ok(to_json(&ack)))
+    }
+
+    /// Set the registers `set` names; all are checked before any changes.
+    fn apply_z80(&mut self, set: &SetZ80, motherboard: &mut Motherboard) -> Result<CommandAck, ApiError> {
+        let check = |name: &str, value: Option<Int>, max: i64| -> Result<Option<i64>, ApiError> {
+            value
+                .map(|v| {
+                    v.within(0, max).ok_or_else(|| {
+                        ApiError::field(name, format!("field \"{name}\" must be between 0 and {max}"))
+                    })
+                })
+                .transpose()
+        };
         let words = [
-            ("PC", Reg16::Pc),
-            ("SP", Reg16::Sp),
-            ("IX", Reg16::Ix),
-            ("IY", Reg16::Iy),
-        ];
-        let bytes = [
-            ("A", Reg8::A),
-            ("F", Reg8::F),
-            ("B", Reg8::B),
-            ("C", Reg8::C),
-            ("D", Reg8::D),
-            ("E", Reg8::E),
-            ("H", Reg8::H),
-            ("L", Reg8::L),
-            ("A2", Reg8::A2),
-            ("F2", Reg8::F2),
-            ("B2", Reg8::B2),
-            ("C2", Reg8::C2),
-            ("D2", Reg8::D2),
-            ("E2", Reg8::E2),
-            ("H2", Reg8::H2),
-            ("L2", Reg8::L2),
-            ("I", Reg8::I),
-            ("R", Reg8::R),
+            ("PC", set.PC, Reg16::Pc),
+            ("SP", set.SP, Reg16::Sp),
+            ("IX", set.IX, Reg16::Ix),
+            ("IY", set.IY, Reg16::Iy),
         ];
         // the pairs, set by their halves
         let pairs = [
-            ("AF", Reg8::A, Reg8::F),
-            ("BC", Reg8::B, Reg8::C),
-            ("DE", Reg8::D, Reg8::E),
-            ("HL", Reg8::H, Reg8::L),
-            ("AF2", Reg8::A2, Reg8::F2),
-            ("BC2", Reg8::B2, Reg8::C2),
-            ("DE2", Reg8::D2, Reg8::E2),
-            ("HL2", Reg8::H2, Reg8::L2),
+            ("AF", set.AF, Reg8::A, Reg8::F),
+            ("BC", set.BC, Reg8::B, Reg8::C),
+            ("DE", set.DE, Reg8::D, Reg8::E),
+            ("HL", set.HL, Reg8::H, Reg8::L),
+            ("AF2", set.AF2, Reg8::A2, Reg8::F2),
+            ("BC2", set.BC2, Reg8::B2, Reg8::C2),
+            ("DE2", set.DE2, Reg8::D2, Reg8::E2),
+            ("HL2", set.HL2, Reg8::H2, Reg8::L2),
+        ];
+        let bytes = [
+            ("A", set.A, Reg8::A),
+            ("F", set.F, Reg8::F),
+            ("B", set.B, Reg8::B),
+            ("C", set.C, Reg8::C),
+            ("D", set.D, Reg8::D),
+            ("E", set.E, Reg8::E),
+            ("H", set.H, Reg8::H),
+            ("L", set.L, Reg8::L),
+            ("A2", set.A2, Reg8::A2),
+            ("F2", set.F2, Reg8::F2),
+            ("B2", set.B2, Reg8::B2),
+            ("C2", set.C2, Reg8::C2),
+            ("D2", set.D2, Reg8::D2),
+            ("E2", set.E2, Reg8::E2),
+            ("H2", set.H2, Reg8::H2),
+            ("L2", set.L2, Reg8::L2),
+            ("I", set.I, Reg8::I),
+            ("R", set.R, Reg8::R),
         ];
         // Validate everything before changing anything.
         let mut word_values = Vec::new();
-        for (name, reg) in words {
-            if let Some(v) = int_field(&body, name, 0, 0xffff)? {
+        for (name, value, reg) in words {
+            if let Some(v) = check(name, value, 0xffff)? {
                 word_values.push((reg, v as u16));
             }
         }
         let mut byte_values = Vec::new();
-        for (name, high, low) in pairs {
-            if let Some(v) = int_field(&body, name, 0, 0xffff)? {
+        for (name, value, high, low) in pairs {
+            if let Some(v) = check(name, value, 0xffff)? {
                 byte_values.push((high, (v >> 8) as u8));
                 byte_values.push((low, v as u8));
             }
         }
-        for (name, reg) in bytes {
-            if let Some(v) = int_field(&body, name, 0, 0xff)? {
+        for (name, value, reg) in bytes {
+            if let Some(v) = check(name, value, 0xff)? {
                 byte_values.push((reg, v as u8));
             }
         }
-        let iff1 = int_field(&body, "IFF1", 0, 1)?;
-        let iff2 = int_field(&body, "IFF2", 0, 1)?;
-        let im = int_field(&body, "IM", 0, 2)?;
+        let iff1 = check("IFF1", set.IFF1, 1)?;
+        let iff2 = check("IFF2", set.IFF2, 1)?;
+        let im = check("IM", set.IM, 2)?;
         if word_values.is_empty()
             && byte_values.is_empty()
             && iff1.is_none()
@@ -1814,9 +1784,37 @@ impl DebugServer {
                 ][im as usize],
             );
         }
-        Ok(ApiResponse::ok(
-            json!({ "ok": true, "cmd_seq": self.command() }),
-        ))
+        Ok(CommandAck::new(self.command()))
+    }
+
+    /// `POST /api/step`.
+    fn step_request(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
+        let query: StepQuery = query_as(request)?;
+        let ack = self.step_by(query.mode.unwrap_or_default(), motherboard)?;
+        Ok(ApiResponse::ok(to_json(&ack)))
+    }
+
+    /// Run as far as `mode` says, then pause.
+    fn step_by(&mut self, mode: StepMode, motherboard: &mut Motherboard) -> Result<CommandAck, ApiError> {
+        let command = match mode {
+            StepMode::In => "debug-step-in",
+            StepMode::Over => "debug-step-over",
+            StepMode::Out => "debug-step-out",
+            StepMode::Frame => "debug-step-frame",
+        };
+        self.run_command(command, None, motherboard)?;
+        Ok(CommandAck::new(self.cmd_seq))
+    }
+
+    /// `GET /api/ping`.
+    fn ping(&self, motherboard: &Motherboard) -> Ping {
+        Ping {
+            ok: true,
+            emu: self.emu(motherboard),
+            frontend: "bemu".to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            features: FEATURES.iter().map(|f| (*f).to_owned()).collect(),
+        }
     }
 
     fn write_ram(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
@@ -2733,20 +2731,45 @@ fn memmap(motherboard: &Motherboard) -> Value {
 }
 
 fn z80(motherboard: &Motherboard) -> Value {
+    to_json(&z80_registers(motherboard))
+}
+
+fn z80_registers(motherboard: &Motherboard) -> Z80Registers {
     let cpu = motherboard.cpu();
     let r8 = |reg: Reg8| cpu.reg8(reg).get();
     let r16 = |reg: Reg16| cpu.reg16(reg).get();
-    json!({
-        "PC": r16(Reg16::Pc), "SP": r16(Reg16::Sp),
-        "A": r8(Reg8::A), "F": r8(Reg8::F), "B": r8(Reg8::B), "C": r8(Reg8::C),
-        "D": r8(Reg8::D), "E": r8(Reg8::E), "H": r8(Reg8::H), "L": r8(Reg8::L),
-        "A2": r8(Reg8::A2), "F2": r8(Reg8::F2), "B2": r8(Reg8::B2), "C2": r8(Reg8::C2),
-        "D2": r8(Reg8::D2), "E2": r8(Reg8::E2), "H2": r8(Reg8::H2), "L2": r8(Reg8::L2),
-        "IX": r16(Reg16::Ix), "IY": r16(Reg16::Iy), "I": r8(Reg8::I), "R": r8(Reg8::R),
-        "IFF1": cpu.iff1() as u8, "IFF2": cpu.iff2() as u8,
-        "IM": match cpu.im() { InterruptMode::Mode0 => 0, InterruptMode::Mode1 => 1, InterruptMode::Mode2 => 2 },
-        "ticks": motherboard.t_state_counter().value() / T_STATES_PER_NOP
-    })
+    Z80Registers {
+        PC: r16(Reg16::Pc),
+        SP: r16(Reg16::Sp),
+        IX: r16(Reg16::Ix),
+        IY: r16(Reg16::Iy),
+        A: r8(Reg8::A),
+        F: r8(Reg8::F),
+        B: r8(Reg8::B),
+        C: r8(Reg8::C),
+        D: r8(Reg8::D),
+        E: r8(Reg8::E),
+        H: r8(Reg8::H),
+        L: r8(Reg8::L),
+        A2: r8(Reg8::A2),
+        F2: r8(Reg8::F2),
+        B2: r8(Reg8::B2),
+        C2: r8(Reg8::C2),
+        D2: r8(Reg8::D2),
+        E2: r8(Reg8::E2),
+        H2: r8(Reg8::H2),
+        L2: r8(Reg8::L2),
+        I: r8(Reg8::I),
+        R: r8(Reg8::R),
+        IFF1: cpu.iff1() as u8,
+        IFF2: cpu.iff2() as u8,
+        IM: match cpu.im() {
+            InterruptMode::Mode0 => 0,
+            InterruptMode::Mode1 => 1,
+            InterruptMode::Mode2 => 2,
+        },
+        ticks: (motherboard.t_state_counter().value() / T_STATES_PER_NOP) as u64,
+    }
 }
 
 /// A binary to load: where, what, and where to start.
@@ -3207,6 +3230,60 @@ fn parse_body(body: &str) -> Result<Value, ApiError> {
 
 /// AMSpiriT looks keys up "flatly, at any depth": `{"a":1}` and
 /// `{"x":{"a":1}}` both carry `a`.
+/// A reply, as JSON.
+fn to_json<T: serde::Serialize>(value: &T) -> Value {
+    serde_json::to_value(value).expect("the API's replies are JSON")
+}
+
+/// The query as `T` (see [`bemu_api`]): each parameter a string, [`Int`] reads numbers from them.
+fn query_as<T: serde::de::DeserializeOwned>(request: &ApiRequest) -> Result<T, ApiError> {
+    let map: serde_json::Map<String, Value> = request
+        .query
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+    serde_path_to_error::deserialize(Value::Object(map)).map_err(typed_error)
+}
+
+/// The JSON body as `T` (see [`bemu_api`]), its fields lifted from any depth first, as
+/// [`find_key`] finds them.
+fn body_as<T: serde::de::DeserializeOwned>(request: &ApiRequest) -> Result<T, ApiError> {
+    let body = parse_body(&request.text())?;
+    serde_path_to_error::deserialize(lift_fields(&body)).map_err(typed_error)
+}
+
+fn typed_error(error: serde_path_to_error::Error<serde_json::Error>) -> ApiError {
+    let path = error.path().to_string();
+    let message = error.into_inner().to_string();
+    if path == "." {
+        ApiError::new(message)
+    } else {
+        ApiError::field(&path, format!("field \"{path}\": {message}"))
+    }
+}
+
+/// Every field of `value` at the top level, wherever it is nested: the one [`find_key`]
+/// would find for each name (the nearest, the first in order).
+fn lift_fields(value: &Value) -> Value {
+    fn walk(value: &Value, out: &mut serde_json::Map<String, Value>) {
+        match value {
+            Value::Object(map) => {
+                for (key, v) in map {
+                    out.entry(key.clone()).or_insert_with(|| v.clone());
+                }
+                for v in map.values() {
+                    walk(v, out);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|v| walk(v, out)),
+            _ => {}
+        }
+    }
+    let mut out = serde_json::Map::new();
+    walk(value, &mut out);
+    Value::Object(out)
+}
+
 fn find_key<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
     match value {
         Value::Object(map) => map
@@ -3261,114 +3338,6 @@ fn parse_hex(text: &str) -> Option<Vec<u8>> {
 // --------------------------------------------------------------- HTTP
 
 /// The HTTP thread: parse, hand to the emulation thread, write the answer.
-#[cfg(not(target_arch = "wasm32"))]
-fn serve(
-    server: &tiny_http::Server,
-    sender: Sender<(ApiRequest, Sender<ApiResponse>)>,
-    events: EventHub,
-) {
-    for mut request in server.incoming_requests() {
-        let url = request.url().to_owned();
-        let (path, query) = url.split_once('?').unwrap_or((&url, ""));
-        if path == "/api/events" && *request.method() == tiny_http::Method::Get {
-            let topics = query
-                .split('&')
-                .find_map(|pair| pair.strip_prefix("topics="))
-                .map(|list| {
-                    list.split(',')
-                        .filter(|t| !t.is_empty())
-                        .map(str::to_owned)
-                        .collect()
-                });
-            match events.subscribe(topics) {
-                Some(queue) => {
-                    let writer = request.into_writer();
-                    let _ = std::thread::Builder::new()
-                        .name("debug-server-events".to_owned())
-                        .spawn(move || stream_events(writer, queue));
-                }
-                None => {
-                    let body = json!({ "error": format!("too many event clients (max {MAX_SSE_CLIENTS})") });
-                    let _ = request.respond(
-                        tiny_http::Response::from_string(body.to_string()).with_status_code(503),
-                    );
-                }
-            }
-            continue;
-        }
-        let query = query
-            .split('&')
-            .filter(|pair| !pair.is_empty())
-            .map(|pair| {
-                let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-                (percent_decode(k), percent_decode(v))
-            })
-            .collect();
-        let mut body = Vec::new();
-        let _ = request.as_reader().read_to_end(&mut body);
-        let api_request = ApiRequest {
-            method: request.method().as_str().to_uppercase(),
-            path: path.to_owned(),
-            query,
-            body,
-        };
-        let (reply_sender, reply) = mpsc::channel();
-        let response = match sender.send((api_request, reply_sender)) {
-            Ok(()) => reply
-                .recv_timeout(Duration::from_secs(5))
-                .unwrap_or_else(|_| {
-                    ApiResponse::json(503, json!({ "error": "the emulation did not answer" }))
-                }),
-            Err(_) => return, // the emulation is gone
-        };
-        let mut http = tiny_http::Response::from_data(response.body)
-            .with_status_code(response.status)
-            .with_header(header("Content-Type", response.content_type))
-            .with_header(header("Access-Control-Allow-Origin", "*"))
-            .with_header(header("Cache-Control", "no-store"));
-        for (name, value) in &response.headers {
-            http = http.with_header(header(name, value));
-        }
-        let _ = request.respond(http);
-    }
-}
-
-/// One SSE client's connection: HTTP/1.1 headers, then the events as they
-/// come, a `: ping` comment after 15s of silence.
-#[cfg(not(target_arch = "wasm32"))]
-fn stream_events(mut writer: Box<dyn Write + Send>, queue: Arc<(Mutex<SseQueue>, Condvar)>) {
-    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\
-                Access-Control-Allow-Origin: *\r\nConnection: keep-alive\r\n\r\n";
-    let mut ok = writer
-        .write_all(head.as_bytes())
-        .and_then(|()| writer.flush())
-        .is_ok();
-    while ok {
-        let (lock, ready) = &*queue;
-        let pending: Vec<String> = {
-            let guard = lock.lock().unwrap();
-            let (mut guard, _) = ready
-                .wait_timeout_while(guard, SSE_HEARTBEAT, |q| q.events.is_empty())
-                .unwrap();
-            guard.events.drain(..).collect()
-        };
-        ok = if pending.is_empty() {
-            writer.write_all(b": ping\n\n")
-        } else {
-            pending
-                .iter()
-                .try_for_each(|event| writer.write_all(event.as_bytes()))
-        }
-        .and_then(|()| writer.flush())
-        .is_ok();
-    }
-    queue.0.lock().unwrap().closed = true;
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn header(name: &str, value: &str) -> tiny_http::Header {
-    tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()).unwrap()
-}
 
 #[cfg(test)]
 mod test {
