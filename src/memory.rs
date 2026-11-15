@@ -721,6 +721,21 @@ impl Memory {
         bank.write(MemoryConfig::relative_address_at(addr), val);
     }
 
+    /// The cartridge page upper ROM `number` reads on a CPC+ (`None`: a ROM of its own, or a
+    /// CPC): 128-159 the cartridge's pages, the disc ROM's number its AMSDOS page, any other
+    /// BASIC (page 1) - as [`Self::upper_rom_bank`] picks it.
+    pub fn cartridge_page_of_upper_rom(&self, number: u8) -> Option<u8> {
+        self.cartridge.as_ref()?;
+        if let Some(Some(_)) = self.upper_roms.get(usize::from(number)) {
+            return None;
+        }
+        Some(match number {
+            0x80.. => number & 0x1f,
+            7 if self.cartridge_disc_rom => 3,
+            _ => 1,
+        })
+    }
+
     /// TODO implement properly the behavior when a rom indice is wrong
     fn upper_rom_bank<'a>(&'a self, number: u8, expansion: Option<&'a dyn Expansion>) -> &'a Bank {
         if let Some(rom) = expansion.and_then(|e| e.upper_rom(number)) {

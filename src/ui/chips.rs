@@ -5,6 +5,11 @@ use crate::commands::{Arg, Command, CommandBus};
 use crate::ga::RgbLevels;
 use crate::motherboard::Motherboard;
 
+/// A colour of the CPC's levels (0-100 each).
+pub fn rgb_color(levels: RgbLevels) -> egui::Color32 {
+    color(levels)
+}
+
 fn color(levels: RgbLevels) -> egui::Color32 {
     let byte = |level: f32| (level * 255.0 / 100.0).round().clamp(0.0, 255.0) as u8;
     egui::Color32::from_rgb(byte(levels.r()), byte(levels.g()), byte(levels.b()))
@@ -785,6 +790,62 @@ pub fn memory_map(ui: &mut egui::Ui, mb: &Motherboard) {
             }
         });
     ui.add_space(6.0);
+    // a CPC+: its cartridge (the system one, or one inserted), each page by its ROM name
+    if let Some(cartridge) = mb.any_cartridge() {
+        let system = mb.cartridge().is_none();
+        ui.strong(format!(
+            "Cartridge: {}, {} pages of 16K",
+            if system { "the system one" } else { "inserted" },
+            cartridge.page_count()
+        ));
+        let lower = mb.ga().plus().map(|plus| plus.rmr2() & 7);
+        let upper = mb.cartridge_page_of_upper_rom(mb.upper_rom_number());
+        // the pages 8 a row, the lower and upper ROMs' lit; a page's name on hover
+        egui::Grid::new("memmap-cartridge")
+            .spacing([4.0, 4.0])
+            .show(ui, |ui| {
+                for page in 0..cartridge.page_count().min(32) as u8 {
+                    let role = match (lower == Some(page), upper == Some(page)) {
+                        (true, true) => "lower and upper ROM",
+                        (true, false) => "lower ROM",
+                        (false, true) => "upper ROM",
+                        _ => "",
+                    };
+                    let fill = if role.is_empty() {
+                        ui.visuals().extreme_bg_color
+                    } else {
+                        egui::Color32::from_rgb(200, 70, 50)
+                    };
+                    let (rect, response) =
+                        ui.allocate_exact_size(egui::vec2(34.0, 20.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 2.0, fill);
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        page.to_string(),
+                        egui::FontId::monospace(12.0),
+                        if role.is_empty() {
+                            ui.visuals().weak_text_color()
+                        } else {
+                            egui::Color32::WHITE
+                        },
+                    );
+                    let bytes: Vec<u8> = (0..0x400u16)
+                        .filter_map(|offset| mb.read_cartridge_byte(page, offset))
+                        .collect();
+                    let name = rom_name(&bytes)
+                        .unwrap_or_else(|| super::paging::cartridge_page_name(mb, page));
+                    response.on_hover_text(if role.is_empty() {
+                        format!("page {page}: {name}")
+                    } else {
+                        format!("page {page}: {name} ({role})")
+                    });
+                    if page % 8 == 7 {
+                        ui.end_row();
+                    }
+                }
+            });
+    }
     ui.strong("ROMs");
     egui::Grid::new("memmap-roms").striped(true).show(ui, |ui| {
         let selected = mb.upper_rom_number();
@@ -1254,8 +1315,9 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
         // the machine
         let crtc = mb.crtc();
         let ram = mb.total_ram_kb();
-        let ga = match mb.ga().gate_array_type() {
-            crate::ga::GateArrayType::Ga40010 => "GA 40010",
+        let ga = match (mb.ga().plus(), mb.ga().gate_array_type()) {
+            (Some(_), _) => "ASIC",
+            (None, crate::ga::GateArrayType::Ga40010) => "GA 40010",
             _ => "GA 40007/8",
         };
         let mut machine = format!(

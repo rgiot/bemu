@@ -40,7 +40,19 @@ pub fn ink_picker(
     resettable: bool,
     tooltip: &str,
 ) -> Option<Picked> {
-    let response = swatch(ui, ink_color(ink), outlined).on_hover_text(tooltip);
+    colour_picker(ui, id, ink_color(ink), outlined, resettable, tooltip)
+}
+
+/// [`ink_picker`] for a swatch of any colour (a CPC+'s 12-bit one): the 27 inks to pick from.
+pub fn colour_picker(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    colour: egui::Color32,
+    outlined: bool,
+    resettable: bool,
+    tooltip: &str,
+) -> Option<Picked> {
+    let response = swatch(ui, colour, outlined).on_hover_text(tooltip);
     let open_id = id.with("open");
     let mut open = ui.data(|d| d.get_temp::<bool>(open_id).unwrap_or(false));
     if response.clicked() {

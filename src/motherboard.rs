@@ -2099,6 +2099,34 @@ impl Motherboard {
         self.memory.inserted_cartridge()
     }
 
+    /// The cartridge of a CPC+, the system one included (`None`: a CPC).
+    pub fn any_cartridge(&self) -> Option<&crate::asic::Cartridge> {
+        self.memory.cartridge()
+    }
+
+    /// One byte of cartridge page `page` (a CPC+), whatever is paged.
+    pub fn read_cartridge_byte(&self, page: u8, offset: u16) -> Option<u8> {
+        use crate::memory::Readable;
+        Some(self.memory.cartridge()?.page(page).read(offset & 0x3fff))
+    }
+
+    /// The cartridge page upper ROM `number` reads (a CPC+; `None`: a ROM of its own, a CPC).
+    pub fn cartridge_page_of_upper_rom(&self, number: u8) -> Option<u8> {
+        self.memory.cartridge_page_of_upper_rom(number)
+    }
+
+    /// The CPC+'s register page is at &4000-&7FFF now (RMR2 bits 4-3 at 3).
+    pub fn register_page_mapped(&self) -> bool {
+        self.in_register_page(0x4000)
+    }
+
+    /// One byte of the CPC+'s register page (`address` in &4000-&7FFF), as the CPU reads it
+    /// there: `None` where no register answers (the RAM then), or on a CPC.
+    pub fn read_register_page(&self, address: u16) -> Option<u8> {
+        let (asic, video) = (self.asic.as_deref()?, self.ga.plus()?);
+        asic.read(video, 0x4000 | (address & 0x3fff))
+    }
+
     /// The CPC+'s ASIC.
     pub fn asic(&self) -> Option<&crate::asic::Asic> {
         self.asic.as_deref()
