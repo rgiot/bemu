@@ -10,6 +10,11 @@ pub(super) fn run(command: &Command, target: &mut dyn CommandTarget) -> CommandR
     match id {
         "debug-run" => set_paused(target, false),
         "debug-pause" => set_paused(target, true),
+        // F8
+        "debug-pause-toggle" => {
+            let paused = paused(target);
+            set_paused(target, !paused)
+        }
         "debug-reset" | "machine-reset-soft" | "machine-reset-hard" => {
             let hard = id == "machine-reset-hard";
             if hard {
@@ -526,6 +531,10 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
         },
         "debug-run" => CommandState::enabled(paused),
         "debug-pause" => CommandState::enabled(!paused),
+        "debug-pause-toggle" => CommandState {
+            enabled: debugger.is_some() || cx.has_settings,
+            checked: paused,
+        },
         "debug-reset" | "machine-reset-soft" | "machine-reset-hard" => CommandState::enabled(true),
         "debug-step-in"
         | "debug-step-over"

@@ -162,6 +162,16 @@ fn machine_ram_state(_: &str, rest: &str, cx: &StateCx) -> CommandState {
 
 // speed-*
 fn speed_run(id: &str, rest: &str, target: &mut dyn CommandTarget) -> CommandResult {
+    // F10: the maximum speed, or back to real time
+    if rest == "max-toggle" {
+        let settings = settings(target)?;
+        settings.speed = if settings.speed == Speed::Max {
+            Speed::Factor(1.0)
+        } else {
+            Speed::Max
+        };
+        return done();
+    }
     let (_, speed) = SPEEDS
         .iter()
         .find(|(name, _)| *name == rest)
@@ -172,14 +182,17 @@ fn speed_run(id: &str, rest: &str, target: &mut dyn CommandTarget) -> CommandRes
 
 fn speed_state(_: &str, rest: &str, cx: &StateCx) -> CommandState {
     let StateCx { settings, .. } = *cx;
-    return match settings {
+    if rest == "max-toggle" {
+        return cx.toggle(settings.is_some_and(|s| s.speed == Speed::Max));
+    }
+    match settings {
         Some(s) => CommandState::checked(
             SPEEDS
                 .iter()
                 .any(|(n, speed)| *n == rest && *speed == s.speed),
         ),
         None => CommandState::DISABLED,
-    };
+    }
 }
 
 // video-rendering-*
@@ -200,7 +213,7 @@ fn video_rendering_state(_: &str, rest: &str, cx: &StateCx) -> CommandState {
     let StateCx {
         target, settings, ..
     } = *cx;
-    return match settings {
+    match settings {
         Some(_) if rest == "next" => CommandState::enabled(!target.is_recording(Recording::Video)),
         Some(s) => CommandState::checked(
             RENDERINGS
@@ -208,7 +221,7 @@ fn video_rendering_state(_: &str, rest: &str, cx: &StateCx) -> CommandState {
                 .any(|(n, m)| *n == rest && *m == s.display),
         ),
         None => CommandState::DISABLED,
-    };
+    }
 }
 
 // printer-charset-*
@@ -226,12 +239,12 @@ fn printer_charset_state(_: &str, rest: &str, cx: &StateCx) -> CommandState {
     let printer = mb
         .printer_port()
         .and_then(|p| p.device_as::<crate::dmp2000::Dmp2000>());
-    return match printer {
+    match printer {
         Some(printer) => CommandState::checked(
             PRINTER_CHARSETS.get(usize::from(printer.international_set())) == Some(&rest),
         ),
         None => CommandState::DISABLED,
-    };
+    }
 }
 
 // keyboard-host-layout-*
@@ -248,7 +261,7 @@ fn keyboard_host_layout_run(id: &str, rest: &str, target: &mut dyn CommandTarget
 
 fn keyboard_host_layout_state(_: &str, rest: &str, cx: &StateCx) -> CommandState {
     let StateCx { settings, .. } = *cx;
-    return match settings {
+    match settings {
         Some(s) => CommandState::checked(matches!(
             (rest, s.host_layout),
             ("auto", None)
@@ -257,7 +270,7 @@ fn keyboard_host_layout_state(_: &str, rest: &str, cx: &StateCx) -> CommandState
                 | ("qwertz", Some(HostLayout::Qwertz))
         )),
         None => CommandState::DISABLED,
-    };
+    }
 }
 
 // rom-set-*

@@ -153,11 +153,7 @@ fn item(
         Kind::Input => format!("{}…", spec.label().trim_end_matches('…')),
         _ => spec.label().to_owned(),
     };
-    let why_not = if spec.note.contains("NOT IMPLEMENTED") {
-        "Not implemented yet".to_owned()
-    } else {
-        format!("Not available now\n\n{}", spec.note)
-    };
+    let why_not = format!("Not available now\n\n{}", spec.note);
     if spec.kind == Kind::Submenu {
         // the recent discs of a drive
         let drive = usize::from(spec.id.starts_with("drive-b"));
