@@ -106,16 +106,18 @@ impl RegisterHeat {
 
 /// A value field lit by its heat (see [`RegisterHeat`]), as the PSG window's registers.
 fn heated<R>(ui: &mut egui::Ui, heat: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let fill = if heat > 0.0 {
-        egui::Color32::from_rgb(200, 140, 30).gamma_multiply(0.25 + 0.6 * heat)
-    } else {
-        egui::Color32::TRANSPARENT
-    };
-    egui::Frame::new()
-        .fill(fill)
-        .corner_radius(3.0)
-        .show(ui, add)
-        .inner
+    if heat <= 0.0 {
+        return add(ui);
+    }
+    // the field's own background (a frame's fill would be under it, hidden)
+    let fill = egui::Color32::from_rgb(200, 140, 30).gamma_multiply(0.25 + 0.6 * heat);
+    ui.scope(|ui| {
+        let widgets = &mut ui.visuals_mut().widgets;
+        widgets.inactive.weak_bg_fill = fill;
+        widgets.inactive.bg_fill = fill;
+        add(ui)
+    })
+    .inner
 }
 
 pub fn registers(
