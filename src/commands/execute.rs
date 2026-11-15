@@ -65,7 +65,7 @@ const PRINTER_CHARSETS: [&str; 9] = [
     "usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan",
 ];
 
-const VIEWS: [(&str, View); 21] = [
+const VIEWS: [(&str, View); 22] = [
     ("view-z80", View::Z80),
     ("view-stack", View::Stack),
     ("view-crtc", View::Crtc),
@@ -82,6 +82,7 @@ const VIEWS: [(&str, View); 21] = [
     ("view-counters", View::Counters),
     ("view-ppi", View::Ppi),
     ("view-tape", View::Tape),
+    ("view-csl-log", View::CslLog),
     ("view-asic", View::Asic),
     ("view-screen", View::Screen),
     ("palette-open", View::Palette),

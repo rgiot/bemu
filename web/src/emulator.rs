@@ -52,6 +52,8 @@ pub struct Emulator {
     discs: [Option<DiscImage>; 2],
     /// A CSL script playing, with its own machine.
     csl: Option<CslRunner>,
+    /// What the script playing, or the last one, played (the CSL log window).
+    csl_log: Option<amsrust::csl_runner::CslLog>,
     /// Files a CSL script names.
     files: MemFiles,
     on_screenshot: Callback,
@@ -107,6 +109,7 @@ impl Emulator {
             frame: None,
             discs: [None, None],
             csl: None,
+            csl_log: None,
             files: MemFiles::default(),
             on_screenshot: Rc::default(),
             on_csl_done: Rc::default(),
@@ -298,6 +301,7 @@ impl Emulator {
         runner.set_machine(self.config.machine().map_err(|e| JsError::new(&e))?);
         amsrust::frame::start_script(&mut runner, &mut self.motherboard);
         runner.start_text(text, ".").map_err(|e| JsError::new(&e))?;
+        self.csl_log = Some(runner.log());
         self.csl = Some(runner);
         Ok(())
     }
@@ -532,7 +536,8 @@ impl Emulator {
             Some(mut ui) => {
                 let size = self.gfx.size();
                 let csl = self.csl.is_some();
-                let output = ui.frame(size, self.machine(), csl);
+                let log = self.csl_log.clone();
+                let output = ui.frame(size, self.machine(), csl, log);
                 // the menus changed the display, the keyboard (a new mapping releases the keys:
                 // only on a change)
                 let settings = &ui.settings;

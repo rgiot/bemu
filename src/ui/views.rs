@@ -184,6 +184,7 @@ pub fn title(view: View) -> &'static str {
         View::Counters => "Counters",
         View::Ppi => "PPI",
         View::Tape => "Tape",
+        View::CslLog => "CSL log",
         View::Asic => "ASIC (CPC+)",
         View::Screen => "Screen memory",
         View::Preferences => "Preferences",
@@ -526,6 +527,7 @@ pub fn contents(
         }
         View::Ppi => super::chips::ppi(ui, mb),
         View::Tape => super::chips::tape(ui, mb, bus),
+        View::CslLog => super::csl_log::csl_log(ui, target, bus),
         View::Asic => super::chips::asic(ui, mb, bus),
         View::Screen => super::screen::show(ui, mb, &mut state.screen),
         View::Fdc => {

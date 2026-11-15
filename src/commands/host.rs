@@ -273,6 +273,7 @@ pub enum View {
     Counters,
     Ppi,
     Tape,
+    CslLog,
     Asic,
     Screen,
     Palette,

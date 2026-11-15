@@ -13,6 +13,7 @@
 mod breakpoints;
 mod chips;
 mod code_views;
+mod csl_log;
 mod files;
 mod menu;
 mod paging;
@@ -102,7 +103,7 @@ fn new_context() -> egui::Context {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ViewKey(u8);
 
-const ALL_VIEWS: [View; 23] = [
+const ALL_VIEWS: [View; 24] = [
     View::Z80,
     View::Stack,
     View::Crtc,
@@ -119,6 +120,7 @@ const ALL_VIEWS: [View; 23] = [
     View::Counters,
     View::Ppi,
     View::Tape,
+    View::CslLog,
     View::Asic,
     View::Screen,
     View::Preferences,

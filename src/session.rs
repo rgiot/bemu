@@ -48,6 +48,8 @@ struct Core<'m> {
     /// The CSL script playing (File > CSL > Play), on a machine of its own: the window's
     /// machine when it ends.
     csl: Option<CslRunner>,
+    /// What the script playing, or the last one, played.
+    csl_log: Option<amsrust::csl_runner::CslLog>,
 }
 
 impl CommandTarget for Core<'_> {
@@ -111,6 +113,9 @@ impl CommandTarget for Core<'_> {
     }
     fn csl_running(&self) -> bool {
         self.csl.is_some()
+    }
+    fn csl_log(&self) -> Option<amsrust::csl_runner::CslLog> {
+        self.csl_log.clone()
     }
     fn is_recording(&self, recording: Recording) -> bool {
         self.recording.contains(&recording)
@@ -335,6 +340,7 @@ impl Window {
             .watch_io_writes(self.overlay.is_some());
         match runner.start_text(text, &folder) {
             Ok(()) => {
+                core.csl_log = Some(runner.log());
                 core.csl = Some(runner);
                 self.notify("CSL script playing".into(), false);
             }
@@ -731,6 +737,7 @@ pub fn run_window(
         gui: false,
         builder,
         csl: None,
+        csl_log: None,
     };
     #[cfg(feature = "gui")]
     {

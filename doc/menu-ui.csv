@@ -118,6 +118,7 @@ Debug,View,PSG,,view-psg,,"Open the PSG registers, decoded",,act,,/api/psg,added
 Debug,View,PPI,,view-ppi,,"Open the PPI: its ports decoded (VSYNC, brand, cassette, motor, PSG control) and the keyboard matrix",,act,,new,added,
 Debug,View,FDC,,view-fdc,,"Open the FDC status, motor, heads",,act,,/api/fdc,added,
 Debug,View,Tape,,view-tape,,"Open the cassette deck: position, duration, PLAY, motor, level, the recording",,act,,new,added,
+Debug,View,CSL log,,view-csl-log,,"Open the CSL log: the instructions of the script playing (or the last one), hover a screenshot to see it",,act,,new,added,
 Debug,Counters,New counter…,,counter-new,,Create a NOP counter,Asks the name,inp,,POST /api/counters,added,"ACE, RVM"
 Debug,Counters,Start / stop counter…,,counter-toggle,,Start or stop a counter,,inp,,POST /api/counters,added,
 Debug,Counters,Reset counter…,,counter-reset,,Reset a counter to 0,,inp,,POST /api/counters,added,

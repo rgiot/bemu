@@ -119,6 +119,8 @@ pub struct Target<'a> {
     pub settings: &'a mut HostSettings,
     pub requests: &'a mut Vec<HostRequest>,
     pub csl_running: bool,
+    /// What the script playing, or the last one, played.
+    pub csl_log: Option<amsrust::csl_runner::CslLog>,
     /// What is being recorded (WAV, YM).
     pub recording: (bool, bool),
 }
@@ -178,6 +180,9 @@ impl CommandTarget for Target<'_> {
     }
     fn csl_running(&self) -> bool {
         self.csl_running
+    }
+    fn csl_log(&self) -> Option<amsrust::csl_runner::CslLog> {
+        self.csl_log.clone()
     }
 }
 
@@ -289,6 +294,7 @@ impl WebUi {
         size: (u32, u32),
         motherboard: &mut Motherboard,
         csl_running: bool,
+        csl_log: Option<amsrust::csl_runner::CslLog>,
     ) -> egui::FullOutput {
         self.now = (js_sys::Date::now() - self.start) / 1000.0;
         let mut target = Target {
@@ -297,6 +303,7 @@ impl WebUi {
             settings: &mut self.settings,
             requests: &mut self.requests,
             csl_running,
+            csl_log,
             recording: (self.wav.is_some(), self.ym),
         };
         for (shift, key) in std::mem::take(&mut self.chords) {

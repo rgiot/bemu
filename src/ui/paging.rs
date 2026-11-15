@@ -285,7 +285,20 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
                             });
                             ui.end_row();
                             ui.label("ASIC");
-                            ui.checkbox(&mut paging.registers, "registers at &4000-&7FFF");
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut paging.registers, "registers at &4000-&7FFF");
+                                let unlocked = mb.ga().plus().is_some_and(|plus| plus.unlocked);
+                                if unlocked {
+                                    ui.weak("(unlocked)");
+                                } else {
+                                    ui.weak("(locked)").on_hover_text(
+                                        "Locked, the CPU cannot change RMR2: the registers stay \
+                                         where the program left them (paged in before it \
+                                         locked again, they are still there). This window can \
+                                         show them either way.",
+                                    );
+                                }
+                            });
                         } else {
                             ui.checkbox(&mut paging.lower_rom, "in &0000-&3FFF");
                         }
