@@ -24,6 +24,11 @@ cpclib-csl = {path = "../rust.cpcdemotools/cpclib-csl"}
 cpclib-cpr = {path = "../rust.cpcdemotools/cpclib-cpr"}
 serde = {version = "1", features = ["derive"]}
 serde_json = "1"
+# the debug API's types (requests, replies, their JSON schemas): what the server parses and
+# documents, shared with clients
+bemu-api = { path = "api" }
+# which field a request's JSON got wrong, for its error
+serde_path_to_error = "0.1"
 rand="0.8.3"
 lazy_static = "1.4.0"
 array-init = "2.0.0"
@@ -63,7 +68,13 @@ rustyline = "8.2.0" # Make not mandaotry
 minifb = "0.28.0"
 cpal = { version = "0.18.2", optional = true }
 ctrlc = { version = "3.5.2", features = ["termination"] }
-tiny_http = "0.12"
+# the debug server: HTTP (axum, on a tokio runtime of its own thread) and its OpenAPI
+# description, generated from the handlers' types (aide)
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "json"] }
+aide = { version = "0.15.1", features = ["axum", "axum-json", "axum-query", "scalar"] }
+schemars = "0.9"
+tokio = { version = "1", features = ["rt", "net", "sync", "macros"] }
+futures-util = { version = "0.3", default-features = false }
 # Host-connected joypads, polled with gilrs on the winit frontend (`--frontend winit`).
 gilrs = { version = "0.11", optional = true }
 # GPU CRT filter (`--features crt-gpu`), see src/display/gpu.rs
