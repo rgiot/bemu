@@ -50,11 +50,6 @@ pub trait Frontend {
         Err("this frontend does not draw the monitor's frames itself".to_owned())
     }
 
-    /// Show the last picture again (the emulation is paused).
-    fn redraw(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
     /// The input of the user interface since the last call (`None`: this frontend has none).
     #[cfg(feature = "gui")]
     fn ui_input(&mut self) -> Option<egui::RawInput> {

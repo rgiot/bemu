@@ -28,6 +28,9 @@ pub struct SavedWindow {
     pub open: bool,
     #[serde(default)]
     pub geometry: Option<Geometry>,
+    /// The size its content wanted (points): it opens at it.
+    #[serde(default)]
+    pub fitted: Option<[f32; 2]>,
     #[serde(default)]
     pub settings: serde_json::Value,
 }

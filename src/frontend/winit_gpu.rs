@@ -164,7 +164,11 @@ impl ViewWindow {
         // a window sized by the user starts at its size; the others are fitted to their content;
         // a window of the last session's workspace where it was, as large as it was made
         let sized = view.geometry.and_then(|g| g.size).or(view.resizable);
-        let initial_size = match sized {
+        // else at the size its content had (last time), clamped to a sensible screen
+        let initial_size = match sized.or(view
+            .size_hint
+            .map(|[w, h]| [w.clamp(160.0, 1600.0), h.clamp(60.0, 1000.0)]))
+        {
             Some([width, height]) => LogicalSize::new(width, height),
             None => LogicalSize::new(460.0, 520.0),
         };
@@ -1581,21 +1585,6 @@ impl Frontend for WinitGpuFrontend {
         }
         self.pace();
         Ok(())
-    }
-
-    fn redraw(&mut self) -> Result<(), String> {
-        let gfx = self
-            .app
-            .gfx
-            .as_mut()
-            .ok_or_else(|| "no window".to_owned())?;
-        gfx.free_zoom = self.app.free_zoom;
-        if let Some(size) = self.app.window.as_ref().map(|w| w.inner_size()) {
-            gfx.resize(size.width, size.height);
-        }
-        let mode = gfx.shown.unwrap_or_default();
-        gfx.use_mode(mode);
-        gfx.draw(mode, false, self.app.ui.as_mut()).map(|_| ())
     }
 
     fn ui_input(&mut self) -> Option<egui::RawInput> {

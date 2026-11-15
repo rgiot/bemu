@@ -86,6 +86,8 @@ pub struct Gui {
     focus: Vec<ViewKey>,
     /// Where the windows of the system are (as the host last said, or a workspace).
     geometries: BTreeMap<ViewKey, workspace::Geometry>,
+    /// The size each window's content last wanted (points): it opens at it next time.
+    fitted: BTreeMap<ViewKey, [f32; 2]>,
 }
 
 /// A debugger's window of the system: its key, title and context (see [`Gui::native_views`]).
@@ -97,6 +99,9 @@ pub struct NativeView {
     pub resizable: Option<[f32; 2]>,
     /// Where it was (a workspace): the host opens it there.
     pub geometry: Option<workspace::Geometry>,
+    /// The size its content wanted last time (points): the host opens it so, not to resize it
+    /// once its content is measured.
+    pub size_hint: Option<[f32; 2]>,
     pub ctx: egui::Context,
 }
 
@@ -135,6 +140,7 @@ impl Gui {
             view_contexts: BTreeMap::new(),
             focus: Vec::new(),
             geometries: BTreeMap::new(),
+            fitted: BTreeMap::new(),
         }
     }
 
@@ -159,6 +165,7 @@ impl Gui {
                 copy: key.copy_number(),
                 open: self.views.contains(&key),
                 geometry: self.geometries.get(&key).copied(),
+                fitted: self.fitted.get(&key).copied(),
                 settings,
             })
             .collect();
@@ -180,6 +187,9 @@ impl Gui {
             }
             if let Some(geometry) = window.geometry {
                 self.geometries.insert(key, geometry);
+            }
+            if let Some(fitted) = window.fitted {
+                self.fitted.insert(key, fitted);
             }
             if window.open {
                 self.views.insert(key);
@@ -211,6 +221,7 @@ impl Gui {
                 title: key.title(),
                 resizable: key.view().info().resizable,
                 geometry: self.geometries.get(&key).copied(),
+                size_hint: self.fitted.get(&key).copied(),
                 ctx: self
                     .view_contexts
                     .entry(key)
@@ -313,6 +324,9 @@ impl Gui {
                     .sum();
         });
         self.follow_links();
+        if wanted.x > 0.0 && wanted.y > 0.0 {
+            self.fitted.insert(key, [wanted.x, wanted.y]);
+        }
         Some((output, wanted))
     }
 
