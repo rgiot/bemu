@@ -656,6 +656,16 @@ impl PixelAutomata {
         PixelAutomata::AvailablePixel(PixelOrder::Pixel1, b, m)
     }
 
+    /// The same byte and mode, at this pixel
+    fn with_step(self, step: PixelOrder) -> Self {
+        match self {
+            PixelAutomata::AvailablePixel(_, byte, mode) => {
+                PixelAutomata::AvailablePixel(step, byte, mode)
+            }
+            PixelAutomata::NeedToReadMemory => self,
+        }
+    }
+
     /// Automaton is over when pixel 8 is produced
     pub fn is_done(&self) -> bool {
         matches!(self, PixelAutomata::NeedToReadMemory)
@@ -1088,6 +1098,9 @@ pub struct GateArray {
     palette: [Ink; 17],
     /// The last outputs, newest first: the ink of `[PALETTE_LOOKUP_LAG_TICKS]` is looked up now
     shown_ring: History<Shown, { PALETTE_LOOKUP_LAG_TICKS + 1 }>,
+    /// The automaton's state (pixel, byte, mode) each pixel was decoded from, newest first, so a
+    /// mode switch can decode again the pixels that have not come out yet (see `apply_video_mode`)
+    decoded_from: History<Option<(PixelOrder, u8, VideoMode)>, { PALETTE_LOOKUP_LAG_TICKS + 2 }>,
     /// [`PALETTE_LOOKUP_LAG_TICKS`], but for tests that look at the pixel stream itself
     lookup_lag: usize,
     /// The palette as it was at the previous tick, for the chips whose writes are a tick late
@@ -1187,6 +1200,7 @@ impl Default for GateArray {
             ],
 
             shown_ring: History::new(Shown::Black),
+            decoded_from: History::new(None),
             lookup_lag: PALETTE_LOOKUP_LAG_TICKS,
             palette_ring: History::new([Ink(0); 17]),
             palette_still: 0,
@@ -1255,8 +1269,45 @@ impl GateArray {
             self.pixel_automata = self
                 .pixel_automata
                 .reconstruct_for_mode_switch(new_mode, self.ga_type);
+            self.decode_again(new_mode);
         }
         self.current_mode = new_mode;
+    }
+
+    /// The pixels decoded before the switch but not yet out (the palette lookup lag, see
+    /// [`PALETTE_LOOKUP_LAG_TICKS`]) are decoded again in the new mode: the mode changes on the
+    /// output, not [`PALETTE_LOOKUP_LAG_TICKS`] ticks before it. They are the black of the HSYNC
+    /// that ended, but for the last `PALETTE_LOOKUP_LAG_TICKS - SYNC_BLACK_LAG_TICKS` ticks of
+    /// it: Camenbert 4's plasma (R3=4, mode 0 written in the HSYNC) showed its first character in
+    /// the old mode, AMSpiriT in the new one.
+    fn decode_again(&mut self, new_mode: VideoMode) {
+        if self.plus.is_some() || new_mode == VideoMode::Mode2 {
+            return;
+        }
+        // (the pixels of the modes 0, 1 and 3 come out a tick after they are decoded: the last
+        // one is still waiting in `shown_previous`)
+        if let (Some((step, byte, old)), Shown::Pen(Pen::Pen(_))) =
+            (self.decoded_from.get(0), self.shown_previous)
+        {
+            if old != new_mode && old != VideoMode::Mode2 {
+                let pen = PixelAutomata::new(byte, new_mode).with_step(step).generate_pen(false);
+                self.shown_previous = Shown::Pen(pen);
+            }
+        }
+        for age in 0..PALETTE_LOOKUP_LAG_TICKS {
+            let Some((step, byte, old)) = self.decoded_from.get(age + 1) else {
+                continue;
+            };
+            if old == new_mode || old == VideoMode::Mode2 {
+                continue;
+            }
+            if let Shown::Pen(Pen::Pen(_)) = self.shown_ring.get(age) {
+                let pen = PixelAutomata::new(byte, new_mode)
+                    .with_step(step)
+                    .generate_pen(false);
+                self.shown_ring.set(age, Shown::Pen(pen));
+            }
+        }
     }
 
     /// Takes the video mode the Gate Array will switch to: the RMR mode as it
@@ -1421,6 +1472,10 @@ impl GateArray {
     /// We assume that the automata is in a valid state
     #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn generate_pixel(&mut self) {
+        self.decoded_from.push(match self.pixel_automata {
+            PixelAutomata::AvailablePixel(step, byte, mode) => Some((step, byte, mode)),
+            PixelAutomata::NeedToReadMemory => None,
+        });
         let shown = if self.pixel_automata.is_done() {
             // the last pixel of a delayed (non MODE 2) byte still comes out
             let shown = if self.rgb_delayed {
@@ -1987,6 +2042,18 @@ impl GateArray {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn a_pixel_decoded_again_in_the_new_mode_keeps_its_byte_and_place() {
+        let old = PixelAutomata::new(0b1011_0100, VideoMode::Mode1).with_step(PixelOrder::Pixel3);
+        let new = PixelAutomata::new(0b1011_0100, VideoMode::Mode0).with_step(PixelOrder::Pixel3);
+        assert_eq!(old.mode(), Some(VideoMode::Mode1));
+        assert_eq!(new.mode(), Some(VideoMode::Mode0));
+        assert!(matches!(
+            new,
+            PixelAutomata::AvailablePixel(PixelOrder::Pixel3, 0b1011_0100, VideoMode::Mode0)
+        ));
+    }
 
     /*
     #[test]
