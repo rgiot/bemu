@@ -2310,6 +2310,9 @@ impl Z80 {
     pub fn af(&self) -> u16 {
         self.reg16(Reg16::Af).value()
     }
+    pub fn af2(&self) -> u16 {
+        self.reg16(Reg16::Af2).value()
+    }
     pub fn bc(&self) -> u16 {
         self.reg16(Reg16::Bc).value()
     }

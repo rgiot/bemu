@@ -2608,6 +2608,8 @@ impl Motherboard {
             pub fn pc(&self) -> u16;
             pub fn sp(&self) -> u16;
             pub fn af(&self) -> u16;
+            pub fn af2(&self) -> u16;
+            pub fn iff1(&self) -> bool;
             pub fn bc(&self) -> u16;
             pub fn de(&self) -> u16;
             pub fn hl(&self) -> u16;

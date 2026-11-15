@@ -198,10 +198,13 @@ impl Default for Asic {
     }
 }
 
-/// The 8 bit line number the ASIC compares with PRI and SPLT: 5 bits of C4 and 3 of C9
-/// ("Extra CPC Plus Hardware Information"), so a line n also matches at n + 256.
-fn line_number(vcc: u8, vlc: u8) -> u8 {
-    ((vcc & 0x1f) << 3) | (vlc & 7)
+/// The line number the ASIC compares with PRI: C4 and C9's 3 bits, not wrapped at 256 (CPCSE
+/// and AMSpiriT agree; "Extra CPC Plus Hardware Information" has 5 bits of C4, so a line n also
+/// matched at n + 256). Prehistorik II (Plus) has R4=38 and PRI=40: the wrap gave it a second
+/// raster interrupt at line 296, twice its handlers, and its text-box drawer was then
+/// interrupted in the middle of its A' counter.
+fn line_number(vcc: u8, vlc: u8) -> u16 {
+    (u16::from(vcc & 0x3f) << 3) | u16::from(vlc & 7)
 }
 
 impl Asic {
@@ -522,7 +525,8 @@ impl Asic {
         // start on that line, or from the line start when the previous line's HSYNC runs over
         // into it (ACE-DL: R2=51 and a width of 14, the HSYNC ending on C0=0; RE-WIRED, Benediction
         // 2026, writes its split line for each line just after this interrupt and relies on it)
-        let matches = hsync && self.pri != 0 && line_number(counters.vcc, counters.vlc) == self.pri;
+        let matches =
+            hsync && self.pri != 0 && line_number(counters.vcc, counters.vlc) == u16::from(self.pri);
         if matches && !self.raster_match {
             self.raster_countdown = Some(RASTER_INTERRUPT_DELAY);
         }
@@ -1118,6 +1122,13 @@ mod test {
         assert_eq!(restored.read(&restored_video, 0x680a), Some(0x21));
         assert_eq!(restored.read(&restored_video, 0x6c00), Some(0x02));
         assert_eq!(restored.split(), Some((0x20, 0x3040)));
+    }
+
+    #[test]
+    fn the_raster_line_does_not_wrap_at_256() {
+        // Prehistorik II (Plus): R4=38, PRI=40: line 296 is not line 40
+        assert_eq!(line_number(5, 0), 40);
+        assert_eq!(line_number(37, 0), 296);
     }
 
     #[test]
