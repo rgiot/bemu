@@ -18,8 +18,8 @@ pub struct Link {
 /// A Memory window's own settings.
 #[derive(Default)]
 pub struct MemoryWindow {
-    /// The bytes changed lately (see [`super::heat`]).
-    heat: super::heat::Heat,
+    /// The bytes changed lately (see [`super::heat`]), for each paging the window showed.
+    heat: super::heat::Heats,
     pub address: String,
     paging: super::paging::Paging,
     /// The byte last clicked.
@@ -167,10 +167,16 @@ pub fn memory(
     let bytes: Vec<u8> = (0..ROWS * 16)
         .map(|i| paging.read(mb, start.wrapping_add(i)))
         .collect();
-    // the bytes that changed since the last frame shown, highlighted (and their characters)
     // the bytes changed lately, lit (and their characters)
     let values: Vec<u32> = bytes.iter().map(|&b| u32::from(b)).collect();
-    super::heat::observe(ui, &mut window.heat, u64::from(start), mb, &values);
+    // what the window shows: its address and the paging at this moment
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (start, &paging).hash(&mut hasher);
+        hasher.finish()
+    };
+    let heat = window.heat.observe(ui, key, mb, &values).clone();
     let normal = ui.visuals().text_color();
     egui::Grid::new((id, "bytes"))
         .spacing([6.0, 0.0])
@@ -183,7 +189,7 @@ pub fn memory(
                 for column in 0..16u16 {
                     let index = usize::from(row * 16 + column);
                     let byte = bytes[index];
-                    let heat = window.heat.heat(index);
+                    let heat = heat.heat(index);
                     let mut text = super::heat::text(
                         egui::RichText::new(format!("{byte:02X}")).monospace(),
                         heat,

@@ -72,6 +72,40 @@ impl Heat {
     }
 }
 
+/// A [`Heat`] for each of a few keys: values that come and go (a memory window following the
+/// paging, the firmware switching its ROM in and out many times a frame) each compared with
+/// what the same key showed before, not with the others.
+#[derive(Clone, Default)]
+pub struct Heats {
+    /// The most recently used last.
+    heats: Vec<(u64, Heat)>,
+}
+
+/// The keys a [`Heats`] keeps.
+const KEYS: usize = 8;
+
+impl Heats {
+    /// The heat of `key`'s values, looked at now.
+    pub fn observe(&mut self, ui: &egui::Ui, key: u64, mb: &Motherboard, values: &[u32]) -> &Heat {
+        let heat = self.of(key);
+        observe(ui, heat, key, mb, values);
+        heat
+    }
+
+    /// The heat of `key`, made the most recently used.
+    fn of(&mut self, key: u64) -> &mut Heat {
+        let heat = match self.heats.iter().position(|(k, _)| *k == key) {
+            Some(index) => self.heats.remove(index).1,
+            None => Heat::default(),
+        };
+        self.heats.push((key, heat));
+        if self.heats.len() > KEYS {
+            self.heats.remove(0);
+        }
+        &mut self.heats.last_mut().expect("just pushed").1
+    }
+}
+
 /// The heat of `values` (what `key` names) in the window of `ui`, kept in its context under
 /// `id`: for the windows that keep no state of their own.
 pub fn watch(ui: &egui::Ui, id: impl Hash, key: u64, mb: &Motherboard, values: &[u32]) -> Heat {
@@ -166,6 +200,17 @@ mod tests {
         assert!(heat.heat(0) > 0.0, "{}", heat.heat(0));
         heat.observe(0, 1000, 2.0, &[2]);
         assert_eq!(heat.heat(0), 0.0);
+    }
+
+    /// Values that come and go (the ROM paged in, out, in again): each compared with itself.
+    #[test]
+    fn values_that_come_and_go_are_compared_with_themselves() {
+        let mut heats = Heats::default();
+        for frame in 0..10u64 {
+            let (key, value) = if frame % 2 == 0 { (1, 0xc3) } else { (2, 0x00) };
+            heats.of(key).observe(key, frame, frame as f64, &[value]);
+            assert_eq!(heats.of(key).heat(0), 0.0, "frame {frame}");
+        }
     }
 
     /// Other values (the window shows another address): none lit.
