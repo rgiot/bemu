@@ -97,7 +97,7 @@ impl ViewWindow for super::screen::ScreenState {
 pub fn new_window(view: View, copy: u8) -> Box<dyn ViewWindow> {
     let plain = |draw: fn(&mut egui::Ui, &mut Cx)| -> Box<dyn ViewWindow> { Box::new(Plain(draw)) };
     match view {
-        View::Z80 => plain(views::z80),
+        View::Z80 => Box::<views::Z80>::default(),
         View::Stack => plain(views::stack),
         View::Crtc => plain(views::crtc),
         View::GateArray => plain(views::gate_array),

@@ -32,7 +32,7 @@ use amsrust::display::{
 };
 use amsrust::input::{HostInput, HostKey};
 use amsrust::joystick::Joysticks;
-use gilrs::{Event, EventType, GamepadId, Gilrs};
+use gilrs::{EventType, GamepadId, Gilrs};
 use image::RgbImage;
 use std::collections::HashMap;
 use std::sync::Arc;

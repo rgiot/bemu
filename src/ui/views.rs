@@ -309,23 +309,31 @@ pub(super) fn controls(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut 
     super::widgets::rule(ui);
 }
 
-pub(super) fn z80(ui: &mut egui::Ui, cx: &mut Cx) {
-    let (target, bus, _) = cx.parts();
-    let mb = target.motherboard();
-    controls(ui, target, bus);
-    let z80 = inspect(target, "z80");
-    let flags = z80["F"].as_u64().unwrap_or(0) as u8;
-    super::chips::registers(ui, mb, bus);
-    ui.weak(format!(
-        "{}: IM {}, IFF1 {}, IFF2 {}",
-        cpclib_dap::inspect::describe_flags(flags),
-        z80["IM"],
-        z80["IFF1"],
-        z80["IFF2"]
-    ));
-    super::widgets::rule(ui);
-    super::chips::z80(ui, mb);
-    ui.collapsing("Raw (as /api/z80)", |ui| json_grid(ui, "z80", &z80));
+/// The Z80's registers, those changed lately lit.
+#[derive(Default)]
+pub(super) struct Z80 {
+    heat: super::chips::RegisterHeat,
+}
+
+impl ViewWindow for Z80 {
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx) {
+        let (target, bus, _) = cx.parts();
+        let mb = target.motherboard();
+        controls(ui, target, bus);
+        let z80 = inspect(target, "z80");
+        let flags = z80["F"].as_u64().unwrap_or(0) as u8;
+        super::chips::registers(ui, mb, bus, &mut self.heat);
+        ui.weak(format!(
+            "{}: IM {}, IFF1 {}, IFF2 {}",
+            cpclib_dap::inspect::describe_flags(flags),
+            z80["IM"],
+            z80["IFF1"],
+            z80["IFF2"]
+        ));
+        super::widgets::rule(ui);
+        super::chips::z80(ui, mb);
+        ui.collapsing("Raw (as /api/z80)", |ui| json_grid(ui, "z80", &z80));
+    }
 }
 
 pub(super) fn stack(ui: &mut egui::Ui, cx: &mut Cx) {

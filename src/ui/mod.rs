@@ -33,7 +33,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::commands::{
     self, Arg, ArgKind, CommandBus, CommandError, CommandTarget, HostRequest, Report, View,
 };
-use crate::input::HostKey;
 use crate::joystick::Joysticks;
 use crate::keyboard::CpcKey;
 use window::{ViewKey, Windows, COPIES};
