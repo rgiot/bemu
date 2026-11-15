@@ -42,83 +42,14 @@ pub fn z80(ui: &mut egui::Ui, mb: &Motherboard) {
 /// The Z80's registers, editable (each change a `z80-set-register` command): the flags first,
 /// each a check box; then each pair beside its shadow (AF / AF'...), the index registers, SP and
 /// PC, I and R.
-/// The registers of the Z80 window, in [`RegisterHeat`]'s order.
+/// The registers of the Z80 window, in their [`RegisterHeat`]'s order (then I and R).
 const HEAT_REGISTERS: [crate::z80::Reg16; 12] = {
     use crate::z80::Reg16::*;
     [Af, Bc, De, Hl, Af2, Bc2, De2, Hl2, Ix, Iy, Sp, Pc]
 };
 
-/// The steps over which a register changed fades out.
-const HEAT_STEPS: u64 = 4;
-
-/// Which registers the machine changed lately: each time it moved (a step, a frame), the
-/// registers it changed are lit, and fade over the next [`HEAT_STEPS`] moves. A paused machine
-/// keeps its colours (what its last step changed).
-#[derive(Default)]
-pub struct RegisterHeat {
-    /// The 16-bit registers, then I and R.
-    last: Option<[u16; 14]>,
-    /// The moves seen.
-    step: u64,
-    /// The move that last changed each register (0: none seen).
-    changed: [u64; 14],
-}
-
-impl RegisterHeat {
-    fn observe(&mut self, mb: &Motherboard) {
-        use crate::z80::{HasValue, Reg8};
-        let cpu = mb.cpu();
-        let mut values = [0u16; 14];
-        for (value, reg) in values.iter_mut().zip(HEAT_REGISTERS) {
-            *value = cpu.reg16(reg).value();
-        }
-        values[12] = u16::from(cpu.reg8(Reg8::I).value());
-        values[13] = u16::from(cpu.reg8(Reg8::R).value());
-        self.observe_values(values);
-    }
-
-    fn observe_values(&mut self, values: [u16; 14]) {
-        if self.last == Some(values) {
-            return;
-        }
-        self.step += 1;
-        if let Some(last) = self.last {
-            for (i, (old, new)) in last.iter().zip(values).enumerate() {
-                if *old != new {
-                    self.changed[i] = self.step;
-                }
-            }
-        }
-        self.last = Some(values);
-    }
-
-    /// 1.0: changed by the last move, less for older ones, 0.0 none lately.
-    fn heat(&self, index: usize) -> f32 {
-        let changed = self.changed[index];
-        let age = self.step - changed;
-        if changed == 0 || age >= HEAT_STEPS {
-            0.0
-        } else {
-            1.0 - age as f32 / HEAT_STEPS as f32
-        }
-    }
-}
-
-/// A value field lit by its heat (see [`RegisterHeat`]), as the PSG window's registers.
-fn heated<R>(ui: &mut egui::Ui, heat: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    if heat <= 0.0 {
-        return add(ui);
-    }
-    // the field's own background (a frame's fill would be under it, hidden)
-    let fill = egui::Color32::from_rgb(200, 140, 30).gamma_multiply(0.25 + 0.6 * heat);
-    ui.scope(|ui| {
-        let widgets = &mut ui.visuals_mut().widgets;
-        widgets.inactive.weak_bg_fill = fill;
-        widgets.inactive.bg_fill = fill;
-        add(ui)
-    })
-    .inner
-}
+/// The registers changed lately (see [`crate::ui::heat`]).
+pub type RegisterHeat = crate::ui::heat::Heat;
 
 pub fn registers(
     ui: &mut egui::Ui,
@@ -127,7 +58,17 @@ pub fn registers(
     heat: &mut RegisterHeat,
 ) {
     use crate::z80::{HasValue, Reg16, Reg8};
-    heat.observe(mb);
+    {
+        use crate::z80::HasValue as _;
+        let cpu = mb.cpu();
+        let mut values = [0u32; 14];
+        for (value, reg) in values.iter_mut().zip(HEAT_REGISTERS) {
+            *value = u32::from(cpu.reg16(reg).value());
+        }
+        values[12] = u32::from(cpu.reg8(Reg8::I).value());
+        values[13] = u32::from(cpu.reg8(Reg8::R).value());
+        crate::ui::heat::observe(ui, heat, 0, mb, &values);
+    }
     let heat = &*heat;
     let index = |reg: Reg16| HEAT_REGISTERS.iter().position(|r| *r == reg).unwrap_or(0);
     let cpu = mb.cpu();
@@ -158,7 +99,7 @@ pub fn registers(
         let value = cpu.reg16(reg).value();
         ui.monospace(name);
         let mut edited = u32::from(value);
-        let response = heated(ui, heat.heat(index(reg)), |ui| {
+        let response = crate::ui::heat::field(ui, heat.heat(index(reg)), |ui| {
             ui.add(
                 egui::DragValue::new(&mut edited)
                     .range(0..=0xffff)
@@ -200,7 +141,7 @@ pub fn registers(
                 let value = cpu.reg8(reg).value();
                 ui.monospace(name);
                 let mut edited = u32::from(value);
-                if heated(ui, heat.heat(slot), |ui| {
+                if crate::ui::heat::field(ui, heat.heat(slot), |ui| {
                     ui.add(
                         egui::DragValue::new(&mut edited)
                             .range(0..=0xff)
@@ -221,35 +162,4 @@ pub fn registers(
             }
             ui.end_row();
         });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A register changed by the last move is the hottest; it cools over the next moves, and a
-    /// machine that does not move keeps its colours.
-    #[test]
-    fn the_registers_changed_lately_are_lit() {
-        let mut heat = RegisterHeat::default();
-        let mut values = [0u16; 14];
-        heat.observe_values(values);
-        assert_eq!(heat.heat(0), 0.0, "nothing changed yet");
-        values[1] = 0x1234; // BC
-        heat.observe_values(values);
-        assert_eq!(heat.heat(1), 1.0);
-        assert_eq!(heat.heat(0), 0.0);
-        // paused: the same values, the same colours
-        heat.observe_values(values);
-        assert_eq!(heat.heat(1), 1.0);
-        values[11] = 1; // PC
-        heat.observe_values(values);
-        assert!(heat.heat(1) < 1.0 && heat.heat(1) > 0.0);
-        assert_eq!(heat.heat(11), 1.0);
-        for pc in 2..2 + HEAT_STEPS as u16 {
-            values[11] = pc;
-            heat.observe_values(values);
-        }
-        assert_eq!(heat.heat(1), 0.0, "cooled down");
-    }
 }

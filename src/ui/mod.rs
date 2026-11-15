@@ -15,6 +15,7 @@ mod chips;
 mod code_views;
 mod csl_log;
 mod files;
+mod heat;
 mod menu;
 mod paging;
 mod paint;

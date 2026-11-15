@@ -381,11 +381,19 @@ pub(super) fn stack(ui: &mut egui::Ui, cx: &mut Cx) {
     });
     super::widgets::rule(ui);
     ui.strong("Words");
+    // the words changed lately (under the same SP), their address lit
+    let values: Vec<u32> = (0..16u16)
+        .map(|i| u32::from(mb.read_word(sp.wrapping_add(i * 2))))
+        .collect();
+    let heat = super::heat::watch(ui, "stack-words", u64::from(sp), mb, &values);
     egui::Grid::new("stack").striped(true).show(ui, |ui| {
         for i in 0..16u16 {
             let at = sp.wrapping_add(i * 2);
             let word = mb.read_word(at);
-            ui.monospace(format!("&{at:04X}"));
+            ui.label(super::heat::text(
+                egui::RichText::new(format!("&{at:04X}")).monospace(),
+                heat.heat(usize::from(i)),
+            ));
             address_link(ui, format!("&{word:04X}"), word, links, bus);
             ui.weak(symbols.and_then(|s| s.describe(word)).unwrap_or_default());
             ui.end_row();

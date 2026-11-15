@@ -19,15 +19,12 @@ const NAMES: [&str; 12] = [
 ];
 /// How many frames of levels the strip keeps.
 const HISTORY: usize = 150;
-/// How long a changed register stays lit.
-const LIT_S: f64 = 1.0;
 
 /// What the window remembers from one drawing to the next.
 #[derive(Clone, Default)]
 struct Memory {
-    registers: [u8; 16],
-    /// When each register last changed (egui's time).
-    changed: [f64; 16],
+    /// The registers changed lately (see [`super::heat`]).
+    heat: super::heat::Heat,
     levels: VecDeque<[f32; 3]>,
     /// The machine's time of the last levels kept: a paused machine adds none.
     t_state: u64,
@@ -94,15 +91,10 @@ pub fn envelope_levels(shape: u8) -> Vec<u8> {
 pub fn show(ui: &mut egui::Ui, mb: &Motherboard) {
     let psg = mb.psg();
     let reg = |r: u8| psg.register(r);
-    let now = ui.input(|i| i.time);
     let id = egui::Id::new("psg-window");
     let mut memory: Memory = ui.data(|d| d.get_temp(id)).unwrap_or_default();
-    for r in 0..16u8 {
-        if memory.registers[usize::from(r)] != reg(r) {
-            memory.registers[usize::from(r)] = reg(r);
-            memory.changed[usize::from(r)] = now;
-        }
-    }
+    let values: Vec<u32> = (0..16u8).map(|r| u32::from(reg(r))).collect();
+    super::heat::observe(ui, &mut memory.heat, 0, mb, &values);
     let t_state = mb.t_state_counter().value() as u64;
     if t_state != memory.t_state {
         memory.t_state = t_state;
@@ -112,7 +104,7 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard) {
         }
     }
 
-    registers(ui, mb, &memory, now);
+    registers(ui, mb, &memory);
     ui.add_space(4.0);
     let mixer = reg(7);
     let mut notes = [None; 3];
@@ -198,7 +190,7 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard) {
 }
 
 /// R0-R15 in boxes, lit for a second after a change, the selected one outlined.
-fn registers(ui: &mut egui::Ui, mb: &Motherboard, memory: &Memory, now: f64) {
+fn registers(ui: &mut egui::Ui, mb: &Motherboard, memory: &Memory) {
     const ROLES: [&str; 16] = [
         "A fine",
         "A coarse",
@@ -225,14 +217,12 @@ fn registers(ui: &mut egui::Ui, mb: &Motherboard, memory: &Memory, now: f64) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
                 for r in row {
-                    let value = memory.registers[usize::from(r)];
-                    let age = now - memory.changed[usize::from(r)];
-                    let lit = memory.changed[usize::from(r)] > 0.0 && age < LIT_S;
+                    let value = mb.psg().register(r);
+                    let heat = memory.heat.heat(usize::from(r));
+                    let lit = heat > 0.0;
                     let visuals = ui.visuals().clone();
                     let fill = if lit {
-                        // fades out
-                        let strength = (1.0 - age / LIT_S) as f32;
-                        egui::Color32::from_rgb(200, 140, 30).gamma_multiply(0.3 + 0.7 * strength)
+                        super::heat::fill(heat)
                     } else {
                         visuals.extreme_bg_color
                     };
@@ -271,17 +261,7 @@ fn registers(ui: &mut egui::Ui, mb: &Motherboard, memory: &Memory, now: f64) {
                 }
             });
         }
-        if lit_any(memory, now) {
-            ui.ctx().request_repaint();
-        }
     });
-}
-
-fn lit_any(memory: &Memory, now: f64) -> bool {
-    memory
-        .changed
-        .iter()
-        .any(|&changed| changed > 0.0 && now - changed < LIT_S)
 }
 
 /// A piano keyboard from C1 to B8: each channel's note marked in its colour.
