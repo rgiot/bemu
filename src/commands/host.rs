@@ -284,6 +284,128 @@ pub enum View {
     Keyboard,
 }
 
+/// What a [`View`] is: everything the menus, the interface and the hosts need to know of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewInfo {
+    /// The command that opens it (`doc/menu-ui.csv`).
+    pub command: &'static str,
+    /// Its title ("" for the palette, which is no window).
+    pub title: &'static str,
+    /// One of the debugger's windows (on a desktop, a window of the system): not the
+    /// preferences, the shortcuts, the about box or the palette.
+    pub debugger: bool,
+    /// Several can be open, each with its own settings (Memory, Disassembly).
+    pub copies: bool,
+    /// Sized by the user, from this size (in points), instead of to its content.
+    pub resizable: Option<[f32; 2]>,
+}
+
+impl ViewInfo {
+    const fn debugger(command: &'static str, title: &'static str) -> Self {
+        Self {
+            command,
+            title,
+            debugger: true,
+            copies: false,
+            resizable: None,
+        }
+    }
+    const fn copies(self) -> Self {
+        Self {
+            copies: true,
+            ..self
+        }
+    }
+    const fn resizable(self, width: f32, height: f32) -> Self {
+        Self {
+            resizable: Some([width, height]),
+            ..self
+        }
+    }
+    const fn not_debugger(self) -> Self {
+        Self {
+            debugger: false,
+            ..self
+        }
+    }
+}
+
+impl View {
+    /// Every view, in the order of the Window menu.
+    pub const ALL: [View; 25] = [
+        View::Z80,
+        View::Stack,
+        View::Crtc,
+        View::GateArray,
+        View::Psg,
+        View::Fdc,
+        View::MemoryMap,
+        View::Memory,
+        View::Disassembly,
+        View::History,
+        View::Symbols,
+        View::Beam,
+        View::Breakpoints,
+        View::Counters,
+        View::Ppi,
+        View::Tape,
+        View::CslLog,
+        View::Asic,
+        View::Screen,
+        View::Palette,
+        View::Preferences,
+        View::Shortcuts,
+        View::About,
+        View::Joystick,
+        View::Keyboard,
+    ];
+
+    pub const fn info(self) -> ViewInfo {
+        use ViewInfo as I;
+        match self {
+            View::Z80 => I::debugger("view-z80", "Z80"),
+            View::Stack => I::debugger("view-stack", "Stack"),
+            View::Crtc => I::debugger("view-crtc", "CRTC"),
+            View::GateArray => I::debugger("view-ga", "Gate Array"),
+            View::Psg => I::debugger("view-psg", "PSG"),
+            View::Fdc => I::debugger("view-fdc", "FDC"),
+            View::MemoryMap => I::debugger("view-memmap", "Memory map"),
+            View::Memory => I::debugger("view-memory", "Memory").copies(),
+            View::Disassembly => I::debugger("view-disassembly", "Disassembly").copies(),
+            View::History => I::debugger("view-history", "Instruction history"),
+            View::Symbols => I::debugger("view-symbols", "Symbols"),
+            View::Beam => I::debugger("view-beam", "Beam"),
+            View::Breakpoints => I::debugger("view-breakpoints", "Breakpoints"),
+            View::Counters => I::debugger("view-counters", "Counters"),
+            View::Ppi => I::debugger("view-ppi", "PPI"),
+            View::Tape => I::debugger("view-tape", "Tape"),
+            View::CslLog => I::debugger("view-csl-log", "CSL log"),
+            View::Asic => I::debugger("view-asic", "ASIC (CPC+)"),
+            View::Screen => I::debugger("view-screen", "Screen memory"),
+            View::Palette => I::debugger("palette-open", "").not_debugger(),
+            View::Preferences => I::debugger("preferences-open", "Preferences").not_debugger(),
+            View::Shortcuts => I::debugger("help-shortcuts", "Keyboard shortcuts").not_debugger(),
+            View::About => I::debugger("help-about", "About bemu").not_debugger(),
+            View::Joystick => I::debugger("joystick-simulated-window", "Joystick"),
+            View::Keyboard => I::debugger("keyboard-view", "Keyboard").resizable(820.0, 300.0),
+        }
+    }
+
+    /// The view the command `id` opens.
+    pub fn opened_by(id: &str) -> Option<View> {
+        View::ALL.into_iter().find(|view| view.info().command == id)
+    }
+
+    /// The view fits the machine: a CPC+ has the ASIC, a CPC the Gate Array.
+    pub fn fits(self, model: crate::motherboard::CpcModel) -> bool {
+        match self {
+            View::GateArray => !model.is_plus(),
+            View::Asic => model.is_plus(),
+            _ => true,
+        }
+    }
+}
+
 /// What the host records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Recording {

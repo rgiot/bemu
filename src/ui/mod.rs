@@ -24,6 +24,7 @@ mod psg;
 mod screen;
 mod views;
 mod widgets;
+mod window;
 
 pub use paint::Painter;
 
@@ -35,6 +36,7 @@ use crate::commands::{
 use crate::input::HostKey;
 use crate::joystick::Joysticks;
 use crate::keyboard::CpcKey;
+use window::{ViewKey, Windows, COPIES};
 
 /// A file the host is asked to pick (a web page opens its file chooser): the command `id` then
 /// runs with it.
@@ -61,7 +63,7 @@ pub struct Gui {
     palette: Option<palette::Palette>,
     prompt: Option<prompt::Prompt>,
     views: BTreeSet<ViewKey>,
-    view_state: views::ViewState,
+    windows: Windows,
     texts: Vec<(String, String)>,
     toasts: VecDeque<Toast>,
     file_requests: Vec<FileRequest>,
@@ -84,9 +86,12 @@ pub struct Gui {
 }
 
 /// A debugger's window of the system: its key, title and context (see [`Gui::native_views`]).
+#[derive(Clone)]
 pub struct NativeView {
     pub key: u8,
     pub title: String,
+    /// Sized by the user from this size (points), else to its content.
+    pub resizable: Option<[f32; 2]>,
     pub ctx: egui::Context,
 }
 
@@ -98,64 +103,6 @@ fn new_context() -> egui::Context {
     });
     ctx
 }
-
-/// [`View`] in a set.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct ViewKey(u8);
-
-const ALL_VIEWS: [View; 24] = [
-    View::Z80,
-    View::Stack,
-    View::Crtc,
-    View::GateArray,
-    View::Psg,
-    View::Fdc,
-    View::MemoryMap,
-    View::Memory,
-    View::Disassembly,
-    View::History,
-    View::Symbols,
-    View::Beam,
-    View::Breakpoints,
-    View::Counters,
-    View::Ppi,
-    View::Tape,
-    View::CslLog,
-    View::Asic,
-    View::Screen,
-    View::Preferences,
-    View::Shortcuts,
-    View::About,
-    View::Joystick,
-    View::Keyboard,
-];
-
-/// A window's key: its view in the low 5 bits, which of its windows above (0: the first; a
-/// Memory or Disassembly window can be opened several times, [`COPIES`] at most).
-impl ViewKey {
-    fn of(view: View) -> Self {
-        Self::copy(view, 0)
-    }
-    fn copy(view: View, copy: u8) -> Self {
-        Self(ALL_VIEWS.iter().position(|v| *v == view).unwrap_or(0) as u8 | (copy << 5))
-    }
-    fn view(self) -> View {
-        ALL_VIEWS[usize::from(self.0 & 31)]
-    }
-    fn copy_number(self) -> u8 {
-        self.0 >> 5
-    }
-    /// Its title: the view's, numbered from the second ("Memory 2").
-    fn title(self) -> String {
-        match self.copy_number() {
-            0 => views::title(self.view()).to_owned(),
-            n => format!("{} {}", views::title(self.view()), n + 1),
-        }
-    }
-}
-
-/// The windows of one view at most (the key's 3 high bits).
-const COPIES: u8 = 8;
 
 impl Default for Gui {
     fn default() -> Self {
@@ -171,7 +118,7 @@ impl Gui {
             palette: None,
             prompt: None,
             views: BTreeSet::new(),
-            view_state: views::ViewState::default(),
+            windows: Windows::default(),
             texts: Vec::new(),
             toasts: VecDeque::new(),
             file_requests: Vec::new(),
@@ -200,13 +147,14 @@ impl Gui {
             .views
             .iter()
             .copied()
-            .filter(|key| views::is_debugger(key.view()))
+            .filter(|key| key.view().info().debugger)
             .collect();
         self.view_contexts.retain(|key, _| open.contains(key));
         open.into_iter()
             .map(|key| NativeView {
                 key: key.0,
                 title: key.title(),
+                resizable: key.view().info().resizable,
                 ctx: self
                     .view_contexts
                     .entry(key)
@@ -216,10 +164,10 @@ impl Gui {
             .collect()
     }
 
-    /// What the windows asked of the others (`views::ViewState::links`): the Memory or
+    /// What the windows asked of the others (`Windows::links`): the Memory or
     /// Disassembly window (the first, or a new one) at the address, open and in front.
     fn follow_links(&mut self) {
-        for link in std::mem::take(&mut self.view_state.links) {
+        for link in std::mem::take(&mut self.windows.links) {
             let copy = if link.new {
                 match self.free_copy(link.view) {
                     Some(copy) => copy,
@@ -228,24 +176,13 @@ impl Gui {
             } else {
                 0
             };
-            let text = format!("&{:04X}", link.address);
-            match link.view {
-                View::Memory => {
-                    let window = self.view_state.memories.entry(copy).or_default();
-                    if link.new {
-                        *window = Default::default();
-                    }
-                    window.go_to(text);
-                }
-                View::Disassembly => {
-                    let window = self.view_state.disassemblies.entry(copy).or_default();
-                    if link.new {
-                        *window = Default::default();
-                    }
-                    window.go_to(text);
-                }
-                _ => {}
-            }
+            let key = ViewKey::copy(link.view, copy);
+            let window = if link.new {
+                self.windows.reset(key)
+            } else {
+                self.windows.get(key)
+            };
+            window.go_to(format!("&{:04X}", link.address));
             self.open_copy(link.view, copy);
         }
     }
@@ -271,18 +208,16 @@ impl Gui {
         let keys: Vec<u8> = self
             .focus
             .iter()
-            .filter(|key| views::is_debugger(key.view()))
+            .filter(|key| key.view().info().debugger)
             .map(|key| key.0)
             .collect();
-        self.focus.retain(|key| !views::is_debugger(key.view()));
+        self.focus.retain(|key| !key.view().info().debugger);
         keys
     }
 
     /// The window of the system of view `key` was closed.
     pub fn close_view(&mut self, key: u8) {
-        if ViewKey(key).view() == View::Joystick {
-            self.view_state.simulated_joysticks = Joysticks::default();
-        }
+        self.windows.closed(ViewKey(key));
         self.views.remove(&ViewKey(key));
         self.view_contexts.remove(&ViewKey(key));
     }
@@ -299,7 +234,7 @@ impl Gui {
         let key = ViewKey(key);
         let ctx = self.view_contexts.get(&key)?.clone();
         apply_zoom(&ctx, target);
-        let state = &mut self.view_state;
+        let windows = &mut self.windows;
         let mut wanted = egui::Vec2::ZERO;
         let output = ctx.run(raw, |ctx| {
             let panel = egui::CentralPanel::default().show(ctx, |ui| {
@@ -311,7 +246,7 @@ impl Gui {
                         // no text wraps to the window's width: the content's size is its own,
                         // whatever the window's (the window is then sized to it)
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                        views::contents(key.view(), key.copy_number(), ui, target, bus, state);
+                        windows.contents(key, ui, target, bus);
                     })
                     .content_size
             });
@@ -339,8 +274,7 @@ impl Gui {
             // another Memory or Disassembly window, of its own
             HostRequest::OpenAnother(view) => {
                 if let Some(copy) = self.free_copy(*view) {
-                    self.view_state.memories.remove(&copy);
-                    self.view_state.disassemblies.remove(&copy);
+                    self.windows.reset(ViewKey::copy(*view, copy));
                     self.open_copy(*view, copy);
                 }
                 true
@@ -368,17 +302,17 @@ impl Gui {
 
     /// The simulated joystick window's current state (stick + fire buttons).
     pub fn simulated_joysticks(&self) -> Joysticks {
-        self.view_state.simulated_joysticks
+        self.windows.input.joysticks
     }
 
     /// The CPC keys currently held down by the virtual keyboard (mouse held on a key).
     pub fn virtual_keys_held(&self) -> Vec<CpcKey> {
-        self.view_state.virtual_keys_held.clone()
+        self.windows.input.keys_held.clone()
     }
 
     /// Whether Ctrl is being used as a mouse modifier on the virtual Shift key.
     pub fn virtual_keyboard_ctrl_click(&self) -> bool {
-        self.view_state.virtual_keyboard_ctrl_click
+        self.windows.input.ctrl_click
     }
 
     /// Show a message for a few seconds.
@@ -540,9 +474,10 @@ impl Gui {
             match panel.inner {
                 Some(menu::WindowAction::Focus(key)) => self.focus.push(ViewKey(key)),
                 Some(menu::WindowAction::CloseAll) => {
-                    self.views.clear();
+                    for key in std::mem::take(&mut self.views) {
+                        self.windows.closed(key);
+                    }
                     self.view_contexts.clear();
-                    self.view_state.simulated_joysticks = Joysticks::default();
                 }
                 None => {}
             }
@@ -586,37 +521,26 @@ impl Gui {
             self.views
                 .iter()
                 .copied()
-                .filter(|key| !views::is_debugger(key.view()))
+                .filter(|key| !key.view().info().debugger)
                 .collect()
         } else {
             self.views.clone()
         };
         for key in embedded {
             let mut open = true;
-            views::show(
-                key.view(),
-                key.copy_number(),
-                &key.title(),
-                &mut open,
-                ctx,
-                target,
-                bus,
-                &mut self.view_state,
-            );
+            self.windows.show(key, &mut open, ctx, target, bus);
             if !open {
                 closed.push(key);
             }
         }
         for key in closed {
-            if key.view() == View::Joystick {
-                self.view_state.simulated_joysticks = Joysticks::default();
-            }
+            self.windows.closed(key);
             self.views.remove(&key);
         }
         // the embedded windows asked for: in front (the system's ones: the host's)
         let native = self.native_views;
         self.focus.retain(|key| {
-            if native && views::is_debugger(key.view()) {
+            if native && key.view().info().debugger {
                 return true;
             }
             let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::new(key.title()));
@@ -790,6 +714,13 @@ mod tests {
         }
     }
 
+    /// The address Memory window `copy` shows.
+    fn memory_address(gui: &mut Gui, copy: u8) -> String {
+        let key = ViewKey::copy(View::Memory, copy);
+        let memory = gui.windows.state::<window::Memory>(key).expect("open");
+        memory.window.address.clone()
+    }
+
     #[test]
     fn memory_windows_open_several_each_its_own() {
         use code_views::Link;
@@ -801,7 +732,7 @@ mod tests {
         let mut bus = CommandBus::default();
         let mut gui = Gui::new();
         for address in [0x4000, 0xc000] {
-            gui.view_state.links.push(Link {
+            gui.windows.links.push(Link {
                 view: View::Memory,
                 address,
                 new: true,
@@ -818,17 +749,17 @@ mod tests {
             ]
         );
         assert_eq!(keys[1].title(), "Memory 2");
-        assert_eq!(gui.view_state.memories[&0].address, "&4000");
-        assert_eq!(gui.view_state.memories[&1].address, "&C000");
+        assert_eq!(memory_address(&mut gui, 0), "&4000");
+        assert_eq!(memory_address(&mut gui, 1), "&C000");
         // the first window, not a new one
-        gui.view_state.links.push(Link {
+        gui.windows.links.push(Link {
             view: View::Memory,
             address: 0x1234,
             new: false,
         });
         gui.follow_links();
         assert_eq!(gui.views.len(), 2);
-        assert_eq!(gui.view_state.memories[&0].address, "&1234");
+        assert_eq!(memory_address(&mut gui, 0), "&1234");
         // 8 at most
         for _ in 0..10 {
             gui.handle(&HostRequest::OpenAnother(View::Memory));
@@ -840,8 +771,8 @@ mod tests {
     fn closing_native_joystick_window_releases_controls() {
         let mut gui = Gui::new();
         gui.handle(&HostRequest::Open(View::Joystick));
-        gui.view_state.simulated_joysticks.joy0.x = 1;
-        gui.view_state.simulated_joysticks.joy1.fire[0] = true;
+        gui.windows.input.joysticks.joy0.x = 1;
+        gui.windows.input.joysticks.joy1.fire[0] = true;
         gui.close_view(ViewKey::of(View::Joystick).0);
         assert_eq!(gui.simulated_joysticks(), Joysticks::default());
     }
@@ -861,7 +792,7 @@ mod tests {
             let target = Target(motherboard, DebugServer::offline(), HostSettings::default());
             let mut bus = CommandBus::default();
             let mut gui = Gui::new();
-            for view in ALL_VIEWS {
+            for view in View::ALL {
                 frame(&mut gui, &target, &mut bus, 0.0);
                 gui.handle(&HostRequest::Open(view));
                 frame(&mut gui, &target, &mut bus, 0.02);

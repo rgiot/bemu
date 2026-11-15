@@ -65,31 +65,6 @@ const PRINTER_CHARSETS: [&str; 9] = [
     "usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan",
 ];
 
-const VIEWS: [(&str, View); 22] = [
-    ("view-z80", View::Z80),
-    ("view-stack", View::Stack),
-    ("view-crtc", View::Crtc),
-    ("view-ga", View::GateArray),
-    ("view-psg", View::Psg),
-    ("view-fdc", View::Fdc),
-    ("view-memmap", View::MemoryMap),
-    ("view-memory", View::Memory),
-    ("view-disassembly", View::Disassembly),
-    ("view-history", View::History),
-    ("view-symbols", View::Symbols),
-    ("view-beam", View::Beam),
-    ("view-breakpoints", View::Breakpoints),
-    ("view-counters", View::Counters),
-    ("view-ppi", View::Ppi),
-    ("view-tape", View::Tape),
-    ("view-csl-log", View::CslLog),
-    ("view-asic", View::Asic),
-    ("view-screen", View::Screen),
-    ("palette-open", View::Palette),
-    ("joystick-simulated-window", View::Joystick),
-    ("keyboard-view", View::Keyboard),
-];
-
 #[cfg_attr(not(feature = "willy"), allow(dead_code))]
 const WILLY_BASES: &[(&str, &str)] = &[
     ("&FEBC", "&FEBC"),
@@ -621,7 +596,7 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
     if let Some(result) = disc_command(&command, target) {
         return result;
     }
-    if let Some(view) = VIEWS.iter().find(|(name, _)| *name == id).map(|(_, v)| *v) {
+    if let Some(view) = View::opened_by(id) {
         return host(target, HostRequest::Open(view));
     }
     if let Some(rest) = id.strip_prefix("machine-crtc-") {
@@ -2217,9 +2192,6 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
         }
         "view-memory-new" => host(target, HostRequest::OpenAnother(View::Memory)),
         "view-disassembly-new" => host(target, HostRequest::OpenAnother(View::Disassembly)),
-        "preferences-open" => host(target, HostRequest::Open(View::Preferences)),
-        "help-shortcuts" => host(target, HostRequest::Open(View::Shortcuts)),
-        "help-about" => host(target, HostRequest::Open(View::About)),
         "ui-menu-toggle" => {
             let settings = settings(target)?;
             settings.menu_visible = !settings.menu_visible;
@@ -2246,16 +2218,9 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
     let has_settings = settings.is_some();
     let debugger = target.debugger();
     let paused = paused(target);
-    if let Some((_, view)) = VIEWS.iter().find(|(name, _)| *name == id) {
-        // a CPC+ has the ASIC, a CPC the Gate Array
-        let plus = mb.model().is_plus();
-        let fits = match view {
-            View::GateArray => !plus,
-            View::Asic => plus,
-            _ => true,
-        };
-        let state = host_can(target, HostRequest::Open(*view));
-        return CommandState::enabled(state.enabled && fits);
+    if let Some(view) = View::opened_by(id) {
+        let state = host_can(target, HostRequest::Open(view));
+        return CommandState::enabled(state.enabled && view.fits(mb.model()));
     }
     if let Some(rest) = id.strip_prefix("machine-crtc-") {
         let n: u8 = rest.parse().unwrap_or(0);
@@ -2658,9 +2623,6 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
         "tools-disc-convert" => CommandState::enabled(true),
         "view-memory-new" => host_can(target, HostRequest::OpenAnother(View::Memory)),
         "view-disassembly-new" => host_can(target, HostRequest::OpenAnother(View::Disassembly)),
-        "preferences-open" => host_can(target, HostRequest::Open(View::Preferences)),
-        "help-shortcuts" => host_can(target, HostRequest::Open(View::Shortcuts)),
-        "help-about" => host_can(target, HostRequest::Open(View::About)),
         "ui-menu-toggle" => toggle(settings.is_some_and(|s| s.menu_visible)),
         // a card left out of this build
         _ => CommandState::DISABLED,
