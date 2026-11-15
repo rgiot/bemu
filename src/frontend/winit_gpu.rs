@@ -270,6 +270,8 @@ struct Gfx {
     /// The picture zoomed by any factor (else by a whole one), see `HostSettings::free_zoom`.
     free_zoom: bool,
     crt: Option<CrtState>,
+    /// The picture resized without moiré (a CRT's at a fractional zoom, any below x1).
+    resampler: Option<amsrust::display::Resampler>,
     /// What the last frame showed, for [`Frontend::redraw`].
     shown: Option<DisplayMode>,
 }
@@ -325,6 +327,7 @@ impl Gfx {
             curvature,
             free_zoom: false,
             crt: None,
+            resampler: None,
             shown: None,
         })
     }
@@ -422,6 +425,39 @@ impl Gfx {
             (picture_w as f32 * scale).round(),
             (picture_h as f32 * scale).round(),
         );
+        // shrunk, or a CRT's scanlines and mask at a fractional zoom: the website's resampling
+        // (the mask's period below a pixel beats into stripes otherwise)
+        let crt_shown = matches!(mode, DisplayMode::Crt(_)) && self.crt.is_some();
+        let whole = scale >= 1.0 && (scale - scale.round()).abs() < 1e-4;
+        let resampled = scale < 1.0 || (crt_shown && !whole);
+        if resampled {
+            let (source, size) = match self.crt.as_ref().filter(|_| crt_shown) {
+                Some(crt) => (
+                    crt.target
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                    (crt.size.0 as u32, crt.size.1 as u32),
+                ),
+                None => (
+                    self.frame.view().clone(),
+                    (
+                        amsrust::display::crt::SRC_WIDTH as u32,
+                        amsrust::display::crt::SRC_HEIGHT as u32,
+                    ),
+                ),
+            };
+            let format = self.config.format;
+            let device = &self.device;
+            self.resampler
+                .get_or_insert_with(|| amsrust::display::Resampler::new(device, format))
+                .prepare(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    &source,
+                    size,
+                    (w as u32, h as u32),
+                );
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("window"),
@@ -446,7 +482,10 @@ impl Gfx {
                 0.0,
                 1.0,
             );
-            self.blit.draw(&mut pass, bind_group);
+            match (&self.resampler, resampled) {
+                (Some(resampler), true) => resampler.draw(&mut pass),
+                _ => self.blit.draw(&mut pass, bind_group),
+            }
         }
         // the menus and windows over it
         if let Some(ui) = ui {
