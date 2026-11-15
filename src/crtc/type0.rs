@@ -351,7 +351,11 @@ impl CrtcChip for Crtc0 {
     /// where AMSpiriT and CPCEC have black).
     fn before_hsync_check(&mut self, core: &mut Core) {
         if self.hsync_is_two_wide(core)
-            && (if core.hcc == core.regs[0] { 0 } else { core.hcc.wrapping_add(1) }) == core.regs[2]
+            && (if core.hcc == core.regs[0] {
+                0
+            } else {
+                core.hcc.wrapping_add(1)
+            }) == core.regs[2]
             && !core.hsync()
         {
             self.early_blank_chars = 2;
