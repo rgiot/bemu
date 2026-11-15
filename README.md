@@ -105,6 +105,10 @@ paging, a Disassembly window's bookmarks, its Registers section folded or not). 
 (`$XDG_CONFIG_HOME/bemu`), `~/Library/Application Support/bemu` on macOS, `%APPDATA%\bemu` on
 Windows. Delete the file to start from no window.
 
+Each debugger window is as large as its content until it is resized by hand. If one opens at a
+wrong size, run with `BEMU_FIT_DEBUG=1`: each window prints what its content measured, the size
+it asked for, and when it took a size as the user's.
+
 Each row of `doc/menu-ui.csv` is a menu item: its menu path, its id (`area-verb`, the name the
 palette, CSL, the configurations and the web API use), its type (`act`, `tog`, `rad`, `inp`,
 `ss` start/stop, `sub`, or `sep` for a line in the menu), its aim and note (the tooltips: the note
