@@ -1946,8 +1946,11 @@ mod test {
         let script = "csl_version 1.0\nreset\nwait 1000000\nscreenshot\nscreenshot 0.25\n\
                       screenshot 200px\nscreenshot_name 'small'\nscreenshot vsync 0.5\n";
         let shots = Collected::default();
-        let mut runner =
-            CslRunner::with_io(Box::new(MemFiles::default()), Box::new(shots.clone()), "out");
+        let mut runner = CslRunner::with_io(
+            Box::new(MemFiles::default()),
+            Box::new(shots.clone()),
+            "out",
+        );
         runner.run_text(script, ".").unwrap();
         let shots = shots.0.borrow();
         assert_eq!(shots.len(), 4);

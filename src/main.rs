@@ -57,7 +57,7 @@
 //! software expects a particular disc already in the drive.
 
 use amsrust::debug::{Monitor, MonitorContext};
-use amsrust::debug_server::{Beam, DebugServer};
+use amsrust::debug_server::DebugServer;
 use amsrust::disc_image::load_disc_file;
 use amsrust::display::DisplayFilter;
 use amsrust::fdc::FdcDrive;
@@ -1059,7 +1059,7 @@ fn run_headless(
                     }
                 });
                 if let Some(overlay) = &mut overlay {
-                    note_io_writes(overlay, motherboard, &monitor);
+                    amsrust::frame::note_io_writes(overlay, motherboard, &monitor);
                 }
                 if let Some(mut frame) = frame {
                     if let Some(overlay) = &mut overlay {
@@ -1113,7 +1113,7 @@ fn run_headless(
                 }
             });
             if let Some(overlay) = &mut overlay {
-                note_io_writes(overlay, motherboard, &monitor);
+                amsrust::frame::note_io_writes(overlay, motherboard, &monitor);
             }
         }
         motherboard.watch_io_writes(false);
@@ -1262,59 +1262,6 @@ fn start_debug_server(
     }
 }
 
-/// Run until the next whole frame, or until the debug server pauses the
-/// CPU (breakpoint, step) - then `None`, the monitor keeping the part of
-/// the frame already drawn.
-fn run_frame(
-    motherboard: &mut Motherboard,
-    monitor: &mut CrtMonitor,
-    mut server: Option<&mut DebugServer>,
-    mut overlay: Option<&mut Overlay>,
-) -> Option<image::RgbImage> {
-    let mut frame = None;
-    while frame.is_none() {
-        motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
-            monitor.receive(rgb, sync);
-            if frame.is_none() {
-                frame = monitor.take_frame();
-            }
-        });
-        if let Some(overlay) = overlay.as_deref_mut() {
-            note_io_writes(overlay, motherboard, monitor);
-        }
-        if let Some(server) = server.as_deref_mut() {
-            let (x, line) = monitor.beam();
-            let (crop_x, crop_y) = monitor.crop_origin();
-            server.set_beam(Beam {
-                x,
-                line,
-                crop_x,
-                crop_y,
-            });
-            server.after_instruction(motherboard);
-            if let Some(pc) = server.take_stop() {
-                eprintln!("debug server: breakpoint at {pc:#06x}");
-            }
-            if server.paused() {
-                break;
-            }
-        }
-    }
-    if let (Some(frame), Some(server)) = (&frame, server) {
-        server.frame_completed(motherboard);
-        server.set_frame(frame);
-    }
-    frame
-}
-
-/// The I/O writes of the last instruction on the overlay, where the beam is.
-fn note_io_writes(overlay: &mut Overlay, motherboard: &mut Motherboard, monitor: &CrtMonitor) {
-    let (beam, origin) = (monitor.beam(), monitor.crop_origin());
-    for (port, value) in motherboard.take_io_writes() {
-        overlay.note(port, value, beam, origin);
-    }
-}
-
 /// `--debug-server` without a window: run in real time, driven by the
 /// debug API (Ctrl+C to quit).
 fn run_debug_server(
@@ -1340,7 +1287,17 @@ fn run_debug_server(
         }
         type_due_keys(typist, motherboard);
         poll_sound_export(motherboard);
-        if run_frame(motherboard, &mut monitor, Some(server), None).is_some() {
+        let frame = amsrust::frame::run_frame(
+            motherboard,
+            &mut monitor,
+            Some(server),
+            None,
+            2 * FRAME_T_STATES,
+        );
+        if let Some(pc) = server.take_stop() {
+            eprintln!("debug server: breakpoint at {pc:#06x}");
+        }
+        if frame.is_some() {
             // The CPC's own pace.
             deadline += frame_duration;
             let now = std::time::Instant::now();
@@ -1354,7 +1311,7 @@ fn run_debug_server(
 }
 
 /// T-states of a CPC frame (312 lines of 64 µs at 4 MHz).
-const FRAME_T_STATES: usize = 312 * 64 * 4;
+use amsrust::frame::FRAME_T_STATES;
 /// At full speed, a frame is shown this often (50 a second).
 const FRAME_SHOWN_EVERY: std::time::Duration = std::time::Duration::from_millis(20);
 

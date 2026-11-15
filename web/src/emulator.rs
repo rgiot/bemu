@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use amsrust::csl_runner::{CslReport, CslRunner, MemFiles, Progress, ScreenshotSink};
+use amsrust::csl_runner::{CslReport, CslRunner, MemFiles, ScreenshotSink};
+use amsrust::frame::{ScriptStep, FRAME_T_STATES};
 use amsrust::disc_image::{load_disc_bytes, DiscImage};
 use amsrust::display::{CrtProfile, DisplayMode};
 use amsrust::fdc::{DriveKind, FdcDrive};
@@ -24,10 +25,6 @@ use crate::ui::WebUi;
 
 /// T-states after which a frame is given up (a machine that never synchronises): two frames.
 const MAX_FRAME_T_STATES: usize = 2 * FRAME_T_STATES;
-/// T-states of a CPC frame: 312 lines of 64 µs at 4 MHz.
-const FRAME_T_STATES: usize = 312 * 64 * 4;
-/// T-states a CSL script plays between two looks at the frame it may have completed.
-const CSL_SLICE_T_STATES: usize = 20_000;
 
 type Callback = Rc<RefCell<Option<Function>>>;
 
@@ -299,9 +296,7 @@ impl Emulator {
             "screenshots"
         );
         runner.set_machine(self.config.machine().map_err(|e| JsError::new(&e))?);
-        runner.set_drive_kind(0, DriveKind::ThreeAndHalfInch);
-        runner.set_drive_kind(1, DriveKind::ThreeAndHalfInch);
-        runner.motherboard_mut().psg_mut().take_audio_output_from(self.motherboard.psg_mut());
+        amsrust::frame::start_script(&mut runner, &mut self.motherboard);
         runner.start_text(text, ".").map_err(|e| JsError::new(&e))?;
         self.csl = Some(runner);
         Ok(())
@@ -457,7 +452,7 @@ impl Emulator {
         if self.ui.as_ref().is_some_and(WebUi::paused) {
             return Ok(());
         }
-        let step = self.csl.as_mut().map(runner_frame);
+        let step = self.csl.as_mut().map(amsrust::frame::play_frame);
         match step {
             Some(step) => self.csl_frame(step)?,
             None => self.free_frame()
@@ -612,27 +607,6 @@ impl Emulator {
     }
 }
 
-/// What a step of the script gave.
-enum Step {
-    /// A frame completed: `CslRunner::last_frame`.
-    Frame,
-    Done(Result<CslReport, String>),
-    Nothing
-}
-
-/// Play the script to its next frame (a frame's time at most).
-fn runner_frame(runner: &mut CslRunner) -> Step {
-    let mut played = 0;
-    while played < MAX_FRAME_T_STATES {
-        match runner.advance(CSL_SLICE_T_STATES) {
-            Ok(Progress::Frame) => return Step::Frame,
-            Ok(Progress::Running) => played += CSL_SLICE_T_STATES,
-            Ok(Progress::Done(report)) => return Step::Done(Ok(report)),
-            Err(e) => return Step::Done(Err(e))
-        }
-    }
-    Step::Nothing
-}
 
 impl Emulator {
     /// The machine running: the script's, or the page's.
@@ -660,14 +634,13 @@ impl Emulator {
 
     /// The machine of a script that ends goes on as the page's.
     fn adopt(&mut self, runner: &mut CslRunner) {
-        let motherboard = std::mem::take(runner.motherboard_mut());
-        self.motherboard = motherboard;
+        self.motherboard = amsrust::frame::end_script(runner);
         self.monitor = Monitor::default().with_black_level(self.config.black_level());
     }
 
-    fn csl_frame(&mut self, step: Step) -> Result<(), JsError> {
+    fn csl_frame(&mut self, step: ScriptStep) -> Result<(), JsError> {
         match step {
-            Step::Frame => {
+            ScriptStep::Frame => {
                 self.frames += 1;
                 // the script's frame, copied in the one already allocated
                 if let Some(source) = self.csl.as_ref().and_then(CslRunner::last_frame) {
@@ -677,8 +650,8 @@ impl Emulator {
                     }
                 }
             },
-            Step::Nothing => {},
-            Step::Done(result) => {
+            ScriptStep::Running => {},
+            ScriptStep::Done(result) => {
                 let mut runner = self.csl.take().expect("a script plays");
                 self.adopt(&mut runner);
                 let report = match &result {
@@ -697,44 +670,25 @@ impl Emulator {
         Ok(())
     }
 
-    /// The page's machine, with the host keyboard, to its next frame.
+    /// The page's machine, with the host keyboard, to its next frame (`amsrust::frame::run_frame`:
+    /// the debugger and the overlay as the window has them).
     fn free_frame(&mut self) {
         self.apply_keyboard();
-        let start = self.motherboard.t_state_counter().value();
-        loop {
-            let monitor = &mut self.monitor;
-            self.motherboard.execute_next_opcode_with_video(|(rgb, sync)| monitor.receive(rgb, sync));
-            if let Some(ui) = self.ui.as_mut().filter(|ui| ui.debugger.is_active()) {
-                let (x, line) = self.monitor.beam();
-                let (crop_x, crop_y) = self.monitor.crop_origin();
-                ui.debugger.set_beam(amsrust::debug_server::Beam { x, line, crop_x, crop_y });
-                ui.debugger.after_instruction(&mut self.motherboard);
-                if ui.debugger.paused() {
-                    return;
-                }
-            }
+        let frame = amsrust::frame::run_frame(
+            &mut self.motherboard,
+            &mut self.monitor,
+            self.ui.as_mut().map(|ui| &mut ui.debugger),
+            self.overlay.as_mut(),
+            MAX_FRAME_T_STATES
+        );
+        if let Some(mut frame) = frame {
             if let Some(overlay) = &mut self.overlay {
-                let (beam, origin) = (self.monitor.beam(), self.monitor.crop_origin());
-                for (port, value) in self.motherboard.take_io_writes() {
-                    overlay.note(port, value, beam, origin);
-                }
+                overlay.draw_and_clear(&mut frame);
             }
-            if let Some(mut frame) = self.monitor.take_frame() {
-                if let Some(overlay) = &mut self.overlay {
-                    overlay.draw_and_clear(&mut frame);
-                }
-                self.frames += 1;
-                if let Some(ui) = &mut self.ui {
-                    ui.debugger.frame_completed(&self.motherboard);
-                }
-                // the previous frame is drawn in next
-                if let Some(previous) = self.frame.replace(frame) {
-                    self.monitor.recycle(previous);
-                }
-                return;
-            }
-            if self.motherboard.t_state_counter().value().wrapping_sub(start) > MAX_FRAME_T_STATES {
-                return;
+            self.frames += 1;
+            // the previous frame is drawn in next
+            if let Some(previous) = self.frame.replace(frame) {
+                self.monitor.recycle(previous);
             }
         }
     }

@@ -14,9 +14,10 @@ use amsrust::commands::{
     self, Chord, CommandBus, CommandError, CommandTarget, HostRequest, HostSettings, Recording,
     Speed,
 };
-use amsrust::csl_runner::{CslReport, CslRunner, Progress};
+use amsrust::csl_runner::{CslReport, CslRunner};
 use amsrust::debug_server::{Beam, DebugServer};
 use amsrust::display::DisplayMode;
+use amsrust::frame::ScriptStep;
 use amsrust::input::{HostInput, HostKey, HostKeyboard, KeyboardMapping};
 use amsrust::joystick::JoystickSource;
 use amsrust::monitor::Monitor as CrtMonitor;
@@ -177,13 +178,6 @@ struct Window {
     gui: Option<amsrust::ui::Gui>,
 }
 
-/// How much of a CSL script plays between two looks for its frame.
-const CSL_SLICE_T_STATES: usize = 20_000;
-
-fn fdc_drive(unit: usize) -> amsrust::fdc::FdcDrive {
-    [amsrust::fdc::FdcDrive::A, amsrust::fdc::FdcDrive::B][unit]
-}
-
 const FUNCTION_KEYS: [(HostKey, &str); 7] = [
     (HostKey::F5, "F5"),
     (HostKey::F6, "F6"),
@@ -334,14 +328,7 @@ impl Window {
         let folder = folder.unwrap_or_else(|| PathBuf::from("."));
         let mut runner = CslRunner::new(&folder);
         runner.set_machine(core.builder);
-        for unit in 0..2 {
-            let kind = core.motherboard.fdc().drive_kind(fdc_drive(unit));
-            runner.set_drive_kind(unit, kind);
-        }
-        runner
-            .motherboard_mut()
-            .psg_mut()
-            .take_audio_output_from(core.motherboard.psg_mut());
+        amsrust::frame::start_script(&mut runner, core.motherboard);
         runner
             .motherboard_mut()
             .watch_io_writes(self.overlay.is_some());
@@ -362,7 +349,7 @@ impl Window {
 
     /// The machine of a script that ends goes on as the window's.
     fn adopt(&mut self, mut runner: CslRunner, core: &mut Core) {
-        *core.motherboard = std::mem::take(runner.motherboard_mut());
+        *core.motherboard = amsrust::frame::end_script(&mut runner);
         self.monitor = if self.exact_monitor {
             let mut monitor = CrtMonitor::default();
             monitor.keep_full_frames();
@@ -375,22 +362,14 @@ impl Window {
     /// The script to its next frame (a frame's time at most): the frame, if one completed.
     fn csl_frame(&mut self, core: &mut Core) -> Option<image::RgbImage> {
         let runner = core.csl.as_mut()?;
-        let mut played = 0;
-        while played < FRAME_T_STATES {
-            match runner.advance(CSL_SLICE_T_STATES) {
-                Ok(Progress::Frame) => return runner.last_frame().cloned(),
-                Ok(Progress::Running) => played += CSL_SLICE_T_STATES,
-                Ok(Progress::Done(report)) => {
-                    self.csl_done(Ok(report), core);
-                    return None;
-                }
-                Err(e) => {
-                    self.csl_done(Err(e), core);
-                    return None;
-                }
+        match amsrust::frame::play_frame(runner) {
+            ScriptStep::Frame => runner.last_frame().cloned(),
+            ScriptStep::Running => None,
+            ScriptStep::Done(result) => {
+                self.csl_done(result, core);
+                None
             }
         }
-        None
     }
 
     fn csl_done(&mut self, result: Result<CslReport, String>, core: &mut Core) {
@@ -929,12 +908,17 @@ pub fn run_window(
         let frame = if core.csl.is_some() {
             window.csl_frame(&mut core)
         } else {
-            run_frame(
+            let frame = amsrust::frame::run_frame(
                 core.motherboard,
                 &mut window.monitor,
-                &mut core.debugger,
+                Some(&mut core.debugger),
                 window.overlay.as_mut(),
-            )
+                2 * FRAME_T_STATES,
+            );
+            if let Some(pc) = core.debugger.take_stop() {
+                eprintln!("debugger: stopped at {pc:#06x}");
+            }
+            frame
         };
         let Some(mut frame) = frame else {
             continue; // paused mid-frame, or the script's frame not over
@@ -1016,49 +1000,4 @@ pub fn run_window(
             );
         }
     }
-}
-
-/// Run until the next whole frame, or until the debugger pauses the CPU (breakpoint, step) -
-/// then `None`, the monitor keeping the part of the frame already drawn.
-fn run_frame(
-    motherboard: &mut Motherboard,
-    monitor: &mut CrtMonitor,
-    debugger: &mut DebugServer,
-    mut overlay: Option<&mut Overlay>,
-) -> Option<image::RgbImage> {
-    let mut frame = None;
-    while frame.is_none() {
-        motherboard.execute_next_opcode_with_video(|(rgb, sync)| {
-            monitor.receive(rgb, sync);
-            if frame.is_none() {
-                frame = monitor.take_frame();
-            }
-        });
-        if let Some(overlay) = overlay.as_deref_mut() {
-            crate::note_io_writes(overlay, motherboard, monitor);
-        }
-        if !debugger.is_active() {
-            continue;
-        }
-        let (x, line) = monitor.beam();
-        let (crop_x, crop_y) = monitor.crop_origin();
-        debugger.set_beam(Beam {
-            x,
-            line,
-            crop_x,
-            crop_y,
-        });
-        debugger.after_instruction(motherboard);
-        if let Some(pc) = debugger.take_stop() {
-            eprintln!("debugger: stopped at {pc:#06x}");
-        }
-        if debugger.paused() {
-            break;
-        }
-    }
-    if let Some(frame) = &frame {
-        debugger.frame_completed(motherboard);
-        debugger.set_frame(frame);
-    }
-    frame
 }
