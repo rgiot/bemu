@@ -267,7 +267,7 @@ pub fn ppi(ui: &mut egui::Ui, mb: &Motherboard) {
         ));
         ui.end_row();
     });
-    ui.separator();
+    super::widgets::rule(ui);
     ui.strong("Keyboard matrix (X: key down)");
     let lines = mb.keyboard().lines();
     egui::Grid::new("ppi-keyboard")
@@ -336,7 +336,7 @@ pub fn tape(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
             ));
         }
     }
-    ui.separator();
+    super::widgets::rule(ui);
     match mb.tape_recorder() {
         Some(recorder) => {
             ui.label(format!("Recording: {:.1} s of tape", recorder.seconds()));
@@ -394,7 +394,7 @@ pub fn asic(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
             }
         });
     ga_state(ui, mb);
-    ui.separator();
+    super::widgets::rule(ui);
     let rmr2 = video.rmr2();
     let sscr = video.sscr();
     egui::Grid::new("asic").striped(true).show(ui, |ui| {
@@ -453,7 +453,7 @@ pub fn asic(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
         ));
         ui.end_row();
     });
-    ui.separator();
+    super::widgets::rule(ui);
     ui.strong("DMA (sound)");
     egui::Grid::new("asic-dma").striped(true).show(ui, |ui| {
         for heading in [
@@ -479,7 +479,7 @@ pub fn asic(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
             ui.end_row();
         }
     });
-    ui.separator();
+    super::widgets::rule(ui);
     ui.strong("Hardware sprites");
     asic_sprites(ui, video);
 }
@@ -616,7 +616,7 @@ pub fn fdc(ui: &mut egui::Ui, mb: &Motherboard) {
         ui.monospace(if fdc.motor() { "on" } else { "off" });
         ui.end_row();
     });
-    ui.separator();
+    super::widgets::rule(ui);
     egui::Grid::new("fdc-drives").striped(true).show(ui, |ui| {
         for heading in ["Drive", "Kind", "Disc", "Track", "Side up", "Modified"] {
             ui.strong(heading);
@@ -632,7 +632,7 @@ pub fn fdc(ui: &mut egui::Ui, mb: &Motherboard) {
             ui.end_row();
         }
     });
-    ui.separator();
+    super::widgets::rule(ui);
     ui.strong("Last commands (the last first)");
     let hex = |bytes: &[u8]| {
         bytes
@@ -1305,12 +1305,12 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
                 deck.position_seconds(),
                 deck.tape().duration_seconds()
             ));
-            ui.separator();
+            super::widgets::rule(ui);
         }
         if let Some(recorder) = mb.tape_recorder() {
             led(ui, motor, RED);
             ui.label(format!("REC {:.1} s", recorder.seconds()));
-            ui.separator();
+            super::widgets::rule(ui);
         }
         // the machine
         let crtc = mb.crtc();
@@ -1381,7 +1381,7 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
         // on the right, from the right edge: the drives, then how it runs
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             drive_leds(ui, target);
-            ui.separator();
+            super::widgets::rule(ui);
             let paused = target
                 .debugger()
                 .map_or(settings.is_some_and(|s| s.paused), |d| d.paused());
@@ -1400,7 +1400,7 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
             };
             ui.label(state);
             if let Some(port) = target.debugger().and_then(|d| d.listening_port()) {
-                ui.separator();
+                super::widgets::rule(ui);
                 ui.label(format!("debug server :{port}"));
             }
         });

@@ -115,7 +115,7 @@ pub fn memory(
 ) {
     let mb = target.motherboard();
     super::paging::show(ui, id, mb, &mut window.paging);
-    ui.separator();
+    super::widgets::rule(ui);
     ui.horizontal(|ui| {
         ui.label("Go to");
         ui.add(
@@ -267,7 +267,7 @@ pub fn disassembly(
     let mb = target.motherboard();
     controls(ui, target, bus);
     super::paging::show(ui, id, mb, &mut window.paging);
-    ui.separator();
+    super::widgets::rule(ui);
     let pc = mb.pc();
     ui.horizontal(|ui| {
         ui.label("From");

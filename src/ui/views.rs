@@ -90,7 +90,7 @@ fn json_grid(ui: &mut egui::Ui, id: &str, value: &Value) {
                                 ui.vertical(|ui| {
                                     for (i, item) in items.iter().enumerate() {
                                         json_grid(ui, &format!("{id}.{key}.{i}"), item);
-                                        ui.separator();
+                                        super::widgets::rule(ui);
                                     }
                                 });
                             }
@@ -402,7 +402,7 @@ pub(super) fn controls(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut 
             }
         }
     });
-    ui.separator();
+    super::widgets::rule(ui);
 }
 
 pub fn contents(
@@ -427,7 +427,7 @@ pub fn contents(
                 z80["IFF1"],
                 z80["IFF2"]
             ));
-            ui.separator();
+            super::widgets::rule(ui);
             super::chips::z80(ui, mb);
             ui.collapsing("Raw (as /api/z80)", |ui| json_grid(ui, "z80", &z80));
         }
@@ -472,7 +472,7 @@ pub fn contents(
                     ui.end_row();
                 }
             });
-            ui.separator();
+            super::widgets::rule(ui);
             ui.strong("Words");
             egui::Grid::new("stack").striped(true).show(ui, |ui| {
                 for i in 0..16u16 {
@@ -503,7 +503,7 @@ pub fn contents(
                     crtc_status(ui, mb, &inspect(target, "beam"), state, bus);
                 });
             });
-            ui.separator();
+            super::widgets::rule(ui);
             super::chips::crtc(ui, mb);
             ui.collapsing("Raw (as /api/crtc)", |ui| json_grid(ui, "crtc", &crtc));
         }
@@ -544,7 +544,7 @@ pub fn contents(
             super::chips::beam_map(ui, mb);
             ui.collapsing("Raw (as /api/beam and /api/state)", |ui| {
                 json_grid(ui, "beam", &inspect(target, "beam"));
-                ui.separator();
+                super::widgets::rule(ui);
                 json_grid(ui, "state", &inspect(target, "state"));
             });
         }
@@ -658,7 +658,7 @@ pub fn contents(
             let symbols = target.debugger().map(|d| d.symbols());
             let resolve = |name: &str| symbols.and_then(|s| s.resolve(name));
             super::breakpoints::show(ui, &mut state.manager, bus, &resolve);
-            ui.separator();
+            super::widgets::rule(ui);
             if let Some(debugger) = target.debugger() {
                 let symbols = debugger.symbols();
                 ui.strong("Execution");
@@ -1072,7 +1072,7 @@ fn simulated_joystick(
 
     ui.heading("Simulated joystick");
     ui.label("Click or drag the stick. Right-click while holding it for Fire 1.");
-    ui.separator();
+    super::widgets::rule(ui);
 
     state.simulated_joysticks = simulated_joystick_controls(ui, [joy0_sim, joy1_sim]);
 }
@@ -1093,7 +1093,7 @@ fn keyboard_view(
 
     ui.heading("Keyboard");
     ui.label("Click a key to press it. Ctrl-click Shift to latch it for the next key.");
-    ui.separator();
+    super::widgets::rule(ui);
 
     // Key widths use quarter-key units so the CPC's uneven modifier widths line up.
     struct K {
@@ -1462,7 +1462,7 @@ mod joystick_tests {
                         ui.label(
                             "Click or drag the stick. Right-click while holding it for Fire 1.",
                         );
-                        ui.separator();
+                        super::widgets::rule(ui);
                         sticks = simulated_joystick_controls(ui, enabled);
                     });
             });

@@ -225,7 +225,7 @@ pub fn show(ui: &mut egui::Ui, id: &str, mb: &Motherboard, paging: &mut Paging) 
                     .on_hover_text("What the CPU reads: the ROMs where they are paged");
                 ui.selectable_value(&mut paging.writes, true, "Write")
                     .on_hover_text("What a write reaches: the RAM, under the ROMs too");
-                ui.separator();
+                super::widgets::rule(ui);
                 ui.checkbox(&mut paging.follow, "Follow the emulator's paging");
                 if ui
                     .button("Resynchronise")

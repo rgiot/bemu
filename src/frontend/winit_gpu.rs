@@ -212,7 +212,9 @@ impl ViewWindow {
             state,
             ctx,
             painter: None,
-            fitting: Fitting::new(!matches!(title, "Keyboard" | "Joystick")),
+            // the keyboard scales to its window; the others, the joystick's included (one or two
+            // sticks), are as large as their content
+            fitting: Fitting::new(title != "Keyboard"),
         })
     }
 

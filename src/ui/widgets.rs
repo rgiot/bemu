@@ -143,3 +143,18 @@ pub fn goto_buttons(ui: &mut egui::Ui, mb: &crate::motherboard::Motherboard) -> 
     });
     chosen
 }
+
+/// A separator that takes no width: in a column, a line across what is shown of the window
+/// (the window is sized to its content: a `ui.separator()` would take the window's whole width
+/// and keep it from ever getting narrower); in a row, the usual one.
+pub fn rule(ui: &mut egui::Ui) {
+    if ui.layout().main_dir().is_horizontal() {
+        ui.separator();
+        return;
+    }
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(0.0, 6.0), egui::Sense::hover());
+    let clip = ui.clip_rect();
+    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+    ui.painter()
+        .hline(clip.left()..=clip.right(), rect.center().y, stroke);
+}
