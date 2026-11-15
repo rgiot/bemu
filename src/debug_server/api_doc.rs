@@ -1,445 +1,75 @@
-//! The debug server describing itself: each operation's parameters, body,
-//! answer and an example, served by `GET /api/doc` (`?endpoint=` for one,
-//! `?format=openapi` for an OpenAPI 3 description, `?format=html` for a
-//! page to read).
+//! The debug server describing itself, served by `GET /api/doc`: the endpoints (default), one in
+//! detail (`?endpoint=`), the whole API as OpenAPI 3.1 (`?format=openapi`), a page to read
+//! (`?format=html`); `/api/doc/ui` is an interactive reference (see `http.rs`).
 //!
-//! Kept beside the handlers by hand; the tests check every route and
-//! method has its operation, and that the examples are accepted.
+//! Everything is generated from the routes' types (`bemu_api`, `http.rs`): what is documented is
+//! what is parsed. Kept here by hand: the conventions, an example for most operations (the tests
+//! check each is accepted), and which routes are bemu's extensions ([`ROUTES`]).
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use super::{Route, ROUTES};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Place {
-    Query,
-    /// A field of the JSON body.
-    Body,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Param {
-    pub name: &'static str,
-    pub place: Place,
-    /// integer, boolean, string, hex (a string of hex bytes).
-    pub kind: &'static str,
-    pub required: bool,
-    pub description: &'static str,
-}
-
-const fn q(name: &'static str, kind: &'static str, description: &'static str) -> Param {
-    Param {
-        name,
-        place: Place::Query,
-        kind,
-        required: false,
-        description,
-    }
-}
-
-const fn b(name: &'static str, kind: &'static str, description: &'static str) -> Param {
-    Param {
-        name,
-        place: Place::Body,
-        kind,
-        required: false,
-        description,
-    }
-}
-
-impl Param {
-    const fn required(self) -> Self {
-        Param {
-            required: true,
-            ..self
-        }
-    }
-}
-
-/// A body that is not a JSON object of [`Param`]s.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct RawBody {
-    pub content_type: &'static str,
-    pub description: &'static str,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Example {
-    /// Without the `?`.
-    pub query: &'static str,
-    pub body: &'static str,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Operation {
-    pub method: &'static str,
-    pub path: &'static str,
-    pub description: &'static str,
-    pub params: &'static [Param],
-    pub raw_body: Option<RawBody>,
-    pub response_type: &'static str,
-    pub response: &'static str,
-    pub example: Option<Example>,
-}
-
-const JSON: &str = "application/json";
-const OK: &str =
-    "{ok: true, cmd_seq}: cmd_seq numbers the commands, for matching the events they cause";
-
-const fn op(
-    method: &'static str,
-    path: &'static str,
-    description: &'static str,
-    response: &'static str,
-) -> Operation {
-    Operation {
-        method,
-        path,
-        description,
-        params: &[],
-        raw_body: None,
-        response_type: JSON,
-        response,
-        example: None,
-    }
-}
-
-impl Operation {
-    const fn params(self, params: &'static [Param]) -> Self {
-        Operation { params, ..self }
-    }
-
-    const fn raw_body(self, content_type: &'static str, description: &'static str) -> Self {
-        Operation {
-            raw_body: Some(RawBody {
-                content_type,
-                description,
-            }),
-            ..self
-        }
-    }
-
-    const fn returns(self, response_type: &'static str) -> Self {
-        Operation {
-            response_type,
-            ..self
-        }
-    }
-
-    const fn example(self, query: &'static str, body: &'static str) -> Self {
-        Operation {
-            example: Some(Example { query, body }),
-            ..self
-        }
-    }
-
-    fn has_json_body(&self) -> bool {
-        self.params.iter().any(|p| p.place == Place::Body)
-    }
-}
 
 /// How values are written, for every operation.
 const CONVENTIONS: &[&str] = &[
     "Integers in the query or in a JSON body: decimal, or hexadecimal with 0x (a JSON body also takes JSON numbers).",
     "JSON bodies are objects; a field is looked up at any depth ({\"a\":1} and {\"x\":{\"a\":1}} both carry a).",
+    "A query flag is 1 or 0; an empty query value (?mode=) is no value.",
     "Errors answer 400 with {error, field?}, 404 for an unknown path, 405 (with Allow) for a method a path does not take.",
     "Commands answer cmd_seq; the events they cause (GET /api/events) carry it.",
     "Addresses are CPU addresses (the current mapping) unless a bank is given; Bnn:hhhh names offset hhhh of 16K RAM bank nn (hex)."
 ];
 
-pub(super) const OPERATIONS: &[Operation] = &[
-    op(
-        "GET",
-        "/api/state",
-        "Everything at once: the Z80 registers, the Gate Array, the CRTC, the PSG, the FDC, the beam and the emulator.",
-        "{z80, ga, crtc, psg, fdc, beam (null without a monitor), emu}: as the endpoints of the same names"
+/// An example of a request: its method, path, query (without `?`) and body.
+pub(super) struct Example {
+    pub method: &'static str,
+    pub path: &'static str,
+    pub query: &'static str,
+    pub body: &'static str,
+}
+
+const fn example(method: &'static str, path: &'static str, query: &'static str, body: &'static str) -> Example {
+    Example {
+        method,
+        path,
+        query,
+        body,
+    }
+}
+
+pub(super) const EXAMPLES: &[Example] = &[
+    example("POST", "/api/z80", "", r#"{"BC":"0x7f10","A":84}"#),
+    example("GET", "/api/ram", "addr=0xc000&len=16&view=cpu", ""),
+    example("POST", "/api/ram", "", r#"{"addr":"0x4000","data":"C3 00 40"}"#),
+    example("POST", "/api/exec", "", r#"{"addr":"0x4000"}"#),
+    example("POST", "/api/step", "mode=over", ""),
+    example("POST", "/api/run_to", "", r#"{"addr":"0x4000"}"#),
+    example("POST", "/api/config", "", r#"{"paused":true}"#),
+    example("POST", "/api/z80_bp", "", "0x4000, B01:0010"),
+    example("DELETE", "/api/z80_bp", "", "0x4000"),
+    example(
+        "POST",
+        "/api/breakpoints",
+        "",
+        r#"{"kind":"mem","access":"w","run":"watch","addr":"0xc000","size":16,"name":"screen"}"#,
     ),
-    op("GET", "/api/ram", "Read memory as hex.", "{addr, len, hex, view?}")
-        .params(&[
-            q("addr", "integer", "first byte (default 0)"),
-            q("len", "integer", "number of bytes, 1 to 65536 (default 256)"),
-            q("bank", "integer", "16K RAM bank addr is counted from, view=raw (default 0); offsets carry into the next banks"),
-            q("view", "string", "raw: the RAM banks, whatever is mapped (default); cpu: what the CPU reads now, ROMs included")
-        ])
-        .example("addr=0xc000&len=16&view=cpu", ""),
-    op("POST", "/api/ram", "Write bytes to RAM and/or jump.", "{ok, seq, cmd_seq}: seq counts the memory changes")
-        .params(&[
-            b("addr", "integer", "where to write (an offset in bank); required with data"),
-            b("bank", "integer", "16K RAM bank addr is counted from (default 0)"),
-            b("data", "hex", "the bytes, as hex (spaces and : ignored)"),
-            b("exec", "boolean", "set PC afterwards (default false)"),
-            b("entry", "integer", "the PC exec sets (default addr)")
-        ])
-        .example("", r#"{"addr":"0x4000","data":"C3 00 40"}"#),
-    op("POST", "/api/exec", "Set PC.", "{ok, seq, cmd_seq}")
-        .params(&[b("addr", "integer", "the new PC").required()])
-        .example("", r#"{"addr":"0x4000"}"#),
-    op(
-        "POST",
-        "/api/run_to",
-        "Run to an address, once, then pause (a z80_bp event, reason run_to); or to a beam position (reason run_to_beam).",
-        OK
-    )
-    .params(&[
-        b("addr", "integer", "a CPU address, or a symbol (label, label+n) as a string"),
-        b("line", "integer", "in place of addr: the line of the frame, from the VSYNC"),
-        b("nop", "integer", "with line: the NOP in it, 0 to 63 (default 0)")
-    ])
-    .example("", r#"{"addr":"0x4000"}"#),
-    op("GET", "/api/config", "Emulator settings.", "{crtc_type, paused, history_size}"),
-    op("POST", "/api/config", "Pause or resume, reset, size the instruction history.", OK)
-        .params(&[
-            b("paused", "boolean", "pause (true) or resume (false)"),
-            b("do_soft_reset", "boolean", "the reset button: RAM kept"),
-            b("do_hard_reset", "boolean", "power off and on"),
-            b("history_size", "integer", "instructions kept for /api/history, 1 to 100000; empties it")
-        ])
-        .example("", r#"{"paused":true}"#),
-    op("POST", "/api/z80_bp", "Replace the execution breakpoints, or add to them.", "{ok, cmd_seq, resolved: [{entry, location}], warnings?}")
-        .params(&[q("add", "integer", "1: add these to the others (default 0: replace them)")])
-        .raw_body(
-            "text/plain",
-            "comma-separated: CPU addresses or symbols (label, label+n: the snapshot's and --sym files' labels), resolved \
-             against the current mapping to the RAM bank or ROM they reach, or Bnn:hhhh (hex bank, hex offset); empty clears"
-        )
-        .example("", "0x4000, B01:0010"),
-    op("DELETE", "/api/z80_bp", "Remove the execution breakpoints listed, the others kept.", "{ok, cmd_seq, removed: [{entry, location}], warnings?}")
-        .raw_body("text/plain", "the breakpoints, as POST takes them; empty removes them all")
-        .example("", "0x4000"),
-    op("GET", "/api/symbols", "The symbols known: the loaded snapshot's (SYMB chunk, REMU labels) and the --sym files'.", "[{name, address}], by address"),
-    op("GET", "/api/breakpoints", "The execution and advanced breakpoints.", "{z80_bp: [location], advanced: [{index, kind, access, run, addr, mask, size, value, valmask, name, condition, counters, after, hits}]}"),
-    op("POST", "/api/breakpoints", "Add an advanced breakpoint (memory, IO or execution; stop, watch or count).", "{ok, index, cmd_seq}")
-        .params(&[
-            b("remu", "string", "the breakpoint as the text of a REMU acebreak entry, in place of the fields below"),
-            b("kind", "string", "exec (default), mem or io"),
-            b("access", "string", "r, w or rw (default)"),
-            b("run", "string", "stop (default), watch (a watch event, no stop) or count (only acts on counters)"),
-            b("addr", "integer", "address or port").required(),
-            b("mask", "integer", "bits of the address compared (default 0xffff)"),
-            b("size", "integer", "bytes or ports covered from addr (default 1)"),
-            b("value", "integer", "byte read or written to match, under valmask"),
-            b("valmask", "integer", "bits of value compared (default 0: any value)"),
-            b("name", "string", "shown in its events"),
-            b(
-                "condition",
-                "string",
-                "ACE's condition language (BASIC-like: A = &12 AND NOT FlagZ, LineCount > 100, CrtcR12 = &30, \
-                 MOD, \\, ^ power; registers, flags, CRTC C0..C9 and CrtcR0..17, beam, MemPage...) or C operators \
-                 (A == #12 && peek(HL) <> 0, value & %1000)"
-            ),
-            b("start", "string", "counter name(s) started on a hit (a string or a list)"),
-            b("stop", "string", "counter name(s) stopped on a hit"),
-            b("reset", "string", "counter name(s) reset on a hit"),
-            b("after", "integer", "hits ignored first")
-        ])
-        .example("", r#"{"kind":"mem","access":"w","run":"watch","addr":"0xc000","size":16,"name":"screen"}"#),
-    op("DELETE", "/api/breakpoints", "Remove one advanced breakpoint, or all.", OK)
-        .params(&[q("index", "integer", "the one to remove (others are renumbered); none: all")])
-        .example("", ""),
-    op("POST", "/api/keytype", "Type text on the CPC keyboard, a key at a time.", OK)
-        .params(&[b("text", "string", "the characters; \\r or \\n is RETURN").required()])
-        .example("", r#"{"text":"PRINT 1\r"}"#),
-    op(
-        "GET",
-        "/api/events",
-        "Server-Sent Events: frame (each frame, while running), z80_bp (a stop: its reason breakpoint, raster, step, \
-         step_out, run_to or run_to_beam, its kind, and the cmd_seq of the last command), pause (each pause and resume, \
-         with cmd_seq), reset, watch (a watch breakpoint's hit), basic_bp (a BASIC stop). Each event's data is JSON.",
-        "an event stream"
-    )
-    .params(&[q("topics", "string", "comma-separated event names to receive (default all)")])
-    .returns("text/event-stream"),
-    op("POST", "/api/quit", "Leave the emulator.", OK),
-    op("GET", "/api/history", "The last instructions run, oldest first.", "[{pc, hex, current_hex, label?}]: hex as fetched, current_hex as in memory now, label the symbol it is at (label or label+n)")
-        .params(&[q("n", "integer", "the last n only, 1 to 100000")])
-        .example("n=8", ""),
-    op(
-        "GET",
-        "/api/screenshot",
-        "The screen as a PNG. Headers: X-Crop-X/Y/W/H (where the picture is in the beam's 1024x350 raster), \
-         X-Beam-X/Y (the beam, in the picture) when known.",
-        "a PNG image; 503 while there is no frame yet, or for crop=0 when whole frames are not kept"
-    )
-    .params(&[
-        q("crop", "integer", "1: the visible 768x272 picture (default); 0: the whole 1024x350 raster, borders and syncs included"),
-        q("live", "integer", "1: the frame being drawn (default while paused); 0: the last complete frame"),
-        q("full", "integer", "with live=1: 1 the drawn part alone (default), 0 drawn over the previous frame")
-    ])
-    .returns("image/png")
-    .example("crop=1&live=0", ""),
-    op(
-        "POST",
-        "/api/media",
-        "Load a snapshot (its breakpoints set), insert a disc or a tape (PLAY down), or load a binary.",
-        "{ok, media: sna|dsk|cdt|bin, cmd_seq, breakpoints?, warnings?, load?, len?, entry?}"
-    )
-    .params(&[
-        q("name", "string", "the file's name: .bin/.amsdos (an AMSDOS header is used when there is one)"),
-        q("drive", "integer", "drive for a disc: 0 (A, default) or 1 (B)"),
-        q("crtc", "string", "keep or sna (accepted; the CRTC is kept)")
-    ])
-    .raw_body("application/octet-stream", "the file: .sna, .dsk and .cdt are recognised by their content"),
-    op(
-        "GET",
-        "/api/snapshot",
-        "The machine's state as a version 3 .sna file: CPU, RAM (the main 64K and the extra pages), CRTC with its \
-         counters, Gate Array, PSG, PPI, ROM and RAM banking. POST it to /api/media to go back to it.",
-        "the .sna file"
-    )
-    .returns("application/octet-stream"),
-    op("GET", "/api/memmap", "What each 16K region of the CPU maps: ROM, or which RAM bank; RMR and MMR.", "{regions: [{base, name, rom, rom_bank?, ram_bank?, ext?, write_bank}], rmr, mmr, ram_mode, ram_page, ram_banks}"),
-    op("GET", "/api/crtc", "The CRTC registers, the selected one and the counters.", "{type, regs, selected_reg, hcc, vcc, vlc, vsc, vtac, ma}"),
-    op("GET", "/api/ga", "The Gate Array: mode, pen, inks, RMR and banking.", "{mode, pen, ink_idx, ink_rgb, ink_firmware, border_idx, border_rgb, rmr, r52, lower_rom, upper_rom, ram_mode, ram_page}"),
-    op("GET", "/api/psg", "The PSG registers, decoded.", "{regs, selected_reg, period_a, period_b, period_c, noise, mixer, vol_a, vol_b, vol_c, env_period, env_shape}"),
-    op("GET", "/api/fdc", "The FDC: status registers, phase, motor and heads.", "{msr, sr0, sr1, sr2, phase, command, motor, drives: [{connected, kind: 3|3.5, disk, side: A|B, track}]}"),
-    op(
-        "POST",
-        "/api/drive",
-        "Set up a drive: a 3\" drive (one head: the side read is the side put up) or a double-sided 3.5\" one \
-         (the FDC selects the side), and turn the disc of a 3\" drive over (its ready line changes, as on a real disc swap).",
-        "the FDC state, as GET /api/fdc"
-    )
-    .params(&[
-        q("drive", "integer", "0 (A, default) or 1 (B)"),
-        q("kind", "string", "3 or 3.5"),
-        q("flip", "integer", "1 turns the disc over")
-    ]),
-    op(
-        "GET",
-        "/api/beam",
-        "Where the beam is: x (ticks of 1/16 us) and y (lines) in the 1024x350 raster, and in NOPs.",
-        "{x, y, nop, line, frame_nop, cx, cy, cw, ch (the picture in the raster), nops_per_line, nops_per_frame}; 400 without a monitor"
-    )
-    .params(&[q("crop", "integer", "1: x and y relative to the visible picture")])
-    .example("crop=1", ""),
-    op("GET", "/api/raster_bp", "The beam breakpoints.", "{breakpoints: [{index, x, nop, name?, y?, line?, frame_nop?}]}"),
-    op(
-        "POST",
-        "/api/raster_bp",
-        "Stop when the beam reaches a position: x/y (or with crop=1, in the picture), or nop in line, or frame_nop. \
-         nop alone stops in every line, line alone at its start.",
-        "{ok, cmd_seq, breakpoints}"
-    )
-    .params(&[
-        q("x", "integer", "beam ticks"),
-        q("y", "integer", "raster line"),
-        q("crop", "integer", "1: x/y relative to the visible picture"),
-        q("nop", "integer", "NOP in the line, 0 to 63"),
-        q("line", "integer", "line of the frame, from the VSYNC"),
-        q("frame_nop", "integer", "NOP of the frame, 0 to 19967"),
-        q("add", "integer", "1: keep the others (default 0: replace them)"),
-        q("enable", "integer", "0: clear them all"),
-        q("name", "string", "shown in its stop event (with its index)")
-    ])
-    .example("line=100&nop=10", ""),
-    op("GET", "/api/counters", "The NOP counters.", "{counters: [{name, nops, running}]}"),
-    op("POST", "/api/counters", "Create, reset, start or stop a counter of the NOPs run.", "{ok, counters: [{name, nops, running}]}")
-        .params(&[
-            b("name", "string", "the counter").required(),
-            b("action", "string", "create (default), reset, start or stop"),
-            b("running", "boolean", "on create: start counting now (default true)")
-        ])
-        .example("", r#"{"name":"loop","action":"create"}"#),
-    op("DELETE", "/api/counters", "Delete a counter, or all.", "{ok, counters}")
-        .params(&[q("name", "string", "the one to delete; none: all")])
-        .example("", ""),
-    op("POST", "/api/basic", "Load a BASIC program in place of the one in RAM (variables cleared).", OK)
-        .params(&[
-            q("reset", "integer", "1: reset first; loaded once the firmware has booted"),
-            q("run", "integer", "1: RUN it")
-        ])
-        .raw_body("text/plain", "the program, as typed (numbered lines)")
-        .example("", "10 PRINT \"HELLO\"\n20 GOTO 10\n"),
-    op(
-        "GET",
-        "/api/basic_state",
-        "Where the BASIC program and its variables are, the line and statement being run.",
-        "{basic_ver, prog_start, txttop, vartop, arrend, prog_size, var_size, chain_heads_addr, cur_linenum (0xffff: direct mode), stmt_addr}"
-    ),
-    op("GET", "/api/basic_export", "The BASIC program in RAM, as text.", "the listing").returns("text/plain"),
-    op(
-        "GET",
-        "/api/basic_listing",
-        "The BASIC program as lines of statements with their addresses (stmt_addr of /api/basic_state names one).",
-        "{lines: [{addr, num, stmts: [{addr, end, colon, text, vars}]}]}"
-    ),
-    op("POST", "/api/basic_step", "Run to the next BASIC statement (a basic_bp event, reason step).", OK)
-        .params(&[q("mode", "string", "statement (default) or line: the next line")])
-        .example("mode=line", ""),
-    op("GET", "/api/basic_bp", "The BASIC line breakpoints.", "{lines}"),
-    op("POST", "/api/basic_bp", "Replace the BASIC line breakpoints.", "{ok, lines, cmd_seq}")
-        .raw_body("text/plain", "comma-separated line numbers; empty clears")
-        .example("", "10, 20"),
-    op("POST", "/api/basic_runto", "Run to a BASIC line or statement, once (a basic_bp event, reason runto).", OK)
-        .params(&[
-            q("line", "integer", "the line number"),
-            q("addr", "integer", "a statement's address (as /api/basic_listing gives them)")
-        ])
-        .example("line=20", ""),
-    op(
-        "GET",
-        "/api/doc",
-        "This documentation: the endpoints (default), one in detail, or the whole API as OpenAPI 3 or HTML.",
-        "{frontend, conventions, endpoints: [{path, methods, summary, extension?, doc}]}; ?endpoint=: {path, operations}"
-    )
-    .params(&[
-        q("endpoint", "string", "one endpoint in detail: its path, with or without /api/ (ram, /api/ram)"),
-        q("format", "string", "json (default), openapi or html")
-    ])
-    .example("endpoint=ram", "")
+    example("DELETE", "/api/breakpoints", "", ""),
+    example("POST", "/api/keytype", "", r#"{"text":"PRINT 1\r"}"#),
+    example("GET", "/api/history", "n=8", ""),
+    example("GET", "/api/screenshot", "crop=1&live=0", ""),
+    example("GET", "/api/beam", "crop=1", ""),
+    example("POST", "/api/raster_bp", "line=100&nop=10", ""),
+    example("POST", "/api/counters", "", r#"{"name":"loop","action":"create"}"#),
+    example("DELETE", "/api/counters", "", ""),
+    example("POST", "/api/basic", "", "10 PRINT \"HELLO\"\n20 GOTO 10\n"),
+    example("POST", "/api/basic_step", "mode=line", ""),
+    example("POST", "/api/basic_bp", "", "10, 20"),
+    example("POST", "/api/basic_runto", "line=20", ""),
+    example("GET", "/api/doc", "endpoint=ram", ""),
 ];
 
-fn param_json(param: &Param) -> Value {
-    let mut value =
-        json!({ "name": param.name, "type": param.kind, "description": param.description });
-    if param.required {
-        value["required"] = json!(true);
-    }
-    value
-}
-
-fn operation_json(operation: &Operation) -> Value {
-    let list = |place| {
-        operation
-            .params
-            .iter()
-            .filter(|p| p.place == place)
-            .map(param_json)
-            .collect::<Vec<_>>()
-    };
-    let mut value = json!({ "method": operation.method, "description": operation.description });
-    let query = list(Place::Query);
-    if !query.is_empty() {
-        value["query"] = json!(query);
-    }
-    if operation.has_json_body() {
-        value["body"] = json!({ "content_type": JSON, "fields": list(Place::Body) });
-    }
-    if let Some(body) = operation.raw_body {
-        value["body"] =
-            json!({ "content_type": body.content_type, "description": body.description });
-    }
-    value["response"] =
-        json!({ "content_type": operation.response_type, "description": operation.response });
-    if let Some(example) = operation.example {
-        let mut request = format!("{} {}", operation.method, operation.path);
-        if !example.query.is_empty() {
-            request = format!("{request}?{}", example.query);
-        }
-        value["example"] = json!({ "request": request });
-        if !example.body.is_empty() {
-            value["example"]["body"] = json!(example.body);
-        }
-    }
-    value
-}
-
-fn operations_of(path: &str) -> impl Iterator<Item = &'static Operation> + '_ {
-    OPERATIONS.iter().filter(move |o| o.path == path)
-}
-
-/// The OpenAPI description generated from the typed routes' types (see `http.rs`), `Null` where
-/// the API is not served over HTTP (the web page).
+/// The description generated from the routes' types (see `http.rs`); `Null` where the API is
+/// not served over HTTP (the web page).
 fn typed() -> Value {
     #[cfg(not(target_arch = "wasm32"))]
     return super::http::openapi();
@@ -447,13 +77,17 @@ fn typed() -> Value {
     Value::Null
 }
 
-/// A typed route's operation, as the generated description has it.
-fn typed_operation<'t>(typed: &'t Value, method: &str, path: &str) -> Option<&'t Value> {
+/// An operation, as the generated description has it.
+fn operation<'t>(typed: &'t Value, method: &str, path: &str) -> Option<&'t Value> {
     typed
         .get("paths")?
         .get(path)?
         .get(method.to_ascii_lowercase())
         .filter(|op| op.is_object())
+}
+
+fn example_of(method: &str, path: &str) -> Option<&'static Example> {
+    EXAMPLES.iter().find(|e| e.method == method && e.path == path)
 }
 
 fn doc_link(route: &Route) -> String {
@@ -482,39 +116,39 @@ pub(super) fn index() -> Value {
         "version": env!("CARGO_PKG_VERSION"),
         "conventions": CONVENTIONS,
         "formats": ["json", "openapi", "html"],
+        "reference": "/api/doc/ui",
         "endpoints": endpoints
     })
 }
 
-/// `GET /api/doc?endpoint=`: `None` for an unknown endpoint.
+/// `GET /api/doc?endpoint=`: one endpoint, its operations as OpenAPI describes them (their
+/// schemas in `components`); `None` for an unknown endpoint.
 pub(super) fn endpoint(name: &str) -> Option<Value> {
     let name = name.trim_start_matches('/');
     let name = name.strip_prefix("api/").unwrap_or(name);
     let route = ROUTES
         .iter()
         .find(|r| r.path.trim_start_matches("/api/") == name)?;
-    let typed = typed();
+    let api = openapi();
     let operations: Vec<Value> = route
         .methods
         .iter()
         .filter_map(|method| {
-            match operations_of(route.path).find(|o| o.method == *method) {
-                Some(operation) => Some(operation_json(operation)),
-                // generated from its types: the operation as OpenAPI describes it
-                None => typed_operation(&typed, method, route.path).map(|op| {
-                    json!({
-                        "method": method,
-                        "description": op.get("description").or(op.get("summary")),
-                        "openapi": op
-                    })
-                }),
-            }
+            operation(&api, method, route.path).map(|op| {
+                json!({
+                    "method": method,
+                    "summary": op.get("summary"),
+                    "description": op.get("description"),
+                    "openapi": op
+                })
+            })
         })
         .collect();
     let mut value = json!({
         "path": route.path,
         "summary": route.summary,
-        "operations": operations
+        "operations": operations,
+        "components": api.get("components")
     });
     if route.extension {
         value["extension"] = json!(true);
@@ -522,153 +156,59 @@ pub(super) fn endpoint(name: &str) -> Option<Value> {
     Some(value)
 }
 
-fn schema_of(kind: &str) -> Value {
-    match kind {
-        // Numbers, or decimal / 0x hex strings.
-        "integer" => json!({ "oneOf": [{ "type": "integer" }, { "type": "string" }] }),
-        "boolean" => json!({ "type": "boolean" }),
-        "hex" => json!({ "type": "string", "pattern": "^[0-9A-Fa-f :]*$" }),
-        _ => json!({ "type": "string" }),
-    }
-}
-
-/// `GET /api/doc?format=openapi`: an OpenAPI 3.1 description, the typed routes' generated from
-/// their types, the others' from the operations above.
+/// `GET /api/doc?format=openapi`: the OpenAPI 3.1 description, generated, with the conventions,
+/// the examples and the extensions marked (`x-bemu-extension`).
 pub(super) fn openapi() -> Value {
-    let mut api = documented_openapi();
-    let typed = typed();
-    if let (Some(paths), Some(typed_paths)) = (
-        api["paths"].as_object_mut(),
-        typed.get("paths").and_then(Value::as_object),
-    ) {
-        for (path, item) in typed_paths {
-            let entry = paths.entry(path.clone()).or_insert_with(|| json!({}));
-            if let (Some(entry), Some(item)) = (entry.as_object_mut(), item.as_object()) {
-                for (method, operation) in item {
-                    entry.insert(method.clone(), operation.clone());
+    let mut api = typed();
+    if !api.is_object() {
+        api = json!({ "openapi": "3.1.0", "paths": {}, "components": { "schemas": {} } });
+    }
+    api["info"] = json!({
+        "title": "bemu debug server",
+        "version": env!("CARGO_PKG_VERSION"),
+        "description": format!(
+            "The AMSpiriT-Lite debug API of bemu, with extensions (x-bemu-extension). The data of \
+             each event of /api/events is described in x-events.\n\n- {}",
+            CONVENTIONS.join("\n- ")
+        )
+    });
+    api["servers"] = json!([{ "url": "/" }]);
+    // AMSpiriT's name for the error, as the old description had it.
+    if let Some(error) = api["components"]["schemas"].get("ErrorReply").cloned() {
+        api["components"]["schemas"]["Error"] = error;
+    }
+    for route in ROUTES {
+        for method in route.methods {
+            let Some(op) = api["paths"][route.path].get_mut(method.to_ascii_lowercase()) else {
+                continue;
+            };
+            op["operationId"] = json!(format!(
+                "{}_{}",
+                method.to_ascii_lowercase(),
+                route.path.trim_start_matches("/api/")
+            ));
+            if route.extension {
+                op["x-bemu-extension"] = json!(true);
+            }
+            if let Some(example) = example_of(method, route.path) {
+                if !example.query.is_empty() {
+                    op["x-example-query"] = json!(example.query);
+                }
+                if !example.body.is_empty() {
+                    if let Some(content) = op["requestBody"]["content"].as_object_mut() {
+                        for (content_type, media) in content.iter_mut() {
+                            media["example"] = if content_type == "application/json" {
+                                serde_json::from_str(example.body).unwrap_or(json!(example.body))
+                            } else {
+                                json!(example.body)
+                            };
+                        }
+                    }
                 }
             }
-        }
-    }
-    if let (Some(schemas), Some(typed_schemas)) = (
-        api["components"]["schemas"].as_object_mut(),
-        typed["components"]["schemas"].as_object(),
-    ) {
-        for (name, schema) in typed_schemas {
-            schemas.insert(name.clone(), schema.clone());
         }
     }
     api
-}
-
-/// The operations documented above, as OpenAPI.
-fn documented_openapi() -> Value {
-    let mut paths = Map::new();
-    for route in ROUTES {
-        let mut item = Map::new();
-        for operation in operations_of(route.path) {
-            let parameters: Vec<Value> = operation
-                .params
-                .iter()
-                .filter(|p| p.place == Place::Query)
-                .map(|p| {
-                    json!({
-                        "name": p.name,
-                        "in": "query",
-                        "required": p.required,
-                        "description": p.description,
-                        // Query values are text: integers in decimal or 0x hex.
-                        "schema": if p.kind == "integer" { json!({ "type": "string" }) } else { schema_of(p.kind) }
-                    })
-                })
-                .collect();
-            let mut value = json!({
-                "summary": route.summary,
-                "description": operation.description,
-                "operationId": format!("{}_{}", operation.method.to_ascii_lowercase(), route.path.trim_start_matches("/api/")),
-                "parameters": parameters,
-                "responses": {
-                    "200": {
-                        "description": operation.response,
-                        "content": { operation.response_type: { "schema": if operation.response_type == JSON {
-                            json!({ "type": "object" })
-                        } else {
-                            json!({ "type": "string" })
-                        } } }
-                    },
-                    "400": {
-                        "description": "a parameter or field is wrong",
-                        "content": { JSON: { "schema": { "$ref": "#/components/schemas/Error" } } }
-                    }
-                }
-            });
-            if operation.has_json_body() {
-                let mut properties = Map::new();
-                for p in operation.params.iter().filter(|p| p.place == Place::Body) {
-                    let mut schema = schema_of(p.kind);
-                    schema["description"] = json!(p.description);
-                    properties.insert(p.name.to_owned(), schema);
-                }
-                let required: Vec<&str> = operation
-                    .params
-                    .iter()
-                    .filter(|p| p.place == Place::Body && p.required)
-                    .map(|p| p.name)
-                    .collect();
-                let mut schema = json!({ "type": "object", "properties": properties });
-                if !required.is_empty() {
-                    schema["required"] = json!(required);
-                }
-                value["requestBody"] =
-                    json!({ "required": true, "content": { JSON: { "schema": schema } } });
-            }
-            if let Some(body) = operation.raw_body {
-                let format = if body.content_type == "application/octet-stream" {
-                    "binary"
-                } else {
-                    "text"
-                };
-                value["requestBody"] = json!({
-                    "description": body.description,
-                    "content": { body.content_type: { "schema": { "type": "string", "format": format } } }
-                });
-            }
-            if let Some(example) = operation.example.filter(|e| !e.body.is_empty()) {
-                let content_type = operation.raw_body.map_or(JSON, |b| b.content_type);
-                value["requestBody"]["content"][content_type]["example"] = match content_type {
-                    JSON => serde_json::from_str(example.body).unwrap_or(json!(example.body)),
-                    _ => json!(example.body),
-                };
-            }
-            if route.extension {
-                value["x-bemu-extension"] = json!(true);
-            }
-            item.insert(operation.method.to_ascii_lowercase(), value);
-        }
-        paths.insert(route.path.to_owned(), Value::Object(item));
-    }
-    json!({
-        "openapi": "3.1.0",
-        "info": {
-            "title": "bemu debug server",
-            "version": env!("CARGO_PKG_VERSION"),
-            "description": format!(
-                "The AMSpiriT-Lite debug API of bemu, with extensions (x-bemu-extension).\n\n- {}",
-                CONVENTIONS.join("\n- ")
-            )
-        },
-        "servers": [{ "url": "/" }],
-        "paths": paths,
-        "components": {
-            "schemas": {
-                "Error": {
-                    "type": "object",
-                    "properties": { "error": { "type": "string" }, "field": { "type": "string" } },
-                    "required": ["error"]
-                }
-            }
-        }
-    })
 }
 
 fn escape(text: &str) -> String {
@@ -678,8 +218,41 @@ fn escape(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// `GET /api/doc?format=html`: the same, to read in a browser.
+/// A schema's name (`#/components/schemas/Name`), or its type.
+fn schema_name(schema: &Value) -> String {
+    if let Some(name) = schema
+        .get("$ref")
+        .and_then(Value::as_str)
+        .and_then(|r| r.rsplit('/').next())
+    {
+        return name.to_owned();
+    }
+    match schema.get("type") {
+        Some(Value::Array(types)) => types
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|t| *t != "null")
+            .collect::<Vec<_>>()
+            .join("|"),
+        Some(Value::String(t)) if t == "array" => {
+            format!("[{}]", schema.get("items").map(schema_name).unwrap_or_default())
+        }
+        Some(Value::String(t)) => t.clone(),
+        _ => schema
+            .get("allOf")
+            .or(schema.get("oneOf"))
+            .and_then(Value::as_array)
+            .and_then(|list| list.first())
+            .map(schema_name)
+            .unwrap_or_else(|| "any".to_owned()),
+    }
+}
+
+/// `GET /api/doc?format=html`: the same, to read in a browser (the interactive reference is
+/// /api/doc/ui).
 pub(super) fn html() -> String {
+    let api = openapi();
+    let schemas = api["components"]["schemas"].clone();
     let mut page = String::from(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">\
          <title>bemu debug API</title><style>\
@@ -708,71 +281,81 @@ pub(super) fn html() -> String {
         ));
     }
     page.push_str("</ul>");
+    // A schema's fields, as a table.
+    let fields = |schema: &Value| -> String {
+        let schema = schema
+            .get("$ref")
+            .and_then(Value::as_str)
+            .and_then(|r| r.rsplit('/').next())
+            .and_then(|name| schemas.get(name))
+            .unwrap_or(schema);
+        let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+            return String::new();
+        };
+        let required: Vec<&str> = schema
+            .get("required")
+            .and_then(Value::as_array)
+            .map(|r| r.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let mut table = String::from("<table><tr><th>field</th><th>type</th><th></th></tr>");
+        for (name, field) in properties {
+            table.push_str(&format!(
+                "<tr><td><code>{name}</code>{}</td><td>{}</td><td>{}</td></tr>",
+                if required.contains(&name.as_str()) { " (required)" } else { "" },
+                escape(&schema_name(field)),
+                escape(field.get("description").and_then(Value::as_str).unwrap_or(""))
+            ));
+        }
+        table.push_str("</table>");
+        table
+    };
     for route in ROUTES {
         page.push_str(&format!("<h2 id=\"{0}\"><code>{0}</code>", route.path));
         if route.extension {
             page.push_str(" <span class=ext>extension</span>");
         }
         page.push_str("</h2>");
-        let typed = typed();
         for method in route.methods {
-            if operations_of(route.path).any(|o| o.method == *method) {
+            let Some(op) = operation(&api, method, route.path) else {
                 continue;
-            }
-            if let Some(op) = typed_operation(&typed, method, route.path) {
-                let text = op.get("description").or(op.get("summary")).and_then(Value::as_str).unwrap_or("");
-                page.push_str(&format!(
-                    "<h3><code>{method} {}</code></h3><p>{}</p><p>Generated from its types: \
-                     see <a href=\"/api/doc/ui\">the interactive reference</a>.</p>",
-                    route.path,
-                    escape(text)
-                ));
-            }
-        }
-        for operation in operations_of(route.path) {
+            };
             page.push_str(&format!(
-                "<h3><code>{} {}</code></h3><p>{}</p>",
-                operation.method,
-                operation.path,
-                escape(operation.description)
+                "<h3><code>{method} {}</code></h3><p>{}</p>",
+                route.path,
+                escape(op.get("description").or(op.get("summary")).and_then(Value::as_str).unwrap_or(""))
             ));
-            for (place, title) in [(Place::Query, "Query"), (Place::Body, "JSON body")] {
-                let params: Vec<_> = operation
-                    .params
-                    .iter()
-                    .filter(|p| p.place == place)
-                    .collect();
-                if params.is_empty() {
-                    continue;
-                }
-                page.push_str(&format!(
-                    "<table><tr><th>{title}</th><th>type</th><th></th></tr>"
-                ));
-                for p in params {
+            if let Some(parameters) = op.get("parameters").and_then(Value::as_array).filter(|p| !p.is_empty()) {
+                page.push_str("<table><tr><th>query</th><th>type</th><th></th></tr>");
+                for p in parameters {
                     page.push_str(&format!(
-                        "<tr><td><code>{}</code>{}</td><td>{}</td><td>{}</td></tr>",
-                        p.name,
-                        if p.required { " (required)" } else { "" },
-                        p.kind,
-                        escape(p.description)
+                        "<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
+                        p["name"].as_str().unwrap_or(""),
+                        escape(&schema_name(&p["schema"])),
+                        escape(p.get("description").and_then(Value::as_str).unwrap_or(""))
                     ));
                 }
                 page.push_str("</table>");
             }
-            if let Some(body) = operation.raw_body {
-                page.push_str(&format!(
-                    "<p>Body (<code>{}</code>): {}</p>",
-                    body.content_type,
-                    escape(body.description)
-                ));
+            if let Some(content) = op["requestBody"]["content"].as_object() {
+                for (content_type, media) in content {
+                    page.push_str(&format!(
+                        "<p>Body (<code>{content_type}</code>): {}</p>{}",
+                        escape(&schema_name(&media["schema"])),
+                        fields(&media["schema"])
+                    ));
+                }
             }
-            page.push_str(&format!(
-                "<p>Answer (<code>{}</code>): {}</p>",
-                operation.response_type,
-                escape(operation.response)
-            ));
-            if let Some(example) = operation.example {
-                let mut request = format!("{} {}", operation.method, operation.path);
+            if let Some(content) = op["responses"]["200"]["content"].as_object() {
+                for (content_type, media) in content {
+                    page.push_str(&format!(
+                        "<p>Answer (<code>{content_type}</code>): {}</p>{}",
+                        escape(&schema_name(&media["schema"])),
+                        fields(&media["schema"])
+                    ));
+                }
+            }
+            if let Some(example) = example_of(method, route.path) {
+                let mut request = format!("{method} {}", route.path);
                 if !example.query.is_empty() {
                     request = format!("{request}?{}", example.query);
                 }
@@ -793,33 +376,35 @@ mod test {
     use crate::debug_server::{ApiRequest, DebugServer};
     use crate::motherboard::{Motherboard, MotherboardBuilder};
 
+    /// Every route and method has its operation generated from its types, and every one
+    /// generated is served.
     #[test]
-    fn every_route_and_method_is_documented_once() {
-        let typed = typed();
+    fn every_route_and_method_is_described() {
+        let api = typed();
         for route in ROUTES {
             for method in route.methods {
-                let count = OPERATIONS
-                    .iter()
-                    .filter(|o| o.path == route.path && o.method == *method)
-                    .count()
-                    + usize::from(typed_operation(&typed, method, route.path).is_some());
-                assert_eq!(count, 1, "{method} {}", route.path);
+                assert!(
+                    operation(&api, method, route.path).is_some(),
+                    "{method} {} is not described",
+                    route.path
+                );
             }
         }
-        for operation in OPERATIONS {
+        for (path, item) in api["paths"].as_object().unwrap() {
+            for method in item.as_object().unwrap().keys() {
+                assert!(
+                    ROUTES.iter().any(|r| r.path == path
+                        && r.methods.iter().any(|m| m.eq_ignore_ascii_case(method))),
+                    "{method} {path} is described but not routed"
+                );
+            }
+        }
+        for example in EXAMPLES {
             assert!(
-                ROUTES
-                    .iter()
-                    .any(|r| r.path == operation.path && r.methods.contains(&operation.method)),
-                "{} {} is not served",
-                operation.method,
-                operation.path
-            );
-            assert!(
-                !(operation.has_json_body() && operation.raw_body.is_some()),
-                "{} {}: one kind of body",
-                operation.method,
-                operation.path
+                operation(&api, example.method, example.path).is_some(),
+                "an example for {} {}, not served",
+                example.method,
+                example.path
             );
         }
     }
@@ -859,30 +444,23 @@ mod test {
             &request("POST", "/api/basic", "", "10 PRINT 1\n20 GOTO 10\n"),
             &mut mb,
         );
-        let mut order: Vec<&Operation> =
-            OPERATIONS.iter().filter(|o| o.example.is_some()).collect();
+        let mut order: Vec<&Example> = EXAMPLES.iter().collect();
         // Create before delete.
-        order.sort_by_key(|o| o.method == "DELETE");
-        for operation in order {
-            let example = operation.example.unwrap();
+        order.sort_by_key(|e| e.method == "DELETE");
+        for example in order {
             let response = server.handle(
-                &request(
-                    operation.method,
-                    operation.path,
-                    example.query,
-                    example.body,
-                ),
+                &request(example.method, example.path, example.query, example.body),
                 &mut mb,
             );
             let accepted = response.status == 200
                 // The beam is known only when a monitor drives the emulation.
-                || operation.path == "/api/beam" && response.status == 400
-                || operation.path == "/api/screenshot" && response.status == 503;
+                || example.path == "/api/beam" && response.status == 400
+                || example.path == "/api/screenshot" && response.status == 503;
             assert!(
                 accepted,
                 "{} {}?{}: {} {}",
-                operation.method,
-                operation.path,
+                example.method,
+                example.path,
                 example.query,
                 response.status,
                 String::from_utf8_lossy(&response.body)
@@ -904,28 +482,25 @@ mod test {
                 serde_json::from_slice(&get(&format!("endpoint={name}")).body).unwrap();
             assert_eq!(ram["path"], "/api/ram", "{name}");
             assert_eq!(ram["operations"][0]["method"], "GET");
-            assert_eq!(ram["operations"][0]["query"][0]["name"], "addr");
-            assert_eq!(ram["operations"][1]["body"]["fields"][2]["name"], "data");
+            assert_eq!(ram["operations"][0]["openapi"]["parameters"][0]["name"], "addr");
+            assert!(ram["components"]["schemas"]["WriteRam"]["properties"]["data"].is_object());
         }
         assert_eq!(get("endpoint=nope").status, 400);
         assert_eq!(get("format=yaml").status, 400);
 
         let openapi: Value = serde_json::from_slice(&get("format=openapi").body).unwrap();
         assert_eq!(openapi["openapi"], "3.1.0");
-        // The typed routes, from their types.
         assert_eq!(openapi["paths"]["/api/step"]["post"]["parameters"][0]["name"], "mode");
-        assert!(openapi["components"]["schemas"]["SetZ80"].is_object());
-        assert!(openapi["components"]["schemas"]["Error"].is_object());
-        let step: Value = serde_json::from_slice(&get("endpoint=step").body).unwrap();
-        assert_eq!(step["operations"][0]["method"], "POST", "{step}");
-        assert!(step["operations"][0]["openapi"]["parameters"].is_array(), "{step}");
+        let schemas = &openapi["components"]["schemas"];
+        for name in ["SetZ80", "Error", "ErrorReply", "NewBreakpoint", "StopEvent", "MemMap"] {
+            assert!(schemas[name].is_object(), "{name}");
+        }
+        assert_eq!(openapi["x-events"]["z80_bp"]["$ref"], "#/components/schemas/StopEvent");
         let breakpoints = &openapi["paths"]["/api/breakpoints"];
         assert_eq!(breakpoints["post"]["x-bemu-extension"], true);
-        assert_eq!(
-            breakpoints["post"]["requestBody"]["content"][JSON]["schema"]["required"],
-            json!(["addr"])
-        );
+        assert_eq!(breakpoints["post"]["operationId"], "post_breakpoints");
         assert_eq!(breakpoints["delete"]["parameters"][0]["name"], "index");
+        assert!(breakpoints["post"]["responses"]["400"].is_object());
         assert_eq!(
             openapi["paths"]["/api/media"]["post"]["requestBody"]["content"]
                 ["application/octet-stream"]["schema"]["format"],
@@ -936,11 +511,17 @@ mod test {
                 ["example"],
             "0x4000, B01:0010"
         );
+        assert_eq!(
+            openapi["paths"]["/api/screenshot"]["get"]["responses"]["200"]["content"]["image/png"]
+                ["schema"]["format"],
+            "binary"
+        );
 
         let html = get("format=html");
         assert_eq!(html.content_type, "text/html; charset=utf-8");
         let html = String::from_utf8(html.body).unwrap();
         assert!(html.contains("<h2 id=\"/api/raster_bp\">"));
         assert!(html.contains("&quot;screen&quot;"), "examples escaped");
+        assert!(html.contains("<code>crtc_type</code>"), "a reply's fields");
     }
 }
