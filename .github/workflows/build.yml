@@ -105,3 +105,58 @@ jobs:
           name: bemu-web
           path: bemu/dist/
           if-no-files-found: error
+
+  # Make the distributions available on the GitHub release page:
+  # - a push on master refreshes the "latest" development pre-release
+  # - a v* tag publishes a release for that tag
+  release:
+    name: Publish release
+    needs: [desktop, web]
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: write
+    steps:
+      - name: Download desktop distributions
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bemu-*-*
+          path: release
+          merge-multiple: true
+      - name: Download web distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: bemu-web
+          path: web-dist
+      - name: Archive web distribution
+        run: |
+          cd web-dist
+          zip -r ../release/bemu-web.zip .
+      - name: List release files
+        run: ls -l release
+      - name: Publish development build
+        if: github.ref == 'refs/heads/master'
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
+          removeArtifacts: false
+          replacesArtifacts: true
+          prerelease: true
+          draft: false
+          tag: latest
+          commit: ${{ github.sha }}
+          name: Development Build
+          generateReleaseNotes: false
+          artifacts: release/*
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
+          replacesArtifacts: true
+          prerelease: false
+          draft: false
+          generateReleaseNotes: true
+          artifacts: release/*
