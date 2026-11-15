@@ -1290,7 +1290,9 @@ impl GateArray {
             (self.decoded_from.get(0), self.shown_previous)
         {
             if old != new_mode && old != VideoMode::Mode2 {
-                let pen = PixelAutomata::new(byte, new_mode).with_step(step).generate_pen(false);
+                let pen = PixelAutomata::new(byte, new_mode)
+                    .with_step(step)
+                    .generate_pen(false);
                 self.shown_previous = Shown::Pen(pen);
             }
         }
