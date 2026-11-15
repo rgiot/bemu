@@ -573,6 +573,14 @@ pub(super) struct Symbols {
 }
 
 impl ViewWindow for Symbols {
+    fn save(&self) -> serde_json::Value {
+        serde_json::Value::String(self.filter.clone())
+    }
+    fn load(&mut self, saved: &serde_json::Value) {
+        if let Some(text) = saved.as_str() {
+            self.filter = text.to_owned();
+        }
+    }
     fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx) {
         let (target, bus, links) = cx.parts();
         let Some(debugger) = target.debugger() else {
@@ -609,6 +617,14 @@ pub(super) struct Counters {
 }
 
 impl ViewWindow for Counters {
+    fn save(&self) -> serde_json::Value {
+        serde_json::Value::String(self.name.clone())
+    }
+    fn load(&mut self, saved: &serde_json::Value) {
+        if let Some(text) = saved.as_str() {
+            self.name = text.to_owned();
+        }
+    }
     fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx) {
         let (target, bus, _) = cx.parts();
         let Some(debugger) = target.debugger() else {

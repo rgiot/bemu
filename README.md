@@ -98,6 +98,13 @@ palette: type a few letters of a command (`crtc 1`, `flip b`, `snapshot`), Enter
 command that needs something asks it (an address, a value, a file in a small file browser).
 `--no-menu` hides the menu bar (Tools > Show menu bar, or the palette, shows it again).
 
+The debugger's windows come back at the next session as they were left: open, where they were
+(and as large, when sized by hand), each with its own settings (a Memory window's address and
+paging, a Disassembly window's bookmarks, its Registers section folded or not). They are kept in
+`workspace.json` of the configuration folder: `$BEMU_CONFIG_DIR`, else `~/.config/bemu`
+(`$XDG_CONFIG_HOME/bemu`), `~/Library/Application Support/bemu` on macOS, `%APPDATA%\bemu` on
+Windows. Delete the file to start from no window.
+
 Each row of `doc/menu-ui.csv` is a menu item: its menu path, its id (`area-verb`, the name the
 palette, CSL, the configurations and the web API use), its type (`act`, `tog`, `rad`, `inp`,
 `ss` start/stop, `sub`, or `sep` for a line in the menu), its aim and note (the tooltips: the note

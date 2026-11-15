@@ -148,14 +148,20 @@ impl ViewWindow {
         view: &amsrust::ui::NativeView,
     ) -> Result<Self, String> {
         let (title, ctx) = (view.title.as_str(), view.ctx.clone());
-        // a window sized by the user starts at its size; the others are fitted to their content
-        let initial_size = match view.resizable {
+        // a window sized by the user starts at its size; the others are fitted to their content;
+        // a window of the last session's workspace where it was, as large as it was made
+        let sized = view.geometry.and_then(|g| g.size).or(view.resizable);
+        let initial_size = match sized {
             Some([width, height]) => LogicalSize::new(width, height),
             None => LogicalSize::new(460.0, 520.0),
         };
-        let attributes = Window::default_attributes()
+        let mut attributes = Window::default_attributes()
             .with_title(format!("bemu: {title}"))
             .with_inner_size(initial_size);
+        if let Some(geometry) = view.geometry {
+            let [x, y] = geometry.position;
+            attributes = attributes.with_position(winit::dpi::PhysicalPosition::new(x, y));
+        }
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -214,7 +220,7 @@ impl ViewWindow {
             painter: None,
             // the keyboard scales to its window; the others, the joystick's included (one or two
             // sticks), are as large as their content
-            fitting: Fitting::new(view.resizable.is_none()),
+            fitting: Fitting::new(sized.is_none()),
         })
     }
 
@@ -1561,6 +1567,23 @@ impl Frontend for WinitGpuFrontend {
             .cloned()
             .collect();
         closed
+    }
+
+    fn view_geometry(&self, key: u8) -> Option<amsrust::ui::workspace::Geometry> {
+        let view = self.app.views.get(&key)?;
+        let position = view.window.outer_position().ok()?;
+        // its size when the user made it (a fitted one is fitted again)
+        let size = (!view.fitting.enabled).then(|| {
+            let size = view
+                .window
+                .inner_size()
+                .to_logical::<f32>(view.window.scale_factor());
+            [size.width, size.height]
+        });
+        Some(amsrust::ui::workspace::Geometry {
+            position: [position.x, position.y],
+            size,
+        })
     }
 
     fn focus_view_window(&mut self, key: u8) {

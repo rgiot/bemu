@@ -31,7 +31,8 @@ pub fn bank_name(bank: u16) -> String {
 }
 
 /// A window's paging: the emulator's, or its own.
-#[derive(Clone, Hash)]
+#[derive(Clone, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Paging {
     /// Follow the emulator's paging (the CPU's view).
     pub follow: bool,

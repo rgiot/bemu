@@ -628,6 +628,10 @@ impl Window {
                 self.window.focus_view_window(key);
             }
             for view in &views {
+                // where it is, for the workspace
+                if let Some(geometry) = self.window.view_geometry(view.key) {
+                    gui.note_geometry(view.key, geometry);
+                }
                 if let Some(raw) = self.window.view_input(view.key) {
                     if let Some((output, wanted)) = gui.run_view(view.key, raw, core, bus) {
                         self.window.set_view_output(view.key, output, wanted);
@@ -789,6 +793,10 @@ pub fn run_window(
     #[cfg(feature = "gui")]
     if let Some(gui) = &mut window.gui {
         gui.set_native_views(window.window.has_view_windows());
+        // the windows of the last session, where they were
+        if let Some(saved) = amsrust::ui::workspace::load() {
+            gui.restore(&saved);
+        }
     }
     let fps = window.target_fps(&core.settings);
     window.window.set_target_fps(fps);
@@ -989,6 +997,13 @@ pub fn run_window(
 
     for recording in core.recording.clone() {
         window.stop_recording(recording, &mut core);
+    }
+    // the windows as they are, for the next session
+    #[cfg(feature = "gui")]
+    if let Some(gui) = &window.gui {
+        if let Err(e) = amsrust::ui::workspace::save(&gui.workspace()) {
+            eprintln!("cannot keep the windows for the next session: {e}");
+        }
     }
     // File > Snapshot > Save when the emulator exits, chosen in the menus (the command line's
     // one is saved by main)

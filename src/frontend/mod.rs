@@ -82,6 +82,13 @@ pub trait Frontend {
         Vec::new()
     }
 
+    /// Where the window of view `key` is (for the workspace).
+    #[cfg(feature = "gui")]
+    fn view_geometry(&self, key: u8) -> Option<amsrust::ui::workspace::Geometry> {
+        let _ = key;
+        None
+    }
+
     /// Bring the window of view `key` to the front (shown again if minimised).
     #[cfg(feature = "gui")]
     fn focus_view_window(&mut self, key: u8) {

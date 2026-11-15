@@ -43,6 +43,9 @@ pub struct DisassemblyWindow {
     rows: usize,
     /// The registers changed lately (its Registers section).
     heat: super::chips::RegisterHeat,
+    /// Its Registers section is unfolded (`Some`: to apply, as restored from a workspace).
+    registers_open: bool,
+    restore_registers: Option<bool>,
 }
 
 impl MemoryWindow {
@@ -61,6 +64,89 @@ impl DisassemblyWindow {
     }
 }
 
+/// What a workspace keeps of a Memory window.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct MemorySaved {
+    address: String,
+    follow: bool,
+    paging: Option<super::paging::Paging>,
+}
+
+impl MemoryWindow {
+    /// Its settings, for a workspace.
+    pub fn save(&self) -> serde_json::Value {
+        serde_json::to_value(MemorySaved {
+            address: self.address.clone(),
+            follow: self.follow,
+            paging: Some(self.paging.clone()),
+        })
+        .unwrap_or_default()
+    }
+
+    /// Its settings from a workspace (what is missing or wrong left as it is).
+    pub fn load(&mut self, saved: &serde_json::Value) {
+        if let Ok(saved) = serde_json::from_value::<MemorySaved>(saved.clone()) {
+            self.address = saved.address;
+            self.follow = saved.follow;
+            if let Some(paging) = saved.paging {
+                self.paging = paging;
+            }
+        }
+    }
+}
+
+/// What a workspace keeps of a Disassembly window.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct DisassemblySaved {
+    address: String,
+    bookmarks: Vec<u16>,
+    no_labels: bool,
+    paging: Option<super::paging::Paging>,
+    registers_open: bool,
+}
+
+impl Default for DisassemblySaved {
+    fn default() -> Self {
+        Self {
+            address: String::new(),
+            bookmarks: Vec::new(),
+            no_labels: false,
+            paging: None,
+            registers_open: true,
+        }
+    }
+}
+
+impl DisassemblyWindow {
+    /// Its settings, for a workspace.
+    pub fn save(&self) -> serde_json::Value {
+        serde_json::to_value(DisassemblySaved {
+            address: self.address.clone(),
+            bookmarks: self.bookmarks.clone(),
+            no_labels: self.no_labels,
+            paging: Some(self.paging.clone()),
+            registers_open: self.registers_open,
+        })
+        .unwrap_or_default()
+    }
+
+    /// Its settings from a workspace (what is missing or wrong left as it is).
+    pub fn load(&mut self, saved: &serde_json::Value) {
+        if let Ok(saved) = serde_json::from_value::<DisassemblySaved>(saved.clone()) {
+            self.address = saved.address;
+            self.bookmarks = saved.bookmarks;
+            self.no_labels = saved.no_labels;
+            if let Some(paging) = saved.paging {
+                self.paging = paging;
+            }
+            self.registers_open = saved.registers_open;
+            self.restore_registers = Some(saved.registers_open);
+        }
+    }
+}
+
 impl Default for DisassemblyWindow {
     fn default() -> Self {
         Self {
@@ -71,6 +157,8 @@ impl Default for DisassemblyWindow {
             before: 0,
             rows: 32,
             heat: Default::default(),
+            registers_open: true,
+            restore_registers: None,
         }
     }
 }
@@ -277,12 +365,14 @@ pub fn disassembly(
     let mb = target.motherboard();
     controls(ui, target, bus);
     // the registers where it stopped, those changed lately lit: folded away when not wanted
-    egui::CollapsingHeader::new("Registers")
+    let registers = egui::CollapsingHeader::new("Registers")
         .id_salt((id, "registers"))
         .default_open(true)
+        .open(window.restore_registers.take())
         .show(ui, |ui| {
             super::chips::registers(ui, mb, bus, &mut window.heat);
         });
+    window.registers_open = registers.openness > 0.5;
     super::paging::show(ui, id, mb, &mut window.paging);
     super::widgets::rule(ui);
     let pc = mb.pc();
