@@ -236,6 +236,9 @@ impl Gui {
                 egui::ScrollArea::both()
                     .auto_shrink([true, true])
                     .show(ui, |ui| {
+                        // no text wraps to the window's width: the content's size is its own,
+                        // whatever the window's (the window is then sized to it)
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                         views::contents(key.view(), ui, target, bus, state);
                     })
                     .content_size

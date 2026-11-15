@@ -218,52 +218,58 @@ fn registers(ui: &mut egui::Ui, mb: &Motherboard, memory: &Memory, now: f64) {
         "Port B",
     ];
     let selected = mb.psg().selected_register();
-    ui.horizontal_wrapped(|ui| {
+    // two rows of eight: the tone and noise registers, then the volumes, envelope and ports
+    ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
-        for r in 0..16u8 {
-            let value = memory.registers[usize::from(r)];
-            let age = now - memory.changed[usize::from(r)];
-            let lit = memory.changed[usize::from(r)] > 0.0 && age < LIT_S;
-            let visuals = ui.visuals().clone();
-            let fill = if lit {
-                // fades out
-                let strength = (1.0 - age / LIT_S) as f32;
-                egui::Color32::from_rgb(200, 140, 30).gamma_multiply(0.3 + 0.7 * strength)
-            } else {
-                visuals.extreme_bg_color
-            };
-            let stroke = if selected == Some(r) {
-                egui::Stroke::new(2.0_f32, visuals.selection.stroke.color)
-            } else {
-                egui::Stroke::new(1.0_f32, visuals.weak_text_color())
-            };
-            let (rect, response) =
-                ui.allocate_exact_size(egui::vec2(42.0, 30.0), egui::Sense::hover());
-            let painter = ui.painter();
-            painter.rect_filled(rect, 3.0, fill);
-            painter.rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Inside);
-            painter.text(
-                rect.center_top() + egui::vec2(0.0, 2.0),
-                egui::Align2::CENTER_TOP,
-                format!("R{r}"),
-                egui::FontId::proportional(9.0),
-                visuals.weak_text_color(),
-            );
-            painter.text(
-                rect.center_bottom() - egui::vec2(0.0, 3.0),
-                egui::Align2::CENTER_BOTTOM,
-                format!("&{value:02X}"),
-                egui::FontId::monospace(12.0),
-                if lit {
-                    egui::Color32::BLACK
-                } else {
-                    visuals.text_color()
-                },
-            );
-            response.on_hover_text(format!(
-                "R{r}: {} = {value} ({value:#010b})",
-                ROLES[usize::from(r)]
-            ));
+        for row in [0..8u8, 8..16] {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+                for r in row {
+                    let value = memory.registers[usize::from(r)];
+                    let age = now - memory.changed[usize::from(r)];
+                    let lit = memory.changed[usize::from(r)] > 0.0 && age < LIT_S;
+                    let visuals = ui.visuals().clone();
+                    let fill = if lit {
+                        // fades out
+                        let strength = (1.0 - age / LIT_S) as f32;
+                        egui::Color32::from_rgb(200, 140, 30).gamma_multiply(0.3 + 0.7 * strength)
+                    } else {
+                        visuals.extreme_bg_color
+                    };
+                    let stroke = if selected == Some(r) {
+                        egui::Stroke::new(2.0_f32, visuals.selection.stroke.color)
+                    } else {
+                        egui::Stroke::new(1.0_f32, visuals.weak_text_color())
+                    };
+                    let (rect, response) =
+                        ui.allocate_exact_size(egui::vec2(42.0, 30.0), egui::Sense::hover());
+                    let painter = ui.painter();
+                    painter.rect_filled(rect, 3.0, fill);
+                    painter.rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Inside);
+                    painter.text(
+                        rect.center_top() + egui::vec2(0.0, 2.0),
+                        egui::Align2::CENTER_TOP,
+                        format!("R{r}"),
+                        egui::FontId::proportional(9.0),
+                        visuals.weak_text_color(),
+                    );
+                    painter.text(
+                        rect.center_bottom() - egui::vec2(0.0, 3.0),
+                        egui::Align2::CENTER_BOTTOM,
+                        format!("&{value:02X}"),
+                        egui::FontId::monospace(12.0),
+                        if lit {
+                            egui::Color32::BLACK
+                        } else {
+                            visuals.text_color()
+                        },
+                    );
+                    response.on_hover_text(format!(
+                        "R{r}: {} = {value} ({value:#010b})",
+                        ROLES[usize::from(r)]
+                    ));
+                }
+            });
         }
         if lit_any(memory, now) {
             ui.ctx().request_repaint();
