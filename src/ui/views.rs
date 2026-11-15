@@ -1462,7 +1462,7 @@ mod joystick_tests {
                         ui.label(
                             "Click or drag the stick. Right-click while holding it for Fire 1.",
                         );
-                        super::widgets::rule(ui);
+                        crate::ui::widgets::rule(ui);
                         sticks = simulated_joystick_controls(ui, enabled);
                     });
             });
