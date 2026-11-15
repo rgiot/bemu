@@ -116,6 +116,10 @@ const CRTC_PIN_ADDRESS_BUS: [CrtcPin; 16] = [
 
 /// R0 values up to this one do not end the line when written on C0=R0 (see `do_write_register`).
 const R0_SHORT_LINE: u8 = 4;
+/// A raise written on C0=R0 ends the line, whatever its size, up to this R0 (Overflow's Hi-Tech preview
+/// writes R0=63 on the last character of its R0=7 lines: AMSpiriT and CPCEC wrap there, as it did
+/// not here, and the band entered 7 us out of phase; empirical, like the rule above it).
+const R0_SHORT_LINE_ENDS: u8 = 8;
 /// The tick of the character at which an OUT (C),r8 reaches the CRTC (an OUTI is on tick 0).
 const R0_OUT_PHASE_TICKS: u8 = 4;
 /// An R0 raised by this much or more on C0=R0 is taken (R0SIDE: 41 -> 61), a smaller one still ends the line
@@ -365,7 +369,7 @@ impl Crtc {
             self.core.r0_ends_line = self.core.hcc == old
                 && old > R0_SHORT_LINE
                 && self.core.phase_ticks == R0_OUT_PHASE_TICKS
-                && u16::from(v & mask) < u16::from(old) + R0_RAISE_TAKEN;
+                && (u16::from(v & mask) < u16::from(old) + R0_RAISE_TAKEN || old <= R0_SHORT_LINE_ENDS);
             self.core.r0_ends_at = old;
         }
         self.chip.before_write(&mut self.core, r, v & mask);
