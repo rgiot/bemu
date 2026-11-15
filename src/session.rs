@@ -100,6 +100,7 @@ impl CommandTarget for Core<'_> {
             | HostRequest::SavePrintout => true,
             HostRequest::StartRecording(..) => true,
             HostRequest::Open(_)
+            | HostRequest::OpenAnother(_)
             | HostRequest::ShowText { .. }
             | HostRequest::OpenUrl(_)
             | HostRequest::CopyScreenshot

@@ -876,7 +876,7 @@ struct App {
     wanted_fullscreen: Option<bool>,
     /// The debugger's windows open, by view, and the ones to have (opened in the event loop).
     views: HashMap<u8, ViewWindow>,
-    wanted_views: Vec<(u8, &'static str, egui::Context)>,
+    wanted_views: Vec<(u8, String, egui::Context)>,
     /// The views whose window the user closed.
     closed_views: Vec<u8>,
 }
@@ -1556,7 +1556,7 @@ impl Frontend for WinitGpuFrontend {
         self.app.wanted_views = views
             .iter()
             .filter(|view| !closed.contains(&view.key))
-            .map(|view| (view.key, view.title, view.ctx.clone()))
+            .map(|view| (view.key, view.title.clone(), view.ctx.clone()))
             .collect();
         closed
     }

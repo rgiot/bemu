@@ -2214,6 +2214,8 @@ pub(super) fn execute(command: Command, target: &mut dyn CommandTarget) -> Comma
                 )
             }
         }
+        "view-memory-new" => host(target, HostRequest::OpenAnother(View::Memory)),
+        "view-disassembly-new" => host(target, HostRequest::OpenAnother(View::Disassembly)),
         "preferences-open" => host(target, HostRequest::Open(View::Preferences)),
         "help-shortcuts" => host(target, HostRequest::Open(View::Shortcuts)),
         "help-about" => host(target, HostRequest::Open(View::About)),
@@ -2653,6 +2655,8 @@ pub fn state(id: &str, target: &dyn CommandTarget) -> CommandState {
         ),
         "tools-disc-catalog" => CommandState::enabled(true),
         "tools-disc-convert" => CommandState::enabled(true),
+        "view-memory-new" => host_can(target, HostRequest::OpenAnother(View::Memory)),
+        "view-disassembly-new" => host_can(target, HostRequest::OpenAnother(View::Disassembly)),
         "preferences-open" => host_can(target, HostRequest::Open(View::Preferences)),
         "help-shortcuts" => host_can(target, HostRequest::Open(View::Shortcuts)),
         "help-about" => host_can(target, HostRequest::Open(View::About)),

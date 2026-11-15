@@ -299,6 +299,8 @@ pub enum HostRequest {
     Quit,
     /// Open a window of the user interface.
     Open(View),
+    /// Open another window of a view that can have several (Memory, Disassembly).
+    OpenAnother(View),
     /// Show a text (the embedded ROMs, a disc's catalogue).
     ShowText {
         title: String,

@@ -16,7 +16,7 @@ pub fn bar(
     ui: &mut egui::Ui,
     target: &dyn CommandTarget,
     bus: &mut CommandBus,
-    windows: &[(u8, &'static str)],
+    windows: &[(u8, String)],
 ) -> Option<WindowAction> {
     let mut action = None;
     egui::MenuBar::new().ui(ui, |ui| {
@@ -27,7 +27,7 @@ pub fn bar(
             }
             for (key, title) in windows {
                 if ui
-                    .add(egui::Button::new((indent(ui), *title)))
+                    .add(egui::Button::new((indent(ui), title.as_str())))
                     .on_hover_text("Bring it to the front (shown again if minimised)")
                     .clicked()
                 {
