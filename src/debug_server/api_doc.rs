@@ -148,7 +148,7 @@ const CONVENTIONS: &[&str] = &[
 ];
 
 pub(super) const OPERATIONS: &[Operation] = &[
-    op("GET", "/api/ping", "Is the server there; the emulator's description.", "{ok, emu: {cpc_model, crtc_type, paused, frames, fps, ticks (T-states run), applied_cmd_seq, ram_apply_seq, autotyping, autotype_remaining}, frontend: \"bemu\", version}"),
+    op("GET", "/api/ping", "Is the server there; the emulator's description.", "{ok, emu: {cpc_model, crtc_type, paused, frames, fps, ticks (T-states run), applied_cmd_seq, ram_apply_seq, autotyping, autotype_remaining}, frontend: \"bemu\", version, features: [step_modes, run_to, z80_bp_edit, stop_reason, register_pairs, raster_names]}"),
     op(
         "GET",
         "/api/state",
@@ -158,7 +158,7 @@ pub(super) const OPERATIONS: &[Operation] = &[
     op("GET", "/api/z80", "The Z80 registers.", "{PC, SP, IX, IY, A, F, B, C, D, E, H, L, A2..L2, I, R, IFF1, IFF2, IM, ticks}"),
     op("POST", "/api/z80", "Set Z80 registers; all are checked before any changes.", OK)
         .params(&[
-            b("PC", "integer", "any 16-bit register by name: PC, SP, AF, BC, DE, HL, IX, IY, AF2, BC2, DE2, HL2"),
+            b("PC", "integer", "any 16-bit register by name: PC, SP, AF, BC, DE, HL, IX, IY, AF2, BC2, DE2, HL2 (a pair sets its two halves)"),
             b("A", "integer", "any 8-bit register by name: A, F, B, C, D, E, H, L, the A2..L2 alternates, I, R"),
             b("IFF1", "integer", "0 or 1"),
             b("IFF2", "integer", "0 or 1"),
@@ -185,7 +185,27 @@ pub(super) const OPERATIONS: &[Operation] = &[
     op("POST", "/api/exec", "Set PC.", "{ok, seq, cmd_seq}")
         .params(&[b("addr", "integer", "the new PC").required()])
         .example("", r#"{"addr":"0x4000"}"#),
-    op("POST", "/api/step", "Run one instruction, then pause (a z80_bp event, reason step).", OK),
+    op(
+        "POST",
+        "/api/step",
+        "Run one instruction, then pause (a z80_bp event, reason step); or step over it (a CALL, RST, DJNZ or block \
+         loop run whole: reason run_to), out of the routine (reason step_out), or to the end of the frame (a pause event).",
+        OK
+    )
+    .params(&[q("mode", "string", "in (default), over, out or frame")])
+    .example("mode=over", ""),
+    op(
+        "POST",
+        "/api/run_to",
+        "Run to an address, once, then pause (a z80_bp event, reason run_to); or to a beam position (reason run_to_beam).",
+        OK
+    )
+    .params(&[
+        b("addr", "integer", "a CPU address, or a symbol (label, label+n) as a string"),
+        b("line", "integer", "in place of addr: the line of the frame, from the VSYNC"),
+        b("nop", "integer", "with line: the NOP in it, 0 to 63 (default 0)")
+    ])
+    .example("", r#"{"addr":"0x4000"}"#),
     op("GET", "/api/config", "Emulator settings.", "{crtc_type, paused, history_size}"),
     op("POST", "/api/config", "Pause or resume, reset, size the instruction history.", OK)
         .params(&[
@@ -195,13 +215,17 @@ pub(super) const OPERATIONS: &[Operation] = &[
             b("history_size", "integer", "instructions kept for /api/history, 1 to 100000; empties it")
         ])
         .example("", r#"{"paused":true}"#),
-    op("POST", "/api/z80_bp", "Replace the execution breakpoints.", "{ok, cmd_seq, resolved: [{entry, location}], warnings?}")
+    op("POST", "/api/z80_bp", "Replace the execution breakpoints, or add to them.", "{ok, cmd_seq, resolved: [{entry, location}], warnings?}")
+        .params(&[q("add", "integer", "1: add these to the others (default 0: replace them)")])
         .raw_body(
             "text/plain",
             "comma-separated: CPU addresses or symbols (label, label+n: the snapshot's and --sym files' labels), resolved \
              against the current mapping to the RAM bank or ROM they reach, or Bnn:hhhh (hex bank, hex offset); empty clears"
         )
         .example("", "0x4000, B01:0010"),
+    op("DELETE", "/api/z80_bp", "Remove the execution breakpoints listed, the others kept.", "{ok, cmd_seq, removed: [{entry, location}], warnings?}")
+        .raw_body("text/plain", "the breakpoints, as POST takes them; empty removes them all")
+        .example("", "0x4000"),
     op("GET", "/api/symbols", "The symbols known: the loaded snapshot's (SYMB chunk, REMU labels) and the --sym files'.", "[{name, address}], by address"),
     op("GET", "/api/breakpoints", "The execution and advanced breakpoints.", "{z80_bp: [location], advanced: [{index, kind, access, run, addr, mask, size, value, valmask, name, condition, counters, after, hits}]}"),
     op("POST", "/api/breakpoints", "Add an advanced breakpoint (memory, IO or execution; stop, watch or count).", "{ok, index, cmd_seq}")
@@ -238,8 +262,9 @@ pub(super) const OPERATIONS: &[Operation] = &[
     op(
         "GET",
         "/api/events",
-        "Server-Sent Events: frame (each frame, while running), z80_bp (a stop: breakpoint, step...), pause, reset, watch \
-         (a watch breakpoint's hit), basic_bp (a BASIC stop). Each event's data is JSON.",
+        "Server-Sent Events: frame (each frame, while running), z80_bp (a stop: its reason breakpoint, raster, step, \
+         step_out, run_to or run_to_beam, its kind, and the cmd_seq of the last command), pause (each pause and resume, \
+         with cmd_seq), reset, watch (a watch breakpoint's hit), basic_bp (a BASIC stop). Each event's data is JSON.",
         "an event stream"
     )
     .params(&[q("topics", "string", "comma-separated event names to receive (default all)")])
@@ -307,7 +332,7 @@ pub(super) const OPERATIONS: &[Operation] = &[
     )
     .params(&[q("crop", "integer", "1: x and y relative to the visible picture")])
     .example("crop=1", ""),
-    op("GET", "/api/raster_bp", "The beam breakpoints.", "{breakpoints: [{index, x, nop, y?, line?, frame_nop?}]}"),
+    op("GET", "/api/raster_bp", "The beam breakpoints.", "{breakpoints: [{index, x, nop, name?, y?, line?, frame_nop?}]}"),
     op(
         "POST",
         "/api/raster_bp",
@@ -323,7 +348,8 @@ pub(super) const OPERATIONS: &[Operation] = &[
         q("line", "integer", "line of the frame, from the VSYNC"),
         q("frame_nop", "integer", "NOP of the frame, 0 to 19967"),
         q("add", "integer", "1: keep the others (default 0: replace them)"),
-        q("enable", "integer", "0: clear them all")
+        q("enable", "integer", "0: clear them all"),
+        q("name", "string", "shown in its stop event (with its index)")
     ])
     .example("line=100&nop=10", ""),
     op("GET", "/api/counters", "The NOP counters.", "{counters: [{name, nops, running}]}"),

@@ -176,9 +176,10 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/z80", methods: &["GET", "POST"], summary: "read / write the Z80 registers", extension: false },
     Route { path: "/api/ram", methods: &["GET", "POST"], summary: "read / write RAM (bank, view=raw|cpu), optional jump", extension: false },
     Route { path: "/api/exec", methods: &["POST"], summary: "set PC", extension: false },
-    Route { path: "/api/step", methods: &["POST"], summary: "execute one instruction and pause", extension: false },
+    Route { path: "/api/step", methods: &["POST"], summary: "execute one instruction and pause (?mode=over|out|frame: step over, out, a frame)", extension: false },
+    Route { path: "/api/run_to", methods: &["POST"], summary: "run to an address or symbol (addr), or a beam position (line, nop), once", extension: true },
     Route { path: "/api/config", methods: &["GET", "POST"], summary: "pause/resume, soft/hard reset", extension: false },
-    Route { path: "/api/z80_bp", methods: &["POST"], summary: "replace the PC breakpoints: CPU addresses, symbols (label, label+n) or Bnn:hhhh, comma-separated", extension: false },
+    Route { path: "/api/z80_bp", methods: &["POST", "DELETE"], summary: "replace the PC breakpoints (?add=1: add them): CPU addresses, symbols (label, label+n) or Bnn:hhhh, comma-separated; DELETE removes those listed", extension: false },
     Route { path: "/api/symbols", methods: &["GET"], summary: "the symbols (snapshot SYMB/REMU labels, --sym files), by address", extension: true },
     Route { path: "/api/keytype", methods: &["POST"], summary: "type text on the CPC keyboard (\\r = RETURN)", extension: false },
     Route { path: "/api/events", methods: &["GET"], summary: "Server-Sent Events: frame, z80_bp, basic_bp, basic_error, pause, reset, watch (?topics=)", extension: false },
@@ -205,6 +206,20 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/basic_bp", methods: &["GET", "POST"], summary: "BASIC line breakpoints: comma-separated line numbers, empty clears", extension: false },
     Route { path: "/api/basic_runto", methods: &["POST"], summary: "run to a BASIC line (?line=) or statement (?addr=), once", extension: false },
     Route { path: "/api/doc", methods: &["GET"], summary: "this documentation: ?endpoint= one in detail, ?format=openapi|html", extension: false }
+];
+
+/// What a client can count on, beyond the AMSpiriT API, said in `/api/ping`'s `features`:
+/// `step_modes` (`/api/step?mode=over|out|frame`), `run_to` (`/api/run_to`), `z80_bp_edit`
+/// (`/api/z80_bp?add=1`, `DELETE /api/z80_bp`), `stop_reason` (a `reason` and the `cmd_seq` in
+/// the stop and pause events), `register_pairs` (`POST /api/z80` takes `HL`, `BC2`...),
+/// `raster_names` (a raster breakpoint's `name`, and its `index` in its stop event).
+const FEATURES: &[&str] = &[
+    "step_modes",
+    "run_to",
+    "z80_bp_edit",
+    "stop_reason",
+    "register_pairs",
+    "raster_names",
 ];
 
 /// Where a BASIC step or run-to stops.
@@ -272,12 +287,14 @@ impl Beam {
 
 /// A beam breakpoint: a position in the frame, or (no line) a position in
 /// every line.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct RasterBreakpoint {
     /// The line; `None`: every line.
     line: Option<usize>,
     /// In monitor ticks.
     x: usize,
+    /// Shown in its stop event.
+    name: Option<String>,
 }
 
 impl RasterBreakpoint {
@@ -304,6 +321,9 @@ impl RasterBreakpoint {
 
     fn json(&self, index: usize) -> Value {
         let mut value = json!({ "index": index, "x": self.x, "nop": self.x / BEAM_TICKS_PER_NOP });
+        if let Some(name) = &self.name {
+            value["name"] = json!(name);
+        }
         if let Some(line) = self.line {
             value["y"] = json!(line);
             value["line"] = json!(line);
@@ -653,8 +673,10 @@ impl DebugServer {
         // A step resumes for one instruction only: not a transition.
         if self.paused != self.reported_paused && !self.stepping {
             self.reported_paused = self.paused;
-            self.events
-                .publish("pause", &json!({ "paused": self.paused }));
+            self.events.publish(
+                "pause",
+                &json!({ "paused": self.paused, "cmd_seq": self.cmd_seq }),
+            );
         }
     }
 
@@ -714,13 +736,21 @@ impl DebugServer {
             }
         }
         if let (Some(before), Some(after)) = (self.previous_beam.take(), self.beam) {
-            if self
+            if let Some(index) = self
                 .raster_breakpoints
                 .iter()
-                .any(|brk| brk.passed(before, after))
+                .position(|brk| brk.passed(before, after))
             {
-                self.stop(motherboard, json!({ "kind": "raster" }));
+                let mut info = json!({ "kind": "raster", "index": index });
+                if let Some(name) = &self.raster_breakpoints[index].name {
+                    info["name"] = json!(name);
+                }
+                self.stop(motherboard, info);
             }
+        }
+        // the end of a single step, told unless something else stopped it first
+        if stepped && !self.paused {
+            self.stop(motherboard, json!({ "kind": "step" }));
         }
         if stepped {
             self.paused = true;
@@ -736,7 +766,7 @@ impl DebugServer {
             self.stop(motherboard, json!({ "kind": "step_out" }));
         }
         if let (Some(target), Some(before), Some(after)) =
-            (self.run_to_beam, self.previous_beam, self.beam)
+            (self.run_to_beam.as_ref(), self.previous_beam, self.beam)
         {
             if target.passed(before, after) {
                 self.stop(motherboard, json!({ "kind": "run_to_beam" }));
@@ -828,6 +858,8 @@ impl DebugServer {
             event["counters"] = self.counters_json();
         }
         merge(&mut event, info);
+        event["reason"] = json!(stop_reason(event.get("kind").and_then(Value::as_str)));
+        event["cmd_seq"] = json!(self.cmd_seq);
         self.events.publish("z80_bp", &event);
     }
 
@@ -984,6 +1016,7 @@ impl DebugServer {
         self.run_to_beam = Some(RasterBreakpoint {
             line: Some(line),
             x: nop.min(NOPS_PER_LINE - 1) * BEAM_TICKS_PER_NOP,
+            name: None,
         });
         self.forget_beam();
         self.paused = false;
@@ -1223,7 +1256,8 @@ impl DebugServer {
                 "ok": true,
                 "emu": self.emu(motherboard),
                 "frontend": "bemu",
-                "version": env!("CARGO_PKG_VERSION")
+                "version": env!("CARGO_PKG_VERSION"),
+                "features": FEATURES
             }))),
             ("GET", "/api/state") => Ok(ApiResponse::ok(self.state(motherboard))),
             ("GET", "/api/z80") => Ok(ApiResponse::ok(z80(motherboard))),
@@ -1231,9 +1265,16 @@ impl DebugServer {
             ("GET", "/api/ram") => read_ram(request, motherboard),
             ("POST", "/api/ram") => self.write_ram(request, motherboard),
             ("POST", "/api/exec") => self.exec(request, motherboard),
-            ("POST", "/api/step") => self
-                .run_command("debug-step-in", None, motherboard)
-                .map(|()| ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.cmd_seq }))),
+            ("POST", "/api/step") => match request.param("mode").unwrap_or("in") {
+                mode @ ("in" | "over" | "out" | "frame") => self
+                    .run_command(&format!("debug-step-{mode}"), None, motherboard)
+                    .map(|()| ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.cmd_seq }))),
+                other => Err(ApiError::field(
+                    "mode",
+                    format!("{other}: expected in, over, out or frame"),
+                )),
+            },
+            ("POST", "/api/run_to") => self.run_to_request(request, motherboard),
             ("GET", "/api/config") => Ok(ApiResponse::ok(json!({
                 "crtc_type": motherboard.crtc().crtc_type() as u8,
                 "paused": self.paused,
@@ -1241,6 +1282,7 @@ impl DebugServer {
             }))),
             ("POST", "/api/config") => self.config(request, motherboard),
             ("POST", "/api/z80_bp") => self.set_breakpoints(request, motherboard),
+            ("DELETE", "/api/z80_bp") => self.remove_exec_breakpoints(request, motherboard),
             ("GET", "/api/breakpoints") => Ok(ApiResponse::ok(self.list_breakpoints())),
             ("GET", "/api/symbols") => Ok(ApiResponse::ok(self.list_symbols())),
             ("POST", "/api/breakpoints") => self.add_breakpoint(request, motherboard),
@@ -1438,15 +1480,18 @@ impl DebugServer {
         let line = param("line", 0xffff)?;
         let frame_nop = param("frame_nop", NOPS_PER_LINE * LINES_PER_FRAME - 1)?;
 
+        let name = request.param("name").filter(|n| !n.is_empty()).map(str::to_owned);
         let breakpoint = if let Some(frame_nop) = frame_nop {
             Some(RasterBreakpoint {
                 line: Some(frame_nop / NOPS_PER_LINE),
                 x: frame_nop % NOPS_PER_LINE * BEAM_TICKS_PER_NOP,
+                name,
             })
         } else if nop.is_some() || line.is_some() {
             Some(RasterBreakpoint {
                 line,
                 x: nop.unwrap_or(0) * BEAM_TICKS_PER_NOP,
+                name,
             })
         } else if x.is_some() || y.is_some() {
             let (dx, dy) = match (crop, self.beam) {
@@ -1463,6 +1508,7 @@ impl DebugServer {
             Some(RasterBreakpoint {
                 line: y.map(|y| (y as isize + dy).max(0) as usize),
                 x,
+                name,
             })
         } else {
             None
@@ -1701,6 +1747,17 @@ impl DebugServer {
             ("I", Reg8::I),
             ("R", Reg8::R),
         ];
+        // the pairs, set by their halves
+        let pairs = [
+            ("AF", Reg8::A, Reg8::F),
+            ("BC", Reg8::B, Reg8::C),
+            ("DE", Reg8::D, Reg8::E),
+            ("HL", Reg8::H, Reg8::L),
+            ("AF2", Reg8::A2, Reg8::F2),
+            ("BC2", Reg8::B2, Reg8::C2),
+            ("DE2", Reg8::D2, Reg8::E2),
+            ("HL2", Reg8::H2, Reg8::L2),
+        ];
         // Validate everything before changing anything.
         let mut word_values = Vec::new();
         for (name, reg) in words {
@@ -1709,6 +1766,12 @@ impl DebugServer {
             }
         }
         let mut byte_values = Vec::new();
+        for (name, high, low) in pairs {
+            if let Some(v) = int_field(&body, name, 0, 0xffff)? {
+                byte_values.push((high, (v >> 8) as u8));
+                byte_values.push((low, v as u8));
+            }
+        }
         for (name, reg) in bytes {
             if let Some(v) = int_field(&body, name, 0, 0xff)? {
                 byte_values.push((reg, v as u8));
@@ -1879,6 +1942,67 @@ impl DebugServer {
     /// mapping, `Bnn:hhhh` (hex 16K bank, hex offset carrying into the next
     /// banks) and the deprecated `Cnn:hhhh` (decimal bank) name a RAM byte.
     fn set_breakpoints(&mut self, request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
+        let (breakpoints, resolved, warnings) = self.parse_exec_breakpoints(request, motherboard)?;
+        if request.param("add") == Some("1") {
+            self.exec_breakpoints.extend(breakpoints);
+        } else {
+            self.exec_breakpoints = breakpoints;
+        }
+        let mut body = json!({ "ok": true, "cmd_seq": self.command(), "resolved": resolved });
+        if !warnings.is_empty() {
+            body["warnings"] = json!(warnings);
+        }
+        Ok(ApiResponse::ok(body))
+    }
+
+    /// `DELETE /api/z80_bp`: the breakpoints listed in the body (as `POST` takes them) removed,
+    /// the others kept; an empty body removes them all.
+    fn remove_exec_breakpoints(&mut self, request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
+        let (breakpoints, resolved, warnings) = self.parse_exec_breakpoints(request, motherboard)?;
+        if request.text().trim().is_empty() {
+            self.exec_breakpoints.clear();
+        } else {
+            self.exec_breakpoints.retain(|location| !breakpoints.contains(location));
+        }
+        let mut body = json!({ "ok": true, "cmd_seq": self.command(), "removed": resolved });
+        if !warnings.is_empty() {
+            body["warnings"] = json!(warnings);
+        }
+        Ok(ApiResponse::ok(body))
+    }
+
+    /// `POST /api/run_to`: run to `addr` (a CPU address or a symbol), or to the beam at `line`
+    /// and `nop`, once, then pause (a z80_bp event, reason run_to or run_to_beam).
+    fn run_to_request(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
+        let body = parse_body(&request.text())?;
+        let reply = |server: &Self| ApiResponse::ok(json!({ "ok": true, "cmd_seq": server.cmd_seq }));
+        if let Some(addr) = find_key(&body, "addr") {
+            let text = match addr {
+                Value::Number(n) => n.to_string(),
+                Value::String(text) => text.clone(),
+                _ => return Err(ApiError::field("addr", "expected an address or a symbol")),
+            };
+            self.run_command("debug-run-to-address", Some(Arg::Text(text)), motherboard)?;
+            return Ok(reply(self));
+        }
+        let line = int_field(&body, "line", 0, 0xffff)?;
+        let nop = int_field(&body, "nop", 0, NOPS_PER_LINE as i64 - 1)?;
+        match (line, nop) {
+            (Some(line), nop) => {
+                self.run_to_beam(line as usize, nop.unwrap_or(0) as usize);
+                Ok(reply(self))
+            }
+            _ => Err(ApiError::new("expected addr, or line (and nop)")),
+        }
+    }
+
+    /// The breakpoint list of `/api/z80_bp`'s body, resolved.
+    #[allow(clippy::type_complexity)]
+    fn parse_exec_breakpoints(
+        &self,
+        request: &ApiRequest,
+        motherboard: &Motherboard,
+    ) -> Result<(HashSet<PhysicalAddress>, Vec<Value>, Vec<String>), ApiError> {
         let mut breakpoints = HashSet::new();
         let mut resolved = Vec::new();
         let mut warnings = Vec::new();
@@ -1928,12 +2052,7 @@ impl DebugServer {
             resolved.push(json!({ "entry": entry, "location": location_name(location) }));
             breakpoints.insert(location);
         }
-        self.exec_breakpoints = breakpoints;
-        let mut body = json!({ "ok": true, "cmd_seq": self.command(), "resolved": resolved });
-        if !warnings.is_empty() {
-            body["warnings"] = json!(warnings);
-        }
-        Ok(ApiResponse::ok(body))
+        Ok((breakpoints, resolved, warnings))
     }
 
     /// `GET /api/breakpoints` (extension).
@@ -2834,6 +2953,20 @@ fn registers_event(motherboard: &Motherboard) -> Value {
     })
 }
 
+/// What a `z80_bp` event's `kind` means, in one word: `breakpoint` (an
+/// execution, memory or I/O breakpoint), `raster`, `step`, `step_over`
+/// (its run to the instruction after), `step_out`, `run_to`, `run_to_beam`.
+fn stop_reason(kind: Option<&str>) -> &'static str {
+    match kind {
+        Some("raster") => "raster",
+        Some("step") => "step",
+        Some("step_out") => "step_out",
+        Some("run_to") => "run_to",
+        Some("run_to_beam") => "run_to_beam",
+        _ => "breakpoint",
+    }
+}
+
 fn merge(target: &mut Value, extra: Value) {
     if let (Value::Object(target), Value::Object(extra)) = (target, extra) {
         target.extend(extra);
@@ -3358,6 +3491,7 @@ mod test {
         let at = |line, nop| RasterBreakpoint {
             line,
             x: nop * BEAM_TICKS_PER_NOP,
+            name: None,
         };
         // Line 100, NOP 10.
         assert!(at(Some(100), 10).passed(beam(150, 100), beam(170, 100)));
@@ -3476,7 +3610,7 @@ mod test {
             &mut server,
             &mut mb,
             "POST",
-            "/api/raster_bp?line=200&nop=20",
+            "/api/raster_bp?line=200&nop=20&name=split",
             "",
         );
         for _ in 0..19968 {
@@ -3496,6 +3630,13 @@ mod test {
             .unwrap();
         assert!(
             stop.contains(r#""kind":"raster""#) && stop.contains(r#""line":200"#),
+            "{stop}"
+        );
+        // Which one, by its index and name, and why.
+        assert!(
+            stop.contains(r#""index":0"#)
+                && stop.contains(r#""name":"split""#)
+                && stop.contains(r#""reason":"raster""#),
             "{stop}"
         );
     }
@@ -4230,6 +4371,120 @@ mod test {
 
     fn events_of(queue: &Arc<(Mutex<SseQueue>, Condvar)>) -> Vec<String> {
         queue.0.lock().unwrap().events.drain(..).collect()
+    }
+
+    /// `PC` at 0x4000, paused.
+    fn paused_at_4000(server: &mut DebugServer, mb: &mut Motherboard) {
+        call(server, mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        call(server, mb, "POST", "/api/config", r#"{"paused":true}"#);
+        server.poll(mb);
+    }
+
+    #[test]
+    fn a_step_is_told_with_its_reason_and_command() {
+        let (mut server, mut mb) = (server(), machine());
+        mb.write_buffer(0x4000, &[0x00, 0x00]); // NOP; NOP
+        paused_at_4000(&mut server, &mut mb);
+        let events = server.events.subscribe(None).unwrap();
+        let (_, step) = call(&mut server, &mut mb, "POST", "/api/step", "");
+        run(&mut server, &mut mb, 1);
+        let stops: Vec<String> = events_of(&events)
+            .into_iter()
+            .filter(|e| e.starts_with("event: z80_bp"))
+            .collect();
+        assert_eq!(stops.len(), 1, "{stops:?}");
+        assert!(stops[0].contains(r#""reason":"step""#), "{}", stops[0]);
+        assert!(
+            stops[0].contains(&format!(r#""cmd_seq":{}"#, step["cmd_seq"])),
+            "{} {step}",
+            stops[0]
+        );
+    }
+
+    #[test]
+    fn step_over_runs_a_call_whole_and_step_out_leaves_the_routine() {
+        let (mut server, mut mb) = (server(), machine());
+        // 0x4000: CALL 0x4010; NOP. 0x4010: NOP; NOP; RET
+        mb.write_buffer(0x4000, &[0xcd, 0x10, 0x40, 0x00]);
+        mb.write_buffer(0x4010, &[0x00, 0x00, 0xc9]);
+        mb.cpu_mut().reg16_mut(Reg16::Sp).set(0xbf00);
+        paused_at_4000(&mut server, &mut mb);
+
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/step?mode=over", "");
+        assert_eq!(status, 200);
+        run(&mut server, &mut mb, 100);
+        assert!(server.paused());
+        assert_eq!(mb.pc(), 0x4003, "after the CALL");
+
+        // Into the routine, then out of it.
+        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
+        server.poll(&mut mb);
+        call(&mut server, &mut mb, "POST", "/api/step", "");
+        run(&mut server, &mut mb, 1);
+        assert_eq!(mb.pc(), 0x4010);
+        call(&mut server, &mut mb, "POST", "/api/step?mode=out", "");
+        run(&mut server, &mut mb, 100);
+        assert!(server.paused());
+        assert_eq!(mb.pc(), 0x4003, "back after the CALL");
+
+        let (status, refused) = call(&mut server, &mut mb, "POST", "/api/step?mode=sideways", "");
+        assert_eq!(status, 400, "{refused}");
+    }
+
+    #[test]
+    fn run_to_stops_once_at_the_address() {
+        let (mut server, mut mb) = (server(), machine());
+        mb.write_buffer(0x4000, &[0x00, 0x00, 0x00, 0x18, 0xfb]); // NOP x3; JR 0x4000
+        paused_at_4000(&mut server, &mut mb);
+        let events = server.events.subscribe(None).unwrap();
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/run_to", r#"{"addr":"0x4002"}"#);
+        assert_eq!(status, 200);
+        run(&mut server, &mut mb, 100);
+        assert!(server.paused());
+        assert_eq!(mb.pc(), 0x4002);
+        assert!(events_of(&events)
+            .iter()
+            .any(|e| e.starts_with("event: z80_bp") && e.contains(r#""reason":"run_to""#)));
+        // Once: resumed, it does not stop there again.
+        call(&mut server, &mut mb, "POST", "/api/config", r#"{"paused":false}"#);
+        server.poll(&mut mb);
+        run(&mut server, &mut mb, 20);
+        assert!(!server.paused());
+
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/run_to", r#"{"nothing":1}"#);
+        assert_eq!(status, 400);
+    }
+
+    #[test]
+    fn exec_breakpoints_are_added_and_removed_one_by_one() {
+        let (mut server, mut mb) = (server(), machine());
+        let list = |server: &mut DebugServer, mb: &mut Motherboard| {
+            call(server, mb, "GET", "/api/breakpoints", "").1["z80_bp"].clone()
+        };
+        call(&mut server, &mut mb, "POST", "/api/z80_bp", "0x4000");
+        call(&mut server, &mut mb, "POST", "/api/z80_bp?add=1", "0x4010, 0x4020");
+        assert_eq!(list(&mut server, &mut mb).as_array().unwrap().len(), 3);
+        let (status, _) = call(&mut server, &mut mb, "DELETE", "/api/z80_bp", "0x4010");
+        assert_eq!(status, 200);
+        assert_eq!(list(&mut server, &mut mb).as_array().unwrap().len(), 2);
+        // Replacing still replaces.
+        call(&mut server, &mut mb, "POST", "/api/z80_bp", "0x4030");
+        assert_eq!(list(&mut server, &mut mb).as_array().unwrap().len(), 1);
+        call(&mut server, &mut mb, "DELETE", "/api/z80_bp", "");
+        assert_eq!(list(&mut server, &mut mb).as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn register_pairs_are_set_by_their_halves() {
+        let (mut server, mut mb) = (server(), machine());
+        let (status, body) = call(&mut server, &mut mb, "POST", "/api/z80", r#"{"HL":"0x1234","BC2":48879}"#);
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(mb.cpu().reg8(Reg8::H).get(), 0x12);
+        assert_eq!(mb.cpu().reg8(Reg8::L).get(), 0x34);
+        assert_eq!(mb.cpu().reg8(Reg8::B2).get(), 0xbe);
+        assert_eq!(mb.cpu().reg8(Reg8::C2).get(), 0xef);
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/z80", r#"{"DE":65536}"#);
+        assert_eq!(status, 400, "too wide");
     }
 
     #[test]
