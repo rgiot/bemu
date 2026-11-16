@@ -12,8 +12,10 @@
 //!
 //! A breakpoint may carry a [`Condition`] (an expression on the registers,
 //! memory and the access): it then only fires while the condition holds. Its
-//! `step` lets that many hits pass before it acts ([`AdvancedBreakpoint::after`]),
-//! as the pass of ACE's breakpoint window and of cpclib's breakpoint manager.
+//! `step` is read as a pass, hits let pass before it acts
+//! ([`AdvancedBreakpoint::after`]), as cpclib's breakpoint manager means it:
+//! rasm writes it without interpreting it, and ACE-DL's documentation does not
+//! define it.
 
 use crate::motherboard::{BusAccess, BusAccessKind};
 
