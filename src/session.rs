@@ -833,8 +833,7 @@ pub fn run_window(
             let sim = gui.simulated_joysticks();
             // (with no joystick set to Simulated, the window still drives joystick 1 while it is used)
             let sim_unset = core.settings().is_some_and(|s| {
-                s.joystick_1 != JoystickSource::Simulated
-                    && s.joystick_2 != JoystickSource::Simulated
+                s.joystick_1 != JoystickSource::Simulated && s.joystick_2 != JoystickSource::Simulated
             });
             if core
                 .settings()

@@ -49,9 +49,7 @@ use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
-use bemu_api::{
-    CommandAck, EmuState, Int, Ping, SetZ80, StepMode, StepQuery, Z80Registers, FEATURES,
-};
+use bemu_api::{CommandAck, EmuState, Int, Ping, SetZ80, StepMode, StepQuery, Z80Registers, FEATURES};
 use serde_json::{json, Value};
 
 use crate::basic_program::{self, BasicState};
@@ -1444,10 +1442,7 @@ impl DebugServer {
         let line = param("line", 0xffff)?;
         let frame_nop = param("frame_nop", NOPS_PER_LINE * LINES_PER_FRAME - 1)?;
 
-        let name = request
-            .param("name")
-            .filter(|n| !n.is_empty())
-            .map(str::to_owned);
+        let name = request.param("name").filter(|n| !n.is_empty()).map(str::to_owned);
         let breakpoint = if let Some(frame_nop) = frame_nop {
             Some(RasterBreakpoint {
                 line: Some(frame_nop / NOPS_PER_LINE),
@@ -1694,19 +1689,12 @@ impl DebugServer {
     }
 
     /// Set the registers `set` names; all are checked before any changes.
-    fn apply_z80(
-        &mut self,
-        set: &SetZ80,
-        motherboard: &mut Motherboard,
-    ) -> Result<CommandAck, ApiError> {
+    fn apply_z80(&mut self, set: &SetZ80, motherboard: &mut Motherboard) -> Result<CommandAck, ApiError> {
         let check = |name: &str, value: Option<Int>, max: i64| -> Result<Option<i64>, ApiError> {
             value
                 .map(|v| {
                     v.within(0, max).ok_or_else(|| {
-                        ApiError::field(
-                            name,
-                            format!("field \"{name}\" must be between 0 and {max}"),
-                        )
+                        ApiError::field(name, format!("field \"{name}\" must be between 0 and {max}"))
                     })
                 })
                 .transpose()
@@ -1815,11 +1803,7 @@ impl DebugServer {
     }
 
     /// Run as far as `mode` says, then pause.
-    fn step_by(
-        &mut self,
-        mode: StepMode,
-        motherboard: &mut Motherboard,
-    ) -> Result<CommandAck, ApiError> {
+    fn step_by(&mut self, mode: StepMode, motherboard: &mut Motherboard) -> Result<CommandAck, ApiError> {
         let command = match mode {
             StepMode::In => "debug-step-in",
             StepMode::Over => "debug-step-over",
@@ -1964,8 +1948,7 @@ impl DebugServer {
     /// mapping, `Bnn:hhhh` (hex 16K bank, hex offset carrying into the next
     /// banks) and the deprecated `Cnn:hhhh` (decimal bank) name a RAM byte.
     fn set_breakpoints(&mut self, request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
-        let (breakpoints, resolved, warnings) =
-            self.parse_exec_breakpoints(request, motherboard)?;
+        let (breakpoints, resolved, warnings) = self.parse_exec_breakpoints(request, motherboard)?;
         if request.param("add") == Some("1") {
             self.exec_breakpoints.extend(breakpoints);
         } else {
@@ -1980,18 +1963,12 @@ impl DebugServer {
 
     /// `DELETE /api/z80_bp`: the breakpoints listed in the body (as `POST` takes them) removed,
     /// the others kept; an empty body removes them all.
-    fn remove_exec_breakpoints(
-        &mut self,
-        request: &ApiRequest,
-        motherboard: &Motherboard,
-    ) -> ApiResult {
-        let (breakpoints, resolved, warnings) =
-            self.parse_exec_breakpoints(request, motherboard)?;
+    fn remove_exec_breakpoints(&mut self, request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
+        let (breakpoints, resolved, warnings) = self.parse_exec_breakpoints(request, motherboard)?;
         if request.text().trim().is_empty() {
             self.exec_breakpoints.clear();
         } else {
-            self.exec_breakpoints
-                .retain(|location| !breakpoints.contains(location));
+            self.exec_breakpoints.retain(|location| !breakpoints.contains(location));
         }
         let mut body = json!({ "ok": true, "cmd_seq": self.command(), "removed": resolved });
         if !warnings.is_empty() {
@@ -2004,8 +1981,7 @@ impl DebugServer {
     /// and `nop`, once, then pause (a z80_bp event, reason run_to or run_to_beam).
     fn run_to_request(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let body = parse_body(&request.text())?;
-        let reply =
-            |server: &Self| ApiResponse::ok(json!({ "ok": true, "cmd_seq": server.cmd_seq }));
+        let reply = |server: &Self| ApiResponse::ok(json!({ "ok": true, "cmd_seq": server.cmd_seq }));
         if let Some(addr) = find_key(&body, "addr") {
             let text = match addr {
                 Value::Number(n) => n.to_string(),
@@ -4360,13 +4336,7 @@ mod test {
         assert_eq!(mb.pc(), 0x4003, "after the CALL");
 
         // Into the routine, then out of it.
-        call(
-            &mut server,
-            &mut mb,
-            "POST",
-            "/api/exec",
-            r#"{"addr":16384}"#,
-        );
+        call(&mut server, &mut mb, "POST", "/api/exec", r#"{"addr":16384}"#);
         server.poll(&mut mb);
         call(&mut server, &mut mb, "POST", "/api/step", "");
         run(&mut server, &mut mb, 1);
@@ -4386,13 +4356,7 @@ mod test {
         mb.write_buffer(0x4000, &[0x00, 0x00, 0x00, 0x18, 0xfb]); // NOP x3; JR 0x4000
         paused_at_4000(&mut server, &mut mb);
         let events = server.events.subscribe(None).unwrap();
-        let (status, _) = call(
-            &mut server,
-            &mut mb,
-            "POST",
-            "/api/run_to",
-            r#"{"addr":"0x4002"}"#,
-        );
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/run_to", r#"{"addr":"0x4002"}"#);
         assert_eq!(status, 200);
         run(&mut server, &mut mb, 100);
         assert!(server.paused());
@@ -4401,24 +4365,12 @@ mod test {
             .iter()
             .any(|e| e.starts_with("event: z80_bp") && e.contains(r#""reason":"run_to""#)));
         // Once: resumed, it does not stop there again.
-        call(
-            &mut server,
-            &mut mb,
-            "POST",
-            "/api/config",
-            r#"{"paused":false}"#,
-        );
+        call(&mut server, &mut mb, "POST", "/api/config", r#"{"paused":false}"#);
         server.poll(&mut mb);
         run(&mut server, &mut mb, 20);
         assert!(!server.paused());
 
-        let (status, _) = call(
-            &mut server,
-            &mut mb,
-            "POST",
-            "/api/run_to",
-            r#"{"nothing":1}"#,
-        );
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/run_to", r#"{"nothing":1}"#);
         assert_eq!(status, 400);
     }
 
@@ -4429,13 +4381,7 @@ mod test {
             call(server, mb, "GET", "/api/breakpoints", "").1["z80_bp"].clone()
         };
         call(&mut server, &mut mb, "POST", "/api/z80_bp", "0x4000");
-        call(
-            &mut server,
-            &mut mb,
-            "POST",
-            "/api/z80_bp?add=1",
-            "0x4010, 0x4020",
-        );
+        call(&mut server, &mut mb, "POST", "/api/z80_bp?add=1", "0x4010, 0x4020");
         assert_eq!(list(&mut server, &mut mb).as_array().unwrap().len(), 3);
         let (status, _) = call(&mut server, &mut mb, "DELETE", "/api/z80_bp", "0x4010");
         assert_eq!(status, 200);
@@ -4450,13 +4396,7 @@ mod test {
     #[test]
     fn register_pairs_are_set_by_their_halves() {
         let (mut server, mut mb) = (server(), machine());
-        let (status, body) = call(
-            &mut server,
-            &mut mb,
-            "POST",
-            "/api/z80",
-            r#"{"HL":"0x1234","BC2":48879}"#,
-        );
+        let (status, body) = call(&mut server, &mut mb, "POST", "/api/z80", r#"{"HL":"0x1234","BC2":48879}"#);
         assert_eq!(status, 200, "{body}");
         assert_eq!(mb.cpu().reg8(Reg8::H).get(), 0x12);
         assert_eq!(mb.cpu().reg8(Reg8::L).get(), 0x34);

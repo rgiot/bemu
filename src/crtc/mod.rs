@@ -369,8 +369,7 @@ impl Crtc {
             self.core.r0_ends_line = self.core.hcc == old
                 && old > R0_SHORT_LINE
                 && self.core.phase_ticks == R0_OUT_PHASE_TICKS
-                && (u16::from(v & mask) < u16::from(old) + R0_RAISE_TAKEN
-                    || old <= R0_SHORT_LINE_ENDS);
+                && (u16::from(v & mask) < u16::from(old) + R0_RAISE_TAKEN || old <= R0_SHORT_LINE_ENDS);
             self.core.r0_ends_at = old;
         }
         self.chip.before_write(&mut self.core, r, v & mask);

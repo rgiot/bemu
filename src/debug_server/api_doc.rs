@@ -725,11 +725,7 @@ pub(super) fn html() -> String {
                 continue;
             }
             if let Some(op) = typed_operation(&typed, method, route.path) {
-                let text = op
-                    .get("description")
-                    .or(op.get("summary"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+                let text = op.get("description").or(op.get("summary")).and_then(Value::as_str).unwrap_or("");
                 page.push_str(&format!(
                     "<h3><code>{method} {}</code></h3><p>{}</p><p>Generated from its types: \
                      see <a href=\"/api/doc/ui\">the interactive reference</a>.</p>",
@@ -922,18 +918,12 @@ mod test {
         let openapi: Value = serde_json::from_slice(&get("format=openapi").body).unwrap();
         assert_eq!(openapi["openapi"], "3.1.0");
         // The typed routes, from their types.
-        assert_eq!(
-            openapi["paths"]["/api/step"]["post"]["parameters"][0]["name"],
-            "mode"
-        );
+        assert_eq!(openapi["paths"]["/api/step"]["post"]["parameters"][0]["name"], "mode");
         assert!(openapi["components"]["schemas"]["SetZ80"].is_object());
         assert!(openapi["components"]["schemas"]["Error"].is_object());
         let step: Value = serde_json::from_slice(&get("endpoint=step").body).unwrap();
         assert_eq!(step["operations"][0]["method"], "POST", "{step}");
-        assert!(
-            step["operations"][0]["openapi"]["parameters"].is_array(),
-            "{step}"
-        );
+        assert!(step["operations"][0]["openapi"]["parameters"].is_array(), "{step}");
         let breakpoints = &openapi["paths"]["/api/breakpoints"];
         assert_eq!(breakpoints["post"]["x-bemu-extension"], true);
         assert_eq!(

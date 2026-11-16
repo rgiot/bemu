@@ -178,10 +178,7 @@ impl<S: Send + Sync> FromRequest<S> for Forwarded {
     async fn from_request(request: Request, _: &S) -> Result<Self, Self::Rejection> {
         let (parts, body) = request.into_parts();
         let body = axum::body::to_bytes(body, MAX_BODY).await.map_err(|e| {
-            to_response(ApiResponse::json(
-                413,
-                json!({ "error": format!("body: {e}") }),
-            ))
+            to_response(ApiResponse::json(413, json!({ "error": format!("body: {e}") })))
         })?;
         Ok(Forwarded(ApiRequest {
             method: parts.method.as_str().to_uppercase(),
@@ -213,9 +210,9 @@ async fn forward(shared: &Shared, Forwarded(request): Forwarded) -> ApiResponse 
         if requests.send((request, reply)).is_err() {
             return ApiResponse::json(503, json!({ "error": "the emulation is gone" }));
         }
-        answer.recv_timeout(ANSWER_TIMEOUT).unwrap_or_else(|_| {
-            ApiResponse::json(503, json!({ "error": "the emulation did not answer" }))
-        })
+        answer
+            .recv_timeout(ANSWER_TIMEOUT)
+            .unwrap_or_else(|_| ApiResponse::json(503, json!({ "error": "the emulation did not answer" })))
     })
     .await
     .unwrap_or_else(|e| ApiResponse::json(503, json!({ "error": e.to_string() })))
@@ -223,8 +220,7 @@ async fn forward(shared: &Shared, Forwarded(request): Forwarded) -> ApiResponse 
 
 fn to_response(answer: ApiResponse) -> Response {
     let mut response = Response::new(Body::from(answer.body));
-    *response.status_mut() =
-        StatusCode::from_u16(answer.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    *response.status_mut() = StatusCode::from_u16(answer.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let headers = response.headers_mut();
     let mut set = |name: &str, value: &str| {
         if let (Ok(name), Ok(value)) = (HeaderName::try_from(name), HeaderValue::try_from(value)) {
@@ -294,10 +290,7 @@ impl<T> IntoResponse for Reply<T> {
 impl<T: JsonSchema> OperationOutput for Reply<T> {
     type Inner = T;
 
-    fn operation_response(
-        ctx: &mut GenContext,
-        operation: &mut Operation,
-    ) -> Option<aide::openapi::Response> {
+    fn operation_response(ctx: &mut GenContext, operation: &mut Operation) -> Option<aide::openapi::Response> {
         <axum::Json<T> as OperationOutput>::operation_response(ctx, operation)
     }
 
@@ -306,9 +299,7 @@ impl<T: JsonSchema> OperationOutput for Reply<T> {
         operation: &mut Operation,
     ) -> Vec<(Option<u16>, aide::openapi::Response)> {
         let mut responses = <axum::Json<T> as OperationOutput>::inferred_responses(ctx, operation);
-        if let Some(error) =
-            <axum::Json<ErrorReply> as OperationOutput>::operation_response(ctx, operation)
-        {
+        if let Some(error) = <axum::Json<ErrorReply> as OperationOutput>::operation_response(ctx, operation) {
             responses.push((Some(400), error));
         }
         responses
@@ -325,19 +316,11 @@ async fn get_z80(State(shared): State<Shared>, request: Forwarded) -> Reply<Z80R
     Reply::of(&shared, request).await
 }
 
-async fn set_z80(
-    State(shared): State<Shared>,
-    _: DocJson<SetZ80>,
-    request: Forwarded,
-) -> Reply<CommandAck> {
+async fn set_z80(State(shared): State<Shared>, _: DocJson<SetZ80>, request: Forwarded) -> Reply<CommandAck> {
     Reply::of(&shared, request).await
 }
 
-async fn step(
-    State(shared): State<Shared>,
-    _: DocQuery<StepQuery>,
-    request: Forwarded,
-) -> Reply<CommandAck> {
+async fn step(State(shared): State<Shared>, _: DocQuery<StepQuery>, request: Forwarded) -> Reply<CommandAck> {
     Reply::of(&shared, request).await
 }
 
@@ -362,12 +345,7 @@ async fn events(State(shared): State<Shared>, Forwarded(request): Forwarded) -> 
         .query
         .iter()
         .find(|(k, _)| k == "topics")
-        .map(|(_, list)| {
-            list.split(',')
-                .filter(|t| !t.is_empty())
-                .map(str::to_owned)
-                .collect()
-        });
+        .map(|(_, list)| list.split(',').filter(|t| !t.is_empty()).map(str::to_owned).collect());
     let Some(queue) = shared.events.subscribe(topics) else {
         let error = format!("too many event clients (max {MAX_SSE_CLIENTS})");
         return to_response(ApiResponse::json(503, json!({ "error": error })));
@@ -406,10 +384,7 @@ async fn events(State(shared): State<Shared>, Forwarded(request): Forwarded) -> 
     });
     let mut response = Response::new(Body::from_stream(stream));
     let headers = response.headers_mut();
-    headers.insert(
-        "content-type",
-        HeaderValue::from_static("text/event-stream"),
-    );
+    headers.insert("content-type", HeaderValue::from_static("text/event-stream"));
     headers.insert("cache-control", HeaderValue::from_static("no-store"));
     headers.insert("access-control-allow-origin", HeaderValue::from_static("*"));
     response
@@ -431,22 +406,12 @@ mod test {
         assert_eq!(step["parameters"][0]["name"], "mode", "{step}");
         assert!(step["responses"]["400"].is_object(), "{step}");
         let schemas = &api["components"]["schemas"];
-        for name in [
-            "Ping",
-            "EmuState",
-            "Z80Registers",
-            "SetZ80",
-            "CommandAck",
-            "ErrorReply",
-            "Int",
-        ] {
+        for name in ["Ping", "EmuState", "Z80Registers", "SetZ80", "CommandAck", "ErrorReply", "Int"] {
             assert!(schemas[name].is_object(), "{name}: {schemas}");
         }
         // A field's description is its doc comment.
-        assert!(
-            schemas["EmuState"]["properties"]["crtc_type"]["description"]
-                .as_str()
-                .is_some_and(|d| d.contains("CRTC"))
-        );
+        assert!(schemas["EmuState"]["properties"]["crtc_type"]["description"]
+            .as_str()
+            .is_some_and(|d| d.contains("CRTC")));
     }
 }
