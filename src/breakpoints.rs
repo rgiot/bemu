@@ -170,11 +170,11 @@ impl AdvancedBreakpoint {
                 "value" => brk.value = number(0xff)? as u8,
                 "valmask" | "value_mask" => brk.value_mask = number(0xff)? as u8,
                 "name" => {
-                    let name = value.trim_matches('"');
+                    let name = unquoted(value);
                     brk.name = (!name.is_empty() && name != "imported").then(|| name.to_owned());
                 }
-                "condition" if !value.trim_matches('"').is_empty() => {
-                    brk.condition = Some(Condition::parse(value.trim_matches('"'))?);
+                "condition" if !unquoted(value).is_empty() => {
+                    brk.condition = Some(Condition::parse(unquoted(value))?);
                 }
                 "step" if !value.is_empty() => brk.after = number(u32::MAX)? as u64,
                 "condition" | "step" => {}
@@ -185,22 +185,37 @@ impl AdvancedBreakpoint {
     }
 }
 
-/// Split on commas outside double quotes (names and conditions can hold
-/// commas).
+/// Split on commas outside quotes (names and conditions can hold commas):
+/// basm writes `name="..."`, rasm the directive's own `NAME='...'`.
 fn split_fields(text: &str) -> Vec<String> {
     let mut fields = vec![String::new()];
-    let mut quoted = false;
+    let mut quote: Option<char> = None;
     for c in text.chars() {
-        match c {
-            '"' => {
-                quoted = !quoted;
+        match (quote, c) {
+            (None, '"' | '\'') => {
+                quote = Some(c);
                 fields.last_mut().unwrap().push(c);
             }
-            ',' if !quoted => fields.push(String::new()),
+            (Some(open), _) if c == open => {
+                quote = None;
+                fields.last_mut().unwrap().push(c);
+            }
+            (None, ',') => fields.push(String::new()),
             _ => fields.last_mut().unwrap().push(c),
         }
     }
     fields
+}
+
+/// A name or a condition without the quotes around it, `"` or `'`.
+fn unquoted(value: &str) -> &str {
+    let value = value.trim();
+    for quote in ['"', '\''] {
+        if let Some(inner) = value.strip_prefix(quote).and_then(|v| v.strip_suffix(quote)) {
+            return inner;
+        }
+    }
+    value
 }
 
 /// Decimal, or hexadecimal with 0x, #, & or $.
@@ -254,6 +269,17 @@ mod test {
             AdvancedBreakpoint::parse_remu(r#"EXEC,RW,STOP,addr=1,condition="A==2 && B==3""#)
                 .unwrap();
         assert_eq!(conditional.condition.unwrap().source(), "A==2 && B==3");
+        // as rasm writes it: the directive's own single quotes, step=0
+        let rasm = AdvancedBreakpoint::parse_remu(
+            "MEM,WRITE,STOP,addr=16385,mask=65535,size=32,value=0,valmask=0,name='isobuffer, overflow',condition='A=5 AND B<>2',step=0",
+        )
+        .unwrap();
+        assert_eq!(rasm.name.as_deref(), Some("isobuffer, overflow"));
+        assert_eq!(rasm.condition.unwrap().source(), "A=5 AND B<>2");
+        assert_eq!((rasm.kind, rasm.access, rasm.size, rasm.after), (BreakpointKind::Memory, BreakpointAccess::Write, 32, 0));
+        // rasm's default name, unquoted, and an unquoted condition
+        let plain = AdvancedBreakpoint::parse_remu("EXEC,RW,STOP,addr=1,name=imported,condition=A=5,step=0").unwrap();
+        assert_eq!((plain.name, plain.condition.unwrap().source().to_owned()), (None, "A=5".to_owned()));
         // the step is a pass: hits let pass before it acts
         assert_eq!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=3").unwrap().after, 3);
         assert_eq!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=").unwrap().after, 0);
