@@ -32,24 +32,29 @@ const HEAD_ANGLE: f32 = 0.0;
 pub(super) enum Kind {
     Data,
     Deleted,
+    /// A CRC error in the ID field: the sector is not found.
+    IdCrcError,
+    /// A CRC error in the data.
     CrcError,
     Weak,
+    /// The ID is there, the data (its address mark) is not.
     NoData,
     OtherTrack,
 }
 
 impl Kind {
-    fn of(sector: &Sector, track: u8) -> Self {
+    pub(super) fn of(sector: &Sector, track: u8) -> Self {
         if sector.copies() > 1 {
             Self::Weak
         } else if sector.st1 & flag::ST1_MISSING_ADDRESS_MARK != 0
             || sector.st2 & flag::ST2_MISSING_DATA_MARK != 0
         {
             Self::NoData
-        } else if sector.st1 & flag::ST1_DATA_ERROR != 0
-            || sector.st2 & flag::ST2_DATA_ERROR_IN_DATA != 0
-        {
+        } else if sector.st2 & flag::ST2_DATA_ERROR_IN_DATA != 0 {
             Self::CrcError
+        } else if sector.st1 & flag::ST1_DATA_ERROR != 0 {
+            // the data CRC sets ST2's bit too: ST1's alone is the ID's
+            Self::IdCrcError
         } else if sector.is_deleted() {
             Self::Deleted
         } else if sector.c != track {
@@ -59,15 +64,18 @@ impl Kind {
         }
     }
 
-    fn colour(self) -> egui::Color32 {
+    /// The colours are Okabe and Ito's, told apart by the colour-blind: no red against green.
+    pub(super) fn colour(self) -> egui::Color32 {
         use egui::Color32 as C;
         match self {
-            Self::Data => C::from_rgb(70, 165, 85),
-            Self::Deleted => C::from_rgb(150, 90, 200),
-            Self::CrcError => C::from_rgb(235, 140, 40),
-            Self::Weak => C::from_rgb(215, 60, 60),
-            Self::NoData => C::from_rgb(120, 120, 120),
-            Self::OtherTrack => C::from_rgb(70, 120, 220),
+            Self::Data => C::from_rgb(0, 158, 115),
+            Self::Deleted => C::from_rgb(204, 121, 167),
+            Self::IdCrcError => C::from_rgb(240, 228, 66),
+            Self::CrcError => C::from_rgb(230, 159, 0),
+            Self::Weak => C::from_rgb(213, 94, 0),
+            // a missing part is pale, as the holes in Steil's block view are white
+            Self::NoData => C::from_rgb(205, 205, 205),
+            Self::OtherTrack => C::from_rgb(0, 114, 178),
         }
     }
 
@@ -75,7 +83,8 @@ impl Kind {
         match self {
             Self::Data => "data",
             Self::Deleted => "deleted data",
-            Self::CrcError => "CRC error",
+            Self::IdCrcError => "ID CRC error",
+            Self::CrcError => "data CRC error",
             Self::Weak => "weak (several copies)",
             Self::NoData => "no data mark",
             Self::OtherTrack => "another track's ID",
@@ -83,7 +92,7 @@ impl Kind {
     }
 }
 
-const ID_COLOUR: egui::Color32 = egui::Color32::from_rgb(80, 200, 215);
+pub(super) const ID_COLOUR: egui::Color32 = egui::Color32::from_rgb(86, 180, 233);
 const SURFACE: egui::Color32 = egui::Color32::from_rgb(38, 34, 30);
 const UNFORMATTED: egui::Color32 = egui::Color32::from_rgb(24, 22, 20);
 
@@ -94,6 +103,32 @@ pub(super) struct Arc {
     pub id: (f32, f32),
     pub data: (f32, f32),
     pub kind: Kind,
+    /// Its place in the track's list of sectors.
+    pub index: usize,
+    /// The data is one byte repeated (a formatted sector nobody wrote).
+    pub empty: bool,
+}
+
+/// The sector's data is one byte repeated: nothing was written there since the format.
+pub(super) fn is_empty(sector: &Sector) -> bool {
+    sector
+        .data
+        .first()
+        .is_some_and(|first| sector.data.iter().all(|b| b == first))
+}
+
+/// How bright the data byte at `offset` of `sector` draws: Steil's "darker areas have more
+/// 0-bits", an empty sector dim and flat.
+pub(super) fn byte_shade(sector: &Sector, offset: usize, empty: bool) -> f32 {
+    if empty {
+        return 0.5;
+    }
+    let byte = sector
+        .data
+        .get(offset.min(sector.nominal_len().saturating_sub(1)))
+        .copied()
+        .unwrap_or(0);
+    0.55 + 0.45 * f32::from(byte.count_ones() as u8) / 8.0
 }
 
 /// The arcs of the sectors of `track` (`head`, its number `cylinder`), in the order they pass:
@@ -120,6 +155,8 @@ pub(super) fn layout(disc: &DiscImage, head: u8, cylinder: u8, track: &Track) ->
                     ),
                     data: (data, data + length),
                     kind: Kind::of(sector, cylinder),
+                    index: i,
+                    empty: is_empty(sector),
                 }
             })
             .collect();
@@ -142,7 +179,8 @@ pub(super) fn layout(disc: &DiscImage, head: u8, cylinder: u8, track: &Track) ->
     track
         .sectors
         .iter()
-        .map(|sector| {
+        .enumerate()
+        .map(|(index, sector)| {
             let id = at + BEFORE_ID;
             let data = id + ID + BEFORE_DATA;
             let end = data + sector.nominal_len() as f32 + 2.0;
@@ -151,6 +189,8 @@ pub(super) fn layout(disc: &DiscImage, head: u8, cylinder: u8, track: &Track) ->
                 id: (id / turn, (id + ID) / turn),
                 data: (data / turn, end / turn),
                 kind: Kind::of(sector, cylinder),
+                index,
+                empty: is_empty(sector),
             }
         })
         .collect()
@@ -186,7 +226,7 @@ fn track_radius(track: u8, tracks: u8) -> f32 {
 }
 
 /// The disc's sides and sectors, as far as the colours go: another one, another picture.
-fn signature(disc: &DiscImage, side: u8) -> u64 {
+pub(super) fn signature(disc: &DiscImage, side: u8) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (side, disc.nb_tracks(), disc.is_bitstream()).hash(&mut hasher);
     for cylinder in 0..disc.nb_tracks() {
@@ -195,12 +235,20 @@ fn signature(disc: &DiscImage, side: u8) -> u64 {
             Some(track) => {
                 (track.gap3, track.sectors.len()).hash(&mut hasher);
                 for s in &track.sectors {
-                    (s.c, s.h, s.r, s.n, s.st1, s.st2, s.copies(), s.data.len()).hash(&mut hasher);
+                    (s.c, s.h, s.r, s.n, s.st1, s.st2, s.copies()).hash(&mut hasher);
+                    // what is written there (the data is shaded by its bytes)
+                    s.data.hash(&mut hasher);
                 }
             }
         }
     }
     hasher.finish()
+}
+
+/// `colour` darkened by `factor` (0-1).
+pub(super) fn scale(colour: egui::Color32, factor: f32) -> egui::Color32 {
+    let by = |c: u8| (f32::from(c) * factor).clamp(0.0, 255.0) as u8;
+    egui::Color32::from_rgb(by(colour.r()), by(colour.g()), by(colour.b()))
 }
 
 /// The disc's picture, not turned: `PICTURE` pixels square, the position on a track counting
@@ -212,6 +260,8 @@ fn picture(disc: &DiscImage, side: u8) -> egui::ColorImage {
         .map(|c| disc.track(side, c).map(|t| layout(disc, side, c, t)))
         .collect();
     let ring_px = (OUTER - INNER) * PICTURE as f32 / 2.0 / f32::from(tracks.max(1));
+    // the bytes behind each arc, to shade the data by them
+    let images: Vec<Option<&Track>> = (0..tracks).map(|c| disc.track(side, c)).collect();
     let mut image = egui::ColorImage::new(
         [PICTURE, PICTURE],
         vec![egui::Color32::TRANSPARENT; PICTURE * PICTURE],
@@ -248,16 +298,27 @@ fn picture(disc: &DiscImage, side: u8) -> egui::ColorImage {
                         None => UNFORMATTED,
                         Some(arcs) => match arc_at(arcs, position) {
                             Some((_, true)) => ID_COLOUR,
-                            Some((i, false)) => arcs[i].kind.colour(),
+                            Some((i, false)) => {
+                                let arc = &arcs[i];
+                                let colour = arc.kind.colour();
+                                // a missing part is not shaded, the rest by its bytes
+                                match (arc.kind, images[usize::from(track)]) {
+                                    (Kind::NoData, _) | (_, None) => colour,
+                                    (_, Some(t)) => {
+                                        let sector = &t.sectors[arc.index];
+                                        let along = (position - arc.data.0)
+                                            / (arc.data.1 - arc.data.0).max(f32::EPSILON);
+                                        let offset =
+                                            (along * (sector.nominal_len() as f32 + 2.0)) as usize;
+                                        scale(colour, byte_shade(sector, offset, arc.empty))
+                                    }
+                                }
+                            }
                             None => SURFACE,
                         },
                     };
                     if darker {
-                        egui::Color32::from_rgb(
-                            (f32::from(colour.r()) * 0.72) as u8,
-                            (f32::from(colour.g()) * 0.72) as u8,
-                            (f32::from(colour.b()) * 0.72) as u8,
-                        )
+                        scale(colour, 0.72)
                     } else {
                         colour
                     }
@@ -279,12 +340,26 @@ fn picture(disc: &DiscImage, side: u8) -> egui::ColorImage {
     image
 }
 
+/// What a drive's disc shows: the disc turning, or its sectors one by one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tab {
+    #[default]
+    Disc,
+    Sectors,
+}
+
 /// A drive's disc drawing: its picture and how far it has turned.
 #[derive(Default)]
 pub struct DiscView {
+    pub tab: Tab,
+    /// The sectors tab's pictures.
+    pub rows: super::sector_rows::RowsView,
     /// The picture of each side, the context it was given to (a window opened again has
     /// another) and the disc it shows.
     textures: [Option<(egui::Context, egui::TextureHandle, u64)>; 2],
+    /// The signature of each side's disc, and what it was taken at (the FDC's count of commands,
+    /// the disc's place).
+    signatures: [Option<((u32, usize), u64)>; 2],
     /// The turn drawn (fraction), and when.
     turned: f32,
     at: Option<f64>,
@@ -351,6 +426,28 @@ fn recent_accesses(mb: &Motherboard, unit: usize) -> Vec<(u8, u8, u8)> {
         .collect()
 }
 
+/// The signature of the disc in drive `unit`, the side the head reads: its bytes are hashed
+/// when the FDC has run a command since (a write is one), or another disc was put in (its
+/// place in memory tells).
+pub(super) fn signature_of(view: &mut DiscView, mb: &Motherboard, unit: usize) -> u64 {
+    let drive = if unit == 0 { FdcDrive::A } else { FdcDrive::B };
+    let fdc = mb.fdc();
+    let Some(disc) = fdc.image(drive) else {
+        return 0;
+    };
+    let side = fdc.side_read(unit).min(disc.nb_heads().saturating_sub(1));
+    let cached = &mut view.signatures[usize::from(side & 1)];
+    let key = (fdc.executions(), std::ptr::from_ref(disc) as usize);
+    match *cached {
+        Some((at, hash)) if at == key => hash,
+        _ => {
+            let hash = signature(disc, side);
+            *cached = Some((key, hash));
+            hash
+        }
+    }
+}
+
 /// The disc in drive `unit`, turning, its head on its track; a sector hovered says what it is.
 pub fn show(ui: &mut egui::Ui, mb: &Motherboard, unit: usize, view: &mut DiscView) {
     let drive = if unit == 0 { FdcDrive::A } else { FdcDrive::B };
@@ -369,7 +466,7 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, unit: usize, view: &mut DiscVie
 
     // the picture, drawn again for another disc (or another context)
     // (a picture each side: a double-sided disc goes from one to the other as it is read)
-    let signature = signature(disc, side);
+    let signature = signature_of(view, mb, unit);
     let kept = &mut view.textures[usize::from(side & 1)];
     let fresh = !matches!(kept, Some((ctx, _, s)) if *ctx == *ui.ctx() && *s == signature);
     if fresh {
@@ -492,9 +589,9 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, unit: usize, view: &mut DiscVie
     );
     let lit = fdc.motor() && fdc.selected_drive() == unit;
     let head_colour = if lit {
-        egui::Color32::from_rgb(255, 220, 90)
+        egui::Color32::from_rgb(255, 255, 255)
     } else {
-        egui::Color32::from_rgb(200, 200, 200)
+        egui::Color32::from_rgb(150, 150, 150)
     };
     painter.line_segment(
         [
@@ -530,7 +627,15 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, unit: usize, view: &mut DiscVie
                                 s.n,
                                 s.nominal_len(),
                                 if id { ", its ID field" } else { "" },
-                                arcs[i].kind.label()
+                                if arcs[i].empty {
+                                    format!(
+                                        "{}, empty: all &{:02X}",
+                                        arcs[i].kind.label(),
+                                        s.data[0]
+                                    )
+                                } else {
+                                    arcs[i].kind.label().to_owned()
+                                }
                             )
                         }
                         None => format!("track {track}: a gap"),
@@ -554,6 +659,7 @@ pub fn legend(ui: &mut egui::Ui) {
         for kind in [
             Kind::Data,
             Kind::Deleted,
+            Kind::IdCrcError,
             Kind::CrcError,
             Kind::Weak,
             Kind::NoData,
@@ -561,6 +667,11 @@ pub fn legend(ui: &mut egui::Ui) {
         ] {
             swatch(ui, kind.colour(), kind.label());
         }
+        swatch(
+            ui,
+            scale(Kind::Data.colour(), 0.5),
+            "empty (one byte repeated)",
+        );
         swatch(ui, UNFORMATTED, "unformatted");
         swatch(ui, egui::Color32::WHITE, "read / written lately");
     });

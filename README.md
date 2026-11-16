@@ -132,7 +132,15 @@ tracks as rings (track 0 outside), each sector an arc where it lies on its track
 timings, else from MFM's layout), its ID field in cyan then its data coloured by what it is
 (data, deleted, CRC error, weak, no data mark, another track's ID), the head on its track (lit
 while the motor runs), the sectors the last commands read or wrote glowing. A sector hovered
-says its C, H, R, N.
+says its C, H, R, N. The data is shaded by its bytes (darker with more 0 bits, a sector of one
+byte repeated dim and flat: the formatted and the empty show at a glance), a missing part is
+pale, an ID CRC error is told from a data CRC error, and the colours are the colour-blind safe
+ones of Okabe and Ito.
+
+The Sectors tab draws the same disc as Michael Steil's block view: a group of rows a track, a row
+a sector (a row a copy of a weak sector, the bytes the copies differ in marked), the ID field
+then the data, byte by byte from left to right. A protection or a read error is a pattern in
+the rows; a byte hovered says its track, sector, offset and value.
 
 The debugger's windows use cpclib-dap's views (`cpclib-dap` without its debug adapter): the
 disassembly with each instruction's cost in NOPs, the call stack read from the stack, the
