@@ -35,7 +35,7 @@ use bemu_api::*;
 use schemars::JsonSchema;
 use serde_json::{json, Value};
 
-use super::{percent_decode, ApiRequest, ApiResponse, EventHub, MAX_SSE_CLIENTS, SSE_HEARTBEAT};
+use super::{query_pairs, ApiRequest, ApiResponse, EventHub, MAX_SSE_CLIENTS, SSE_HEARTBEAT};
 
 /// The largest request body (a disc image, a snapshot).
 const MAX_BODY: usize = 64 << 20;
@@ -344,17 +344,6 @@ impl<S: Send + Sync> FromRequest<S> for Forwarded {
 }
 
 impl OperationInput for Forwarded {}
-
-fn query_pairs(query: &str) -> Vec<(String, String)> {
-    query
-        .split('&')
-        .filter(|pair| !pair.is_empty())
-        .map(|pair| {
-            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            (percent_decode(k), percent_decode(v))
-        })
-        .collect()
-}
 
 /// Ask the emulation thread.
 async fn forward(shared: &Shared, Forwarded(request): Forwarded) -> ApiResponse {

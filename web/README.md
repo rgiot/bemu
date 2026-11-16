@@ -116,6 +116,8 @@ have the focus, to the CPC otherwise.
 | `tapeControl(key)` | the deck's keys: `'play'`, `'stop'`, `'rewind'` |
 | `loadSnapshot(source)` | an SNA snapshot |
 | `saveSnapshot()` | the machine's state as an SNA file (`Uint8Array`, version 3), to save or give back to `loadSnapshot` |
+| `api(method, path, query, body)` | bemu's debug API, as the desktop's `--debug-server` serves it and answered by the same code (`api('GET', '/api/ping')`, `api('POST', '/api/config', '', '{"paused":true}')`): `{ status, contentType, body, headers }`, `body` a `Uint8Array`; the query as in a URL, the body a string or bytes. The routes are documented by a desktop bemu at `/api/doc` |
+| `debugEvents()` | the debug events since the last call, each as `/api/events` streams it (`event: NAME\ndata: JSON\n\n`); the first call subscribes, from then on the debugger watches every instruction. cpclib's debugger uses both to debug a page in a VS Code tab |
 | `addFile(name, source)` | a file a CSL script names (`disk_insert`, `tape_insert`, `snapshot_load`, `csl_load`) |
 | `runCsl(script, { files })` | play a CSL script live, see below |
 | `stopCsl()` | stop the script; its machine goes on |
