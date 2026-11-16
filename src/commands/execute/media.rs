@@ -327,12 +327,12 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
             checked: settings.is_some_and(|s| s.save_discs),
         },
         "tape-insert" => CommandState::enabled(true),
+        "tape-eject" | "tape-rewind" => CommandState::enabled(mb.tape_deck().is_some()),
         "tape-record" => CommandState {
             enabled: true,
             checked: mb.tape_recorder().is_some(),
         },
         "tape-record-stop" => CommandState::enabled(mb.tape_recorder().is_some()),
-        "tape-eject" | "tape-rewind" => CommandState::enabled(mb.tape_deck().is_some()),
         "tape-play" => CommandState {
             enabled: mb.tape_deck().is_some(),
             checked: mb.tape_deck().is_some_and(|deck| deck.playing()),

@@ -87,8 +87,8 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
         "ui-zoom-reset" => {
             CommandState::enabled(settings.is_some_and(|s| (s.ui_zoom - 1.0).abs() > 1e-3))
         }
-        "autotype-paste" => host_can(target, HostRequest::PasteClipboard),
         "autotype-delays" => needs_settings,
+        "autotype-paste" => host_can(target, HostRequest::PasteClipboard),
         "view-memory-new" => host_can(target, HostRequest::OpenAnother(View::Memory)),
         "view-disassembly-new" => host_can(target, HostRequest::OpenAnother(View::Disassembly)),
         "ui-menu-toggle" => toggle(settings.is_some_and(|s| s.menu_visible)),

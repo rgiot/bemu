@@ -525,10 +525,6 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
     let toggle = |on: bool| cx.toggle(on);
     let needs_debugger = CommandState::enabled(debugger.is_some());
     Some(match id {
-        "history-record-toggle" => CommandState {
-            enabled: debugger.is_some(),
-            checked: debugger.is_some_and(|d| d.records_history()),
-        },
         "debug-run" => CommandState::enabled(paused),
         "debug-pause" => CommandState::enabled(!paused),
         "debug-pause-toggle" => CommandState {
@@ -563,6 +559,10 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
         "counter-toggle" | "counter-reset" | "counter-delete" => {
             CommandState::enabled(debugger.is_some_and(|d| !d.counters().is_empty()))
         }
+        "history-record-toggle" => CommandState {
+            enabled: debugger.is_some(),
+            checked: debugger.is_some_and(|d| d.records_history()),
+        },
         "basic-export" => CommandState::enabled(crate::basic_program::program(mb).is_ok()),
         "debug-server-toggle" => CommandState {
             enabled: target.can(&HostRequest::DebugServer(true)),

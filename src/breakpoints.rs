@@ -244,6 +244,7 @@ mod test {
             kind,
             address,
             value,
+            previous: value,
         }
     }
 
@@ -348,7 +349,9 @@ mod test {
 ///   bank mapping mode, 0-7), `LowerROMOn`, `UpperROMOn`, `UpperROMNum`,
 ///   and for the Plus `LowerROMNum`, `LowerROMAdr`, `ASICPageOn` (0 here)
 ///   and `ASICPageOff` (1: no ASIC page is ever mapped);
-/// - for memory/IO breakpoints the access's `ADDRESS` (`ADDR`) and `VALUE`;
+/// - for memory/IO breakpoints the access's `ADDRESS` (`ADDR`) and `VALUE`, and, for a memory
+///   write, `OLDVALUE` (the byte of RAM it replaced: `VALUE <> OLDVALUE` is a change; bemu's
+///   extension);
 /// - `peek(x)` / `deek(x)`: the byte / little-endian word at `x`, as the CPU
 ///   sees memory.
 ///
@@ -430,6 +433,7 @@ pub const VARIABLES: &[&str] = &[
     "IM",
     "ADDRESS",
     "VALUE",
+    "OLDVALUE",
     "FLAGZ",
     "FLAGNZ",
     "FLAGC",
@@ -500,6 +504,11 @@ impl Condition {
     /// Whether the condition holds (a variable without a value is 0).
     pub fn holds(&self, context: &dyn ConditionContext) -> bool {
         evaluate(&self.expr, context) != 0
+    }
+
+    /// Its value (a watch window shows an expression's): a variable without a value is 0.
+    pub fn value(&self, context: &dyn ConditionContext) -> i64 {
+        evaluate(&self.expr, context)
     }
 }
 

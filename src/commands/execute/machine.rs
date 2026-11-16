@@ -211,8 +211,8 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
             )
         }
         "joystick-simulated-window" => CommandState::enabled(true),
-        "keyboard-view" => CommandState::enabled(true),
         "keyboard-write" => CommandState::enabled(true),
+        "keyboard-view" => CommandState::enabled(true),
         _ => return None,
     })
 }

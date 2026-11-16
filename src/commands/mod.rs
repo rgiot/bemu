@@ -577,6 +577,43 @@ mod tests {
         assert_eq!(seen.len(), 12, "{seen:?}");
     }
 
+    /// Code is not left behind for a command that left the menu specification: every id an arm
+    /// of the areas' `run` and `state` names is a command of the registry, the command a stop
+    /// command stops, or a choice of a radio family.
+    #[test]
+    fn no_arm_is_left_for_a_command_that_is_gone() {
+        const AREAS: [(&str, &str); 6] = [
+            ("debug", include_str!("execute/debug.rs")),
+            ("devices", include_str!("execute/devices.rs")),
+            ("machine", include_str!("execute/machine.rs")),
+            ("media", include_str!("execute/media.rs")),
+            ("sound_video", include_str!("execute/sound_video.rs")),
+            ("tools", include_str!("execute/tools.rs")),
+        ];
+        let stops: Vec<&str> = COMMANDS.iter().filter_map(|spec| spec.stop_id).collect();
+        let mut orphans = Vec::new();
+        for (area, source) in AREAS {
+            for line in source.lines() {
+                // the head of an arm: `"id" =>`, `"id" | "other"`, `| "id"` (8 spaces in)
+                let head = line.strip_prefix("        ").unwrap_or("");
+                let head = head.strip_prefix("| ").unwrap_or(head);
+                if !head.starts_with('"') {
+                    continue;
+                }
+                let names = head.split("=>").next().unwrap_or("");
+                for id in names.split('"').skip(1).step_by(2) {
+                    if spec(id).is_none() && !stops.contains(&id) {
+                        orphans.push(format!("{area}: {id}"));
+                    }
+                }
+            }
+        }
+        assert!(
+            orphans.is_empty(),
+            "arms for commands that are not in doc/menu-ui.csv: {orphans:?}"
+        );
+    }
+
     #[test]
     fn every_command_has_a_behaviour() {
         for spec in COMMANDS {

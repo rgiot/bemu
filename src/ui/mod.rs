@@ -24,6 +24,7 @@ mod prompt;
 mod psg;
 mod screen;
 mod views;
+mod watch;
 mod widgets;
 mod window;
 pub mod workspace;

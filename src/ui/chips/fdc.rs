@@ -22,13 +22,28 @@ fn disc_details(ui: &mut egui::Ui, mb: &Motherboard, unit: usize, view: &mut Dis
         },
         disc.side
     ));
-    // the disc turning, its head on its track; the sectors under the head beside it
-    ui.horizontal_top(|ui| {
-        super::disc_view::show(ui, mb, unit, view);
-        ui.vertical(|ui| {
-            sectors_under_head(ui, &disc, unit);
-        });
+    // the disc turning, or sector by sector
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut view.tab, super::disc_view::Tab::Disc, "Disc")
+            .on_hover_text("The disc as the drive turns it: rings of tracks, arcs of sectors");
+        ui.selectable_value(&mut view.tab, super::disc_view::Tab::Sectors, "Sectors")
+            .on_hover_text("A row a sector, its bytes from left to right: the read errors show");
     });
+    match view.tab {
+        super::disc_view::Tab::Disc => {
+            // its head on its track; the sectors under the head beside it
+            ui.horizontal_top(|ui| {
+                super::disc_view::show(ui, mb, unit, view);
+                ui.vertical(|ui| {
+                    sectors_under_head(ui, &disc, unit);
+                });
+            });
+        }
+        super::disc_view::Tab::Sectors => {
+            let signature = super::disc_view::signature_of(view, mb, unit);
+            super::sector_rows::show(ui, mb, unit, &mut view.rows, signature);
+        }
+    }
     super::disc_view::legend(ui);
     catalogue(ui, &disc, unit);
 }

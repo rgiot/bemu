@@ -127,12 +127,28 @@ over, out, a frame) and counters work without the debug server, which Debug > De
 starts on demand. A command that cannot run now (no disc to flip, no script to stop) is greyed
 out, its tooltip says why.
 
+The Watch window (Debug > View > Watch) shows what is typed in it, live: an address (`&BE00`), a
+symbol, or an expression of the breakpoint language (`HL`, `peek(&BE00)+1`, `deek(SP)`), a byte
+or a word, lit when it changed lately. "Stop" on an address stops the machine when its value
+changes: a write breakpoint whose condition is `VALUE <> OLDVALUE` (`OLDVALUE`, the byte a write
+replaced, is bemu's addition to ACE's language). The watches come back at the next session.
+
 The FDC window draws each disc as the drive turns it, the way C64 tools draw a 1541 disc: its
 tracks as rings (track 0 outside), each sector an arc where it lies on its track (from an HFE's
 timings, else from MFM's layout), its ID field in cyan then its data coloured by what it is
 (data, deleted, CRC error, weak, no data mark, another track's ID), the head on its track (lit
 while the motor runs), the sectors the last commands read or wrote glowing. A sector hovered
-says its C, H, R, N.
+says its C, H, R, N. The data is shaded by its bytes (darker with more 0 bits, a sector of one
+byte repeated dim and flat: the formatted and the empty show at a glance), a missing part is
+pale, an ID CRC error is told from a data CRC error, and the colours are the colour-blind safe
+ones of Okabe and Ito.
+
+The Sectors tab draws the same disc as Michael Steil's block view: a group of rows a track, a row
+a sector (a row a copy of a weak sector, the bytes the copies differ in marked), the ID field
+then the data, byte by byte from left to right. A protection or a read error is a pattern in
+the rows; a byte hovered says its track, sector, offset and value. It shows the bytes the FDC
+decodes, not the raw MFM bits (so a DSK and an HFE look alike): what lives only in the flux, a
+dropout for example, does not show there, and the tab says so.
 
 The debugger's windows use cpclib-dap's views (`cpclib-dap` without its debug adapter): the
 disassembly with each instruction's cost in NOPs, the call stack read from the stack, the

@@ -130,6 +130,7 @@ pub fn new_window(view: View, copy: u8) -> Box<dyn ViewWindow> {
         View::Tape => plain(|ui, cx| super::chips::tape(ui, cx.target.motherboard(), cx.bus)),
         View::Asic => plain(|ui, cx| super::chips::asic(ui, cx.target.motherboard(), cx.bus)),
         View::CslLog => Box::<super::csl_log::CslLogWindow>::default(),
+        View::Watch => Box::<super::watch::WatchWindow>::default(),
         View::Preferences => plain(|ui, cx| views::preferences(ui, cx.target, cx.bus)),
         // drawn by the interface itself
         View::Palette => plain(|_, _| {}),

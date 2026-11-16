@@ -84,6 +84,7 @@ mod fdc;
 mod ga;
 mod memory_map;
 mod ppi;
+mod sector_rows;
 mod status_bar;
 mod tape;
 mod z80;

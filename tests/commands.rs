@@ -519,3 +519,45 @@ fn a_shadow_register_is_set() {
     assert_eq!(host.motherboard.cpu().reg16(Reg16::Bc2).value(), 0x1234);
     assert_eq!(host.motherboard.cpu().reg16(Reg16::Af2).value(), 43981);
 }
+
+/// A watch's "stop on change" is a write breakpoint on a value that differs: writing the value
+/// already there does not stop the machine, writing another does.
+#[test]
+fn a_watch_stops_the_machine_when_its_value_changes() {
+    let mut host = Host::new();
+    // the byte at &9000 is 5; the program writes 5, 5, then 6 there
+    host.run_with("memory-poke", Arg::Text("&9000 05".into()))
+        .unwrap();
+    host.run_with(
+        "memory-poke",
+        Arg::Text("&8000 3E 05 32 00 90 3E 05 32 00 90 3E 06 32 00 90 18 FE".into()),
+    )
+    .unwrap();
+    host.run_with("debug-set-pc", Arg::Text("&8000".into()))
+        .unwrap();
+    // the text the Watch window gives (ui/watch.rs)
+    host.run_with(
+        "breakpoint-add-advanced",
+        Arg::Text(
+            "MEM,W,STOP,addr=36864,mask=65535,size=1,name=\"watch &9000 #0\",\
+             condition=VALUE != OLDVALUE"
+                .into(),
+        ),
+    )
+    .unwrap();
+    let mut steps = 0;
+    while !host.debugger.paused() && steps < 1000 {
+        host.motherboard.execute_next_opcode_no_video();
+        host.debugger.after_instruction(&mut host.motherboard);
+        steps += 1;
+    }
+    assert!(host.debugger.paused(), "the machine stopped");
+    assert_eq!(
+        host.motherboard.pc(),
+        0x800f,
+        "after the write of 6, not the writes of 5"
+    );
+    assert_eq!(host.motherboard.read_byte(0x9000), 6);
+    // the breakpoint is found by its name (the window's checkbox)
+    assert_eq!(host.debugger.advanced_named("watch &9000 #0"), Some(0));
+}

@@ -308,6 +308,9 @@ pub struct BusAccess {
     pub kind: BusAccessKind,
     pub address: u16,
     pub value: u8,
+    /// For a memory write: the byte of RAM it replaced (a ROM may be paged over it); for the
+    /// other accesses, the value.
+    pub previous: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1147,8 +1150,19 @@ impl Motherboard {
             let addr = self.cpu.get_address_from_pins();
             let byte = self.cpu.get_data_from_pins();
             //    eprintln!("0x{:x}=0x{:x}", addr, byte);
+            // what the write replaces, for the debugger (only when it watches the bus)
+            let previous = if self.bus_log.is_some() {
+                match self.physical_address_for_write(addr) {
+                    PhysicalAddress::Ram { bank, offset } => {
+                        self.read_bank_byte(bank, offset).unwrap_or(byte)
+                    }
+                    _ => byte,
+                }
+            } else {
+                byte
+            };
             self.write_byte(addr, byte);
-            self.log_bus(BusAccessKind::MemoryWrite, addr, byte);
+            self.log_bus_write(addr, byte, previous);
             self.cpu.set_pin(Z80Pin::Neg_WR, true); // TODO do the real stuff - but here I am sure to not play with the data bus ...
             self.fdc_write_active = false;
         } else if self.cpu_request_byte_output() {
@@ -2450,6 +2464,19 @@ impl Motherboard {
                 kind,
                 address,
                 value,
+                previous: value,
+            });
+        }
+    }
+
+    /// A memory write, with the byte it replaced.
+    fn log_bus_write(&mut self, address: u16, value: u8, previous: u8) {
+        if let Some(log) = &mut self.bus_log {
+            log.push(BusAccess {
+                kind: BusAccessKind::MemoryWrite,
+                address,
+                value,
+                previous,
             });
         }
     }

@@ -190,8 +190,8 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
             enabled: has_settings && cfg!(feature = "crt-gpu") && files,
             checked: settings.is_some_and(|s| s.crt_gpu),
         },
-        "video-fullscreen-toggle" => toggle(settings.is_some_and(|s| s.fullscreen)),
         "video-free-zoom-toggle" => toggle(settings.is_some_and(|s| s.free_zoom)),
+        "video-fullscreen-toggle" => toggle(settings.is_some_and(|s| s.fullscreen)),
         _ => return None,
     })
 }

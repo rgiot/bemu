@@ -2133,6 +2133,13 @@ impl DebugServer {
     }
 
     /// `GET /api/breakpoints` (extension).
+    /// The index of the memory / I/O breakpoint named `name`, if there is one.
+    pub fn advanced_named(&self, name: &str) -> Option<usize> {
+        self.advanced
+            .iter()
+            .position(|b| b.name.as_deref() == Some(name))
+    }
+
     fn list_breakpoints(&self) -> Breakpoints {
         let mut exec: Vec<String> = self
             .exec_breakpoints
@@ -2899,6 +2906,16 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// The value of `expression` on `motherboard` now (the registers, `(address)`, the variables a
+/// breakpoint condition names): what the watch window shows.
+pub fn expression_value(motherboard: &Motherboard, expression: &Condition) -> i64 {
+    expression.value(&MachineContext {
+        motherboard,
+        access: None,
+        beam: None,
+    })
+}
+
 /// What a breakpoint condition reads: the machine, and the access that hit.
 struct MachineContext<'m> {
     motherboard: &'m Motherboard,
@@ -2956,6 +2973,7 @@ impl ConditionContext for MachineContext<'_> {
             }),
             "ADDRESS" => self.access.map(|a| a.address as i64),
             "VALUE" => self.access.map(|a| a.value as i64),
+            "OLDVALUE" => self.access.map(|a| a.previous as i64),
             _ => self.ace_variable(name),
         }
     }
