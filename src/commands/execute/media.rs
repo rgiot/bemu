@@ -238,6 +238,19 @@ pub(super) fn run(command: &Command, target: &mut dyn CommandTarget) -> CommandR
             )
         }
         "csl-stop" => host(target, HostRequest::StopCsl),
+        "csl-log-save" => {
+            let text = target
+                .csl_log()
+                .map(|log| log.text())
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| CommandError::Unavailable("no CSL script played yet".into()))?;
+            let arg = arg!(
+                command,
+                "Save the CSL log",
+                ArgKind::SaveFile(TEXT_FILES, "csl-log.txt")
+            );
+            save(target, &arg, "csl-log.txt", text.into_bytes())
+        }
         "files-watch-toggle" => {
             let settings = settings(target)?;
             settings.watch_files = !settings.watch_files;
@@ -345,6 +358,11 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
             },
         ),
         "csl-stop" => CommandState::enabled(target.csl_running()),
+        "csl-log-save" => CommandState::enabled(
+            target
+                .csl_log()
+                .is_some_and(|log| !log.entries().is_empty()),
+        ),
         "files-watch-toggle" => CommandState {
             enabled: has_settings && files,
             checked: settings.is_some_and(|s| s.watch_files),

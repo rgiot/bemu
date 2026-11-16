@@ -14,17 +14,24 @@ pub fn asic(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
     // the palette: pens 0-15, the border, the sprite colours 1-15
     ui.strong("Palette (12 bits: &GRB)");
     let pen = usize::from(mb.ga().selected_pen());
+    let values: Vec<u32> = (0..32).map(|i| u32::from(video.palette_entry(i))).collect();
+    let heat = crate::ui::heat::watch(ui, "asic-palette", 0, mb, &values);
     egui::Grid::new("asic-palette")
         .spacing([4.0, 6.0])
         .show(ui, |ui| {
             for index in 0..32 {
                 let entry = video.palette_entry(index);
                 ui.vertical_centered(|ui| {
-                    ui.small(match index {
+                    let label = match index {
                         16 => "B".to_owned(),
                         17.. => format!("S{}", index - 16),
                         _ => index.to_string(),
-                    });
+                    };
+                    // lit when its colour changed lately
+                    ui.label(crate::ui::heat::text(
+                        egui::RichText::new(label).small(),
+                        heat.heat(index),
+                    ));
                     swatch(ui, color(video.rgb(index)), index == pen).on_hover_text(format!(
                         "{}: &{entry:03X} (green {}, red {}, blue {})",
                         match index {

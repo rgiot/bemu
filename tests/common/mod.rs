@@ -10,11 +10,12 @@ use amsrust::keyboard::CpcKey;
 use amsrust::monitor::*;
 use amsrust::motherboard::Motherboard;
 
-/// A keypress must outlast at least one keyboard scan (every 6th interrupt,
-/// i.e. once per 50Hz frame) *and* the firmware's debounce, whatever the
-/// phase it lands on: generous rather than tight.
-pub const KEY_HOLD_OPCODES: u64 = 200_000;
-pub const KEY_GAP_OPCODES: u64 = 100_000;
+/// A keypress must outlast a few keyboard scans (once per 50Hz frame) and the
+/// firmware's debounce, whatever the phase it lands on, but stay below its
+/// auto-repeat delay (30 frames, 0.6 s): a time, not a count of instructions
+/// (an instruction of a HALT loop lasts 1 µs, of BASIC several).
+pub const KEY_HOLD_US: u64 = 100_000;
+pub const KEY_GAP_US: u64 = 80_000;
 
 pub fn run_opcodes(motherboard: &mut Motherboard, count: u64) {
     for _ in 0..count {
@@ -22,11 +23,16 @@ pub fn run_opcodes(motherboard: &mut Motherboard, count: u64) {
     }
 }
 
+/// Run the machine for `us` microseconds of its time.
+pub fn run_us(motherboard: &mut Motherboard, us: u64) {
+    let start = motherboard.t_state_counter().value() as u64;
+    while (motherboard.t_state_counter().value() as u64).wrapping_sub(start) < us * 4 {
+        motherboard.execute_next_opcode_no_video();
+    }
+}
+
 pub fn press_and_release(motherboard: &mut Motherboard, key: CpcKey) {
-    motherboard.keyboard_mut().set_pressed(key, true);
-    run_opcodes(motherboard, KEY_HOLD_OPCODES);
-    motherboard.keyboard_mut().set_pressed(key, false);
-    run_opcodes(motherboard, KEY_GAP_OPCODES);
+    press_chord(motherboard, &[key]);
 }
 
 /// Press several keys together (e.g. Shift + 2 for `"`), hold them, release.
@@ -34,11 +40,11 @@ pub fn press_chord(motherboard: &mut Motherboard, keys: &[CpcKey]) {
     for &key in keys {
         motherboard.keyboard_mut().set_pressed(key, true);
     }
-    run_opcodes(motherboard, KEY_HOLD_OPCODES);
+    run_us(motherboard, KEY_HOLD_US);
     for &key in keys {
         motherboard.keyboard_mut().set_pressed(key, false);
     }
-    run_opcodes(motherboard, KEY_GAP_OPCODES);
+    run_us(motherboard, KEY_GAP_US);
 }
 
 pub fn type_keys(motherboard: &mut Motherboard, keys: &[CpcKey]) {

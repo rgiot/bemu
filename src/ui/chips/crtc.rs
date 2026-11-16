@@ -73,6 +73,8 @@ pub fn crtc_registers(ui: &mut egui::Ui, mb: &Motherboard) {
     let registers = crtc.registers();
     let selected = usize::from(crtc.selected_register());
     let warnings = cpclib_dap::inspect::validate_crtc(&registers);
+    let values: Vec<u32> = registers.iter().map(|&r| u32::from(r)).collect();
+    let heat = crate::ui::heat::watch(ui, "crtc-registers", 0, mb, &values);
     const ERROR: egui::Color32 = egui::Color32::from_rgb(220, 60, 60);
     const WARNING: egui::Color32 = egui::Color32::from_rgb(220, 180, 40);
     egui::Grid::new("crtc-boxes")
@@ -103,6 +105,8 @@ pub fn crtc_registers(ui: &mut egui::Ui, mb: &Motherboard) {
                 };
                 let fill = match border {
                     Some(color) => color.gamma_multiply(0.18),
+                    // changed lately
+                    None if heat.heat(r) > 0.0 => crate::ui::heat::fill(heat.heat(r)),
                     None => ui.visuals().extreme_bg_color,
                 };
                 let response = egui::Frame::new()

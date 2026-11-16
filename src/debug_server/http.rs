@@ -208,9 +208,14 @@ fn typed_routes() -> ApiRouter<Shared> {
         get_with "/api/ga" (NoInput, NoInput) -> axum::Json<GateArray>:
             "the Gate Array", "The Gate Array: the mode, the pen, the inks, RMR and banking.";
         get_with "/api/psg" (NoInput, NoInput) -> axum::Json<Psg>:
-            "the PSG, decoded", "The PSG's registers, decoded.";
+            "the PSG, decoded", "The PSG's registers, decoded, and each channel as a musician reads it: its frequency, \
+             note, volume; the noise's and the envelope's frequencies.";
         get_with "/api/fdc" (NoInput, NoInput) -> axum::Json<Fdc>:
-            "the FDC", "The FDC: its status registers, phase, motor and heads.";
+            "the FDC", "The FDC: its status registers, phase, motor and heads; each disc as the head sees it (its format, \
+             the track map, the sectors under the head, the AMSDOS catalogue).";
+        get_with "/api/asic" (NoInput, NoInput) -> axum::Json<Option<Asic>>:
+            "a CPC+'s ASIC", "A CPC+'s ASIC (null on a CPC): the lock, the palette, the registers, the DMA channels, \
+             the sprites.";
         post_with "/api/drive" (DocQuery<DriveCommand>, NoInput) -> axum::Json<Fdc>:
             "set a drive up, turn its disc over",
             "A 3\" drive (one head: the side read is the side put up), a double-sided 3.5\" one or a Gotek; turn the disc \

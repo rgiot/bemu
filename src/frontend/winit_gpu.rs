@@ -85,6 +85,11 @@ struct ViewWindow {
     ctx: egui::Context,
     painter: Option<amsrust::ui::Painter>,
     fitting: Fitting,
+    /// When its scale factor changed (another screen, a Retina one): a `Resized` just after is
+    /// the system's.
+    scale_changed: Option<std::time::Instant>,
+    /// Where it is, as its last move or resize left it (for the workspace).
+    geometry: Option<amsrust::ui::workspace::Geometry>,
 }
 
 /// A window sized to its content until the user resizes it.
@@ -97,14 +102,19 @@ struct Fitting {
     /// When that size was asked, until the window reaches it: a `Resized` meanwhile is the
     /// system's (the window's first size, a late event), not the user's.
     pending: Option<std::time::Instant>,
+    /// The size the window had before the size asked (at first: the one it was made with): a
+    /// `Resized` reporting it, however late, is the system's news of it, not the user's.
+    previous: Option<egui::Vec2>,
 }
 
 impl Fitting {
-    fn new(enabled: bool) -> Self {
+    /// `initial`: the size the window is made with (logical pixels).
+    fn new(enabled: bool, initial: egui::Vec2) -> Self {
         Self {
             enabled,
             fitted: None,
             pending: None,
+            previous: Some(initial),
         }
     }
 
@@ -118,6 +128,9 @@ impl Fitting {
         {
             return None;
         }
+        if let Some(fitted) = self.fitted {
+            self.previous = Some(fitted);
+        }
         self.fitted = Some(size);
         self.pending = Some(std::time::Instant::now());
         Some(size)
@@ -126,15 +139,17 @@ impl Fitting {
     /// The window has `size` (logical pixels) now: the size asked reached, or, with no request
     /// pending, the user resized it - it keeps that size from now on.
     fn resized(&mut self, size: egui::Vec2) {
-        let reached = self
-            .fitted
-            .is_some_and(|fitted| (fitted - size).abs().max_elem() < 8.0);
+        let near = |other: Option<egui::Vec2>| {
+            other.is_some_and(|other| (other - size).abs().max_elem() < 8.0)
+        };
         // a request is pending until reached, or for half a second (a system that changes it)
         let pending = self
             .pending
             .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(500));
-        if reached {
+        if near(self.fitted) {
             self.pending = None;
+        } else if near(self.previous) {
+            // the size it had, reported late (macOS: the first frame can take a second)
         } else if !pending && self.fitted.is_some() {
             self.enabled = false;
         }
@@ -148,14 +163,32 @@ impl ViewWindow {
         view: &amsrust::ui::NativeView,
     ) -> Result<Self, String> {
         let (title, ctx) = (view.title.as_str(), view.ctx.clone());
-        // a window sized by the user starts at its size; the others are fitted to their content
-        let initial_size = match view.resizable {
+        // a window sized by the user starts at its size; the others are fitted to their content;
+        // a window of the last session's workspace where it was, as large as it was made
+        let sized = view.geometry.and_then(|g| g.size).or(view.resizable);
+        // else at the size its content had (last time), clamped to a sensible screen
+        let initial_size = match sized.or(view
+            .size_hint
+            .map(|[w, h]| [w.clamp(160.0, 1600.0), h.clamp(60.0, 1000.0)]))
+        {
             Some([width, height]) => LogicalSize::new(width, height),
             None => LogicalSize::new(460.0, 520.0),
         };
-        let attributes = Window::default_attributes()
+        let mut attributes = Window::default_attributes()
             .with_title(format!("bemu: {title}"))
             .with_inner_size(initial_size);
+        // where it was, if that is still on a screen (one may have been unplugged since)
+        if let Some(geometry) = view.geometry {
+            let [x, y] = geometry.position;
+            let on_a_screen = event_loop.available_monitors().any(|monitor| {
+                let (at, size) = (monitor.position(), monitor.size());
+                (at.x..at.x + size.width as i32).contains(&x)
+                    && (at.y..at.y + size.height as i32).contains(&y)
+            });
+            if on_a_screen {
+                attributes = attributes.with_position(winit::dpi::PhysicalPosition::new(x, y));
+            }
+        }
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -214,7 +247,12 @@ impl ViewWindow {
             painter: None,
             // the keyboard scales to its window; the others, the joystick's included (one or two
             // sticks), are as large as their content
-            fitting: Fitting::new(view.resizable.is_none()),
+            scale_changed: None,
+            geometry: None,
+            fitting: Fitting::new(
+                sized.is_none(),
+                egui::vec2(initial_size.width as f32, initial_size.height as f32),
+            ),
         })
     }
 
@@ -249,6 +287,25 @@ impl ViewWindow {
                 self.fitting.resized(size);
             }
         }
+    }
+
+    /// Note where it is: its position, its size when the user made it (a fitted one is fitted
+    /// again).
+    fn note_geometry(&mut self) {
+        let Ok(position) = self.window.outer_position() else {
+            return;
+        };
+        let size = (!self.fitting.enabled).then(|| {
+            let size = self
+                .window
+                .inner_size()
+                .to_logical::<f32>(self.window.scale_factor());
+            [size.width, size.height]
+        });
+        self.geometry = Some(amsrust::ui::workspace::Geometry {
+            position: [position.x, position.y],
+            size,
+        });
     }
 
     fn resize(&mut self, gfx: &Gfx, width: u32, height: u32) {
@@ -1078,9 +1135,39 @@ impl App {
                     view.resize(gfx, size.width, size.height);
                 }
                 let logical: LogicalSize<f32> = size.to_logical(view.window.scale_factor());
-                view.fitting
-                    .resized(egui::vec2(logical.width, logical.height));
+                let by_scale = view
+                    .scale_changed
+                    .take()
+                    .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(500));
+                if by_scale {
+                    if std::env::var_os("BEMU_FIT_DEBUG").is_some() {
+                        eprintln!(
+                            "fit {:?}: resized by a scale change, {logical:?}",
+                            view.window.title()
+                        );
+                    }
+                } else {
+                    let fitted = view.fitting.enabled;
+                    view.fitting
+                        .resized(egui::vec2(logical.width, logical.height));
+                    if fitted
+                        && !view.fitting.enabled
+                        && std::env::var_os("BEMU_FIT_DEBUG").is_some()
+                    {
+                        eprintln!(
+                            "fit {:?}: {logical:?} taken as the user's size, no longer fitted {:?}",
+                            view.window.title(),
+                            view.fitting
+                        );
+                    }
+                }
+                // (after: a size the user made is kept)
+                view.note_geometry();
             }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                view.scale_changed = Some(std::time::Instant::now());
+            }
+            WindowEvent::Moved(_) => view.note_geometry(),
             _ => {}
         }
         true
@@ -1539,21 +1626,6 @@ impl Frontend for WinitGpuFrontend {
         Ok(())
     }
 
-    fn redraw(&mut self) -> Result<(), String> {
-        let gfx = self
-            .app
-            .gfx
-            .as_mut()
-            .ok_or_else(|| "no window".to_owned())?;
-        gfx.free_zoom = self.app.free_zoom;
-        if let Some(size) = self.app.window.as_ref().map(|w| w.inner_size()) {
-            gfx.resize(size.width, size.height);
-        }
-        let mode = gfx.shown.unwrap_or_default();
-        gfx.use_mode(mode);
-        gfx.draw(mode, false, self.app.ui.as_mut()).map(|_| ())
-    }
-
     fn ui_input(&mut self) -> Option<egui::RawInput> {
         let window = self.app.window.as_ref()?;
         Some(
@@ -1600,6 +1672,10 @@ impl Frontend for WinitGpuFrontend {
             .cloned()
             .collect();
         closed
+    }
+
+    fn view_geometry(&self, key: u8) -> Option<amsrust::ui::workspace::Geometry> {
+        self.app.views.get(&key)?.geometry
     }
 
     fn focus_view_window(&mut self, key: u8) {
@@ -1664,7 +1740,7 @@ mod test {
     fn a_window_is_fitted_until_the_user_resizes_it() {
         use super::Fitting;
         let content = egui::vec2(803.0, 415.0);
-        let mut fitting = Fitting::new(true);
+        let mut fitting = Fitting::new(true, egui::vec2(460.0, 520.0));
         assert_eq!(fitting.request(content), Some(content));
         // the window's first size, reported late (macOS): not the user's
         fitting.resized(egui::vec2(460.0, 520.0));
@@ -1680,6 +1756,28 @@ mod test {
         fitting.resized(egui::vec2(500.0, 300.0));
         assert!(!fitting.enabled);
         assert_eq!(fitting.request(egui::vec2(900.0, 900.0)), None);
+    }
+
+    /// The window's first size reported long after (a first frame that took a second, as
+    /// macOS compiling its shaders): still fitted.
+    #[test]
+    fn a_late_report_of_the_first_size_is_not_the_user() {
+        use super::Fitting;
+        let mut fitting = Fitting::new(true, egui::vec2(460.0, 520.0));
+        fitting.request(egui::vec2(803.0, 415.0));
+        // what was asked is not reached yet, half a second is over
+        fitting.pending = None;
+        fitting.resized(egui::vec2(460.0, 520.0));
+        assert!(fitting.enabled, "{fitting:?}");
+        fitting.resized(egui::vec2(803.0, 415.0));
+        // a grown content, then the previous size reported late
+        fitting.request(egui::vec2(803.0, 600.0));
+        fitting.pending = None;
+        fitting.resized(egui::vec2(803.0, 415.0));
+        assert!(fitting.enabled, "{fitting:?}");
+        // a size neither: the user's
+        fitting.resized(egui::vec2(600.0, 300.0));
+        assert!(!fitting.enabled);
     }
 
     #[test]

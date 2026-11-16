@@ -4,6 +4,7 @@
 //! a [`Link`] the interface follows after the frame.
 
 use crate::commands::{Arg, CommandBus, CommandTarget, View};
+use serde::Deserialize as _;
 
 use super::views::{breakpoint_dot, controls, number, push};
 
@@ -15,21 +16,27 @@ pub struct Link {
     pub new: bool,
 }
 
-/// A Memory window's own settings.
-#[derive(Default)]
+/// A Memory window's own settings (a workspace keeps the ones serialised).
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct MemoryWindow {
-    /// The bytes it showed last (its first address and them), to mark the changed ones.
-    seen: Option<(u16, Vec<u8>)>,
+    /// The bytes changed lately (see [`super::heat`]), for each paging the window showed.
+    #[serde(skip)]
+    heat: super::heat::Heats,
     pub address: String,
     paging: super::paging::Paging,
     /// The byte last clicked.
+    #[serde(skip)]
     selected: Option<u16>,
     /// A few rows around each register that points.
     follow: bool,
+    #[serde(skip)]
     poke: String,
 }
 
-/// A Disassembly window's own settings.
+/// A Disassembly window's own settings (a workspace keeps the ones serialised).
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct DisassemblyWindow {
     paging: super::paging::Paging,
     /// Where it starts: empty, the PC (it follows it).
@@ -39,8 +46,18 @@ pub struct DisassemblyWindow {
     /// The numbers, not the labels.
     no_labels: bool,
     /// Instructions shown before the start, and from it.
+    #[serde(skip)]
     before: usize,
+    #[serde(skip)]
     rows: usize,
+    /// The registers changed lately (its Registers section).
+    #[serde(skip)]
+    heat: super::chips::RegisterHeat,
+    /// Its Registers section is unfolded.
+    registers_open: bool,
+    /// Its fold to apply at the next drawing (as a workspace restored it).
+    #[serde(skip)]
+    restore_registers: Option<bool>,
 }
 
 impl MemoryWindow {
@@ -59,6 +76,35 @@ impl DisassemblyWindow {
     }
 }
 
+impl MemoryWindow {
+    /// Its settings, for a workspace.
+    pub fn save(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or_default()
+    }
+
+    /// Its settings from a workspace (left as they are when unreadable).
+    pub fn load(&mut self, saved: &serde_json::Value) {
+        if let Ok(saved) = Self::deserialize(saved) {
+            *self = saved;
+        }
+    }
+}
+
+impl DisassemblyWindow {
+    /// Its settings, for a workspace.
+    pub fn save(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or_default()
+    }
+
+    /// Its settings from a workspace (left as they are when unreadable).
+    pub fn load(&mut self, saved: &serde_json::Value) {
+        if let Ok(saved) = Self::deserialize(saved) {
+            *self = saved;
+            self.restore_registers = Some(self.registers_open);
+        }
+    }
+}
+
 impl Default for DisassemblyWindow {
     fn default() -> Self {
         Self {
@@ -68,6 +114,9 @@ impl Default for DisassemblyWindow {
             no_labels: false,
             before: 0,
             rows: 32,
+            heat: Default::default(),
+            registers_open: true,
+            restore_registers: None,
         }
     }
 }
@@ -164,13 +213,19 @@ pub fn memory(
     let bytes: Vec<u8> = (0..ROWS * 16)
         .map(|i| paging.read(mb, start.wrapping_add(i)))
         .collect();
-    // the bytes that changed since the last frame shown, highlighted (and their characters)
-    let seen = window
-        .seen
-        .as_ref()
-        .filter(|(at, _)| *at == start)
-        .map(|(_, bytes)| bytes.clone());
-    let changed = ui.visuals().warn_fg_color;
+    // the bytes changed lately, lit (and their characters)
+    let values: Vec<u32> = bytes.iter().map(|&b| u32::from(b)).collect();
+    // what the window shows: its address and the paging at this moment
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (start, &paging).hash(&mut hasher);
+        hasher.finish()
+    };
+    let heats: Vec<f32> = {
+        let heat = window.heat.observe(ui, key, mb, &values);
+        (0..values.len()).map(|i| heat.heat(i)).collect()
+    };
     let normal = ui.visuals().text_color();
     egui::Grid::new((id, "bytes"))
         .spacing([6.0, 0.0])
@@ -183,11 +238,11 @@ pub fn memory(
                 for column in 0..16u16 {
                     let index = usize::from(row * 16 + column);
                     let byte = bytes[index];
-                    let is_changed = seen.as_ref().is_some_and(|seen| seen[index] != byte);
-                    let mut text = egui::RichText::new(format!("{byte:02X}")).monospace();
-                    if is_changed {
-                        text = text.color(changed);
-                    }
+                    let heat = heats[index];
+                    let mut text = super::heat::text(
+                        egui::RichText::new(format!("{byte:02X}")).monospace(),
+                        heat,
+                    );
                     let address = at.wrapping_add(column);
                     // a byte a label starts at: underlined, the label in its tooltip
                     let label = symbols.and_then(|s| s.name_at(address));
@@ -217,7 +272,12 @@ pub fn memory(
                         0.0,
                         egui::TextFormat {
                             font_id: egui::FontId::monospace(12.0),
-                            color: if is_changed { changed } else { normal },
+                            color: normal,
+                            background: if heat > 0.0 {
+                                super::heat::fill(heat)
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            },
                             ..Default::default()
                         },
                     );
@@ -226,7 +286,6 @@ pub fn memory(
                 ui.end_row();
             }
         });
-    window.seen = Some((start, bytes));
     // the byte clicked: its address, and the disassembly from it
     if let Some(address) = window.selected {
         ui.horizontal(|ui| {
@@ -266,6 +325,15 @@ pub fn disassembly(
 ) {
     let mb = target.motherboard();
     controls(ui, target, bus);
+    // the registers where it stopped, those changed lately lit: folded away when not wanted
+    let registers = egui::CollapsingHeader::new("Registers")
+        .id_salt((id, "registers"))
+        .default_open(true)
+        .open(window.restore_registers.take())
+        .show(ui, |ui| {
+            super::chips::registers(ui, mb, bus, &mut window.heat);
+        });
+    window.registers_open = registers.openness > 0.5;
     super::paging::show(ui, id, mb, &mut window.paging);
     super::widgets::rule(ui);
     let pc = mb.pc();

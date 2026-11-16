@@ -1,0 +1,252 @@
+Command,Exists today,Origin,Seen in
+drive-a-select-disc,--dsk; web insertDisc/swapDisc,draft,"WinAPE, ACE, Caprice, RVM"
+drive-a-new-disc,new,draft,"WinAPE (Format), ACE"
+drive-a-flip-disc,F5 / Shift+F5,draft,"WinAPE (Flip disc), ACE"
+drive-a-remove-disc,web eject(),draft,"WinAPE, ACE, Caprice"
+drive-a-save-disc,--save-discs (automatic only); web getDisc(),added,"WinAPE, ACE"
+drive-a-save-disc-as,examples/dsk_to_hfe (HFE conversion),added,"WinAPE, ACE"
+drive-a-insert-recent,new,added,"WinAPE, ACE, RVM"
+drive-a-original,--drive-a 3 / --drive-b 3,filled,
+drive-a-pc,--drive-a 3.5 / --drive-b 3.5,filled,
+drive-a-gotek,yes,filled,ACE
+drive-b-select-disc,--dsk-b; web insertDisc/swapDisc,added,"WinAPE, ACE, Caprice, RVM"
+drive-b-new-disc,new,added,"WinAPE (Format), ACE"
+drive-b-flip-disc,F5 / Shift+F5,added,"WinAPE (Flip disc), ACE"
+drive-b-remove-disc,web eject(),added,"WinAPE, ACE, Caprice"
+drive-b-save-disc,--save-discs (automatic only); web getDisc(),added,"WinAPE, ACE"
+drive-b-save-disc-as,examples/dsk_to_hfe (HFE conversion),added,"WinAPE, ACE"
+drive-b-insert-recent,new,added,"WinAPE, ACE, RVM"
+drive-b-original,--drive-a 3 / --drive-b 3,added,
+drive-b-pc,--drive-a 3.5 / --drive-b 3.5,added,
+drive-b-gotek,yes,added,ACE
+drives-swap,new,fixed,
+discs-save-automatically-toggle,--save-discs,added,
+tape-insert,--cdt; web insertTape,filled,"WinAPE, ACE, RVM"
+tape-eject,web ejectTape(),filled,
+tape-record,yes,filled,"WinAPE, ACE"
+tape-play,web tapeControl('play'),added,"WinAPE, ACE"
+tape-stop,web tapeControl('stop'),added,
+tape-rewind,web tapeControl('rewind'),added,"WinAPE, ACE"
+albireo-select-path,--albireo,draft,
+albireo-eject,new,filled,
+m4-select-folder,--m4,filled,
+m4-eject,new,filled,
+cartridge-insert,--cart,fixed,
+cartridge-remove,new,filled,
+dandanator-select-romset,--dandanator,added,
+dandanator-eject,new,added,
+snapshot-load,--sna; web loadSnapshot,draft,all
+snapshot-save,web saveSnapshot,draft,all
+snapshot-update,new,fixed,
+snapshot-quick-save,F7,added,Caprice (F-key)
+snapshot-save-on-exit-toggle,--save-sna,added,
+snapshot-version-2,new,added,
+snapshot-version-3,new,added,
+config-load,new,filled,"WinAPE, ACE, RVM"
+config-save,new,filled,
+config-reset,new,added,
+csl-load,web runCsl; desktop window,draft,
+csl-stop,web stopCsl(),added,
+files-watch-toggle,--watch,added,
+exit,F4; /api/quit; monitor q,draft,all
+debug-run,F8; monitor c; /api/config paused=false,draft,
+debug-pause,F8; /api/config paused=true,draft,
+debug-pause-toggle,F8,added,
+debug-reset,/api/config do_soft_reset,draft,
+debug-step-in,/api/step; monitor s,draft,all debuggers
+debug-step-out,yes,draft,all debuggers
+debug-step-over,monitor n,fixed,all debuggers
+debug-step-frame,web stepFrame(),added,
+debug-run-to-address,monitor r ADDR (sets PC and runs); /api/exec,added,
+debug-run-to-beam,/api/raster_bp,added,"ACE, RVM"
+debug-set-pc,/api/exec,added,
+speed-normal,F10 toggles,filled,
+speed-max,--turbo; F10; web setSpeed('max'),filled,"WinAPE, ACE, RVM"
+speed-25,web setSpeed(factor),added,"ACE, RVM"
+speed-50,web setSpeed(factor),added,"ACE, RVM"
+speed-200,web setSpeed(factor),added,"ACE, RVM"
+speed-400,web setSpeed(factor),added,"ACE, RVM"
+speed-max-toggle,F10,added,
+breakpoint-add,monitor b; /api/z80_bp,added,all debuggers
+breakpoint-toggle,new,added,all debuggers
+breakpoint-remove,new,added,all debuggers
+breakpoint-add-advanced,/api/breakpoints,added,"WinAPE, ACE, RVM"
+breakpoint-add-raster,/api/raster_bp,added,ACE
+breakpoint-add-basic,/api/basic_bp,added,
+view-breakpoints,monitor i b; /api/breakpoints,added,
+breakpoints-clear,DELETE /api/breakpoints,added,
+view-z80,monitor i z; /api/z80,added,
+view-stack,monitor i s,added,
+view-disassembly,monitor d,added,
+view-disassembly-new,,added,
+view-history,/api/history,added,
+view-symbols,/api/symbols,added,
+view-memmap,/api/memmap,added,
+view-memory,monitor peek; /api/ram,added,
+view-memory-new,,added,
+view-screen,new,added,
+view-crtc,monitor i c; /api/crtc,added,
+view-beam,"/api/ping, /api/state",added,
+view-ga,monitor i g; /api/ga,added,
+view-asic,new,added,
+view-psg,/api/psg,added,
+view-ppi,new,added,
+view-fdc,/api/fdc,added,
+view-tape,new,added,
+view-csl-log,new,added,
+counter-new,POST /api/counters,added,"ACE, RVM"
+counter-toggle,POST /api/counters,added,
+counter-reset,POST /api/counters,added,
+counter-delete,DELETE /api/counters,added,
+view-counters,GET /api/counters,added,"ACE, RVM"
+symbols-load,--sym,added,"WinAPE, ACE, RVM"
+memory-poke,POST /api/ram,added,
+z80-set-register,POST /api/z80,added,
+ga-set-ink,,added,
+ga-set-mode,,added,
+keyboard-write,new,added,
+history-record-toggle,,added,
+history-set-size,POST /api/config history_size,added,
+basic-export,GET /api/basic_export,added,
+basic-step,POST /api/basic_step,added,
+basic-run-to,POST /api/basic_runto,added,
+debug-server-toggle,--debug-server,added,
+debug-server-set-port,--debug-port,added,
+debug-server-open-doc,/api/doc,added,
+overlay-toggle,--overlay; F6,added,
+machine-reset-soft,/api/config do_soft_reset,added,all
+machine-reset-hard,/api/config do_hard_reset; web reset(),added,all
+machine-platform-cpc464,--model,draft,all
+machine-platform-cpc664,--model,draft,all
+machine-platform-cpc6128,--model,draft,all
+machine-platform-cpc464plus,--model,draft,all
+machine-platform-cpc6128plus,--model,draft,all
+machine-platform-gx4000,--model,draft,all
+machine-crtc-0,--crtc,draft,ACE
+machine-crtc-1,--crtc,draft,
+machine-crtc-2,--crtc,draft,
+machine-crtc-3,--crtc,draft,
+machine-crtc-4,--crtc,added,
+machine-ga-40007,--ga 40007|40008,filled,
+machine-ga-40010,--ga 40010,filled,
+machine-ram-default,default,draft,
+machine-ram-64,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+machine-ram-128,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+machine-ram-192,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+machine-ram-256,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+machine-ram-320,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+machine-ram-384,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+machine-ram-448,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+machine-ram-512,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+machine-ram-576,--ram; web ramKb,filled,"WinAPE, ACE, RVM"
+machine-ram-4160,--ram (web: ramKb 4160),added,
+machine-disc-interface-default,new,added,
+machine-disc-interface-ddi1,--ddi,added,
+machine-disc-interface-none,--no-disc,added,
+rom-load,--rom SLOT=FILE,added,"WinAPE, ACE, RVM"
+rom-remove,new,added,
+rom-set-orgams,--orgams,added,
+rom-set-unidos,--rom inner://unidos…,added,
+rom-set-rulezcharge,--rom 5=inner://rulezcharge,added,
+rom-list,--list-roms,added,
+machine-language-en,default,filled,
+machine-language-fr,--french; web language:'fr',filled,
+machine-brand-amstrad,web config brand,added,
+machine-brand-schneider,web config brand,added,
+machine-brand-awa,web config brand,added,
+machine-brand-orion,web config brand,added,
+machine-brand-saisho,web config brand,added,
+machine-brand-solavox,web config brand,added,
+machine-brand-triumph,web config brand,added,
+machine-brand-lsp,web config brand,added,
+keyboard-mapping-symbolic,--keyboard symbolic,added,VICE (symbolic / positional)
+keyboard-mapping-positional,--keyboard positional,added,
+keyboard-mapping-toggle,F12,added,
+keyboard-host-layout-auto,--host-keyboard-layout,added,
+keyboard-host-layout-qwerty,--host-keyboard-layout,added,
+keyboard-host-layout-azerty,--host-keyboard-layout,added,
+keyboard-host-layout-qwertz,--host-keyboard-layout,added,
+keyboard-view,draft,
+joystick-1-none,draft,
+joystick-1-host,draft,
+joystick-1-simulated,draft,
+joystick-2-none,draft,
+joystick-2-host,draft,
+joystick-2-simulated,draft,
+joystick-simulated-window,draft,
+expansion-albireo-toggle,--albireo,filled,
+expansion-nova-toggle,--nova,filled,
+nova-select-file,--nova,added,
+expansion-dmp2000-toggle,--dmp2000,filled,
+printer-charset-usa,--dmp2000-charset,filled,
+printer-charset-france,--dmp2000-charset,filled,
+printer-charset-germany,--dmp2000-charset,filled,
+printer-charset-uk,--dmp2000-charset,filled,
+printer-charset-denmark,--dmp2000-charset,filled,
+printer-charset-sweden,--dmp2000-charset,filled,
+printer-charset-italy,--dmp2000-charset,filled,
+printer-charset-spain,--dmp2000-charset,filled,
+printer-charset-japan,--dmp2000-charset,filled,
+printer-realtime-toggle,--dmp2000-realtime,filled,
+printer-select-rom,--dmp2000-rom,added,
+printer-save-printout,at the end of the run only,added,
+expansion-digiblaster-toggle,--digiblaster; web config,added,
+expansion-playcity-toggle,--playcity,added,
+willy-opl3-toggle,--willy-opl3,filled,
+willy-opl3-set-address,--willy-opl3-at,filled,
+willy-s2p-toggle,--willy-s2p,filled,
+willy-s2p-select-soundfont,--willy-s2p,added,
+willy-s2p-set-address,--willy-s2p-at,added,
+expansion-m4-toggle,--m4,added,
+m4-wifi-toggle,"--m4-no-wifi; |WIFI,0",added,
+m4-select-rom,--m4-rom,added,
+m4-set-slot,--m4-slot,added,
+booster-none,default,added,
+booster-plus,--booster,added,
+booster-mini,--miniboster,added,
+booster-set-uart,--booster-uart,added,
+booster-select-eeprom,--booster-eeprom,added,
+booster-select-flash,--booster-flash,added,
+booster-select-adc,--booster-adc,added,
+dandanator-writable-toggle,--dandanator-writable,added,
+expansion-dandanator-toggle,--dandanator,added,
+audio-stereo,default,filled,
+audio-mono,host_audio mono mode,added,
+audio-mute-toggle,--mute; web setMuted,filled,all
+audio-volume-up,web setVolume,added,
+audio-volume-down,web setVolume,added,
+audio-volume-set,web setVolume,added,
+wav-start,--record-wav,fixed,
+ym-start,--record-ym,fixed,
+screenshot-save,--screenshot; web screenshot(),draft,all
+screenshot-copy,new,added,
+screenshot-series-start,--screenshot DIR --every --from,added,
+video-start,--record,filled,
+video-rendering-raw,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
+video-rendering-ctm,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
+video-rendering-gt65,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
+video-rendering-trinitron,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
+video-rendering-atari,--display; web setDisplay,added,"WinAPE (colour / green), ACE"
+video-rendering-next,F9,added,
+video-curvature-set,--curvature; web setCurvature,added,
+video-black-level-set,--black-level,added,
+video-crt-gpu-toggle,--crt-gpu,added,
+video-free-zoom-toggle,,added,
+ui-zoom-in,,added,
+ui-zoom-out,,added,
+ui-zoom-reset,,added,
+video-fullscreen-toggle,F11; web fullscreen(),added,all
+autotype-text,--type; /api/keytype; web typeText,filled,
+autotype-paste,web typeText,filled,"WinAPE (Paste), ACE"
+autotype-file,new,added,
+autotype-delays,new,added,
+basic-load,--basic; POST /api/basic,added,ACE
+tools-disc-catalog,examples/disc_cat,filled,WinAPE
+tools-disc-convert,examples/dsk_to_hfe,filled,
+palette-open,new,added,"VS Code, RVM"
+ui-menu-toggle,new,added,
+preferences-open,new,added,all
+help-shortcuts,--help (after_long_help),added,
+help-api-doc,/api/doc,added,
+help-about,--version,added,
+csl-log-save,new,added,
