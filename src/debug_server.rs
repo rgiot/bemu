@@ -2974,6 +2974,7 @@ impl MachineContext<'_> {
         let crtc = motherboard.crtc();
         let mmr = motherboard.mmr();
         let ga = motherboard.ga();
+        let rmr2 = ga.plus().map(|plus| plus.rmr2());
         if let Some(number) = name
             .strip_prefix("CRTCR")
             .and_then(|n| n.parse::<u8>().ok())
@@ -3003,9 +3004,17 @@ impl MachineContext<'_> {
             "LOWERROMON" => Some(ga.lower_rom_pagging().is_enabled() as i64),
             "UPPERROMON" => Some(ga.upper_rom_pagging().is_enabled() as i64),
             "UPPERROMNUM" => Some(motherboard.upper_rom_number() as i64),
-            // A Plus's: no ASIC here, the lower ROM is the firmware's at 0.
-            "LOWERROMNUM" | "LOWERROMADR" | "ASICPAGEON" => Some(0),
-            "ASICPAGEOFF" => Some(1),
+            // A Plus's RMR2 (on a CPC, none: the lower ROM is the firmware at 0):
+            // the cartridge page the lower ROM is, where, or the ASIC's
+            // registers at &4000 instead.
+            "LOWERROMNUM" => Some(rmr2.map_or(0, |rmr2| rmr2 & 7) as i64),
+            "LOWERROMADR" => Some(match rmr2.map_or(0, |rmr2| (rmr2 >> 3) & 3) {
+                1 => 0x4000,
+                2 => 0x8000,
+                _ => 0,
+            }),
+            "ASICPAGEON" => Some(rmr2.is_some_and(|rmr2| (rmr2 >> 3) & 3 == 3) as i64),
+            "ASICPAGEOFF" => Some(!rmr2.is_some_and(|rmr2| (rmr2 >> 3) & 3 == 3) as i64),
             _ => None,
         }
     }
@@ -3856,6 +3865,32 @@ mod test {
         assert!(!Condition::parse("LineCount OR LineCycle")
             .unwrap()
             .holds(&headless));
+    }
+
+    /// A CPC+'s RMR2 in ACE's variables: the cartridge page the lower ROM is
+    /// and where, or the ASIC's registers paged in.
+    #[test]
+    fn ace_condition_variables_read_a_cpc_plus_rmr2() {
+        let mut mb = MotherboardBuilder::default()
+            .set_model(crate::motherboard::CpcModel::Cpc6128Plus)
+            .build();
+        let holds = |mb: &Motherboard, source: &str| {
+            Condition::parse(source).unwrap().holds(&MachineContext {
+                motherboard: mb,
+                access: None,
+                beam: None,
+            })
+        };
+        assert!(holds(&mb, "LowerROMNum = 0 AND LowerROMAdr = 0 AND ASICPageOn = 0 AND ASICPageOff = 1"));
+        // cartridge page 3 at &4000
+        mb.ga_mut().plus_mut().unwrap().rmr2 = 0b01_011;
+        assert!(holds(&mb, "LowerROMNum = 3 AND LowerROMAdr = &4000 AND ASICPageOn = 0"));
+        // page 5 at &8000
+        mb.ga_mut().plus_mut().unwrap().rmr2 = 0b10_101;
+        assert!(holds(&mb, "LowerROMNum = 5 AND LowerROMAdr = &8000"));
+        // the registers at &4000, the lower ROM (page 1) at &0000
+        mb.ga_mut().plus_mut().unwrap().rmr2 = 0b11_001;
+        assert!(holds(&mb, "ASICPageOn = 1 AND ASICPageOff = 0 AND LowerROMNum = 1 AND LowerROMAdr = 0"));
     }
 
     #[test]
