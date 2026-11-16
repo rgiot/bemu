@@ -361,6 +361,9 @@ pub struct DebugServer {
     /// `/api/breakpoints` (extension).
     advanced: Vec<AdvancedBreakpoint>,
     events: EventHub,
+    /// The events for a client in the same process (the web page's debugger), see
+    /// [`Self::local_events`]; subscribed on its first call.
+    local_events: Option<Arc<(Mutex<SseQueue>, Condvar)>>,
     /// Pause state last reported by a `pause` event.
     reported_paused: bool,
     frames: u64,
@@ -475,7 +478,6 @@ impl EventHub {
         }
     }
 
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
     fn subscribe(&self, topics: Option<Vec<String>>) -> Option<Arc<(Mutex<SseQueue>, Condvar)>> {
         let mut clients = self.clients.lock().unwrap();
         clients.retain(|client| !client.queue.0.lock().unwrap().closed);
@@ -545,6 +547,7 @@ impl DebugServer {
             exec_breakpoints: HashSet::new(),
             advanced: Vec::new(),
             events: EventHub::default(),
+            local_events: None,
             reported_paused: false,
             frames: 0,
             fps: 0.0,
@@ -581,6 +584,21 @@ impl DebugServer {
     }
 
     /// Whether the emulation must stay stopped.
+    /// The events published since the previous call, as `/api/events` streams them (`event:
+    /// NAME\ndata: JSON\n\n` each), for a client in the same process: the web page, which has no
+    /// HTTP server. The first call subscribes (nothing before it is kept); at most 32 are kept
+    /// between two calls, the oldest dropped, as for an HTTP client.
+    pub fn local_events(&mut self) -> Vec<String> {
+        let events = self.events.clone();
+        let queue = self.local_events.get_or_insert_with(|| {
+            events
+                .subscribe(None)
+                .unwrap_or_else(|| Arc::new((Mutex::new(SseQueue::default()), Condvar::new())))
+        });
+        let mut queue = queue.0.lock().unwrap();
+        queue.events.drain(..).collect()
+    }
+
     pub fn paused(&self) -> bool {
         self.paused
     }
@@ -1086,7 +1104,9 @@ impl DebugServer {
     /// breakpoint, a step, keys to type, a counter): the window calls
     /// [`Self::after_instruction`] only then, the emulation running at full speed otherwise.
     pub fn is_active(&self) -> bool {
+        // served, over HTTP or to the page
         self.listening_port().is_some()
+            || self.local_events.is_some()
             || self.has_breakpoints()
             || self.stepping
             || self.run_to.is_some()
@@ -2846,6 +2866,18 @@ fn parse_binary<'b>(name: &str, bytes: &'b [u8]) -> Result<Binary<'b>, String> {
 
 /// Decode `%XX` and `+` in a query value.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
+/// A query string's pairs, decoded: what [`ApiRequest::query`] holds.
+pub fn query_pairs(query: &str) -> Vec<(String, String)> {
+    query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            (percent_decode(k), percent_decode(v))
+        })
+        .collect()
+}
+
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());

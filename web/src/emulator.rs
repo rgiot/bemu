@@ -72,6 +72,9 @@ pub struct Emulator {
     frames: u64,
     /// The menus, the palette and the debugger (`config.menu`, WebGPU / WebGL only).
     ui: Option<WebUi>,
+    /// The debugger without the menus (none with them: theirs is the one): what [`Self::api`]
+    /// asks, a debugger in the page's host (cpclib-dap) driving it.
+    debugger: Option<amsrust::debug_server::DebugServer>,
     /// The CRTC / Gate Array writes drawn on the picture (Debug > Overlay).
     overlay: Option<amsrust::overlay::Overlay>,
 }
@@ -120,6 +123,7 @@ impl Emulator {
             typed: Vec::new(),
             gamepad_error_reported: false,
             frames: 0,
+            debugger: ui.is_none().then(amsrust::debug_server::DebugServer::offline),
             ui,
             overlay: None,
         })
@@ -453,7 +457,11 @@ impl Emulator {
     /// Run the machine to its next frame without showing it ([`Self::redraw`] shows the last
     /// one): several frames a refresh, at more than real time, only the last needs drawing.
     pub fn advance_frame(&mut self) -> Result<(), JsError> {
-        if self.ui.as_ref().is_some_and(WebUi::paused) {
+        // the API's commands applied, its pause told (paused, no instruction runs to do it)
+        if let Some(debugger) = &mut self.debugger {
+            debugger.poll_with(&mut self.motherboard, Some(&self.monitor));
+        }
+        if self.ui.as_ref().is_some_and(WebUi::paused) || self.debugger.as_ref().is_some_and(|d| d.paused()) {
             return Ok(());
         }
         let step = self.csl.as_mut().map(amsrust::frame::play_frame);
@@ -468,7 +476,10 @@ impl Emulator {
     /// time, all but the last frame of a refresh), about a quarter faster. A CSL script keeps its
     /// picture (its screenshots need it).
     pub fn advance_frame_unseen(&mut self) -> Result<(), JsError> {
-        if self.csl.is_some() || self.ui.as_ref().is_some_and(|ui| ui.debugger.is_active()) {
+        if self.csl.is_some()
+            || self.ui.as_ref().is_some_and(|ui| ui.debugger.is_active())
+            || self.debugger.as_ref().is_some_and(|d| d.is_active())
+        {
             return self.advance_frame();
         }
         self.apply_keyboard();
@@ -480,6 +491,48 @@ impl Emulator {
         self.motherboard.set_video(true);
         self.frames += 1;
         Ok(())
+    }
+
+    /// The debug API, in the page (it has no HTTP server): `method` and `path` (`GET`,
+    /// `/api/ping`), the query as in a URL (`a=1&b=%262`, decoded here) and the body, answered as the desktop's
+    /// server answers them, by the same code: `{ status, contentType, body, headers }`, the body
+    /// a `Uint8Array`, the headers `[name, value]` pairs. The debugger of the menus when they are
+    /// shown, else the page's own.
+    pub fn api(&mut self, method: &str, path: &str, query: &str, body: Vec<u8>) -> JsValue {
+        let request = amsrust::debug_server::ApiRequest {
+            method: method.to_ascii_uppercase(),
+            path: path.to_owned(),
+            query: amsrust::debug_server::query_pairs(query),
+            body,
+        };
+        let debugger = match (self.ui.as_mut(), self.debugger.as_mut()) {
+            (Some(ui), _) => &mut ui.debugger,
+            (None, Some(debugger)) => debugger,
+            (None, None) => unreachable!("a page has the menus' debugger or its own"),
+        };
+        let response = debugger.handle_with(&request, &mut self.motherboard, Some(&self.monitor));
+        let object = Object::new();
+        let _ = Reflect::set(&object, &"status".into(), &JsValue::from(response.status));
+        let _ = Reflect::set(&object, &"contentType".into(), &JsValue::from(response.content_type));
+        let _ = Reflect::set(&object, &"body".into(), &Uint8Array::from(response.body.as_slice()));
+        let headers = Array::new();
+        for (name, value) in &response.headers {
+            headers.push(&Array::of2(&name.into(), &value.into()));
+        }
+        let _ = Reflect::set(&object, &"headers".into(), &headers);
+        object.into()
+    }
+
+    /// The debug events since the previous call, as `/api/events` streams them (`event:
+    /// NAME\ndata: JSON\n\n` each). The first call subscribes the page: from then on the
+    /// debugger sees every instruction, as a served one does.
+    pub fn debug_events(&mut self) -> Array {
+        let debugger = match (self.ui.as_mut(), self.debugger.as_mut()) {
+            (Some(ui), _) => &mut ui.debugger,
+            (None, Some(debugger)) => debugger,
+            (None, None) => unreachable!("a page has the menus' debugger or its own"),
+        };
+        debugger.local_events().into_iter().map(JsValue::from).collect()
     }
 
     /// Frames the machine produced since it was created (for the page's speed figures).
@@ -682,7 +735,7 @@ impl Emulator {
         let frame = amsrust::frame::run_frame(
             &mut self.motherboard,
             &mut self.monitor,
-            self.ui.as_mut().map(|ui| &mut ui.debugger),
+            self.ui.as_mut().map(|ui| &mut ui.debugger).or(self.debugger.as_mut()),
             self.overlay.as_mut(),
             MAX_FRAME_T_STATES
         );

@@ -442,6 +442,20 @@ export class Bemu {
     /** The machine's state as an SNA snapshot file (a Promise of a Uint8Array, version 3), for loadSnapshot later. */
     saveSnapshot() { return this.#transport.call('saveSnapshot'); }
 
+    /**
+     * The debug API, in the page: `method`, `path` (`'/api/z80'`), the query (`'a=1&b=2'`) and
+     * the body (bytes, or text), answered as bemu's desktop HTTP server answers them:
+     * `{ status, contentType, body: Uint8Array, headers }`. What lets a debugger (cpclib-dap)
+     * drive an emulator in a page as it drives a window.
+     */
+    api(method, path, query = '', body = new Uint8Array()) {
+        const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : body;
+        return this.#transport.call('api', [method, path, query, bytes]);
+    }
+
+    /** The debug events since the previous call, as `/api/events` streams them (`event: NAME\ndata: JSON\n\n`). */
+    debugEvents() { return this.#transport.call('debugEvents'); }
+
     start() {
         if (this.#destroyed) return;
         this.#setRunning(true);
