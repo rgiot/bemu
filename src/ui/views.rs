@@ -455,13 +455,20 @@ pub(super) fn psg(ui: &mut egui::Ui, cx: &mut Cx) {
     });
 }
 
-pub(super) fn fdc(ui: &mut egui::Ui, cx: &mut Cx) {
-    let target = cx.target;
-    let mb = target.motherboard();
-    super::chips::fdc(ui, mb);
-    ui.collapsing("Raw (as /api/fdc)", |ui| {
-        json_grid(ui, "fdc", &inspect(target, "fdc"))
-    });
+/// The FDC, and its drives' discs turning.
+#[derive(Default)]
+pub(super) struct Fdc {
+    discs: [super::chips::DiscView; 2],
+}
+
+impl ViewWindow for Fdc {
+    fn ui(&mut self, ui: &mut egui::Ui, cx: &mut Cx) {
+        let target = cx.target;
+        super::chips::fdc(ui, target.motherboard(), &mut self.discs);
+        ui.collapsing("Raw (as /api/fdc)", |ui| {
+            json_grid(ui, "fdc", &inspect(target, "fdc"))
+        });
+    }
 }
 
 pub(super) fn memory_map(ui: &mut egui::Ui, cx: &mut Cx) {

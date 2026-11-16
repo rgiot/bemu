@@ -124,8 +124,15 @@ The function keys, the menus, the palette and the debug server's routes all run 
 commands (`src/commands`). Debug > View opens the debugger's windows (registers, CRTC, Gate
 Array, PSG, FDC, memory, disassembly, history, breakpoints, symbols); breakpoints, stepping (in,
 over, out, a frame) and counters work without the debug server, which Debug > Debug server
-starts on demand. The commands the emulator cannot do yet (a Gotek drive, recording a tape) are
-in the menus, greyed out.
+starts on demand. A command that cannot run now (no disc to flip, no script to stop) is greyed
+out, its tooltip says why.
+
+The FDC window draws each disc as the drive turns it, the way C64 tools draw a 1541 disc: its
+tracks as rings (track 0 outside), each sector an arc where it lies on its track (from an HFE's
+timings, else from MFM's layout), its ID field in cyan then its data coloured by what it is
+(data, deleted, CRC error, weak, no data mark, another track's ID), the head on its track (lit
+while the motor runs), the sectors the last commands read or wrote glowing. A sector hovered
+says its C, H, R, N.
 
 The debugger's windows use cpclib-dap's views (`cpclib-dap` without its debug adapter): the
 disassembly with each instruction's cost in NOPs, the call stack read from the stack, the

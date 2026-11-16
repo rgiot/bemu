@@ -79,6 +79,7 @@ fn led(ui: &mut egui::Ui, lit: bool, color: egui::Color32) -> egui::Response {
 mod asic;
 mod code;
 mod crtc;
+mod disc_view;
 mod fdc;
 mod ga;
 mod memory_map;
@@ -90,6 +91,7 @@ mod z80;
 pub use asic::*;
 pub use code::*;
 pub use crtc::*;
+pub use disc_view::DiscView;
 pub use fdc::*;
 pub use ga::*;
 pub use memory_map::*;

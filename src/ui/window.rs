@@ -120,7 +120,7 @@ pub fn new_window(view: View, copy: u8) -> Box<dyn ViewWindow> {
         View::Crtc => plain(views::crtc),
         View::GateArray => plain(views::gate_array),
         View::Psg => plain(views::psg),
-        View::Fdc => plain(views::fdc),
+        View::Fdc => Box::<views::Fdc>::default(),
         View::MemoryMap => plain(views::memory_map),
         View::Beam => plain(views::beam),
         View::History => plain(views::history),
