@@ -20,8 +20,8 @@ pub fn bar(
 ) -> Option<WindowAction> {
     let mut action = None;
     egui::MenuBar::new().ui(ui, |ui| {
-        level(ui, &[], target, bus);
-        ui.menu_button("Window", |ui| {
+        let mut tops = level(ui, &[], target, bus);
+        let window = ui.menu_button("Window", |ui| {
             if windows.is_empty() {
                 ui.weak("No window open");
             }
@@ -47,13 +47,37 @@ pub fn bar(
                 ui.close();
             }
         });
+        tops.push(window.response);
+        switch_on_hover(ui.ctx(), &tops);
     });
     action
 }
 
+/// One menu of the bar open, the pointer on another's title opens that one (as menu bars do):
+/// egui's opens only on a click.
+fn switch_on_hover(ctx: &egui::Context, tops: &[egui::Response]) {
+    let popup = |response: &egui::Response| egui::Popup::default_response_id(response);
+    let any_open = tops
+        .iter()
+        .any(|top| egui::Popup::is_id_open(ctx, popup(top)));
+    if let Some(hovered) = tops.iter().find(|top| top.hovered()) {
+        if any_open && !egui::Popup::is_id_open(ctx, popup(hovered)) {
+            egui::Popup::open_id(ctx, popup(hovered));
+            ctx.request_repaint();
+        }
+    }
+}
+
 /// The items and submenus under `prefix`, as they first come in the registry, a line between
-/// their groups (the specification's `sep` rows, and after a radio group).
-fn level(ui: &mut egui::Ui, prefix: &[&str], target: &dyn CommandTarget, bus: &mut CommandBus) {
+/// their groups (the specification's `sep` rows, and after a radio group). Returns the
+/// buttons of its submenus.
+fn level(
+    ui: &mut egui::Ui,
+    prefix: &[&str],
+    target: &dyn CommandTarget,
+    bus: &mut CommandBus,
+) -> Vec<egui::Response> {
+    let mut buttons = Vec::new();
     let depth = prefix.len();
     let mut submenus: Vec<&str> = Vec::new();
     let mut previous_group: Option<&[&str]> = None;
@@ -90,12 +114,14 @@ fn level(ui: &mut egui::Ui, prefix: &[&str], target: &dyn CommandTarget, bus: &m
             }
             submenus.push(name);
             previous_group = None;
-            ui.menu_button((indent(ui), name), |ui| {
+            let menu = ui.menu_button((indent(ui), name), |ui| {
                 level(ui, &spec.path[..=depth], target, bus);
             });
+            buttons.push(menu.response);
             after_line = false;
         }
     }
+    buttons
 }
 
 /// A blank as wide as a check box less the button's padding: a plain item's text starts where a
@@ -127,11 +153,7 @@ fn item(
         Kind::Input => format!("{}…", spec.label().trim_end_matches('…')),
         _ => spec.label().to_owned(),
     };
-    let why_not = if spec.note.contains("NOT IMPLEMENTED") {
-        "Not implemented yet".to_owned()
-    } else {
-        format!("Not available now\n\n{}", spec.note)
-    };
+    let why_not = format!("Not available now\n\n{}", spec.note);
     if spec.kind == Kind::Submenu {
         // the recent discs of a drive
         let drive = usize::from(spec.id.starts_with("drive-b"));
@@ -182,5 +204,63 @@ fn item(
         };
         bus.push_id(id);
         ui.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One frame of a bar of two menus, the pointer's events given: the menus' buttons.
+    fn bar_frame(ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<egui::Response> {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 300.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut tops = Vec::new();
+        let _ = ctx.run(raw, |ctx| {
+            egui::TopBottomPanel::top("bar").show(ctx, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
+                    for name in ["File", "Machine"] {
+                        tops.push(ui.menu_button(name, |ui| ui.label(name)).response);
+                    }
+                    switch_on_hover(ui.ctx(), &tops);
+                });
+            });
+        });
+        tops
+    }
+
+    #[test]
+    fn a_menu_open_the_pointer_on_another_opens_it() {
+        let ctx = egui::Context::default();
+        let tops = bar_frame(&ctx, Vec::new());
+        let (file, machine) = (tops[0].rect.center(), tops[1].rect.center());
+        let popup = |top: &egui::Response| egui::Popup::default_response_id(top);
+        let (file_menu, machine_menu) = (popup(&tops[0]), popup(&tops[1]));
+
+        // the pointer alone opens nothing
+        bar_frame(&ctx, vec![egui::Event::PointerMoved(machine)]);
+        bar_frame(&ctx, Vec::new());
+        assert!(!egui::Popup::is_id_open(&ctx, machine_menu));
+
+        let press = |pressed| egui::Event::PointerButton {
+            pos: file,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        bar_frame(&ctx, vec![egui::Event::PointerMoved(file), press(true)]);
+        bar_frame(&ctx, vec![press(false)]);
+        assert!(egui::Popup::is_id_open(&ctx, file_menu));
+
+        bar_frame(&ctx, vec![egui::Event::PointerMoved(machine)]);
+        bar_frame(&ctx, Vec::new());
+        assert!(egui::Popup::is_id_open(&ctx, machine_menu));
+        assert!(!egui::Popup::is_id_open(&ctx, file_menu));
     }
 }

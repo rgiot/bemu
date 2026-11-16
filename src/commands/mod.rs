@@ -492,7 +492,7 @@ impl CommandBus {
 }
 
 /// A key chord of a shortcut: modifiers and a key name (`F1`-`F12`, `A`-`Z`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Chord<'a> {
     pub ctrl: bool,
     pub shift: bool,
@@ -524,23 +524,11 @@ impl<'a> Chord<'a> {
 /// F10 switches between the normal and the full speed), the first one enabled and not already
 /// checked.
 pub fn shortcut_command(chord: Chord, target: &dyn CommandTarget) -> Option<&'static str> {
-    let mut candidates = COMMANDS
+    // one command a chord (see the test `a_shortcut_is_one_command`)
+    COMMANDS
         .iter()
-        .filter(|spec| spec.shortcut.and_then(Chord::parse) == Some(chord))
-        .peekable();
-    candidates.peek()?;
-    let candidates: Vec<_> = candidates.collect();
-    candidates
-        .iter()
-        .find(|spec| {
-            let state = state(spec.id, target);
-            state.enabled && !state.checked
-        })
-        .or_else(|| {
-            candidates
-                .iter()
-                .find(|spec| state(spec.id, target).enabled)
-        })
+        .find(|spec| spec.shortcut.and_then(Chord::parse) == Some(chord))
+        .filter(|spec| state(spec.id, target).enabled)
         .map(|spec| spec.id)
 }
 
@@ -573,6 +561,20 @@ mod tests {
         // a note is not a shortcut
         assert_eq!(spec("video-rendering-raw").unwrap().shortcut, None);
         assert_eq!(spec("wav-stop").unwrap().id, "wav-start");
+    }
+
+    /// A chord runs one command: a pair (run and pause, normal and maximum speed) is a toggle.
+    #[test]
+    fn a_shortcut_is_one_command() {
+        let mut seen = std::collections::HashMap::new();
+        for spec in COMMANDS {
+            if let Some(chord) = spec.shortcut.and_then(Chord::parse) {
+                if let Some(other) = seen.insert(chord, spec.id) {
+                    panic!("{:?}: {other} and {}", spec.shortcut, spec.id);
+                }
+            }
+        }
+        assert_eq!(seen.len(), 12, "{seen:?}");
     }
 
     #[test]

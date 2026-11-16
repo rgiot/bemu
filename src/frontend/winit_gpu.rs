@@ -32,7 +32,7 @@ use amsrust::display::{
 };
 use amsrust::input::{HostInput, HostKey};
 use amsrust::joystick::Joysticks;
-use gilrs::{Event, EventType, GamepadId, Gilrs};
+use gilrs::{EventType, GamepadId, Gilrs};
 use image::RgbImage;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -145,13 +145,13 @@ impl ViewWindow {
     fn open(
         event_loop: &ActiveEventLoop,
         gfx: &Gfx,
-        title: &str,
-        ctx: egui::Context,
+        view: &amsrust::ui::NativeView,
     ) -> Result<Self, String> {
-        let initial_size = match title {
-            "Keyboard" => LogicalSize::new(820.0, 300.0),
-            "Joystick" => LogicalSize::new(840.0, 340.0),
-            _ => LogicalSize::new(460.0, 520.0),
+        let (title, ctx) = (view.title.as_str(), view.ctx.clone());
+        // a window sized by the user starts at its size; the others are fitted to their content
+        let initial_size = match view.resizable {
+            Some([width, height]) => LogicalSize::new(width, height),
+            None => LogicalSize::new(460.0, 520.0),
         };
         let attributes = Window::default_attributes()
             .with_title(format!("bemu: {title}"))
@@ -214,7 +214,7 @@ impl ViewWindow {
             painter: None,
             // the keyboard scales to its window; the others, the joystick's included (one or two
             // sticks), are as large as their content
-            fitting: Fitting::new(title != "Keyboard"),
+            fitting: Fitting::new(view.resizable.is_none()),
         })
     }
 
@@ -863,6 +863,8 @@ struct App {
     /// Which connected gamepad is mapped to joystick 0 / 1.
     joy0_id: Option<GamepadId>,
     joy1_id: Option<GamepadId>,
+    /// The d-pad buttons held (up, down, left, right) of each of the two gamepads.
+    dpad: [[bool; 4]; 2],
     closed: bool,
     error: Option<String>,
     /// F11 asked for fullscreen (kept here: the window manager may refuse it).
@@ -878,7 +880,7 @@ struct App {
     wanted_fullscreen: Option<bool>,
     /// The debugger's windows open, by view, and the ones to have (opened in the event loop).
     views: HashMap<u8, ViewWindow>,
-    wanted_views: Vec<(u8, String, egui::Context)>,
+    wanted_views: Vec<amsrust::ui::NativeView>,
     /// The views whose window the user closed.
     closed_views: Vec<u8>,
 }
@@ -1019,19 +1021,19 @@ impl App {
     fn sync_views(&mut self, event_loop: &ActiveEventLoop) {
         let wanted = &self.wanted_views;
         self.views
-            .retain(|key, _| wanted.iter().any(|(wanted, ..)| wanted == key));
+            .retain(|key, _| wanted.iter().any(|wanted| wanted.key == *key));
         let Some(gfx) = &self.gfx else { return };
-        for (key, title, ctx) in wanted {
-            if self.views.contains_key(key) {
+        for wanted in wanted {
+            if self.views.contains_key(&wanted.key) {
                 continue;
             }
-            match ViewWindow::open(event_loop, gfx, title, ctx.clone()) {
+            match ViewWindow::open(event_loop, gfx, wanted) {
                 Ok(view) => {
-                    self.views.insert(*key, view);
+                    self.views.insert(wanted.key, view);
                 }
                 Err(e) => {
                     eprintln!("{e}");
-                    self.closed_views.push(*key);
+                    self.closed_views.push(wanted.key);
                 }
             }
         }
@@ -1068,7 +1070,7 @@ impl App {
             }
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
                 self.views.remove(&key);
-                self.wanted_views.retain(|(wanted, ..)| *wanted != key);
+                self.wanted_views.retain(|wanted| wanted.key != key);
                 self.closed_views.push(key);
             }
             WindowEvent::Resized(size) => {
@@ -1260,6 +1262,7 @@ impl WinitGpuFrontend {
                 gilrs: Gilrs::new().ok(),
                 joy0_id: None,
                 joy1_id: None,
+                dpad: [[false; 4]; 2],
                 closed: false,
                 error: None,
                 fullscreen: false,
@@ -1397,6 +1400,14 @@ impl Frontend for WinitGpuFrontend {
                             gilrs::Button::West => joy.fire[2] = true,
                             _ => {}
                         }
+                        let slot = usize::from(self.app.joy0_id != Some(id));
+                        match button {
+                            gilrs::Button::DPadUp => self.app.dpad[slot][0] = true,
+                            gilrs::Button::DPadDown => self.app.dpad[slot][1] = true,
+                            gilrs::Button::DPadLeft => self.app.dpad[slot][2] = true,
+                            gilrs::Button::DPadRight => self.app.dpad[slot][3] = true,
+                            _ => {}
+                        }
                     }
                     EventType::ButtonReleased(button, _) => {
                         let joy = match id {
@@ -1410,19 +1421,40 @@ impl Frontend for WinitGpuFrontend {
                             gilrs::Button::West => joy.fire[2] = false,
                             _ => {}
                         }
+                        let slot = usize::from(self.app.joy0_id != Some(id));
+                        match button {
+                            gilrs::Button::DPadUp => self.app.dpad[slot][0] = false,
+                            gilrs::Button::DPadDown => self.app.dpad[slot][1] = false,
+                            gilrs::Button::DPadLeft => self.app.dpad[slot][2] = false,
+                            gilrs::Button::DPadRight => self.app.dpad[slot][3] = false,
+                            _ => {}
+                        }
                     }
                     _ => {}
                 }
             }
+            // a gamepad that was plugged in before the window's first poll gets no Connected event
+            for (id, _) in gilrs.gamepads() {
+                if self.app.joy0_id != Some(id) && self.app.joy1_id != Some(id) {
+                    if self.app.joy0_id.is_none() {
+                        self.app.joy0_id = Some(id);
+                    } else if self.app.joy1_id.is_none() {
+                        self.app.joy1_id = Some(id);
+                    }
+                }
+            }
             // digital direction: one axis at a time, from current axis state
             for (id, gamepad) in gilrs.gamepads() {
+                let slot = usize::from(self.app.joy0_id != Some(id));
+                let dpad = self.app.dpad[slot];
                 let joy = match id {
                     id if self.app.joy0_id == Some(id) => &mut self.app.joysticks.joy0,
                     id if self.app.joy1_id == Some(id) => &mut self.app.joysticks.joy1,
                     _ => continue,
                 };
                 let raw_x = gamepad.value(gilrs::Axis::LeftStickX) as f64;
-                let raw_y = gamepad.value(gilrs::Axis::LeftStickY) as f64;
+                // gilrs has up positive; the joystick's Y is -1 for up
+                let raw_y = -(gamepad.value(gilrs::Axis::LeftStickY) as f64);
                 let dead = 0.5;
                 let dx = if raw_x.abs() > dead {
                     raw_x.signum() as i8
@@ -1445,6 +1477,13 @@ impl Frontend for WinitGpuFrontend {
                 } else {
                     joy.x = dx;
                     joy.y = dy;
+                }
+                // the d-pad's buttons, where the stick is centred
+                if joy.x == 0 {
+                    joy.x = i8::from(dpad[3]) - i8::from(dpad[2]);
+                }
+                if joy.y == 0 {
+                    joy.y = i8::from(dpad[1]) - i8::from(dpad[0]);
                 }
             }
         }
@@ -1558,7 +1597,7 @@ impl Frontend for WinitGpuFrontend {
         self.app.wanted_views = views
             .iter()
             .filter(|view| !closed.contains(&view.key))
-            .map(|view| (view.key, view.title.clone(), view.ctx.clone()))
+            .cloned()
             .collect();
         closed
     }
