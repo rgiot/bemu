@@ -217,7 +217,9 @@ impl WebUi {
     /// A pointer event at (`x`, `y`) CSS pixels of the canvas: "move", "down", "up" or "leave",
     /// `button` 0 (primary), 1 (middle), 2 (secondary). Whether the interface is under it.
     pub fn pointer(&mut self, kind: &str, x: f32, y: f32, button: u8) -> bool {
-        let pos = egui::pos2(x, y);
+        // CSS pixels to egui's points: the interface zoom
+        let zoom = self.gui.context().zoom_factor();
+        let pos = egui::pos2(x / zoom, y / zoom);
         let button = match button {
             1 => egui::PointerButton::Middle,
             2 => egui::PointerButton::Secondary,
@@ -327,19 +329,23 @@ impl WebUi {
             }
         }
         self.bus.run(&mut target);
-        let ppp = self.pixels_per_point;
+        // egui's points: the device's pixel ratio (given as native) times the interface zoom
+        let native = self.pixels_per_point;
+        let ppp = native * self.gui.context().zoom_factor();
+        let mut viewport = egui::ViewportInfo::default();
+        viewport.native_pixels_per_point = Some(native);
         let raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(size.0 as f32 / ppp, size.1 as f32 / ppp),
             )),
+            viewports: std::iter::once((egui::ViewportId::ROOT, viewport)).collect(),
             time: Some(self.now),
             modifiers: self.modifiers,
             events: std::mem::take(&mut self.events),
             focused: true,
             ..Default::default()
         };
-        self.gui.context().set_pixels_per_point(ppp);
         let mut output = self.gui.run(raw, &target, &mut self.bus);
         if !self.pending_textures.is_empty() {
             let mut textures = std::mem::take(&mut self.pending_textures);

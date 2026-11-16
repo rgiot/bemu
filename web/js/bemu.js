@@ -223,6 +223,7 @@ export class Bemu {
     #pixelRatioChanged = null;
     #destroyed = false;
     #displayWarningKey = '';
+    #uiScale = 0;
 
     constructor(canvas, transport, options, size = [canvas.width, canvas.height]) {
         this.#canvas = canvas;
@@ -263,11 +264,18 @@ export class Bemu {
         if (typeof window !== 'undefined') {
             const resize = () => {
                 const next = this.#deviceSize ?? Bemu.#measure(canvas);
+                // the menus' scale (device pixels per CSS pixel) also on the first measure and when
+                // only the pixel ratio changed: the engine starts at 1, the menus half size and
+                // the mouse off on a high-DPI screen
+                const box = canvas.getBoundingClientRect?.();
+                const scale = box?.width ? next[0] / box.width : 0;
+                if (scale && scale !== this.#uiScale) {
+                    this.#uiScale = scale;
+                    this.#send('uiScale', scale);
+                }
                 if (next[0] === this.#size[0] && next[1] === this.#size[1]) return;
                 this.#size = next;
                 this.#send('resize', next[0], next[1]);
-                const box = canvas.getBoundingClientRect?.();
-                if (box?.width) this.#send('uiScale', next[0] / box.width);
                 this.#emit('display-size', this.displaySize);
                 this.#updateDisplayWarning();
             };
