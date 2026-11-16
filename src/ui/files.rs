@@ -18,6 +18,8 @@ pub struct FileBrowser {
     entries: Vec<(String, bool)>,
     error: Option<String>,
     all_files: bool,
+    /// The File field takes the keyboard at the first drawing: a name typed, Enter opens it.
+    focus_file_field: bool,
 }
 
 /// The folder last browsed, where the next browser opens.
@@ -39,6 +41,7 @@ impl FileBrowser {
             entries: Vec::new(),
             error: None,
             all_files: extensions.is_empty(),
+            focus_file_field: true,
         };
         browser.read();
         browser
@@ -150,16 +153,24 @@ impl FileBrowser {
             self.enter(&folder);
         }
         ui.horizontal(|ui| {
+            // Enter in the file's field is a click on its button
+            let mut submitted = false;
             if self.mode != Mode::Folder {
                 ui.label("File:");
-                ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(260.0));
+                // (read before the field, which may take the key)
+                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let field = ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(260.0));
+                if std::mem::take(&mut self.focus_file_field) {
+                    field.request_focus();
+                }
+                submitted = field.lost_focus() && enter;
             }
             let verb = match self.mode {
                 Mode::Open => "Open",
                 Mode::Save => "Save",
                 Mode::Folder => "Choose this folder",
             };
-            if ui.button(verb).clicked() {
+            if ui.button(verb).clicked() || submitted {
                 chosen = match self.mode {
                     Mode::Folder => Some(self.folder.clone()),
                     _ if self.name.is_empty() => None,
@@ -178,5 +189,58 @@ impl FileBrowser {
             }
         });
         chosen
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One frame of the browser with `events`; the path it chose, if it did.
+    fn frame(
+        ctx: &egui::Context,
+        browser: &mut FileBrowser,
+        events: Vec<egui::Event>,
+    ) -> Option<PathBuf> {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(700.0, 500.0),
+            )),
+            events,
+            focused: true,
+            ..Default::default()
+        };
+        let mut chosen = None;
+        let _ = ctx.run(raw, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| chosen = browser.show(ui));
+        });
+        chosen
+    }
+
+    /// Enter in the File field opens the file, as the Open button does.
+    #[test]
+    fn enter_in_the_file_field_opens_the_file() {
+        let ctx = egui::Context::default();
+        let mut browser = FileBrowser::open(&["csl"]);
+        browser.name = "script.csl".to_owned();
+        assert_eq!(frame(&ctx, &mut browser, Vec::new()), None);
+        // the field has the keyboard from the start, Enter is typed
+        assert_eq!(frame(&ctx, &mut browser, Vec::new()), None);
+        let key = |pressed| egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let chosen = frame(&ctx, &mut browser, vec![key(true), key(false)]);
+        assert_eq!(chosen, Some(browser.folder.join("script.csl")));
+        // with nothing in the field, Enter chooses nothing
+        browser.name.clear();
+        browser.focus_file_field = true;
+        frame(&ctx, &mut browser, Vec::new());
+        frame(&ctx, &mut browser, Vec::new());
+        assert_eq!(frame(&ctx, &mut browser, vec![key(true), key(false)]), None);
     }
 }
