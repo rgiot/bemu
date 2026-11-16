@@ -4,6 +4,7 @@
 //! a [`Link`] the interface follows after the frame.
 
 use crate::commands::{Arg, CommandBus, CommandTarget, View};
+use serde::Deserialize as _;
 
 use super::views::{breakpoint_dot, controls, number, push};
 
@@ -15,21 +16,27 @@ pub struct Link {
     pub new: bool,
 }
 
-/// A Memory window's own settings.
-#[derive(Default)]
+/// A Memory window's own settings (a workspace keeps the ones serialised).
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct MemoryWindow {
     /// The bytes changed lately (see [`super::heat`]), for each paging the window showed.
+    #[serde(skip)]
     heat: super::heat::Heats,
     pub address: String,
     paging: super::paging::Paging,
     /// The byte last clicked.
+    #[serde(skip)]
     selected: Option<u16>,
     /// A few rows around each register that points.
     follow: bool,
+    #[serde(skip)]
     poke: String,
 }
 
-/// A Disassembly window's own settings.
+/// A Disassembly window's own settings (a workspace keeps the ones serialised).
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct DisassemblyWindow {
     paging: super::paging::Paging,
     /// Where it starts: empty, the PC (it follows it).
@@ -39,12 +46,17 @@ pub struct DisassemblyWindow {
     /// The numbers, not the labels.
     no_labels: bool,
     /// Instructions shown before the start, and from it.
+    #[serde(skip)]
     before: usize,
+    #[serde(skip)]
     rows: usize,
     /// The registers changed lately (its Registers section).
+    #[serde(skip)]
     heat: super::chips::RegisterHeat,
-    /// Its Registers section is unfolded (`Some`: to apply, as restored from a workspace).
+    /// Its Registers section is unfolded.
     registers_open: bool,
+    /// Its fold to apply at the next drawing (as a workspace restored it).
+    #[serde(skip)]
     restore_registers: Option<bool>,
 }
 
@@ -64,57 +76,16 @@ impl DisassemblyWindow {
     }
 }
 
-/// What a workspace keeps of a Memory window.
-#[derive(Default, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
-struct MemorySaved {
-    address: String,
-    follow: bool,
-    paging: Option<super::paging::Paging>,
-}
-
 impl MemoryWindow {
     /// Its settings, for a workspace.
     pub fn save(&self) -> serde_json::Value {
-        serde_json::to_value(MemorySaved {
-            address: self.address.clone(),
-            follow: self.follow,
-            paging: Some(self.paging.clone()),
-        })
-        .unwrap_or_default()
+        serde_json::to_value(self).unwrap_or_default()
     }
 
-    /// Its settings from a workspace (what is missing or wrong left as it is).
+    /// Its settings from a workspace (left as they are when unreadable).
     pub fn load(&mut self, saved: &serde_json::Value) {
-        if let Ok(saved) = serde_json::from_value::<MemorySaved>(saved.clone()) {
-            self.address = saved.address;
-            self.follow = saved.follow;
-            if let Some(paging) = saved.paging {
-                self.paging = paging;
-            }
-        }
-    }
-}
-
-/// What a workspace keeps of a Disassembly window.
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(default)]
-struct DisassemblySaved {
-    address: String,
-    bookmarks: Vec<u16>,
-    no_labels: bool,
-    paging: Option<super::paging::Paging>,
-    registers_open: bool,
-}
-
-impl Default for DisassemblySaved {
-    fn default() -> Self {
-        Self {
-            address: String::new(),
-            bookmarks: Vec::new(),
-            no_labels: false,
-            paging: None,
-            registers_open: true,
+        if let Ok(saved) = Self::deserialize(saved) {
+            *self = saved;
         }
     }
 }
@@ -122,27 +93,14 @@ impl Default for DisassemblySaved {
 impl DisassemblyWindow {
     /// Its settings, for a workspace.
     pub fn save(&self) -> serde_json::Value {
-        serde_json::to_value(DisassemblySaved {
-            address: self.address.clone(),
-            bookmarks: self.bookmarks.clone(),
-            no_labels: self.no_labels,
-            paging: Some(self.paging.clone()),
-            registers_open: self.registers_open,
-        })
-        .unwrap_or_default()
+        serde_json::to_value(self).unwrap_or_default()
     }
 
-    /// Its settings from a workspace (what is missing or wrong left as it is).
+    /// Its settings from a workspace (left as they are when unreadable).
     pub fn load(&mut self, saved: &serde_json::Value) {
-        if let Ok(saved) = serde_json::from_value::<DisassemblySaved>(saved.clone()) {
-            self.address = saved.address;
-            self.bookmarks = saved.bookmarks;
-            self.no_labels = saved.no_labels;
-            if let Some(paging) = saved.paging {
-                self.paging = paging;
-            }
-            self.registers_open = saved.registers_open;
-            self.restore_registers = Some(saved.registers_open);
+        if let Ok(saved) = Self::deserialize(saved) {
+            *self = saved;
+            self.restore_registers = Some(self.registers_open);
         }
     }
 }
@@ -264,7 +222,10 @@ pub fn memory(
         (start, &paging).hash(&mut hasher);
         hasher.finish()
     };
-    let heat = window.heat.observe(ui, key, mb, &values).clone();
+    let heats: Vec<f32> = {
+        let heat = window.heat.observe(ui, key, mb, &values);
+        (0..values.len()).map(|i| heat.heat(i)).collect()
+    };
     let normal = ui.visuals().text_color();
     egui::Grid::new((id, "bytes"))
         .spacing([6.0, 0.0])
@@ -277,7 +238,7 @@ pub fn memory(
                 for column in 0..16u16 {
                     let index = usize::from(row * 16 + column);
                     let byte = bytes[index];
-                    let heat = heat.heat(index);
+                    let heat = heats[index];
                     let mut text = super::heat::text(
                         egui::RichText::new(format!("{byte:02X}")).monospace(),
                         heat,

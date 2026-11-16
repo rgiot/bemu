@@ -85,9 +85,11 @@ struct ViewWindow {
     ctx: egui::Context,
     painter: Option<amsrust::ui::Painter>,
     fitting: Fitting,
-    /// Its scale factor just changed (another screen, a Retina one): the `Resized` that follows
-    /// is the system's.
-    scale_changed: bool,
+    /// When its scale factor changed (another screen, a Retina one): a `Resized` just after is
+    /// the system's.
+    scale_changed: Option<std::time::Instant>,
+    /// Where it is, as its last move or resize left it (for the workspace).
+    geometry: Option<amsrust::ui::workspace::Geometry>,
 }
 
 /// A window sized to its content until the user resizes it.
@@ -175,9 +177,17 @@ impl ViewWindow {
         let mut attributes = Window::default_attributes()
             .with_title(format!("bemu: {title}"))
             .with_inner_size(initial_size);
+        // where it was, if that is still on a screen (one may have been unplugged since)
         if let Some(geometry) = view.geometry {
             let [x, y] = geometry.position;
-            attributes = attributes.with_position(winit::dpi::PhysicalPosition::new(x, y));
+            let on_a_screen = event_loop.available_monitors().any(|monitor| {
+                let (at, size) = (monitor.position(), monitor.size());
+                (at.x..at.x + size.width as i32).contains(&x)
+                    && (at.y..at.y + size.height as i32).contains(&y)
+            });
+            if on_a_screen {
+                attributes = attributes.with_position(winit::dpi::PhysicalPosition::new(x, y));
+            }
         }
         let window = Arc::new(
             event_loop
@@ -237,7 +247,8 @@ impl ViewWindow {
             painter: None,
             // the keyboard scales to its window; the others, the joystick's included (one or two
             // sticks), are as large as their content
-            scale_changed: false,
+            scale_changed: None,
+            geometry: None,
             fitting: Fitting::new(
                 sized.is_none(),
                 egui::vec2(initial_size.width as f32, initial_size.height as f32),
@@ -276,6 +287,25 @@ impl ViewWindow {
                 self.fitting.resized(size);
             }
         }
+    }
+
+    /// Note where it is: its position, its size when the user made it (a fitted one is fitted
+    /// again).
+    fn note_geometry(&mut self) {
+        let Ok(position) = self.window.outer_position() else {
+            return;
+        };
+        let size = (!self.fitting.enabled).then(|| {
+            let size = self
+                .window
+                .inner_size()
+                .to_logical::<f32>(self.window.scale_factor());
+            [size.width, size.height]
+        });
+        self.geometry = Some(amsrust::ui::workspace::Geometry {
+            position: [position.x, position.y],
+            size,
+        });
     }
 
     fn resize(&mut self, gfx: &Gfx, width: u32, height: u32) {
@@ -1105,7 +1135,11 @@ impl App {
                     view.resize(gfx, size.width, size.height);
                 }
                 let logical: LogicalSize<f32> = size.to_logical(view.window.scale_factor());
-                if std::mem::take(&mut view.scale_changed) {
+                let by_scale = view
+                    .scale_changed
+                    .take()
+                    .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(500));
+                if by_scale {
                     if std::env::var_os("BEMU_FIT_DEBUG").is_some() {
                         eprintln!(
                             "fit {:?}: resized by a scale change, {logical:?}",
@@ -1127,8 +1161,13 @@ impl App {
                         );
                     }
                 }
+                // (after: a size the user made is kept)
+                view.note_geometry();
             }
-            WindowEvent::ScaleFactorChanged { .. } => view.scale_changed = true,
+            WindowEvent::ScaleFactorChanged { .. } => {
+                view.scale_changed = Some(std::time::Instant::now());
+            }
+            WindowEvent::Moved(_) => view.note_geometry(),
             _ => {}
         }
         true
@@ -1636,20 +1675,7 @@ impl Frontend for WinitGpuFrontend {
     }
 
     fn view_geometry(&self, key: u8) -> Option<amsrust::ui::workspace::Geometry> {
-        let view = self.app.views.get(&key)?;
-        let position = view.window.outer_position().ok()?;
-        // its size when the user made it (a fitted one is fitted again)
-        let size = (!view.fitting.enabled).then(|| {
-            let size = view
-                .window
-                .inner_size()
-                .to_logical::<f32>(view.window.scale_factor());
-            [size.width, size.height]
-        });
-        Some(amsrust::ui::workspace::Geometry {
-            position: [position.x, position.y],
-            size,
-        })
+        self.app.views.get(&key)?.geometry
     }
 
     fn focus_view_window(&mut self, key: u8) {

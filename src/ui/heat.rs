@@ -56,19 +56,26 @@ impl Heat {
         }
     }
 
-    /// Value `index`: 1.0 just changed, less for an older change, 0.0 none lately.
-    pub fn heat(&self, index: usize) -> f32 {
-        let Some(Some((moves, time))) = self.changed.get(index) else {
-            return 0.0;
-        };
+    /// Value `index`'s heat by the machine's moves and by the time since its change.
+    fn parts(&self, index: usize) -> Option<(f32, f32)> {
+        let (moves, time) = (*self.changed.get(index)?)?;
         let by_moves = 1.0 - (self.moves - moves) as f32 / MOVES as f32;
         let by_time = (1.0 - (self.now - time) / LIT_S) as f32;
-        by_moves.max(by_time).max(0.0)
+        Some((by_moves, by_time))
     }
 
-    /// Something is still fading (the window is to be drawn again).
+    /// Value `index`: 1.0 just changed, less for an older change, 0.0 none lately.
+    pub fn heat(&self, index: usize) -> f32 {
+        self.parts(index)
+            .map_or(0.0, |(by_moves, by_time)| by_moves.max(by_time).max(0.0))
+    }
+
+    /// The time still dims a colour (the window is to be drawn again to show it): not a
+    /// colour the machine's moves keep, as a paused machine's last step.
     pub fn fading(&self) -> bool {
-        (0..self.changed.len()).any(|i| self.heat(i) > 0.0)
+        (0..self.changed.len())
+            .filter_map(|i| self.parts(i))
+            .any(|(by_moves, by_time)| by_time > 0.0 && by_time > by_moves)
     }
 }
 
@@ -186,6 +193,26 @@ mod tests {
         }
         assert_eq!(heat.heat(1), 0.0, "cooled down");
         assert!(!heat.fading());
+    }
+
+    /// A paused machine's last change stays lit without asking to be drawn again and again.
+    #[test]
+    fn a_paused_change_does_not_keep_redrawing() {
+        let mut heat = Heat::default();
+        heat.observe(0, 0, 0.0, &[1]);
+        heat.observe(0, 10, 0.0, &[2]);
+        // paused at once: the clock stays, the time goes on
+        heat.observe(0, 10, 5.0, &[2]);
+        assert_eq!(heat.heat(0), 1.0, "still lit");
+        assert!(!heat.fading(), "nothing more to show as time passes");
+        // running: the moves go by fast, the time dims it
+        let mut heat = Heat::default();
+        heat.observe(0, 0, 0.0, &[1]);
+        heat.observe(0, 10, 0.0, &[2]);
+        for frame in 2..8 {
+            heat.observe(0, 10 * frame, 0.02 * frame as f64, &[2]);
+        }
+        assert!(heat.fading(), "{}", heat.heat(0));
     }
 
     /// While running, a change stays lit for a while, however many frames go by.
