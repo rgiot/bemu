@@ -12,10 +12,9 @@
 //!
 //! A breakpoint may carry a [`Condition`] (an expression on the registers,
 //! memory and the access): it then only fires while the condition holds. Its
-//! `step` is read as a pass, hits let pass before it acts
-//! ([`AdvancedBreakpoint::after`]), as cpclib's breakpoint manager means it:
-//! rasm writes it without interpreting it, and ACE-DL's documentation does not
-//! define it.
+//! `step` N raises it from its N-th match on, the N - 1 before let pass
+//! ([`AdvancedBreakpoint::after`]; 0 or 1: from the first), as cpclib's
+//! breakpoint manager and an editor's hit count N mean it.
 
 use crate::motherboard::{BusAccess, BusAccessKind};
 
@@ -178,7 +177,8 @@ impl AdvancedBreakpoint {
                 "condition" if !unquoted(value).is_empty() => {
                     brk.condition = Some(Condition::parse(unquoted(value))?);
                 }
-                "step" if !value.is_empty() => brk.after = number(u32::MAX)? as u64,
+                // raised from its N-th match on
+                "step" if !value.is_empty() => brk.after = u64::from(number(u32::MAX)?.saturating_sub(1)),
                 "condition" | "step" => {}
                 other => return Err(format!("unknown breakpoint field {other:?}")),
             }
@@ -282,8 +282,10 @@ mod test {
         // rasm's default name, unquoted, and an unquoted condition
         let plain = AdvancedBreakpoint::parse_remu("EXEC,RW,STOP,addr=1,name=imported,condition=A=5,step=0").unwrap();
         assert_eq!((plain.name, plain.condition.unwrap().source().to_owned()), (None, "A=5".to_owned()));
-        // the step is a pass: hits let pass before it acts
-        assert_eq!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=3").unwrap().after, 3);
+        // step N: raised from the N-th match on, the N - 1 before let pass
+        assert_eq!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=3").unwrap().after, 2);
+        assert_eq!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=1").unwrap().after, 0);
+        assert_eq!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=0").unwrap().after, 0);
         assert_eq!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=").unwrap().after, 0);
         assert!(AdvancedBreakpoint::parse_remu("BOGUS").is_err());
     }
