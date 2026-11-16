@@ -81,6 +81,21 @@ pub struct CslLogEntry {
 /// The pictures of the log are kept this wide at most (hundreds of them in a Shaker run).
 pub const LOG_PICTURE_WIDTH: u32 = 400;
 
+/// The log's copy of a screenshot, as the screen shows it: a monitor's frame has each line
+/// once (768 x 272), the screen twice as tall (a CRT filter's picture is already so), at most
+/// [`LOG_PICTURE_WIDTH`] wide.
+pub fn log_picture(frame: &image::RgbImage) -> image::RgbImage {
+    let (width, height) = frame.dimensions();
+    let lines = if width > 2 * height { 2 } else { 1 };
+    let shown = width.min(LOG_PICTURE_WIDTH).max(1);
+    let shown_height = (height * lines * shown / width.max(1)).max(1);
+    if (shown, shown_height) == (width, height) {
+        frame.clone()
+    } else {
+        crate::display::resize::resize(frame, shown, shown_height)
+    }
+}
+
 /// The instructions a script played, in order: shared with the window that shows them, kept by
 /// the host once the runner is gone.
 #[derive(Debug, Clone, Default)]
@@ -1474,12 +1489,7 @@ impl CslRunner {
             eprintln!("[{:>9} µs] {}", self.elapsed_us(), path.display());
         }
         // in the log: on the instruction that asked for it, on a line of its own for an SSM code
-        let picture = if frame.width() > LOG_PICTURE_WIDTH {
-            let height = (frame.height() * LOG_PICTURE_WIDTH / frame.width()).max(1);
-            crate::display::resize::resize(&frame, LOG_PICTURE_WIDTH, height)
-        } else {
-            frame
-        };
+        let picture = log_picture(&frame);
         if let Some(code) = ssm_code {
             self.log
                 .push(self.elapsed_us(), format!("SSM &{code:04X}: screenshot"));
@@ -2074,6 +2084,13 @@ mod test {
         let (path, picture) = entries[2].picture.as_ref().expect("its picture");
         assert_eq!(path, &Path::new("out").join("AMSRUST_0.png"));
         assert!(picture.width() <= LOG_PICTURE_WIDTH);
+        // the screen's shape: the frame's lines shown twice (768 x 272 is 4:3 as 768 x 544)
+        let ratio = picture.width() as f32 / picture.height() as f32;
+        assert!(
+            (ratio - 768.0 / 544.0).abs() < 0.05,
+            "{:?}",
+            picture.dimensions()
+        );
         assert!(entries[1].at_us < entries[2].at_us);
     }
 
