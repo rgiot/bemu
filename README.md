@@ -127,6 +127,12 @@ over, out, a frame) and counters work without the debug server, which Debug > De
 starts on demand. A command that cannot run now (no disc to flip, no script to stop) is greyed
 out, its tooltip says why.
 
+The Watch window (Debug > View > Watch) shows what is typed in it, live: an address (`&BE00`), a
+symbol, or an expression of the breakpoint language (`HL`, `peek(&BE00)+1`, `deek(SP)`), a byte
+or a word, lit when it changed lately. "Stop" on an address stops the machine when its value
+changes: a write breakpoint whose condition is `VALUE <> OLDVALUE` (`OLDVALUE`, the byte a write
+replaced, is bemu's addition to ACE's language). The watches come back at the next session.
+
 The FDC window draws each disc as the drive turns it, the way C64 tools draw a 1541 disc: its
 tracks as rings (track 0 outside), each sector an arc where it lies on its track (from an HFE's
 timings, else from MFM's layout), its ID field in cyan then its data coloured by what it is

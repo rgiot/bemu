@@ -274,6 +274,7 @@ pub enum View {
     Ppi,
     Tape,
     CslLog,
+    Watch,
     Asic,
     Screen,
     Palette,
@@ -332,7 +333,7 @@ impl ViewInfo {
 
 impl View {
     /// Every view, in the order of the Window menu.
-    pub const ALL: [View; 25] = [
+    pub const ALL: [View; 26] = [
         View::Z80,
         View::Stack,
         View::Crtc,
@@ -350,6 +351,7 @@ impl View {
         View::Ppi,
         View::Tape,
         View::CslLog,
+        View::Watch,
         View::Asic,
         View::Screen,
         View::Palette,
@@ -380,6 +382,7 @@ impl View {
             View::Ppi => I::debugger("view-ppi", "PPI"),
             View::Tape => I::debugger("view-tape", "Tape"),
             View::CslLog => I::debugger("view-csl-log", "CSL log"),
+            View::Watch => I::debugger("view-watch", "Watch"),
             View::Asic => I::debugger("view-asic", "ASIC (CPC+)"),
             View::Screen => I::debugger("view-screen", "Screen memory"),
             View::Palette => I::debugger("palette-open", "").not_debugger(),
