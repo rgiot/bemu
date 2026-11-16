@@ -138,12 +138,12 @@ dependencies = [
  "aide",
  "array-init",
  "axum",
- "bemu-api",
  "bytemuck",
  "clap",
  "cpal",
  "cpclib",
  "cpclib-asm",
+ "cpclib-bemu-api",
  "cpclib-cpr",
  "cpclib-csl",
  "cpclib-dap",
@@ -494,15 +494,6 @@ name = "beef"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
-
-[[package]]
-name = "bemu-api"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "bindgen"
@@ -1229,6 +1220,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpclib-bemu-api"
+version = "0.11.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cpclib-common"
 version = "0.11.0"
 dependencies = [
@@ -1290,6 +1290,7 @@ dependencies = [
  "camino",
  "cpclib-asm",
  "cpclib-basic",
+ "cpclib-bemu-api",
  "cpclib-common",
  "cpclib-image",
  "cpclib-sna",

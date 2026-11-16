@@ -25,8 +25,8 @@ cpclib-cpr = {path = "../rust.cpcdemotools/cpclib-cpr"}
 serde = {version = "1", features = ["derive"]}
 serde_json = "1"
 # the debug API's types (requests, replies, their JSON schemas): what the server parses and
-# documents, shared with clients
-bemu-api = { path = "api" }
+# documents; in cpclib, for cpclib-dap (a client) to share them
+bemu-api = { package = "cpclib-bemu-api", path = "../rust.cpcdemotools/cpclib-bemu-api" }
 # which field a request's JSON got wrong, for its error
 serde_path_to_error = "0.1"
 rand="0.8.3"

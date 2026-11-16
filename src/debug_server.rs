@@ -16,25 +16,26 @@
 //! [`DebugServer::after_instruction`] and [`DebugServer::frame_completed`],
 //! and stops running while [`DebugServer::paused`].
 //!
-//! Implemented so far: `ping`, `state`, `z80` (GET/POST), `ram` (GET/POST,
-//! every 16K bank), `exec`, `step`, `config` (GET/POST: pause/resume,
-//! resets), `z80_bp` (CPU addresses resolved to the RAM bank or ROM holding
-//! them, `Bnn:hhhh` physical locations), `keytype`, `events` (Server-Sent
-//! Events: `frame`, `z80_bp`, `pause`, `reset`, `basic_bp`), `doc`, the chips
-//! (`memmap`, `crtc`, `ga`, `psg`, `fdc`), BASIC (`basic`, `basic_state`,
-//! `basic_listing`, `basic_export`, `basic_bp`, `basic_step`, `basic_runto`,
-//! see [`crate::basic_program`]) and the beam (`beam`, `raster_bp`, in
-//! AMSpiriT's video buffer coordinates or in NOPs: 64 a line, 19968 a
-//! frame).
+//! Every request is parsed into the types of [`bemu_api`] (the `cpclib-bemu-api` crate, shared
+//! with clients) and every reply and event built from them; the OpenAPI description
+//! (`/api/doc?format=openapi`) is generated from the same types (`http.rs`, `api_doc.rs`).
 //!
-//! Extensions to the AMSpiriT API - listed in `/api/doc` with
-//! `"extension":true` - add what debuggers of rasm/basm/ACE programs need:
-//! `/api/breakpoints` for advanced breakpoints (memory/IO watchpoints,
-//! ranges and masks, stop or watch, conditions, see
-//! [`crate::breakpoints`]), the
-//! `watch` event for watch hits, `kind`/`name`/`access`/`beam`/`counters`
-//! in `z80_bp` events, and `/api/counters`: named counters of the NOPs
-//! run. Replies identify this emulator with `"frontend":"bemu"`.
+//! The routes ([`ROUTES`]): `ping`, `state`, `z80`, `ram` (every 16K bank, or as the CPU sees
+//! it), `exec`, `step` (in, over, out, a frame), `run_to`, `config` (pause/resume, resets, the
+//! history's size), `z80_bp` (CPU addresses resolved to the RAM bank or ROM holding them,
+//! `Bnn:hhhh` physical locations), `keytype`, `events` (Server-Sent Events), `history`,
+//! `screenshot`, `media`, `snapshot`, the chips (`memmap`, `crtc`, `ga`, `psg`, `fdc`, `drive`),
+//! BASIC (`basic`, `basic_state`, `basic_listing`, `basic_export`, `basic_bp`, `basic_step`,
+//! `basic_runto`, see [`crate::basic_program`]), the beam (`beam`, `raster_bp`, in AMSpiriT's
+//! video buffer coordinates or in NOPs: 64 a line, 19968 a frame) and `doc`.
+//!
+//! Extensions to the AMSpiriT API - listed in `/api/doc` with `"extension":true`, and in
+//! `/api/ping`'s `features` - add what debuggers of rasm/basm/ACE programs need:
+//! `/api/breakpoints` for advanced breakpoints (memory/IO watchpoints, ranges and masks, stop or
+//! watch, conditions, see [`crate::breakpoints`]), the `watch` event for watch hits,
+//! `reason`/`kind`/`name`/`access`/`beam`/`counters`/`cmd_seq` in `z80_bp` events, `/api/counters`
+//! (named counters of the NOPs run), `/api/run_to`, the step modes, the symbols. Replies identify
+//! this emulator with `"frontend":"bemu"`.
 
 mod api_doc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -49,7 +50,8 @@ use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
-use bemu_api::{CommandAck, EmuState, Int, Ping, SetZ80, StepMode, StepQuery, Z80Registers, FEATURES};
+use bemu_api::*;
+use bemu_api as api;
 use serde_json::{json, Value};
 
 use crate::basic_program::{self, BasicState};
@@ -86,13 +88,6 @@ impl ApiRequest {
     /// The body as text (JSON, breakpoint lists).
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
-    }
-
-    fn param(&self, name: &str) -> Option<&str> {
-        self.query
-            .iter()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -262,14 +257,34 @@ impl Beam {
         self.x / BEAM_TICKS_PER_NOP
     }
 
-    fn json(&self) -> Value {
-        json!({
-            "x": self.x,
-            "y": self.line,
-            "nop": self.nop(),
-            "line": self.line,
-            "frame_nop": self.line * NOPS_PER_LINE + self.nop()
-        })
+    fn event_beam(&self) -> EventBeam {
+        EventBeam {
+            x: self.x as u64,
+            y: self.line as u64,
+            nop: self.nop() as u64,
+            line: self.line as u64,
+            frame_nop: (self.line * NOPS_PER_LINE + self.nop()) as u64,
+        }
+    }
+
+    /// The beam, `x` and `y` relative to the visible picture with `crop`.
+    fn state(&self, crop: bool) -> BeamState {
+        let (x, y) = if crop {
+            (self.x as i64 - self.crop_x as i64, self.line as i64 - self.crop_y as i64)
+        } else {
+            (self.x as i64, self.line as i64)
+        };
+        BeamState {
+            x,
+            y,
+            nop: self.nop() as u64,
+            line: self.line as u64,
+            frame_nop: (self.line * NOPS_PER_LINE + self.nop()) as u64,
+            cx: self.crop_x as i64,
+            cy: self.crop_y as i64,
+            cw: SCREENSHOT_SIZE.0 as u64,
+            ch: SCREENSHOT_SIZE.1 as u64,
+        }
     }
 }
 
@@ -307,17 +322,18 @@ impl RasterBreakpoint {
         }
     }
 
-    fn json(&self, index: usize) -> Value {
-        let mut value = json!({ "index": index, "x": self.x, "nop": self.x / BEAM_TICKS_PER_NOP });
-        if let Some(name) = &self.name {
-            value["name"] = json!(name);
+    fn typed(&self, index: usize) -> api::RasterBreakpoint {
+        api::RasterBreakpoint {
+            index: index as u64,
+            x: self.x as u64,
+            nop: (self.x / BEAM_TICKS_PER_NOP) as u64,
+            name: self.name.clone(),
+            y: self.line.map(|line| line as u64),
+            line: self.line.map(|line| line as u64),
+            frame_nop: self
+                .line
+                .map(|line| (line * NOPS_PER_LINE + self.x / BEAM_TICKS_PER_NOP) as u64),
         }
-        if let Some(line) = self.line {
-            value["y"] = json!(line);
-            value["line"] = json!(line);
-            value["frame_nop"] = json!(line * NOPS_PER_LINE + self.x / BEAM_TICKS_PER_NOP);
-        }
-        value
     }
 }
 
@@ -433,7 +449,7 @@ impl EventHub {
         !self.clients.lock().unwrap().is_empty()
     }
 
-    fn publish(&self, topic: &str, data: &Value) {
+    fn publish<T: serde::Serialize>(&self, topic: &str, data: &T) {
         let mut clients = self.clients.lock().unwrap();
         clients.retain(|client| !client.queue.0.lock().unwrap().closed);
         let mut message = None;
@@ -445,8 +461,10 @@ impl EventHub {
             {
                 continue;
             }
-            let message =
-                message.get_or_insert_with(|| format!("event: {topic}\ndata: {data}\n\n"));
+            let message = message.get_or_insert_with(|| {
+                let data = serde_json::to_string(data).expect("the events are JSON");
+                format!("event: {topic}\ndata: {data}\n\n")
+            });
             let (queue, ready) = &*client.queue;
             let mut queue = queue.lock().unwrap();
             queue.events.push_back(message.clone());
@@ -644,7 +662,10 @@ impl DebugServer {
             self.reported_paused = self.paused;
             self.events.publish(
                 "pause",
-                &json!({ "paused": self.paused, "cmd_seq": self.cmd_seq }),
+                &PauseEvent {
+                    paused: self.paused,
+                    cmd_seq: self.cmd_seq,
+                },
             );
         }
     }
@@ -680,7 +701,7 @@ impl DebugServer {
                 .exec_breakpoints
                 .contains(&motherboard.physical_address(pc))
         {
-            self.stop(motherboard, json!({ "kind": "exec" }));
+            self.stop(motherboard, StopInfo::of("exec"));
         }
         for index in 0..self.advanced.len() {
             if self.advanced[index].hit_by_execution(pc) {
@@ -701,7 +722,7 @@ impl DebugServer {
             // asked before the machine was ready: its error has no request left to answer
             if let Err(error) = self.load_basic(&pending.source, pending.run, motherboard) {
                 self.events
-                    .publish("basic_error", &json!({ "error": error }));
+                    .publish("basic_error", &BasicErrorEvent { error });
             }
         }
         if let (Some(before), Some(after)) = (self.previous_beam.take(), self.beam) {
@@ -710,35 +731,36 @@ impl DebugServer {
                 .iter()
                 .position(|brk| brk.passed(before, after))
             {
-                let mut info = json!({ "kind": "raster", "index": index });
-                if let Some(name) = &self.raster_breakpoints[index].name {
-                    info["name"] = json!(name);
-                }
+                let info = StopInfo {
+                    index: Some(index as u64),
+                    name: self.raster_breakpoints[index].name.clone(),
+                    ..StopInfo::of("raster")
+                };
                 self.stop(motherboard, info);
             }
         }
         // the end of a single step, told unless something else stopped it first
         if stepped && !self.paused {
-            self.stop(motherboard, json!({ "kind": "step" }));
+            self.stop(motherboard, StopInfo::of("step"));
         }
         if stepped {
             self.paused = true;
         }
         if self.run_to == Some(pc) {
-            self.stop(motherboard, json!({ "kind": "run_to" }));
+            self.stop(motherboard, StopInfo::of("run_to"));
         }
         // the routine returned: the stack above where it was (SP may wrap past &FFFF)
         if self
             .step_out_sp
             .is_some_and(|sp| (motherboard.sp().wrapping_sub(sp) as i16) > 0 && !stepped)
         {
-            self.stop(motherboard, json!({ "kind": "step_out" }));
+            self.stop(motherboard, StopInfo::of("step_out"));
         }
         if let (Some(target), Some(before), Some(after)) =
             (self.run_to_beam.as_ref(), self.previous_beam, self.beam)
         {
             if target.passed(before, after) {
-                self.stop(motherboard, json!({ "kind": "run_to_beam" }));
+                self.stop(motherboard, StopInfo::of("run_to_beam"));
             }
         }
         self.fetched = Some((pc, instruction_bytes(motherboard, pc)));
@@ -768,28 +790,36 @@ impl DebugServer {
         for (action, name) in &brk.counters {
             self.act_on_counter(*action, name);
         }
-        let mut info = json!({ "kind": kind_name(brk.kind), "index": index, "hits": brk.hits });
-        if let Some(name) = &brk.name {
-            info["name"] = json!(name);
-        }
-        if let Some(access) = access {
-            info["access"] = json!({
-                "type": match access.kind {
-                    BusAccessKind::MemoryRead | BusAccessKind::IoRead => "read",
-                    BusAccessKind::MemoryWrite | BusAccessKind::IoWrite => "write"
-                },
-                "addr": hex16(access.address),
-                "value": access.value
-            });
-        }
+        let access = access.map(|access| EventAccess {
+            access_type: match access.kind {
+                BusAccessKind::MemoryRead | BusAccessKind::IoRead => "read",
+                BusAccessKind::MemoryWrite | BusAccessKind::IoWrite => "write",
+            }
+            .to_owned(),
+            addr: hex16(access.address),
+            value: access.value,
+        });
         match brk.run {
-            RunMode::Stop => self.stop(motherboard, info),
+            RunMode::Stop => self.stop(
+                motherboard,
+                StopInfo {
+                    index: Some(index as u64),
+                    name: brk.name.clone(),
+                    hits: Some(brk.hits),
+                    access,
+                    ..StopInfo::of(kind_name(brk.kind))
+                },
+            ),
             RunMode::Watch => {
-                let mut event = registers_event(motherboard);
-                if !self.counters.is_empty() {
-                    event["counters"] = self.counters_json();
-                }
-                merge(&mut event, info);
+                let event = WatchEvent {
+                    registers: registers_event(motherboard),
+                    kind: kind_name(brk.kind).to_owned(),
+                    index: index as u64,
+                    hits: brk.hits,
+                    name: brk.name.clone(),
+                    access,
+                    counters: self.counters_map(),
+                };
                 self.events.publish("watch", &event);
             }
             RunMode::Count => {}
@@ -814,21 +844,23 @@ impl DebugServer {
         }
     }
 
-    fn stop(&mut self, motherboard: &Motherboard, info: Value) {
+    fn stop(&mut self, motherboard: &Motherboard, info: StopInfo) {
         self.paused = true;
         self.cancel_run_targets();
         self.last_stop = Some(motherboard.pc());
-        let mut event = registers_event(motherboard);
-        event["ticks"] = json!(motherboard.t_state_counter().value() / T_STATES_PER_NOP);
-        if let Some(beam) = self.beam {
-            event["beam"] = beam.json();
-        }
-        if !self.counters.is_empty() {
-            event["counters"] = self.counters_json();
-        }
-        merge(&mut event, info);
-        event["reason"] = json!(stop_reason(event.get("kind").and_then(Value::as_str)));
-        event["cmd_seq"] = json!(self.cmd_seq);
+        let event = StopEvent {
+            registers: registers_event(motherboard),
+            reason: stop_reason(info.kind),
+            kind: info.kind.to_owned(),
+            cmd_seq: self.cmd_seq,
+            ticks: (motherboard.t_state_counter().value() / T_STATES_PER_NOP) as u64,
+            beam: self.beam.map(|beam| beam.event_beam()),
+            index: info.index,
+            name: info.name,
+            hits: info.hits,
+            access: info.access,
+            counters: self.counters_map(),
+        };
         self.events.publish("z80_bp", &event);
     }
 
@@ -840,16 +872,18 @@ impl DebugServer {
             return; // direct mode
         };
         let reason = match self.basic_target {
-            Some(BasicTarget::Statement) => Some("step"),
+            Some(BasicTarget::Statement) => Some(BasicStopReason::Step),
             Some(BasicTarget::LineAfter(from)) if from != Some(line) || state.first_statement => {
-                Some("step")
+                Some(BasicStopReason::Step)
             }
             Some(BasicTarget::Line(target)) if target == line && state.first_statement => {
-                Some("runto")
+                Some(BasicStopReason::RunTo)
             }
-            Some(BasicTarget::Address(target)) if target == state.stmt_addr => Some("runto"),
+            Some(BasicTarget::Address(target)) if target == state.stmt_addr => {
+                Some(BasicStopReason::RunTo)
+            }
             _ if state.first_statement && self.basic_breakpoints.contains(&line) => {
-                Some("breakpoint")
+                Some(BasicStopReason::Breakpoint)
             }
             _ => None,
         };
@@ -858,11 +892,12 @@ impl DebugServer {
             self.paused = true;
             self.cancel_run_targets();
             self.last_stop = Some(motherboard.pc());
-            let mut event =
-                json!({ "line": line, "addr": hex16(state.stmt_addr), "reason": reason });
-            if !self.counters.is_empty() {
-                event["counters"] = self.counters_json();
-            }
+            let event = BasicStopEvent {
+                line,
+                addr: hex16(state.stmt_addr),
+                reason,
+                counters: self.counters_map(),
+            };
             self.events.publish("basic_bp", &event);
         }
     }
@@ -878,18 +913,14 @@ impl DebugServer {
         }
     }
 
-    fn counters_json(&self) -> Value {
-        Value::Object(
+    /// The counters' NOPs, by name, for the events; `None` without counters.
+    fn counters_map(&self) -> Option<std::collections::BTreeMap<String, u64>> {
+        (!self.counters.is_empty()).then(|| {
             self.counters
                 .iter()
-                .map(|(name, counter)| {
-                    (
-                        name.clone(),
-                        json!(counter.t_states / T_STATES_PER_NOP as u64),
-                    )
-                })
-                .collect(),
-        )
+                .map(|(name, counter)| (name.clone(), counter.t_states / T_STATES_PER_NOP as u64))
+                .collect()
+        })
     }
 
     /// To call once per completed video frame.
@@ -900,11 +931,12 @@ impl DebugServer {
             self.report_pause();
         }
         if self.frames.is_multiple_of(FRAME_EVENT_EVERY) && self.events.has_clients() {
-            let mut event = registers_event(motherboard);
-            merge(
-                &mut event,
-                json!({ "fps": self.fps, "frame": self.frames, "paused": self.paused }),
-            );
+            let event = FrameEvent {
+                registers: registers_event(motherboard),
+                fps: self.fps,
+                frame: self.frames,
+                paused: self.paused,
+            };
             self.events.publish("frame", &event);
         }
         let elapsed = self.fps_window.0.elapsed();
@@ -1025,7 +1057,7 @@ impl DebugServer {
 
     /// Tell the debugger's clients the machine was reset.
     pub fn reset_done(&mut self, hard: bool) {
-        self.events.publish("reset", &json!({ "hard": hard }));
+        self.events.publish("reset", &ResetEvent { hard });
         self.command();
     }
 
@@ -1149,10 +1181,14 @@ impl DebugServer {
             "fdc" => fdc(motherboard),
             "asic" => asic(motherboard),
             "memmap" => memmap(motherboard),
-            "breakpoints" => self.list_breakpoints(),
-            "symbols" => self.list_symbols(),
-            "counters" => self.list_counters(),
-            "raster_bp" => self.list_raster_breakpoints(),
+            "breakpoints" => to_json(&self.list_breakpoints()),
+            "symbols" => to_json(&self.list_symbols()),
+            "counters" => to_json(&Counters {
+                counters: self.list_counters(),
+            }),
+            "raster_bp" => to_json(&RasterBreakpoints {
+                breakpoints: self.list_raster_breakpoints(),
+            }),
             "beam" => self.beam.map_or(Value::Null, beam_json),
             "state" => self.state(motherboard),
             "basic_state" => basic_state(motherboard),
@@ -1227,25 +1263,21 @@ impl DebugServer {
             return response;
         }
         let result = match (request.method.as_str(), request.path.as_str()) {
-            ("GET", "/api/ping") => Ok(ApiResponse::ok(to_json(&self.ping(motherboard)))),
-            ("GET", "/api/state") => Ok(ApiResponse::ok(self.state(motherboard))),
-            ("GET", "/api/z80") => Ok(ApiResponse::ok(to_json(&z80_registers(motherboard)))),
+            ("GET", "/api/ping") => Ok(reply(&self.ping(motherboard))),
+            ("GET", "/api/state") => Ok(reply(&self.state_typed(motherboard))),
+            ("GET", "/api/z80") => Ok(reply(&z80_registers(motherboard))),
             ("POST", "/api/z80") => self.set_z80(request, motherboard),
             ("GET", "/api/ram") => read_ram(request, motherboard),
             ("POST", "/api/ram") => self.write_ram(request, motherboard),
             ("POST", "/api/exec") => self.exec(request, motherboard),
             ("POST", "/api/step") => self.step_request(request, motherboard),
             ("POST", "/api/run_to") => self.run_to_request(request, motherboard),
-            ("GET", "/api/config") => Ok(ApiResponse::ok(json!({
-                "crtc_type": motherboard.crtc().crtc_type() as u8,
-                "paused": self.paused,
-                "history_size": self.history_size
-            }))),
+            ("GET", "/api/config") => Ok(reply(&self.get_config(motherboard))),
             ("POST", "/api/config") => self.config(request, motherboard),
             ("POST", "/api/z80_bp") => self.set_breakpoints(request, motherboard),
             ("DELETE", "/api/z80_bp") => self.remove_exec_breakpoints(request, motherboard),
-            ("GET", "/api/breakpoints") => Ok(ApiResponse::ok(self.list_breakpoints())),
-            ("GET", "/api/symbols") => Ok(ApiResponse::ok(self.list_symbols())),
+            ("GET", "/api/breakpoints") => Ok(reply(&self.list_breakpoints())),
+            ("GET", "/api/symbols") => Ok(reply(&self.list_symbols())),
             ("POST", "/api/breakpoints") => self.add_breakpoint(request, motherboard),
             ("DELETE", "/api/breakpoints") => self.remove_breakpoints(request, motherboard),
             // Answered by the HTTP thread (see `serve`): only reached
@@ -1255,7 +1287,7 @@ impl DebugServer {
             ("GET", "/api/doc") => doc(request),
             ("POST", "/api/quit") => self
                 .run_command("exit", None, motherboard)
-                .map(|()| ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.cmd_seq }))),
+                .map(|()| reply(&CommandAck::new(self.cmd_seq))),
             ("GET", "/api/history") => self.history_list(request, motherboard),
             ("GET", "/api/screenshot") => self.screenshot(request, monitor),
             ("POST", "/api/media") => self.media(request, motherboard),
@@ -1270,20 +1302,24 @@ impl DebugServer {
                         "attachment; filename=\"bemu.sna\"".into(),
                     )],
                 }),
-            ("GET", "/api/memmap") => Ok(ApiResponse::ok(memmap(motherboard))),
-            ("GET", "/api/crtc") => Ok(ApiResponse::ok(self.crtc(motherboard))),
-            ("GET", "/api/ga") => Ok(ApiResponse::ok(ga(motherboard))),
-            ("GET", "/api/psg") => Ok(ApiResponse::ok(psg(motherboard))),
-            ("GET", "/api/fdc") => Ok(ApiResponse::ok(fdc(motherboard))),
-            ("GET", "/api/asic") => Ok(ApiResponse::ok(asic(motherboard))),
+            ("GET", "/api/memmap") => memmap_request(request, motherboard),
+            ("GET", "/api/crtc") => Ok(reply(&self.crtc_state(motherboard))),
+            ("GET", "/api/ga") => Ok(reply(&ga_state(motherboard))),
+            ("GET", "/api/psg") => Ok(reply(&psg_state(motherboard))),
+            ("GET", "/api/fdc") => Ok(reply(&fdc_state(motherboard))),
+            ("GET", "/api/asic") => Ok(reply(&crate::state::asic(motherboard))),
             ("POST", "/api/drive") => self.drive_command(request, motherboard),
             ("GET", "/api/beam") => self.beam_position(request),
-            ("GET", "/api/raster_bp") => Ok(ApiResponse::ok(self.list_raster_breakpoints())),
+            ("GET", "/api/raster_bp") => Ok(reply(&RasterBreakpoints {
+                breakpoints: self.list_raster_breakpoints(),
+            })),
             ("POST", "/api/raster_bp") => self.set_raster_breakpoint(request),
-            ("GET", "/api/counters") => Ok(ApiResponse::ok(self.list_counters())),
+            ("GET", "/api/counters") => Ok(reply(&Counters {
+                counters: self.list_counters(),
+            })),
             ("POST", "/api/counters") => self.counter_command(request, motherboard),
             ("POST", "/api/basic") => self.basic_load_request(request, motherboard),
-            ("GET", "/api/basic_state") => Ok(ApiResponse::ok(basic_state(motherboard))),
+            ("GET", "/api/basic_state") => Ok(reply(&basic_state_typed(motherboard))),
             ("GET", "/api/basic_export") => Ok(ApiResponse {
                 status: 200,
                 content_type: "text/plain; charset=utf-8",
@@ -1294,46 +1330,12 @@ impl DebugServer {
                 headers: Vec::new(),
             }),
             ("GET", "/api/basic_listing") => basic_listing(motherboard),
-            ("POST", "/api/basic_step") => {
-                let target = match request.param("mode") {
-                    Some("line") => BasicTarget::LineAfter(BasicState::read(motherboard).line),
-                    None | Some("") | Some("stmt") | Some("statement") => BasicTarget::Statement,
-                    Some(other) => {
-                        return ApiError::field(
-                            "mode",
-                            format!("unknown mode \"{other}\": line or statement"),
-                        )
-                        .response()
-                    }
-                };
-                Ok(self.run_basic_to(target))
-            }
-            ("GET", "/api/basic_bp") => {
-                Ok(ApiResponse::ok(json!({ "lines": self.basic_breakpoints })))
-            }
+            ("POST", "/api/basic_step") => self.basic_step(request, motherboard),
+            ("GET", "/api/basic_bp") => Ok(reply(&BasicBreakpoints {
+                lines: self.basic_breakpoints.iter().copied().collect(),
+            })),
             ("POST", "/api/basic_bp") => self.set_basic_breakpoints(request),
-            ("POST", "/api/basic_runto") => {
-                let number = |name: &str| {
-                    request
-                        .param(name)
-                        .map(|v| parse_int(v).filter(|v| (0..=0xffff).contains(v)))
-                };
-                match (number("line"), number("addr")) {
-                    (Some(Some(line)), _) => Ok(self.run_basic_to(BasicTarget::Line(line as u16))),
-                    (None, Some(Some(addr))) => {
-                        Ok(self.run_basic_to(BasicTarget::Address(addr as u16)))
-                    }
-                    (Some(None), _) => Err(ApiError::field(
-                        "line",
-                        "line must be a number from 0 to 65535",
-                    )),
-                    (None, Some(None)) => Err(ApiError::field(
-                        "addr",
-                        "addr must be a number from 0 to 65535",
-                    )),
-                    (None, None) => Err(ApiError::new("missing ?line= or ?addr=")),
-                }
-            }
+            ("POST", "/api/basic_runto") => self.basic_run_to(request),
             ("DELETE", "/api/counters") => self.delete_counters(request),
             _ => unreachable!("{} {}", request.method, request.path),
         };
@@ -1358,62 +1360,63 @@ impl DebugServer {
     }
 
     fn state(&self, motherboard: &Motherboard) -> Value {
-        json!({
-            "z80": z80(motherboard),
-            "ga": ga(motherboard),
-            "crtc": self.crtc(motherboard),
-            "psg": psg(motherboard),
-            "fdc": fdc(motherboard),
-            "beam": self.beam.map(beam_json),
-            "emu": to_json(&self.emu(motherboard))
-        })
+        to_json(&self.state_typed(motherboard))
+    }
+
+    fn state_typed(&self, motherboard: &Motherboard) -> State {
+        State {
+            z80: z80_registers(motherboard),
+            ga: ga_state(motherboard),
+            crtc: self.crtc_state(motherboard),
+            psg: psg_state(motherboard),
+            fdc: fdc_state(motherboard),
+            beam: self.beam.map(|beam| beam.state(false)),
+            emu: self.emu(motherboard),
+        }
     }
 
     fn crtc(&self, motherboard: &Motherboard) -> Value {
+        to_json(&self.crtc_state(motherboard))
+    }
+
+    fn crtc_state(&self, motherboard: &Motherboard) -> Crtc {
         let crtc = motherboard.crtc();
-        let mut value = json!({
-            "type": crtc.crtc_type() as u8,
-            "regs": (0..14).map(|r| crtc.do_read_register(r)).collect::<Vec<_>>(),
-            "selected_reg": crtc.selected_register(),
+        Crtc {
+            crtc_type: crtc.crtc_type() as u8,
+            regs: (0..14).map(|r| crtc.do_read_register(r)).collect(),
+            selected_reg: crtc.selected_register(),
             // Extension: the counters (C0, C4, C9, VSYNC, R5 adjust) and
             // the address the CRTC outputs.
-            "hcc": crtc.hcc,
-            "vcc": crtc.vcc.value(),
-            "vlc": crtc.vlc.value(),
-            "vsc": crtc.vsc,
-            "vtac": crtc.vtac,
-            "ma": crtc.vma()
-        });
-        if let Some(beam) = self.beam {
-            value["rasterline"] = json!(beam.line);
+            hcc: crtc.hcc,
+            vcc: crtc.vcc.value(),
+            vlc: crtc.vlc.value(),
+            vsc: crtc.vsc,
+            vtac: crtc.vtac,
+            ma: crtc.vma(),
+            rasterline: self.beam.map(|beam| beam.line as u64),
         }
-        value
     }
 
     // ------------------------------------------------------------- beam
 
     fn beam_position(&self, request: &ApiRequest) -> ApiResult {
+        let query: BeamQuery = query_as(request)?;
         let beam = self.beam.ok_or_else(|| {
             ApiError::new("no beam position: the emulation is not driving a monitor")
         })?;
-        let crop = request.param("crop").is_some_and(|v| v != "0");
-        let mut value = beam.json();
-        if crop {
-            value["x"] = json!(beam.x as isize - beam.crop_x);
-            value["y"] = json!(beam.line as isize - beam.crop_y as isize);
-        }
-        merge(&mut value, beam_crop(beam));
-        merge(
-            &mut value,
-            json!({ "nops_per_line": NOPS_PER_LINE, "nops_per_frame": NOPS_PER_LINE * LINES_PER_FRAME }),
-        );
-        Ok(ApiResponse::ok(value))
+        Ok(reply(&BeamPosition {
+            beam: beam.state(flag(query.crop, false)),
+            nops_per_line: NOPS_PER_LINE as u64,
+            nops_per_frame: (NOPS_PER_LINE * LINES_PER_FRAME) as u64,
+        }))
     }
 
-    fn list_raster_breakpoints(&self) -> Value {
-        json!({
-            "breakpoints": self.raster_breakpoints.iter().enumerate().map(|(i, b)| b.json(i)).collect::<Vec<_>>()
-        })
+    fn list_raster_breakpoints(&self) -> Vec<api::RasterBreakpoint> {
+        self.raster_breakpoints
+            .iter()
+            .enumerate()
+            .map(|(i, b)| b.typed(i))
+            .collect()
     }
 
     /// `POST /api/raster_bp`: AMSpiriT's `x`/`y` (beam ticks and lines,
@@ -1422,27 +1425,20 @@ impl DebugServer {
     /// in every line, `line` alone at its start.
     fn set_raster_breakpoint(&mut self, request: &ApiRequest) -> ApiResult {
         self.forget_beam();
-        let param = |name: &str, max: usize| -> Result<Option<usize>, ApiError> {
-            match request.param(name) {
-                None | Some("") => Ok(None),
-                Some(text) => parse_int(text)
-                    .filter(|&v| (0..=max as i64).contains(&v))
-                    .map(|v| Some(v as usize))
-                    .ok_or_else(|| {
-                        ApiError::field(name, format!("{name} must be a number from 0 to {max}"))
-                    }),
-            }
+        let set: SetRasterBreakpoint = query_as(request)?;
+        let param = |name: &str, value: Option<Int>, max: usize| -> Result<Option<usize>, ApiError> {
+            Ok(ranged(name, value, 0, max as i64)?.map(|v| v as usize))
         };
-        let enable = param("enable", 1)?.unwrap_or(1) == 1;
-        let add = param("add", 1)?.unwrap_or(0) == 1;
-        let crop = param("crop", 1)?.unwrap_or(0) == 1;
-        let x = param("x", 0xffff)?;
-        let y = param("y", 0xffff)?;
-        let nop = param("nop", NOPS_PER_LINE - 1)?;
-        let line = param("line", 0xffff)?;
-        let frame_nop = param("frame_nop", NOPS_PER_LINE * LINES_PER_FRAME - 1)?;
+        let enable = flag(set.enable, true);
+        let add = flag(set.add, false);
+        let crop = flag(set.crop, false);
+        let x = param("x", set.x, 0xffff)?;
+        let y = param("y", set.y, 0xffff)?;
+        let nop = param("nop", set.nop, NOPS_PER_LINE - 1)?;
+        let line = param("line", set.line, 0xffff)?;
+        let frame_nop = param("frame_nop", set.frame_nop, NOPS_PER_LINE * LINES_PER_FRAME - 1)?;
+        let name = set.name.filter(|n| !n.is_empty());
 
-        let name = request.param("name").filter(|n| !n.is_empty()).map(str::to_owned);
         let breakpoint = if let Some(frame_nop) = frame_nop {
             Some(RasterBreakpoint {
                 line: Some(frame_nop / NOPS_PER_LINE),
@@ -1488,9 +1484,11 @@ impl DebugServer {
             }
             (false, _) => {}
         }
-        let mut reply = self.list_raster_breakpoints();
-        merge(&mut reply, json!({ "ok": true, "cmd_seq": self.command() }));
-        Ok(ApiResponse::ok(reply))
+        Ok(reply(&RasterBreakpointsSet {
+            ok: true,
+            cmd_seq: self.command(),
+            breakpoints: self.list_raster_breakpoints(),
+        }))
     }
 
     // ------------------------------------------------------------ BASIC
@@ -1498,7 +1496,7 @@ impl DebugServer {
     fn run_basic_to(&mut self, target: BasicTarget) -> ApiResponse {
         self.basic_target = Some(target);
         self.paused = false;
-        ApiResponse::ok(json!({ "ok": true, "cmd_seq": self.command() }))
+        reply(&CommandAck::new(self.command()))
     }
 
     fn set_basic_breakpoints(&mut self, request: &ApiRequest) -> ApiResult {
@@ -1515,9 +1513,34 @@ impl DebugServer {
             lines.insert(line);
         }
         self.basic_breakpoints = lines;
-        Ok(ApiResponse::ok(
-            json!({ "ok": true, "lines": self.basic_breakpoints, "cmd_seq": self.command() }),
-        ))
+        Ok(reply(&BasicBreakpointsSet {
+            ok: true,
+            lines: self.basic_breakpoints.iter().copied().collect(),
+            cmd_seq: self.command(),
+        }))
+    }
+
+    /// `POST /api/basic_step`.
+    fn basic_step(&mut self, request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
+        let query: BasicStep = query_as(request)?;
+        let target = match query.mode.unwrap_or(BasicStepMode::Statement) {
+            BasicStepMode::Line => BasicTarget::LineAfter(BasicState::read(motherboard).line),
+            BasicStepMode::Statement => BasicTarget::Statement,
+        };
+        Ok(self.run_basic_to(target))
+    }
+
+    /// `POST /api/basic_runto`.
+    fn basic_run_to(&mut self, request: &ApiRequest) -> ApiResult {
+        let query: BasicRunTo = query_as(request)?;
+        match (
+            ranged("line", query.line, 0, 0xffff)?,
+            ranged("addr", query.addr, 0, 0xffff)?,
+        ) {
+            (Some(line), _) => Ok(self.run_basic_to(BasicTarget::Line(line as u16))),
+            (None, Some(addr)) => Ok(self.run_basic_to(BasicTarget::Address(addr as u16))),
+            (None, None) => Err(ApiError::new("missing ?line= or ?addr=")),
+        }
     }
 
     /// `POST /api/basic[?reset=1][&run=1]`: after a reset, the program is
@@ -1527,21 +1550,18 @@ impl DebugServer {
         request: &ApiRequest,
         motherboard: &mut Motherboard,
     ) -> ApiResult {
-        let flag = |name: &str| {
-            request
-                .param(name)
-                .is_some_and(|v| v != "0" && !v.is_empty())
-        };
+        let query: BasicLoad = query_as(request)?;
+        let (reset, run) = (flag(query.reset, false), flag(query.run, false));
         let source = request.text();
         // Checked now, to answer 400 rather than fail later.
         cpclib::basic::BasicProgram::parse(&source)
             .map_err(|e| ApiError::new(format!("BASIC inject failed: {e:?}")))?;
-        if flag("reset") {
+        if reset {
             motherboard.restart();
-            self.events.publish("reset", &json!({ "hard": true }));
+            self.events.publish("reset", &ResetEvent { hard: true });
             self.pending_basic = Some(PendingBasic {
                 source,
-                run: flag("run"),
+                run,
                 at_t_states: motherboard.t_state_counter().value() + BASIC_BOOT_T_STATES,
             });
         } else if motherboard.t_state_counter().value() < BASIC_BOOT_T_STATES {
@@ -1550,16 +1570,14 @@ impl DebugServer {
             // reset (a debugger that starts the emulator injects at once).
             self.pending_basic = Some(PendingBasic {
                 source,
-                run: flag("run"),
+                run,
                 at_t_states: BASIC_BOOT_T_STATES,
             });
         } else {
-            self.load_basic(&source, flag("run"), motherboard)
+            self.load_basic(&source, run, motherboard)
                 .map_err(|e| ApiError::new(format!("BASIC inject failed: {e}")))?;
         }
-        Ok(ApiResponse::ok(
-            json!({ "ok": true, "cmd_seq": self.command() }),
-        ))
+        Ok(reply(&CommandAck::new(self.command())))
     }
 
     fn load_basic(
@@ -1580,54 +1598,31 @@ impl DebugServer {
 
     // --------------------------------------------------------- counters
 
-    fn list_counters(&self) -> Value {
-        json!({
-            "counters": self.counters.iter().map(|(name, counter)| json!({
-                "name": name,
-                "nops": counter.t_states / T_STATES_PER_NOP as u64,
-                "running": counter.running
-            })).collect::<Vec<_>>()
-        })
+    fn list_counters(&self) -> Vec<Counter> {
+        self.counters
+            .iter()
+            .map(|(name, counter)| Counter {
+                name: name.clone(),
+                nops: counter.t_states / T_STATES_PER_NOP as u64,
+                running: counter.running,
+            })
+            .collect()
     }
 
     /// `POST /api/counters {"name", "action": create|reset|start|stop}`:
     /// a counter counts the NOPs the emulation runs while it is running
     /// (from its creation unless created with `"running": false`).
     fn counter_command(&mut self, request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
-        let body = parse_body(&request.text())?;
-        let name = match find_key(&body, "name") {
-            Some(Value::String(name)) if !name.is_empty() => name.clone(),
-            _ => {
-                return Err(ApiError::field(
-                    "name",
-                    "missing field \"name\": the counter's name",
-                ))
-            }
-        };
-        let action = match find_key(&body, "action") {
-            None => "create",
-            Some(Value::String(action)) => action.as_str(),
-            Some(_) => {
-                return Err(ApiError::field(
-                    "action",
-                    "field \"action\" must be a string",
-                ))
-            }
-        };
-        let running = match find_key(&body, "running") {
-            None => true,
-            Some(Value::Bool(b)) => *b,
-            Some(_) => {
-                return Err(ApiError::field(
-                    "running",
-                    "field \"running\" must be a boolean",
-                ))
-            }
-        };
+        let command: CounterCommand = body_as(request)?;
+        let name = command
+            .name
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| ApiError::field("name", "missing field \"name\": the counter's name"))?;
+        let running = command.running.unwrap_or(true);
         // Count from the instruction about to run.
         self.count_nops(motherboard);
-        match action {
-            "create" => {
+        match command.action.unwrap_or(api::CounterAction::Create) {
+            api::CounterAction::Create => {
                 if self.counters.contains_key(&name) {
                     return Err(ApiError::field(
                         "name",
@@ -1642,41 +1637,39 @@ impl DebugServer {
                     },
                 );
             }
-            "reset" | "start" | "stop" => {
+            action => {
                 let counter = self
                     .counters
                     .get_mut(&name)
                     .ok_or_else(|| ApiError::field("name", format!("no counter \"{name}\"")))?;
                 match action {
-                    "reset" => counter.t_states = 0,
-                    "start" => counter.running = true,
+                    api::CounterAction::Reset => counter.t_states = 0,
+                    api::CounterAction::Start => counter.running = true,
                     _ => counter.running = false,
                 }
             }
-            other => {
-                return Err(ApiError::field(
-                    "action",
-                    format!("unknown action \"{other}\": create, reset, start or stop"),
-                ))
-            }
         }
-        let mut reply = self.list_counters();
-        merge(&mut reply, json!({ "ok": true }));
-        Ok(ApiResponse::ok(reply))
+        Ok(reply(&CountersChanged {
+            ok: true,
+            counters: self.list_counters(),
+        }))
     }
 
     fn delete_counters(&mut self, request: &ApiRequest) -> ApiResult {
-        match request.param("name") {
+        refuse_empty(request, "name", "the counter to delete (none: all)")?;
+        let query: RemoveCounter = query_as(request)?;
+        match query.name {
             None => self.counters.clear(),
             Some(name) => {
-                if self.counters.remove(name).is_none() {
+                if self.counters.remove(&name).is_none() {
                     return Err(ApiError::field("name", format!("no counter \"{name}\"")));
                 }
             }
         }
-        let mut reply = self.list_counters();
-        merge(&mut reply, json!({ "ok": true }));
-        Ok(ApiResponse::ok(reply))
+        Ok(reply(&CountersChanged {
+            ok: true,
+            counters: self.list_counters(),
+        }))
     }
 
     // --------------------------------------------------------- commands
@@ -1685,20 +1678,12 @@ impl DebugServer {
     fn set_z80(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let set: SetZ80 = body_as(request)?;
         let ack = self.apply_z80(&set, motherboard)?;
-        Ok(ApiResponse::ok(to_json(&ack)))
+        Ok(reply(&ack))
     }
 
     /// Set the registers `set` names; all are checked before any changes.
     fn apply_z80(&mut self, set: &SetZ80, motherboard: &mut Motherboard) -> Result<CommandAck, ApiError> {
-        let check = |name: &str, value: Option<Int>, max: i64| -> Result<Option<i64>, ApiError> {
-            value
-                .map(|v| {
-                    v.within(0, max).ok_or_else(|| {
-                        ApiError::field(name, format!("field \"{name}\" must be between 0 and {max}"))
-                    })
-                })
-                .transpose()
-        };
+        let check = |name: &str, value: Option<Int>, max: i64| ranged(name, value, 0, max);
         let words = [
             ("PC", set.PC, Reg16::Pc),
             ("SP", set.SP, Reg16::Sp),
@@ -1799,7 +1784,7 @@ impl DebugServer {
     fn step_request(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let query: StepQuery = query_as(request)?;
         let ack = self.step_by(query.mode.unwrap_or_default(), motherboard)?;
-        Ok(ApiResponse::ok(to_json(&ack)))
+        Ok(reply(&ack))
     }
 
     /// Run as far as `mode` says, then pause.
@@ -1826,27 +1811,23 @@ impl DebugServer {
     }
 
     fn write_ram(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.text())?;
-        let addr = int_field(&body, "addr", 0, 0xffff)?;
+        let write: WriteRam = body_as(request)?;
+        if write.at.is_some() {
+            return self.write_at(&write, motherboard);
+        }
+        if write.paging.is_some() {
+            return Err(ApiError::field("paging", "a paging is for a CPU address: give it in \"at\""));
+        }
+        let addr = ranged("addr", write.addr, 0, 0xffff)?;
         let bank_count = motherboard.physical_bank_count() as i64;
-        let bank = int_field(&body, "bank", 0, bank_count - 1)?.unwrap_or(0) as usize;
-        let data = match find_key(&body, "data") {
+        let bank = ranged("bank", write.bank, 0, bank_count - 1)?.unwrap_or(0) as usize;
+        let data = match &write.data {
             None => Vec::new(),
-            Some(Value::String(text)) => parse_hex(text)
+            Some(text) => parse_hex(text)
                 .ok_or_else(|| ApiError::field("data", "field \"data\" must be a hex string"))?,
-            Some(_) => {
-                return Err(ApiError::field(
-                    "data",
-                    "field \"data\" must be a hex string",
-                ))
-            }
         };
-        let exec = match find_key(&body, "exec") {
-            None => false,
-            Some(Value::Bool(b)) => *b,
-            Some(_) => return Err(ApiError::field("exec", "field \"exec\" must be a boolean")),
-        };
-        let entry = int_field(&body, "entry", 0, 0xffff)?;
+        let exec = write.exec.unwrap_or(false);
+        let entry = ranged("entry", write.entry, 0, 0xffff)?;
         if data.is_empty() && !exec {
             return Err(ApiError::new(
                 "nothing to do: no \"data\" to write and no \"exec\"",
@@ -1884,39 +1865,102 @@ impl DebugServer {
             motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(target);
         }
         self.ram_seq += 1;
-        Ok(ApiResponse::ok(
-            json!({ "ok": true, "seq": self.ram_seq, "cmd_seq": self.command() }),
-        ))
+        Ok(reply(&MemoryAck {
+            ok: true,
+            seq: self.ram_seq,
+            cmd_seq: self.command(),
+        }))
+    }
+
+    /// `POST /api/ram` with `at`: a CPU address (the RAM a write there reaches, through
+    /// `paging`) or an offset in a RAM bank; a ROM, a cartridge page, the registers refused.
+    fn write_at(&mut self, write: &WriteRam, motherboard: &mut Motherboard) -> ApiResult {
+        if write.addr.is_some() || write.bank.is_some() {
+            return Err(ApiError::field("at", "\"at\" replaces addr and bank: give one or the other"));
+        }
+        let at = write.at.expect("write_at is for an \"at\"");
+        let data = match &write.data {
+            None => Vec::new(),
+            Some(text) => parse_hex(text)
+                .ok_or_else(|| ApiError::field("data", "field \"data\" must be a hex string"))?,
+        };
+        let exec = write.exec.unwrap_or(false);
+        let entry = ranged("entry", write.entry, 0, 0xffff)?;
+        if data.is_empty() && !exec {
+            return Err(ApiError::new("nothing to do: no \"data\" to write and no \"exec\""));
+        }
+        // where each byte goes: a RAM bank and an offset in it
+        let places: Vec<(u16, u16)> = match at {
+            Location::Cpu(address) => {
+                let through = crate::paging::Paging::from_api(&write.paging.unwrap_or_default(), motherboard);
+                (0..data.len())
+                    .map(|i| through.write_location(motherboard, address.wrapping_add(i as u16)))
+                    .collect()
+            }
+            Location::In { space: Space::Ram(bank), offset } => {
+                if write.paging.is_some() {
+                    return Err(ApiError::field("paging", "a paging is for a CPU address, not a RAM bank"));
+                }
+                let start = u32::from(bank) * 0x4000 + offset;
+                (0..data.len() as u32)
+                    .map(|i| (((start + i) / 0x4000) as u16, ((start + i) % 0x4000) as u16))
+                    .collect()
+            }
+            Location::In { space, .. } => {
+                return Err(ApiError::field(
+                    "at",
+                    format!("{} is not written: a ROM, a cartridge page or the ASIC's registers", space.name()),
+                ))
+            }
+        };
+        for (&(bank, offset), &byte) in places.iter().zip(&data) {
+            if !motherboard.write_bank_byte(bank, offset, byte) {
+                return Err(ApiError::field(
+                    "data",
+                    format!(
+                        "the write runs past the last RAM bank (B{:02X})",
+                        motherboard.physical_bank_count() - 1
+                    ),
+                ));
+            }
+        }
+        if exec {
+            let target = match (entry, at) {
+                (Some(entry), _) => entry as u16,
+                (None, Location::Cpu(address)) => address,
+                (None, _) => {
+                    return Err(ApiError::field("entry", "exec at a RAM bank's offset needs the \"entry\" PC"))
+                }
+            };
+            motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(target);
+        }
+        self.ram_seq += 1;
+        Ok(reply(&MemoryAck {
+            ok: true,
+            seq: self.ram_seq,
+            cmd_seq: self.command(),
+        }))
     }
 
     fn exec(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.text())?;
-        let addr = int_field(&body, "addr", 0, 0xffff)?
+        let set: SetPc = body_as(request)?;
+        let addr = ranged("addr", set.addr, 0, 0xffff)?
             .ok_or_else(|| ApiError::field("addr", "missing field \"addr\": the new PC"))?;
         self.run_command("debug-set-pc", Some(Arg::Number(addr)), motherboard)?;
         self.ram_seq += 1;
-        Ok(ApiResponse::ok(
-            json!({ "ok": true, "seq": self.ram_seq, "cmd_seq": self.command() }),
-        ))
+        Ok(reply(&MemoryAck {
+            ok: true,
+            seq: self.ram_seq,
+            cmd_seq: self.command(),
+        }))
     }
 
     fn config(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.text())?;
-        let bool_field = |name: &str| -> Result<Option<bool>, ApiError> {
-            match find_key(&body, name) {
-                None => Ok(None),
-                Some(Value::Bool(b)) => Ok(Some(*b)),
-                Some(_) => Err(ApiError::field(
-                    name,
-                    format!("field \"{name}\" must be a boolean"),
-                )),
-            }
-        };
-        let paused = bool_field("paused")?;
-        let soft = bool_field("do_soft_reset")?.unwrap_or(false);
-        let hard = bool_field("do_hard_reset")?.unwrap_or(false);
-        let history_size = int_field(&body, "history_size", 1, 100_000)?;
-        if paused.is_none() && !soft && !hard && history_size.is_none() {
+        let set: SetConfig = body_as(request)?;
+        let soft = set.do_soft_reset.unwrap_or(false);
+        let hard = set.do_hard_reset.unwrap_or(false);
+        let history_size = ranged("history_size", set.history_size, 1, 100_000)?;
+        if set.paused.is_none() && !soft && !hard && history_size.is_none() {
             return Err(ApiError::new(
                 "no recognised field: supported are paused, do_soft_reset, do_hard_reset, history_size"
             ));
@@ -1935,30 +1979,39 @@ impl DebugServer {
             };
             self.run_command(reset, None, motherboard)?;
         }
-        if let Some(paused) = paused {
+        if let Some(paused) = set.paused {
             let id = if paused { "debug-pause" } else { "debug-run" };
             self.run_command(id, None, motherboard)?;
         }
-        Ok(ApiResponse::ok(
-            json!({ "ok": true, "cmd_seq": self.command() }),
-        ))
+        Ok(reply(&CommandAck::new(self.command())))
+    }
+
+    /// `GET /api/config`.
+    fn get_config(&self, motherboard: &Motherboard) -> Config {
+        Config {
+            crtc_type: motherboard.crtc().crtc_type() as u8,
+            paused: self.paused,
+            history_size: self.history_size as u64,
+        }
     }
 
     /// `POST /api/z80_bp`: CPU addresses are resolved against the live
     /// mapping, `Bnn:hhhh` (hex 16K bank, hex offset carrying into the next
     /// banks) and the deprecated `Cnn:hhhh` (decimal bank) name a RAM byte.
     fn set_breakpoints(&mut self, request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
+        let query: ExecBreakpointsQuery = query_as(request)?;
         let (breakpoints, resolved, warnings) = self.parse_exec_breakpoints(request, motherboard)?;
-        if request.param("add") == Some("1") {
+        if flag(query.add, false) {
             self.exec_breakpoints.extend(breakpoints);
         } else {
             self.exec_breakpoints = breakpoints;
         }
-        let mut body = json!({ "ok": true, "cmd_seq": self.command(), "resolved": resolved });
-        if !warnings.is_empty() {
-            body["warnings"] = json!(warnings);
-        }
-        Ok(ApiResponse::ok(body))
+        Ok(reply(&ExecBreakpointsSet {
+            ok: true,
+            cmd_seq: self.command(),
+            resolved,
+            warnings: (!warnings.is_empty()).then_some(warnings),
+        }))
     }
 
     /// `DELETE /api/z80_bp`: the breakpoints listed in the body (as `POST` takes them) removed,
@@ -1970,35 +2023,30 @@ impl DebugServer {
         } else {
             self.exec_breakpoints.retain(|location| !breakpoints.contains(location));
         }
-        let mut body = json!({ "ok": true, "cmd_seq": self.command(), "removed": resolved });
-        if !warnings.is_empty() {
-            body["warnings"] = json!(warnings);
-        }
-        Ok(ApiResponse::ok(body))
+        Ok(reply(&ExecBreakpointsRemoved {
+            ok: true,
+            cmd_seq: self.command(),
+            removed: resolved,
+            warnings: (!warnings.is_empty()).then_some(warnings),
+        }))
     }
 
     /// `POST /api/run_to`: run to `addr` (a CPU address or a symbol), or to the beam at `line`
     /// and `nop`, once, then pause (a z80_bp event, reason run_to or run_to_beam).
     fn run_to_request(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.text())?;
-        let reply = |server: &Self| ApiResponse::ok(json!({ "ok": true, "cmd_seq": server.cmd_seq }));
-        if let Some(addr) = find_key(&body, "addr") {
-            let text = match addr {
-                Value::Number(n) => n.to_string(),
-                Value::String(text) => text.clone(),
-                _ => return Err(ApiError::field("addr", "expected an address or a symbol")),
-            };
+        let run_to: RunTo = body_as(request)?;
+        if let Some(AddressOrSymbol(text)) = run_to.addr {
             self.run_command("debug-run-to-address", Some(Arg::Text(text)), motherboard)?;
-            return Ok(reply(self));
+            return Ok(reply(&CommandAck::new(self.cmd_seq)));
         }
-        let line = int_field(&body, "line", 0, 0xffff)?;
-        let nop = int_field(&body, "nop", 0, NOPS_PER_LINE as i64 - 1)?;
-        match (line, nop) {
-            (Some(line), nop) => {
+        let line = ranged("line", run_to.line, 0, 0xffff)?;
+        let nop = ranged("nop", run_to.nop, 0, NOPS_PER_LINE as i64 - 1)?;
+        match line {
+            Some(line) => {
                 self.run_to_beam(line as usize, nop.unwrap_or(0) as usize);
-                Ok(reply(self))
+                Ok(reply(&CommandAck::new(self.cmd_seq)))
             }
-            _ => Err(ApiError::new("expected addr, or line (and nop)")),
+            None => Err(ApiError::new("expected addr, or line (and nop)")),
         }
     }
 
@@ -2008,7 +2056,7 @@ impl DebugServer {
         &self,
         request: &ApiRequest,
         motherboard: &Motherboard,
-    ) -> Result<(HashSet<PhysicalAddress>, Vec<Value>, Vec<String>), ApiError> {
+    ) -> Result<(HashSet<PhysicalAddress>, Vec<ResolvedBreakpoint>, Vec<String>), ApiError> {
         let mut breakpoints = HashSet::new();
         let mut resolved = Vec::new();
         let mut warnings = Vec::new();
@@ -2055,24 +2103,32 @@ impl DebugServer {
                     motherboard.physical_address(address)
                 }
             };
-            resolved.push(json!({ "entry": entry, "location": location_name(location) }));
+            resolved.push(ResolvedBreakpoint {
+                entry: entry.to_owned(),
+                location: location_name(location),
+            });
             breakpoints.insert(location);
         }
         Ok((breakpoints, resolved, warnings))
     }
 
     /// `GET /api/breakpoints` (extension).
-    fn list_breakpoints(&self) -> Value {
+    fn list_breakpoints(&self) -> Breakpoints {
         let mut exec: Vec<String> = self
             .exec_breakpoints
             .iter()
             .map(|l| location_name(*l))
             .collect();
         exec.sort();
-        json!({
-            "z80_bp": exec,
-            "advanced": self.advanced.iter().enumerate().map(|(index, b)| breakpoint_json(index, b)).collect::<Vec<_>>()
-        })
+        Breakpoints {
+            z80_bp: exec,
+            advanced: self
+                .advanced
+                .iter()
+                .enumerate()
+                .map(|(index, b)| breakpoint_typed(index, b))
+                .collect(),
+        }
     }
 
     /// `POST /api/breakpoints` (extension): one advanced breakpoint, as a
@@ -2080,19 +2136,20 @@ impl DebugServer {
     /// `addr`, `mask`, `size`, `value`, `valmask`, `name`) or as the text of
     /// a REMU `acebreak` entry in `remu`.
     fn add_breakpoint(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
-        let body = parse_body(&request.text())?;
-        let brk = match find_key(&body, "remu") {
-            Some(Value::String(text)) => {
+        let new: NewBreakpoint = body_as(request)?;
+        let brk = match &new.remu {
+            Some(text) => {
                 AdvancedBreakpoint::parse_remu(text).map_err(|e| ApiError::field("remu", e))?
             }
-            Some(_) => return Err(ApiError::field("remu", "field \"remu\" must be a string")),
-            None => breakpoint_of_json(&body)?,
+            None => breakpoint_of(&new)?,
         };
         self.advanced.push(brk);
         motherboard.watch_bus(self.watches_bus());
-        Ok(ApiResponse::ok(
-            json!({ "ok": true, "index": self.advanced.len() - 1, "cmd_seq": self.command() }),
-        ))
+        Ok(reply(&BreakpointAdded {
+            ok: true,
+            index: self.advanced.len() as u64 - 1,
+            cmd_seq: self.command(),
+        }))
     }
 
     /// `DELETE /api/breakpoints[?index=N]` (extension): one, or all.
@@ -2101,10 +2158,12 @@ impl DebugServer {
         request: &ApiRequest,
         motherboard: &mut Motherboard,
     ) -> ApiResult {
-        match request.query.iter().find(|(k, _)| k == "index") {
-            Some((_, index)) => {
-                let index = parse_int(index)
-                    .filter(|i| (0..self.advanced.len() as i64).contains(i))
+        refuse_empty(request, "index", "the breakpoint to remove (none: all)")?;
+        let query: RemoveBreakpoint = query_as(request)?;
+        match query.index {
+            Some(index) => {
+                let index = index
+                    .within(0, self.advanced.len() as i64 - 1)
                     .ok_or_else(|| {
                         ApiError::field(
                             "index",
@@ -2116,9 +2175,7 @@ impl DebugServer {
             None => self.advanced.clear(),
         }
         motherboard.watch_bus(self.watches_bus());
-        Ok(ApiResponse::ok(
-            json!({ "ok": true, "cmd_seq": self.command() }),
-        ))
+        Ok(reply(&CommandAck::new(self.command())))
     }
 
     /// Breakpoints read from elsewhere (e.g. a snapshot's chunks).
@@ -2137,12 +2194,14 @@ impl DebugServer {
     }
 
     /// `GET /api/symbols` (extension): `[{name, address}]`, by address.
-    fn list_symbols(&self) -> Value {
-        json!(self
-            .symbols
+    fn list_symbols(&self) -> Vec<Symbol> {
+        self.symbols
             .iter()
-            .map(|(name, address)| json!({ "name": name, "address": address }))
-            .collect::<Vec<_>>())
+            .map(|(name, address)| Symbol {
+                name: name.to_string(),
+                address,
+            })
+            .collect()
     }
 
     /// Whether an execution breakpoint is on the CPU address `address` (as mapped now).
@@ -2194,28 +2253,21 @@ impl DebugServer {
 
     /// `GET /api/history[?n=N]`: oldest first.
     fn history_list(&self, request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
-        let n = match request.param("n") {
-            None => self.history.len(),
-            Some(text) => parse_int(text)
-                .filter(|n| (1..=100_000).contains(n))
-                .ok_or_else(|| {
-                    ApiError::field("n", "parameter \"n\" must be between 1 and 100000")
-                })? as usize,
-        };
+        let query: HistoryQuery = query_as(request)?;
+        let n = ranged("n", query.n, 1, 100_000)?.map_or(self.history.len(), |n| n as usize);
         let hex = |bytes: [u8; 4]| bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
-        let entries: Vec<Value> = self
+        let entries: Vec<HistoryEntry> = self
             .history
             .iter()
             .skip(self.history.len().saturating_sub(n))
-            .map(|&(pc, bytes)| {
-                let mut entry = json!({ "pc": pc, "hex": hex(bytes), "current_hex": hex(instruction_bytes(motherboard, pc)) });
-                if let Some(label) = self.symbols.describe(pc) {
-                    entry["label"] = json!(label);
-                }
-                entry
+            .map(|&(pc, bytes)| HistoryEntry {
+                pc,
+                hex: hex(bytes),
+                current_hex: hex(instruction_bytes(motherboard, pc)),
+                label: self.symbols.describe(pc),
             })
             .collect();
-        Ok(ApiResponse::ok(json!(entries)))
+        Ok(reply(&entries))
     }
 
     /// `GET /api/screenshot[?crop=][&live=][&full=]`, as AMSpiriT:
@@ -2229,17 +2281,10 @@ impl DebugServer {
     /// `crop=0` and `live=1` need the monitor (the emulator's loop, not a
     /// bare `handle`).
     fn screenshot(&self, request: &ApiRequest, monitor: Option<&Monitor>) -> ApiResult {
-        let flag = |name: &str, default: bool| -> Result<bool, ApiError> {
-            match request.param(name) {
-                None | Some("") => Ok(default),
-                Some("0") => Ok(false),
-                Some("1") => Ok(true),
-                Some(_) => Err(ApiError::field(name, format!("{name} must be 0 or 1"))),
-            }
-        };
-        let crop = flag("crop", true)?;
-        let live = flag("live", self.paused)?;
-        let alone = flag("full", true)?;
+        let query: ScreenshotQuery = query_as(request)?;
+        let crop = flag(query.crop, true);
+        let live = flag(query.live, self.paused);
+        let alone = flag(query.full, true);
         let no_frame = || {
             Ok(ApiResponse::json(
                 503,
@@ -2325,27 +2370,17 @@ impl DebugServer {
                 "empty body: expected the raw media file bytes",
             ));
         }
-        let name = request.param("name").unwrap_or("");
-        let drive = match request.param("drive") {
-            None | Some("0") => crate::fdc::FdcDrive::A,
-            Some("1") => crate::fdc::FdcDrive::B,
-            Some(_) => {
-                return Err(ApiError::field(
-                    "drive",
-                    "parameter \"drive\" must be 0 or 1",
-                ))
-            }
+        let query: MediaQuery = query_as(request)?;
+        let name = query.name.as_deref().unwrap_or("");
+        let drive = match ranged("drive", query.drive, 0, 1)? {
+            None | Some(0) => crate::fdc::FdcDrive::A,
+            _ => crate::fdc::FdcDrive::B,
         };
-        if let Some(crtc) = request.param("crtc") {
-            if !matches!(crtc, "keep" | "sna") {
-                return Err(ApiError::field(
-                    "crtc",
-                    "parameter \"crtc\" must be one of keep, sna",
-                ));
-            }
-        }
         let lower_name = name.to_ascii_lowercase();
-        let mut reply = json!({ "ok": true });
+        let mut loaded = MediaLoaded {
+            ok: true,
+            ..MediaLoaded::default()
+        };
         if bytes.starts_with(b"MV - SNA") {
             let breakpoints =
                 crate::snapshot::load_sna_bytes(motherboard, bytes).map_err(ApiError::new)?;
@@ -2356,11 +2391,11 @@ impl DebugServer {
                 self.add_advanced_breakpoint(brk.clone(), motherboard);
             }
             self.add_symbols(&breakpoints.symbols);
-            reply["media"] = json!("sna");
-            reply["breakpoints"] = json!(breakpoints.len());
-            reply["symbols"] = json!(breakpoints.symbols.len());
+            loaded.media = "sna".to_owned();
+            loaded.breakpoints = Some(breakpoints.len() as u64);
+            loaded.symbols = Some(breakpoints.symbols.len() as u64);
             if !breakpoints.ignored.is_empty() {
-                reply["warnings"] = json!(breakpoints.ignored);
+                loaded.warnings = Some(breakpoints.ignored.iter().map(ToString::to_string).collect());
             }
         } else if bytes.starts_with(b"MV - CPC")
             || bytes.starts_with(b"EXTENDED CPC DSK")
@@ -2379,33 +2414,31 @@ impl DebugServer {
             let image =
                 crate::disc_image::load_disc_bytes(bytes, file, entry).map_err(ApiError::new)?;
             motherboard.insert_disc(drive, Some(image));
-            reply["media"] = json!("dsk");
+            loaded.media = "dsk".to_owned();
         } else if bytes.starts_with(b"ZXTape!") {
             let tape = crate::tape::Tape::from_cdt(bytes).map_err(ApiError::new)?;
             if !tape.notes.is_empty() {
-                reply["warnings"] = json!(tape.notes);
+                loaded.warnings = Some(tape.notes.iter().map(ToString::to_string).collect());
             }
             motherboard.insert_tape(Some(tape));
-            reply["media"] = json!("cdt");
+            loaded.media = "cdt".to_owned();
         } else if lower_name.ends_with(".bin") || lower_name.ends_with(".amsdos") {
             let binary = parse_binary(name, bytes).map_err(|e| ApiError::field("name", e))?;
             motherboard.write_buffer(binary.load, binary.data);
             if let Some(entry) = binary.jump {
                 motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(entry);
             }
-            reply["media"] = json!("bin");
-            reply["load"] = json!(binary.load);
-            reply["len"] = json!(binary.data.len());
-            if let Some(entry) = binary.entry {
-                reply["entry"] = json!(entry);
-            }
+            loaded.media = "bin".to_owned();
+            loaded.load = Some(binary.load);
+            loaded.len = Some(binary.data.len() as u64);
+            loaded.entry = binary.entry;
         } else {
             return Err(ApiError::new(
                 "unsupported media: a .sna or .dsk image (recognised by its content), or a .bin/.amsdos named by ?name="
             ));
         }
-        reply["cmd_seq"] = json!(self.command());
-        Ok(ApiResponse::ok(reply))
+        loaded.cmd_seq = self.command();
+        Ok(reply(&loaded))
     }
 
     fn keytype(
@@ -2413,17 +2446,10 @@ impl DebugServer {
         request: &ApiRequest,
         layout: crate::keyboard::KeyboardLayout,
     ) -> ApiResult {
-        let body = parse_body(&request.text())?;
-        let text = match find_key(&body, "text") {
-            Some(Value::String(text)) => text.clone(),
-            Some(_) => return Err(ApiError::field("text", "field \"text\" must be a string")),
-            None => {
-                return Err(ApiError::field(
-                    "text",
-                    "missing field \"text\": the characters to type",
-                ))
-            }
-        };
+        let typed: KeyType = body_as(request)?;
+        let text = typed.text.ok_or_else(|| {
+            ApiError::field("text", "missing field \"text\": the characters to type")
+        })?;
         for c in text.chars() {
             let c = if c == '\r' { '\n' } else { c };
             let keys = layout
@@ -2431,9 +2457,7 @@ impl DebugServer {
                 .ok_or_else(|| ApiError::field("text", format!("cannot type {c:?}")))?;
             self.typing.push_back(keys);
         }
-        Ok(ApiResponse::ok(
-            json!({ "ok": true, "cmd_seq": self.command() }),
-        ))
+        Ok(reply(&CommandAck::new(self.command())))
     }
 
     /// Press/release the typed keys that are due.
@@ -2471,43 +2495,55 @@ impl DebugServer {
 /// AMSpiriT's `beam` object: the beam in the video buffer (1024 ticks by
 /// 350 lines) and the visible area, plus the position in NOPs.
 fn beam_json(beam: Beam) -> Value {
-    let mut value = beam.json();
-    merge(&mut value, beam_crop(beam));
-    value
+    to_json(&beam.state(false))
 }
 
-fn beam_crop(beam: Beam) -> Value {
-    json!({ "cx": beam.crop_x, "cy": beam.crop_y, "cw": SCREENSHOT_SIZE.0, "ch": SCREENSHOT_SIZE.1 })
-}
+
 
 fn basic_state(motherboard: &Motherboard) -> Value {
+    to_json(&basic_state_typed(motherboard))
+}
+
+fn basic_state_typed(motherboard: &Motherboard) -> api::BasicState {
     let state = BasicState::read(motherboard);
-    json!({
-        "basic_ver": basic_program::BasicRom::of(motherboard.model()).version,
-        "prog_start": state.prog_start,
-        "txttop": state.txttop,
-        "vartop": state.vartop,
-        "arrend": state.arrend,
-        "prog_size": state.txttop.wrapping_sub(state.prog_start),
-        "var_size": state.vartop.wrapping_sub(state.txttop),
-        "chain_heads_addr": basic_program::BasicRom::of(motherboard.model()).variable_chain_heads,
-        "cur_linenum": state.line.unwrap_or(0xffff),
-        "stmt_addr": state.stmt_addr
-    })
+    let rom = basic_program::BasicRom::of(motherboard.model());
+    api::BasicState {
+        basic_ver: rom.version,
+        prog_start: state.prog_start,
+        txttop: state.txttop,
+        vartop: state.vartop,
+        arrend: state.arrend,
+        prog_size: state.txttop.wrapping_sub(state.prog_start),
+        var_size: state.vartop.wrapping_sub(state.txttop),
+        chain_heads_addr: rom.variable_chain_heads,
+        cur_linenum: state.line.unwrap_or(0xffff),
+        stmt_addr: state.stmt_addr,
+    }
 }
 
 fn basic_listing(motherboard: &Motherboard) -> ApiResult {
     let lines = basic_program::listing(motherboard)
         .map_err(|e| ApiError::new(format!("cannot decode the program: {e}")))?;
-    Ok(ApiResponse::ok(json!({
-        "lines": lines.iter().map(|line| json!({
-            "addr": line.addr,
-            "num": line.number,
-            "stmts": line.statements.iter().map(|s| json!({
-                "addr": s.addr, "end": s.end, "colon": s.colon, "text": s.text, "vars": s.vars
-            })).collect::<Vec<_>>()
-        })).collect::<Vec<_>>()
-    })))
+    Ok(reply(&BasicListing {
+        lines: lines
+            .iter()
+            .map(|line| BasicLine {
+                addr: line.addr,
+                num: line.number,
+                stmts: line
+                    .statements
+                    .iter()
+                    .map(|s| BasicStatement {
+                        addr: s.addr,
+                        end: s.end,
+                        colon: s.colon,
+                        text: s.text.clone(),
+                        vars: s.vars.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }))
 }
 
 /// The visible picture (what `GET /api/screenshot` returns).
@@ -2542,37 +2578,52 @@ fn rgb(levels: crate::ga::RgbLevels) -> u32 {
 }
 
 fn ga(motherboard: &Motherboard) -> Value {
+    to_json(&ga_state(motherboard))
+}
+
+fn ga_state(motherboard: &Motherboard) -> GateArray {
     use crate::ga::VideoMode;
     let ga = motherboard.ga();
     let palette = ga.palette();
     let mmr = motherboard.mmr();
-    json!({
-        "mode": match ga.active_video_mode() {
-            VideoMode::Mode0 => 0, VideoMode::Mode1 => 1, VideoMode::Mode2 => 2, VideoMode::Mode3 => 3
+    GateArray {
+        mode: match ga.active_video_mode() {
+            VideoMode::Mode0 => 0,
+            VideoMode::Mode1 => 1,
+            VideoMode::Mode2 => 2,
+            VideoMode::Mode3 => 3,
         },
-        "pen": ga.selected_pen(),
+        pen: ga.selected_pen(),
         // The hardware colour numbers (0x40 | n is the INKR write).
-        "border_idx": palette[16].hardware_number(),
-        "border_rgb": rgb(palette[16].into()),
-        "ink_idx": palette[..16].iter().map(|ink| ink.hardware_number()).collect::<Vec<_>>(),
-        "ink_rgb": palette[..16].iter().map(|&ink| rgb(ink.into())).collect::<Vec<_>>(),
-        "rmr": ga.rmr(),
-        "ram_mode": mmr & 7,
-        "ram_page": (mmr >> 3) & 7,
+        border_idx: palette[16].hardware_number(),
+        border_rgb: rgb(palette[16].into()),
+        ink_idx: palette[..16].iter().map(|ink| ink.hardware_number()).collect(),
+        ink_rgb: palette[..16].iter().map(|&ink| rgb(ink.into())).collect(),
+        rmr: ga.rmr(),
+        ram_mode: mmr & 7,
+        ram_page: (mmr >> 3) & 7,
         // Extension: firmware ink numbers, ROM enables, interrupt counter.
-        "ink_firmware": palette.iter().map(|ink| ink.number()).collect::<Vec<_>>(),
-        "lower_rom": ga.lower_rom_pagging().is_enabled(),
-        "upper_rom": ga.upper_rom_pagging().is_enabled(),
-        "r52": ga.r52()
-    })
+        ink_firmware: palette.iter().map(|ink| ink.number()).collect(),
+        lower_rom: ga.lower_rom_pagging().is_enabled(),
+        upper_rom: ga.upper_rom_pagging().is_enabled(),
+        r52: ga.r52(),
+    }
 }
 
 fn psg(motherboard: &Motherboard) -> Value {
-    to_json(&crate::state::psg(motherboard))
+    to_json(&psg_state(motherboard))
+}
+
+fn psg_state(motherboard: &Motherboard) -> Psg {
+    crate::state::psg(motherboard)
 }
 
 fn fdc(motherboard: &Motherboard) -> Value {
-    to_json(&crate::state::fdc(motherboard))
+    to_json(&fdc_state(motherboard))
+}
+
+fn fdc_state(motherboard: &Motherboard) -> Fdc {
+    crate::state::fdc(motherboard)
 }
 
 /// `GET /api/asic`: a CPC+'s ASIC (`null` on a CPC).
@@ -2590,17 +2641,12 @@ impl DebugServer {
         motherboard: &mut Motherboard,
     ) -> Result<ApiResponse, ApiError> {
         use crate::fdc::DriveKind;
-        let drive = match request.param("drive") {
-            None | Some("0") => "drive-a",
-            Some("1") => "drive-b",
-            Some(_) => {
-                return Err(ApiError::field(
-                    "drive",
-                    "parameter \"drive\" must be 0 or 1",
-                ))
-            }
+        let command: DriveCommand = query_as(request)?;
+        let drive = match ranged("drive", command.drive, 0, 1)? {
+            None | Some(0) => "drive-a",
+            _ => "drive-b",
         };
-        if let Some(kind) = request.param("kind") {
+        if let Some(kind) = command.kind {
             let kind: DriveKind = kind
                 .parse()
                 .map_err(|e: String| ApiError::field("kind", e))?;
@@ -2611,7 +2657,7 @@ impl DebugServer {
             };
             self.run_command(&id, None, motherboard)?;
         }
-        if request.param("flip").is_some_and(|v| v == "1")
+        if flag(command.flip, false)
             && self
                 .run_command(&format!("{drive}-flip-disc"), None, motherboard)
                 .is_err()
@@ -2621,7 +2667,7 @@ impl DebugServer {
                 "only the disc of a 3\" drive with a disc in it can be turned over",
             ));
         }
-        Ok(ApiResponse::ok(fdc(motherboard)))
+        Ok(reply(&fdc_state(motherboard)))
     }
 
     /// Run the command `id` of the menus (see [`crate::commands`]): the API and the menus do
@@ -2678,40 +2724,69 @@ impl CommandTarget for ServerTarget<'_> {
 /// `GET /api/memmap`: each 16K region of the CPU's view, with the ROM
 /// read there if any and the absolute RAM bank (written there in any case).
 fn memmap(motherboard: &Motherboard) -> Value {
-    let regions: Vec<Value> = (0..4u16)
+    let paging = crate::paging::Paging::from_api(&bemu_api::Paging::default(), motherboard);
+    to_json(&memmap_state(motherboard, &paging))
+}
+
+/// `GET /api/memmap[?paging=]`.
+fn memmap_request(request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
+    let query: MemMapQuery = query_as(request)?;
+    let paging = crate::paging::Paging::from_api(&query.paging.unwrap_or_default(), motherboard);
+    Ok(reply(&memmap_state(motherboard, &paging)))
+}
+
+/// The map of `paging`: what each region reads (the ROM, or which RAM bank), the bank written,
+/// and the registers' values that make it.
+fn memmap_state(motherboard: &Motherboard, paging: &crate::paging::Paging) -> MemMap {
+    use crate::paging::Source;
+    let regions = (0..4u16)
         .map(|region| {
             let base = region * 0x4000;
-            let ram_bank = match motherboard.physical_address_for_write(base) {
-                PhysicalAddress::Ram { bank, .. } => bank,
-                _ => unreachable!("writes always reach RAM"),
+            let source = paging.source(motherboard, region);
+            let mut value = MemRegion {
+                base,
+                name: format!("{base:04X}"),
+                rom: true,
+                rom_bank: None,
+                ram_bank: None,
+                ext: None,
+                write_bank: paging.write_location(motherboard, base).0,
+                source: Some(paging.space(motherboard, region).name()),
             };
-            let mut value = json!({ "base": base, "name": format!("{base:04X}") });
-            match motherboard.physical_address(base) {
-                PhysicalAddress::LowerRom { .. } => {
-                    merge(&mut value, json!({ "rom": true, "rom_bank": 255 }))
+            match source {
+                // AMSpiriT's numbers: 255 the lower ROM, else the upper ROM's
+                Source::LowerRom => value.rom_bank = Some(255),
+                Source::UpperRom(slot) => value.rom_bank = Some(u16::from(slot)),
+                Source::Cartridge(_) if region == 3 => value.rom_bank = Some(u16::from(paging.upper_number)),
+                Source::Cartridge(_) => value.rom_bank = Some(255),
+                Source::Registers => value.rom = false,
+                Source::Ram(bank) => {
+                    value.rom = false;
+                    value.ram_bank = Some(bank);
+                    value.ext = Some(bank >= 4);
                 }
-                PhysicalAddress::UpperRom { rom, .. } => {
-                    merge(&mut value, json!({ "rom": true, "rom_bank": rom }))
-                }
-                PhysicalAddress::Ram { bank, .. } => merge(
-                    &mut value,
-                    json!({ "rom": false, "ram_bank": bank, "ext": bank >= 4 }),
-                ),
             }
-            // Extension: where writes go, ROM or not.
-            value["write_bank"] = json!(ram_bank);
             value
         })
         .collect();
-    let mmr = motherboard.mmr();
-    json!({
-        "regions": regions,
-        "rmr": motherboard.ga().rmr(),
-        "ram_mode": mmr & 7,
-        "ram_page": (mmr >> 3) & 7,
-        "mmr": mmr,
-        "ram_banks": motherboard.physical_bank_count()
-    })
+    let (mmr, rmr) = if paging.follow {
+        (motherboard.mmr(), motherboard.ga().rmr())
+    } else {
+        // the values that would page it: the RAM's, and RMR's ROM bits (set: disabled)
+        let mmr = 0xc0 | ((paging.page & 7) << 3) | paging.ram_config;
+        let rmr = (motherboard.ga().rmr() & !0x0c)
+            | if paging.lower_rom { 0 } else { 0x04 }
+            | if paging.upper_rom { 0 } else { 0x08 };
+        (mmr, rmr)
+    };
+    MemMap {
+        regions,
+        rmr,
+        ram_mode: mmr & 7,
+        ram_page: (mmr >> 3) & 7,
+        mmr,
+        ram_banks: motherboard.physical_bank_count() as u32,
+    }
 }
 
 fn z80(motherboard: &Motherboard) -> Value {
@@ -2914,35 +2989,59 @@ fn hex16(value: u16) -> String {
 }
 
 /// The registers part of the `frame`/`z80_bp`/`watch` events.
-fn registers_event(motherboard: &Motherboard) -> Value {
+fn registers_event(motherboard: &Motherboard) -> EventRegisters {
     let cpu = motherboard.cpu();
     let r8 = |reg: Reg8| cpu.reg8(reg).get();
     let r16 = |reg: Reg16| hex16(cpu.reg16(reg).get());
-    json!({
-        "pc": r16(Reg16::Pc), "sp": r16(Reg16::Sp),
-        "a": r8(Reg8::A), "f": r8(Reg8::F), "b": r8(Reg8::B), "c": r8(Reg8::C),
-        "d": r8(Reg8::D), "e": r8(Reg8::E), "h": r8(Reg8::H), "l": r8(Reg8::L),
-        "ix": r16(Reg16::Ix), "iy": r16(Reg16::Iy)
-    })
+    EventRegisters {
+        pc: r16(Reg16::Pc),
+        sp: r16(Reg16::Sp),
+        a: r8(Reg8::A),
+        f: r8(Reg8::F),
+        b: r8(Reg8::B),
+        c: r8(Reg8::C),
+        d: r8(Reg8::D),
+        e: r8(Reg8::E),
+        h: r8(Reg8::H),
+        l: r8(Reg8::L),
+        ix: r16(Reg16::Ix),
+        iy: r16(Reg16::Iy),
+    }
+}
+
+/// What a stop event says beyond the machine's state.
+struct StopInfo {
+    /// See [`StopEvent::kind`].
+    kind: &'static str,
+    index: Option<u64>,
+    name: Option<String>,
+    hits: Option<u64>,
+    access: Option<EventAccess>,
+}
+
+impl StopInfo {
+    fn of(kind: &'static str) -> Self {
+        StopInfo {
+            kind,
+            index: None,
+            name: None,
+            hits: None,
+            access: None,
+        }
+    }
 }
 
 /// What a `z80_bp` event's `kind` means, in one word: `breakpoint` (an
 /// execution, memory or I/O breakpoint), `raster`, `step`, `step_over`
 /// (its run to the instruction after), `step_out`, `run_to`, `run_to_beam`.
-fn stop_reason(kind: Option<&str>) -> &'static str {
+fn stop_reason(kind: &str) -> StopReason {
     match kind {
-        Some("raster") => "raster",
-        Some("step") => "step",
-        Some("step_out") => "step_out",
-        Some("run_to") => "run_to",
-        Some("run_to_beam") => "run_to_beam",
-        _ => "breakpoint",
-    }
-}
-
-fn merge(target: &mut Value, extra: Value) {
-    if let (Value::Object(target), Value::Object(extra)) = (target, extra) {
-        target.extend(extra);
+        "raster" => StopReason::Raster,
+        "step" => StopReason::Step,
+        "step_out" => StopReason::StepOut,
+        "run_to" => StopReason::RunTo,
+        "run_to_beam" => StopReason::RunToBeam,
+        _ => StopReason::Breakpoint,
     }
 }
 
@@ -2963,119 +3062,90 @@ fn location_name(location: PhysicalAddress) -> String {
     }
 }
 
-fn breakpoint_json(index: usize, brk: &AdvancedBreakpoint) -> Value {
-    json!({
-        "index": index,
-        "kind": kind_name(brk.kind),
-        "access": match brk.access { BreakpointAccess::Read => "r", BreakpointAccess::Write => "w", BreakpointAccess::ReadWrite => "rw" },
-        "run": match brk.run { RunMode::Stop => "stop", RunMode::Watch => "watch", RunMode::Count => "count" },
-        "addr": brk.address, "mask": brk.mask, "size": brk.size,
-        "value": brk.value, "valmask": brk.value_mask,
-        "name": brk.name,
-        "condition": brk.condition.as_ref().map(Condition::source),
-        "counters": brk.counters.iter().map(|(action, name)| json!({ "action": action.name(), "name": name })).collect::<Vec<_>>(),
-        "after": brk.after,
-        "hits": brk.hits
-    })
+fn breakpoint_typed(index: usize, brk: &AdvancedBreakpoint) -> api::AdvancedBreakpoint {
+    api::AdvancedBreakpoint {
+        index: index as u64,
+        kind: match brk.kind {
+            BreakpointKind::Exec => api::BreakpointKind::Exec,
+            BreakpointKind::Memory => api::BreakpointKind::Mem,
+            BreakpointKind::Io => api::BreakpointKind::Io,
+        },
+        access: match brk.access {
+            BreakpointAccess::Read => api::BreakpointAccess::Read,
+            BreakpointAccess::Write => api::BreakpointAccess::Write,
+            BreakpointAccess::ReadWrite => api::BreakpointAccess::ReadWrite,
+        },
+        run: match brk.run {
+            RunMode::Stop => api::BreakpointRun::Stop,
+            RunMode::Watch => api::BreakpointRun::Watch,
+            RunMode::Count => api::BreakpointRun::Count,
+        },
+        addr: brk.address,
+        mask: brk.mask,
+        size: brk.size,
+        value: brk.value,
+        valmask: brk.value_mask,
+        name: brk.name.clone(),
+        condition: brk.condition.as_ref().map(|c| c.source().to_owned()),
+        counters: brk
+            .counters
+            .iter()
+            .map(|(action, name)| api::CounterLink {
+                action: match action {
+                    CounterAction::Reset => api::CounterAction::Reset,
+                    CounterAction::Start => api::CounterAction::Start,
+                    CounterAction::Stop => api::CounterAction::Stop,
+                },
+                name: name.clone(),
+            })
+            .collect(),
+        after: brk.after,
+        hits: brk.hits,
+    }
 }
 
-fn breakpoint_of_json(body: &Value) -> Result<AdvancedBreakpoint, ApiError> {
-    let text = |name: &str| -> Result<Option<String>, ApiError> {
-        match find_key(body, name) {
-            None => Ok(None),
-            Some(Value::String(text)) => Ok(Some(text.to_ascii_lowercase())),
-            Some(_) => Err(ApiError::field(
-                name,
-                format!("field \"{name}\" must be a string"),
-            )),
-        }
-    };
+fn breakpoint_of(new: &NewBreakpoint) -> Result<AdvancedBreakpoint, ApiError> {
     let mut brk = AdvancedBreakpoint::exec(0);
-    brk.kind = match text("kind")?.as_deref() {
-        None | Some("exec") => BreakpointKind::Exec,
-        Some("mem" | "memory") => BreakpointKind::Memory,
-        Some("io") => BreakpointKind::Io,
-        Some(_) => {
-            return Err(ApiError::field(
-                "kind",
-                "field \"kind\" must be one of exec, mem, io",
-            ))
-        }
+    brk.kind = match new.kind.unwrap_or(api::BreakpointKind::Exec) {
+        api::BreakpointKind::Exec => BreakpointKind::Exec,
+        api::BreakpointKind::Mem => BreakpointKind::Memory,
+        api::BreakpointKind::Io => BreakpointKind::Io,
     };
-    brk.access = match text("access")?.as_deref() {
-        None | Some("rw") => BreakpointAccess::ReadWrite,
-        Some("r" | "read") => BreakpointAccess::Read,
-        Some("w" | "write") => BreakpointAccess::Write,
-        Some(_) => {
-            return Err(ApiError::field(
-                "access",
-                "field \"access\" must be one of r, w, rw",
-            ))
-        }
+    brk.access = match new.access.unwrap_or(api::BreakpointAccess::ReadWrite) {
+        api::BreakpointAccess::Read => BreakpointAccess::Read,
+        api::BreakpointAccess::Write => BreakpointAccess::Write,
+        api::BreakpointAccess::ReadWrite => BreakpointAccess::ReadWrite,
     };
-    brk.run = match text("run")?.as_deref() {
-        None | Some("stop") => RunMode::Stop,
-        Some("watch") => RunMode::Watch,
-        Some("count") => RunMode::Count,
-        Some(_) => {
-            return Err(ApiError::field(
-                "run",
-                "field \"run\" must be one of stop, watch, count",
-            ))
-        }
+    brk.run = match new.run.unwrap_or(api::BreakpointRun::Stop) {
+        api::BreakpointRun::Stop => RunMode::Stop,
+        api::BreakpointRun::Watch => RunMode::Watch,
+        api::BreakpointRun::Count => RunMode::Count,
     };
-    brk.address = int_field(body, "addr", 0, 0xffff)?
+    brk.address = ranged("addr", new.addr, 0, 0xffff)?
         .ok_or_else(|| ApiError::field("addr", "missing field \"addr\""))? as u16;
-    brk.mask = int_field(body, "mask", 0, 0xffff)?.unwrap_or(0xffff) as u16;
-    brk.size = int_field(body, "size", 1, 0xffff)?.unwrap_or(1) as u16;
-    brk.value = int_field(body, "value", 0, 0xff)?.unwrap_or(0) as u8;
-    brk.value_mask = int_field(body, "valmask", 0, 0xff)?.unwrap_or(0) as u8;
-    brk.name = match find_key(body, "name") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(name)) => Some(name.clone()),
-        Some(_) => return Err(ApiError::field("name", "field \"name\" must be a string")),
-    };
-    brk.condition = match find_key(body, "condition") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(text)) if text.trim().is_empty() => None,
-        Some(Value::String(text)) => {
-            Some(Condition::parse(text).map_err(|e| ApiError::field("condition", e))?)
-        }
-        Some(_) => {
-            return Err(ApiError::field(
-                "condition",
-                "field \"condition\" must be a string",
-            ))
-        }
+    brk.mask = ranged("mask", new.mask, 0, 0xffff)?.unwrap_or(0xffff) as u16;
+    brk.size = ranged("size", new.size, 1, 0xffff)?.unwrap_or(1) as u16;
+    brk.value = ranged("value", new.value, 0, 0xff)?.unwrap_or(0) as u8;
+    brk.value_mask = ranged("valmask", new.valmask, 0, 0xff)?.unwrap_or(0) as u8;
+    brk.name = new.name.clone();
+    brk.condition = match new.condition.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(text) => Some(Condition::parse(text).map_err(|e| ApiError::field("condition", e))?),
     };
     // "start"/"stop"/"reset": a counter name or a list of them.
-    for action in [
-        CounterAction::Reset,
-        CounterAction::Start,
-        CounterAction::Stop,
+    for (action, names) in [
+        (CounterAction::Reset, &new.reset),
+        (CounterAction::Start, &new.start),
+        (CounterAction::Stop, &new.stop),
     ] {
-        let field = action.name();
-        let names = match find_key(body, field) {
-            None | Some(Value::Null) => Vec::new(),
-            Some(Value::String(name)) => vec![name.clone()],
-            Some(Value::Array(names)) if names.iter().all(Value::is_string) => names
-                .iter()
-                .map(|n| n.as_str().unwrap().to_owned())
-                .collect(),
-            Some(_) => {
-                return Err(ApiError::field(
-                    field,
-                    format!("field \"{field}\" must be a counter name or a list of them"),
-                ))
-            }
-        };
+        let names = names.as_ref().map(|n| n.0.clone()).unwrap_or_default();
         if names.iter().any(String::is_empty) {
-            return Err(ApiError::field(field, "a counter name cannot be empty"));
+            return Err(ApiError::field(action.name(), "a counter name cannot be empty"));
         }
         brk.counters
             .extend(names.into_iter().map(|name| (action, name)));
     }
-    brk.after = int_field(body, "after", 0, u32::MAX as i64)?.unwrap_or(0) as u64;
+    brk.after = ranged("after", new.after, 0, u32::MAX as i64)?.unwrap_or(0) as u64;
     if brk.run == RunMode::Count && brk.counters.is_empty() {
         return Err(ApiError::field(
             "run",
@@ -3086,36 +3156,58 @@ fn breakpoint_of_json(body: &Value) -> Result<AdvancedBreakpoint, ApiError> {
 }
 
 fn read_ram(request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
-    let param = |name: &str| {
-        request
-            .query
-            .iter()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.as_str())
-    };
-    let int_param = |name: &str, default: i64, min: i64, max: i64| -> Result<i64, ApiError> {
-        match param(name) {
-            None => Ok(default),
-            Some(text) => parse_int(text)
-                .filter(|v| (min..=max).contains(v))
-                .ok_or_else(|| {
-                    ApiError::field(
-                        name,
-                        format!("parameter \"{name}\" must be an integer between {min} and {max}"),
-                    )
-                }),
+    let query: ReadRam = query_as(request)?;
+    let len = ranged("len", query.len, 1, 0x10000)?.unwrap_or(256);
+    if let Some(at) = query.at {
+        if query.addr.is_some() || query.bank.is_some() || query.view.is_some() {
+            return Err(ApiError::field("at", "\"at\" replaces addr, bank and view: give one or the other"));
         }
-    };
-    let addr = int_param("addr", 0, 0, 0xffff)?;
-    let len = int_param("len", 256, 1, 0x10000)?;
-    let bank = int_param("bank", 0, 0, motherboard.physical_bank_count() as i64 - 1)?;
-    let view = param("view").unwrap_or("raw");
+        let (addr, hex, paging) = match at {
+            Location::Cpu(address) => {
+                let paging = query.paging.unwrap_or_default();
+                let through = crate::paging::Paging::from_api(&paging, motherboard);
+                let hex = (0..len)
+                    .map(|i| format!("{:02x}", through.read(motherboard, address.wrapping_add(i as u16))))
+                    .collect();
+                (u32::from(address), hex, (!paging.is_cpu()).then_some(paging))
+            }
+            Location::In { space, offset } => {
+                if query.paging.is_some() {
+                    return Err(ApiError::field("paging", "a paging is for a CPU address, not a space"));
+                }
+                let mut hex = String::with_capacity(2 * len as usize);
+                for i in 0..len as u32 {
+                    let byte = crate::paging::read_space(motherboard, space, offset + i).ok_or_else(|| {
+                        ApiError::field("at", format!("no {} here (or it ends before {} bytes)", space.name(), len))
+                    })?;
+                    hex.push_str(&format!("{byte:02x}"));
+                }
+                (offset, hex, None)
+            }
+        };
+        return Ok(reply(&Ram {
+            addr,
+            len: len as u32,
+            hex,
+            view: None,
+            at: Some(at),
+            paging,
+        }));
+    }
+    let addr = ranged("addr", query.addr, 0, 0xffff)?.unwrap_or(0);
+    let bank = ranged("bank", query.bank, 0, motherboard.physical_bank_count() as i64 - 1)?.unwrap_or(0);
+    let view = query.view.unwrap_or(RamView::Raw);
+    let paging = query.paging.filter(|paging| !paging.is_cpu());
+    if paging.is_some() && view == RamView::Raw {
+        return Err(ApiError::field("paging", "a paging is for the CPU's addresses: view=cpu, or at"));
+    }
+    let through = crate::paging::Paging::from_api(&paging.unwrap_or_default(), motherboard);
     // Past the last bank, the read wraps to the first one.
     let total = motherboard.physical_bank_count() as i64 * 0x4000;
     let byte_at = |i: i64| -> u8 {
         match view {
-            "cpu" => motherboard.read_byte((addr + i) as u16),
-            _ => {
+            RamView::Cpu => through.read(motherboard, (addr + i) as u16),
+            RamView::Raw => {
                 let linear = (bank * 0x4000 + addr + i) % total;
                 motherboard
                     .read_bank_byte((linear / 0x4000) as u16, (linear % 0x4000) as u16)
@@ -3123,45 +3215,36 @@ fn read_ram(request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
             }
         }
     };
-    if !matches!(view, "raw" | "cpu") {
-        return Err(ApiError::field(
-            "view",
-            "parameter \"view\" must be one of raw, cpu",
-        ));
-    }
     let hex: String = (0..len).map(|i| format!("{:02x}", byte_at(i))).collect();
-    let mut body = json!({ "addr": addr, "len": len, "hex": hex });
-    if view == "cpu" {
-        body["view"] = json!("cpu");
-    }
-    Ok(ApiResponse::ok(body))
+    Ok(reply(&Ram {
+        addr: addr as u32,
+        len: len as u32,
+        hex,
+        view: (view == RamView::Cpu).then_some(RamView::Cpu),
+        at: None,
+        paging,
+    }))
 }
 
 /// `GET /api/doc[?endpoint=][&format=json|openapi|html]`.
 fn doc(request: &ApiRequest) -> ApiResult {
-    match (
-        request.param("format").unwrap_or("json"),
-        request.param("endpoint"),
-    ) {
-        ("json", None) => Ok(ApiResponse::ok(api_doc::index())),
-        ("json", Some(name)) => match api_doc::endpoint(name) {
+    let query: api::DocQuery = query_as(request)?;
+    match (query.format.unwrap_or(DocFormat::Json), query.endpoint) {
+        (DocFormat::Json, None) => Ok(ApiResponse::ok(api_doc::index())),
+        (DocFormat::Json, Some(name)) => match api_doc::endpoint(&name) {
             Some(value) => Ok(ApiResponse::ok(value)),
             None => Err(ApiError::field(
                 "endpoint",
                 format!("no endpoint \"{name}\" (GET /api/doc lists them)"),
             )),
         },
-        ("openapi", _) => Ok(ApiResponse::ok(api_doc::openapi())),
-        ("html", _) => Ok(ApiResponse {
+        (DocFormat::Openapi, _) => Ok(ApiResponse::ok(api_doc::openapi())),
+        (DocFormat::Html, _) => Ok(ApiResponse {
             status: 200,
             content_type: "text/html; charset=utf-8",
             body: api_doc::html().into_bytes(),
             headers: Vec::new(),
         }),
-        (other, _) => Err(ApiError::field(
-            "format",
-            format!("unknown format \"{other}\": json, openapi or html"),
-        )),
     }
 }
 
@@ -3178,25 +3261,58 @@ fn parse_body(body: &str) -> Result<Value, ApiError> {
     }
 }
 
-/// AMSpiriT looks keys up "flatly, at any depth": `{"a":1}` and
-/// `{"x":{"a":1}}` both carry `a`.
 /// A reply, as JSON.
 fn to_json<T: serde::Serialize>(value: &T) -> Value {
     serde_json::to_value(value).expect("the API's replies are JSON")
 }
 
+/// A reply: 200, `value` as JSON.
+fn reply<T: serde::Serialize>(value: &T) -> ApiResponse {
+    ApiResponse::ok(to_json(value))
+}
+
+/// A query flag, `default` when absent.
+fn flag(value: Option<Flag>, default: bool) -> bool {
+    value.map_or(default, |f| f.0)
+}
+
+/// An integer of a request, checked to be within `min..=max`.
+fn ranged(name: &str, value: Option<Int>, min: i64, max: i64) -> Result<Option<i64>, ApiError> {
+    value
+        .map(|v| {
+            v.within(min, max).ok_or_else(|| {
+                ApiError::field(name, format!("\"{name}\" must be between {min} and {max}"))
+            })
+        })
+        .transpose()
+}
+
 /// The query as `T` (see [`bemu_api`]): each parameter a string, [`Int`] reads numbers from them.
 fn query_as<T: serde::de::DeserializeOwned>(request: &ApiRequest) -> Result<T, ApiError> {
+    // An empty value (`?mode=`) is no value.
     let map: serde_json::Map<String, Value> = request
         .query
         .iter()
+        .filter(|(_, v)| !v.is_empty())
         .map(|(k, v)| (k.clone(), Value::String(v.clone())))
         .collect();
     serde_path_to_error::deserialize(Value::Object(map)).map_err(typed_error)
 }
 
-/// The JSON body as `T` (see [`bemu_api`]), its fields lifted from any depth first, as
-/// [`find_key`] finds them.
+/// `name` given empty (`?name=`): refused where no value means "all" and removes everything,
+/// rather than taken for no value.
+fn refuse_empty(request: &ApiRequest, name: &str, what: &str) -> Result<(), ApiError> {
+    if request.query.iter().any(|(k, v)| k == name && v.is_empty()) {
+        return Err(ApiError::field(
+            name,
+            format!("\"{name}\" is empty: give {what}, or leave it out"),
+        ));
+    }
+    Ok(())
+}
+
+/// The JSON body as `T` (see [`bemu_api`]), its fields lifted from any depth first (the
+/// AMSpiriT convention: `{"a":1}` and `{"x":{"a":1}}` both carry `a`).
 fn body_as<T: serde::de::DeserializeOwned>(request: &ApiRequest) -> Result<T, ApiError> {
     let body = parse_body(&request.text())?;
     serde_path_to_error::deserialize(lift_fields(&body)).map_err(typed_error)
@@ -3212,8 +3328,8 @@ fn typed_error(error: serde_path_to_error::Error<serde_json::Error>) -> ApiError
     }
 }
 
-/// Every field of `value` at the top level, wherever it is nested: the one [`find_key`]
-/// would find for each name (the nearest, the first in order).
+/// Every field of `value` at the top level, wherever it is nested: for each name, the one at
+/// the top, else the first found depth first.
 fn lift_fields(value: &Value) -> Value {
     fn walk(value: &Value, out: &mut serde_json::Map<String, Value>) {
         match value {
@@ -3232,34 +3348,6 @@ fn lift_fields(value: &Value) -> Value {
     let mut out = serde_json::Map::new();
     walk(value, &mut out);
     Value::Object(out)
-}
-
-fn find_key<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
-    match value {
-        Value::Object(map) => map
-            .get(key)
-            .or_else(|| map.values().find_map(|v| find_key(v, key))),
-        Value::Array(items) => items.iter().find_map(|v| find_key(v, key)),
-        _ => None,
-    }
-}
-
-/// An integer field: a JSON integer, or a string in decimal or 0x hex.
-fn int_field(body: &Value, name: &str, min: i64, max: i64) -> Result<Option<i64>, ApiError> {
-    let value = match find_key(body, name) {
-        None => return Ok(None),
-        Some(Value::Number(n)) => n.as_i64(),
-        Some(Value::String(text)) => parse_int(text),
-        Some(_) => None,
-    }
-    .ok_or_else(|| ApiError::field(name, format!("field \"{name}\" must be an integer")))?;
-    if !(min..=max).contains(&value) {
-        return Err(ApiError::field(
-            name,
-            format!("field \"{name}\" must be between {min} and {max}"),
-        ));
-    }
-    Ok(Some(value))
 }
 
 fn parse_int(text: &str) -> Option<i64> {
@@ -4372,6 +4460,133 @@ mod test {
 
         let (status, _) = call(&mut server, &mut mb, "POST", "/api/run_to", r#"{"nothing":1}"#);
         assert_eq!(status, 400);
+    }
+
+    /// The hex `/api/ram` answers for `query`.
+    fn ram_hex(server: &mut DebugServer, mb: &mut Motherboard, query: &str) -> (u16, Value) {
+        call(server, mb, "GET", &format!("/api/ram?{query}"), "")
+    }
+
+    #[test]
+    fn memory_is_read_in_a_ram_bank_a_rom_or_through_a_paging() {
+        let mut server = server();
+        let mut mb = Motherboard::default();
+        mb.write_bank_byte(4, 0x10, 0xaa);
+        mb.write_bank_byte(1, 0x10, 0x55);
+        mb.write_bank_byte(5, 0x3fff, 0x11);
+        mb.write_bank_byte(6, 0, 0x22);
+        // a RAM bank, whatever is paged; running on into the next one
+        let (_, read) = ram_hex(&mut server, &mut mb, "at=B04:0010&len=1");
+        assert_eq!(read["hex"], "aa", "{read}");
+        assert_eq!(read["at"], "B04:0010");
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=P0B1:3fff&len=2").1["hex"], "1122");
+        // the CPU's paging (C0: bank 1 at &4000), or another (C4: bank 4 there)
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=0x4010&len=1").1["hex"], "55");
+        let (_, through) = ram_hex(&mut server, &mut mb, "at=0x4010&len=1&paging=C4");
+        assert_eq!(through["hex"], "aa", "{through}");
+        assert_eq!(through["paging"], "C4");
+        // the older view=cpu takes a paging too
+        assert_eq!(ram_hex(&mut server, &mut mb, "addr=0x4010&len=1&view=cpu&paging=C4").1["hex"], "aa");
+        // the ROMs: the lower one at &0000, an upper one (an empty slot reads as BASIC's)
+        let lower = mb.read_lower_rom_byte(0);
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=LOWER:0000&len=1").1["hex"], format!("{lower:02x}"));
+        let basic = mb.upper_rom(0).unwrap()[0x10];
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=UPPER00:0010&len=1").1["hex"], format!("{basic:02x}"));
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=0xc010&len=1&paging=U0").1["hex"], format!("{basic:02x}"));
+        // the RAM under the lower ROM: ROM off, or what a write reaches
+        mb.write_bank_byte(0, 0, 0x42);
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=0&len=1&paging=-L").1["hex"], "42");
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=0&len=1&paging=W").1["hex"], "42");
+        // refused: what is not there, a paging for a space, at with the older parameters
+        for query in [
+            "at=CART00:0000",
+            "at=ASIC:0000",
+            "at=B40:0000",
+            "at=B04:0000&paging=C4",
+            "at=0x4000&bank=1",
+            "addr=0x4000&paging=C4",
+            "at=0x4000&paging=C9",
+        ] {
+            let (status, refused) = ram_hex(&mut server, &mut mb, query);
+            assert_eq!(status, 400, "{query}: {refused}");
+        }
+    }
+
+    #[test]
+    fn memory_is_written_where_a_write_goes() {
+        let (mut server, mut mb) = (server(), machine());
+        let (status, body) = call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"B04:0010","data":"AB CD"}"#);
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(mb.read_bank_byte(4, 0x10), Some(0xab));
+        assert_eq!(mb.read_bank_byte(4, 0x11), Some(0xcd));
+        // a CPU address through a paging: C4 puts bank 4 at &4000
+        call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"0x4020","paging":"C4","data":"77"}"#);
+        assert_eq!(mb.read_bank_byte(4, 0x20), Some(0x77));
+        assert_eq!(mb.read_bank_byte(1, 0x20), Some(0));
+        // and jumps there
+        call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"0x4020","exec":true}"#);
+        assert_eq!(mb.pc(), 0x4020);
+        // a ROM is not written; exec at a bank's offset needs its PC
+        let (status, refused) =
+            call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"UPPER07:0000","data":"00"}"#);
+        assert_eq!(status, 400, "{refused}");
+        assert_eq!(refused["field"], "at");
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"B04:0000","exec":true}"#);
+        assert_eq!(status, 400);
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"B04:0000","addr":0,"data":"00"}"#);
+        assert_eq!(status, 400);
+    }
+
+    #[test]
+    fn the_memory_map_of_another_paging() {
+        let (mut server, mut mb) = (server(), Motherboard::default());
+        let (_, now) = call(&mut server, &mut mb, "GET", "/api/memmap", "");
+        assert_eq!(now["regions"][0]["source"], "LOWER", "{now}");
+        assert_eq!(now["regions"][1]["source"], "B01");
+        let (_, other) = call(&mut server, &mut mb, "GET", "/api/memmap?paging=C4,-L", "");
+        assert_eq!(other["regions"][0]["source"], "B00", "{other}");
+        assert_eq!(other["regions"][1]["source"], "B04");
+        assert_eq!(other["regions"][1]["ram_bank"], 4);
+        assert_eq!(other["mmr"], 0xc4);
+        assert_eq!(other["rmr"].as_u64().unwrap() & 4, 4, "the lower ROM's bit set: disabled");
+    }
+
+    #[test]
+    fn a_cpc_plus_cartridge_page_and_its_registers_are_read() {
+        let mut server = server();
+        let mut mb = MotherboardBuilder::default()
+            .set_model(crate::motherboard::CpcModel::Cpc6128Plus)
+            .build();
+        let page1 = mb.read_cartridge_byte(1, 0x20).unwrap();
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=CART01:0020&len=1").1["hex"], format!("{page1:02x}"));
+        // the lower ROM is the cartridge page RMR2 selects (0 after the reset)
+        let page0 = mb.read_cartridge_byte(0, 0x10).unwrap();
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=LOWER:0010&len=1").1["hex"], format!("{page0:02x}"));
+        // a paging with page 1 as the lower ROM
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=0x20&len=1&paging=LP1").1["hex"], format!("{page1:02x}"));
+        let (status, _) = ram_hex(&mut server, &mut mb, "at=ASIC:0000&len=16");
+        assert_eq!(status, 200);
+        let (status, _) = ram_hex(&mut server, &mut mb, "at=CART40:0000&len=1");
+        assert_eq!(status, 400, "past the cartridge's pages");
+    }
+
+    #[test]
+    fn an_empty_name_or_index_does_not_delete_everything() {
+        let (mut server, mut mb) = (server(), machine());
+        call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop"}"#);
+        call(&mut server, &mut mb, "POST", "/api/breakpoints", r#"{"addr":"0x4000"}"#);
+        let (status, refused) = call(&mut server, &mut mb, "DELETE", "/api/counters?name=", "");
+        assert_eq!(status, 400, "{refused}");
+        assert_eq!(refused["field"], "name");
+        let (status, _) = call(&mut server, &mut mb, "DELETE", "/api/breakpoints?index=", "");
+        assert_eq!(status, 400);
+        let (_, counters) = call(&mut server, &mut mb, "GET", "/api/counters", "");
+        assert_eq!(counters["counters"].as_array().unwrap().len(), 1, "{counters}");
+        let (_, breakpoints) = call(&mut server, &mut mb, "GET", "/api/breakpoints", "");
+        assert_eq!(breakpoints["advanced"].as_array().unwrap().len(), 1, "{breakpoints}");
+        // Left out, it is all of them.
+        let (status, _) = call(&mut server, &mut mb, "DELETE", "/api/counters", "");
+        assert_eq!(status, 200);
     }
 
     #[test]
