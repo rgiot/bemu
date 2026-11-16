@@ -1,13 +1,13 @@
 //! The debug API over HTTP (the desktop's; the web page has none): axum, on a tokio runtime of
 //! its own thread.
 //!
-//! Every request, typed or not, goes to the emulation thread as an [`ApiRequest`], which
-//! [`DebugServer::handle`] answers: the same answers as in process (the window's commands, the
-//! tests). What this module adds to the routes migrated to [`bemu_api`]'s types is their
-//! description: each handler names the types its request is parsed into and its reply built from
-//! ([`DocQuery`], [`DocJson`], [`Reply`]), and aide generates the OpenAPI description from them.
-//! The others reach the emulation thread through the fallback, as before, documented by hand
-//! (`api_doc.rs`) until they are migrated.
+//! Every request goes to the emulation thread as an [`ApiRequest`], which
+//! [`super::DebugServer::handle`] answers: the same answers as in process (the window's
+//! commands, the tests), parsed into and built from [`bemu_api`]'s types there. What this module
+//! adds is the description: each route names the types of its query, its body and its reply
+//! ([`DocQuery`], [`DocJson`], [`TextBody`], [`Reply`]...), and aide generates the OpenAPI
+//! description from them ([`openapi`]). An unknown path, or a method a path does not take, goes
+//! to the emulation thread too, for AMSpiriT's 404 and 405.
 //!
 //! `/api/events` (Server-Sent Events) is served here, from the [`EventHub`] the emulation
 //! publishes to, and `/api/doc/ui` is a page to read the description in (Scalar, built in).
@@ -15,6 +15,8 @@
 use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::sync::mpsc::{self, Sender};
+use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use aide::axum::routing::{get_with, post_with};
@@ -85,15 +87,18 @@ pub(super) fn listen(
         .enable_io()
         .build()
         .map_err(|e| format!("debug server: {e}"))?;
+    // Handed to tokio here, in its runtime, for a failure to be told rather than leave a server
+    // that says it listens and serves nothing.
+    let socket = {
+        let _runtime = runtime.enter();
+        tokio::net::TcpListener::from_std(socket).map_err(|e| format!("debug server: {e}"))?
+    };
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let app = router(Shared { requests, events });
     std::thread::Builder::new()
         .name("debug-server".to_owned())
         .spawn(move || {
             runtime.block_on(async move {
-                let Ok(socket) = tokio::net::TcpListener::from_std(socket) else {
-                    return;
-                };
                 // Not a graceful shutdown: an event stream never ends by itself.
                 tokio::select! {
                     _ = axum::serve(socket, app) => {}
@@ -249,8 +254,14 @@ fn typed_routes() -> ApiRouter<Shared> {
     )
 }
 
-/// The OpenAPI description of the typed routes.
+/// The OpenAPI description generated from the routes' types, and the events' (`x-events`):
+/// generated once, as the types do not change.
 pub(super) fn openapi() -> Value {
+    static OPENAPI: OnceLock<Value> = OnceLock::new();
+    OPENAPI.get_or_init(generate_openapi).clone()
+}
+
+fn generate_openapi() -> Value {
     let mut api = OpenApi {
         info: Info {
             title: "bemu debug API".to_owned(),
@@ -593,18 +604,34 @@ async fn typed<Q, B, R>(State(shared): State<Shared>, _: Q, _: B, request: Forwa
     Reply::of(&shared, request).await
 }
 
-/// A route not typed yet: the emulation thread routes it (404 and 405 included).
+/// An unknown path, or a method a path does not take: the emulation thread answers (404, 405),
+/// but for a browser's CORS preflight (`OPTIONS`), allowed.
 async fn untyped(State(shared): State<Shared>, request: Forwarded) -> Response {
+    if request.0.method == "OPTIONS" {
+        let mut response = to_response(ApiResponse {
+            status: 204,
+            content_type: "text/plain",
+            body: Vec::new(),
+            headers: vec![
+                ("access-control-allow-methods".to_owned(), "GET, POST, DELETE".to_owned()),
+                ("access-control-allow-headers".to_owned(), "content-type".to_owned()),
+                ("access-control-max-age".to_owned(), "86400".to_owned()),
+            ],
+        });
+        response.headers_mut().remove("content-type");
+        return response;
+    }
     to_response(forward(&shared, request).await)
 }
 
 /// The page to read the description in.
-async fn doc_page() -> Html<String> {
-    Html(
+async fn doc_page() -> Html<&'static str> {
+    static PAGE: OnceLock<String> = OnceLock::new();
+    Html(PAGE.get_or_init(|| {
         aide::scalar::Scalar::new("/api/doc?format=openapi")
             .with_title("bemu debug API")
-            .html(),
-    )
+            .html()
+    }))
 }
 
 /// `GET /api/events`: Server-Sent Events, the ones in `?topics=` (default all), a `: ping`
@@ -614,11 +641,13 @@ async fn events(
     _: DocQuery<EventsQuery>,
     Forwarded(request): Forwarded,
 ) -> EventStream {
-    let topics = request
-        .query
-        .iter()
-        .find(|(k, _)| k == "topics")
-        .map(|(_, list)| list.split(',').filter(|t| !t.is_empty()).map(str::to_owned).collect());
+    let query: EventsQuery = match super::query_as(&request) {
+        Ok(query) => query,
+        Err(error) => return EventStream(to_response(error.response())),
+    };
+    let topics = query
+        .topics
+        .map(|list| list.split(',').filter(|t| !t.is_empty()).map(str::to_owned).collect());
     let Some(queue) = shared.events.subscribe(topics) else {
         let error = format!("too many event clients (max {MAX_SSE_CLIENTS})");
         return EventStream(to_response(ApiResponse::json(503, json!({ "error": error }))));
@@ -626,9 +655,11 @@ async fn events(
     // The queue is the emulation's (a mutex and a condition variable): a thread of its own waits
     // on it, and hands the events over until the client is gone.
     let (sender, receiver) = tokio::sync::mpsc::channel::<String>(64);
-    let _ = std::thread::Builder::new()
+    let streamed = Arc::clone(&queue);
+    let spawned = std::thread::Builder::new()
         .name("debug-server-events".to_owned())
         .spawn(move || {
+            let queue = streamed;
             loop {
                 let (lock, ready) = &*queue;
                 let pending: Vec<String> = {
@@ -649,6 +680,12 @@ async fn events(
             }
             queue.0.lock().unwrap().closed = true;
         });
+    if let Err(e) = spawned {
+        // the client's place is given back
+        queue.0.lock().unwrap().closed = true;
+        let error = format!("cannot stream the events: {e}");
+        return EventStream(to_response(ApiResponse::json(503, json!({ "error": error }))));
+    }
     let stream = futures_util::stream::unfold(receiver, |mut receiver| async move {
         receiver
             .recv()
@@ -686,5 +723,78 @@ mod test {
         assert!(schemas["EmuState"]["properties"]["crtc_type"]["description"]
             .as_str()
             .is_some_and(|d| d.contains("CRTC")));
+        // The events' data, by event.
+        for (event, schema) in bemu_api::EVENTS {
+            assert_eq!(api["x-events"][event]["$ref"], format!("#/components/schemas/{schema}"));
+            assert!(schemas[schema].is_object(), "{schema}");
+        }
+        // Bodies that are not JSON, replies that are not JSON.
+        assert!(paths["/api/z80_bp"]["post"]["requestBody"]["content"]["text/plain"].is_object());
+        assert!(paths["/api/media"]["post"]["requestBody"]["content"]["application/octet-stream"].is_object());
+        assert!(paths["/api/screenshot"]["get"]["responses"]["200"]["content"]["image/png"].is_object());
+        assert!(paths["/api/events"]["get"]["responses"]["200"]["content"]["text/event-stream"].is_object());
+    }
+
+    /// A server on a free port: every request is answered by `answer`, standing for the
+    /// emulation thread.
+    fn serve(answer: impl Fn(ApiRequest) -> ApiResponse + Send + 'static) -> (Listener, u16) {
+        let (requests, received) = mpsc::channel::<(ApiRequest, Sender<ApiResponse>)>();
+        std::thread::spawn(move || {
+            for (request, reply) in received {
+                let _ = reply.send(answer(request));
+            }
+        });
+        let listener = listen(0, requests, EventHub::default()).unwrap();
+        let port = listener.port;
+        (listener, port)
+    }
+
+    /// The raw HTTP answer to `request`.
+    fn ask(port: u16, request: &str) -> String {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut answer = String::new();
+        let _ = stream.read_to_string(&mut answer);
+        answer
+    }
+
+    #[test]
+    fn requests_reach_the_emulation_thread_decoded() {
+        let (_listener, port) = serve(|request| {
+            ApiResponse::json(
+                200,
+                json!({ "method": request.method, "path": request.path, "query": request.query,
+                        "body": String::from_utf8_lossy(&request.body) }),
+            )
+        });
+        let answer = ask(
+            port,
+            "POST /api/raster_bp?name=split%20screen&add=1 HTTP/1.1\r\nHost: x\r\n\
+             Content-Length: 3\r\nConnection: close\r\n\r\nabc",
+        );
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        assert!(answer.contains(r#"["name","split screen"]"#), "{answer}");
+        assert!(answer.contains(r#""body":"abc""#), "{answer}");
+        assert!(answer.to_ascii_lowercase().contains("access-control-allow-origin: *"), "{answer}");
+    }
+
+    #[test]
+    fn a_browser_preflight_is_allowed() {
+        let (_listener, port) = serve(|_| panic!("a preflight is not the emulation's"));
+        let answer = ask(
+            port,
+            "OPTIONS /api/z80 HTTP/1.1\r\nHost: x\r\nOrigin: http://example\r\nConnection: close\r\n\r\n",
+        );
+        assert!(answer.starts_with("HTTP/1.1 204"), "{answer}");
+        assert!(answer.to_ascii_lowercase().contains("access-control-allow-methods: get, post, delete"), "{answer}");
+    }
+
+    #[test]
+    fn an_unknown_path_is_the_emulation_threads_to_answer() {
+        let (_listener, port) = serve(|request| ApiResponse::json(404, json!({ "path": request.path })));
+        let answer = ask(port, "GET /api/nothing HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        assert!(answer.starts_with("HTTP/1.1 404"), "{answer}");
+        assert!(answer.contains(r#""path":"/api/nothing""#), "{answer}");
     }
 }

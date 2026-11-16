@@ -16,25 +16,26 @@
 //! [`DebugServer::after_instruction`] and [`DebugServer::frame_completed`],
 //! and stops running while [`DebugServer::paused`].
 //!
-//! Implemented so far: `ping`, `state`, `z80` (GET/POST), `ram` (GET/POST,
-//! every 16K bank), `exec`, `step`, `config` (GET/POST: pause/resume,
-//! resets), `z80_bp` (CPU addresses resolved to the RAM bank or ROM holding
-//! them, `Bnn:hhhh` physical locations), `keytype`, `events` (Server-Sent
-//! Events: `frame`, `z80_bp`, `pause`, `reset`, `basic_bp`), `doc`, the chips
-//! (`memmap`, `crtc`, `ga`, `psg`, `fdc`), BASIC (`basic`, `basic_state`,
-//! `basic_listing`, `basic_export`, `basic_bp`, `basic_step`, `basic_runto`,
-//! see [`crate::basic_program`]) and the beam (`beam`, `raster_bp`, in
-//! AMSpiriT's video buffer coordinates or in NOPs: 64 a line, 19968 a
-//! frame).
+//! Every request is parsed into the types of [`bemu_api`] (the `cpclib-bemu-api` crate, shared
+//! with clients) and every reply and event built from them; the OpenAPI description
+//! (`/api/doc?format=openapi`) is generated from the same types (`http.rs`, `api_doc.rs`).
 //!
-//! Extensions to the AMSpiriT API - listed in `/api/doc` with
-//! `"extension":true` - add what debuggers of rasm/basm/ACE programs need:
-//! `/api/breakpoints` for advanced breakpoints (memory/IO watchpoints,
-//! ranges and masks, stop or watch, conditions, see
-//! [`crate::breakpoints`]), the
-//! `watch` event for watch hits, `kind`/`name`/`access`/`beam`/`counters`
-//! in `z80_bp` events, and `/api/counters`: named counters of the NOPs
-//! run. Replies identify this emulator with `"frontend":"bemu"`.
+//! The routes ([`ROUTES`]): `ping`, `state`, `z80`, `ram` (every 16K bank, or as the CPU sees
+//! it), `exec`, `step` (in, over, out, a frame), `run_to`, `config` (pause/resume, resets, the
+//! history's size), `z80_bp` (CPU addresses resolved to the RAM bank or ROM holding them,
+//! `Bnn:hhhh` physical locations), `keytype`, `events` (Server-Sent Events), `history`,
+//! `screenshot`, `media`, `snapshot`, the chips (`memmap`, `crtc`, `ga`, `psg`, `fdc`, `drive`),
+//! BASIC (`basic`, `basic_state`, `basic_listing`, `basic_export`, `basic_bp`, `basic_step`,
+//! `basic_runto`, see [`crate::basic_program`]), the beam (`beam`, `raster_bp`, in AMSpiriT's
+//! video buffer coordinates or in NOPs: 64 a line, 19968 a frame) and `doc`.
+//!
+//! Extensions to the AMSpiriT API - listed in `/api/doc` with `"extension":true`, and in
+//! `/api/ping`'s `features` - add what debuggers of rasm/basm/ACE programs need:
+//! `/api/breakpoints` for advanced breakpoints (memory/IO watchpoints, ranges and masks, stop or
+//! watch, conditions, see [`crate::breakpoints`]), the `watch` event for watch hits,
+//! `reason`/`kind`/`name`/`access`/`beam`/`counters`/`cmd_seq` in `z80_bp` events, `/api/counters`
+//! (named counters of the NOPs run), `/api/run_to`, the step modes, the symbols. Replies identify
+//! this emulator with `"frontend":"bemu"`.
 
 mod api_doc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1255,9 +1256,9 @@ impl DebugServer {
             return response;
         }
         let result = match (request.method.as_str(), request.path.as_str()) {
-            ("GET", "/api/ping") => Ok(ApiResponse::ok(to_json(&self.ping(motherboard)))),
+            ("GET", "/api/ping") => Ok(reply(&self.ping(motherboard))),
             ("GET", "/api/state") => Ok(reply(&self.state_typed(motherboard))),
-            ("GET", "/api/z80") => Ok(ApiResponse::ok(to_json(&z80_registers(motherboard)))),
+            ("GET", "/api/z80") => Ok(reply(&z80_registers(motherboard))),
             ("POST", "/api/z80") => self.set_z80(request, motherboard),
             ("GET", "/api/ram") => read_ram(request, motherboard),
             ("POST", "/api/ram") => self.write_ram(request, motherboard),
@@ -1375,15 +1376,15 @@ impl DebugServer {
         Crtc {
             crtc_type: crtc.crtc_type() as u8,
             regs: (0..14).map(|r| crtc.do_read_register(r)).collect(),
-            selected_reg: crtc.selected_register() as u8,
+            selected_reg: crtc.selected_register(),
             // Extension: the counters (C0, C4, C9, VSYNC, R5 adjust) and
             // the address the CRTC outputs.
             hcc: crtc.hcc,
-            vcc: crtc.vcc.value() as u8,
-            vlc: crtc.vlc.value() as u8,
+            vcc: crtc.vcc.value(),
+            vlc: crtc.vlc.value(),
             vsc: crtc.vsc,
             vtac: crtc.vtac,
-            ma: crtc.vma() as u16,
+            ma: crtc.vma(),
             rasterline: self.beam.map(|beam| beam.line as u64),
         }
     }
@@ -1647,6 +1648,7 @@ impl DebugServer {
     }
 
     fn delete_counters(&mut self, request: &ApiRequest) -> ApiResult {
+        refuse_empty(request, "name", "the counter to delete (none: all)")?;
         let query: RemoveCounter = query_as(request)?;
         match query.name {
             None => self.counters.clear(),
@@ -1668,7 +1670,7 @@ impl DebugServer {
     fn set_z80(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let set: SetZ80 = body_as(request)?;
         let ack = self.apply_z80(&set, motherboard)?;
-        Ok(ApiResponse::ok(to_json(&ack)))
+        Ok(reply(&ack))
     }
 
     /// Set the registers `set` names; all are checked before any changes.
@@ -1774,7 +1776,7 @@ impl DebugServer {
     fn step_request(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let query: StepQuery = query_as(request)?;
         let ack = self.step_by(query.mode.unwrap_or_default(), motherboard)?;
-        Ok(ApiResponse::ok(to_json(&ack)))
+        Ok(reply(&ack))
     }
 
     /// Run as far as `mode` says, then pause.
@@ -2072,6 +2074,7 @@ impl DebugServer {
         request: &ApiRequest,
         motherboard: &mut Motherboard,
     ) -> ApiResult {
+        refuse_empty(request, "index", "the breakpoint to remove (none: all)")?;
         let query: RemoveBreakpoint = query_as(request)?;
         match query.index {
             Some(index) => {
@@ -3176,8 +3179,6 @@ fn parse_body(body: &str) -> Result<Value, ApiError> {
     }
 }
 
-/// AMSpiriT looks keys up "flatly, at any depth": `{"a":1}` and
-/// `{"x":{"a":1}}` both carry `a`.
 /// A reply, as JSON.
 fn to_json<T: serde::Serialize>(value: &T) -> Value {
     serde_json::to_value(value).expect("the API's replies are JSON")
@@ -3214,6 +3215,18 @@ fn query_as<T: serde::de::DeserializeOwned>(request: &ApiRequest) -> Result<T, A
         .map(|(k, v)| (k.clone(), Value::String(v.clone())))
         .collect();
     serde_path_to_error::deserialize(Value::Object(map)).map_err(typed_error)
+}
+
+/// `name` given empty (`?name=`): refused where no value means "all" and removes everything,
+/// rather than taken for no value.
+fn refuse_empty(request: &ApiRequest, name: &str, what: &str) -> Result<(), ApiError> {
+    if request.query.iter().any(|(k, v)| k == name && v.is_empty()) {
+        return Err(ApiError::field(
+            name,
+            format!("\"{name}\" is empty: give {what}, or leave it out"),
+        ));
+    }
+    Ok(())
 }
 
 /// The JSON body as `T` (see [`bemu_api`]), its fields lifted from any depth first (the
@@ -4365,6 +4378,25 @@ mod test {
 
         let (status, _) = call(&mut server, &mut mb, "POST", "/api/run_to", r#"{"nothing":1}"#);
         assert_eq!(status, 400);
+    }
+
+    #[test]
+    fn an_empty_name_or_index_does_not_delete_everything() {
+        let (mut server, mut mb) = (server(), machine());
+        call(&mut server, &mut mb, "POST", "/api/counters", r#"{"name":"loop"}"#);
+        call(&mut server, &mut mb, "POST", "/api/breakpoints", r#"{"addr":"0x4000"}"#);
+        let (status, refused) = call(&mut server, &mut mb, "DELETE", "/api/counters?name=", "");
+        assert_eq!(status, 400, "{refused}");
+        assert_eq!(refused["field"], "name");
+        let (status, _) = call(&mut server, &mut mb, "DELETE", "/api/breakpoints?index=", "");
+        assert_eq!(status, 400);
+        let (_, counters) = call(&mut server, &mut mb, "GET", "/api/counters", "");
+        assert_eq!(counters["counters"].as_array().unwrap().len(), 1, "{counters}");
+        let (_, breakpoints) = call(&mut server, &mut mb, "GET", "/api/breakpoints", "");
+        assert_eq!(breakpoints["advanced"].as_array().unwrap().len(), 1, "{breakpoints}");
+        // Left out, it is all of them.
+        let (status, _) = call(&mut server, &mut mb, "DELETE", "/api/counters", "");
+        assert_eq!(status, 200);
     }
 
     #[test]
