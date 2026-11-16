@@ -238,6 +238,10 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, unit: usize, view: &mut RowsVie
         ["A", "B"][usize::from(side & 1)],
         picture.bytes_per_pixel
     ));
+    ui.weak(
+        "The bytes the FDC decodes, not the raw MFM bits: a dropout or a protection that lives \
+         in the flux does not show here.",
+    );
     egui::ScrollArea::vertical()
         .id_salt(("disc-rows", unit))
         .max_height(380.0)

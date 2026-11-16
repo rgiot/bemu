@@ -140,7 +140,9 @@ ones of Okabe and Ito.
 The Sectors tab draws the same disc as Michael Steil's block view: a group of rows a track, a row
 a sector (a row a copy of a weak sector, the bytes the copies differ in marked), the ID field
 then the data, byte by byte from left to right. A protection or a read error is a pattern in
-the rows; a byte hovered says its track, sector, offset and value.
+the rows; a byte hovered says its track, sector, offset and value. It shows the bytes the FDC
+decodes, not the raw MFM bits (so a DSK and an HFE look alike): what lives only in the flux, a
+dropout for example, does not show there, and the tab says so.
 
 The debugger's windows use cpclib-dap's views (`cpclib-dap` without its debug adapter): the
 disassembly with each instruction's cost in NOPs, the call stack read from the stack, the
