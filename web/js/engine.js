@@ -159,6 +159,10 @@ export class Engine {
     screenshot() { return this.#core.screenshot(); }
     getDisc(drive) { return this.#core.disc_image(drive); }
     saveSnapshot() { return this.#core.save_snapshot(); }
+    /** The debug API, as the desktop's HTTP server answers it (see `Emulator::api`). */
+    api(method, path, query, body) { return this.#core.api(method, path, query ?? '', body ?? new Uint8Array()); }
+    /** The debug events since the previous call, as `/api/events` streams them. */
+    debugEvents() { return this.#core.debug_events(); }
 
     setSpeed(value) {
         if (value !== 1) this.#core.audio_samples(); // what is queued is dropped, not played late
