@@ -583,7 +583,6 @@ impl DebugServer {
         }
     }
 
-    /// Whether the emulation must stay stopped.
     /// The events published since the previous call, as `/api/events` streams them (`event:
     /// NAME\ndata: JSON\n\n` each), for a client in the same process: the web page, which has no
     /// HTTP server. The first call subscribes (nothing before it is kept); at most 32 are kept
@@ -599,6 +598,7 @@ impl DebugServer {
         queue.events.drain(..).collect()
     }
 
+    /// Whether the emulation must stay stopped.
     pub fn paused(&self) -> bool {
         self.paused
     }
@@ -2864,9 +2864,8 @@ fn parse_binary<'b>(name: &str, bytes: &'b [u8]) -> Result<Binary<'b>, String> {
     })
 }
 
-/// Decode `%XX` and `+` in a query value.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // the HTTP server is the desktop's
-/// A query string's pairs, decoded: what [`ApiRequest::query`] holds.
+/// A query string's pairs, decoded: what [`ApiRequest::query`] holds (the desktop's HTTP
+/// server and the web page's API decode a query the same way).
 pub fn query_pairs(query: &str) -> Vec<(String, String)> {
     query
         .split('&')
@@ -2878,6 +2877,7 @@ pub fn query_pairs(query: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Decode `%XX` and `+` in a query value.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());

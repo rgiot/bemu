@@ -494,10 +494,10 @@ impl Emulator {
     }
 
     /// The debug API, in the page (it has no HTTP server): `method` and `path` (`GET`,
-    /// `/api/ping`), the query as in a URL (`a=1&b=%262`, decoded here) and the body, answered as the desktop's
-    /// server answers them, by the same code: `{ status, contentType, body, headers }`, the body
-    /// a `Uint8Array`, the headers `[name, value]` pairs. The debugger of the menus when they are
-    /// shown, else the page's own.
+    /// `/api/ping`), the query as in a URL (`a=1&b=%262`, decoded here) and the body, answered
+    /// as the desktop's server answers them, by the same code (`DebugServer::handle_with`):
+    /// `{ status, contentType, body, headers }`, the body a `Uint8Array`, the headers
+    /// `[name, value]` pairs. The debugger of the menus when they are shown, else the page's own.
     pub fn api(&mut self, method: &str, path: &str, query: &str, body: Vec<u8>) -> JsValue {
         let request = amsrust::debug_server::ApiRequest {
             method: method.to_ascii_uppercase(),
@@ -505,11 +505,7 @@ impl Emulator {
             query: amsrust::debug_server::query_pairs(query),
             body,
         };
-        let debugger = match (self.ui.as_mut(), self.debugger.as_mut()) {
-            (Some(ui), _) => &mut ui.debugger,
-            (None, Some(debugger)) => debugger,
-            (None, None) => unreachable!("a page has the menus' debugger or its own"),
-        };
+        let debugger = api_debugger(&mut self.ui, &mut self.debugger);
         let response = debugger.handle_with(&request, &mut self.motherboard, Some(&self.monitor));
         let object = Object::new();
         let _ = Reflect::set(&object, &"status".into(), &JsValue::from(response.status));
@@ -527,12 +523,7 @@ impl Emulator {
     /// NAME\ndata: JSON\n\n` each). The first call subscribes the page: from then on the
     /// debugger sees every instruction, as a served one does.
     pub fn debug_events(&mut self) -> Array {
-        let debugger = match (self.ui.as_mut(), self.debugger.as_mut()) {
-            (Some(ui), _) => &mut ui.debugger,
-            (None, Some(debugger)) => debugger,
-            (None, None) => unreachable!("a page has the menus' debugger or its own"),
-        };
-        debugger.local_events().into_iter().map(JsValue::from).collect()
+        api_debugger(&mut self.ui, &mut self.debugger).local_events().into_iter().map(JsValue::from).collect()
     }
 
     /// Frames the machine produced since it was created (for the page's speed figures).
@@ -882,5 +873,17 @@ impl ScreenshotSink for JsScreenshots {
                 .map_err(|e| format!("screenshot callback: {e:?}"))?;
         }
         Ok(dir.join(file))
+    }
+}
+
+/// The debugger [`Emulator::api`] asks: the menus' when they are shown, else the page's own.
+fn api_debugger<'a>(
+    ui: &'a mut Option<WebUi>,
+    own: &'a mut Option<amsrust::debug_server::DebugServer>,
+) -> &'a mut amsrust::debug_server::DebugServer {
+    match (ui, own) {
+        (Some(ui), _) => &mut ui.debugger,
+        (None, Some(debugger)) => debugger,
+        (None, None) => unreachable!("a page has the menus' debugger or its own"),
     }
 }
