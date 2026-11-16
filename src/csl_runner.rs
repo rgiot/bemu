@@ -94,6 +94,21 @@ impl CslLog {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// The log as text: a line an instruction, its time, the file of its screenshot.
+    pub fn text(&self) -> String {
+        self.entries()
+            .iter()
+            .map(|entry| {
+                let mut line = format!("{:>10.3} s  {}", entry.at_us as f64 / 1e6, entry.text);
+                if let Some((path, _)) = &entry.picture {
+                    line.push_str(&format!("  -> {}", path.display()));
+                }
+                line.push('\n');
+                line
+            })
+            .collect()
+    }
+
     /// Tells two logs apart (another script, another log).
     pub fn id(&self) -> usize {
         std::sync::Arc::as_ptr(&self.0) as usize

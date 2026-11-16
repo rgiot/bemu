@@ -64,6 +64,7 @@ File,Machine,Restore default configuration,,config-reset,,"Go back to the defaul
 File,,,,,,,,sep,
 File,Load CSL,,,csl-load,,Play a CSL script (open a file browser if no file is provided),"Plays on a machine of its own (the command line's, the script's settings applied at its reset), which becomes the window's when the script ends; screenshots in the script's folder",inp,
 File,Stop CSL,,,csl-stop,,Stop the running CSL script; the machine goes on,Enable only while a script plays,act,
+File,Save the CSL log,,,csl-log-save,,"Save the log of the CSL script played: its instructions, their times, their screenshots' files",Enable once a script played,inp,
 File,,,,,,,,sep,
 File,Watch files for changes,,,files-watch-toggle,,"Load again the snapshot, discs and tape when their files change on the host",Checkable. Edit / assemble / see loop,tog,
 File,,,,,,,,sep,
