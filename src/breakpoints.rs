@@ -11,9 +11,9 @@
 //! fetched at PC.
 //!
 //! A breakpoint may carry a [`Condition`] (an expression on the registers,
-//! memory and the access): it then only fires while the condition holds.
-//! Step counts are not supported yet: a breakpoint carrying one is refused
-//! rather than made to fire on every hit.
+//! memory and the access): it then only fires while the condition holds. Its
+//! `step` lets that many hits pass before it acts ([`AdvancedBreakpoint::after`]),
+//! as the pass of ACE's breakpoint window and of cpclib's breakpoint manager.
 
 use crate::motherboard::{BusAccess, BusAccessKind};
 
@@ -176,9 +176,7 @@ impl AdvancedBreakpoint {
                 "condition" if !value.trim_matches('"').is_empty() => {
                     brk.condition = Some(Condition::parse(value.trim_matches('"'))?);
                 }
-                "step" if !value.is_empty() => {
-                    return Err(format!("step={value}: step counts are not supported yet"))
-                }
+                "step" if !value.is_empty() => brk.after = number(u32::MAX)? as u64,
                 "condition" | "step" => {}
                 other => return Err(format!("unknown breakpoint field {other:?}")),
             }
@@ -256,7 +254,9 @@ mod test {
             AdvancedBreakpoint::parse_remu(r#"EXEC,RW,STOP,addr=1,condition="A==2 && B==3""#)
                 .unwrap();
         assert_eq!(conditional.condition.unwrap().source(), "A==2 && B==3");
-        assert!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=3").is_err());
+        // the step is a pass: hits let pass before it acts
+        assert_eq!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=3").unwrap().after, 3);
+        assert_eq!(AdvancedBreakpoint::parse_remu("EXEC,addr=1,step=").unwrap().after, 0);
         assert!(AdvancedBreakpoint::parse_remu("BOGUS").is_err());
     }
 
