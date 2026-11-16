@@ -219,6 +219,15 @@ pub struct Z80Registers {
     pub IM: u8,
     /// NOPs emulated.
     pub ticks: u64,
+    /// WZ (MEMPTR).
+    #[serde(default)]
+    pub WZ: u16,
+    /// The flags set, by name, bits 7 to 0 (`SZYHXPNC`), a dash for a clear one.
+    #[serde(default)]
+    pub flags: String,
+    /// On a HALT, waiting for an interrupt.
+    #[serde(default)]
+    pub halted: bool,
 }
 
 /// `POST /api/z80`: the registers to set, by name; any left out are kept. All are checked
@@ -354,4 +363,202 @@ mod tests {
         assert_eq!(set.A, Some(Int(7)));
         assert_eq!(set.PC, None);
     }
+}
+
+// ------------------------------------------------------------------ /api/psg
+
+/// A PSG tone channel, as a musician reads it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PsgChannel {
+    /// R0-R5: 12 bits.
+    pub period: u16,
+    pub frequency_hz: f64,
+    /// The nearest note (`A4`), how far from it in cents, its MIDI number: none out of hearing.
+    pub note: Option<String>,
+    pub cents: Option<i32>,
+    pub midi: Option<i32>,
+    /// Its tone, and the noise, mixed in.
+    pub tone: bool,
+    pub noise: bool,
+    /// Its volume, 0 to 15 (or the envelope's).
+    pub volume: u8,
+    pub envelope: bool,
+}
+
+impl PsgChannel {
+    /// The note it sounds: its tone on, a volume.
+    pub fn sounding(&self) -> Option<i32> {
+        self.midi
+            .filter(|_| self.tone && (self.envelope || self.volume != 0))
+    }
+}
+
+/// `GET /api/psg`: AMSpiriT's fields, the 16 registers, and the channels read.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Psg {
+    pub period_a: u16,
+    pub vol_a: u8,
+    pub period_b: u16,
+    pub vol_b: u8,
+    pub period_c: u16,
+    pub vol_c: u8,
+    pub mixer: u8,
+    pub noise: u8,
+    pub env_period: u16,
+    pub env_shape: u8,
+    pub regs: Vec<u8>,
+    pub selected_reg: Option<u8>,
+    pub channels: Vec<PsgChannel>,
+    pub noise_hz: f64,
+    pub envelope_hz: f64,
+    /// Port A reads (the keyboard), else writes.
+    pub port_a_input: bool,
+}
+
+// ------------------------------------------------------------------ /api/fdc
+
+/// A track in a word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackKind {
+    Unformatted,
+    /// Sectors with several copies of their data.
+    WeakSectors,
+    /// The 9 sectors of 512 bytes of AMSDOS.
+    Standard,
+    NoSector,
+    /// A protection, a more packed format...
+    AnotherLayout,
+}
+
+impl TrackKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unformatted => "unformatted",
+            Self::WeakSectors => "weak sectors",
+            Self::Standard => "9 x 512",
+            Self::NoSector => "no sector",
+            Self::AnotherLayout => "another layout",
+        }
+    }
+}
+
+/// A sector of the track under the head.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DiscSector {
+    pub c: u8,
+    pub h: u8,
+    pub r: u8,
+    pub n: u8,
+    /// The size its N announces, and the data the image holds.
+    pub size: usize,
+    pub data_len: usize,
+    /// What is special about it: weak (several copies), deleted, another track's ID, odd size.
+    pub notes: Vec<String>,
+}
+
+/// A file of a disc's AMSDOS catalogue.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CatalogueEntry {
+    /// `NAME.EXT`.
+    pub name: String,
+    pub user: u8,
+    pub hidden: bool,
+    pub kilobytes: u32,
+}
+
+/// The disc in a drive as the head sees it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Disc {
+    /// `DSK` or `HFE`.
+    pub image: String,
+    /// The format of the track under the head: `Data`, `System`, `IBM`, else its sectors.
+    pub format: String,
+    pub tracks: u8,
+    pub double_sided: bool,
+    /// The side read: `A` or `B`.
+    pub side: String,
+    pub head_track: u8,
+    /// Each track of the side read.
+    pub track_kinds: Vec<TrackKind>,
+    /// Each track's sector IDs (R), in their order on the track.
+    pub track_sectors: Vec<Vec<u8>>,
+    /// The track under the head, its sectors in the order they pass; the next one's index.
+    pub sectors: Vec<DiscSector>,
+    pub next_sector: Option<usize>,
+    pub catalogue: Vec<CatalogueEntry>,
+}
+
+/// A drive.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FdcDrive {
+    pub connected: bool,
+    /// `3` or `3.5` (inches).
+    pub kind: String,
+    pub disk: bool,
+    /// `A` or `B`.
+    pub side: String,
+    pub track: u8,
+    /// Its disc as the head sees it.
+    pub disc: Option<Disc>,
+}
+
+/// `GET /api/fdc`: the status registers, the phase, the drives and their discs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Fdc {
+    pub msr: u8,
+    pub sr0: u8,
+    pub sr1: u8,
+    pub sr2: u8,
+    pub motor: bool,
+    pub phase: String,
+    pub command: String,
+    pub drives: Vec<FdcDrive>,
+}
+
+// ------------------------------------------------------------------ /api/asic
+
+/// A DMA channel of the ASIC.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AsicDma {
+    /// SAR: the next instruction's address.
+    pub address: u16,
+    /// PPR: a PAUSE tick is this + 1 HSYNCs.
+    pub prescaler: u8,
+    pub enabled: bool,
+    /// PAUSE ticks left.
+    pub pause: u16,
+    /// REPEAT's counter.
+    pub loop_count: u16,
+    pub interrupt: bool,
+}
+
+/// A hardware sprite of the ASIC.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AsicSprite {
+    pub x: u16,
+    pub y: u16,
+    /// 0 hides it; 1, 2, 3 make a pixel 1, 2, 4 wide or high.
+    pub zoom_x: u8,
+    pub zoom_y: u8,
+    pub shown: bool,
+    /// Its 16 x 16 pens, row by row (0: transparent, n: sprite colour n).
+    pub pixels: Vec<u8>,
+}
+
+/// `GET /api/asic`: a CPC+'s ASIC (null on a CPC).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Asic {
+    pub unlocked: bool,
+    /// The 32 palette entries (12 bits, `&GRB`): pens 0-15, the border, sprite colours 1-15.
+    pub palette: Vec<u16>,
+    /// The line of the programmable raster interrupt (0: none).
+    pub pri: u8,
+    /// The line of the split screen (0: none).
+    pub splt: u8,
+    pub sscr: u8,
+    pub ivr: u8,
+    pub rmr2: u8,
+    pub dma: Vec<AsicDma>,
+    pub sprites: Vec<AsicSprite>,
 }

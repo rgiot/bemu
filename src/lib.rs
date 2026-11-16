@@ -35,6 +35,7 @@ pub mod snapshot;
 #[cfg(any(feature = "playcity", feature = "digiblaster"))]
 pub mod sound_cards;
 pub mod sound_export;
+pub mod state;
 pub mod symbols;
 pub mod tape;
 #[cfg(not(target_arch = "wasm32"))]

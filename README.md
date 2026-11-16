@@ -98,6 +98,17 @@ palette: type a few letters of a command (`crtc 1`, `flip b`, `snapshot`), Enter
 command that needs something asks it (an address, a value, a file in a small file browser).
 `--no-menu` hides the menu bar (Tools > Show menu bar, or the palette, shows it again).
 
+The debugger's windows come back at the next session as they were left: open, where they were
+(and as large, when sized by hand), each with its own settings (a Memory window's address and
+paging, a Disassembly window's bookmarks, its Registers section folded or not). They are kept in
+`workspace.json` of the configuration folder: `$BEMU_CONFIG_DIR`, else `~/.config/bemu`
+(`$XDG_CONFIG_HOME/bemu`), `~/Library/Application Support/bemu` on macOS, `%APPDATA%\bemu` on
+Windows. Delete the file to start from no window.
+
+Each debugger window is as large as its content until it is resized by hand. If one opens at a
+wrong size, run with `BEMU_FIT_DEBUG=1`: each window prints what its content measured, the size
+it asked for, and when it took a size as the user's.
+
 Each row of `doc/menu-ui.csv` is a menu item: its menu path, its id (`area-verb`, the name the
 palette, CSL, the configurations and the web API use), its type (`act`, `tog`, `rad`, `inp`,
 `ss` start/stop, `sub`, or `sep` for a line in the menu), its aim and note (the tooltips: the note
@@ -113,8 +124,15 @@ The function keys, the menus, the palette and the debug server's routes all run 
 commands (`src/commands`). Debug > View opens the debugger's windows (registers, CRTC, Gate
 Array, PSG, FDC, memory, disassembly, history, breakpoints, symbols); breakpoints, stepping (in,
 over, out, a frame) and counters work without the debug server, which Debug > Debug server
-starts on demand. The commands the emulator cannot do yet (a Gotek drive, recording a tape) are
-in the menus, greyed out.
+starts on demand. A command that cannot run now (no disc to flip, no script to stop) is greyed
+out, its tooltip says why.
+
+The FDC window draws each disc as the drive turns it, the way C64 tools draw a 1541 disc: its
+tracks as rings (track 0 outside), each sector an arc where it lies on its track (from an HFE's
+timings, else from MFM's layout), its ID field in cyan then its data coloured by what it is
+(data, deleted, CRC error, weak, no data mark, another track's ID), the head on its track (lit
+while the motor runs), the sectors the last commands read or wrote glowing. A sector hovered
+says its C, H, R, N.
 
 The debugger's windows use cpclib-dap's views (`cpclib-dap` without its debug adapter): the
 disassembly with each instruction's cost in NOPs, the call stack read from the stack, the

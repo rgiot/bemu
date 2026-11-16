@@ -818,3 +818,26 @@ fn a_written_disc_is_marked_modified_until_saved() {
     fdc.mark_saved(FdcDrive::A);
     assert!(!fdc.is_modified(FdcDrive::A));
 }
+
+/// The side the head reads: on a 3.5" drive the head the last command selected, on a 3" one the
+/// side put up (whatever the command asks).
+#[test]
+fn the_side_read_is_the_heads_on_a_35_and_the_side_up_on_a_3() {
+    let mut fdc = fdc_35_with(two_sided());
+    assert_eq!(fdc.side_read(0), 0);
+    // HD=1 on unit 0: side B
+    let mut command = rw(READ_DATA, 0, 1, 1, 1, 1);
+    command[1] = 0x04;
+    read(&mut fdc, &command, 256);
+    assert_eq!(fdc.side_read(0), 1);
+    read(&mut fdc, &rw(READ_DATA, 0, 0, 1, 1, 1), 256);
+    assert_eq!(fdc.side_read(0), 0);
+
+    let mut fdc = fdc_with(two_sided());
+    let mut command = rw(READ_DATA, 0, 0, 1, 1, 1);
+    command[1] = 0x04;
+    read(&mut fdc, &command, 256);
+    assert_eq!(fdc.side_read(0), 0, "a 3\" drive reads the side put up");
+    fdc.flip_disc(FdcDrive::A);
+    assert_eq!(fdc.side_read(0), 1);
+}

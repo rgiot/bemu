@@ -15,6 +15,7 @@ mod chips;
 mod code_views;
 mod csl_log;
 mod files;
+mod heat;
 mod menu;
 mod paging;
 mod paint;
@@ -25,6 +26,7 @@ mod screen;
 mod views;
 mod widgets;
 mod window;
+pub mod workspace;
 
 pub use paint::Painter;
 
@@ -82,6 +84,10 @@ pub struct Gui {
     /// The windows to bring to the front: the embedded ones at the next frame, the system's
     /// by the host ([`Self::take_focus_requests`]).
     focus: Vec<ViewKey>,
+    /// Where the windows of the system are (as the host last said, or a workspace).
+    geometries: BTreeMap<ViewKey, workspace::Geometry>,
+    /// The size each window's content last wanted (points): it opens at it next time.
+    fitted: BTreeMap<ViewKey, [f32; 2]>,
 }
 
 /// A debugger's window of the system: its key, title and context (see [`Gui::native_views`]).
@@ -91,6 +97,11 @@ pub struct NativeView {
     pub title: String,
     /// Sized by the user from this size (points), else to its content.
     pub resizable: Option<[f32; 2]>,
+    /// Where it was (a workspace): the host opens it there.
+    pub geometry: Option<workspace::Geometry>,
+    /// The size its content wanted last time (points): the host opens it so, not to resize it
+    /// once its content is measured.
+    pub size_hint: Option<[f32; 2]>,
     pub ctx: egui::Context,
 }
 
@@ -128,6 +139,61 @@ impl Gui {
             native_views: false,
             view_contexts: BTreeMap::new(),
             focus: Vec::new(),
+            geometries: BTreeMap::new(),
+            fitted: BTreeMap::new(),
+        }
+    }
+
+    /// Where the window of the system of view `key` is now (the host says, each frame).
+    pub fn note_geometry(&mut self, key: u8, geometry: workspace::Geometry) {
+        self.geometries.insert(ViewKey(key), geometry);
+    }
+
+    /// The workspace: the windows open, where they are, their settings (and those of the
+    /// windows closed during the session, for when they open again).
+    pub fn workspace(&self) -> workspace::Workspace {
+        let mut keys: BTreeMap<ViewKey, serde_json::Value> =
+            self.windows.saved().into_iter().collect();
+        for key in &self.views {
+            keys.entry(*key).or_default();
+        }
+        let windows = keys
+            .into_iter()
+            .filter(|(key, _)| key.view() != View::Palette)
+            .map(|(key, settings)| workspace::SavedWindow {
+                view: key.view().info().command.to_owned(),
+                copy: key.copy_number(),
+                open: self.views.contains(&key),
+                geometry: self.geometries.get(&key).copied(),
+                fitted: self.fitted.get(&key).copied(),
+                settings,
+            })
+            .collect();
+        workspace::Workspace { windows }
+    }
+
+    /// Back to a workspace: its windows opened again where they were, as they were.
+    pub fn restore(&mut self, saved: &workspace::Workspace) {
+        for window in &saved.windows {
+            let Some(view) = View::opened_by(&window.view) else {
+                continue;
+            };
+            if view == View::Palette || (window.copy > 0 && !view.info().copies) {
+                continue;
+            }
+            let key = ViewKey::copy(view, window.copy);
+            if !window.settings.is_null() {
+                self.windows.get(key).load(&window.settings);
+            }
+            if let Some(geometry) = window.geometry {
+                self.geometries.insert(key, geometry);
+            }
+            if let Some(fitted) = window.fitted {
+                self.fitted.insert(key, fitted);
+            }
+            if window.open {
+                self.views.insert(key);
+            }
         }
     }
 
@@ -154,6 +220,8 @@ impl Gui {
                 key: key.0,
                 title: key.title(),
                 resizable: key.view().info().resizable,
+                geometry: self.geometries.get(&key).copied(),
+                size_hint: self.fitted.get(&key).copied(),
                 ctx: self
                     .view_contexts
                     .entry(key)
@@ -256,6 +324,9 @@ impl Gui {
                     .sum();
         });
         self.follow_links();
+        if wanted.x > 0.0 && wanted.y > 0.0 {
+            self.fitted.insert(key, [wanted.x, wanted.y]);
+        }
         Some((output, wanted))
     }
 
@@ -738,6 +809,44 @@ mod tests {
         assert!(!gui.views.contains(&ViewKey::of(View::Z80)));
         let window = gui.windows.state::<window::Disassembly>(key).expect("open");
         assert_eq!(window.window.address, "");
+    }
+
+    /// A workspace brings the windows back open, where they were, with their settings.
+    #[test]
+    fn a_workspace_brings_the_windows_back() {
+        let target = Target(
+            Motherboard::default(),
+            DebugServer::offline(),
+            HostSettings::default(),
+        );
+        let mut bus = CommandBus::default();
+        let mut gui = Gui::new();
+        gui.handle(&HostRequest::Open(View::Crtc));
+        gui.handle(&HostRequest::OpenAnother(View::Memory));
+        gui.handle(&HostRequest::OpenAnother(View::Memory));
+        gui.windows
+            .get(ViewKey::copy(View::Memory, 1))
+            .go_to("&C000".into());
+        let geometry = workspace::Geometry {
+            position: [100, 200],
+            size: Some([300.0, 400.0]),
+        };
+        gui.note_geometry(ViewKey::of(View::Crtc).0, geometry);
+        frame(&mut gui, &target, &mut bus, 0.0);
+        let saved = gui.workspace();
+        // as a file would give it back
+        let saved: workspace::Workspace =
+            serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+
+        let mut again = Gui::new();
+        again.restore(&saved);
+        assert!(again.views.contains(&ViewKey::of(View::Crtc)));
+        assert!(again.views.contains(&ViewKey::copy(View::Memory, 1)));
+        assert_eq!(memory_address(&mut again, 1), "&C000");
+        assert_eq!(
+            again.geometries.get(&ViewKey::of(View::Crtc)),
+            Some(&geometry)
+        );
     }
 
     /// The address Memory window `copy` shows.

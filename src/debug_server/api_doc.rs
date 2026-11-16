@@ -290,8 +290,13 @@ pub(super) const OPERATIONS: &[Operation] = &[
     op("GET", "/api/memmap", "What each 16K region of the CPU maps: ROM, or which RAM bank; RMR and MMR.", "{regions: [{base, name, rom, rom_bank?, ram_bank?, ext?, write_bank}], rmr, mmr, ram_mode, ram_page, ram_banks}"),
     op("GET", "/api/crtc", "The CRTC registers, the selected one and the counters.", "{type, regs, selected_reg, hcc, vcc, vlc, vsc, vtac, ma}"),
     op("GET", "/api/ga", "The Gate Array: mode, pen, inks, RMR and banking.", "{mode, pen, ink_idx, ink_rgb, ink_firmware, border_idx, border_rgb, rmr, r52, lower_rom, upper_rom, ram_mode, ram_page}"),
-    op("GET", "/api/psg", "The PSG registers, decoded.", "{regs, selected_reg, period_a, period_b, period_c, noise, mixer, vol_a, vol_b, vol_c, env_period, env_shape}"),
-    op("GET", "/api/fdc", "The FDC: status registers, phase, motor and heads.", "{msr, sr0, sr1, sr2, phase, command, motor, drives: [{connected, kind: 3|3.5, disk, side: A|B, track}]}"),
+    op("GET", "/api/psg", "The PSG registers, decoded, and each channel as a musician reads it.", "{regs, selected_reg, period_a, period_b, period_c, noise, mixer, vol_a, vol_b, vol_c, env_period, env_shape, \
+       channels: [{period, frequency_hz, note, cents, midi, tone, noise, volume, envelope}], noise_hz, envelope_hz, port_a_input}"),
+    op("GET", "/api/fdc", "The FDC: status registers, phase, motor and heads; each disc as the head sees it.", "{msr, sr0, sr1, sr2, phase, command, motor, drives: [{connected, kind: 3|3.5, disk, side: A|B, track, \
+       disc: null | {image: DSK|HFE, format, tracks, double_sided, side, head_track, track_kinds: [unformatted|standard|another_layout|weak_sectors|no_sector], \
+       track_sectors: [[R]], sectors: [{c, h, r, n, size, data_len, notes}], next_sector, catalogue: [{name, user, hidden, kilobytes}]}}]}"),
+    op("GET", "/api/asic", "A CPC+'s ASIC (null on a CPC).", "{unlocked, palette: [32 x &GRB], pri, splt, sscr, ivr, rmr2, \
+       dma: [{address, prescaler, enabled, pause, loop_count, interrupt}], sprites: [{x, y, zoom_x, zoom_y, shown, pixels: [256]}]}"),
     op(
         "POST",
         "/api/drive",

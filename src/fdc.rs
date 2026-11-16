@@ -691,6 +691,28 @@ impl Fdc {
         u8::from(self.drives[drive.index()].flipped)
     }
 
+    /// The side of the disc the head of `unit` reads now: on a 3" drive the side put up; on a
+    /// 3.5" one the head selected by the command running on it (a multi-track read goes on to
+    /// head 1), else by the last command that addressed it.
+    pub fn side_read(&self, unit: usize) -> u8 {
+        let unit = unit % NB_UNITS;
+        let head = if self.phase == Phase::Execution && self.xfer.unit == unit {
+            self.xfer.head
+        } else {
+            self.recent
+                .iter()
+                .rev()
+                .filter(|record| {
+                    // Specify and Sense Interrupt Status name no drive
+                    let code = record.command.first().map_or(0, |c| c & 0x1f);
+                    !matches!(code, 0x03 | 0x08) && record.command.len() > 1
+                })
+                .find(|record| usize::from(record.command[1] & 3) == unit)
+                .map_or(0, |record| (record.command[1] >> 2) & 1)
+        };
+        self.surface(unit, head)
+    }
+
     /// The side of the image the FDC's head `head` reads on `unit`: on a 3" drive the side put
     /// up, whatever the FDC asks; on a 3.5" drive the head selected.
     fn surface(&self, unit: usize, head: u8) -> u8 {

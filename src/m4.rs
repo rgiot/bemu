@@ -1261,14 +1261,29 @@ mod test {
         );
     }
 
+    /// A data disc holding one BASIC file, COLUMNS.BAS (3K with its header), as written to
+    /// `path`.
+    fn columns_disc(path: &std::path::Path) {
+        use cpclib_disc::amsdos::{
+            AmsdosAddBehavior, AmsdosFile, AmsdosFileName, AmsdosManagerMut,
+        };
+        let mut disc = cpclib_disc::builder::single_head_data_dsk();
+        let name = AmsdosFileName::try_from("COLUMNS.BAS").unwrap();
+        let file = AmsdosFile::basic_file_from_buffer(&name, &[0x55; 2800]).unwrap();
+        AmsdosManagerMut::new_from_disc(&mut disc, Head::A)
+            .add_file(&file, None, false, false, AmsdosAddBehavior::FailIfPresent)
+            .unwrap();
+        let mut bytes = Vec::new();
+        disc.to_buffer(&mut bytes);
+        std::fs::write(path, bytes).unwrap();
+    }
+
     /// A DSK image is entered as a directory (RulezCharge's "Reset + Open .DSK"), its AMSDOS
     /// files listed and read, read only, and left with `..`.
     #[test]
     fn a_dsk_image_is_a_directory() {
         let (mut board, sd) = board("dsk");
-        let image = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("m4sd/Columns_CPC_v2004.1.1__ENGLISH.dsk");
-        std::fs::copy(image, sd.join("Columns.dsk")).unwrap();
+        columns_disc(&sd.join("Columns.dsk"));
         assert_eq!(
             run(&mut board, C_CD, &nul_terminated("columns.DSK")),
             vec![0]

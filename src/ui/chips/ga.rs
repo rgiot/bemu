@@ -49,6 +49,8 @@ fn ga_inks(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
     let ga = mb.ga();
     let palette = ga.palette();
     let pen = ga.selected_pen();
+    let values: Vec<u32> = palette.iter().map(|ink| u32::from(ink.number())).collect();
+    let heat = crate::ui::heat::watch(ui, "ga-inks", 0, mb, &values);
     ui.weak("A click on a pen gives it another ink, until the program writes it again")
         .on_hover_text("The firmware sends its own inks again at each flash period: a change lasts under BASIC only while the firmware is stopped");
     egui::Grid::new("ga-inks")
@@ -61,7 +63,11 @@ fn ga_inks(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
                     } else {
                         index.to_string()
                     };
-                    ui.small(label);
+                    // the pen number lit when its ink changed lately
+                    ui.label(crate::ui::heat::text(
+                        egui::RichText::new(label).small(),
+                        heat.heat(index),
+                    ));
                     let tooltip = format!(
                         "pen {index}: ink {} (hardware &{:02X})",
                         ink.number(),

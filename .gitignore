@@ -15,6 +15,7 @@ shaker_results*
 m4sd
 *.csv
 !doc/menu-ui.csv
+!doc/menu-ui-origins.csv
 *.sna
 *.mp4
 *.log
