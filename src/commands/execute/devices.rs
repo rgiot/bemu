@@ -419,12 +419,12 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
         #[cfg(feature = "albireo")]
         "albireo-select-path" => CommandState::enabled(has_settings),
         #[cfg(feature = "albireo")]
-        "albireo-eject" => CommandState::enabled(mb.has_expansion::<crate::ch376::Albireo>()),
-        #[cfg(feature = "albireo")]
         "expansion-albireo-toggle" => CommandState {
             enabled: has_settings,
             checked: mb.has_expansion::<crate::ch376::Albireo>(),
         },
+        #[cfg(feature = "albireo")]
+        "albireo-eject" => CommandState::enabled(mb.has_expansion::<crate::ch376::Albireo>()),
         #[cfg(feature = "m4")]
         "m4-select-folder" => CommandState::enabled(files && has_settings),
         #[cfg(feature = "m4")]
