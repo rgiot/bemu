@@ -187,7 +187,8 @@ pub fn disc(mb: &Motherboard, unit: usize) -> Option<Disc> {
     let drive = if unit == 0 { Drive::A } else { Drive::B };
     let fdc = mb.fdc();
     let disc = fdc.image(drive)?;
-    let side = fdc.disc_side(drive).min(disc.nb_heads().saturating_sub(1));
+    // the side under the head now (a 3.5" drive's head selected by the FDC)
+    let side = fdc.side_read(unit).min(disc.nb_heads().saturating_sub(1));
     let head_track = fdc.track(unit);
     let under = disc.track(side, head_track);
     let sectors: Vec<DiscSector> = under

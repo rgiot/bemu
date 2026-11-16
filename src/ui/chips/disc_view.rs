@@ -282,9 +282,9 @@ fn picture(disc: &DiscImage, side: u8) -> egui::ColorImage {
 /// A drive's disc drawing: its picture and how far it has turned.
 #[derive(Default)]
 pub struct DiscView {
-    /// The picture, the context it was given to (a window opened again has another) and the
-    /// disc it shows.
-    texture: Option<(egui::Context, egui::TextureHandle, u64)>,
+    /// The picture of each side, the context it was given to (a window opened again has
+    /// another) and the disc it shows.
+    textures: [Option<(egui::Context, egui::TextureHandle, u64)>; 2],
     /// The turn drawn (fraction), and when.
     turned: f32,
     at: Option<f64>,
@@ -359,7 +359,8 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, unit: usize, view: &mut DiscVie
         return;
     };
     let tracks = disc.nb_tracks();
-    let side = fdc.disc_side(drive).min(disc.nb_heads().saturating_sub(1));
+    // the side under the head now (a 3.5" drive's head selected by the FDC)
+    let side = fdc.side_read(unit).min(disc.nb_heads().saturating_sub(1));
     let head_track = fdc.track(unit).min(tracks.saturating_sub(1));
     let under = disc.track(side, head_track);
     let arcs = under
@@ -367,21 +368,19 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, unit: usize, view: &mut DiscVie
         .unwrap_or_default();
 
     // the picture, drawn again for another disc (or another context)
+    // (a picture each side: a double-sided disc goes from one to the other as it is read)
     let signature = signature(disc, side);
-    let fresh = !matches!(&view.texture, Some((ctx, _, s)) if *ctx == *ui.ctx() && *s == signature);
+    let kept = &mut view.textures[usize::from(side & 1)];
+    let fresh = !matches!(kept, Some((ctx, _, s)) if *ctx == *ui.ctx() && *s == signature);
     if fresh {
         let texture = ui.ctx().load_texture(
-            format!("disc-{unit}"),
+            format!("disc-{unit}-{side}"),
             picture(disc, side),
             egui::TextureOptions::LINEAR,
         );
-        view.texture = Some((ui.ctx().clone(), texture, signature));
+        *kept = Some((ui.ctx().clone(), texture, signature));
     }
-    let texture = view
-        .texture
-        .as_ref()
-        .map(|(_, t, _)| t.clone())
-        .expect("drawn");
+    let texture = kept.as_ref().map(|(_, t, _)| t.clone()).expect("drawn");
 
     // how far it has turned: the drive's clock, or the next sector brought under the head
     let now = ui.input(|i| i.time);
@@ -444,8 +443,15 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, unit: usize, view: &mut DiscVie
         (middle - half - 0.5, middle + half + 0.5)
     };
     let mut glow = egui::Mesh::default();
+    // the side a command's head reads: the one it selects on a 3.5" drive, the one put up on a 3"
+    let double_sided = fdc.drive_kind(drive).is_double_sided();
     for (age, (c, h, r)) in recent_accesses(mb, unit).into_iter().enumerate() {
-        if h != side {
+        let read = if double_sided {
+            h
+        } else {
+            fdc.disc_side(drive)
+        };
+        if read != side {
             continue;
         }
         // the track under the head when it has that ID, else the one of its number
