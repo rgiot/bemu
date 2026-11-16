@@ -17,7 +17,8 @@ const CONVENTIONS: &[&str] = &[
     "A query flag is 1 or 0; an empty query value (?mode=) is no value.",
     "Errors answer 400 with {error, field?}, 404 for an unknown path, 405 (with Allow) for a method a path does not take.",
     "Commands answer cmd_seq; the events they cause (GET /api/events) carry it.",
-    "Addresses are CPU addresses (the current mapping) unless a bank is given; Bnn:hhhh names offset hhhh of 16K RAM bank nn (hex)."
+    "Addresses are CPU addresses (the current mapping) unless a bank is given; Bnn:hhhh names offset hhhh of 16K RAM bank nn (hex).",
+    "Memory is named by a location: a CPU address, read through a paging (C0-C7, &C0-&FF, Pn, L, -L, U, -U, Un, LPn, LBn, R, -R, W; default the CPU's), or SPACE:hhhh in a space: Bnn (RAM bank), LOWER, UPPERnn, CARTnn (cartridge page), ASIC."
 ];
 
 /// An example of a request: its method, path, query (without `?`) and body.
@@ -39,8 +40,9 @@ const fn example(method: &'static str, path: &'static str, query: &'static str, 
 
 pub(super) const EXAMPLES: &[Example] = &[
     example("POST", "/api/z80", "", r#"{"BC":"0x7f10","A":84}"#),
-    example("GET", "/api/ram", "addr=0xc000&len=16&view=cpu", ""),
-    example("POST", "/api/ram", "", r#"{"addr":"0x4000","data":"C3 00 40"}"#),
+    example("GET", "/api/ram", "at=0xc000&len=16&paging=U7", ""),
+    example("POST", "/api/ram", "", r#"{"at":"B04:0000","data":"C3 00 40"}"#),
+    example("GET", "/api/memmap", "paging=C4,-L", ""),
     example("POST", "/api/exec", "", r#"{"addr":"0x4000"}"#),
     example("POST", "/api/step", "mode=over", ""),
     example("POST", "/api/run_to", "", r#"{"addr":"0x4000"}"#),

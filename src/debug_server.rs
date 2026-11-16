@@ -1295,7 +1295,7 @@ impl DebugServer {
                         "attachment; filename=\"bemu.sna\"".into(),
                     )],
                 }),
-            ("GET", "/api/memmap") => Ok(reply(&memmap_state(motherboard))),
+            ("GET", "/api/memmap") => memmap_request(request, motherboard),
             ("GET", "/api/crtc") => Ok(reply(&self.crtc_state(motherboard))),
             ("GET", "/api/ga") => Ok(reply(&ga_state(motherboard))),
             ("GET", "/api/psg") => Ok(reply(&psg_state(motherboard))),
@@ -1804,6 +1804,12 @@ impl DebugServer {
 
     fn write_ram(&mut self, request: &ApiRequest, motherboard: &mut Motherboard) -> ApiResult {
         let write: WriteRam = body_as(request)?;
+        if write.at.is_some() {
+            return self.write_at(&write, motherboard);
+        }
+        if write.paging.is_some() {
+            return Err(ApiError::field("paging", "a paging is for a CPU address: give it in \"at\""));
+        }
         let addr = ranged("addr", write.addr, 0, 0xffff)?;
         let bank_count = motherboard.physical_bank_count() as i64;
         let bank = ranged("bank", write.bank, 0, bank_count - 1)?.unwrap_or(0) as usize;
@@ -1848,6 +1854,76 @@ impl DebugServer {
         }
         if exec {
             let target = entry.unwrap_or(addr as i64) as u16;
+            motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(target);
+        }
+        self.ram_seq += 1;
+        Ok(reply(&MemoryAck {
+            ok: true,
+            seq: self.ram_seq,
+            cmd_seq: self.command(),
+        }))
+    }
+
+    /// `POST /api/ram` with `at`: a CPU address (the RAM a write there reaches, through
+    /// `paging`) or an offset in a RAM bank; a ROM, a cartridge page, the registers refused.
+    fn write_at(&mut self, write: &WriteRam, motherboard: &mut Motherboard) -> ApiResult {
+        if write.addr.is_some() || write.bank.is_some() {
+            return Err(ApiError::field("at", "\"at\" replaces addr and bank: give one or the other"));
+        }
+        let at = write.at.expect("write_at is for an \"at\"");
+        let data = match &write.data {
+            None => Vec::new(),
+            Some(text) => parse_hex(text)
+                .ok_or_else(|| ApiError::field("data", "field \"data\" must be a hex string"))?,
+        };
+        let exec = write.exec.unwrap_or(false);
+        let entry = ranged("entry", write.entry, 0, 0xffff)?;
+        if data.is_empty() && !exec {
+            return Err(ApiError::new("nothing to do: no \"data\" to write and no \"exec\""));
+        }
+        // where each byte goes: a RAM bank and an offset in it
+        let places: Vec<(u16, u16)> = match at {
+            Location::Cpu(address) => {
+                let through = crate::paging::Paging::from_api(&write.paging.unwrap_or_default(), motherboard);
+                (0..data.len())
+                    .map(|i| through.write_location(motherboard, address.wrapping_add(i as u16)))
+                    .collect()
+            }
+            Location::In { space: Space::Ram(bank), offset } => {
+                if write.paging.is_some() {
+                    return Err(ApiError::field("paging", "a paging is for a CPU address, not a RAM bank"));
+                }
+                let start = u32::from(bank) * 0x4000 + offset;
+                (0..data.len() as u32)
+                    .map(|i| (((start + i) / 0x4000) as u16, ((start + i) % 0x4000) as u16))
+                    .collect()
+            }
+            Location::In { space, .. } => {
+                return Err(ApiError::field(
+                    "at",
+                    format!("{} is not written: a ROM, a cartridge page or the ASIC's registers", space.name()),
+                ))
+            }
+        };
+        for (&(bank, offset), &byte) in places.iter().zip(&data) {
+            if !motherboard.write_bank_byte(bank, offset, byte) {
+                return Err(ApiError::field(
+                    "data",
+                    format!(
+                        "the write runs past the last RAM bank (B{:02X})",
+                        motherboard.physical_bank_count() - 1
+                    ),
+                ));
+            }
+        }
+        if exec {
+            let target = match (entry, at) {
+                (Some(entry), _) => entry as u16,
+                (None, Location::Cpu(address)) => address,
+                (None, _) => {
+                    return Err(ApiError::field("entry", "exec at a RAM bank's offset needs the \"entry\" PC"))
+                }
+            };
             motherboard.cpu_mut().reg16_mut(Reg16::Pc).set(target);
         }
         self.ram_seq += 1;
@@ -2673,17 +2749,25 @@ impl CommandTarget for ServerTarget<'_> {
 /// `GET /api/memmap`: each 16K region of the CPU's view, with the ROM
 /// read there if any and the absolute RAM bank (written there in any case).
 fn memmap(motherboard: &Motherboard) -> Value {
-    to_json(&memmap_state(motherboard))
+    let paging = crate::paging::Paging::from_api(&bemu_api::Paging::default(), motherboard);
+    to_json(&memmap_state(motherboard, &paging))
 }
 
-fn memmap_state(motherboard: &Motherboard) -> MemMap {
+/// `GET /api/memmap[?paging=]`.
+fn memmap_request(request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
+    let query: MemMapQuery = query_as(request)?;
+    let paging = crate::paging::Paging::from_api(&query.paging.unwrap_or_default(), motherboard);
+    Ok(reply(&memmap_state(motherboard, &paging)))
+}
+
+/// The map of `paging`: what each region reads (the ROM, or which RAM bank), the bank written,
+/// and the registers' values that make it.
+fn memmap_state(motherboard: &Motherboard, paging: &crate::paging::Paging) -> MemMap {
+    use crate::paging::Source;
     let regions = (0..4u16)
         .map(|region| {
             let base = region * 0x4000;
-            let write_bank = match motherboard.physical_address_for_write(base) {
-                PhysicalAddress::Ram { bank, .. } => bank,
-                _ => unreachable!("writes always reach RAM"),
-            };
+            let source = paging.source(motherboard, region);
             let mut value = MemRegion {
                 base,
                 name: format!("{base:04X}"),
@@ -2691,12 +2775,17 @@ fn memmap_state(motherboard: &Motherboard) -> MemMap {
                 rom_bank: None,
                 ram_bank: None,
                 ext: None,
-                write_bank,
+                write_bank: paging.write_location(motherboard, base).0,
+                source: Some(paging.space(motherboard, region).name()),
             };
-            match motherboard.physical_address(base) {
-                PhysicalAddress::LowerRom { .. } => value.rom_bank = Some(255),
-                PhysicalAddress::UpperRom { rom, .. } => value.rom_bank = Some(rom as u16),
-                PhysicalAddress::Ram { bank, .. } => {
+            match source {
+                // AMSpiriT's numbers: 255 the lower ROM, else the upper ROM's
+                Source::LowerRom => value.rom_bank = Some(255),
+                Source::UpperRom(slot) => value.rom_bank = Some(u16::from(slot)),
+                Source::Cartridge(_) if region == 3 => value.rom_bank = Some(u16::from(paging.upper_number)),
+                Source::Cartridge(_) => value.rom_bank = Some(255),
+                Source::Registers => value.rom = false,
+                Source::Ram(bank) => {
                     value.rom = false;
                     value.ram_bank = Some(bank);
                     value.ext = Some(bank >= 4);
@@ -2705,10 +2794,19 @@ fn memmap_state(motherboard: &Motherboard) -> MemMap {
             value
         })
         .collect();
-    let mmr = motherboard.mmr();
+    let (mmr, rmr) = if paging.follow {
+        (motherboard.mmr(), motherboard.ga().rmr())
+    } else {
+        // the values that would page it: the RAM's, and RMR's ROM bits (set: disabled)
+        let mmr = 0xc0 | ((paging.page & 7) << 3) | paging.ram_config;
+        let rmr = (motherboard.ga().rmr() & !0x0c)
+            | if paging.lower_rom { 0 } else { 0x04 }
+            | if paging.upper_rom { 0 } else { 0x08 };
+        (mmr, rmr)
+    };
     MemMap {
         regions,
-        rmr: motherboard.ga().rmr(),
+        rmr,
         ram_mode: mmr & 7,
         ram_page: (mmr >> 3) & 7,
         mmr,
@@ -3118,15 +3216,56 @@ fn breakpoint_of(new: &NewBreakpoint) -> Result<AdvancedBreakpoint, ApiError> {
 
 fn read_ram(request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
     let query: ReadRam = query_as(request)?;
-    let addr = ranged("addr", query.addr, 0, 0xffff)?.unwrap_or(0);
     let len = ranged("len", query.len, 1, 0x10000)?.unwrap_or(256);
+    if let Some(at) = query.at {
+        if query.addr.is_some() || query.bank.is_some() || query.view.is_some() {
+            return Err(ApiError::field("at", "\"at\" replaces addr, bank and view: give one or the other"));
+        }
+        let (addr, hex, paging) = match at {
+            Location::Cpu(address) => {
+                let paging = query.paging.unwrap_or_default();
+                let through = crate::paging::Paging::from_api(&paging, motherboard);
+                let hex = (0..len)
+                    .map(|i| format!("{:02x}", through.read(motherboard, address.wrapping_add(i as u16))))
+                    .collect();
+                (u32::from(address), hex, (!paging.is_cpu()).then_some(paging))
+            }
+            Location::In { space, offset } => {
+                if query.paging.is_some() {
+                    return Err(ApiError::field("paging", "a paging is for a CPU address, not a space"));
+                }
+                let mut hex = String::with_capacity(2 * len as usize);
+                for i in 0..len as u32 {
+                    let byte = crate::paging::read_space(motherboard, space, offset + i).ok_or_else(|| {
+                        ApiError::field("at", format!("no {} here (or it ends before {} bytes)", space.name(), len))
+                    })?;
+                    hex.push_str(&format!("{byte:02x}"));
+                }
+                (offset, hex, None)
+            }
+        };
+        return Ok(reply(&Ram {
+            addr,
+            len: len as u32,
+            hex,
+            view: None,
+            at: Some(at),
+            paging,
+        }));
+    }
+    let addr = ranged("addr", query.addr, 0, 0xffff)?.unwrap_or(0);
     let bank = ranged("bank", query.bank, 0, motherboard.physical_bank_count() as i64 - 1)?.unwrap_or(0);
     let view = query.view.unwrap_or(RamView::Raw);
+    let paging = query.paging.filter(|paging| !paging.is_cpu());
+    if paging.is_some() && view == RamView::Raw {
+        return Err(ApiError::field("paging", "a paging is for the CPU's addresses: view=cpu, or at"));
+    }
+    let through = crate::paging::Paging::from_api(&paging.unwrap_or_default(), motherboard);
     // Past the last bank, the read wraps to the first one.
     let total = motherboard.physical_bank_count() as i64 * 0x4000;
     let byte_at = |i: i64| -> u8 {
         match view {
-            RamView::Cpu => motherboard.read_byte((addr + i) as u16),
+            RamView::Cpu => through.read(motherboard, (addr + i) as u16),
             RamView::Raw => {
                 let linear = (bank * 0x4000 + addr + i) % total;
                 motherboard
@@ -3141,6 +3280,8 @@ fn read_ram(request: &ApiRequest, motherboard: &Motherboard) -> ApiResult {
         len: len as u32,
         hex,
         view: (view == RamView::Cpu).then_some(RamView::Cpu),
+        at: None,
+        paging,
     }))
 }
 
@@ -4378,6 +4519,114 @@ mod test {
 
         let (status, _) = call(&mut server, &mut mb, "POST", "/api/run_to", r#"{"nothing":1}"#);
         assert_eq!(status, 400);
+    }
+
+    /// The hex `/api/ram` answers for `query`.
+    fn ram_hex(server: &mut DebugServer, mb: &mut Motherboard, query: &str) -> (u16, Value) {
+        call(server, mb, "GET", &format!("/api/ram?{query}"), "")
+    }
+
+    #[test]
+    fn memory_is_read_in_a_ram_bank_a_rom_or_through_a_paging() {
+        let mut server = server();
+        let mut mb = Motherboard::default();
+        mb.write_bank_byte(4, 0x10, 0xaa);
+        mb.write_bank_byte(1, 0x10, 0x55);
+        mb.write_bank_byte(5, 0x3fff, 0x11);
+        mb.write_bank_byte(6, 0, 0x22);
+        // a RAM bank, whatever is paged; running on into the next one
+        let (_, read) = ram_hex(&mut server, &mut mb, "at=B04:0010&len=1");
+        assert_eq!(read["hex"], "aa", "{read}");
+        assert_eq!(read["at"], "B04:0010");
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=P0B1:3fff&len=2").1["hex"], "1122");
+        // the CPU's paging (C0: bank 1 at &4000), or another (C4: bank 4 there)
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=0x4010&len=1").1["hex"], "55");
+        let (_, through) = ram_hex(&mut server, &mut mb, "at=0x4010&len=1&paging=C4");
+        assert_eq!(through["hex"], "aa", "{through}");
+        assert_eq!(through["paging"], "C4");
+        // the older view=cpu takes a paging too
+        assert_eq!(ram_hex(&mut server, &mut mb, "addr=0x4010&len=1&view=cpu&paging=C4").1["hex"], "aa");
+        // the ROMs: the lower one at &0000, an upper one (an empty slot reads as BASIC's)
+        let lower = mb.read_lower_rom_byte(0);
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=LOWER:0000&len=1").1["hex"], format!("{lower:02x}"));
+        let basic = mb.upper_rom(0).unwrap()[0x10];
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=UPPER00:0010&len=1").1["hex"], format!("{basic:02x}"));
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=0xc010&len=1&paging=U0").1["hex"], format!("{basic:02x}"));
+        // the RAM under the lower ROM: ROM off, or what a write reaches
+        mb.write_bank_byte(0, 0, 0x42);
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=0&len=1&paging=-L").1["hex"], "42");
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=0&len=1&paging=W").1["hex"], "42");
+        // refused: what is not there, a paging for a space, at with the older parameters
+        for query in [
+            "at=CART00:0000",
+            "at=ASIC:0000",
+            "at=B40:0000",
+            "at=B04:0000&paging=C4",
+            "at=0x4000&bank=1",
+            "addr=0x4000&paging=C4",
+            "at=0x4000&paging=C9",
+        ] {
+            let (status, refused) = ram_hex(&mut server, &mut mb, query);
+            assert_eq!(status, 400, "{query}: {refused}");
+        }
+    }
+
+    #[test]
+    fn memory_is_written_where_a_write_goes() {
+        let (mut server, mut mb) = (server(), machine());
+        let (status, body) = call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"B04:0010","data":"AB CD"}"#);
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(mb.read_bank_byte(4, 0x10), Some(0xab));
+        assert_eq!(mb.read_bank_byte(4, 0x11), Some(0xcd));
+        // a CPU address through a paging: C4 puts bank 4 at &4000
+        call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"0x4020","paging":"C4","data":"77"}"#);
+        assert_eq!(mb.read_bank_byte(4, 0x20), Some(0x77));
+        assert_eq!(mb.read_bank_byte(1, 0x20), Some(0));
+        // and jumps there
+        call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"0x4020","exec":true}"#);
+        assert_eq!(mb.pc(), 0x4020);
+        // a ROM is not written; exec at a bank's offset needs its PC
+        let (status, refused) =
+            call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"UPPER07:0000","data":"00"}"#);
+        assert_eq!(status, 400, "{refused}");
+        assert_eq!(refused["field"], "at");
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"B04:0000","exec":true}"#);
+        assert_eq!(status, 400);
+        let (status, _) = call(&mut server, &mut mb, "POST", "/api/ram", r#"{"at":"B04:0000","addr":0,"data":"00"}"#);
+        assert_eq!(status, 400);
+    }
+
+    #[test]
+    fn the_memory_map_of_another_paging() {
+        let (mut server, mut mb) = (server(), Motherboard::default());
+        let (_, now) = call(&mut server, &mut mb, "GET", "/api/memmap", "");
+        assert_eq!(now["regions"][0]["source"], "LOWER", "{now}");
+        assert_eq!(now["regions"][1]["source"], "B01");
+        let (_, other) = call(&mut server, &mut mb, "GET", "/api/memmap?paging=C4,-L", "");
+        assert_eq!(other["regions"][0]["source"], "B00", "{other}");
+        assert_eq!(other["regions"][1]["source"], "B04");
+        assert_eq!(other["regions"][1]["ram_bank"], 4);
+        assert_eq!(other["mmr"], 0xc4);
+        assert_eq!(other["rmr"].as_u64().unwrap() & 4, 4, "the lower ROM's bit set: disabled");
+    }
+
+    #[test]
+    fn a_cpc_plus_cartridge_page_and_its_registers_are_read() {
+        let mut server = server();
+        let mut mb = MotherboardBuilder::default()
+            .set_model(crate::motherboard::CpcModel::Cpc6128Plus)
+            .build();
+        let page1 = mb.read_cartridge_byte(1, 0x20).unwrap();
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=CART01:0020&len=1").1["hex"], format!("{page1:02x}"));
+        // the lower ROM is the cartridge page RMR2 selects (0 after the reset)
+        let page0 = mb.read_cartridge_byte(0, 0x10).unwrap();
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=LOWER:0010&len=1").1["hex"], format!("{page0:02x}"));
+        // a paging with page 1 as the lower ROM
+        assert_eq!(ram_hex(&mut server, &mut mb, "at=0x20&len=1&paging=LP1").1["hex"], format!("{page1:02x}"));
+        let (status, _) = ram_hex(&mut server, &mut mb, "at=ASIC:0000&len=16");
+        assert_eq!(status, 200);
+        let (status, _) = ram_hex(&mut server, &mut mb, "at=CART40:0000&len=1");
+        assert_eq!(status, 400, "past the cartridge's pages");
     }
 
     #[test]

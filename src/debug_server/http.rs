@@ -143,9 +143,16 @@ fn typed_routes() -> ApiRouter<Shared> {
         post_with "/api/z80" (NoInput, DocJson<SetZ80>) -> axum::Json<CommandAck>:
             "set Z80 registers", "Set registers by name; all are checked before any changes. A pair sets its two halves.";
         get_with "/api/ram" (DocQuery<ReadRam>, NoInput) -> axum::Json<Ram>:
-            "read memory", "Read memory, as hex: the RAM banks (view=raw, default) or what the CPU reads now (view=cpu).";
+            "read memory: the CPU's, a RAM bank, a ROM, a cartridge page",
+            "Read memory, as hex. at= names where: a CPU address, read through paging= (default the CPU's \
+             paging now: C4, U7, -L... see Paging), or an offset in a space: Bnn (a RAM bank), LOWER, UPPERnn, \
+             CARTnn (a CPC+ cartridge page), ASIC (its registers). The older form: the RAM banks (view=raw, \
+             default: addr an offset in bank) or the CPU's addresses (view=cpu).";
         post_with "/api/ram" (NoInput, DocJson<WriteRam>) -> axum::Json<MemoryAck>:
-            "write RAM, and/or jump", "Write bytes to RAM banks (addr an offset in bank), and/or set PC (exec).";
+            "write RAM, and/or jump",
+            "Write bytes to RAM, and/or set PC (exec). at names where: a CPU address (the RAM a write there \
+             reaches, through paging) or an offset in a RAM bank (Bnn:hhhh); a ROM, a cartridge page, the \
+             registers are refused. The older form: addr an offset in bank.";
         post_with "/api/exec" (NoInput, DocJson<SetPc>) -> axum::Json<MemoryAck>:
             "set PC", "Set PC.";
         post_with "/api/step" (DocQuery<StepQuery>, NoInput) -> axum::Json<CommandAck>:
@@ -192,8 +199,10 @@ fn typed_routes() -> ApiRouter<Shared> {
             "the machine as a .sna",
             "The machine's state as a version 3 .sna file: CPU, RAM, CRTC with its counters, Gate Array, PSG, PPI, ROM and \
              RAM banking. POST it to /api/media to go back to it.";
-        get_with "/api/memmap" (NoInput, NoInput) -> axum::Json<MemMap>:
-            "what is mapped in each 16K region", "Each 16K region of the CPU: the ROM, or which RAM bank, read there; the bank written; RMR and MMR.";
+        get_with "/api/memmap" (DocQuery<MemMapQuery>, NoInput) -> axum::Json<MemMap>:
+            "what is mapped in each 16K region",
+            "Each 16K region of the CPU: what is read there (source: a space, as at= names it; rom_bank or \
+             ram_bank), the bank written; RMR and MMR. paging= describes another paging than the CPU's.";
         get_with "/api/crtc" (NoInput, NoInput) -> axum::Json<Crtc>:
             "the CRTC", "The CRTC's registers, the selected one and its counters.";
         get_with "/api/ga" (NoInput, NoInput) -> axum::Json<GateArray>:

@@ -44,6 +44,7 @@ pub mod willy;
 pub mod z80;
 
 pub mod memory;
+pub mod paging;
 
 pub mod monitor;
 
