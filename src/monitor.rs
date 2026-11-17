@@ -79,6 +79,26 @@ const MONITOR_PULL_FLAT_LATE: i64 = 422;
 const MONITOR_PULL_END_LATE: i64 = 496;
 /// A second sync up to this far ahead of the line sync still pulls (see `discriminate`).
 const MONITOR_PULL_END_EARLY: i64 = 12 * 16;
+/// Further ahead, from 12 to 28 characters before the line sync (two HSYNC positions a line, the
+/// screen splitting of Onescreen Colonies #1), a second sync pulls the picture right by
+/// [`MONITOR_AHEAD_PULL`] (1/16 ticks, interpolated on the pulse's width in ticks), tapered by
+/// [`MONITOR_AHEAD_TAPER`] (thousandths) from 28 to 33 characters ahead; the beam covers 3/8 of the
+/// way left each line, both ways, from the line after (AMSpiriT Lite 1.16,
+/// validation/fuzz/gen_pull3_probe.py: 3, 6, 10, 13 px for 1 to 4 usec pulses).
+const MONITOR_AHEAD_PULL: [(i64, i64); 5] = [(0, 0), (16, 43), (32, 98), (48, 159), (64, 209)];
+const MONITOR_AHEAD_TAPER: [(i64, i64); 6] =
+    [(12 * 16, 1000), (28 * 16, 1000), (29 * 16, 745), (30 * 16, 540), (32 * 16, 145), (33 * 16, 0)];
+
+/// `table` (x ascending) at `x`, linearly interpolated, 0 outside.
+fn interpolate(table: &[(i64, i64)], x: i64) -> i64 {
+    table
+        .windows(2)
+        .find(|pair| (pair[0].0..=pair[1].0).contains(&x))
+        .map_or(0, |pair| {
+            let ((x0, y0), (x1, y1)) = (pair[0], pair[1]);
+            y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+        })
+}
 
 const HSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 128, 255]);
 const VSYNC_DEBUG_COLOR: Rgb<u8> = Rgb([0, 64, 255]);
@@ -132,6 +152,10 @@ pub struct Monitor {
     /// What the discriminator decided at the last sync: the beam follows it
     /// from the next line (the pulses it looks at come after the flyback).
     next_shift: i32,
+    /// The pull of a second sync far ahead of the line sync (`MONITOR_AHEAD_FLAT`), in 1/16 ticks,
+    /// and where it goes.
+    ahead_pull: i32,
+    ahead_target: i32,
     vsync_color: Rgb<u8>,
     /// When the frame oscillator last restarted (`now` ticks).
     frame_t0: u64,
@@ -175,6 +199,8 @@ impl Monitor {
             last_sync_start: None,
             shift: 0,
             next_shift: 0,
+            ahead_pull: 0,
+            ahead_target: 0,
             vsync_color,
             frame_t0: 0,
             hsync_color,
@@ -562,6 +588,7 @@ impl Monitor {
     /// exactly one) and let the beam follow it.
     fn discriminate(&mut self, start: u64) {
         let mut target = 0i32;
+        let mut ahead_target = 0i32;
         if let (Some(previous), [(other, width)]) = (self.last_sync_start, self.pulses.as_slice()) {
             let after = (*other - previous) as i64; // late for the previous sync
             let late_pull =
@@ -586,8 +613,9 @@ impl Monitor {
             // a second sync BEFORE the line sync pulls the picture right only when it is close: by
             // (width - 3) / 5 ticks starting 6 to 12 usec ahead (Shaker D3 B/C/D 8-11, R2=#23/#24 before
             // the line sync at #2E: 9 and 6 pixels for 3 and 2 usec; a 1 usec one is left alone, D3 D is
-            // half a microsecond off as a whole for another reason), not at all from 12 to 28 usec
-            // ahead (validation/fuzz/gen_pull_probe.py)
+            // half a microsecond off as a whole for another reason). From 12 to 33 characters ahead
+            // the pull is `MONITOR_AHEAD_PULL` (gen_pull_probe.py saw none there: its pulses also ran
+            // during the frame flyback, after which AMSpiriT does not move the picture)
             let before = start as i64 - *other as i64;
             if target == 0
                 && before > MONITOR_PULL_DEADZONE
@@ -596,8 +624,16 @@ impl Monitor {
             {
                 target = (*width - 3).max(0) / 5;
             }
+            // further ahead (two HSYNC positions a line): a pull of its own, see `MONITOR_AHEAD_FLAT`
+            if target == 0 && before > MONITOR_PULL_END_EARLY {
+                let full = interpolate(&MONITOR_AHEAD_PULL, i64::from((*width).clamp(0, 64)));
+                ahead_target = (full * interpolate(&MONITOR_AHEAD_TAPER, before) / 1000) as i32;
+            }
         }
-        self.shift = self.next_shift;
+        // the beam follows the far pull a line later than the near ones
+        self.shift = self.next_shift + (self.ahead_pull + 8).div_euclid(16);
+        self.ahead_target = ahead_target;
+        self.ahead_pull += ((self.ahead_target - self.ahead_pull) * 3).div_euclid(8);
         if target == 0 {
             // no second sync: the lock takes the picture back at once
             self.next_shift = 0;

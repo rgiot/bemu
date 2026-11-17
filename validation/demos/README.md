@@ -12,7 +12,10 @@ takes a screenshot every 5 seconds:
 | borderline | Pulpo Corrosivo, Borderline (BCP24) | `RUN"BORDER"` |
 | checkmate | Pulpo Corrosivo, Checkmate (Revision 23, 4K) | `RUN"CHECK"` |
 | ghostnop | Pulpo Corrosivo and Futurs', Ghost NOP (Revision 24) | `RUN"GHOSTNOP"` |
-| oc2 | Vanity, Onescreen Colonies #2 | `RUN"-OSC2"` |
+| oc0 | Vanity, Onescreen Colonies #0 (2018, pouet 76730). `oc0.csl`: CRTC 1, Gate Array 40007 | `RUN"-OSC0"` |
+| oc1 | Vanity, Onescreen Colonies #1 (2018, pouet 75726): Plasmanoid then Vertical Nightmare, a screen split with two HSYNC positions a line (R2=21 and R2=50). CRTC 0 or 1; `oc1.csl` on CRTC 1, 40007 | `RUN"-ONECOL"` |
+| oc2 | Vanity, Onescreen Colonies #2 (pouet 91214). `oc2.csl` on CRTC 0; `oc2_crtc1.csl` on CRTC 1 with the 40007, as compared with AMSpiriT | `RUN"-OSC2"` |
+| oc3 | Vanity & Futurs, Onescreen Colonies #3 (2023, pouet 94533). `oc3.csl`: CRTC 1, 40007 | `RUN"-OSC3"` |
 | oc4 | Vanity, Onescreen Colonies #4 | `RUN"-OSC4"` |
 | foursome | Pulpo Corrosivo, Foursome (Benediction Coding Party 2022, scene.org) | `RUN"FOURSOME"` |
 | ovfprev | Overflow (Logon System), 5 previews 1992 (genesis8.free.fr). The loader asks `PREVIEW (1/5) ?`: type the preview number, then a key; ESC leaves to BASIC, so the script resets between previews | `RUN"-PREVIEW"`, `1`..`5`, space |
@@ -29,3 +32,21 @@ takes a screenshot every 5 seconds:
 | batman | Batman Forever (Batman Group, scene.org), the zip as published: the 3" set (disk 1 side A/B, disk 2 side A) and the one disk version, which needs a double-sided 3.5" drive (on a 3" one it says `WRONG DISK FOR YOUR CONFIGURATION`). `batman_3.csl` plays disk 1 and inserts side B when asked; `batman_35.csl` plays the one disk version: `run_csl validation/demos/batman/batman_35.csl /tmp/out --drive-a 3.5`. The scripts take the discs from the zip (`batman_forever.zip#Batman Forever (Disk 1 side A).dsk`) | `RUN"DISC"`, space |
 | scrollfactory | Impact, Scroll Factory (2018, astimpact.weebly.com), the Complete version: scrolls of all kinds and the "Vanity HBL Killer" (HBL position). 128K, all CRTCs | `RUN"SCROLLF"` |
 | madness | Contrast, Madness Demo (1994, 128K). Its behaviour depends on the CRTC: on CRTC 1 a rainbow plasma, on CRTC 0 a greenish one made of R0=4/R0=58 lines (R0 written on C0=4 must not end the 59 character line; AMSpiriT Lite is the reference), on CRTC 2 noise. The band under the logo also shows the decruncher's data while it loads. The demo does not respect CPC timings: the picture may be distorted on a real screen. `madness.csl` plays it on CRTC 1 (change `crtc_select`) | `RUN"MADNESS"` |
+
+## Onescreen Colonies #0-#3 against AMSpiriT Lite 1.16.0
+
+`cargo test --release --test onescreen_colonies -- --ignored`: each demo is played on CRTC 1 with
+the Gate Array 40007 (the chip AMSpiriT emulates; bemu's default 40010 puts a palette write one
+pixel later: #2's colour bars were all one pixel off), 800 frames in a row from 20 s after the
+RUN; every AMSpiriT shot of `ocN/amspirit_1.16.0/` must have an identical frame. The two
+emulators start the demos 3 s apart (the CSL typing), then run them the same.
+
+- #0, #2, #3: 40 shots of AMSpiriT out of 40 have an identical frame in bemu.
+- #1: its Vertical Nightmare part has, on every line, an HSYNC at C0=21 (R3=4) besides the line
+  sync at C0=50 (R3=6), 29 characters ahead of it: AMSpiriT's monitor pulls the picture 4 pixels
+  right, which bemu did not do (the pictures were 4-6 pixels apart from the split down).
+  `validation/fuzz/gen_pull3_probe.py` measured the pull of such a pulse in AMSpiriT (12 to 33
+  characters ahead, 1 to 4 us wide), bemu's monitor now does the same (`MONITOR_AHEAD_PULL`) and
+  the pictures match down to the first of two gaps where the demo leaves the second HSYNC out for
+  two lines: AMSpiriT then ends one pixel further right each time (4, 5, 6), bemu goes back to 4.
+
