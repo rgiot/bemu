@@ -29,3 +29,16 @@ Findings against AMSpiriT (single extra pulse, 200 lines of stripes):
   36 ticks (B0_B has late pulses of 37-80 that AMSpiriT ignores). A late pulse of 1-2 ticks must be ignored
   (applying that jitter broke Shaker A). Probes match AMSpiriT within 2-3 px on average.
 
+Second HSYNC far ahead of the line sync (`gen_pull3_probe.py`, `pull_measure.py`; Onescreen Colonies #1):
+* the probe synchronises once and loops on exactly one frame, the extra pulse on chosen lines only (a table),
+  CRTC 1, line sync at C0=50; phase 24. Compare each emulator with its own baseline (`X=-`).
+* AMSpiriT Lite 1.16: a pulse 14 to 28 characters ahead pulls the picture right by 3, 6, 10, 13 px (1, 2,
+  3, 4 us wide), half of it 30 ahead, nothing from 33; the beam covers 3/8 of the way each line (1/16 px
+  steps, floored), from the line after, both when the pulses come and when they go. amsrust had nothing
+  there: `MONITOR_AHEAD_PULL` in src/monitor.rs.
+* Pulses that already run during the frame flyback (right after the VSYNC, as gen_pull_probe.py does) do not
+  move the picture in AMSpiriT; when they stop, it dips by as much for 7 lines and jumps back. Not modelled,
+  and why gen_pull_probe.py saw no pull ahead of the line sync.
+* AMSpiriT 1.16 also differs from the Shaker-fitted rules nearer the line sync (8-10 characters ahead: no
+  pull; a 1 us pulse after it: -4, not -10): left as they are (Shaker's references).
+
