@@ -95,6 +95,10 @@ jobs:
           cargo install wasm-bindgen-cli --version "$version" --locked
       - name: Build web package
         run: web/build.sh
+      - name: Smoke-test web package
+        run: |
+          node web/tests/check-externref-table.mjs web/pkg/bemu_web_bg.wasm
+          node web/tests/smoke-init.mjs
       - name: Prepare distribution
         run: |
           mkdir -p dist

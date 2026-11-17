@@ -16,7 +16,9 @@ wasm-bindgen --target web --out-dir pkg --out-name bemu_web \
     "$target_dir/wasm32-unknown-unknown/release/bemu_web.wasm"
 # Optimize for execution speed, not just download size.
 "$wasm_opt" -O3 --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
-    --enable-mutable-globals pkg/bemu_web_bg.wasm -o pkg/bemu_web_bg.wasm
+    --enable-mutable-globals --enable-reference-types --enable-multivalue pkg/bemu_web_bg.wasm -o pkg/bemu_web_bg.wasm
+# wasm-bindgen's externref table must survive wasm-opt (a broken module dies at startup).
+node tests/check-externref-table.mjs pkg/bemu_web_bg.wasm
 cp js/bemu.js js/engine.js js/worker.js js/audio-worklet.js pkg/
 cat > pkg/package.json <<JSON
 {
