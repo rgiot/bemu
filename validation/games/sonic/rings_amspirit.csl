@@ -1,0 +1,293 @@
+; Sonic (GX4000): the ring route as AMSpiriT Lite plays it (CSL 1.2: it has no joystick
+; instruction; line 9 of keyboard_write is joystick 0). Run with the cartridge as argument:
+;   AppRun --turbo --no-splash -m GX4000 -l EN --script rings_amspirit.csl --debug-script \
+;     --save-log ams.log 'Sonic the Hedgehog (UK) (64K) (2025) [Original].cpr'
+; then ../../tools/amspirit_replay.py ams.log ... rings.csl replays its exact input times.
+csl_version 1.2
+reset
+wait 15000000
+keyboard_write 255,255,255,255,255,255,255,255,255,223
+wait 300000
+keyboard_write 255,255,255,255,255,255,255,255,255,255
+wait 7000000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r00'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r01'
+screenshot
+wait 250000
+screenshot_name 'r02'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r03'
+screenshot
+wait 250000
+screenshot_name 'r04'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r05'
+screenshot
+wait 250000
+screenshot_name 'r06'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r07'
+screenshot
+wait 250000
+screenshot_name 'r08'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r09'
+screenshot
+wait 250000
+screenshot_name 'r10'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r11'
+screenshot
+wait 250000
+screenshot_name 'r12'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r13'
+screenshot
+wait 250000
+screenshot_name 'r14'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r15'
+screenshot
+wait 250000
+screenshot_name 'r16'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r17'
+screenshot
+wait 250000
+screenshot_name 'r18'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r19'
+screenshot
+wait 250000
+screenshot_name 'r20'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r21'
+screenshot
+wait 250000
+screenshot_name 'r22'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r23'
+screenshot
+wait 250000
+screenshot_name 'r24'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r25'
+screenshot
+wait 250000
+screenshot_name 'r26'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r27'
+screenshot
+wait 250000
+screenshot_name 'r28'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r29'
+screenshot
+wait 250000
+screenshot_name 'r30'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r31'
+screenshot
+wait 250000
+screenshot_name 'r32'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r33'
+screenshot
+wait 250000
+screenshot_name 'r34'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r35'
+screenshot
+wait 250000
+screenshot_name 'r36'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r37'
+screenshot
+wait 250000
+screenshot_name 'r38'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r39'
+screenshot
+wait 250000
+screenshot_name 'r40'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r41'
+screenshot
+wait 250000
+screenshot_name 'r42'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r43'
+screenshot
+wait 250000
+screenshot_name 'r44'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r45'
+screenshot
+wait 250000
+screenshot_name 'r46'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r47'
+screenshot
+wait 250000
+screenshot_name 'r48'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r49'
+screenshot
+wait 250000
+screenshot_name 'r50'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r51'
+screenshot
+wait 250000
+screenshot_name 'r52'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r53'
+screenshot
+wait 250000
+screenshot_name 'r54'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r55'
+screenshot
+wait 250000
+screenshot_name 'r56'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r57'
+screenshot
+wait 250000
+screenshot_name 'r58'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r59'
+screenshot
+wait 250000
+screenshot_name 'r60'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r61'
+screenshot
+wait 250000
+screenshot_name 'r62'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r63'
+screenshot
+wait 250000
+screenshot_name 'r64'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r65'
+screenshot
+wait 250000
+screenshot_name 'r66'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r67'
+screenshot
+wait 250000
+screenshot_name 'r68'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r69'
+screenshot
+wait 250000
+screenshot_name 'r70'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r71'
+screenshot
+wait 250000
+screenshot_name 'r72'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r73'
+screenshot
+wait 250000
+screenshot_name 'r74'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r75'
+screenshot
+wait 250000
+screenshot_name 'r76'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,215
+screenshot_name 'r77'
+screenshot
+wait 250000
+screenshot_name 'r78'
+screenshot
+wait 250000
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+screenshot_name 'r79'
+screenshot
+wait 250000
