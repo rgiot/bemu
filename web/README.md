@@ -39,8 +39,10 @@ web/build.sh                                       # gives web/pkg
 
 `build.sh` checks (`web/tests/check-externref-table.mjs`) that `wasm-opt` kept wasm-bindgen's externref
 table intact. If the module fails at startup with `WebAssembly.Table.set(): ... function-typed object
-must be null`, the wasm was built with a Binaryen that mangled that table: use a recent Binaryen
-(116 or later) and rebuild with `web/build.sh`.
+must be null` (Firefox: `can only pass WebAssembly exported functions to funcref`), the wasm was built
+with a Binaryen that mangled that table. The distribution packages (apt, ...) of Binaryen were the
+culprit in CI: use an official release (CI uses 124, from
+<https://github.com/WebAssembly/binaryen/releases>) and rebuild with `web/build.sh`.
 
 The JavaScript scheduling and audio-startup regression tests run with `node --test web/tests/`.
 
