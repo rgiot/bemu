@@ -85,9 +85,12 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - name: Install Binaryen
+        # The official release, not the (older) apt package: wasm-opt must keep wasm-bindgen's externref table.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y binaryen
+          version=124
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/version_${version}/binaryen-version_${version}-x86_64-linux.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local
+          wasm-opt --version
       - name: Install matching wasm-bindgen
         run: |
           cargo fetch --manifest-path web/Cargo.toml
