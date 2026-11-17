@@ -1,0 +1,41 @@
+csl_version 1.2
+; Sonic the Hedgehog (UK) (64K) (2025), GX4000 cartridge.
+; Boots the cartridge, screenshots the intro/title, then presses fire on
+; joystick 0 (keyboard line 9, bit 4 = fire 1, active low) and walks right.
+cpc_model 6
+rom_config C 0 'Sonic the Hedgehog (UK) (64K) (2025) [Original].cpr'
+reset
+wait 3000000
+screenshot_name 'sonic_01_boot'
+screenshot
+wait 5000000
+screenshot_name 'sonic_02_intro'
+screenshot
+wait 7000000
+screenshot_name 'sonic_03_title'
+screenshot
+; fire
+keyboard_write 255,255,255,255,255,255,255,255,255,239
+wait 300000
+keyboard_write 255,255,255,255,255,255,255,255,255,255
+wait 4000000
+screenshot_name 'sonic_04_after_fire'
+screenshot
+keyboard_write 255,255,255,255,255,255,255,255,255,239
+wait 300000
+keyboard_write 255,255,255,255,255,255,255,255,255,255
+wait 6000000
+screenshot_name 'sonic_05_level'
+screenshot
+; right (bit 3)
+keyboard_write 255,255,255,255,255,255,255,255,255,247
+wait 3000000
+screenshot_name 'sonic_06_run_right'
+screenshot
+wait 3000000
+screenshot_name 'sonic_07_run_right'
+screenshot
+keyboard_write 255,255,255,255,255,255,255,255,255,255
+wait 2000000
+screenshot_name 'sonic_08_stop'
+screenshot
