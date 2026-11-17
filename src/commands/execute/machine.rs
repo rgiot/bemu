@@ -144,6 +144,39 @@ pub(super) fn run(command: &Command, target: &mut dyn CommandTarget) -> CommandR
             target.motherboard_mut().keyboard_mut().set_lines(lines);
             done()
         }
+        "joystick-write" => {
+            let arg = arg!(
+                command,
+                "Joystick: 0 or 1, then any of up down left right fire1 fire2 fire3",
+                ArgKind::Text
+            );
+            let text = arg.text();
+            let mut words = text.split([' ', ',']).filter(|word| !word.is_empty());
+            let line = match words.next() {
+                Some("0") => 9,
+                Some("1") => 6,
+                _ => return Err(CommandError::Invalid("the joystick: 0 or 1".into())),
+            };
+            let mut state = crate::joystick::JoystickState::default();
+            for word in words {
+                match word.to_ascii_lowercase().as_str() {
+                    "up" => state.y = -1,
+                    "down" => state.y = 1,
+                    "left" => state.x = -1,
+                    "right" => state.x = 1,
+                    "fire1" => state.fire[0] = true,
+                    "fire2" => state.fire[1] = true,
+                    "fire3" => state.fire[2] = true,
+                    _ => {
+                        return Err(CommandError::Invalid(format!(
+                            "{word}: up, down, left, right, fire1, fire2 or fire3"
+                        )));
+                    }
+                }
+            }
+            state.apply_to_matrix(target.motherboard_mut(), line);
+            done()
+        }
         _ => Err(elsewhere()),
     }
 }
@@ -212,6 +245,7 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
         }
         "joystick-simulated-window" => CommandState::enabled(true),
         "keyboard-write" => CommandState::enabled(true),
+        "joystick-write" => CommandState::enabled(true),
         "keyboard-view" => CommandState::enabled(true),
         _ => return None,
     })

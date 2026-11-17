@@ -16,7 +16,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use cpclib_csl::{
-    parse_csl_with_rich_errors, CrtcModel as CslCrtc, CslInstruction, Drive, KeyElement, SpecialKey,
+    CrtcModel as CslCrtc, CslInstruction, Drive, KeyElement, SpecialKey, parse_csl_with_rich_errors,
 };
 
 use crate::commands::{
@@ -1002,7 +1002,8 @@ impl CslRunner {
             | KeyDelay { .. }
             | KeyOutput(_)
             | KeyFromFile(_)
-            | KeyboardWrite(_) => {
+            | KeyboardWrite(_)
+            | Joystick { .. } => {
                 // the media the script names are needed: a script that cannot find them stops
                 let needed = matches!(
                     instruction,
@@ -1162,6 +1163,10 @@ impl CslRunner {
                         .collect::<Vec<_>>()
                         .join(" "),
                 )),
+            )?],
+            Joystick { port, input } => vec![command(
+                "joystick-write",
+                Some(Arg::Text(format!("{port} {input}"))),
             )?],
             _ => Vec::new(),
         })
@@ -1661,11 +1666,7 @@ fn drive_unit(drive: Drive) -> usize {
 }
 
 fn drive(unit: usize) -> FdcDrive {
-    if unit == 0 {
-        FdcDrive::A
-    } else {
-        FdcDrive::B
-    }
+    if unit == 0 { FdcDrive::A } else { FdcDrive::B }
 }
 
 /// CSL type names to ours (1A/1B are both the UM6845R).
@@ -2041,7 +2042,7 @@ mod test {
     /// their width; `screenshot_name` names a zoomed one as it says.
     #[test]
     fn a_screenshot_is_zoomed_as_the_script_says() {
-        let script = "csl_version 1.0\nreset\nwait 1000000\nscreenshot\nscreenshot 0.25\n\
+        let script = "csl_version 1.3\nreset\nwait 1000000\nscreenshot\nscreenshot 0.25\n\
                       screenshot 200px\nscreenshot_name 'small'\nscreenshot vsync 0.5\n";
         let shots = Collected::default();
         let mut runner = CslRunner::with_io(
@@ -2098,8 +2099,7 @@ mod test {
     /// emulated time, codes and screenshots, and the frames come out on the way.
     #[test]
     fn a_script_advanced_step_by_step_plays_as_in_one_go() {
-        let script =
-            "csl_version 1.0\ncrtc_select 1\nreset\nwait 1500000\nkey_output 'print 1\\(RET)'\n\
+        let script = "csl_version 1.0\ncrtc_select 1\nreset\nwait 1500000\nkey_output 'print 1\\(RET)'\n\
                       wait 600000\nwait_vsyncoffon\nscreenshot\nwait 20000\nscreenshot\n";
         let whole = Collected::default();
         let mut runner = CslRunner::with_io(
@@ -2215,5 +2215,34 @@ mod test {
         assert_eq!(crtc_type(CslCrtc::Type1A), CrtcType::Crtc1);
         assert_eq!(crtc_type(CslCrtc::Type1B), CrtcType::Crtc1);
         assert_eq!(crtc_type(CslCrtc::Type4), CrtcType::Crtc4);
+    }
+
+    /// `joystick 0 right fire1` holds them down on line 9 (bit 3 right, bit 5 fire 1) until
+    /// the next `joystick 0`; joystick 1 is line 6.
+    #[test]
+    fn a_joystick_is_held_until_released() {
+        let mut runner = CslRunner::with_io(
+            Box::new(MemFiles::default()),
+            Box::new(Collected::default()),
+            "out",
+        );
+        runner
+            .run_text(
+                "csl_version 1.3\nreset\njoystick 0 right fire1\nwait 1000\n",
+                ".",
+            )
+            .unwrap();
+        assert_eq!(
+            runner.motherboard().keyboard().line(9),
+            0xFF & !(1 << 3) & !(1 << 5)
+        );
+        runner
+            .run_text(
+                "csl_version 1.3\njoystick 1 up\nwait 1000\njoystick 0\nwait 1000\n",
+                ".",
+            )
+            .unwrap();
+        assert_eq!(runner.motherboard().keyboard().line(9), 0xFF);
+        assert_eq!(runner.motherboard().keyboard().line(6), 0xFF & !1);
     }
 }
