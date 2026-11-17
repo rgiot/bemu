@@ -74,7 +74,9 @@ fn play(demo: &str) -> Vec<(String, usize)> {
         .collect();
     text.push_str("wait 20000000\n");
     for i in 0..FRAMES {
-        text.push_str(&format!("screenshot_name 'f{i:03}'\nscreenshot\nwait 20000\n"));
+        text.push_str(&format!(
+            "screenshot_name 'f{i:03}'\nscreenshot\nwait 20000\n"
+        ));
     }
     let mut references: Vec<(String, RgbImage)> = std::fs::read_dir(dir.join("amspirit_1.16.0"))
         .unwrap()
