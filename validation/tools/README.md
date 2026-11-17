@@ -103,3 +103,18 @@ mostly *not* a CRTC/GA bug:
   `run_shaker_suite`.
 - `tests/instruction_timings.rs` checks every opcode's duration against the
   ACCC chapter 26 table (it found two Z80 timing bugs).
+
+## Games against AMSpiriT Lite (validation/games)
+
+AMSpiriT Lite's Linux AppImage (amspirit.fr, `--appimage-extract` into `$SHAKER_WORK/amspirit`)
+plays a CSL script headless: `xvfb-run -a AppRun --turbo --no-splash -m GX4000 -l EN --script
+X.csl --debug-script --save-log ams.log game.cpr` (a cartridge is given as an argument: AMSpiriT
+ignores `rom_config C`). Its `wait`s last a frame or two longer than asked, so a game played by
+the same script soon goes another way in bemu:
+
+- `amspirit_replay.py ams.log out.csl --cart game.cpr` writes the bemu script that replays the
+  log at AMSpiriT's emulated times (`keyboard_write` of line 9 becomes `joystick 0`);
+- `amspirit_compare.py OUR_SHOTS AMSPIRIT_SHOTS [--mark DIR]` compares the shots at the CPC+'s
+  16 levels per channel (AMSpiriT: 542 lines, levels 5-245, one pixel to the left).
+
+`../games/sonic/` is the first game done this way.

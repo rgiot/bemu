@@ -1,0 +1,39 @@
+csl_version 1.3
+; Sonic the Hedgehog (UK) (64K) (2025), GX4000 cartridge.
+; Boots the cartridge, screenshots the intro/title, then presses fire on
+; joystick 0 to start the game, then runs right into the first Motobug.
+cpc_model 6
+rom_config C 0 'Sonic the Hedgehog (UK) (64K) (2025) [Original].cpr'
+reset
+wait 3000000
+screenshot_name 'sonic_01_boot'
+screenshot
+wait 5000000
+screenshot_name 'sonic_02_intro'
+screenshot
+wait 7000000
+screenshot_name 'sonic_03_title'
+screenshot
+joystick 0 fire1
+wait 300000
+joystick 0
+wait 4000000
+screenshot_name 'sonic_04_after_fire'
+screenshot
+joystick 0 fire1
+wait 300000
+joystick 0
+wait 6000000
+screenshot_name 'sonic_05_level'
+screenshot
+joystick 0 right
+wait 3000000
+screenshot_name 'sonic_06_run_right'
+screenshot
+wait 3000000
+screenshot_name 'sonic_07_run_right'
+screenshot
+joystick 0
+wait 2000000
+screenshot_name 'sonic_08_stop'
+screenshot
