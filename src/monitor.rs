@@ -72,8 +72,6 @@ const MONITOR_HPULSE_MAX: usize = 128;
 /// characters after (20 before); a pulse within 6 characters belongs to the
 /// same sync complex. The beam follows it by 1 to 3 ticks a line.
 const MONITOR_PULL_DEAD_WIDTH: i32 = 9;
-/// ... but never less than this for a second sync (Shaker D3 with R3l=3: a 1 usec pulse pulls as much as a 2 usec one)
-const MONITOR_PULL_MIN: i32 = 10;
 const MONITOR_PULL_DEADZONE: i64 = 6 * 16;
 const MONITOR_PULL_FLAT_LATE: i64 = 422;
 const MONITOR_PULL_END_LATE: i64 = 496;
@@ -670,8 +668,8 @@ impl Monitor {
         let mut ahead_target = None;
         if let (Some(previous), [(other, width)]) = (self.last_sync_start, self.pulses.as_slice()) {
             let after = (*other - previous) as i64; // late for the previous sync
-            let late_pull =
-                (((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12).max(MONITOR_PULL_MIN);
+            // (a 1 usec pulse pulls 3: Shaker D3 D1-D4, once the line sync of 1 usec is placed right)
+            let late_pull = ((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12;
             let taper = |pull: i32, distance: i64, flat: i64, end: i64| -> i32 {
                 if distance <= flat {
                     pull
@@ -691,8 +689,7 @@ impl Monitor {
             }
             // a second sync BEFORE the line sync pulls the picture right only when it is close: by
             // (width - 3) / 5 ticks starting 6 to 12 usec ahead (Shaker D3 B/C/D 8-11, R2=#23/#24 before
-            // the line sync at #2E: 9 and 6 pixels for 3 and 2 usec; a 1 usec one is left alone, D3 D is
-            // half a microsecond off as a whole for another reason). From 12 to 33 characters ahead
+            // the line sync at #2E: 9 and 6 pixels for 3 and 2 usec; a 1 usec one is left alone). From 12 to 33 characters ahead
             // the pull is `MONITOR_AHEAD_PULL` (gen_pull_probe.py saw none there: its pulses also ran
             // during the frame flyback, after which AMSpiriT does not move the picture)
             let before = start as i64 - *other as i64;
