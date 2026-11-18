@@ -666,7 +666,11 @@ impl Monitor {
     fn discriminate(&mut self, start: u64) {
         let mut target = 0i32;
         let mut ahead_target = None;
-        if let (Some(previous), [(other, width)]) = (self.last_sync_start, self.pulses.as_slice()) {
+        // with several other pulses in the line (Shaker AT/F: R2 rewritten during the HSYNC makes three
+        // pulses a line) AMSpiriT, and the real CPC's photo, go by the last one before the line sync:
+        // the picture is pulled right by about 10 pixels, as by that pulse alone
+        let last = self.pulses.last().copied();
+        if let (Some(previous), Some((other, width))) = (self.last_sync_start, last.as_ref()) {
             let after = (*other - previous) as i64; // late for the previous sync
             // (a 1 usec pulse pulls 3: Shaker D3 D1-D4, once the line sync of 1 usec is placed right)
             let late_pull = ((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12;
