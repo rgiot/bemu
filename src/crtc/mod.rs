@@ -1291,6 +1291,42 @@ mod test {
         assert_eq!(crtc.vlc.value(), c9);
     }
 
+    /// Shaker BU/E: with R0=0 the counters are frozen on the frame's first line; R6 written with the
+    /// value of C4 (0) there, and then something else, leaves the BORDER on for the rest of the frame
+    /// (the real CPC and AMSpiriT show nothing but border; with R0 not zero, R6=C4=0 on the first line
+    /// only comes and goes).
+    #[test]
+    fn test_crtc0_r6_written_with_c4_while_r0_is_zero_keeps_the_border() {
+        let mut crtc = crtc0();
+        while !(crtc.vcc.value() == 0 && crtc.vlc.value() == 0 && crtc.hcc == 0) {
+            crtc.update_memory_address();
+        }
+        crtc.do_write_register(0, 0);
+        for _ in 0..8 {
+            crtc.update_memory_address();
+        }
+        assert_eq!((crtc.vcc.value(), crtc.vlc.value()), (0, 0), "frozen on the first line");
+        crtc.do_write_register(6, 0);
+        for _ in 0..4 {
+            crtc.update_memory_address();
+        }
+        crtc.do_write_register(6, 13);
+        for _ in 0..4 {
+            crtc.update_memory_address();
+        }
+        assert!(crtc.core.r6_border, "the BORDER is on");
+        crtc.do_write_register(0, 63);
+        for _ in 0..3 * 64 {
+            crtc.update_memory_address();
+            assert!(crtc.core.r6_border, "and stays on for the frame");
+        }
+        // a new frame displays again
+        for _ in 0..16 * 12 * 64 {
+            crtc.update_memory_address();
+        }
+        assert!(!crtc.core.r6_border || crtc.vcc.value() >= crtc.regs[6]);
+    }
+
     /// One line of 64 characters
     fn run_line(crtc: &mut Crtc) {
         let ends = crtc.line_ends;
