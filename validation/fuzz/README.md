@@ -69,6 +69,19 @@ Gaps in the far second sync, and the line sync's width (`gen_pull3_probe.py` wit
   Onescreen Colonies #1 narrows the line sync for 2 lines: the few lines around it still differ from
   AMSpiriT (up to 5 pixels), by design.
 
+Real-CPC photos (the Shaker site's, `validation/tools/real_compare.py`) against bemu and AMSpiriT, modules A-D on CRTC 0:
+correlation after registration 0.675 for bemu, 0.674 for AMSpiriT: the two are the same distance from the real CPC
+on almost every screen (it cannot see a few pixels of shift). Where AMSpiriT is clearly closer: AT/F (0.71 against
+0.75), AY/C (0.82 against 0.86), AO/H, CT/D. AT/F and AY/C show it: in the band of lines where R2 or R3 is
+rewritten during the HSYNC, the real CPC and AMSpiriT draw slanted stripes (each line a little further), bemu a
+checkerboard (the picture alternates between two positions line by line): the same effect as gen_pull4_probe.py with
+R3 alternating 6/5 (AMSpiriT a steady 4 px, the mean; bemu 2, 4, 2, 4...). The cause: the line oscillator's phase
+detector follows the END of the pulse and subtracts the instant half-width (`sync_adj`), so an alternating width
+leaves a +/-8 tick error that the 3/8 PLL passes on. Tried and dropped: a low-pass on `sync_adj` alone (the ripple
+stays: the pulse end itself alternates), a start-of-pulse detector with the picture offset taken from the filtered
+width (steady plateaus drift; needs the offset and the PLL state separated, not a patch). Left for the real-CPC
+ground truth.
+
 Ink writes (`gen_inkwrite_probe.py`): pen 1 set dark at the start of each line, light in the middle by
 OUT (C),r, OUT (n),A or OUTI (all writing in the same microsecond), mode 0, 1 or 2. AMSpiriT Lite 1.16: the
 three instructions reach the same pixel; the light colour starts 8 ticks into the character in modes 0 and
