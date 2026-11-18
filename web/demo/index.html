@@ -26,7 +26,7 @@
 <p id="audio-error" role="alert" hidden></p>
 
 <form id="config">
-  <label>Model <select name="model"><option>464</option><option>664</option><option selected>6128</option></select></label>
+  <label>Model <select name="model"><option>464</option><option>664</option><option selected>6128</option><option>464plus</option><option>6128plus</option><option>gx4000</option></select></label>
   <label>CRTC <select name="crtc"><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
   <label>Gate Array <select name="gateArray"><option>40007</option><option>40008</option><option selected>40010</option></select></label>
   <label>RAM (KB) <select name="ramKb"><option value="">model's</option><option>64</option><option>128</option><option>256</option><option>576</option><option value="4160">4 MB</option></select></label>
@@ -57,8 +57,8 @@
 </div>
 
 <div id="drop">
-  Drop .dsk (drive A, or B with Shift), .cdt, .sna, .csl and the files a script names here, or pick them:
-  <input id="files" type="file" multiple accept=".dsk,.cdt,.sna,.csl">
+  Drop .dsk (drive A, or B with Shift), .cdt, .sna, .cpr (a CPC+ cartridge), .csl and the files a script names here, or pick them:
+  <input id="files" type="file" multiple accept=".dsk,.cdt,.sna,.cpr,.csl">
 </div>
 <p id="status"></p>
 <div id="shots"></div>
@@ -155,6 +155,16 @@ document.querySelector('#saveA').onclick = async () => {
 };
 document.querySelector('#saveSna').onclick = async () => download(await emu.saveSnapshot(), 'bemu.sna', 'application/octet-stream');
 
+// a cartridge goes in a CPC+: the machine becomes a 6128plus first when it is not one
+async function insertCartridge(source) {
+  const model = form.elements.model;
+  if (!model.value.endsWith('plus') && model.value !== 'gx4000') {
+    model.value = '6128plus';
+    await emu.configure(config());
+  }
+  await emu.insertCartridge(source);
+}
+
 // files: discs and snapshots go in at once, a script plays with all the files given so far
 async function take(files, driveB) {
   let script = null;
@@ -164,6 +174,7 @@ async function take(files, driveB) {
     if (name.endsWith('.dsk')) await emu.insertDisc(driveB ? 'B' : 'A', file);
     else if (name.endsWith('.sna')) await emu.loadSnapshot(file);
     else if (name.endsWith('.cdt')) await emu.insertTape(file);
+    else if (name.endsWith('.cpr')) await insertCartridge(file);
     else if (name.endsWith('.csl')) script = file;
   }
   if (script) {
@@ -184,7 +195,7 @@ drop.ondrop = (event) => {
   take(event.dataTransfer.files, event.shiftKey).catch((e) => status(e.message));
 };
 
-// files from the URL: ?dsk=URL&dskb=URL&cdt=URL&sna=URL&csl=URL&files=URL1,URL2 (named after their URLs)
+// files from the URL: ?dsk=URL&dskb=URL&cdt=URL&sna=URL&cpr=URL&csl=URL&files=URL1,URL2 (named after their URLs)
 try {
   for (const url of (params.get('files') ?? '').split(',').filter(Boolean)) {
     await emu.addFile(decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()), url);
@@ -193,6 +204,7 @@ try {
   if (params.has('dskb')) await emu.insertDisc('B', params.get('dskb'));
   if (params.has('cdt')) await emu.insertTape(params.get('cdt'));
   if (params.has('sna')) await emu.loadSnapshot(params.get('sna'));
+  if (params.has('cpr')) await insertCartridge(params.get('cpr'));
   if (params.has('csl')) { status('playing the script...'); await emu.runCsl(params.get('csl')); }
 } catch (error) {
   status(error.message);

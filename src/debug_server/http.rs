@@ -192,9 +192,9 @@ fn typed_routes() -> ApiRouter<Shared> {
             "Headers: X-Crop-X/Y/W/H (where the picture is in the beam's 1024x350 raster), X-Beam-X/Y (the beam, in the \
              picture) when known. 503 while there is no frame yet, or for crop=0 when whole frames are not kept.";
         post_with "/api/media" (DocQuery<MediaQuery>, BinaryBody) -> axum::Json<MediaLoaded>:
-            "load a snapshot, a disc, a tape or a binary",
+            "load a snapshot, a disc, a tape, a cartridge or a binary",
             "The body: the file. A .sna (its breakpoints and symbols set), .dsk/.hfe (or an archive holding one), and .cdt \
-             (PLAY down) are recognised by their content; a .bin/.amsdos by ?name=.";
+             (PLAY down) and .cpr (a CPC+ cartridge; the machine restarts) are recognised by their content; a .bin/.amsdos by ?name=.";
         get_with "/api/snapshot" (NoInput, NoInput) -> Binary:
             "the machine as a .sna",
             "The machine's state as a version 3 .sna file: CPU, RAM, CRTC with its counters, Gate Array, PSG, PPI, ROM and \
