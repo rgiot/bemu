@@ -310,6 +310,9 @@ impl CrtcChip for Crtc0 {
             self.two_wide_pulse = false;
         }
         if r == 6 {
+            if self.counters_frozen {
+                core.latch_r6_in_frozen_line();
+            }
             core.latch_r6_written_with_c4();
         }
         // CRTC 0 keeps assessing the last line while C0<2 (ACCC 12.2)
@@ -424,6 +427,9 @@ impl CrtcChip for Crtc0 {
     }
 
     fn line_started(&mut self, core: &mut Core, new_frame: bool, c4_before: u8) {
+        if new_frame {
+            core.r6_frozen_latch = false;
+        }
         core.parity_from_r6(new_frame, c4_before);
     }
 
