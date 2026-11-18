@@ -923,6 +923,7 @@ impl CslRunner {
                 match config.rom_type {
                     // a CPC+ cartridge, for the next reset
                     cpclib_csl::RomType::Cartridge => {
+                        // through the script's files, not `std::fs`: a web page has bytes (`addFile`), no disc
                         let dir = self.rom_dir.clone().unwrap_or_else(|| self.base_dir.clone());
                         let bytes = self
                             .files
