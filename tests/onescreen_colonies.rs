@@ -121,7 +121,7 @@ fn onescreen_colonies_0_matches_amspirit() {
 #[ignore = "slow: plays the demo"]
 fn onescreen_colonies_1_is_near_amspirit() {
     // the first two shots: the logo alone; the last two: the picture drawn over the screen
-    check("oc1", 12_000);
+    check("oc1", 3_000);
 }
 
 #[test]
