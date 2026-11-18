@@ -37,7 +37,11 @@ fn main() {
                     Reg8::B,
                     Reg8::A,
                 ][((op2 >> 3) & 7) as usize];
-                let value = if op2 == 0x71 { 0 } else { cpu.reg8(reg).value() };
+                let value = if op2 == 0x71 {
+                    0
+                } else {
+                    cpu.reg8(reg).value()
+                };
                 Some((b, value))
             }
             (0xed, 0xa3 | 0xab | 0xb3 | 0xbb) => Some((b.wrapping_sub(1), mb.read_byte(hl))),
