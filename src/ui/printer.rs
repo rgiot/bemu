@@ -190,24 +190,16 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut PrinterWindow, bus:
     }
 }
 
-/// The line of dots where a sheet is torn off the next, along the bottom of `sheet`: the holes of
-/// the perforation, with the paper's fold shaded either side.
+/// The line of dots where a sheet is torn off the next, along the bottom of `sheet`: as faint as
+/// the perforations along the tractor strips (`dmp2000::Page::to_rgb`: dashes a shade darker than
+/// the paper), so that the two read alike.
 fn perforation(ui: &egui::Ui, sheet: egui::Rect) {
-    let painter = ui.painter();
     let y = sheet.bottom() - 0.5;
-    // the fold: the paper is a little darker where it bends
-    for (offset, alpha) in [(-2.0, 10), (-1.0, 22), (1.0, 22), (2.0, 10)] {
-        painter.hline(
-            sheet.x_range(),
-            y + offset,
-            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(alpha)),
-        );
-    }
-    painter.extend(egui::Shape::dotted_line(
+    ui.painter().extend(egui::Shape::dotted_line(
         &[egui::pos2(sheet.left(), y), egui::pos2(sheet.right(), y)],
-        egui::Color32::from_rgb(110, 108, 100),
-        4.0,
-        1.2,
+        egui::Color32::from_rgb(196, 194, 186),
+        2.0,
+        0.5,
     ));
 }
 
