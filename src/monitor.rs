@@ -567,8 +567,10 @@ impl Monitor {
             self.x = 0;
             if pulse_end {
                 // the line oscillator is referenced to the middle of the sync pulse (ACCC 14.4: the
-                // picture moves half a microsecond when R3l drops by one; Shaker D3 on AMSpiriT)
-                self.sync_adj = (hsync_pulse as i64 - 64).clamp(-32, 32) / 2;
+                // picture moves half a microsecond when R3l drops by one; Shaker D3 on AMSpiriT), down to
+                // the shortest pulse it takes (R3=3 on CRTC 1: a 1 usec C-HSYNC, 24 ticks right, as
+                // AMSpiriT; validation/fuzz/gen_pull4_probe.py)
+                self.sync_adj = (hsync_pulse as i64 - 64).clamp(-64, 32) / 2;
                 self.follow_sync(x_before, was_locked);
             } else {
                 self.ran_free = true;
@@ -628,7 +630,9 @@ impl Monitor {
     /// that range, or when the oscillator was not locked, the beam simply restarts.
     fn follow_sync(&mut self, x_before: usize, was_locked: bool) {
         let adj = std::mem::take(&mut self.sync_adj);
-        let error = if self.ran_free {
+        // after a line the oscillator ran free (a line without a sync: R3=2 on CRTC 1), the sync
+        // either comes just after it went round (late), or at the end of the next line as usual
+        let error = if self.ran_free && x_before < RASTER_LINE_LENGTH / 2 {
             x_before as i64
         } else {
             x_before as i64 - RASTER_LINE_LENGTH as i64
@@ -1006,6 +1010,43 @@ mod test {
             }
         }
         assert_eq!(mon.shift, 0);
+    }
+
+    /// How far right (ticks) each line is drawn, against a line sync of 64 ticks, when the line
+    /// syncs start at tick 736 and last `widths` ticks (0: no sync on that line).
+    fn shifts_by_width(widths: &[usize]) -> Vec<i64> {
+        let mut mon = Monitor::default();
+        let mut out = Vec::new();
+        for &width in std::iter::repeat_n(&64, 40).chain(widths) {
+            for t in 0..RASTER_LINE_LENGTH {
+                let hsync = (736..736 + width).contains(&t);
+                mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
+            }
+            // a 64 ticks sync ends at 800: the next line is 223 ticks in at its last tick
+            out.push(mon.x as i64 - 223);
+        }
+        out.split_off(40)
+    }
+
+    /// The line oscillator is referenced to the middle of the sync: 8 ticks a microsecond of R3,
+    /// down to a 1 usec C-HSYNC (R3=3 on CRTC 1: 24 ticks, as AMSpiriT), reached by the PLL.
+    #[test]
+    fn a_narrower_sync_moves_the_picture_half_as_much() {
+        for (width, expected) in [(48, 8), (32, 16), (16, 24)] {
+            let shifts = shifts_by_width(&[width; 30]);
+            assert_eq!(shifts[29], expected, "C-HSYNC of {width} ticks: {shifts:?}");
+            assert!(shifts.windows(2).all(|w| w[0] <= w[1]), "{shifts:?}");
+        }
+    }
+
+    /// A line without a sync (R3=2 on CRTC 1) in an R3 wave: the oscillator runs free for a line,
+    /// the next sync (at the end of the next line) pulls it as usual, the beam does not restart.
+    #[test]
+    fn a_line_without_a_sync_does_not_restart_the_line() {
+        let wave: Vec<usize> = [64, 48, 32, 16, 0, 16, 32, 48].repeat(8);
+        let shifts = shifts_by_width(&wave);
+        assert!(shifts.iter().all(|&s| (0..=24).contains(&s)), "{shifts:?}");
+        assert!(shifts.windows(2).all(|w| (w[0] - w[1]).abs() <= 12), "{shifts:?}");
     }
 
     /// A pulse the locked line oscillator does not listen to does not blank the beam

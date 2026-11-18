@@ -5,7 +5,8 @@ striped mode 1 screen, CRTC 1, one frame long loop), but R3 is also rewritten on
 before the extra pulse, the line sync's width (6, or 5 on chosen lines) after it.
   gen_pull4_probe.py <out.sna> <phase_us> <We> <X|-> <extra lines> [<narrow lines>]
 Lines are `first:count,first:count...` of the 200 (`-`: none); the narrow ones have a line sync
-of width 5. The phase for AMSpiriT and bemu: 24 (as gen_pull3_probe.py)."""
+of width 5, or `first:count:width` (an R3 of 1 to 6), `first:count:w1/w2/...` (the widths in turn, from
+line `first` on: an R3 wave). The phase for AMSpiriT and bemu: 24 (as gen_pull3_probe.py)."""
 import struct
 import sys
 
@@ -25,14 +26,28 @@ def lines(spec):
 
 
 extra = lines(sys.argv[5]) if len(sys.argv) > 5 else set(range(200))
-narrow = lines(sys.argv[6]) if len(sys.argv) > 6 else set()
+def widths(spec):
+    """line -> the line sync's width (6 if not given)"""
+    out = {}
+    if spec in ('-', ''):
+        return out
+    for r in spec.split(','):
+        f, c, *w = r.split(':')
+        f, c = int(f), int(c)
+        cycle = [int(v) for v in w[0].split('/')] if w else [5]
+        for i in range(c):
+            out[f + i] = cycle[i % len(cycle)]
+    return out
+
+
+narrow = widths(sys.argv[6]) if len(sys.argv) > 6 else {}
 # entry i (2 bytes): the R2 of line i+1's extra pulse (written at the start of line i's loop),
 # then the width of line i+1's line sync (written after that extra pulse)
 TABLE = 0x8000
 table = bytearray()
 for i in range(201):
     table.append(x if x is not None and (i + 1) in extra else MAIN)
-    table.append(0x80 | (5 if (i + 1) in narrow else 6))
+    table.append(0x80 | narrow.get(i + 1, 6))
 code = bytearray()
 T = [0]
 
