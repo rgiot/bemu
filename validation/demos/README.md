@@ -41,14 +41,21 @@ pixel later: #2's colour bars were all one pixel off), 800 frames in a row from 
 RUN; every AMSpiriT shot of `ocN/amspirit_1.16.0/` must have an identical frame. The two
 emulators start the demos 3 s apart (the CSL typing), then run them the same.
 
-- #2, #3: 40 shots of AMSpiriT out of 40 have an identical frame in bemu. #0 too on the 40010, but
-  on the 40007 one pixel of its text box differs (a colour change a pixel earlier than AMSpiriT):
-  #2 wants the 40007's palette delay, #0 the 40010's, so AMSpiriT's is neither here (to be found).
+- #0, #2, #3: 40 shots of AMSpiriT out of 40 have an identical frame in bemu. #0 had one pixel
+  off in its text box: a palette write that lands in the middle of a mode 1 pixel shows from the
+  next pixel in AMSpiriT (the ink is looked up on the pixel's first tick), from the very tick in
+  bemu; `validation/fuzz/gen_inkwrite_probe.py` measured it in modes 0, 1 and 2 (the instruction,
+  OUT (C),r, OUT (n),A or OUTI, makes no difference) and the Gate Array now does the same.
 - #1: its Vertical Nightmare part has, on every line, an HSYNC at C0=21 (R3=4) besides the line
   sync at C0=50 (R3=6), 29 characters ahead of it: AMSpiriT's monitor pulls the picture 4 pixels
   right, which bemu did not do (the pictures were 4-6 pixels apart from the split down).
   `validation/fuzz/gen_pull3_probe.py` measured the pull of such a pulse in AMSpiriT (12 to 33
   characters ahead, 1 to 4 us wide), bemu's monitor now does the same (`MONITOR_AHEAD_PULL`) and
   the pictures match down to the first of two gaps where the demo leaves the second HSYNC out for
-  two lines: AMSpiriT then ends one pixel further right each time (4, 5, 6), bemu goes back to 4.
+  two lines: AMSpiriT then ends one pixel further right each time (4, 5, 6). bemu does too now
+  (`AheadPull` in src/monitor.rs, fitted on gaps of 1 to 4 lines). What is left: the demo also
+  narrows the line sync (R3=5) on these two lines, and AMSpiriT follows such a short change of
+  width differently (`validation/fuzz/gen_pull4_probe.py`: one line later, 1, 2, 5, 6, 7, 8 pixels
+  for a 1 us narrower sync, straight back when it lasted 8 lines or less) from bemu's line
+  oscillator (3, 5, 6, 7, 8, back by 3/8 a line); a few lines around each gap, up to 4 pixels.
 

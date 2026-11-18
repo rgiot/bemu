@@ -5,7 +5,7 @@ screen; R2 is selected once and rewritten twice a line (X after the line sync, 5
 pulse), so the extra pulse can sit anywhere from 2 characters after the line sync to 2 before it.
 `X=-` leaves R2 at 50 (the baseline). The shift of each line against the baseline is the monitor's
 pull (validation/fuzz/pull_measure.py).
-  gen_pull3_probe.py <out.sna> <phase_us> <W> <X|-> [first_line count]
+  gen_pull3_probe.py <out.sna> <phase_us> <W> <X|-> [first_line count | first:count,first:count...]
 With first_line and count, only those of the 200 lines get the extra pulse (the others keep R2=50):
 the picture before, during and after them shows how the line oscillator reacts.
 The phase for AMSpiriT and bemu (CRTC 1): 24 (R2 written at C0=58)."""
@@ -13,9 +13,16 @@ import struct, sys
 
 out, phase, w = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 x = None if sys.argv[4] == '-' else int(sys.argv[4])
-first, count = (int(sys.argv[5]), int(sys.argv[6])) if len(sys.argv) > 6 else (0, 200)
+# the lines with the extra pulse: `first count`, or several ranges `first:count,first:count`
+if len(sys.argv) > 6:
+    ranges = [(int(sys.argv[5]), int(sys.argv[6]))]
+elif len(sys.argv) > 5:
+    ranges = [tuple(map(int, r.split(':'))) for r in sys.argv[5].split(',')]
+else:
+    ranges = [(0, 200)]
 TABLE = 0x8000
-table = bytes((x if x is not None and first <= i < first + count else 50) for i in range(201))
+table = bytes((x if x is not None and any(f <= i < f + c for f, c in ranges) else 50)
+              for i in range(201))
 MAIN = 50
 code = bytearray()
 T = [0]

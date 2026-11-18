@@ -42,3 +42,21 @@ Second HSYNC far ahead of the line sync (`gen_pull3_probe.py`, `pull_measure.py`
 * AMSpiriT 1.16 also differs from the Shaker-fitted rules nearer the line sync (8-10 characters ahead: no
   pull; a 1 us pulse after it: -4, not -10): left as they are (Shaker's references).
 
+Gaps in the far second sync, and the line sync's width (`gen_pull3_probe.py` with several ranges,
+`gen_pull4_probe.py`: R3 rewritten every line too; Onescreen Colonies #1):
+* AMSpiriT Lite 1.16: a single line without the far pulse changes nothing; a gap of g lines takes the
+  picture down g-1 steps (3/8 of the way back each), back up through the same states from the gap's last
+  line, then 3/8 of the first step down above where it was, and the pull keeps that much more (4, 3, 5 for
+  a 2 us pulse 29 characters ahead); after 8 lines without it the picture is back to 0. `AheadPull` in
+  src/monitor.rs reproduces every row of 22 probe pictures but a few rows of the tails (1 pixel).
+* A line sync 1 us narrower (R3 5 instead of 6) for L lines, no other pulse: AMSpiriT moves the picture one
+  line later than amsrust, 1, 2, 5, 6, 7, 8 pixels (amsrust: 3, 5, 6, 7, 8), and for L <= 8 straight back
+  when the width comes back (amsrust: 3/8 a line); for L = 1, +4 for one line. Not modelled yet (the
+  line oscillator's response to the width was fitted on long runs, Shaker D3).
+
+Ink writes (`gen_inkwrite_probe.py`): pen 1 set dark at the start of each line, light in the middle by
+OUT (C),r, OUT (n),A or OUTI (all writing in the same microsecond), mode 0, 1 or 2. AMSpiriT Lite 1.16: the
+three instructions reach the same pixel; the light colour starts 8 ticks into the character in modes 0 and
+1, 7 in mode 2, i.e. a pixel takes the ink of its first tick (the 40007's write timing, then the pixel
+grid). The Gate Array (`pixel_start_ring` in src/ga.rs) now does the same.
+

@@ -1053,6 +1053,17 @@ pub struct GateArray {
     blank_window: Option<bool>,
     blank_pipe: History<Option<bool>, HSYNC_GA_DELAY_TICKS>,
     shown_previous: Shown,
+    /// `shown_previous` began a pixel (see `pixel_start_ring`)
+    start_previous: bool,
+    /// Whether each of the last outputs began a pixel, newest first (with `shown_ring`): the ink of
+    /// a pixel is looked up once, on its first tick, so a palette write that lands in the middle of
+    /// a mode 0 or mode 1 pixel shows from the next one (AMSpiriT Lite 1.16,
+    /// validation/fuzz/gen_inkwrite_probe.py: the new colour starts 8 ticks into the character in
+    /// modes 0 and 1, 7 in mode 2, on the 40007; Onescreen Colonies #0's text box). The border
+    /// changes colour on any tick.
+    pixel_start_ring: History<bool, { PALETTE_LOOKUP_LAG_TICKS + 1 }>,
+    /// The colour and pen of the last output, which a pixel keeps after its first tick
+    held: Option<(Pen, RgbLevels)>,
     /// The last blanking states, newest first (see [`BLANK_DELAY_TICKS`])
     blank_ring: History<Option<bool>, { BLANK_DELAY_TICKS + 1 }>,
     /// The sync black (HSYNC-GA, VSYNC) of the last ticks, newest first (see [`SYNC_BLACK_LAG_TICKS`])
@@ -1152,6 +1163,9 @@ impl Default for GateArray {
             blank_window: None,
             blank_pipe: History::new(None),
             shown_previous: Shown::Black,
+            start_previous: true,
+            pixel_start_ring: History::new(true),
+            held: None,
             blank_ring: History::new(None),
             sync_black_ring: History::new(false),
             sync_black_lag: SYNC_BLACK_LAG_TICKS,
@@ -1478,14 +1492,17 @@ impl GateArray {
             PixelAutomata::AvailablePixel(step, byte, mode) => Some((step, byte, mode)),
             PixelAutomata::NeedToReadMemory => None,
         });
+        let mut starts = true;
         let shown = if self.pixel_automata.is_done() {
             // the last pixel of a delayed (non MODE 2) byte still comes out
             let shown = if self.rgb_delayed {
+                starts = self.start_previous;
                 self.shown_previous
             } else {
                 Shown::Black
             };
             self.shown_previous = Shown::Black;
+            self.start_previous = true;
             self.rgb_delayed = false;
             shown
         } else {
@@ -1536,12 +1553,30 @@ impl GateArray {
             // ACCC §9.3 (GA 40007/8/10): the pixels of MODE 2 are displayed one
             // pixel earlier than those of the other modes (the BORDER stops and
             // starts one pixel earlier too); the other modes are what we delay
+            // a new pixel: another pixel of the byte (or another byte) than the tick before; the
+            // border has no pixels
+            let new_pixel = border
+                || match self.decoded_from.get(0) {
+                    // 8 dots a byte: 4 a pixel in mode 0 (and 3), 2 in mode 1, 1 in mode 2
+                    Some((step, _, mode)) => {
+                        let width = match mode {
+                            VideoMode::Mode0 | VideoMode::Mode3 => 4,
+                            VideoMode::Mode1 => 2,
+                            VideoMode::Mode2 => 1,
+                        };
+                        (step as usize) % width == 0
+                    }
+                    None => true,
+                };
             let pixel = if mode == Some(VideoMode::Mode2) {
+                starts = new_pixel;
                 computed
             } else {
+                starts = self.start_previous;
                 self.shown_previous
             };
             self.shown_previous = computed;
+            self.start_previous = new_pixel;
             self.rgb_delayed = mode != Some(VideoMode::Mode2);
             // the black zone of an R3l=2 window comes BLANK_DELAY_TICKS later (see the constant); the
             // HSYNC-GA's own blanking does not
@@ -1559,6 +1594,7 @@ impl GateArray {
         let sync_black = self.sync_black_ring.get(self.sync_black_lag);
         // The ink is looked up in the palette as it is now, a few ticks after the pen was known.
         self.shown_ring.push(shown);
+        self.pixel_start_ring.push(starts);
         if self.byte_tick == DISPEN_LATCH_TICKS + 1 {
             self.latch_byte_dispen();
         }
@@ -1576,14 +1612,27 @@ impl GateArray {
         self.rgb = match (self.shown_ring.get(self.lookup_lag), &self.plus) {
             _ if sync_black => (0., 0., 0.).into(),
             (Shown::Black, _) => (0., 0., 0.).into(),
-            (Shown::Pen(pen), None) => match &delayed {
-                None => self.palette[pen.value() as usize],
-                Some(palette) => palette[pen.value() as usize],
-            }
-            .into(),
+            (Shown::Pen(pen), None) => match self.held {
+                // a pixel keeps the colour of its first tick
+                Some((held_pen, rgb))
+                    if held_pen.value() == pen.value()
+                        && !self.pixel_start_ring.get(self.lookup_lag) =>
+                {
+                    rgb
+                }
+                _ => match &delayed {
+                    None => self.palette[pen.value() as usize],
+                    Some(palette) => palette[pen.value() as usize],
+                }
+                .into(),
+            },
             (Shown::Pen(pen), Some(plus)) => plus.rgb(pen.value() as usize),
             (Shown::Sprite(pen), Some(plus)) => plus.rgb(16 + pen as usize),
             (Shown::Sprite(_), None) => (0., 0., 0.).into(),
+        };
+        self.held = match (self.shown_ring.get(self.lookup_lag), &self.plus) {
+            (Shown::Pen(pen), None) if !sync_black => Some((pen, self.rgb)),
+            _ => None,
         };
     }
 
