@@ -1022,10 +1022,11 @@ mod test {
                 let hsync = (736..736 + width).contains(&t);
                 mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
             }
-            // a 64 ticks sync ends at 800: the next line is 223 ticks in at its last tick
-            out.push(mon.x as i64 - 223);
+            out.push(mon.x as i64);
         }
-        out.split_off(40)
+        // against the lines of a 64 ticks sync before
+        let base = out[39];
+        out.split_off(40).into_iter().map(|x| x - base).collect()
     }
 
     /// The line oscillator is referenced to the middle of the sync: 8 ticks a microsecond of R3,
