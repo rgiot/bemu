@@ -177,6 +177,8 @@ pub trait CslFiles {
     fn snapshot(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
     /// The tape `tape_insert` names, in `dir`.
     fn tape(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
+    /// The CPC+ cartridge `rom_config C` names (a .cpr, or a zip holding one), in `dir`.
+    fn cartridge(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
     /// The text `key_from_file` names, in `dir`.
     fn text(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
     /// Whether the files are on a disk: what the script writes (`snapshot`) goes there.
@@ -259,6 +261,10 @@ impl CslFiles for FsFiles {
         let path = resolve(dir, name);
         let path = find_case_insensitive(&path).unwrap_or(path);
         std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    fn cartridge(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+        self.tape(dir, name)
     }
 
     fn text(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String> {
@@ -353,6 +359,12 @@ impl CslFiles for MemFiles {
         self.get(name)
             .cloned()
             .ok_or_else(|| format!("{name}: no such tape"))
+    }
+
+    fn cartridge(&mut self, _dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+        self.get(name)
+            .cloned()
+            .ok_or_else(|| format!("{name}: no such cartridge"))
     }
 
     fn text(&mut self, _dir: &Path, name: &str) -> Result<Vec<u8>, String> {
@@ -911,8 +923,11 @@ impl CslRunner {
                 match config.rom_type {
                     // a CPC+ cartridge, for the next reset
                     cpclib_csl::RomType::Cartridge => {
-                        let bytes = std::fs::read(&path)
-                            .map_err(|e| format!("rom_config {}: {e}", path.display()))?;
+                        let dir = self.rom_dir.clone().unwrap_or_else(|| self.base_dir.clone());
+                        let bytes = self
+                            .files
+                            .cartridge(&dir, config.filename.as_str())
+                            .map_err(|e| format!("rom_config {}: {e}", config.filename))?;
                         // checked now, as the script names it
                         crate::asic::Cartridge::from_bytes(
                             &bytes,
@@ -2164,6 +2179,32 @@ mod test {
             files.disc(base, "shaker26.dsk", &mut notes).is_err(),
             "two discs: no guess"
         );
+    }
+
+    /// A cartridge `rom_config` names comes from the files given as bytes (a web page has no disc).
+    #[test]
+    fn a_cartridge_is_given_as_bytes() {
+        let mut files = MemFiles::default();
+        files.insert("Game.CPR", crate::roms::PLUS_SYSTEM_UK.to_vec());
+        assert_eq!(
+            files.cartridge(Path::new("x"), "Z:/roms/game.cpr").map(|bytes| bytes.len()),
+            Ok(crate::roms::PLUS_SYSTEM_UK.len())
+        );
+        assert!(files.cartridge(Path::new("x"), "other.cpr").is_err());
+
+        let mut runner = CslRunner::with_io(
+            Box::new(files),
+            Box::new(Collected::default()),
+            "out",
+        );
+        runner
+            .execute(&cpclib_csl::CslInstruction::RomConfig(cpclib_csl::RomConfig {
+                num: 0,
+                rom_type: cpclib_csl::RomType::Cartridge,
+                filename: "game.cpr".into(),
+            }))
+            .unwrap();
+        assert!(runner.cartridge.is_some());
     }
 
     /// A disc a script names is found inside a zip archive given, by its file name; a lone archive

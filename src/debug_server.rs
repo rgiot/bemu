@@ -184,7 +184,7 @@ const ROUTES: &[Route] = &[
     Route { path: "/api/history", methods: &["GET"], summary: "last executed instructions (?n=), bytes as fetched and as now", extension: false },
     Route { path: "/api/screenshot", methods: &["GET"], summary: "frame as PNG: crop=1 visible 768x272 | crop=0 whole 1024x350; live=1 the frame being drawn; full=0 over the previous one", extension: false },
     Route { path: "/api/snapshot", methods: &["GET"], summary: "the machine's state as a version 3 .sna file (save it, load it back with /api/media)", extension: true },
-    Route { path: "/api/media", methods: &["POST"], summary: "load a .sna/.dsk/.cdt (by content) or .bin/.amsdos (?name=, ?drive=)", extension: false },
+    Route { path: "/api/media", methods: &["POST"], summary: "load a .sna/.dsk/.cdt/.cpr (by content) or .bin/.amsdos (?name=, ?drive=)", extension: false },
     Route { path: "/api/memmap", methods: &["GET"], summary: "what is mapped in each 16K region (ROM, absolute RAM bank), RMR, MMR", extension: false },
     Route { path: "/api/crtc", methods: &["GET"], summary: "CRTC registers, selected register and counters", extension: false },
     Route { path: "/api/ga", methods: &["GET"], summary: "Gate Array: mode, pens, inks, RMR and banking", extension: false },
@@ -2424,6 +2424,26 @@ impl DebugServer {
             if !breakpoints.ignored.is_empty() {
                 loaded.warnings = Some(breakpoints.ignored.iter().map(ToString::to_string).collect());
             }
+        } else if bytes.get(8..12) == Some(b"AMS!".as_slice())
+            || crate::disc_image::split_disc_spec(name)
+                .0
+                .to_ascii_lowercase()
+                .ends_with(".cpr")
+            || crate::disc_image::split_disc_spec(name)
+                .1
+                .is_some_and(|entry| entry.to_ascii_lowercase().ends_with(".cpr"))
+        {
+            // a CPC+ cartridge (a .cpr, recognised by its RIFF "AMS!" header, or named by ?name=; a zip
+            // holding one by `games.zip#game.cpr`): the machine restarts to boot it
+            if !motherboard.model().is_plus() {
+                return Err(ApiError::new("a cartridge goes in a CPC+"));
+            }
+            let (file, entry) = crate::disc_image::split_disc_spec(name);
+            let cartridge = crate::asic::Cartridge::from_bytes(bytes, file, entry)
+                .map_err(ApiError::new)?;
+            motherboard.insert_cartridge(Some(cartridge));
+            motherboard.restart();
+            loaded.media = "cpr".to_owned();
         } else if bytes.starts_with(b"MV - CPC")
             || bytes.starts_with(b"EXTENDED CPC DSK")
             || bytes.starts_with(b"HXCPICFE")
@@ -2461,7 +2481,7 @@ impl DebugServer {
             loaded.entry = binary.entry;
         } else {
             return Err(ApiError::new(
-                "unsupported media: a .sna or .dsk image (recognised by its content), or a .bin/.amsdos named by ?name="
+                "unsupported media: a .sna, .dsk, .cdt or .cpr (recognised by its content), or a .bin/.amsdos named by ?name="
             ));
         }
         loaded.cmd_seq = self.command();
@@ -4634,6 +4654,22 @@ mod test {
         assert_eq!(other["regions"][1]["ram_bank"], 4);
         assert_eq!(other["mmr"], 0xc4);
         assert_eq!(other["rmr"].as_u64().unwrap() & 4, 4, "the lower ROM's bit set: disabled");
+    }
+
+    #[test]
+    fn media_cartridge_goes_in_a_cpc_plus() {
+        let mut server = server();
+        let cpr = crate::roms::PLUS_SYSTEM_UK;
+        let mut cpc = machine();
+        assert_eq!(upload(&mut server, &mut cpc, "", cpr).0, 400, "a CPC takes no cartridge");
+        let mut plus = MotherboardBuilder::default()
+            .set_model(crate::motherboard::CpcModel::Cpc6128Plus)
+            .build();
+        let (status, reply) = upload(&mut server, &mut plus, "", cpr);
+        assert_eq!((status, reply["media"].clone()), (200, json!("cpr")));
+        assert!(plus.cartridge().is_some());
+        let (status, reply) = upload(&mut server, &mut plus, "name=game.cpr", cpr);
+        assert_eq!((status, reply["media"].clone()), (200, json!("cpr")));
     }
 
     #[test]

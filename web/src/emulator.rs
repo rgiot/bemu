@@ -270,6 +270,26 @@ impl Emulator {
             .map(|deck| vec![deck.position_seconds(), deck.tape().duration_seconds(), f64::from(u8::from(deck.playing()))])
     }
 
+    /// A CPC+ cartridge (a CPR file, or a zip holding one) in the machine, which restarts to boot it.
+    pub fn insert_cartridge(&mut self, bytes: &[u8], entry: Option<String>) -> Result<(), JsError> {
+        if !self.machine().model().is_plus() {
+            return Err(JsError::new("a cartridge goes in a CPC+ (model 464plus, 6128plus or gx4000)"));
+        }
+        let cartridge = amsrust::asic::Cartridge::from_bytes(bytes, "cartridge", entry.as_deref())
+            .map_err(|e| JsError::new(&e))?;
+        let machine = self.machine();
+        machine.insert_cartridge(Some(cartridge));
+        machine.restart();
+        Ok(())
+    }
+
+    /// The cartridge out of the machine, which restarts (on the system cartridge's BASIC).
+    pub fn eject_cartridge(&mut self) {
+        let machine = self.machine();
+        machine.insert_cartridge(None);
+        machine.restart();
+    }
+
     /// Load an SNA snapshot in the machine.
     pub fn load_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsError> {
         amsrust::snapshot::load_sna_bytes(self.machine(), bytes)
