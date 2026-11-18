@@ -86,8 +86,86 @@ const MONITOR_PULL_END_EARLY: i64 = 12 * 16;
 /// way left each line, both ways, from the line after (AMSpiriT Lite 1.16,
 /// validation/fuzz/gen_pull3_probe.py: 3, 6, 10, 13 px for 1 to 4 usec pulses).
 const MONITOR_AHEAD_PULL: [(i64, i64); 5] = [(0, 0), (16, 43), (32, 98), (48, 159), (64, 209)];
-const MONITOR_AHEAD_TAPER: [(i64, i64); 6] =
-    [(12 * 16, 1000), (28 * 16, 1000), (29 * 16, 745), (30 * 16, 540), (32 * 16, 145), (33 * 16, 0)];
+const MONITOR_AHEAD_TAPER: [(i64, i64); 6] = [
+    (12 * 16, 1000),
+    (28 * 16, 1000),
+    (29 * 16, 745),
+    (30 * 16, 540),
+    (32 * 16, 145),
+    (33 * 16, 0),
+];
+
+/// How AMSpiriT Lite 1.16 moves the picture with a second sync far ahead of the line sync
+/// ([`MONITOR_AHEAD_PULL`]), line after line, measured with validation/fuzz/gen_pull3_probe.py
+/// (every row of 22 probe pictures: runs of pulses, gaps of 1 to 4 lines, two gaps, 3 positions,
+/// 1 and 4 usec pulses):
+/// * with the pulse, the picture covers 3/8 of the way to the pull each line (1/16 tick steps,
+///   floored), shown a line later; without, 3/8 of the way back;
+/// * a single line without the pulse changes nothing; a longer gap takes the picture back up the
+///   way it went down from its last line on, then 3/8 of the first step down above where it was,
+///   and the pull keeps that much more (Onescreen Colonies #1: 4, 5, 6 pixels after two gaps);
+/// * after 8 lines without the pulse, the picture is back where it would be without it.
+#[derive(Clone, Debug, Default)]
+struct AheadPull {
+    /// Where the picture is, in 1/16 ticks.
+    state: i32,
+    /// The pull of the previous line's pulse (`None`: there was none).
+    previous: Option<i32>,
+    /// What the gaps added to the pull.
+    boost: i32,
+    /// Lines without the pulse in a row.
+    missing: u32,
+    /// The state before the gap, its first step down, the states it went down through.
+    before: i32,
+    first_drop: i32,
+    path: Vec<i32>,
+    /// The states it goes back up through after a gap.
+    queue: std::collections::VecDeque<i32>,
+}
+
+impl AheadPull {
+    const SNAP_LINES: u32 = 8;
+
+    /// A line sync: `pull` is that of the pulse ahead of it (1/16 ticks, `None`: no pulse). The
+    /// state shown is the previous line's, which is decided knowing whether this one has the pulse.
+    /// Returns the shift (ticks) of the line drawn next.
+    fn line(&mut self, pull: Option<i32>) -> i32 {
+        let previous = std::mem::replace(&mut self.previous, pull);
+        let next_present = pull.is_some();
+        if let Some(state) = self.queue.pop_front() {
+            self.state = state;
+        } else if let Some(pull) = previous {
+            self.missing = 0;
+            self.state += ((pull + self.boost - self.state) * 3).div_euclid(8);
+        } else {
+            self.missing += 1;
+            if self.missing == 1 {
+                self.before = self.state;
+                self.path.clear();
+            }
+            if self.missing >= Self::SNAP_LINES {
+                self.state = 0;
+                self.boost = 0;
+            } else if next_present && self.missing >= 2 {
+                // the gap's last line: back up the way down, then above where it was
+                let bonus = (self.first_drop * 3).div_euclid(8);
+                self.boost += bonus;
+                self.queue = self.path.iter().rev().skip(1).copied().collect();
+                self.queue.push_back(self.before + bonus);
+                self.state = self.queue.pop_front().unwrap_or(self.state);
+            } else if !next_present {
+                let drop = -((self.boost - self.state) * 3).div_euclid(8);
+                if self.missing == 1 {
+                    self.first_drop = drop;
+                }
+                self.state -= drop;
+                self.path.push(self.state);
+            }
+            // (a single line without the pulse changes nothing)
+        }
+        (self.state + 8).div_euclid(16)
+    }
+}
 
 /// `table` (x ascending) at `x`, linearly interpolated, 0 outside.
 fn interpolate(table: &[(i64, i64)], x: i64) -> i64 {
@@ -152,10 +230,8 @@ pub struct Monitor {
     /// What the discriminator decided at the last sync: the beam follows it
     /// from the next line (the pulses it looks at come after the flyback).
     next_shift: i32,
-    /// The pull of a second sync far ahead of the line sync (`MONITOR_AHEAD_FLAT`), in 1/16 ticks,
-    /// and where it goes.
-    ahead_pull: i32,
-    ahead_target: i32,
+    /// The pull of a second sync far ahead of the line sync (see [`AheadPull`]).
+    ahead: AheadPull,
     vsync_color: Rgb<u8>,
     /// When the frame oscillator last restarted (`now` ticks).
     frame_t0: u64,
@@ -199,8 +275,7 @@ impl Monitor {
             last_sync_start: None,
             shift: 0,
             next_shift: 0,
-            ahead_pull: 0,
-            ahead_target: 0,
+            ahead: AheadPull::default(),
             vsync_color,
             frame_t0: 0,
             hsync_color,
@@ -588,7 +663,7 @@ impl Monitor {
     /// exactly one) and let the beam follow it.
     fn discriminate(&mut self, start: u64) {
         let mut target = 0i32;
-        let mut ahead_target = 0i32;
+        let mut ahead_target = None;
         if let (Some(previous), [(other, width)]) = (self.last_sync_start, self.pulses.as_slice()) {
             let after = (*other - previous) as i64; // late for the previous sync
             let late_pull =
@@ -624,16 +699,14 @@ impl Monitor {
             {
                 target = (*width - 3).max(0) / 5;
             }
-            // further ahead (two HSYNC positions a line): a pull of its own, see `MONITOR_AHEAD_FLAT`
+            // further ahead (two HSYNC positions a line): a pull of its own, see `MONITOR_AHEAD_PULL` and `AheadPull`
             if target == 0 && before > MONITOR_PULL_END_EARLY {
                 let full = interpolate(&MONITOR_AHEAD_PULL, i64::from((*width).clamp(0, 64)));
-                ahead_target = (full * interpolate(&MONITOR_AHEAD_TAPER, before) / 1000) as i32;
+                let pull = full * interpolate(&MONITOR_AHEAD_TAPER, before) / 1000;
+                ahead_target = (pull > 0).then_some(pull as i32);
             }
         }
-        // the beam follows the far pull a line later than the near ones
-        self.shift = self.next_shift + (self.ahead_pull + 8).div_euclid(16);
-        self.ahead_target = ahead_target;
-        self.ahead_pull += ((self.ahead_target - self.ahead_pull) * 3).div_euclid(8);
+        self.shift = self.next_shift + self.ahead.line(ahead_target);
         if target == 0 {
             // no second sync: the lock takes the picture back at once
             self.next_shift = 0;
@@ -867,6 +940,34 @@ mod test {
         frame(&mut mon, 312, 64);
         feed(&mut mon, MONITOR_MIN_VSYNC_TICKS, (0., 0., 0.), true, false);
         assert!(!mon.is_frame_complete());
+    }
+
+    /// The far pull line by line, as AMSpiriT Lite 1.16 shows gen_pull3_probe.py's pulses 29
+    /// characters ahead, 2 us wide (pull 73/16 ticks): a ramp to 4, a single line without the
+    /// pulse changes nothing, a gap of two takes it down a step then one pixel above (5), a gap
+    /// of four down three steps, back up two, then 5; 8 lines without the pulse end it.
+    #[test]
+    fn the_far_pull_follows_amspirit_through_gaps() {
+        let shown = |pattern: &[bool]| {
+            let mut pull = AheadPull::default();
+            pattern
+                .iter()
+                .map(|&present| pull.line(present.then_some(73)))
+                .collect::<Vec<_>>()
+        };
+        let run = |before: usize, gap: usize, after: usize| {
+            let mut pattern = vec![true; before];
+            pattern.extend(vec![false; gap]);
+            pattern.extend(vec![true; after]);
+            shown(&pattern)
+        };
+        assert_eq!(shown(&[true; 8]), [0, 2, 3, 3, 4, 4, 4, 4]);
+        assert_eq!(run(20, 1, 6)[20..], [4; 7]);
+        assert_eq!(run(20, 2, 6)[20..], [4, 3, 5, 5, 5, 5, 5, 5]);
+        assert_eq!(run(20, 4, 6)[20..], [4, 3, 2, 1, 2, 3, 5, 5, 5, 5]);
+        let mut pattern = vec![true; 20];
+        pattern.extend(vec![false; 12]);
+        assert_eq!(shown(&pattern)[20..], [4, 3, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     /// A second sync 29 characters after the line sync (Shaker AY): the beam

@@ -4,13 +4,10 @@
 //! (`amspirit_1.16.0/`) must have an identical frame among them (the two emulators do not start
 //! the demo at the same moment: the CSL typing differs, the demo then runs the same).
 //!
-//! #0 has one pixel off on a line of its text box: a palette write lands a pixel earlier than in
-//! AMSpiriT on the 40007 (on the 40010 that pixel is right, and #2's colour bars are all a pixel
-//! late): AMSpiriT's delay is not one of the two Gate Arrays' here, to be found.
-//!
 //! #1 is not identical yet: its screen splitting (two HSYNC positions a line, R2=21 and R2=50)
-//! makes AMSpiriT's monitor pull the picture, and on two short gaps of the second HSYNC it ends
-//! one pixel further each time, which bemu does not reproduce: a bound is checked instead.
+//! leaves out the second HSYNC and narrows the line sync (R3=5) for two lines, twice a frame; how
+//! AMSpiriT's monitor follows such a short change of the line sync's width is not modelled (a few
+//! lines around each gap differ by up to 4 pixels): a bound is checked instead.
 //!
 //! Slow (plays 4 x 36 s): `cargo test --release --test onescreen_colonies -- --ignored`.
 
@@ -117,15 +114,14 @@ fn check(demo: &str, tolerated: usize) {
 #[test]
 #[ignore = "slow: plays the demo"]
 fn onescreen_colonies_0_matches_amspirit() {
-    // one pixel: see the top of this file
-    check("oc0", 4);
+    check("oc0", 0);
 }
 
 #[test]
 #[ignore = "slow: plays the demo"]
 fn onescreen_colonies_1_is_near_amspirit() {
     // the first two shots: the logo alone; the last two: the picture drawn over the screen
-    check("oc1", 12_000);
+    check("oc1", 3_000);
 }
 
 #[test]
