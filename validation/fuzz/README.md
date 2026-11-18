@@ -82,6 +82,16 @@ stays: the pulse end itself alternates), a start-of-pulse detector with the pict
 width (steady plateaus drift; needs the offset and the PLL state separated, not a patch). Left for the real-CPC
 ground truth.
 
+Other CRTC types against the real photos (modules A, C, D played on CRTC 1, 2 and 4 with the suite's own SHAKER-x-n.CSL scripts,
+`ams_shaker_refs.bundle(n)` and `run_shaker_suite`, ~6 min a module): mean correlation 0.684 (CRTC 1), 0.685 (CRTC 2),
+0.714 (CRTC 4), against 0.705 on CRTC 0: nothing is broadly wrong. Outliers to look at (score on that CRTC against
+CRTC 0): AT/F on CRTC 4 0.26 (0.71; the real CPC shows large curved shifts, bemu the CRTC 0 picture: the monitor
+reacts differently to the R2/R3 update during the HSYNC of the CRTC 3/4 pulse), AP/F on CRTC 4 0.63 (1.02), AY/A on
+CRTC 1 0.63 (0.86), AP/I and AP/J on CRTC 1 and 2 (0.44-0.59 against 0.83-0.88: the picture looks the same, the
+registration of the photo may be at fault: check by eye first). A9/C on CRTC 1: the real photo's black is a dark grey
+(the tube's black level, not a bug). DT/J2 is a rolling picture, any score is noise. AO/H on CRTC 0 looked worse than
+AMSpiriT (0.29 against 0.39): same geometry, AMSpiriT's reference is a soft lossy WebP; not a bug.
+
 Ink writes (`gen_inkwrite_probe.py`): pen 1 set dark at the start of each line, light in the middle by
 OUT (C),r, OUT (n),A or OUTI (all writing in the same microsecond), mode 0, 1 or 2. AMSpiriT Lite 1.16: the
 three instructions reach the same pixel; the light colour starts 8 ticks into the character in modes 0 and
