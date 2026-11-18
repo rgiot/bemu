@@ -41,7 +41,9 @@ pixel later: #2's colour bars were all one pixel off), 800 frames in a row from 
 RUN; every AMSpiriT shot of `ocN/amspirit_1.16.0/` must have an identical frame. The two
 emulators start the demos 3 s apart (the CSL typing), then run them the same.
 
-- #0, #2, #3: 40 shots of AMSpiriT out of 40 have an identical frame in bemu.
+- #2, #3: 40 shots of AMSpiriT out of 40 have an identical frame in bemu. #0 too on the 40010, but
+  on the 40007 one pixel of its text box differs (a colour change a pixel earlier than AMSpiriT):
+  #2 wants the 40007's palette delay, #0 the 40010's, so AMSpiriT's is neither here (to be found).
 - #1: its Vertical Nightmare part has, on every line, an HSYNC at C0=21 (R3=4) besides the line
   sync at C0=50 (R3=6), 29 characters ahead of it: AMSpiriT's monitor pulls the picture 4 pixels
   right, which bemu did not do (the pictures were 4-6 pixels apart from the split down).
