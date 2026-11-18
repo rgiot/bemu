@@ -1,6 +1,8 @@
 //! Debug > View > Printer: what the DMP2000 printed, in two tabs: the text (ASCII: the graphics and
-//! the styles are lost) and the paper (the sheets as they look, in a scroll area as they are long).
+//! the styles are lost; drawn with the CPC's own font, or in the interface's monospace one to select
+//! it) and the paper (the sheets as they look, in a scroll area as they are long).
 
+use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
 use crate::commands::CommandBus;
@@ -10,6 +12,13 @@ use crate::motherboard::Motherboard;
 /// The most often the text and the sheets are drawn again while the CPC prints (a sheet takes a
 /// moment to render).
 const REFRESH_SECONDS: f64 = 0.3;
+
+/// The text's lines drawn in one picture (a picture is at most 8 K high on some graphics cards).
+const CHUNK_LINES: usize = 128;
+/// The most columns drawn (the CPC's font is 8 pixels wide).
+const MAX_COLUMNS: usize = 255;
+/// A pixel of the CPC's font, in points.
+const FONT_SCALE: f32 = 2.0;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -23,6 +32,12 @@ pub struct PrinterWindow {
     tab: Tab,
     /// The sheets as wide as the window (else at half their printed size: 120 dpi).
     fit_width: bool,
+    /// The text in the CPC's font (a picture, so not selectable: Copy gives it), else in the
+    /// interface's monospace font.
+    cpc_font: bool,
+    /// The text's pictures: `CHUNK_LINES` lines each, with a hash of the lines they show (only the
+    /// ones that changed are drawn again).
+    chunks: Vec<(u64, egui::TextureHandle)>,
     /// The printer's bytes the text was made from, and when.
     text_seen: usize,
     text: String,
@@ -38,6 +53,8 @@ impl Default for PrinterWindow {
         Self {
             tab: Tab::Text,
             fit_width: true,
+            cpc_font: true,
+            chunks: Vec::new(),
             text_seen: 0,
             text: String::new(),
             sheets_seen: 0,
@@ -98,18 +115,37 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut PrinterWindow, bus:
                 if ui.button("Copy").clicked() {
                     ui.ctx().copy_text(state.text.clone());
                 }
+                ui.checkbox(&mut state.cpc_font, "CPC font")
+                    .on_hover_text("The firmware's characters; unchecked, a font to select the text in");
                 ui.weak(format!("{} lines", state.text.lines().count()));
             });
+            if state.cpc_font {
+                update_chunks(ui.ctx(), &state.text, &mut state.chunks);
+            }
             egui::ScrollArea::both()
                 .id_salt("printer-text")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    // read-only, but selectable
-                    ui.add(
-                        egui::TextEdit::multiline(&mut state.text.as_str())
-                            .font(egui::TextStyle::Monospace)
-                            .desired_width(f32::INFINITY),
-                    );
+                    if state.cpc_font {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let ink = ui.visuals().text_color();
+                        for (_, texture) in &state.chunks {
+                            ui.add(
+                                egui::Image::new(egui::load::SizedTexture::new(
+                                    texture.id(),
+                                    texture.size_vec2() * FONT_SCALE,
+                                ))
+                                .tint(ink),
+                            );
+                        }
+                    } else {
+                        // read-only, but selectable
+                        ui.add(
+                            egui::TextEdit::multiline(&mut state.text.as_str())
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY),
+                        );
+                    }
                 });
         }
         Tab::Paper => {
@@ -149,6 +185,64 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut PrinterWindow, bus:
                         ui.add_space(8.0);
                     }
                 });
+        }
+    }
+}
+
+/// The glyph of `character` in the CPC's firmware font (the lower ROM's &3800: 8 rows, bit 7 the
+/// leftmost pixel); a character the font has not is a question mark.
+fn glyph(character: char) -> [u8; 8] {
+    let code = u8::try_from(character).unwrap_or(b'?');
+    let at = 0x3800 + usize::from(code) * 8;
+    let mut rows = [0; 8];
+    rows.copy_from_slice(&crate::roms::OS6128[at..at + 8]);
+    rows
+}
+
+/// `lines` in the CPC's font: white on transparent, one character a glyph (tinted when drawn).
+fn text_image(lines: &[&str]) -> egui::ColorImage {
+    let columns = lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0)
+        .clamp(1, MAX_COLUMNS);
+    let width = columns * 8;
+    let mut pixels = vec![egui::Color32::TRANSPARENT; width * lines.len().max(1) * 8];
+    for (row, line) in lines.iter().enumerate() {
+        for (column, character) in line.chars().take(columns).enumerate() {
+            for (y, bits) in glyph(character).into_iter().enumerate() {
+                for x in 0..8 {
+                    if bits & (0x80 >> x) != 0 {
+                        pixels[(row * 8 + y) * width + column * 8 + x] = egui::Color32::WHITE;
+                    }
+                }
+            }
+        }
+    }
+    egui::ColorImage::new([width, lines.len().max(1) * 8], pixels)
+}
+
+/// The pictures of `text`'s lines, `CHUNK_LINES` each: only those whose lines changed are drawn
+/// again.
+fn update_chunks(ctx: &egui::Context, text: &str, chunks: &mut Vec<(u64, egui::TextureHandle)>) {
+    let lines: Vec<&str> = text.lines().collect();
+    let groups: Vec<&[&str]> = lines.chunks(CHUNK_LINES).collect();
+    chunks.truncate(groups.len());
+    for (index, group) in groups.into_iter().enumerate() {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        group.hash(&mut hasher);
+        let hash = hasher.finish();
+        match chunks.get_mut(index) {
+            Some((drawn, _)) if *drawn == hash => {}
+            Some((drawn, texture)) => {
+                texture.set(text_image(group), egui::TextureOptions::NEAREST);
+                *drawn = hash;
+            }
+            None => chunks.push((
+                hash,
+                ctx.load_texture(format!("printer-text-{index}"), text_image(group), egui::TextureOptions::NEAREST),
+            )),
         }
     }
 }
@@ -210,12 +304,32 @@ mod tests {
         }
         draw(&mb, &mut state, 1.0);
         assert!(state.text.contains("HELLO PAPER"), "{:?}", state.text);
+        assert_eq!(state.chunks.len(), 1, "the text in the CPC's font");
+        assert_eq!(state.chunks[0].1.size()[1], 8, "a line, 8 pixels high");
         assert!(state.sheets.is_empty(), "the paper is drawn when its tab is open");
         state.tab = Tab::Paper;
         draw(&mb, &mut state, 2.0);
         assert_eq!(state.sheets.len(), 1);
         let size = state.sheets[0].1.size();
         assert_eq!(size, [1140, 1320], "half of the 2280 x 2640 sheet");
+    }
+
+    /// A character is the firmware's glyph, pixel for pixel; an unknown one a question mark.
+    #[test]
+    fn the_text_is_drawn_with_the_cpc_font() {
+        let image = text_image(&["A\u{20ac}"]);
+        assert_eq!(image.size, [16, 8]);
+        let rows = |column: usize, glyph: [u8; 8]| {
+            (0..8)
+                .map(|y| {
+                    (0..8).fold(0u8, |bits, x| {
+                        bits << 1 | u8::from(image.pixels[y * 16 + column * 8 + x] == egui::Color32::WHITE)
+                    }) == glyph[y]
+                })
+                .all(|same| same)
+        };
+        assert!(rows(0, glyph('A')) && glyph('A') != [0; 8]);
+        assert!(rows(1, glyph('?')));
     }
 
     #[test]
