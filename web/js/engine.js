@@ -123,6 +123,8 @@ export class Engine {
     insertTape(bytes) { return this.#core.insert_tape(bytes); }
     ejectTape() { this.#core.eject_tape(); }
     tapeControl(key) { this.#core.tape_control(key); }
+    insertCartridge(bytes, entry) { this.#core.insert_cartridge(bytes, entry); }
+    ejectCartridge() { this.#core.eject_cartridge(); }
     loadSnapshot(bytes) { this.#core.load_snapshot(bytes); }
     addFile(name, bytes) { this.#core.add_file(name, bytes); }
     runCsl(text) {

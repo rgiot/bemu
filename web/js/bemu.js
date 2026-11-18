@@ -391,6 +391,15 @@ export class Bemu {
     /** { position, duration } in seconds and whether PLAY is down, or undefined without a tape. */
     get tape() { return this.#state.tape ?? undefined; }
 
+    /**
+     * A CPC+ cartridge (a .cpr, or a zip holding one: the first .cpr, or the one named `entry`), from a
+     * URL, a File/Blob or bytes. The machine must be a CPC+ (`model: '6128plus'`, '464plus' or 'gx4000');
+     * it restarts to boot the cartridge.
+     */
+    async insertCartridge(source, entry) { await this.#transport.call('insertCartridge', [await bytesOf(source), entry]); }
+    /** The cartridge out; the machine restarts. */
+    ejectCartridge() { return this.#transport.call('ejectCartridge'); }
+
     /** An SNA snapshot, from a URL, a File/Blob or bytes. */
     async loadSnapshot(source) { await this.#transport.call('loadSnapshot', [await bytesOf(source)]); }
     /** A file a CSL script names (disk_insert, snapshot_load, csl_load). */
