@@ -170,23 +170,45 @@ pub fn show(ui: &mut egui::Ui, mb: &Motherboard, state: &mut PrinterWindow, bus:
                 .id_salt("printer-paper")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    for (index, texture) in &state.sheets {
-                        ui.label(format!("Sheet {}", index + 1));
+                    // continuous stationery: the sheets follow each other, joined by their perforation
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for (_, texture) in &state.sheets {
                         let size = texture.size_vec2();
                         let scale = if state.fit_width {
                             (ui.available_width() - 8.0).max(120.0) / size.x
                         } else {
                             1.0
                         };
-                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                        let sheet = ui.add(egui::Image::new(egui::load::SizedTexture::new(
                             texture.id(),
                             size * scale,
                         )));
-                        ui.add_space(8.0);
+                        perforation(ui, sheet.rect);
                     }
                 });
         }
     }
+}
+
+/// The line of dots where a sheet is torn off the next, along the bottom of `sheet`: the holes of
+/// the perforation, with the paper's fold shaded either side.
+fn perforation(ui: &egui::Ui, sheet: egui::Rect) {
+    let painter = ui.painter();
+    let y = sheet.bottom() - 0.5;
+    // the fold: the paper is a little darker where it bends
+    for (offset, alpha) in [(-2.0, 10), (-1.0, 22), (1.0, 22), (2.0, 10)] {
+        painter.hline(
+            sheet.x_range(),
+            y + offset,
+            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(alpha)),
+        );
+    }
+    painter.extend(egui::Shape::dotted_line(
+        &[egui::pos2(sheet.left(), y), egui::pos2(sheet.right(), y)],
+        egui::Color32::from_rgb(110, 108, 100),
+        4.0,
+        1.2,
+    ));
 }
 
 /// The glyph of `character` in the CPC's firmware font (the lower ROM's &3800: 8 rows, bit 7 the
