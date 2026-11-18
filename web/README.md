@@ -128,7 +128,7 @@ have the focus, to the CPC otherwise.
 | `plugNova()`, `unplugNova()` | a Nova (ethernet, 128 KB of NVRAM kept in memory) on the expansion port |
 | `insertAlbireo(source)`, `removeAlbireo()` | an Albireo (CH376 USB board) on the expansion port, its USB key the FAT image `source`; what the CPC writes stays in memory |
 | `startTapeRecording()`, `stopTapeRecording()` | records what the CPC writes to the cassette port (`SAVE`); stopping gives the CDT file (`Uint8Array`), or `undefined` if nothing was recording. A `reset()` ends it |
-| `printout(prefix?)` | what a DMP2000 printer (`dmp2000: true`) printed: `[{ name, data }]`, the text (`.txt`), the bytes sent (`.prn`) and a PNG per sheet with ink; `undefined` without a printer |
+| `printout(prefix?)` | what a DMP2000 printer (`dmp2000: true`) printed: `[{ name, data }]`, the text (`.txt`), the bytes sent (`.prn`) and a PNG per sheet with ink; `undefined` without a printer. The menu bar's Debug > View > Printer window shows it live, as text and as the paper |
 | `loadSnapshot(source)` | an SNA snapshot |
 | `saveSnapshot()` | the machine's state as an SNA file (`Uint8Array`, version 3), to save or give back to `loadSnapshot` |
 | `api(method, path, query, body)` | bemu's debug API, as the desktop's `--debug-server` serves it and answered by the same code (`api('GET', '/api/ping')`, `api('POST', '/api/config', '', '{"paused":true}')`): `{ status, contentType, body, headers }`, `body` a `Uint8Array`; the query as in a URL, the body a string or bytes. The routes are documented by a desktop bemu at `/api/doc`; `POST /api/media` takes a snapshot, a disc, a tape or a CPC+ cartridge (`.cpr`) by its content |
