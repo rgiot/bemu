@@ -123,7 +123,9 @@ export class Engine {
     insertTape(bytes) { return this.#core.insert_tape(bytes); }
     ejectTape() { this.#core.eject_tape(); }
     tapeControl(key) { this.#core.tape_control(key); }
+    // a CPC+ cartridge (a CPR, or a zip holding one) in; the machine restarts to boot it. Throws on a CPC.
     insertCartridge(bytes, entry) { this.#core.insert_cartridge(bytes, entry); }
+    // the cartridge out; the machine restarts
     ejectCartridge() { this.#core.eject_cartridge(); }
     loadSnapshot(bytes) { this.#core.load_snapshot(bytes); }
     addFile(name, bytes) { this.#core.add_file(name, bytes); }

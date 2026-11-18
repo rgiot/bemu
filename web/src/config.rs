@@ -12,7 +12,8 @@ use serde::Deserialize;
 #[derive(Deserialize, Default, Clone, Debug)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Config {
-    /// "464", "664" or "6128".
+    /// "464", "664" or "6128"; a CPC+ (its ASIC is CRTC 3 whatever `crtc` says, and it takes a cartridge,
+    /// see `Emulator::insert_cartridge`): "464plus", "6128plus" or "gx4000".
     pub model: Option<String>,
     /// 0 to 4.
     pub crtc: Option<u8>,

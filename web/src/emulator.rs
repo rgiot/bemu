@@ -275,6 +275,7 @@ impl Emulator {
         if !self.machine().model().is_plus() {
             return Err(JsError::new("a cartridge goes in a CPC+ (model 464plus, 6128plus or gx4000)"));
         }
+        // checked before anything changes: a bad file leaves the machine as it was
         let cartridge = amsrust::asic::Cartridge::from_bytes(bytes, "cartridge", entry.as_deref())
             .map_err(|e| JsError::new(&e))?;
         let machine = self.machine();

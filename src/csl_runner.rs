@@ -263,6 +263,7 @@ impl CslFiles for FsFiles {
         std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
     }
 
+    /// Looked up like a tape: in `dir`, case-insensitively.
     fn cartridge(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String> {
         self.tape(dir, name)
     }
@@ -361,6 +362,7 @@ impl CslFiles for MemFiles {
             .ok_or_else(|| format!("{name}: no such tape"))
     }
 
+    /// By file name, wherever the script puts the directory (`addFile("game.cpr", ...)` on the web).
     fn cartridge(&mut self, _dir: &Path, name: &str) -> Result<Vec<u8>, String> {
         self.get(name)
             .cloned()
