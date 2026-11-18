@@ -29,3 +29,49 @@ Findings against AMSpiriT (single extra pulse, 200 lines of stripes):
   36 ticks (B0_B has late pulses of 37-80 that AMSpiriT ignores). A late pulse of 1-2 ticks must be ignored
   (applying that jitter broke Shaker A). Probes match AMSpiriT within 2-3 px on average.
 
+Second HSYNC far ahead of the line sync (`gen_pull3_probe.py`, `pull_measure.py`; Onescreen Colonies #1):
+* the probe synchronises once and loops on exactly one frame, the extra pulse on chosen lines only (a table),
+  CRTC 1, line sync at C0=50; phase 24. Compare each emulator with its own baseline (`X=-`).
+* AMSpiriT Lite 1.16: a pulse 14 to 28 characters ahead pulls the picture right by 3, 6, 10, 13 px (1, 2,
+  3, 4 us wide), half of it 30 ahead, nothing from 33; the beam covers 3/8 of the way each line (1/16 px
+  steps, floored), from the line after, both when the pulses come and when they go. amsrust had nothing
+  there: `MONITOR_AHEAD_PULL` in src/monitor.rs.
+* Pulses that already run during the frame flyback (right after the VSYNC, as gen_pull_probe.py does) do not
+  move the picture in AMSpiriT; when they stop, it dips by as much for 7 lines and jumps back. Not modelled,
+  and why gen_pull_probe.py saw no pull ahead of the line sync.
+* AMSpiriT 1.16 also differs from the Shaker-fitted rules nearer the line sync (8-10 characters ahead: no
+  pull; a 1 us pulse after it: -4, not -10): left as they are (Shaker's references).
+
+Gaps in the far second sync, and the line sync's width (`gen_pull3_probe.py` with several ranges,
+`gen_pull4_probe.py`: R3 rewritten every line too; Onescreen Colonies #1):
+* AMSpiriT Lite 1.16: a single line without the far pulse changes nothing; a gap of g lines takes the
+  picture down g-1 steps (3/8 of the way back each), back up through the same states from the gap's last
+  line, then 3/8 of the first step down above where it was, and the pull keeps that much more (4, 3, 5 for
+  a 2 us pulse 29 characters ahead); after 8 lines without it the picture is back to 0. `AheadPull` in
+  src/monitor.rs reproduces every row of 22 probe pictures but a few rows of the tails (1 pixel).
+* A line sync 1 us narrower (R3 5 instead of 6) for L lines, no other pulse: AMSpiriT moves the picture one
+  line later than amsrust, 1, 2, 5, 6, 7, 8 pixels (amsrust: 3, 5, 6, 7, 8), and for L <= 8 straight back
+  when the width comes back (amsrust: 3/8 a line); for L = 1, +4 for one line.
+* `gen_pull4_probe.py` widths `first:count:w` and waves `first:count:w1/w2/...` (scratch harness: each
+  probe, base and per-row left-edge shift in both emulators). AMSpiriT Lite 1.16's response to the width is
+  not one filter: R3 5 for 40 lines ramps 1, 2, 5, 6, 7, 8; R3 4 ramps 1, 2, 4, 7, 9, 11, 14, 16; R3 3 jumps
+  to 24 at once; alternate 6/5 lines give a steady 4 (the mean, no ripple); a wave 6..2..6 is followed
+  nearly line by line; 2 narrow lines give 1 pixel on one row, 1 narrow line 4. A width change moves the
+  middle of the pulse like a position change does, which AMSpiriT follows with the 3/8 PLL (R2 waves
+  above): amsrust keeps the same PLL for both (the R3 waves it shows stay smooth), and does NOT copy
+  these dynamics. Two amsrust bugs found on the way, fixed:
+  - the middle reference stopped at a 2 us C-HSYNC: R3 3 (1 us) settled at 32 ticks, not 24 (the
+    1/2 us per R3 rule, which AMSpiriT follows). Shaker D3 D1-D11 (a 1 us line sync) were 1/2 us off
+    as a whole for it, and MONITOR_PULL_MIN (a 1 us second sync pulled as much as a 2 us one) made up
+    for it in D1-D4: removed, the eleven are now at 0-1.2 % (were 4.6-11.4 %);
+  - after a line without a sync (R3 2 on CRTC 1: no C-HSYNC), the next sync, at the end of the next line,
+    was taken for a sync 1000 ticks late: the beam restarted (48-tick spikes in an R3 wave, AMSpiriT none).
+  Onescreen Colonies #1 narrows the line sync for 2 lines: the few lines around it still differ from
+  AMSpiriT (up to 5 pixels), by design.
+
+Ink writes (`gen_inkwrite_probe.py`): pen 1 set dark at the start of each line, light in the middle by
+OUT (C),r, OUT (n),A or OUTI (all writing in the same microsecond), mode 0, 1 or 2. AMSpiriT Lite 1.16: the
+three instructions reach the same pixel; the light colour starts 8 ticks into the character in modes 0 and
+1, 7 in mode 2, i.e. a pixel takes the ink of its first tick (the 40007's write timing, then the pixel
+grid). The Gate Array (`pixel_start_ring` in src/ga.rs) now does the same.
+
