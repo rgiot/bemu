@@ -100,6 +100,16 @@ CRTC 0's mild stripes, so either the type 3/4 HSYNC (the C3l counter ends it; a 
 makes other pulses, or the monitor reacts to them differently. `asic.rs` has its own `hsync_end` rule: the next step
 is the Compendium's section on R2 written during the HSYNC for CRTC 3/4 and a real-CPC capture of the pulses.
 
+Lines with several extra pulses (Shaker AT/F on CRTC 0, `probe_hsync`: R2 rewritten during the HSYNC makes three 4 us
+pulses a line, at 11 and 35 usec after the previous line sync and the line sync): AMSpiriT pulls the picture right by
+about 10 px over the whole band (ramp in 3, 9, 10 px over three lines), and after the pulses stop it relaxes back over
+~8 lines (11, 7, 4, 3, 2, 1, 1: the 3/8 PLL): the slanted stripes of the real photo. amsrust ignored any line with
+more than one extra pulse. Now the last pulse before the line sync decides, as that pulse alone: 13 px
+(`MONITOR_AHEAD_PULL` at 24 usec; AMSpiriT 10: the pulse before it may weigh a little), ramps within 1-3 px. Shaker: AT/F
+5.7 -> 2.7 %, D4/A and D4/B 11.8 -> 6.4 %, no other screen moves. D4 (R0=7: eight pulses per 1024 ticks) is still
+20 px off in the band where the picture shifts left (-31 against AMSpiriT's -20) and AMSpiriT overshoots by +15 when the
+pulses stop; the monitor's lock on a train of pulses is not understood yet.
+
 Ink writes (`gen_inkwrite_probe.py`): pen 1 set dark at the start of each line, light in the middle by
 OUT (C),r, OUT (n),A or OUTI (all writing in the same microsecond), mode 0, 1 or 2. AMSpiriT Lite 1.16: the
 three instructions reach the same pixel; the light colour starts 8 ticks into the character in modes 0 and

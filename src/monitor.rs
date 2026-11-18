@@ -1051,6 +1051,34 @@ mod test {
         assert!(shifts.windows(2).all(|w| (w[0] - w[1]).abs() <= 12), "{shifts:?}");
     }
 
+    /// Shaker AT/F (R2 rewritten during the HSYNC): two extra pulses a line besides the line sync. AMSpiriT
+    /// and the real CPC pull the picture right by the last of them, as that pulse alone (24 usec ahead:
+    /// 13 pixels, ramping in and out over a few lines); the monitor used to ignore lines with more than one.
+    #[test]
+    fn several_extra_pulses_pull_the_picture_by_the_last_one() {
+        let mut mon = Monitor::default();
+        let mut shift = 0;
+        for l in 0..60 {
+            for t in 0..RASTER_LINE_LENGTH {
+                let main = (736..800).contains(&t);
+                // a pulse 11 usec after the previous line sync, and one 24 usec before this one
+                let other = l >= 10 && l < 40 && ((176..240).contains(&t) || (352..416).contains(&t));
+                mon.receive(
+                    (100., 0., 0.).into(),
+                    Sync {
+                        vsync: false,
+                        hsync: main || other,
+                    },
+                );
+            }
+            if l == 35 {
+                shift = mon.shift;
+            }
+        }
+        assert!((12..=14).contains(&shift), "the plateau of the pull: {shift}");
+        assert_eq!(mon.shift, 0, "and the picture is back after the pulses");
+    }
+
     /// A pulse the locked line oscillator does not listen to does not blank the beam
     /// (AMSpiriT, validation/fuzz/gen_pull2_probe.py: a narrow extra pulse before a wide sync).
     #[test]
