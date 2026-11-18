@@ -123,6 +123,19 @@ export class Engine {
     insertTape(bytes) { return this.#core.insert_tape(bytes); }
     ejectTape() { this.#core.eject_tape(); }
     tapeControl(key) { this.#core.tape_control(key); }
+    // cards on the expansion port: they stay plugged through reset and configure
+    insertDandanator(bytes) { this.#core.insert_dandanator(bytes); }
+    removeDandanator() { this.#core.remove_dandanator(); }
+    dandanatorFlash() { return this.#core.dandanator_flash(); }
+    plugNova() { this.#core.plug_nova(); }
+    unplugNova() { this.#core.unplug_nova(); }
+    insertAlbireo(bytes) { this.#core.insert_albireo(bytes); }
+    removeAlbireo() { this.#core.remove_albireo(); }
+    // records what the CPC writes to the cassette port; stopTapeRecording gives the CDT (or undefined)
+    startTapeRecording() { this.#core.start_tape_recording(); }
+    stopTapeRecording() { return this.#core.stop_tape_recording(); }
+    // what a DMP2000 printed: [{ name, data }], or undefined without a printer
+    printout(prefix) { return this.#core.printout(prefix); }
     // an upper ROM in a slot (0-255), found by the firmware at the next reset; removeRom empties the slot
     insertRom(slot, bytes) { this.#core.insert_rom(slot, bytes); }
     removeRom(slot) { this.#core.remove_rom(slot); }

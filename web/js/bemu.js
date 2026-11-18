@@ -401,6 +401,39 @@ export class Bemu {
     ejectCartridge() { return this.#transport.call('ejectCartridge'); }
 
     /**
+     * A Dandanator Mini on the expansion port: `source` is its 512 KB romset (a URL, a File/Blob or bytes). It
+     * takes the place of the CPC's ROMs, so the machine restarts to boot it. The card stays plugged through
+     * `reset()` and `configure()`, until `removeDandanator()`.
+     */
+    async insertDandanator(source) { await this.#transport.call('insertDandanator', [await bytesOf(source)]); }
+    removeDandanator() { return this.#transport.call('removeDandanator'); }
+    /** The Dandanator's flash (512 KB, a `Uint8Array`) with what the CPC programmed in it, or `undefined` without one. */
+    dandanatorFlash() { return this.#transport.call('dandanatorFlash'); }
+    /** A Nova (ethernet, 128 KB of NVRAM kept in memory) on the expansion port; it stays through `reset()`. */
+    plugNova() { return this.#transport.call('plugNova'); }
+    unplugNova() { return this.#transport.call('unplugNova'); }
+    /**
+     * An Albireo (a CH376 USB board) on the expansion port, its USB key the FAT image `source` (a URL, a
+     * File/Blob or bytes): what the CPC writes stays in memory. It stays through `reset()`.
+     */
+    async insertAlbireo(source) { await this.#transport.call('insertAlbireo', [await bytesOf(source)]); }
+    removeAlbireo() { return this.#transport.call('removeAlbireo'); }
+
+    /**
+     * Records what the CPC writes to the cassette port (`SAVE`, `SAVE"X",B`...), until `stopTapeRecording()`,
+     * which resolves with the CDT file (a `Uint8Array`), or `undefined` when nothing was being recorded.
+     * A `reset()` or `configure()` ends the recording.
+     */
+    startTapeRecording() { return this.#transport.call('startTapeRecording'); }
+    stopTapeRecording() { return this.#transport.call('stopTapeRecording'); }
+    /**
+     * What a DMP2000 printer (configuration `dmp2000: true`) printed, as files: `[{ name, data }]` with
+     * `prefix.txt`, `prefix.prn` (the bytes sent) and `prefix_001.png`... (the sheets with ink), or
+     * `undefined` without a printer. `prefix` is 'printout' by default.
+     */
+    printout(prefix = 'printout') { return this.#transport.call('printout', [prefix]); }
+
+    /**
      * An upper ROM (a 16 KB image) in `slot` (0 to 255), from a URL, a File/Blob or bytes. The machine does not
      * reset: the firmware finds the ROM at its next `reset()`, and it stays in until `removeRom`.
      */

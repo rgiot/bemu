@@ -7,7 +7,7 @@ use amsrust::motherboard::{CpcModel, MotherboardBuilder};
 use amsrust::ppi::Brand;
 use serde::Deserialize;
 
-/// `{ model, crtc, gateArray, ramKb, discInterface, playcity, digiblaster, willyOpl3, language, brand, display, curvature, blackLevel }`, each optional:
+/// `{ model, crtc, gateArray, ramKb, discInterface, playcity, digiblaster, dmp2000, dmp2000Charset, willyOpl3, language, brand, display, curvature, blackLevel }`, each optional:
 /// a 6128 with its own disc interface, CRTC 0, Gate Array 40010, raw display by default.
 #[derive(Deserialize, Default, Clone, Debug)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
@@ -27,6 +27,11 @@ pub struct Config {
     pub playcity: Option<bool>,
     /// A Digiblaster plugged (a DAC on the printer port).
     pub digiblaster: Option<bool>,
+    /// An Amstrad DMP2000 printer on the printer port; what it prints comes back with `printout()`.
+    pub dmp2000: Option<bool>,
+    /// The DMP2000's character set: "usa", "france", "germany", "uk", "denmark", "sweden", "italy",
+    /// "spain" or "japan" ("usa" by default).
+    pub dmp2000_charset: Option<String>,
     /// Willy with an OPL3LPT plugged: true (at &FEBC) or its base ("&FEAC"...).
     pub willy_opl3: Option<WillyOpl3>,
     /// "en" (the default) or "fr": the French 6128's ROMs, AZERTY keyboard.
@@ -108,6 +113,19 @@ impl Config {
             builder.plug_digiblaster();
             #[cfg(not(feature = "digiblaster"))]
             return Err("digiblaster: this build has no Digiblaster".into());
+        }
+        if self.dmp2000 == Some(true) {
+            builder.plug_dmp2000();
+            if let Some(country) = &self.dmp2000_charset {
+                const COUNTRIES: [&str; 9] = ["usa", "france", "germany", "uk", "denmark", "sweden", "italy", "spain", "japan"];
+                let charset = COUNTRIES
+                    .iter()
+                    .position(|name| name.eq_ignore_ascii_case(country))
+                    .ok_or_else(|| format!("dmp2000Charset must be one of {}, not {country:?}", COUNTRIES.join(", ")))?;
+                builder.set_dmp2000(charset as u8, false);
+            }
+        } else if self.dmp2000_charset.is_some() {
+            return Err("dmp2000Charset needs dmp2000: true".into());
         }
         match &self.willy_opl3 {
             None | Some(WillyOpl3::Plugged(false)) => {},

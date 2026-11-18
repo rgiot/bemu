@@ -29,6 +29,14 @@ const MAX_FRAME_T_STATES: usize = 2 * FRAME_T_STATES;
 type Callback = Rc<RefCell<Option<Function>>>;
 
 /// The configured machine, its drives 3.5" ones: they read both sides of any disc image.
+/// The card `T` of `old`'s expansion port, if there is one, onto `new`'s.
+#[cfg(any(feature = "dandanator", feature = "nova", feature = "albireo"))]
+fn carry_card<T: amsrust::expansion_port::ExpansionDevice>(old: &mut Motherboard, new: &mut Motherboard) {
+    if let Some(card) = old.unplug_expansion::<T>() {
+        new.plug_expansion(card);
+    }
+}
+
 fn build_machine(config: &Config) -> Result<Motherboard, JsError> {
     let mut motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
     for drive in [FdcDrive::A, FdcDrive::B] {
@@ -313,6 +321,127 @@ impl Emulator {
         self.machine().set_upper_rom(slot, None).map_err(|e| JsError::new(&e))?;
         self.roms.retain(|(taken, _)| *taken != slot);
         Ok(())
+    }
+
+    /// A Dandanator Mini (a 512 KB romset, uploaded: what the CPC programs stays in memory, see
+    /// `dandanator_flash`) on the expansion port, in place of the CPC's ROMs: the machine restarts to boot it.
+    pub fn insert_dandanator(&mut self, romset: &[u8]) -> Result<(), JsError> {
+        #[cfg(feature = "dandanator")]
+        {
+            use amsrust::dandanator::Dandanator;
+            let machine = self.machine();
+            machine.unplug_expansion::<Dandanator>();
+            machine.plug_expansion(Box::new(Dandanator::new(romset)));
+            machine.restart();
+            Ok(())
+        }
+        #[cfg(not(feature = "dandanator"))]
+        {
+            let _ = romset;
+            Err(JsError::new("this build has no Dandanator"))
+        }
+    }
+
+    /// The Dandanator unplugged; the machine restarts.
+    pub fn remove_dandanator(&mut self) {
+        #[cfg(feature = "dandanator")]
+        {
+            let machine = self.machine();
+            machine.unplug_expansion::<amsrust::dandanator::Dandanator>();
+            machine.restart();
+        }
+    }
+
+    /// The Dandanator's flash (512 KB), with what the CPC programmed in it; none without one.
+    pub fn dandanator_flash(&self) -> Option<Vec<u8>> {
+        #[cfg(feature = "dandanator")]
+        {
+            let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+            machine.expansion_port()?.device::<amsrust::dandanator::Dandanator>().map(|card| card.flash().to_vec())
+        }
+        #[cfg(not(feature = "dandanator"))]
+        None
+    }
+
+    /// A Nova (an ethernet card with 128 KB of NVRAM, kept in memory) on the expansion port.
+    pub fn plug_nova(&mut self) -> Result<(), JsError> {
+        #[cfg(feature = "nova")]
+        {
+            use amsrust::nova::Nova;
+            let card = Nova::new(None).map_err(|e| JsError::new(&e))?;
+            let machine = self.machine();
+            machine.unplug_expansion::<Nova>();
+            machine.plug_expansion(Box::new(card));
+            Ok(())
+        }
+        #[cfg(not(feature = "nova"))]
+        Err(JsError::new("this build has no Nova"))
+    }
+
+    /// The Nova unplugged.
+    pub fn unplug_nova(&mut self) {
+        #[cfg(feature = "nova")]
+        self.machine().unplug_expansion::<amsrust::nova::Nova>();
+    }
+
+    /// An Albireo (a CH376 board) on the expansion port, its USB key the FAT image `image`: what the CPC
+    /// writes stays in memory.
+    pub fn insert_albireo(&mut self, image: Vec<u8>) -> Result<(), JsError> {
+        #[cfg(feature = "albireo")]
+        {
+            use amsrust::ch376::Albireo;
+            let machine = self.machine();
+            machine.unplug_expansion::<Albireo>();
+            machine.plug_expansion(Box::new(Albireo::with_image(image)));
+            Ok(())
+        }
+        #[cfg(not(feature = "albireo"))]
+        {
+            let _ = image;
+            Err(JsError::new("this build has no Albireo"))
+        }
+    }
+
+    /// The Albireo unplugged.
+    pub fn remove_albireo(&mut self) {
+        #[cfg(feature = "albireo")]
+        self.machine().unplug_expansion::<amsrust::ch376::Albireo>();
+    }
+
+    /// Record what the CPC writes to the cassette port (`SAVE` on the CPC) until `stop_tape_recording`.
+    pub fn start_tape_recording(&mut self) {
+        self.machine().start_tape_recording();
+    }
+
+    /// The recording as a CDT file; none when nothing was being recorded.
+    pub fn stop_tape_recording(&mut self) -> Option<Vec<u8>> {
+        self.machine().stop_tape_recording()
+    }
+
+    /// The seconds recorded so far; none when not recording.
+    pub fn tape_recording_seconds(&self) -> Option<f64> {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        machine.tape_recorder().map(|recorder| recorder.seconds())
+    }
+
+    /// What a DMP2000 printer (`dmp2000: true`) printed, as files named after `prefix`:
+    /// `[{ name, data }]` with `prefix.txt` (the text), `prefix.prn` (the bytes the CPC sent) and
+    /// `prefix_001.png`... (the sheets with ink). None without a printer.
+    pub fn printout(&self, prefix: &str) -> Option<Array> {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        let printer = machine.printer_port()?.device_as::<amsrust::dmp2000::Dmp2000>()?;
+        Some(
+            printer
+                .files(prefix)
+                .into_iter()
+                .map(|(name, data)| {
+                    let file = Object::new();
+                    let _ = Reflect::set(&file, &"name".into(), &name.into());
+                    let _ = Reflect::set(&file, &"data".into(), &Uint8Array::from(data.as_slice()));
+                    JsValue::from(file)
+                })
+                .collect(),
+        )
     }
 
     /// Load an SNA snapshot in the machine.
@@ -720,6 +849,14 @@ impl Emulator {
         for (unit, disc) in self.discs.iter().enumerate() {
             motherboard.fdc_mut().insert_image(fdc_drive(unit), disc.clone());
         }
+        // the cards on the expansion port stay plugged, with what they hold (the Nova's NVRAM, the
+        // Albireo's key, the Dandanator's flash)
+        #[cfg(feature = "dandanator")]
+        carry_card::<amsrust::dandanator::Dandanator>(&mut self.motherboard, &mut motherboard);
+        #[cfg(feature = "nova")]
+        carry_card::<amsrust::nova::Nova>(&mut self.motherboard, &mut motherboard);
+        #[cfg(feature = "albireo")]
+        carry_card::<amsrust::ch376::Albireo>(&mut self.motherboard, &mut motherboard);
         // the cartridge and the upper ROMs stay in (a CPC has no cartridge port: the cartridge waits)
         if motherboard.model().is_plus() {
             if let Some(cartridge) = &self.cartridge {

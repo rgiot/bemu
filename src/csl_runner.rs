@@ -179,6 +179,9 @@ pub trait CslFiles {
     fn tape(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
     /// The CPC+ cartridge `rom_config C` names (a .cpr, or a zip holding one), in `dir`.
     fn cartridge(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
+    /// The upper ROM `rom_config U` names, in `dir`: asked only where the files are not on a disk, an
+    /// `inner://` embedded ROM or a file of the disk being read by the `rom-load` command itself.
+    fn rom(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
     /// The text `key_from_file` names, in `dir`.
     fn text(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String>;
     /// Whether the files are on a disk: what the script writes (`snapshot`) goes there.
@@ -261,6 +264,10 @@ impl CslFiles for FsFiles {
         let path = resolve(dir, name);
         let path = find_case_insensitive(&path).unwrap_or(path);
         std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    fn rom(&mut self, dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+        self.tape(dir, name)
     }
 
     /// Looked up like a tape: in `dir`, case-insensitively.
@@ -362,6 +369,12 @@ impl CslFiles for MemFiles {
             .ok_or_else(|| format!("{name}: no such tape"))
     }
 
+    fn rom(&mut self, _dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+        self.get(name)
+            .cloned()
+            .ok_or_else(|| format!("{name}: no such ROM"))
+    }
+
     /// By file name, wherever the script puts the directory (`addFile("game.cpr", ...)` on the web).
     fn cartridge(&mut self, _dir: &Path, name: &str) -> Result<Vec<u8>, String> {
         self.get(name)
@@ -441,7 +454,7 @@ pub struct CslRunner {
     /// The CPC+ cartridge `rom_config C` names (its file and bytes), inserted at the next `reset`.
     cartridge: Option<(String, Vec<u8>)>,
     /// The upper ROMs `rom_config` names (slot, file), fitted at the next `reset`.
-    roms: Vec<(u8, String)>,
+    roms: Vec<(u8, String, Option<Vec<u8>>)>,
     /// Where `rom_config` looks (`rom_dir`), else `base_dir`.
     rom_dir: Option<PathBuf>,
     /// The settings of the commands the script runs (typing delays, snapshot version).
@@ -941,8 +954,22 @@ impl CslRunner {
                     }
                     // an upper ROM, for the next reset
                     cpclib_csl::RomType::Upper => {
-                        self.roms.retain(|(slot, _)| *slot != config.num);
-                        self.roms.push((config.num, path.display().to_string()));
+                        self.roms.retain(|(slot, _, _)| *slot != config.num);
+                        let name = config.filename.as_str();
+                        // where there is no disk (a web page) the file is one given as bytes; an
+                        // embedded ROM (`inner://`) needs no file
+                        let bytes = if self.files.on_disk() || name.starts_with("inner://") {
+                            None
+                        } else {
+                            let dir = self.rom_dir.clone().unwrap_or_else(|| self.base_dir.clone());
+                            Some(
+                                self.files
+                                    .rom(&dir, name)
+                                    .map_err(|e| format!("rom_config {name}: {e}"))?,
+                            )
+                        };
+                        let file = if bytes.is_some() { name.to_owned() } else { path.display().to_string() };
+                        self.roms.push((config.num, file, bytes));
                     }
                     cpclib_csl::RomType::Lower | cpclib_csl::RomType::Multiface2 => {
                         self.note(format!("{instruction}: not supported"))
@@ -1231,11 +1258,13 @@ impl CslRunner {
                     .map_err(|e| e.to_string())?,
             );
         }
-        for (slot, file) in &self.roms {
-            commands.push(
-                Command::with_arg("rom-load", Arg::Text(format!("{slot}={file}")))
-                    .map_err(|e| e.to_string())?,
-            );
+        for (slot, file, bytes) in &self.roms {
+            let arg = match bytes {
+                // the ROM's bytes, named by its slot: `rom-load` takes them as they are
+                Some(data) => Arg::Bytes { name: format!("{slot}={file}"), data: data.clone() },
+                None => Arg::Text(format!("{slot}={file}")),
+            };
+            commands.push(Command::with_arg("rom-load", arg).map_err(|e| e.to_string())?);
         }
         commands.push(Command::new("machine-reset-hard").map_err(|e| e.to_string())?);
         Ok(commands)
@@ -2208,6 +2237,22 @@ mod test {
             }))
             .unwrap();
         assert!(runner.cartridge.is_some());
+    }
+
+    /// An upper ROM `rom_config` names, given as bytes, is in its slot after the script's `reset`.
+    #[test]
+    fn an_upper_rom_is_given_as_bytes() {
+        let mut files = MemFiles::default();
+        files.insert("Tool.ROM", vec![0xa5; 0x4000]);
+        let mut runner = CslRunner::with_io(Box::new(files), Box::new(Collected::default()), "out");
+        runner
+            .run_text("csl_version 1.1\nrom_config U 5 'Z:\\roms\\tool.rom'\nreset\n", "x")
+            .unwrap();
+        assert_eq!(runner.motherboard().upper_rom(5).map(|rom| rom[0]), Some(0xa5));
+        // a ROM that is not given is an error, as it names a file
+        let mut runner = CslRunner::with_io(Box::new(MemFiles::default()), Box::new(Collected::default()), "out");
+        let error = runner.run_text("csl_version 1.1\nrom_config U 5 'other.rom'\nreset\n", "x").unwrap_err();
+        assert!(error.contains("no such ROM"), "{error}");
     }
 
     /// A disc a script names is found inside a zip archive given, by its file name; a lone archive
