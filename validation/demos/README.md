@@ -58,4 +58,6 @@ emulators start the demos 3 s apart (the CSL typing), then run them the same.
   width differently (`validation/fuzz/gen_pull4_probe.py`: one line later, 1, 2, 5, 6, 7, 8 pixels
   for a 1 us narrower sync, straight back when it lasted 8 lines or less) from bemu's line
   oscillator (3, 5, 6, 7, 8, back by 3/8 a line); a few lines around each gap, up to 4 pixels.
+  Left as it is: AMSpiriT's response to the sync's width is not one filter (validation/fuzz/README.md),
+  bemu keeps the PLL that follows a moved sync for a narrowed one too (smooth R3 waves).
 
