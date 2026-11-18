@@ -61,7 +61,9 @@ Gaps in the far second sync, and the line sync's width (`gen_pull3_probe.py` wit
   above): amsrust keeps the same PLL for both (the R3 waves it shows stay smooth), and does NOT copy
   these dynamics. Two amsrust bugs found on the way, fixed:
   - the middle reference stopped at a 2 us C-HSYNC: R3 3 (1 us) settled at 32 ticks, not 24 (the
-    1/2 us per R3 rule, which AMSpiriT follows);
+    1/2 us per R3 rule, which AMSpiriT follows). Shaker D3 D1-D11 (a 1 us line sync) were 1/2 us off
+    as a whole for it, and MONITOR_PULL_MIN (a 1 us second sync pulled as much as a 2 us one) made up
+    for it in D1-D4: removed, the eleven are now at 0-1.2 % (were 4.6-11.4 %);
   - after a line without a sync (R3 2 on CRTC 1: no C-HSYNC), the next sync, at the end of the next line,
     was taken for a sync 1000 ticks late: the beam restarted (48-tick spikes in an R3 wave, AMSpiriT none).
   Onescreen Colonies #1 narrows the line sync for 2 lines: the few lines around it still differ from
