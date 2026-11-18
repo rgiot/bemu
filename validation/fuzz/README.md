@@ -106,9 +106,15 @@ about 10 px over the whole band (ramp in 3, 9, 10 px over three lines), and afte
 ~8 lines (11, 7, 4, 3, 2, 1, 1: the 3/8 PLL): the slanted stripes of the real photo. amsrust ignored any line with
 more than one extra pulse. Now the last pulse before the line sync decides, as that pulse alone: 13 px
 (`MONITOR_AHEAD_PULL` at 24 usec; AMSpiriT 10: the pulse before it may weigh a little), ramps within 1-3 px. Shaker: AT/F
-5.7 -> 2.7 %, D4/A and D4/B 11.8 -> 6.4 %, no other screen moves. D4 (R0=7: eight pulses per 1024 ticks) is still
-20 px off in the band where the picture shifts left (-31 against AMSpiriT's -20) and AMSpiriT overshoots by +15 when the
-pulses stop; the monitor's lock on a train of pulses is not understood yet.
+5.7 -> 2.7 %, D4/A and D4/B 11.8 -> 6.4 %, no other screen moves. D4 (R0=7: eight pulses per 1024 ticks): the band's
+left edge is at x=31 in bemu and x=42 in AMSpiriT (the band's own picture is 8 characters wide; the edges are not
+the shift itself). bemu pulls the picture +12 px there (the last pulse, 8 usec before the line sync, `target` 12);
+AMSpiriT about +23: after the band it is 15 px right of normal on the first line, 5/8 of its pull, then relaxes (the
+3/8 PLL). Adding all the pulses' single-pulse pulls would give about -29, so AMSpiriT does not sum them; no rule that
+fits both D4 (pulses every 8 usec: +23) and AT/F (two pulses: +10) is known. The monitor's HSYNC window start
+(`MONITOR_HSYNC_WINDOW_START`, 976 ticks: a pulse only restarts the line once the beam has run that long, the H-hold of
+the monitor) does not change D4 anywhere from 897 to 1024 (pulses end every 128 ticks, the eighth is always the one
+that locks) and breaks it below 896, so this test cannot pin it.
 
 Ink writes (`gen_inkwrite_probe.py`): pen 1 set dark at the start of each line, light in the middle by
 OUT (C),r, OUT (n),A or OUTI (all writing in the same microsecond), mode 0, 1 or 2. AMSpiriT Lite 1.16: the
