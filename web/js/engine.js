@@ -123,6 +123,9 @@ export class Engine {
     insertTape(bytes) { return this.#core.insert_tape(bytes); }
     ejectTape() { this.#core.eject_tape(); }
     tapeControl(key) { this.#core.tape_control(key); }
+    // an upper ROM in a slot (0-255), found by the firmware at the next reset; removeRom empties the slot
+    insertRom(slot, bytes) { this.#core.insert_rom(slot, bytes); }
+    removeRom(slot) { this.#core.remove_rom(slot); }
     // a CPC+ cartridge (a CPR, or a zip holding one) in; the machine restarts to boot it. Throws on a CPC.
     insertCartridge(bytes, entry) { this.#core.insert_cartridge(bytes, entry); }
     // the cartridge out; the machine restarts

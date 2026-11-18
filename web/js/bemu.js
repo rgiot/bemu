@@ -400,6 +400,14 @@ export class Bemu {
     /** The cartridge out; the machine restarts. */
     ejectCartridge() { return this.#transport.call('ejectCartridge'); }
 
+    /**
+     * An upper ROM (a 16 KB image) in `slot` (0 to 255), from a URL, a File/Blob or bytes. The machine does not
+     * reset: the firmware finds the ROM at its next `reset()`, and it stays in until `removeRom`.
+     */
+    async insertRom(slot, source) { await this.#transport.call('insertRom', [slot, await bytesOf(source)]); }
+    /** Empty the upper ROM `slot`. */
+    removeRom(slot) { return this.#transport.call('removeRom', [slot]); }
+
     /** An SNA snapshot, from a URL, a File/Blob or bytes. */
     async loadSnapshot(source) { await this.#transport.call('loadSnapshot', [await bytesOf(source)]); }
     /** A file a CSL script names (disk_insert, snapshot_load, csl_load). */

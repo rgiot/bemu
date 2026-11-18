@@ -50,6 +50,10 @@ pub struct Emulator {
     frame: Option<RgbImage>,
     /// The discs the page inserted, for a new machine.
     discs: [Option<DiscImage>; 2],
+    /// The CPC+ cartridge the page inserted, for a new machine (kept while the model is a CPC+).
+    cartridge: Option<amsrust::asic::Cartridge>,
+    /// The upper ROMs the page inserted (slot, image), for a new machine.
+    roms: Vec<(u8, Vec<u8>)>,
     /// A CSL script playing, with its own machine.
     csl: Option<CslRunner>,
     /// What the script playing, or the last one, played (the CSL log window).
@@ -111,6 +115,8 @@ impl Emulator {
             motherboard,
             frame: None,
             discs: [None, None],
+            cartridge: None,
+            roms: Vec::new(),
             csl: None,
             csl_log: None,
             files: MemFiles::default(),
@@ -278,6 +284,7 @@ impl Emulator {
         // checked before anything changes: a bad file leaves the machine as it was
         let cartridge = amsrust::asic::Cartridge::from_bytes(bytes, "cartridge", entry.as_deref())
             .map_err(|e| JsError::new(&e))?;
+        self.cartridge = Some(cartridge.clone());
         let machine = self.machine();
         machine.insert_cartridge(Some(cartridge));
         machine.restart();
@@ -286,9 +293,26 @@ impl Emulator {
 
     /// The cartridge out of the machine, which restarts (on the system cartridge's BASIC).
     pub fn eject_cartridge(&mut self) {
+        self.cartridge = None;
         let machine = self.machine();
         machine.insert_cartridge(None);
         machine.restart();
+    }
+
+    /// An upper ROM (a 16 KB image: Protext, Maxam, UniDOS...) in `slot`, 0 to 255. The machine is not
+    /// reset: the firmware finds the ROM at the next reset. It stays in through `reset()` and `configure()`.
+    pub fn insert_rom(&mut self, slot: u8, bytes: &[u8]) -> Result<(), JsError> {
+        self.machine().set_upper_rom(slot, Some(bytes)).map_err(|e| JsError::new(&e))?;
+        self.roms.retain(|(taken, _)| *taken != slot);
+        self.roms.push((slot, bytes.to_vec()));
+        Ok(())
+    }
+
+    /// Empty the upper ROM `slot`.
+    pub fn remove_rom(&mut self, slot: u8) -> Result<(), JsError> {
+        self.machine().set_upper_rom(slot, None).map_err(|e| JsError::new(&e))?;
+        self.roms.retain(|(taken, _)| *taken != slot);
+        Ok(())
     }
 
     /// Load an SNA snapshot in the machine.
@@ -687,7 +711,7 @@ impl Emulator {
         }
     }
 
-    /// `motherboard` replaces the machine: the discs go in, the sound goes on.
+    /// `motherboard` replaces the machine: the discs, the cartridge and the ROMs go in, the sound goes on.
     fn replace_machine(&mut self, mut motherboard: Motherboard) {
         motherboard.psg_mut().take_audio_output_from(self.motherboard.psg_mut());
         if let (Some(rate), None) = (self.audio_rate, motherboard.psg().audio_config()) {
@@ -695,6 +719,16 @@ impl Emulator {
         }
         for (unit, disc) in self.discs.iter().enumerate() {
             motherboard.fdc_mut().insert_image(fdc_drive(unit), disc.clone());
+        }
+        // the cartridge and the upper ROMs stay in (a CPC has no cartridge port: the cartridge waits)
+        if motherboard.model().is_plus() {
+            if let Some(cartridge) = &self.cartridge {
+                motherboard.insert_cartridge(Some(cartridge.clone()));
+            }
+        }
+        for (slot, rom) in &self.roms {
+            // a slot a model refuses (the disc interface's) is not fatal for the machine
+            let _ = motherboard.set_upper_rom(*slot, Some(rom));
         }
         // the deck keeps its tape, where it is
         motherboard.take_cassette_and_watches_from(&mut self.motherboard);
