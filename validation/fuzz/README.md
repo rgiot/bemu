@@ -92,6 +92,14 @@ registration of the photo may be at fault: check by eye first). A9/C on CRTC 1: 
 (the tube's black level, not a bug). DT/J2 is a rolling picture, any score is noise. AO/H on CRTC 0 looked worse than
 AMSpiriT (0.29 against 0.39): same geometry, AMSpiriT's reference is a soft lossy WebP; not a bug.
 
+AT/F on CRTC 4 (`examples/probe_crtc_writes.rs`, `examples/probe_hsync.rs`; the test, run alone: boot SHAKE27A, key T, five spaces):
+per line the program writes R2=11 at C0=3, R2=22 at C0=12 (during the HSYNC R2=11 opened) and R2=46 at C0=34, R3=10. The Gate
+Array sends the monitor three 4 us C-HSYNC pulses a line on CRTC 0 and CRTC 4 alike, at the same phases (148, 532 and 996
+ticks): bemu gives CRTC 4 the pulses of CRTC 0 here. The real CPC photo on CRTC 4 shows large curved shifts instead of
+CRTC 0's mild stripes, so either the type 3/4 HSYNC (the C3l counter ends it; a start compare after an R2 write)
+makes other pulses, or the monitor reacts to them differently. `asic.rs` has its own `hsync_end` rule: the next step
+is the Compendium's section on R2 written during the HSYNC for CRTC 3/4 and a real-CPC capture of the pulses.
+
 Ink writes (`gen_inkwrite_probe.py`): pen 1 set dark at the start of each line, light in the middle by
 OUT (C),r, OUT (n),A or OUTI (all writing in the same microsecond), mode 0, 1 or 2. AMSpiriT Lite 1.16: the
 three instructions reach the same pixel; the light colour starts 8 ticks into the character in modes 0 and
