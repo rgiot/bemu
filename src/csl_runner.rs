@@ -1766,7 +1766,7 @@ fn find_case_insensitive(path: &Path) -> Option<PathBuf> {
 
 /// The keys to hold down together to produce a character on a UK keyboard.
 ///
-/// Public so `main.rs`'s `--window` interactive mode can reuse it for
+/// Public so `main.rs`'s window mode can reuse it for
 /// typed-character input, not just CSL scripts - see `update_keyboard`'s
 /// doc comment there for why that's needed (host keyboard layouts other
 /// than US/UK QWERTY can't be represented as a fixed physical-key table).

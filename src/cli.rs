@@ -133,7 +133,7 @@ pub struct Args {
     #[arg(long, value_name = "PATH", help_heading = MEDIA)]
     pub save_sna: Option<String>,
 
-    /// Takes the --sna/--dsk/--dsk-b/--cdt files again when they change (with --window or
+    /// Takes the --sna/--dsk/--dsk-b/--cdt files again when they change (in the window or with
     /// --debug-server).
     ///
     /// For an edit, assemble, see loop: a disc or tape goes in again, then the snapshot is
@@ -182,9 +182,14 @@ pub struct Args {
     #[arg(long, value_name = "S", default_value_t = 0.0, value_parser = parse_seconds, help_heading = RUN)]
     pub from: f64,
 
-    /// A live, playable window redrawn at the CPC's ~50 Hz, keyboard included; close it to quit.
+    /// No window: the interactive monitor in the terminal, or with --record / --debug-server a
+    /// run without a picture on screen. (The live, playable window is the default.)
     #[arg(long, help_heading = RUN)]
-    pub window: bool,
+    pub console: bool,
+
+    /// The window is the default: accepted, for the scripts that still pass it.
+    #[arg(long = "window", hide = true, conflicts_with = "console")]
+    pub window_flag: bool,
 
     /// The window silent (a build with --features audio plays the sound).
     #[arg(long, help_heading = RUN)]
@@ -214,8 +219,8 @@ pub struct Args {
     #[arg(long, value_enum, default_value_t = DEFAULT_FRONTEND, help_heading = RUN)]
     pub frontend: FrontendKind,
 
-    /// A video with sound through ffmpeg: what the window shows until it is closed, or without
-    /// --window, --seconds run headless.
+    /// A video with sound through ffmpeg: what the window shows until it is closed, or with
+    /// --console, --seconds run without one.
     #[arg(long, value_name = "FILE", help_heading = RECORD)]
     pub record: Option<String>,
 
@@ -242,7 +247,7 @@ pub struct Args {
     pub type_at: f64,
 
     /// Serves the AMSpiriT-Lite compatible debug API on 127.0.0.1 (GET /api/doc lists the
-    /// endpoints), with --window or headless.
+    /// endpoints), with the window or with --console.
     #[arg(long, help_heading = DEBUG)]
     debug_server: bool,
 
@@ -424,8 +429,9 @@ pub struct Args {
 }
 
 const AFTER_HELP: &str = "\
-With no --screenshot, --window, --record or --debug-server, drops into the interactive monitor
-once everything is loaded ('h' at its prompt lists its commands).
+With --console (and no --screenshot, --record or --debug-server), drops into the interactive
+monitor once everything is loaded ('h' at its prompt lists its commands). Without it, a live
+window opens.
 
 In the window: F10 toggles full speed (the emulation as fast as it can, silent, the picture shown
 50 times a second), F8 pauses and resumes (through the debug server when it runs, its clients
@@ -468,6 +474,11 @@ impl Args {
             Some(base) => Some(base.clone()),
             None => self.willy_opl3.then(|| "&FEBC".to_owned()),
         }
+    }
+
+    /// Whether the live window runs: the default, unless --console.
+    pub fn window(&self) -> bool {
+        !self.console
     }
 
     pub fn debug_server(&self) -> bool {

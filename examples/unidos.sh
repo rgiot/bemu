@@ -33,7 +33,7 @@ fi
 cd "$(dirname "$0")/.."
 run="$2"
 typed="$3"
-set -- --window --nova "$(dirname "$folder")/nova.bin" --albireo "$folder" \
+set -- --nova "$(dirname "$folder")/nova.bin" --albireo "$folder" \
     --rom 1=inner://unidos-nova --rom 7=inner://unidos --rom 14=inner://unitools \
     --rom 15=inner://amsdos --rom 27=inner://unidos-albireo $willy
 if [ -n "$run" ]; then

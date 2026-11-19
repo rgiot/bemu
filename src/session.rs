@@ -1,4 +1,4 @@
-//! `--window`: the live window, its menus and command palette (with the `gui` feature, on the
+//! The live window (the default, `--console` turns it off), its menus and command palette (with the `gui` feature, on the
 //! winit frontend), driven by the commands of `amsrust::commands`.
 //!
 //! [`Core`] is what the commands act on (their receiver): the machine, the debugger (always
