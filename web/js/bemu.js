@@ -400,6 +400,67 @@ export class Bemu {
     /** The cartridge out; the machine restarts. */
     ejectCartridge() { return this.#transport.call('ejectCartridge'); }
 
+    /**
+     * A Dandanator Mini on the expansion port: `source` is its 512 KB romset (a URL, a File/Blob or bytes). It
+     * takes the place of the CPC's ROMs, so the machine restarts to boot it. The card stays plugged through
+     * `reset()` and `configure()`, until `removeDandanator()`.
+     */
+    async insertDandanator(source) { await this.#transport.call('insertDandanator', [await bytesOf(source)]); }
+    removeDandanator() { return this.#transport.call('removeDandanator'); }
+    /** The Dandanator's flash (512 KB, a `Uint8Array`) with what the CPC programmed in it, or `undefined` without one. */
+    dandanatorFlash() { return this.#transport.call('dandanatorFlash'); }
+    /** A Nova (ethernet, 128 KB of NVRAM kept in memory) on the expansion port; it stays through `reset()`. */
+    plugNova() { return this.#transport.call('plugNova'); }
+    unplugNova() { return this.#transport.call('unplugNova'); }
+    /**
+     * An Albireo (a CH376 USB board) on the expansion port, its USB key the FAT image `source` (a URL, a
+     * File/Blob or bytes): what the CPC writes stays in memory. It stays through `reset()`.
+     */
+    async insertAlbireo(source) { await this.#transport.call('insertAlbireo', [await bytesOf(source)]); }
+    removeAlbireo() { return this.#transport.call('removeAlbireo'); }
+
+    /**
+     * An M4 board (Duke's SD / WiFi board) on the expansion port, its SD card the files kept in memory by
+     * `m4PutFile` and the others. The CPC sees them with `|DIR`, `|CD`, `LOAD`, `RUN"` and the M4 tools; what
+     * it saves is there to take with `m4GetFile`. The machine restarts so that the firmware finds the board's
+     * ROM. The board stays plugged through `reset()` and `configure()`; its files stay after `unplugM4()`. The
+     * WiFi, HTTP and the board's web page are not emulated.
+     */
+    plugM4() { return this.#transport.call('plugM4'); }
+    unplugM4() { return this.#transport.call('unplugM4'); }
+    /** `path` ('games/demo.bin') of the M4's card written with `source` (a URL, a File/Blob or bytes), its folders made. */
+    async m4PutFile(path, source) { await this.#transport.call('m4PutFile', [path, await bytesOf(source)]); }
+    /** The file `path` of the M4's card (a `Uint8Array`), or `undefined`. */
+    m4GetFile(path) { return this.#transport.call('m4GetFile', [path]); }
+    /** The folder `path` ('' is the root) of the M4's card: `[{ name, folder, size }]`, folders first, or `undefined` if it is not a folder. */
+    m4List(path = '') { return this.#transport.call('m4List', [path]); }
+    /** A file, or a folder and what is in it, taken from the M4's card; resolves with whether there was one. */
+    m4Remove(path) { return this.#transport.call('m4Remove', [path]); }
+    /** A folder (and the ones above it) made on the M4's card. */
+    m4MakeDir(path) { return this.#transport.call('m4MakeDir', [path]); }
+
+    /**
+     * Records what the CPC writes to the cassette port (`SAVE`, `SAVE"X",B`...), until `stopTapeRecording()`,
+     * which resolves with the CDT file (a `Uint8Array`), or `undefined` when nothing was being recorded.
+     * A `reset()` or `configure()` ends the recording.
+     */
+    startTapeRecording() { return this.#transport.call('startTapeRecording'); }
+    stopTapeRecording() { return this.#transport.call('stopTapeRecording'); }
+    /**
+     * What a DMP2000 printer (configuration `dmp2000: true`) printed, as files: `[{ name, data }]` with
+     * `prefix.txt`, `prefix.prn` (the bytes sent) and `prefix_001.png`... (the sheets with ink), or
+     * `undefined` without a printer. `prefix` is 'printout' by default.
+     */
+    printout(prefix = 'printout') { return this.#transport.call('printout', [prefix]); }
+
+    /**
+     * An upper ROM (a 16 KB image) in `slot` (0 to 255), from a URL, a File/Blob or bytes. The machine does not
+     * reset: the firmware finds the ROM at its next `reset()`, and it stays in until `removeRom`.
+     */
+    async insertRom(slot, source) { await this.#transport.call('insertRom', [slot, await bytesOf(source)]); }
+    /** Empty the upper ROM `slot`. */
+    removeRom(slot) { return this.#transport.call('removeRom', [slot]); }
+
     /** An SNA snapshot, from a URL, a File/Blob or bytes. */
     async loadSnapshot(source) { await this.#transport.call('loadSnapshot', [await bytesOf(source)]); }
     /** A file a CSL script names (disk_insert, snapshot_load, csl_load). */

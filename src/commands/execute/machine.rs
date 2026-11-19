@@ -56,7 +56,12 @@ pub(super) fn run(command: &Command, target: &mut dyn CommandTarget) -> CommandR
                 .trim()
                 .parse()
                 .map_err(|_| CommandError::Invalid(format!("{slot}: a slot from 0 to 255")))?;
-            let rom = crate::roms::load_rom(file.trim()).map_err(failed)?;
+            // a ROM given as bytes (a page, a CSL script's `rom_config` there), else a file or an
+            // embedded ROM
+            let rom = match &arg {
+                Arg::Bytes { data, .. } => data.clone(),
+                _ => crate::roms::load_rom(file.trim()).map_err(failed)?,
+            };
             target
                 .motherboard_mut()
                 .set_upper_rom(slot, Some(&rom))
