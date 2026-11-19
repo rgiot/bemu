@@ -314,10 +314,12 @@ impl Monitor {
     pub fn with_holds(mut self, hhold: i8, vhold: i8) -> Self {
         self.hhold = hhold.clamp(-100, 100);
         self.vhold = vhold.clamp(-100, 100);
-        self.line_length =
-            (RASTER_LINE_LENGTH as i64 + i64::from(self.hhold) * MONITOR_HHOLD_TICKS / 100) as usize;
-        self.frame_lines =
-            (MONITOR_FREE_RUN_LINES as i64 + i64::from(self.vhold) * MONITOR_VHOLD_LINES / 100) as usize;
+        self.line_length = (RASTER_LINE_LENGTH as i64
+            + i64::from(self.hhold) * MONITOR_HHOLD_TICKS / 100)
+            as usize;
+        self.frame_lines = (MONITOR_FREE_RUN_LINES as i64
+            + i64::from(self.vhold) * MONITOR_VHOLD_LINES / 100)
+            as usize;
         // the frame oscillator listens to a VSYNC late in its period: the later, the higher the knob is
         // (a frame is 312 lines: from about +60 the VSYNC comes too early to be heard and the picture rolls)
         self.vsync_window_lines = (MONITOR_VSYNC_WINDOW_START_LINES as i64
@@ -528,7 +530,8 @@ impl Monitor {
         let hsync_pulse = self.hsync_run;
         if sync {
             if self.hsync_run == 0 {
-                self.hsync_listened = !self.locked || self.x >= self.line_length - MONITOR_HSYNC_WINDOW_MARGIN;
+                self.hsync_listened =
+                    !self.locked || self.x >= self.line_length - MONITOR_HSYNC_WINDOW_MARGIN;
             }
             self.hsync_run += 1;
         } else {
@@ -719,7 +722,8 @@ impl Monitor {
         // the picture is pulled right by about 10 pixels, as by that pulse alone
         let last = self.pulses.last().copied();
         if let (Some(previous), Some((other, width))) = (self.last_sync_start, last.as_ref()) {
-            let after = (*other - previous) as i64; // late for the previous sync
+            // late for the previous sync
+            let after = (*other - previous) as i64;
             // (a 1 usec pulse pulls 3: Shaker D3 D1-D4, once the line sync of 1 usec is placed right)
             let late_pull = ((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12;
             let taper = |pull: i32, distance: i64, flat: i64, end: i64| -> i32 {
@@ -1069,7 +1073,13 @@ mod test {
         for &width in std::iter::repeat_n(&64, 40).chain(widths) {
             for t in 0..RASTER_LINE_LENGTH {
                 let hsync = (736..736 + width).contains(&t);
-                mon.receive((100., 0., 0.).into(), Sync { vsync: false, hsync });
+                mon.receive(
+                    (100., 0., 0.).into(),
+                    Sync {
+                        vsync: false,
+                        hsync,
+                    },
+                );
             }
             out.push(mon.x as i64);
         }
@@ -1096,7 +1106,10 @@ mod test {
         let wave: Vec<usize> = [64, 48, 32, 16, 0, 16, 32, 48].repeat(8);
         let shifts = shifts_by_width(&wave);
         assert!(shifts.iter().all(|&s| (0..=24).contains(&s)), "{shifts:?}");
-        assert!(shifts.windows(2).all(|w| (w[0] - w[1]).abs() <= 12), "{shifts:?}");
+        assert!(
+            shifts.windows(2).all(|w| (w[0] - w[1]).abs() <= 12),
+            "{shifts:?}"
+        );
     }
 
     /// A CRTC-like frame of 312 lines with a white bar at ticks 300..316 of every line and a white
@@ -1172,23 +1185,38 @@ mod test {
     #[test]
     fn h_hold_slides_the_picture_then_tears_it() {
         let x = |h: i8| marks_after(h, 0, 3)[2].0;
-        let slide: Vec<i32> = [-60, -40, -20, 0, 20, 40, 60].iter().map(|&h| x(h)).collect();
-        assert!(slide.windows(2).all(|w| w[0] > w[1]), "slides with the knob: {slide:?}");
-        assert!((x(0) - x(60)).abs() < 40 && (x(-60) - x(0)).abs() < 40, "{slide:?}");
+        let slide: Vec<i32> = [-60, -40, -20, 0, 20, 40, 60]
+            .iter()
+            .map(|&h| x(h))
+            .collect();
+        assert!(
+            slide.windows(2).all(|w| w[0] > w[1]),
+            "slides with the knob: {slide:?}"
+        );
+        assert!(
+            (x(0) - x(60)).abs() < 40 && (x(-60) - x(0)).abs() < 40,
+            "{slide:?}"
+        );
         for h in [100, -100] {
             let mut mon = Monitor::default().with_holds(h, 0);
             for _ in 0..3 {
                 marked_frame(&mut mon);
             }
             let rows = bar_x(&mon, &[30, 60, 90, 180, 210]);
-            assert!(rows.windows(2).any(|w| w[0] != w[1]), "tears at {h}: {rows:?}");
+            assert!(
+                rows.windows(2).any(|w| w[0] != w[1]),
+                "tears at {h}: {rows:?}"
+            );
         }
         let mut mon = Monitor::default().with_holds(60, 0);
         for _ in 0..3 {
             marked_frame(&mut mon);
         }
         let rows = bar_x(&mon, &[30, 60, 90, 180, 210]);
-        assert!(rows.windows(2).all(|w| w[0] == w[1]), "steady at 60: {rows:?}");
+        assert!(
+            rows.windows(2).all(|w| w[0] == w[1]),
+            "steady at 60: {rows:?}"
+        );
     }
 
     /// V-hold detunes the frame oscillator: steady in a wide range around 0, a picture that rolls
@@ -1219,7 +1247,8 @@ mod test {
             for t in 0..RASTER_LINE_LENGTH {
                 let main = (736..800).contains(&t);
                 // a pulse 11 usec after the previous line sync, and one 24 usec before this one
-                let other = l >= 10 && l < 40 && ((176..240).contains(&t) || (352..416).contains(&t));
+                let other =
+                    l >= 10 && l < 40 && ((176..240).contains(&t) || (352..416).contains(&t));
                 mon.receive(
                     (100., 0., 0.).into(),
                     Sync {
@@ -1232,7 +1261,10 @@ mod test {
                 shift = mon.shift;
             }
         }
-        assert!((12..=14).contains(&shift), "the plateau of the pull: {shift}");
+        assert!(
+            (12..=14).contains(&shift),
+            "the plateau of the pull: {shift}"
+        );
         assert_eq!(mon.shift, 0, "and the picture is back after the pulses");
     }
 
