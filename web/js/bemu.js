@@ -420,6 +420,26 @@ export class Bemu {
     removeAlbireo() { return this.#transport.call('removeAlbireo'); }
 
     /**
+     * An M4 board (Duke's SD / WiFi board) on the expansion port, its SD card the files kept in memory by
+     * `m4PutFile` and the others. The CPC sees them with `|DIR`, `|CD`, `LOAD`, `RUN"` and the M4 tools; what
+     * it saves is there to take with `m4GetFile`. The machine restarts so that the firmware finds the board's
+     * ROM. The board stays plugged through `reset()` and `configure()`; its files stay after `unplugM4()`. The
+     * WiFi, HTTP and the board's web page are not emulated.
+     */
+    plugM4() { return this.#transport.call('plugM4'); }
+    unplugM4() { return this.#transport.call('unplugM4'); }
+    /** `path` ('games/demo.bin') of the M4's card written with `source` (a URL, a File/Blob or bytes), its folders made. */
+    async m4PutFile(path, source) { await this.#transport.call('m4PutFile', [path, await bytesOf(source)]); }
+    /** The file `path` of the M4's card (a `Uint8Array`), or `undefined`. */
+    m4GetFile(path) { return this.#transport.call('m4GetFile', [path]); }
+    /** The folder `path` ('' is the root) of the M4's card: `[{ name, folder, size }]`, folders first, or `undefined` if it is not a folder. */
+    m4List(path = '') { return this.#transport.call('m4List', [path]); }
+    /** A file, or a folder and what is in it, taken from the M4's card; resolves with whether there was one. */
+    m4Remove(path) { return this.#transport.call('m4Remove', [path]); }
+    /** A folder (and the ones above it) made on the M4's card. */
+    m4MakeDir(path) { return this.#transport.call('m4MakeDir', [path]); }
+
+    /**
      * Records what the CPC writes to the cassette port (`SAVE`, `SAVE"X",B`...), until `stopTapeRecording()`,
      * which resolves with the CDT file (a `Uint8Array`), or `undefined` when nothing was being recorded.
      * A `reset()` or `configure()` ends the recording.

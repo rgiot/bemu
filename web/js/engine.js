@@ -131,6 +131,14 @@ export class Engine {
     unplugNova() { this.#core.unplug_nova(); }
     insertAlbireo(bytes) { this.#core.insert_albireo(bytes); }
     removeAlbireo() { this.#core.remove_albireo(); }
+    // the M4 board, its SD card the page's files in memory
+    plugM4() { this.#core.plug_m4(); }
+    unplugM4() { this.#core.unplug_m4(); }
+    m4PutFile(path, bytes) { this.#core.m4_put_file(path, bytes); }
+    m4GetFile(path) { return this.#core.m4_get_file(path); }
+    m4List(path) { return this.#core.m4_list(path); }
+    m4Remove(path) { return this.#core.m4_remove(path); }
+    m4MakeDir(path) { this.#core.m4_make_dir(path); }
     // records what the CPC writes to the cassette port; stopTapeRecording gives the CDT (or undefined)
     startTapeRecording() { this.#core.start_tape_recording(); }
     stopTapeRecording() { return this.#core.stop_tape_recording(); }

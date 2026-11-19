@@ -30,7 +30,7 @@ type Callback = Rc<RefCell<Option<Function>>>;
 
 /// The configured machine, its drives 3.5" ones: they read both sides of any disc image.
 /// The card `T` of `old`'s expansion port, if there is one, onto `new`'s.
-#[cfg(any(feature = "dandanator", feature = "nova", feature = "albireo"))]
+#[cfg(any(feature = "dandanator", feature = "nova", feature = "albireo", feature = "m4"))]
 fn carry_card<T: amsrust::expansion_port::ExpansionDevice>(old: &mut Motherboard, new: &mut Motherboard) {
     if let Some(card) = old.unplug_expansion::<T>() {
         new.plug_expansion(card);
@@ -58,6 +58,9 @@ pub struct Emulator {
     frame: Option<RgbImage>,
     /// The discs the page inserted, for a new machine.
     discs: [Option<DiscImage>; 2],
+    /// The M4's SD card, in memory: the page's files, whether the board is plugged or not.
+    #[cfg(feature = "m4")]
+    m4_card: amsrust::m4::MemoryCard,
     /// The CPC+ cartridge the page inserted, for a new machine (kept while the model is a CPC+).
     cartridge: Option<amsrust::asic::Cartridge>,
     /// The upper ROMs the page inserted (slot, image), for a new machine.
@@ -123,6 +126,8 @@ impl Emulator {
             motherboard,
             frame: None,
             discs: [None, None],
+            #[cfg(feature = "m4")]
+            m4_card: amsrust::m4::MemoryCard::new(),
             cartridge: None,
             roms: Vec::new(),
             csl: None,
@@ -406,6 +411,102 @@ impl Emulator {
     pub fn remove_albireo(&mut self) {
         #[cfg(feature = "albireo")]
         self.machine().unplug_expansion::<amsrust::ch376::Albireo>();
+    }
+
+    /// An M4 board (Duke's SD/WiFi board; its ROM v2.0.8 in upper ROM slot 6) on the expansion port, its SD
+    /// card the files the page keeps in memory (`m4_put_file`...): the CPC reads them with `|DIR`, `|CD`,
+    /// `LOAD`, `RUN"` and the M4 tools, and what it saves is there for the page to take. The machine
+    /// restarts, so that the firmware finds the ROM. The WiFi, HTTP and the board's web page are not
+    /// emulated.
+    pub fn plug_m4(&mut self) -> Result<(), JsError> {
+        #[cfg(feature = "m4")]
+        {
+            use amsrust::m4::M4Board;
+            let card = M4Board::with_bundled_rom_in_memory(self.m4_card.clone()).map_err(|e| JsError::new(&e))?;
+            let machine = self.machine();
+            machine.unplug_expansion::<M4Board>();
+            machine.plug_expansion(Box::new(card));
+            machine.restart();
+            Ok(())
+        }
+        #[cfg(not(feature = "m4"))]
+        Err(JsError::new("this build has no M4"))
+    }
+
+    /// The M4 unplugged; the machine restarts. Its files stay for the next `plug_m4`.
+    pub fn unplug_m4(&mut self) {
+        #[cfg(feature = "m4")]
+        {
+            let machine = self.machine();
+            machine.unplug_expansion::<amsrust::m4::M4Board>();
+            machine.restart();
+        }
+    }
+
+    /// `path` ("games/demo.bin") of the M4's card written with `bytes`, its folders made.
+    pub fn m4_put_file(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), JsError> {
+        #[cfg(feature = "m4")]
+        return self.m4_card.write_file(path, bytes).map_err(|e| JsError::new(&e));
+        #[cfg(not(feature = "m4"))]
+        {
+            let _ = (path, bytes);
+            Err(JsError::new("this build has no M4"))
+        }
+    }
+
+    /// The file `path` of the M4's card; none if there is none.
+    pub fn m4_get_file(&self, path: &str) -> Option<Vec<u8>> {
+        #[cfg(feature = "m4")]
+        return self.m4_card.read_file(path);
+        #[cfg(not(feature = "m4"))]
+        {
+            let _ = path;
+            None
+        }
+    }
+
+    /// The folder `path` of the M4's card: `[{ name, folder, size }]`, folders first; none if it is not a folder.
+    pub fn m4_list(&self, path: &str) -> Option<Array> {
+        #[cfg(feature = "m4")]
+        return self.m4_card.list(path).map(|entries| {
+            entries
+                .into_iter()
+                .map(|(name, folder, size)| {
+                    let entry = Object::new();
+                    let _ = Reflect::set(&entry, &"name".into(), &name.into());
+                    let _ = Reflect::set(&entry, &"folder".into(), &folder.into());
+                    let _ = Reflect::set(&entry, &"size".into(), &(size as f64).into());
+                    JsValue::from(entry)
+                })
+                .collect()
+        });
+        #[cfg(not(feature = "m4"))]
+        {
+            let _ = path;
+            None
+        }
+    }
+
+    /// A file, or a folder and what is in it, taken from the M4's card; false if there was none.
+    pub fn m4_remove(&mut self, path: &str) -> bool {
+        #[cfg(feature = "m4")]
+        return self.m4_card.remove(path);
+        #[cfg(not(feature = "m4"))]
+        {
+            let _ = path;
+            false
+        }
+    }
+
+    /// A folder (and the ones above it) made on the M4's card.
+    pub fn m4_make_dir(&mut self, path: &str) -> Result<(), JsError> {
+        #[cfg(feature = "m4")]
+        return self.m4_card.make_dir(path).map_err(|e| JsError::new(&e));
+        #[cfg(not(feature = "m4"))]
+        {
+            let _ = path;
+            Err(JsError::new("this build has no M4"))
+        }
     }
 
     /// Record what the CPC writes to the cassette port (`SAVE` on the CPC) until `stop_tape_recording`.
@@ -857,6 +958,8 @@ impl Emulator {
         carry_card::<amsrust::nova::Nova>(&mut self.motherboard, &mut motherboard);
         #[cfg(feature = "albireo")]
         carry_card::<amsrust::ch376::Albireo>(&mut self.motherboard, &mut motherboard);
+        #[cfg(feature = "m4")]
+        carry_card::<amsrust::m4::M4Board>(&mut self.motherboard, &mut motherboard);
         // the cartridge and the upper ROMs stay in (a CPC has no cartridge port: the cartridge waits)
         if motherboard.model().is_plus() {
             if let Some(cartridge) = &self.cartridge {
