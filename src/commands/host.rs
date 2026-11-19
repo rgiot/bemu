@@ -137,6 +137,9 @@ pub struct HostSettings {
     /// The picture as large as the window allows (Video > Maximal size): by default it is
     /// zoomed by a whole factor, every CPC pixel the same size.
     pub free_zoom: bool,
+    /// A whole zoom, the CRT drawn directly at that resolution (Video > Interface zoom > Maximal
+    /// integer size); `free_zoom` comes first.
+    pub native_zoom: bool,
     pub fullscreen: bool,
     /// The CRTC / Gate Array writes drawn on the picture.
     pub overlay: bool,
@@ -232,7 +235,7 @@ impl Default for HostSettings {
         Self {
             paused: false,
             speed: Speed::default(),
-            display: DisplayMode::default(),
+            display: DisplayMode::Crt(crate::display::CrtProfile::Ctm644),
             curvature: 1.0,
             black_level: 8,
             brightness: 0,
@@ -241,6 +244,7 @@ impl Default for HostSettings {
             ui_zoom: 1.0,
             crt_gpu: false,
             free_zoom: false,
+            native_zoom: false,
             fullscreen: false,
             overlay: false,
             keyboard: KeyboardMapping::default(),

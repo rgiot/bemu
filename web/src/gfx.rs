@@ -5,37 +5,20 @@
 //! blit scales the picture, letterboxed, to the canvas (as the desktop's `--frontend winit`
 //! window does). Canvas 2D shows the raw picture only.
 
-use amsrust::display::{Blit, CrtParams, CrtPass, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH};
+use amsrust::display::{DisplayMode, Picture, PictureSize, RAW_HEIGHT, RAW_WIDTH};
 use image::RgbImage;
 use wasm_bindgen::{Clamped, JsCast};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, OffscreenCanvas, OffscreenCanvasRenderingContext2d};
 
 use crate::scanlines::double_scanlines;
 
-/// The picture of a CRT display, in its own texture.
-struct CrtState {
-    mode: DisplayMode,
-    warp: Warp,
-    pass: CrtPass,
-    target: wgpu::Texture,
-    bind_group: wgpu::BindGroup,
-    pixel_bind_group: wgpu::BindGroup,
-    size: (usize, usize)
-}
-
 pub struct Gpu {
-    /// The picture fills the canvas at any zoom (Video > Maximal size), else by whole factors.
-    free_zoom: bool,
-    /// The picture resized without moiré (a CRT's at a fractional zoom, any below x1).
-    resampler: Option<amsrust::display::Resampler>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    frame: FrameTexture,
-    blit: Blit,
-    raw_bind_group: wgpu::BindGroup,
-    crt: Option<CrtState>,
+    /// The monitor's picture: the very code of the desktop window.
+    picture: Picture,
     painter: Option<amsrust::ui::Painter>
 }
 
@@ -123,10 +106,10 @@ impl Gfx {
         Ok(Self::Flat(Flat { context, source, source_context, size, rgba: vec![255; RAW_WIDTH * RAW_HEIGHT * 4] }))
     }
 
-    /// Let the picture fill the canvas at any zoom (`on`), or by whole factors only.
-    pub fn set_free_zoom(&mut self, on: bool) {
+    /// How large the picture is shown in the canvas.
+    pub fn set_picture_size(&mut self, size: PictureSize) {
         if let Self::Gpu(gpu) = self {
-            gpu.free_zoom = on;
+            gpu.picture.size = size;
         }
     }
 
@@ -162,9 +145,8 @@ impl Gfx {
     ) -> Result<Option<egui::FullOutput>, String> {
         match self {
             Self::Gpu(gpu) => {
-                gpu.use_mode(mode, mode.warp(curvature));
-                gpu.frame.upload(&gpu.queue, frame);
-                gpu.draw(mode, ui)
+                gpu.picture.upload(&gpu.queue, frame);
+                gpu.draw(mode, mode.warp(curvature), ui)
             },
             Self::Flat(flat) => flat.show(frame).map(|()| ui.map(|(_, output)| output))
         }
@@ -265,10 +247,8 @@ impl Gpu {
         };
         surface.configure(&device, &config);
 
-        let frame = FrameTexture::new(&device);
-        let blit = Blit::new(&device, format);
-        let raw_bind_group = blit.bind_group(&device, frame.view(), false, Warp::FLAT);
-        Ok(Self { free_zoom: false, resampler: None, surface, device, queue, config, frame, blit, raw_bind_group, crt: None, painter: None })
+        let picture = Picture::new(&device, format);
+        Ok(Self { surface, device, queue, config, picture, painter: None })
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -279,30 +259,12 @@ impl Gpu {
         }
     }
 
-    /// Make `mode`'s pass the current one.
-    fn use_mode(&mut self, mode: DisplayMode, warp: Warp) {
-        let DisplayMode::Crt(profile) = mode else {
-            return;
-        };
-        if self.crt.as_ref().is_some_and(|crt| crt.mode == mode && crt.warp == warp) {
-            return;
-        }
-        let params: CrtParams = profile.params();
-        let pass = CrtPass::new(&self.device, &params, &self.frame, warp);
-        let target = CrtPass::create_target(&self.device, &params, wgpu::TextureUsages::TEXTURE_BINDING);
-        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        // the CRT pass already bends the beam under the glass
-        let bind_group = self.blit.bind_group(&self.device, &view, true, Warp::FLAT);
-        let pixel_bind_group = self.blit.bind_group(&self.device, &view, false, Warp::FLAT);
-        self.crt = Some(CrtState { mode, warp, pass, target, bind_group, pixel_bind_group, size: params.output_size() });
-    }
-
-    /// Draw `mode`'s picture of the frame already uploaded.
     /// Draw `mode`'s picture of the frame already uploaded, and the interface over it. The
     /// interface's output comes back when it could not be drawn (its texture updates are kept).
     fn draw(
         &mut self,
         mode: DisplayMode,
+        warp: amsrust::display::Warp,
         ui: Option<(&amsrust::ui::Gui, egui::FullOutput)>
     ) -> Result<Option<egui::FullOutput>, String> {
         let surface_texture = match self.surface.get_current_texture() {
@@ -317,74 +279,21 @@ impl Gpu {
         let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
-        let (picture_size, crt) = match (mode, self.crt.as_ref()) {
-            (DisplayMode::Crt(_), Some(crt)) => {
-                crt.pass.encode(&mut encoder, &crt.target.create_view(&wgpu::TextureViewDescriptor::default()));
-                (crt.size, Some(crt))
-            },
-            _ => ((RAW_WIDTH, RAW_HEIGHT), None)
-        };
-
-        // by whole factors (every CPC pixel the same size) unless asked otherwise
-        let integer = !self.free_zoom;
-        // below the menu bar
-        let top = ui
-            .as_ref()
-            .map_or(0, |(gui, output)| (gui.menu_height() * output.pixels_per_point).ceil() as u32)
-            .min(self.config.height.saturating_sub(1));
-        // above the status bar
-        let bottom = ui
-            .as_ref()
-            .map_or(0, |(gui, output)| (gui.status_height() * output.pixels_per_point).ceil() as u32)
-            .min(self.config.height.saturating_sub(top + 1));
-        let (x, y, w, h, pixel_aligned) = crate::viewport::fit(
-            (self.config.width, self.config.height - top - bottom),
-            picture_size,
-            integer
+        // below the menu bar, above the status bar
+        let bars = ui.as_ref().map_or((0.0, 0.0), |(gui, output)| {
+            (gui.menu_height() * output.pixels_per_point, gui.status_height() * output.pixels_per_point)
+        });
+        self.picture.draw(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &view,
+            (self.config.width, self.config.height),
+            bars,
+            mode,
+            warp,
+            false
         );
-        let y = y + top as f32;
-        // shrunk, or a CRT's scanlines and mask at a fractional zoom: the website's resampling
-        let resampled = !pixel_aligned && (crt.is_some() || w < picture_size.0 as f32);
-        if resampled {
-            let (source, size) = match crt {
-                Some(crt) => (
-                    crt.target.create_view(&wgpu::TextureViewDescriptor::default()),
-                    (crt.size.0 as u32, crt.size.1 as u32)
-                ),
-                None => (
-                    self.frame.view().clone(),
-                    (amsrust::display::crt::SRC_WIDTH as u32, amsrust::display::crt::SRC_HEIGHT as u32)
-                )
-            };
-            let (device, format) = (&self.device, self.config.format);
-            self.resampler
-                .get_or_insert_with(|| amsrust::display::Resampler::new(device, format))
-                .prepare(&self.device, &self.queue, &mut encoder, &source, size, (w.round() as u32, h.round() as u32));
-        }
-        let bind_group = match crt {
-            Some(crt) if pixel_aligned => &crt.pixel_bind_group,
-            Some(crt) => &crt.bind_group,
-            None => &self.raw_bind_group
-        };
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("canvas"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store }
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None
-            });
-            pass.set_viewport(x, y, w, h, 0.0, 1.0);
-            match (&self.resampler, resampled) {
-                (Some(resampler), true) => resampler.draw(&mut pass),
-                _ => self.blit.draw(&mut pass, bind_group)
-            }
-        }
         if let Some((gui, output)) = ui {
             let painter = self
                 .painter

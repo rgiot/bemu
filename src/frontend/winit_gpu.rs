@@ -28,7 +28,7 @@
 
 use super::Frontend;
 use amsrust::display::{
-    wait_for, Blit, CrtParams, CrtPass, DisplayMode, FrameTexture, Warp, RAW_HEIGHT, RAW_WIDTH,
+    wait_for, DisplayMode, Picture,
 };
 use amsrust::input::{HostInput, HostKey};
 use amsrust::joystick::Joysticks;
@@ -50,20 +50,6 @@ use winit::window::{Fullscreen, Window, WindowId};
 
 /// The window's initial width, in logical pixels.
 const INITIAL_WIDTH: f64 = 1152.0;
-
-/// The most a CRT's picture is drawn larger than its profile's (a texture of 4320 x 3264).
-const MAX_CRT_LEVEL: usize = 3;
-
-/// The picture of a CRT display, in its own texture.
-struct CrtState {
-    mode: DisplayMode,
-    /// How many times larger than the profile's picture it is drawn (`CrtParams::scaled`).
-    level: usize,
-    pass: CrtPass,
-    target: wgpu::Texture,
-    bind_group: wgpu::BindGroup,
-    size: (usize, usize),
-}
 
 /// The user interface (egui) of the window: its input, and the last frame to draw.
 struct UiLayer {
@@ -390,16 +376,10 @@ struct Gfx {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    frame: FrameTexture,
-    blit: Blit,
-    raw_bind_group: wgpu::BindGroup,
+    /// The monitor's picture, drawn as the web page's.
+    picture: Picture,
     /// How curved the CRTs' glass is, see `DisplayMode::warp`.
     curvature: f32,
-    /// The picture zoomed by any factor (else by a whole one), see `HostSettings::free_zoom`.
-    free_zoom: bool,
-    crt: Option<CrtState>,
-    /// The picture resized without moiré (a CRT's at a fractional zoom, any below x1).
-    resampler: Option<amsrust::display::Resampler>,
     /// What the last frame showed, for [`Frontend::redraw`].
     shown: Option<DisplayMode>,
 }
@@ -439,9 +419,7 @@ impl Gfx {
         };
         surface.configure(&device, &config);
 
-        let frame = FrameTexture::new(&device);
-        let blit = Blit::new(&device, format);
-        let raw_bind_group = blit.bind_group(&device, frame.view(), false, Warp::FLAT);
+        let picture = Picture::new(&device, format);
         Ok(Self {
             instance,
             adapter,
@@ -449,13 +427,8 @@ impl Gfx {
             device,
             queue,
             config,
-            frame,
-            blit,
-            raw_bind_group,
+            picture,
             curvature,
-            free_zoom: false,
-            crt: None,
-            resampler: None,
             shown: None,
         })
     }
@@ -466,59 +439,6 @@ impl Gfx {
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
         }
-    }
-
-    /// How large a CRT's picture is drawn for the window: at the maximal size, the smallest
-    /// whole multiple of the profile's resolution that is not below the room the picture takes
-    /// (it is then resized down, without moiré); else the profile's own.
-    fn crt_level(&self, mode: DisplayMode, bars: (f32, f32)) -> usize {
-        let DisplayMode::Crt(profile) = mode else {
-            return 1;
-        };
-        if !self.free_zoom {
-            return 1;
-        }
-        let (width, height) = profile.params().output_size();
-        let room = (
-            self.config.width as f32,
-            (self.config.height as f32 - bars.0 - bars.1).max(1.0),
-        );
-        let fit = (room.0 / width as f32).min(room.1 / height as f32);
-        (fit.ceil() as usize).clamp(1, MAX_CRT_LEVEL)
-    }
-
-    /// Make `mode`'s pass the current one, drawn `level` times larger.
-    fn use_mode(&mut self, mode: DisplayMode, level: usize) {
-        let DisplayMode::Crt(profile) = mode else {
-            return;
-        };
-        if self
-            .crt
-            .as_ref()
-            .is_some_and(|crt| crt.mode == mode && crt.level == level)
-        {
-            return;
-        }
-        let params: CrtParams = profile.params().scaled(level);
-        let pass = CrtPass::new(
-            &self.device,
-            &params,
-            &self.frame,
-            mode.warp(self.curvature),
-        );
-        let target =
-            CrtPass::create_target(&self.device, &params, wgpu::TextureUsages::TEXTURE_BINDING);
-        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        // the CRT pass already bends the beam under the glass
-        let bind_group = self.blit.bind_group(&self.device, &view, true, Warp::FLAT);
-        self.crt = Some(CrtState {
-            mode,
-            level,
-            pass,
-            target,
-            bind_group,
-            size: params.output_size(),
-        });
     }
 
     /// Draw `mode`'s picture of the frame already uploaded (`again`: the same frame shown on
@@ -546,99 +466,19 @@ impl Gfx {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
-        let (bind_group, (picture_w, picture_h)) = match (mode, self.crt.as_ref()) {
-            (DisplayMode::Crt(_), Some(crt)) => {
-                if !again {
-                    crt.pass.encode(
-                        &mut encoder,
-                        &crt.target
-                            .create_view(&wgpu::TextureViewDescriptor::default()),
-                    );
-                }
-                (&crt.bind_group, crt.size)
-            }
-            _ => (&self.raw_bind_group, (RAW_WIDTH, RAW_HEIGHT)),
-        };
-
-        // the picture, as large as the window allows below the menu bar, centred
-        let top = ui.as_ref().map_or(0.0, |ui| ui.top_pixels);
-        let bottom = ui.as_ref().map_or(0.0, |ui| ui.bottom_pixels);
-        let (window_w, window_h) = (
-            self.config.width as f32,
-            (self.config.height as f32 - top - bottom).max(1.0),
+        // the picture, as large as the window allows between the bars, centred
+        let bars = ui.as_ref().map_or((0.0, 0.0), |ui| (ui.top_pixels, ui.bottom_pixels));
+        self.picture.draw(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &view,
+            (self.config.width, self.config.height),
+            bars,
+            mode,
+            mode.warp(self.curvature),
+            again,
         );
-        let scale = picture_scale(
-            (window_w, window_h),
-            (picture_w as f32, picture_h as f32),
-            self.free_zoom,
-        );
-        // whole pixels: the picture's pixels fall on the window's
-        let (w, h) = (
-            (picture_w as f32 * scale).round(),
-            (picture_h as f32 * scale).round(),
-        );
-        // shrunk, or a CRT's scanlines and mask at a fractional zoom: the website's resampling
-        // (the mask's period below a pixel beats into stripes otherwise)
-        let crt_shown = matches!(mode, DisplayMode::Crt(_)) && self.crt.is_some();
-        let whole = scale >= 1.0 && (scale - scale.round()).abs() < 1e-4;
-        let resampled = scale < 1.0 || (crt_shown && !whole);
-        if resampled {
-            let (source, size) = match self.crt.as_ref().filter(|_| crt_shown) {
-                Some(crt) => (
-                    crt.target
-                        .create_view(&wgpu::TextureViewDescriptor::default()),
-                    (crt.size.0 as u32, crt.size.1 as u32),
-                ),
-                None => (
-                    self.frame.view().clone(),
-                    (
-                        amsrust::display::crt::SRC_WIDTH as u32,
-                        amsrust::display::crt::SRC_HEIGHT as u32,
-                    ),
-                ),
-            };
-            let format = self.config.format;
-            let device = &self.device;
-            self.resampler
-                .get_or_insert_with(|| amsrust::display::Resampler::new(device, format))
-                .prepare(
-                    &self.device,
-                    &self.queue,
-                    &mut encoder,
-                    &source,
-                    size,
-                    (w as u32, h as u32),
-                );
-        }
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("window"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_viewport(
-                ((window_w - w) / 2.0).floor(),
-                (top + (window_h - h) / 2.0).floor(),
-                w,
-                h,
-                0.0,
-                1.0,
-            );
-            match (&self.resampler, resampled) {
-                (Some(resampler), true) => resampler.draw(&mut pass),
-                _ => self.blit.draw(&mut pass, bind_group),
-            }
-        }
         // the menus and windows over it
         if let Some(ui) = ui {
             // a new frame of the interface (its texture updates once), else the last one again
@@ -669,18 +509,6 @@ impl Gfx {
         surface_texture.present();
         self.shown = Some(mode);
         Ok(true)
-    }
-}
-
-/// How much the picture is zoomed in a window's room: the largest factor that fits, a whole one
-/// unless `free` (each CPC pixel the same size, no moiré). A room smaller than the picture shrinks
-/// it by any factor (the blit's filter averages then).
-fn picture_scale(room: (f32, f32), picture: (f32, f32), free: bool) -> f32 {
-    let fit = (room.0 / picture.0).min(room.1 / picture.1);
-    if free || fit < 1.0 {
-        fit
-    } else {
-        fit.floor()
     }
 }
 
@@ -929,8 +757,8 @@ struct App {
     size: (f64, f64),
     /// See `Gfx::curvature`.
     curvature: f32,
-    /// See `Gfx::free_zoom`.
-    free_zoom: bool,
+    /// See `Picture::size`.
+    picture_size: amsrust::display::PictureSize,
     window: Option<Arc<Window>>,
     gfx: Option<Gfx>,
     /// Keys held, by physical key, so that a release is matched with its
@@ -1367,7 +1195,7 @@ impl WinitGpuFrontend {
             app: App {
                 size,
                 curvature,
-                free_zoom: false,
+                picture_size: amsrust::display::PictureSize::default(),
                 window: None,
                 gfx: None,
                 held: HashMap::new(),
@@ -1620,22 +1448,15 @@ impl Frontend for WinitGpuFrontend {
     }
 
     fn present_frame(&mut self, frame: &RgbImage, mode: DisplayMode) -> Result<(), String> {
-        let free_zoom = self.app.free_zoom;
+        let picture_size = self.app.picture_size;
         let size = self.app.window.as_ref().map(|w| w.inner_size());
-        let bars = self
-            .app
-            .ui
-            .as_ref()
-            .map_or((0.0, 0.0), |ui| (ui.top_pixels, ui.bottom_pixels));
         let gfx = self.gfx()?;
-        gfx.free_zoom = free_zoom;
+        gfx.picture.size = picture_size;
         // the surface at the window's size now: one of the old size would be stretched
         if let Some(size) = size {
             gfx.resize(size.width, size.height);
         }
-        let level = gfx.crt_level(mode, bars);
-        gfx.use_mode(mode, level);
-        gfx.frame.upload(&gfx.queue, frame);
+        gfx.picture.upload(&gfx.queue, frame);
         let gfx = self
             .app
             .gfx
@@ -1734,19 +1555,18 @@ impl Frontend for WinitGpuFrontend {
         }
     }
 
-    fn set_free_zoom(&mut self, on: bool) {
-        self.app.free_zoom = on;
+    fn set_picture_size(&mut self, size: amsrust::display::PictureSize) {
+        self.app.picture_size = size;
         if let Some(gfx) = &mut self.app.gfx {
-            gfx.free_zoom = on;
+            gfx.picture.size = size;
         }
     }
 
     fn set_curvature(&mut self, curvature: f32) {
         if let Some(gfx) = &mut self.app.gfx {
             if gfx.curvature != curvature {
+                // the CRT pass is made again with its new glass, at the next frame
                 gfx.curvature = curvature;
-                // the CRT pass again, with its new glass
-                gfx.crt = None;
             }
         }
     }
@@ -1813,19 +1633,6 @@ mod test {
         // a size neither: the user's
         fitting.resized(egui::vec2(600.0, 300.0));
         assert!(!fitting.enabled);
-    }
-
-    #[test]
-    fn the_picture_is_zoomed_by_a_whole_factor_unless_free() {
-        use super::picture_scale;
-        let picture = (768.0, 544.0);
-        // 1920 x 1080: 1.98 fits, 1 is whole
-        assert_eq!(picture_scale((1920.0, 1080.0), picture, false), 1.0);
-        assert!((picture_scale((1920.0, 1080.0), picture, true) - 1080.0 / 544.0).abs() < 1e-4);
-        // 4K: 3
-        assert_eq!(picture_scale((3840.0, 2160.0), picture, false), 3.0);
-        // smaller than the picture: shrunk as needed
-        assert_eq!(picture_scale((384.0, 272.0), picture, false), 0.5);
     }
 
     #[test]

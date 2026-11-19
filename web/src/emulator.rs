@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use amsrust::display::PictureSize;
 use amsrust::csl_runner::{CslReport, CslRunner, MemFiles, ScreenshotSink};
 use amsrust::frame::{ScriptStep, FRAME_T_STATES};
 use amsrust::disc_image::{load_disc_bytes, DiscImage};
@@ -892,7 +893,7 @@ impl Emulator {
         let shown_frame = paused.as_ref().or(self.frame.as_ref());
         let result = match (shown_frame, ui) {
             (Some(frame), Some((mut ui, output))) => {
-                self.gfx.set_free_zoom(ui.settings.free_zoom);
+                self.gfx.set_picture_size(PictureSize::of(ui.settings.free_zoom, ui.settings.native_zoom));
                 let shown = self.gfx.show_with_ui(frame, self.display, self.curvature, Some((&ui.gui, output)));
                 let shown = shown.map(|undrawn| {
                     if let Some(output) = undrawn {

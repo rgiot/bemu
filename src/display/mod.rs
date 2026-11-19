@@ -15,6 +15,8 @@ pub mod crt;
 mod curved;
 #[cfg(feature = "crt-gpu")]
 mod gpu;
+#[cfg(feature = "crt-gpu")]
+mod picture;
 pub mod resize;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -26,6 +28,8 @@ pub use curved::Curved;
 pub use gpu::{wait_for, GpuCrt};
 #[cfg(feature = "crt-gpu")]
 pub use gpu::{Blit, CrtPass, FrameTexture, Resampler};
+#[cfg(feature = "crt-gpu")]
+pub use picture::{picture_scale, Picture};
 
 use image::RgbImage;
 use std::str::FromStr;
@@ -35,6 +39,32 @@ pub const RAW_WIDTH: usize = 48 * 8 * 2; // 768
 /// Height of the raw output: each of the monitor's 272 lines drawn twice,
 /// for a roughly correct 4:3 aspect instead of a squashed one.
 pub const RAW_HEIGHT: usize = 272 * 2;
+
+/// How large the picture is shown in its room.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PictureSize {
+    /// A whole factor of the picture (the profile's resolution for a CRT): every CPC pixel the
+    /// same size, the largest that fits.
+    #[default]
+    Whole,
+    /// A whole factor too, but a CRT is drawn directly at that resolution (its slots and
+    /// scanlines finer) instead of enlarging the picture of the profile.
+    Integer,
+    /// The largest size that fits, by any factor: a CRT is drawn at the finest resolution that
+    /// covers the room, then resized without moiré.
+    Maximal,
+}
+
+impl PictureSize {
+    /// From the settings' two switches (`Maximal` first).
+    pub fn of(maximal: bool, integer: bool) -> Self {
+        match (maximal, integer) {
+            (true, _) => Self::Maximal,
+            (false, true) => Self::Integer,
+            (false, false) => Self::Whole,
+        }
+    }
+}
 
 /// What `--display` selects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -175,6 +205,13 @@ impl DisplayFilter for RawFilter {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn the_size_comes_from_the_two_switches() {
+        assert_eq!(PictureSize::of(false, false), PictureSize::Whole);
+        assert_eq!(PictureSize::of(false, true), PictureSize::Integer);
+        assert_eq!(PictureSize::of(true, true), PictureSize::Maximal);
+    }
 
     #[test]
     fn raw_doubles_each_line_and_letterboxes() {

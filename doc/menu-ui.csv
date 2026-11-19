@@ -278,8 +278,8 @@ Video,Copy Screenshot,,,screenshot-copy,,Copy the last frame to the clipboard,,a
 Video,Screenshot series,,,screenshot-series-start,screenshot-series-stop,Save a screenshot every N seconds or frames (1f = every frame),"Checkable; asks directory, interval, first screenshot time",ss,,
 Video,Save Video,,,video-start,video-stop,Record a video with sound through ffmpeg (asks the file),Checkable: selected when running; another click stops the capture. Needs ffmpeg; no display change while recording,ss,,
 Video,,,,,,,,sep,,
-Video,Monitor,Rendering,Raw,video-rendering-raw,,The monitor's ideal picture,Radio,rad,,10:rendering*
-Video,Monitor,Rendering,CTM,video-rendering-ctm,,Amstrad CTM644 colour monitor tube,Radio,rad,,10:rendering
+Video,Monitor,Rendering,Raw,video-rendering-raw,,The monitor's ideal picture,Radio,rad,,10:rendering
+Video,Monitor,Rendering,CTM,video-rendering-ctm,,Amstrad CTM644 colour monitor tube,Radio,rad,,10:rendering*
 Video,Monitor,Rendering,GT65,video-rendering-gt65,,Amstrad GT64 / GT65 green monitor tube (also --display gt64),Radio,rad,,10:rendering
 Video,Monitor,Rendering,MM12,video-rendering-mm12,,Amstrad MM12 grey monochrome monitor tube,Radio,rad,,10:rendering
 Video,Monitor,Rendering,Trinitron,video-rendering-trinitron,,Sony Trinitron-like tube,Radio,rad,,10:rendering
@@ -295,6 +295,7 @@ Video,Interface zoom,Zoom in,,ui-zoom-in,,Zoom the emulator window's menus and b
 Video,Interface zoom,Zoom out,,ui-zoom-out,,Zoom the emulator window's menus and bars out,Down to 50 %,act,,
 Video,Interface zoom,Actual size,,ui-zoom-reset,,Back to the interface's own size (100 %),,act,,
 Video,Interface zoom,Maximal size,,video-free-zoom-toggle,,"The picture as large as the window allows, its aspect ratio kept: a CRT is drawn at the finest resolution that fits, then resized without moiré","Checkable; off by default: the picture is zoomed by a whole factor (x1, x2...)",tog,,
+Video,Interface zoom,Maximal integer size,,video-native-zoom-toggle,,"The picture at the largest whole factor that fits: a CRT is drawn directly at that resolution (its slots and scanlines finer), nothing resized",Checkable; off by default (the picture is then enlarged from the CRT's own resolution). Maximal size comes first when both are on,tog,,
 Video,,,,,,,,sep,,
 Video,Fullscreen,,,video-fullscreen-toggle,,Toggle fullscreen,winit window only (not minifb),tog,F11,
 Tools,Auto-type,Type text…,,autotype-text,,"Type text on the CPC keyboard (keys as CSL key_output: \n, \(RET), \(WAIT n)…)",Asks the text,inp,,

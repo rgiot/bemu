@@ -142,7 +142,7 @@ fn run_csl(args: &Args, script: &str) {
     let dir = args.screenshot_dir.as_deref().unwrap_or(".");
     let mut runner = CslRunner::with_io(Box::new(files), Box::new(PictureFiles(pictures)), dir);
     runner.set_display_filter(
-        (!args.display.is_raw()).then(|| args.display.filter_on(args.gpu, args.curvature)),
+        (!args.display().is_raw()).then(|| args.display().filter_on(args.gpu, args.curvature())),
     );
     runner.set_black_level(args.black_level);
     runner.set_holds(args.hhold, args.vhold);
@@ -182,7 +182,7 @@ fn main() {
     if let Some(script) = &args.csl {
         return run_csl(&args, script);
     }
-    let mut filter = args.display.filter_on(args.gpu, args.curvature);
+    let mut filter = args.display().filter_on(args.gpu, args.curvature());
     if args.record.is_some() {
         // Only when recording: elsewhere (the interactive monitor) Ctrl+C
         // keeps its usual meaning.
@@ -477,7 +477,7 @@ fn main() {
         eprintln!("--watch needs the window or --debug-server");
     }
 
-    match args.screenshot_dir {
+    match args.screenshot_dir.clone() {
         Some(dir) => run_headless(
             &mut motherboard,
             &dir,
@@ -485,7 +485,7 @@ fn main() {
             args.every,
             args.from,
             &mut typist,
-            args.display,
+            args.display(),
             filter.as_mut(),
             args.black_level,
             (args.hhold, args.vhold),

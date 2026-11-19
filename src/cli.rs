@@ -267,16 +267,18 @@ pub struct Args {
 
     /// How the picture is rendered, in the window, the recording and the screenshots (raw: the
     /// monitor's ideal picture; the others CRT approximations). F9 cycles them in the window.
-    #[arg(long, value_name = DisplayMode::NAMES, default_value = "raw", help_heading = DISPLAY)]
-    pub display: DisplayMode,
+    /// The window shows a ctm by default, the headless runs the raw picture.
+    #[arg(long, value_name = DisplayMode::NAMES, help_heading = DISPLAY)]
+    display: Option<DisplayMode>,
 
     /// Renders the CRTs on the GPU (a build with --features crt-gpu).
     #[arg(long = "crt-gpu", help_heading = DISPLAY)]
     pub gpu: bool,
 
-    /// How curved a CRT's glass is, times its tube's own bulge: 0 (flat) to 4.
-    #[arg(long, default_value_t = 0.0, value_parser = parse_curvature, help_heading = DISPLAY)]
-    pub curvature: f32,
+    /// How curved a CRT's glass is, times its tube's own bulge: 0 (flat) to 4. 1 by default in
+    /// the window, flat in the headless runs.
+    #[arg(long, value_parser = parse_curvature, help_heading = DISPLAY)]
+    curvature: Option<f32>,
 
     /// What a black ink is drawn at: on a real tube a dark grey, blanking and sync being blacker
     /// (0). Not with the debug server, whose pictures stay exact.
@@ -474,6 +476,23 @@ impl Args {
             Some(base) => Some(base.clone()),
             None => self.willy_opl3.then(|| "&FEBC".to_owned()),
         }
+    }
+
+    /// How the picture is rendered: `--display`, else a ctm in the window and the raw picture
+    /// where there is none (a screenshot, a console run).
+    pub fn display(&self) -> DisplayMode {
+        self.display.unwrap_or(if self.window() && self.screenshot_dir.is_none() {
+            DisplayMode::Crt(amsrust::display::CrtProfile::Ctm644)
+        } else {
+            DisplayMode::Raw
+        })
+    }
+
+    /// The glass's curvature: `--curvature`, else 1 for a CRT in the window, flat otherwise.
+    pub fn curvature(&self) -> f32 {
+        self.curvature.unwrap_or(
+            if self.window() && self.screenshot_dir.is_none() { 1.0 } else { 0.0 },
+        )
     }
 
     /// Whether the live window runs: the default, unless --console.

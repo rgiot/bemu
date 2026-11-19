@@ -8,7 +8,7 @@ use amsrust::ppi::Brand;
 use serde::Deserialize;
 
 /// `{ model, crtc, gateArray, ramKb, discInterface, playcity, digiblaster, dmp2000, dmp2000Charset, willyOpl3, language, brand, display, curvature, blackLevel }`, each optional:
-/// a 6128 with its own disc interface, CRTC 0, Gate Array 40010, raw display by default.
+/// a 6128 with its own disc interface, CRTC 0, Gate Array 40010, ctm display by default.
 #[derive(Deserialize, Default, Clone, Debug)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Config {
@@ -157,7 +157,7 @@ impl Config {
     }
 
     pub fn display(&self) -> Result<DisplayMode, String> {
-        self.display.as_deref().unwrap_or("raw").parse()
+        self.display.as_deref().unwrap_or("ctm").parse()
     }
 
     pub fn curvature(&self) -> Result<f32, String> {

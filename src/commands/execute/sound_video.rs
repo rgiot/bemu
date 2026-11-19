@@ -163,6 +163,11 @@ pub(super) fn run(command: &Command, target: &mut dyn CommandTarget) -> CommandR
             settings.free_zoom = !settings.free_zoom;
             done()
         }
+        "video-native-zoom-toggle" => {
+            let settings = settings(target)?;
+            settings.native_zoom = !settings.native_zoom;
+            done()
+        }
         "video-fullscreen-toggle" => {
             let settings = settings(target)?;
             settings.fullscreen = !settings.fullscreen;
@@ -221,6 +226,7 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
             checked: settings.is_some_and(|s| s.crt_gpu),
         },
         "video-free-zoom-toggle" => toggle(settings.is_some_and(|s| s.free_zoom)),
+        "video-native-zoom-toggle" => toggle(settings.is_some_and(|s| s.native_zoom)),
         "video-fullscreen-toggle" => toggle(settings.is_some_and(|s| s.fullscreen)),
         _ => return None,
     })

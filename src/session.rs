@@ -533,8 +533,9 @@ impl Window {
         if wanted.fullscreen != applied.fullscreen {
             self.window.set_fullscreen(wanted.fullscreen);
         }
-        if wanted.free_zoom != applied.free_zoom {
-            self.window.set_free_zoom(wanted.free_zoom);
+        if (wanted.free_zoom, wanted.native_zoom) != (applied.free_zoom, applied.native_zoom) {
+            self.window
+                .set_picture_size(amsrust::display::PictureSize::of(wanted.free_zoom, wanted.native_zoom));
         }
         // the files of the media in use, inserted from the command line or the menus
         let media = &wanted.media;
@@ -672,8 +673,8 @@ fn settings_of(args: &Args, sound: bool) -> HostSettings {
         } else {
             Speed::default()
         },
-        display: args.display,
-        curvature: args.curvature,
+        display: args.display(),
+        curvature: args.curvature(),
         black_level: args.black_level,
         hhold: args.hhold,
         vhold: args.vhold,
@@ -716,7 +717,7 @@ pub fn run_window(
 ) {
     let sound = !args.mute;
     let record = args.record.as_deref();
-    let mode: DisplayMode = args.display;
+    let mode: DisplayMode = args.display();
     let (width, height) = mode.output_size();
     #[cfg(feature = "gui")]
     let gui = (args.frontend == FrontendKind::Winit).then(amsrust::ui::Gui::new);
@@ -729,7 +730,7 @@ pub fn run_window(
         FrontendKind::Winit => Box::new(
             frontend::WinitGpuFrontend::open(
                 (width, height),
-                args.curvature,
+                args.curvature(),
                 gui.as_ref().map(|gui| gui.context().clone()),
             )
             .unwrap_or_else(|e| panic!("{e}")),
@@ -765,7 +766,7 @@ pub fn run_window(
     if has_server {
         monitor.keep_full_frames();
     }
-    let filter = mode.filter_on(gpu, args.curvature);
+    let filter = mode.filter_on(gpu, args.curvature());
     let (fw, fh) = filter.output_size();
     let mut window = Window {
         window,
