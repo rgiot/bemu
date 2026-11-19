@@ -51,9 +51,14 @@ use winit::window::{Fullscreen, Window, WindowId};
 /// The window's initial width, in logical pixels.
 const INITIAL_WIDTH: f64 = 1152.0;
 
+/// The most a CRT's picture is drawn larger than its profile's (a texture of 4320 x 3264).
+const MAX_CRT_LEVEL: usize = 3;
+
 /// The picture of a CRT display, in its own texture.
 struct CrtState {
     mode: DisplayMode,
+    /// How many times larger than the profile's picture it is drawn (`CrtParams::scaled`).
+    level: usize,
     pass: CrtPass,
     target: wgpu::Texture,
     bind_group: wgpu::BindGroup,
@@ -463,15 +468,38 @@ impl Gfx {
         }
     }
 
-    /// Make `mode`'s pass the current one.
-    fn use_mode(&mut self, mode: DisplayMode) {
+    /// How large a CRT's picture is drawn for the window: at the maximal size, the smallest
+    /// whole multiple of the profile's resolution that is not below the room the picture takes
+    /// (it is then resized down, without moiré); else the profile's own.
+    fn crt_level(&self, mode: DisplayMode, bars: (f32, f32)) -> usize {
+        let DisplayMode::Crt(profile) = mode else {
+            return 1;
+        };
+        if !self.free_zoom {
+            return 1;
+        }
+        let (width, height) = profile.params().output_size();
+        let room = (
+            self.config.width as f32,
+            (self.config.height as f32 - bars.0 - bars.1).max(1.0),
+        );
+        let fit = (room.0 / width as f32).min(room.1 / height as f32);
+        (fit.ceil() as usize).clamp(1, MAX_CRT_LEVEL)
+    }
+
+    /// Make `mode`'s pass the current one, drawn `level` times larger.
+    fn use_mode(&mut self, mode: DisplayMode, level: usize) {
         let DisplayMode::Crt(profile) = mode else {
             return;
         };
-        if self.crt.as_ref().is_some_and(|crt| crt.mode == mode) {
+        if self
+            .crt
+            .as_ref()
+            .is_some_and(|crt| crt.mode == mode && crt.level == level)
+        {
             return;
         }
-        let params: CrtParams = profile.params();
+        let params: CrtParams = profile.params().scaled(level);
         let pass = CrtPass::new(
             &self.device,
             &params,
@@ -485,6 +513,7 @@ impl Gfx {
         let bind_group = self.blit.bind_group(&self.device, &view, true, Warp::FLAT);
         self.crt = Some(CrtState {
             mode,
+            level,
             pass,
             target,
             bind_group,
@@ -1593,13 +1622,19 @@ impl Frontend for WinitGpuFrontend {
     fn present_frame(&mut self, frame: &RgbImage, mode: DisplayMode) -> Result<(), String> {
         let free_zoom = self.app.free_zoom;
         let size = self.app.window.as_ref().map(|w| w.inner_size());
+        let bars = self
+            .app
+            .ui
+            .as_ref()
+            .map_or((0.0, 0.0), |ui| (ui.top_pixels, ui.bottom_pixels));
         let gfx = self.gfx()?;
         gfx.free_zoom = free_zoom;
         // the surface at the window's size now: one of the old size would be stretched
         if let Some(size) = size {
             gfx.resize(size.width, size.height);
         }
-        gfx.use_mode(mode);
+        let level = gfx.crt_level(mode, bars);
+        gfx.use_mode(mode, level);
         gfx.frame.upload(&gfx.queue, frame);
         let gfx = self
             .app

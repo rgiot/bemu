@@ -131,7 +131,7 @@ pub struct HostSettings {
     pub vhold: i8,
     /// The CRT drawn by the GPU.
     pub crt_gpu: bool,
-    /// The picture fills the window at any zoom (Video > Fill the window): by default it is
+    /// The picture as large as the window allows (Video > Maximal size): by default it is
     /// zoomed by a whole factor, every CPC pixel the same size.
     pub free_zoom: bool,
     pub fullscreen: bool,

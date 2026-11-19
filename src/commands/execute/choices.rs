@@ -206,6 +206,10 @@ fn video_rendering_run(id: &str, rest: &str, target: &mut dyn CommandTarget) -> 
             .map(|(_, mode)| *mode)
             .ok_or_else(|| CommandError::Unknown(id.into()))?,
     };
+    // a CRT is seen through its curved glass
+    if !settings.display.is_raw() {
+        settings.curvature = 1.0;
+    }
     done()
 }
 

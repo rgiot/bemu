@@ -53,7 +53,7 @@ fn fs(v: Vertex) -> @location(0) vec4<f32> {
     var colour: vec3<f32>;
     if (warp.sharp < 0.5) {
         colour = textureSampleLevel(picture, picture_sampler, uv, 0.0).rgb;
-    } else if (zoom.x >= 1.0 && zoom.y >= 1.0) {
+    } else if (zoom.x >= 0.999 && zoom.y >= 0.999) {
         // sharp bilinear: each texel a solid block, only the screen pixel on its edge mixes the
         // two (no uneven widths, no moiré, no blur; exactly nearest at a whole zoom)
         let base = floor(texel - 0.5) + 0.5;

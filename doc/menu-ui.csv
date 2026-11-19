@@ -290,7 +290,7 @@ Video,Black level…,,,video-black-level-set,,"Brightness: the grey of a black i
 Video,H-hold…,,,video-hhold-set,,"Monitor H-hold knob, -100 to 100 (0: steady): the picture slides sideways, and tears near the ends",Slider / asks the value,inp,
 Video,V-hold…,,,video-vhold-set,,"Monitor V-hold knob, -100 to 100 (0: steady): the picture rolls below about -60 and above about 60",Slider / asks the value,inp,
 Video,Render CRT on the GPU,,,video-crt-gpu-toggle,,Draw the CRT with the GPU,Checkable; hidden if the build lacks the feature,tog,
-Video,Fill the window (non-integer zoom),,,video-free-zoom-toggle,,"Let the picture fill the window by any factor, filtered so the CPC pixels stay sharp without moiré","Checkable; off by default: the picture is zoomed by a whole factor (x1, x2...)",tog,
+Video,Maximal size,,,video-free-zoom-toggle,,"The picture as large as the window allows, its aspect ratio kept: a CRT is drawn at the finest resolution that fits, then resized without moiré","Checkable; off by default: the picture is zoomed by a whole factor (x1, x2...)",tog,
 Video,,,,,,,,sep,
 Video,Interface zoom,Zoom in,,ui-zoom-in,,Zoom the emulator window's menus and bars in (its picture keeps its size),"Steps of 10 %, 25 % above 200 %. The debugger's windows of the system keep their own size; on the web, the windows inside the page zoom with it",act,
 Video,Interface zoom,Zoom out,,ui-zoom-out,,Zoom the emulator window's menus and bars out,Down to 50 %,act,
