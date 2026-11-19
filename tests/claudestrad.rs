@@ -27,7 +27,7 @@ use std::path::PathBuf;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/claudestrad");
 
-/// Share of text-sized pixels that must agree with CLAUDESTRAD's screen, unless the case is listed
+/// Share of the non-background pixels that must agree with CLAUDESTRAD's screen, unless the case is listed
 /// in [`KNOWN_DIFFERENCES`].
 const MIN_MATCH: f64 = 0.97;
 
@@ -203,16 +203,25 @@ fn scaled(image: &RgbImage, width: u32, height: u32) -> RgbImage {
     image::imageops::resize(image, width, height, image::imageops::FilterType::Nearest)
 }
 
-/// Share of pixels of `reference` that `ours` reproduces (within a small colour distance), after
-/// bringing `ours` to the reference's size.
+/// Share of the pixels of `reference` that `ours` reproduces (within a small colour distance),
+/// after bringing `ours` to the reference's size, counted only over the area where either picture
+/// has something but the background (most of a screen is empty paper, which would hide
+/// everything).
 fn match_share(reference: &RgbImage, ours: &RgbImage) -> f64 {
     let ours = scaled(ours, reference.width(), reference.height());
-    let same = reference
-        .pixels()
-        .zip(ours.pixels())
-        .filter(|(a, b)| (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum::<i32>() <= 60)
-        .count();
-    same as f64 / (reference.width() * reference.height()) as f64
+    let background = |image: &RgbImage| *image.get_pixel(2, image.height() - 2);
+    let (bg_ref, bg_ours) = (background(reference), background(&ours));
+    let (mut total, mut same) = (0usize, 0usize);
+    for (a, b) in reference.pixels().zip(ours.pixels()) {
+        if *a == bg_ref && *b == bg_ours {
+            continue;
+        }
+        total += 1;
+        if (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum::<i32>() <= 60 {
+            same += 1;
+        }
+    }
+    if total == 0 { 1.0 } else { same as f64 / total as f64 }
 }
 
 fn floor(case: &str, machine: &str) -> f64 {
