@@ -285,10 +285,10 @@ Video,Monitor,Rendering,MM12,video-rendering-mm12,,Amstrad MM12 grey monochrome 
 Video,Monitor,Rendering,Trinitron,video-rendering-trinitron,,Sony Trinitron-like tube,Radio,rad,,10:rendering
 Video,Monitor,Rendering,Atari,video-rendering-atari,,Atari monitor tube,"Radio; draft listed 4 of the 5 profiles, 'Atari' was missing",rad,,10:rendering
 Video,Monitor,Rendering,Next,video-rendering-next,,Cycle through the renderings,Not while recording a video,act,F9,
-Video,Monitor,Curvature…,,video-curvature-set,,How curved the CRT glass is: 0 (flat) to 4,Slider / asks the value,inp,,
-Video,Monitor,Brightness…,,video-brightness-set,,"Everything brighter or darker, -100 to 100 (0: as is): blacks stay black, the range is kept moderate",Slider / asks the value,inp,,
-Video,Monitor,H-hold…,,video-hhold-set,,"Monitor H-hold knob, -100 to 100 (0: steady): the picture slides sideways, and tears near the ends",Slider / asks the value,inp,,
-Video,Monitor,V-hold…,,video-vhold-set,,"Monitor V-hold knob, -100 to 100 (0: steady): the picture rolls below about -60 and above about 60",Slider / asks the value,inp,,
+Video,Monitor,Curvature…,,video-curvature-set,,How curved the CRT glass is: 0 (flat) to 4,Slider / asks the value,inp,,curvature
+Video,Monitor,Brightness…,,video-brightness-set,,"Everything brighter or darker, -100 to 100 (0: as is): blacks stay black, the range is kept moderate",Slider / asks the value,inp,,brightness
+Video,Monitor,H-hold…,,video-hhold-set,,"Monitor H-hold knob, -100 to 100 (0: steady): the picture slides sideways, and tears near the ends",Slider / asks the value,inp,,hHold
+Video,Monitor,V-hold…,,video-vhold-set,,"Monitor V-hold knob, -100 to 100 (0: steady): the picture rolls below about -60 and above about 60",Slider / asks the value,inp,,vHold
 Video,Render CRT on the GPU,,,video-crt-gpu-toggle,,Draw the CRT with the GPU,Checkable; hidden if the build lacks the feature,tog,,
 Video,,,,,,,,sep,,
 Video,Interface zoom,Zoom in,,ui-zoom-in,,Zoom the emulator window's menus and bars in (its picture keeps its size),"Steps of 10 %, 25 % above 200 %. The debugger's windows of the system keep their own size; on the web, the windows inside the page zoom with it",act,,

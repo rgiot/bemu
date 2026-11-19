@@ -64,6 +64,8 @@ fn main() {
     let mut pending_separator: Option<usize> = None;
     // the configuration's radio groups (column `Config`: `order:key`, `*` after the default)
     let mut config_groups: Vec<(usize, String, Vec<String>, Option<String>)> = Vec::new();
+    // the configuration's values (an input's `key`)
+    let mut config_values: Vec<(String, String)> = Vec::new();
     for row in rows.iter().skip(1) {
         let cell = |i: usize| row.get(i).map(|s| s.trim()).unwrap_or("");
         if cell(8) == "sep" {
@@ -89,8 +91,10 @@ fn main() {
             other => panic!("doc/menu-ui.csv: {id}: unknown type {other:?}"),
         };
         let config = cell(10);
-        if !config.is_empty() {
-            assert_eq!(kind, "Kind::Radio", "doc/menu-ui.csv: {id}: only a radio item has a Config");
+        if !config.is_empty() && kind == "Kind::Input" {
+            config_values.push((config.to_owned(), id.to_owned()));
+        } else if !config.is_empty() {
+            assert_eq!(kind, "Kind::Radio", "doc/menu-ui.csv: {id}: only a radio item or an input has a Config");
             let (order, key) = config
                 .split_once(':')
                 .unwrap_or_else(|| panic!("doc/menu-ui.csv: {id}: Config is order:key"));
@@ -156,6 +160,14 @@ fn main() {
             out,
             "    ConfigGroup {{ key: {key:?}, items: &{items:?}, default: {default:?} }},"
         );
+    }
+    out.push_str("];\n");
+    out.push_str(
+        "/// The values a configuration keeps, each set by an input command (its argument).\n\
+         pub static CONFIG_VALUES: &[ConfigValue] = &[\n",
+    );
+    for (key, id) in &config_values {
+        let _ = writeln!(out, "    ConfigValue {{ key: {key:?}, id: {id:?} }},");
     }
     out.push_str("];\n");
     let dest = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("commands_table.rs");

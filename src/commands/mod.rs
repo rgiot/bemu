@@ -82,6 +82,15 @@ pub struct ConfigGroup {
     pub default: &'static str,
 }
 
+/// A value of the saved configuration: a number a command sets (its input).
+#[derive(Debug)]
+pub struct ConfigValue {
+    /// Its key in the JSON.
+    pub key: &'static str,
+    /// The input command that sets it.
+    pub id: &'static str,
+}
+
 include!(concat!(env!("OUT_DIR"), "/commands_table.rs"));
 
 impl CommandSpec {
