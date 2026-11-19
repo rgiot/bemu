@@ -26,7 +26,11 @@ struct Params {
     warp_ky: f32,
     warp_corner: f32,
     edged: f32,
-    pad: f32,
+    // a monochrome tube: 1 and the colour of its phosphor (`CrtParams::phosphor`), else 0
+    mono: f32,
+    tint_r: f32,
+    tint_g: f32,
+    tint_b: f32,
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
@@ -53,6 +57,10 @@ fn gun(i: i32, j: i32, c: u32) -> f32 {
         return 0.0;
     }
     let v = textureLoad(src, vec2<i32>(i, j), 0);
+    if (p.mono > 0.5) {
+        // the luminance of the light
+        return dot(v.rgb * v.rgb, vec3<f32>(0.299, 0.587, 0.114));
+    }
     var s = v.r;
     if (c == 1u) { s = v.g; } else if (c == 2u) { s = v.b; }
     return s * s;
@@ -97,7 +105,8 @@ fn light(x: i32, y: i32) -> vec3<f32> {
     }
     let sw = i32(p.slot_px);
     let slot = x / sw;
-    let c = u32(slot % 3);
+    var c = u32(slot % 3);
+    if (p.mono > 0.5) { c = 1u; }
     let size = vec2<f32>(f32(p.out_w), f32(p.out_h));
     let beam = warped(vec2<f32>((f32(slot) + 0.5) * f32(sw), f32(y) + 0.5) / size) * size;
     let u = beam.x / p.x_ratio;
@@ -121,7 +130,11 @@ fn light(x: i32, y: i32) -> vec3<f32> {
     let level = a * la + b * lb;
     let coverage = clamp(0.5 - (slot_distance(x, y) - p.spill * level), 0.0, 1.0);
     var o = vec3<f32>(0.0);
-    o[c] = level * coverage * p.scale;
+    if (p.mono > 0.5) {
+        o = vec3<f32>(p.tint_r, p.tint_g, p.tint_b) * (level * coverage * p.scale);
+    } else {
+        o[c] = level * coverage * p.scale;
+    }
     return o;
 }
 

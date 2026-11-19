@@ -226,6 +226,7 @@ video-start,--record,filled,
 video-rendering-raw,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
 video-rendering-ctm,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
 video-rendering-gt65,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
+video-rendering-mm12,--display; web setDisplay,added,
 video-rendering-trinitron,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
 video-rendering-atari,--display; web setDisplay,added,"WinAPE (colour / green), ACE"
 video-rendering-next,F9,added,

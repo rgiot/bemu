@@ -359,7 +359,7 @@ export class Bemu {
     /** A new machine (the discs stay in). */
     configure(config) { return this.#transport.call('configure', [config]); }
     reset() { return this.#transport.call('reset'); }
-    /** 'raw', 'ctm', 'trinitron', 'gt65' or 'atari'. */
+    /** 'raw', 'ctm', 'trinitron', 'gt65', 'gt64', 'mm12' or 'atari'. */
     setDisplay(name) { return this.#transport.call('setDisplay', [name]); }
 
     /** How curved a CRT's glass is, times its profile's bulge: 0 (flat) to 4, 1 by default. */

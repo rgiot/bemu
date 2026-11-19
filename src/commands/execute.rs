@@ -44,10 +44,11 @@ const PLATFORMS: [(&str, CpcModel); 6] = [
     ("gx4000", CpcModel::Gx4000),
 ];
 
-const RENDERINGS: [(&str, DisplayMode); 5] = [
+const RENDERINGS: [(&str, DisplayMode); 6] = [
     ("raw", DisplayMode::Raw),
     ("ctm", DisplayMode::Crt(CrtProfile::Ctm644)),
     ("gt65", DisplayMode::Crt(CrtProfile::Gt65)),
+    ("mm12", DisplayMode::Crt(CrtProfile::Mm12)),
     ("trinitron", DisplayMode::Crt(CrtProfile::Trinitron)),
     ("atari", DisplayMode::Crt(CrtProfile::AtariColor)),
 ];

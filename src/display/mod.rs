@@ -47,7 +47,7 @@ pub enum DisplayMode {
 }
 
 impl DisplayMode {
-    pub const NAMES: &'static str = "raw|ctm|trinitron|gt65|atari";
+    pub const NAMES: &'static str = "raw|ctm|trinitron|gt65|mm12|atari";
 
     pub fn is_raw(self) -> bool {
         self == Self::Raw
@@ -67,7 +67,8 @@ impl DisplayMode {
             Self::Raw => Self::Crt(CrtProfile::Ctm644),
             Self::Crt(CrtProfile::Ctm644) => Self::Crt(CrtProfile::Trinitron),
             Self::Crt(CrtProfile::Trinitron) => Self::Crt(CrtProfile::Gt65),
-            Self::Crt(CrtProfile::Gt65) => Self::Crt(CrtProfile::AtariColor),
+            Self::Crt(CrtProfile::Gt65) => Self::Crt(CrtProfile::Mm12),
+            Self::Crt(CrtProfile::Mm12) => Self::Crt(CrtProfile::AtariColor),
             Self::Crt(CrtProfile::AtariColor) => Self::Raw,
         }
     }
@@ -196,6 +197,15 @@ mod test {
             "ctm".parse::<DisplayMode>(),
             Ok(DisplayMode::Crt(CrtProfile::Ctm644))
         );
+        // GT64 and GT65 are the same green tube
+        assert_eq!(
+            "gt64".parse::<DisplayMode>(),
+            Ok(DisplayMode::Crt(CrtProfile::Gt65))
+        );
+        assert_eq!(
+            "mm12".parse::<DisplayMode>(),
+            Ok(DisplayMode::Crt(CrtProfile::Mm12))
+        );
         assert!("nope".parse::<DisplayMode>().is_err());
     }
 
@@ -209,7 +219,7 @@ mod test {
             seen.push(mode);
             mode = mode.next();
         }
-        assert_eq!(seen.len(), 5);
+        assert_eq!(seen.len(), 6);
     }
 
     #[test]

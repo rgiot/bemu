@@ -81,7 +81,7 @@ slower.
   | `digiblaster` | `true` plugs a Digiblaster: an 8-bit DAC on the printer port | `false` |
   | `language` | `'en'`, or `'fr'`: the French 6128's ROMs and its AZERTY keyboard (typed text follows it) | `'en'` |
   | `brand` | `'amstrad'`, `'schneider'`, `'awa'`, `'orion'`, `'saisho'`, `'solavox'`, `'triumph'`, `'isp'` | `'amstrad'` |
-  | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'`, `'atari'` | `'raw'` |
+  | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'` (or `'gt64'`, green), `'mm12'` (grey), `'atari'` | `'raw'` |
   | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `0` |
   | `blackLevel` | `0` to `255`: the grey a black ink is drawn at | `8` |
   | `menu` | `false` hides the menu bar, the command palette (Ctrl+Shift+P) and the debugger's windows drawn over the picture (WebGPU / WebGL only) | `true` |

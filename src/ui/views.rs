@@ -759,7 +759,8 @@ pub(super) fn preferences(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &m
                 for (id, label) in [
                     ("video-rendering-raw", "Raw"),
                     ("video-rendering-ctm", "CTM"),
-                    ("video-rendering-gt65", "GT65"),
+                    ("video-rendering-gt65", "GT64/65"),
+                    ("video-rendering-mm12", "MM12"),
                     ("video-rendering-trinitron", "Trinitron"),
                     ("video-rendering-atari", "Atari"),
                 ] {

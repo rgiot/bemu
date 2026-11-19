@@ -33,7 +33,7 @@ pub struct Config {
     /// The name of the boot banner: "amstrad", "schneider", "awa", "orion", "saisho", "solavox",
     /// "triumph" or "isp".
     pub brand: Option<String>,
-    /// "raw", or a CRT: "ctm", "trinitron", "gt65", "atari".
+    /// "raw", or a CRT: "ctm", "trinitron", "gt65" (or "gt64", green), "mm12" (grey), "atari".
     pub display: Option<String>,
     /// How curved a CRT's glass is, times its profile's bulge: 0 (flat) to 4, 1 by default.
     pub curvature: Option<f32>,

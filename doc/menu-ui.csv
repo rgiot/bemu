@@ -279,7 +279,8 @@ Video,Save Video,,,video-start,video-stop,Record a video with sound through ffmp
 Video,,,,,,,,sep,
 Video,Rendering,Raw,,video-rendering-raw,,The monitor's ideal picture,Radio,rad,
 Video,Rendering,CTM,,video-rendering-ctm,,Amstrad CTM644 colour monitor tube,Radio,rad,
-Video,Rendering,GT65,,video-rendering-gt65,,Amstrad GT65 green monitor tube,Radio,rad,
+Video,Rendering,GT65,,video-rendering-gt65,,Amstrad GT64 / GT65 green monitor tube (also --display gt64),Radio,rad,
+Video,Rendering,MM12,,video-rendering-mm12,,Amstrad MM12 grey monochrome monitor tube,Radio,rad,
 Video,Rendering,Trinitron,,video-rendering-trinitron,,Sony Trinitron-like tube,Radio,rad,
 Video,Rendering,Atari,,video-rendering-atari,,Atari monitor tube,"Radio; draft listed 4 of the 5 profiles, 'Atari' was missing",rad,
 Video,Rendering,Next,,video-rendering-next,,Cycle through the renderings,Not while recording a video,act,F9

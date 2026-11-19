@@ -38,14 +38,17 @@ pub enum CrtProfile {
     Ctm644,
     /// Aperture grille (vertical wires): no gap between the vertical slots.
     Trinitron,
-    /// Amstrad GT65: no mask structure, visible scanlines only.
+    /// Amstrad GT64 / GT65, the green monitors: one green phosphor, no mask structure, visible
+    /// scanlines only. The colours are shown as their luminance.
     Gt65,
+    /// Amstrad MM12, a grey monochrome monitor: as the GT65, in a grey phosphor.
+    Mm12,
     /// Atari colour monitor: grille with strong scanlines.
     AtariColor,
 }
 
 impl CrtProfile {
-    pub const NAMES: &'static str = "ctm|trinitron|gt65|atari";
+    pub const NAMES: &'static str = "ctm|trinitron|gt65|mm12|atari";
 
     pub fn params(self) -> CrtParams {
         CrtParams::from_profile(self)
@@ -56,7 +59,7 @@ impl CrtProfile {
     /// most. Eyeballed, not measured.
     pub fn curvature(self) -> (f32, f32) {
         match self {
-            CrtProfile::Ctm644 | CrtProfile::Gt65 => (0.025, 0.035),
+            CrtProfile::Ctm644 | CrtProfile::Gt65 | CrtProfile::Mm12 => (0.025, 0.035),
             CrtProfile::Trinitron => (0.0, 0.025),
             CrtProfile::AtariColor => (0.035, 0.045),
         }
@@ -127,7 +130,8 @@ impl FromStr for CrtProfile {
         match s {
             "ctm" => Ok(Self::Ctm644),
             "trinitron" => Ok(Self::Trinitron),
-            "gt65" => Ok(Self::Gt65),
+            "gt65" | "gt64" => Ok(Self::Gt65),
+            "mm12" => Ok(Self::Mm12),
             "atari" => Ok(Self::AtariColor),
             other => Err(format!("unknown CRT {other:?} (expected {})", Self::NAMES)),
         }
@@ -165,7 +169,15 @@ pub struct CrtParams {
     /// only a third of the surface, so 3 keeps the mean light of a picture
     /// (ACE-DL's 2.6): the brightest slots clip.
     pub gain: f32,
+    /// A monochrome tube: the colour of its phosphor, as the light of each of the three primaries
+    /// for a full white (the green of a GT65, the grey of an MM12). Every slot is lit by the
+    /// luminance of the picture instead of the gun of its colour. `None`: a colour tube.
+    pub phosphor: Option<[f32; 3]>,
 }
+
+/// The luminance of a pixel's light: the green screen of the CPC shows the colours as the
+/// luminance they would have on a black and white television.
+pub const LUMA: [f32; 3] = [0.299, 0.587, 0.114];
 
 impl CrtParams {
     pub fn from_profile(profile: CrtProfile) -> Self {
@@ -181,6 +193,7 @@ impl CrtParams {
             spill: 0.5,
             halation: 0.10,
             gain: 3.0,
+            phosphor: None,
         };
         match profile {
             CrtProfile::Ctm644 => base,
@@ -191,13 +204,26 @@ impl CrtParams {
                 gain: 3.0,
                 ..base
             },
+            // no mask to speak of: every slot is lit, so a third of the colour tubes' gain
             CrtProfile::Gt65 => Self {
                 slot_fill: (1.0, 1.2),
                 stagger: 0.0,
                 spill: 0.0,
                 halation: 0.0,
                 beam_sigma_v: 0.42,
-                gain: 3.0,
+                gain: 1.0,
+                // a P31 green phosphor: green, a little blue and less red
+                phosphor: Some([0.12, 1.0, 0.16]),
+                ..base
+            },
+            CrtProfile::Mm12 => Self {
+                slot_fill: (1.0, 1.2),
+                stagger: 0.0,
+                spill: 0.0,
+                halation: 0.0,
+                beam_sigma_v: 0.42,
+                gain: 1.0,
+                phosphor: Some([0.78, 0.80, 0.84]),
                 ..base
             },
             CrtProfile::AtariColor => Self {
@@ -233,9 +259,14 @@ impl CrtParams {
         (TRIADS_ACROSS * self.triad_px) as f32 / SRC_WIDTH as f32
     }
 
-    /// The phosphor (0 = red, 1 = green, 2 = blue) of output column `x`.
+    /// The phosphor (0 = red, 1 = green, 2 = blue) of output column `x`; a monochrome tube has the
+    /// one (called green here, its colour is [`Self::phosphor`]).
     pub fn channel(&self, x: usize) -> usize {
-        (x / self.slot_px()) % 3
+        if self.phosphor.is_some() {
+            1
+        } else {
+            (x / self.slot_px()) % 3
+        }
     }
 
     /// Factor making the mean light of a full-white field equal to what the

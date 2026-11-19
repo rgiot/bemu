@@ -186,7 +186,7 @@ impl Emulator {
         Ok(())
     }
 
-    /// "raw", "ctm", "trinitron", "gt65" or "atari" (Canvas 2D shows them raw).
+    /// "raw", "ctm", "trinitron", "gt65", "gt64", "mm12" or "atari" (Canvas 2D shows them raw).
     pub fn set_display(&mut self, name: &str) -> Result<(), JsError> {
         self.display = name.parse().map_err(|e: String| JsError::new(&e))?;
         self.config.display = Some(name.to_owned());
