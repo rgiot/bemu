@@ -71,6 +71,8 @@ pub struct Gui {
     toasts: VecDeque<Toast>,
     file_requests: Vec<FileRequest>,
     menu_height: f32,
+    /// In fullscreen the bars are drawn over the picture, which keeps the whole screen.
+    bars_over_picture: bool,
     /// The machine was paused at the last frame: a pause (the button, F8, a breakpoint) shows
     /// the Disassembly window.
     was_paused: bool,
@@ -135,6 +137,7 @@ impl Gui {
             toasts: VecDeque::new(),
             file_requests: Vec::new(),
             menu_height: 0.0,
+            bars_over_picture: false,
             pointer_seen: 0.0,
             was_paused: false,
             status_height: 0.0,
@@ -434,9 +437,14 @@ impl Gui {
         self.ctx.wants_pointer_input()
     }
 
-    /// The height of the menu bar, in points (0 without it): the picture goes below.
+    /// The height of the menu bar, in points (0 without it, and in fullscreen, where it is drawn
+    /// over the picture): the picture goes below.
     pub fn menu_height(&self) -> f32 {
-        self.menu_height
+        if self.bars_over_picture {
+            0.0
+        } else {
+            self.menu_height
+        }
     }
 
     /// Whether the menu and status bars are shown: always in a window; in fullscreen while the
@@ -469,9 +477,14 @@ impl Gui {
         shown
     }
 
-    /// The height of the status bar, in points (0 without it): the picture goes above.
+    /// The height of the status bar, in points (0 without it, and in fullscreen): the picture goes
+    /// above.
     pub fn status_height(&self) -> f32 {
-        self.status_height
+        if self.bars_over_picture {
+            0.0
+        } else {
+            self.status_height
+        }
     }
 
     /// Lay out one frame of the interface. Its commands are queued on `bus`.
@@ -540,6 +553,7 @@ impl Gui {
                 }
             }
         }
+        self.bars_over_picture = target.settings().is_some_and(|s| s.fullscreen);
         let visible =
             target.settings().is_none_or(|s| s.menu_visible) && self.bars_shown(ctx, target);
         self.menu_height = if visible {
@@ -588,6 +602,11 @@ impl Gui {
                         bus.push(command);
                     }
                     self.prompt = None;
+                }
+                prompt::Answer::Live(id, arg) => {
+                    if let Ok(command) = commands::Command::with_arg(id, arg) {
+                        bus.push(command);
+                    }
                 }
             }
         }

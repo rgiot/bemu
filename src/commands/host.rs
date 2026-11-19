@@ -126,6 +126,9 @@ pub struct HostSettings {
     pub curvature: f32,
     /// The grey of a black ink, 0-255 (the monitor's brightness knob).
     pub black_level: u8,
+    /// The picture brighter (up to 100) or darker (down to -100), 0 as it is: a gamma curve
+    /// of a moderate range, see `Monitor::with_brightness`.
+    pub brightness: i8,
     /// The monitor's H-hold and V-hold knobs, -100 to 100 (0: steady, see `Monitor::with_holds`).
     pub hhold: i8,
     pub vhold: i8,
@@ -232,6 +235,7 @@ impl Default for HostSettings {
             display: DisplayMode::default(),
             curvature: 1.0,
             black_level: 8,
+            brightness: 0,
             hhold: 0,
             vhold: 0,
             ui_zoom: 1.0,

@@ -8,13 +8,27 @@ pub enum Answer {
     Waiting,
     Cancelled,
     Given(&'static str, Arg),
+    /// A value applied while the window stays open (the monitor's knobs).
+    Live(&'static str, Arg),
 }
+
+/// The settings that are tried by ear or by eye: their window applies each change at once, and
+/// its Reset goes back to the value it opened with.
+const LIVE: [&str; 5] = [
+    "video-hhold-set",
+    "video-vhold-set",
+    "video-curvature-set",
+    "video-brightness-set",
+    "audio-volume-set",
+];
 
 pub struct Prompt {
     question: ArgPrompt,
     text: String,
     number: i64,
     decimal: f64,
+    /// The value the window opened with, for Reset.
+    initial: (i64, f64),
     browser: Option<FileBrowser>,
     focused: bool,
 }
@@ -40,6 +54,7 @@ impl Prompt {
             text: String::new(),
             number,
             decimal,
+            initial: (number, decimal),
             browser,
             focused: false,
         }
@@ -48,6 +63,7 @@ impl Prompt {
     pub fn show(&mut self, ctx: &egui::Context, target: &dyn CommandTarget) -> Answer {
         let mut answer = Answer::Waiting;
         let mut open = true;
+        let mut close = false;
         let id = self.question.id;
         let escape = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         egui::Window::new(self.question.title)
@@ -70,6 +86,53 @@ impl Prompt {
                                 answer = Answer::Given(id, Arg::Text((*value).to_owned()));
                             }
                         }
+                    }
+                    ArgKind::Decimal { min, max, .. } if LIVE.contains(&id) => {
+                        ui.horizontal(|ui| {
+                            let changed = ui
+                                .add(
+                                    egui::Slider::new(&mut self.decimal, *min..=*max)
+                                        .clamping(egui::SliderClamping::Always),
+                                )
+                                .changed();
+                            let reset = ui
+                                .button("Reset")
+                                .on_hover_text("Back to the value it had when this window opened")
+                                .clicked();
+                            if reset {
+                                self.decimal = self.initial.1;
+                            }
+                            if changed || reset {
+                                answer = Answer::Live(id, Arg::Text(self.decimal.to_string()));
+                            }
+                            if ui.button("Close").clicked() {
+                                close = true;
+                            }
+                        });
+                    }
+                    ArgKind::Number { min, max, .. } if LIVE.contains(&id) => {
+                        ui.horizontal(|ui| {
+                            let changed = ui
+                                .add(
+                                    egui::Slider::new(&mut self.number, *min..=*max)
+                                        .logarithmic(*max - *min > 1000)
+                                        .clamping(egui::SliderClamping::Always),
+                                )
+                                .changed();
+                            let reset = ui
+                                .button("Reset")
+                                .on_hover_text("Back to the value it had when this window opened")
+                                .clicked();
+                            if reset {
+                                self.number = self.initial.0;
+                            }
+                            if changed || reset {
+                                answer = Answer::Live(id, Arg::Number(self.number));
+                            }
+                            if ui.button("Close").clicked() {
+                                close = true;
+                            }
+                        });
                     }
                     ArgKind::Decimal { min, max, .. } => {
                         ui.horizontal(|ui| {
@@ -127,7 +190,7 @@ impl Prompt {
                     }
                 }
             });
-        if !open || escape {
+        if !open || escape || close {
             return Answer::Cancelled;
         }
         answer

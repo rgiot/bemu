@@ -233,7 +233,17 @@ fn entry_score(query: &str, entry: &Entry) -> Option<i32> {
         Entry::Choice(_) => "",
     };
     let name = score(query, &format!("{} {} {stop}", entry.label(), entry.id())).map(|s| s + 20);
-    name.max(score(query, &entry.haystack()))
+    // a radio family is also found by one of its values on its own (`trinitron`)
+    let value = match entry {
+        Entry::Choice(choice) => choice
+            .items
+            .iter()
+            .filter_map(|item| score(query, item.label()))
+            .max()
+            .map(|s| s + 20),
+        Entry::Command(_) => None,
+    };
+    name.max(value).max(score(query, &entry.haystack()))
 }
 
 /// The entries matching `query`, the best first; `recent` (the commands run lately, the last

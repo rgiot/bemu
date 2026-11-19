@@ -364,6 +364,7 @@ impl Window {
             monitor
         } else {
             viewing_monitor(core.settings.black_level, (core.settings.hhold, core.settings.vhold))
+                .with_brightness(core.settings.brightness)
         };
     }
 
@@ -515,6 +516,7 @@ impl Window {
         // the debug server's pictures are exact (no lifted black, whole frames)
         let exact = core.debugger.listening_port().is_some();
         if wanted.black_level != applied.black_level
+            || wanted.brightness != applied.brightness
             || (wanted.hhold, wanted.vhold) != (applied.hhold, applied.vhold)
             || exact != self.exact_monitor
         {
@@ -525,6 +527,7 @@ impl Window {
                 monitor
             } else {
                 viewing_monitor(wanted.black_level, (wanted.hhold, wanted.vhold))
+                    .with_brightness(wanted.brightness)
             };
         }
         if wanted.fullscreen != applied.fullscreen {

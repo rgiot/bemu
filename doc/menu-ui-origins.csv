@@ -232,7 +232,7 @@ video-rendering-trinitron,--display; web setDisplay,filled,"WinAPE (colour / gre
 video-rendering-atari,--display; web setDisplay,added,"WinAPE (colour / green), ACE"
 video-rendering-next,F9,added,
 video-curvature-set,--curvature; web setCurvature,added,
-video-black-level-set,--black-level (--brightness),added,
+video-brightness-set,,added,
 video-hhold-set,--hhold,added,
 video-vhold-set,--vhold,added,
 video-crt-gpu-toggle,--crt-gpu,added,

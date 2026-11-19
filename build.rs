@@ -62,6 +62,8 @@ fn main() {
     // a `sep` row: a line in its menu before the next item there (the menu's depth: its path)
     let mut separators: Vec<(String, usize)> = Vec::new();
     let mut pending_separator: Option<usize> = None;
+    // the configuration's radio groups (column `Config`: `order:key`, `*` after the default)
+    let mut config_groups: Vec<(usize, String, Vec<String>, Option<String>)> = Vec::new();
     for row in rows.iter().skip(1) {
         let cell = |i: usize| row.get(i).map(|s| s.trim()).unwrap_or("");
         if cell(8) == "sep" {
@@ -86,6 +88,33 @@ fn main() {
             "sub" => "Kind::Submenu",
             other => panic!("doc/menu-ui.csv: {id}: unknown type {other:?}"),
         };
+        let config = cell(10);
+        if !config.is_empty() {
+            assert_eq!(kind, "Kind::Radio", "doc/menu-ui.csv: {id}: only a radio item has a Config");
+            let (order, key) = config
+                .split_once(':')
+                .unwrap_or_else(|| panic!("doc/menu-ui.csv: {id}: Config is order:key"));
+            let order: usize = order
+                .parse()
+                .unwrap_or_else(|_| panic!("doc/menu-ui.csv: {id}: Config order {order:?}"));
+            let (key, is_default) = match key.strip_suffix('*') {
+                Some(key) => (key, true),
+                None => (key, false),
+            };
+            let at = match config_groups.iter().position(|g| g.1 == key) {
+                Some(at) => at,
+                None => {
+                    config_groups.push((order, key.to_owned(), Vec::new(), None));
+                    config_groups.len() - 1
+                }
+            };
+            let group = &mut config_groups[at];
+            assert_eq!(group.0, order, "doc/menu-ui.csv: {id}: the order of {key} changes");
+            group.2.push(id.to_owned());
+            if is_default {
+                assert!(group.3.replace(id.to_owned()).is_none(), "doc/menu-ui.csv: {key} has two defaults");
+            }
+        }
         let stop = cell(5);
         let _ = writeln!(
             out,
@@ -111,6 +140,22 @@ fn main() {
     );
     for (id, depth) in &separators {
         let _ = writeln!(out, "    ({id:?}, {depth}),");
+    }
+    out.push_str("];\n");
+    out.push_str(
+        "/// The radio groups a configuration keeps, in the order they are applied: the key, the \
+         commands of the items, the default one.\n\
+         pub static CONFIG_GROUPS: &[ConfigGroup] = &[\n",
+    );
+    config_groups.sort_by_key(|group| group.0);
+    for (_, key, items, default) in &config_groups {
+        let default = default
+            .as_deref()
+            .unwrap_or_else(|| panic!("doc/menu-ui.csv: {key} has no default (a * in Config)"));
+        let _ = writeln!(
+            out,
+            "    ConfigGroup {{ key: {key:?}, items: &{items:?}, default: {default:?} }},"
+        );
     }
     out.push_str("];\n");
     let dest = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("commands_table.rs");
