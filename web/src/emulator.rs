@@ -519,12 +519,6 @@ impl Emulator {
         self.machine().stop_tape_recording()
     }
 
-    /// The seconds recorded so far; none when not recording.
-    pub fn tape_recording_seconds(&self) -> Option<f64> {
-        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
-        machine.tape_recorder().map(|recorder| recorder.seconds())
-    }
-
     /// What a DMP2000 printer (`dmp2000: true`) printed, as files named after `prefix`:
     /// `[{ name, data }]` with `prefix.txt` (the text), `prefix.prn` (the bytes the CPC sent) and
     /// `prefix_001.png`... (the sheets with ink). None without a printer.
