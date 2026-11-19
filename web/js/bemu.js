@@ -442,14 +442,15 @@ export class Bemu {
     /**
      * Records what the CPC writes to the cassette port (`SAVE`, `SAVE"X",B`...), until `stopTapeRecording()`,
      * which resolves with the CDT file (a `Uint8Array`), or `undefined` when nothing was being recorded.
-     * A `reset()` or `configure()` ends the recording.
+     * The recording goes on through `reset()` and `configure()`, as the tape does.
      */
     startTapeRecording() { return this.#transport.call('startTapeRecording'); }
     stopTapeRecording() { return this.#transport.call('stopTapeRecording'); }
     /**
      * What a DMP2000 printer (configuration `dmp2000: true`) printed, as files: `[{ name, data }]` with
      * `prefix.txt`, `prefix.prn` (the bytes sent) and `prefix_001.png`... (the sheets with ink), or
-     * `undefined` without a printer. `prefix` is 'printout' by default.
+     * `undefined` without a printer. `prefix` is 'printout' by default. A `reset()` or `configure()` makes a new
+     * printer with a blank paper: take the printout first.
      */
     printout(prefix = 'printout') { return this.#transport.call('printout', [prefix]); }
 
