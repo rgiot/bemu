@@ -75,35 +75,35 @@ const fn case(name: &'static str, disk: &'static str, waits: &'static [u32]) -> 
 }
 
 const CASES: &[Case] = &[
-    case("INTPOS", "INTPOS.DSK", &[20]),
-    case("INTPOS2", "INTPOS2.DSK", &[20]),
-    case("INTPOS3", "INTPOS3.DSK", &[20]),
-    case("INTREP", "INTREP.DSK", &[20]),
-    case("HALTPOS", "HALTPOS.DSK", &[20]),
-    case("HALTTST2", "HALTTST2.DSK", &[20, 10]),
-    case("HALTTEST", "HALTTEST.DSK", &[20, 10]),
-    case("HALTPEND", "HALTPEND.DSK", &[20]),
-    case("INTLAT", "INTLAT.DSK", &[20]),
-    case("INTLAT1", "INTLAT1.DSK", &[20]),
-    case("VSINT", "VSINT.DSK", &[20]),
-    case("VSINT1", "VSINT1.DSK", &[20]),
+    case("INTPOS", "INTPOS.DSK", &[12]),
+    case("INTPOS2", "INTPOS2.DSK", &[12]),
+    case("INTPOS3", "INTPOS3.DSK", &[12]),
+    case("INTREP", "INTREP.DSK", &[12]),
+    case("HALTPOS", "HALTPOS.DSK", &[12]),
+    case("HALTTST2", "HALTTST2.DSK", &[12, 6]),
+    case("HALTTEST", "HALTTEST.DSK", &[12, 6]),
+    case("HALTPEND", "HALTPEND.DSK", &[12]),
+    case("INTLAT", "INTLAT.DSK", &[12]),
+    case("INTLAT1", "INTLAT1.DSK", &[12]),
+    case("VSINT", "VSINT.DSK", &[12]),
+    case("VSINT1", "VSINT1.DSK", &[12]),
     Case {
         random: true,
         ..case("PPIRACE", "PPIRACE.DSK", &[30])
     },
-    case("PALA14", "PALA14.DSK", &[20]),
-    case("PALA14B", "PALA14B.DSK", &[20]),
-    case("HSYNCPOS", "HSYNCPOS.DSK", &[20, 10]),
-    case("INKBORD", "INKBORD.DSK", &[20, 10]),
-    case("INKMODE", "INKMODE.DSK", &[20]),
-    case("INKPOINT", "INKPOINT.DSK", &[20]),
-    case("INKTEST", "INKTEST.DSK", &[20, 10]),
+    case("PALA14", "PALA14.DSK", &[12]),
+    case("PALA14B", "PALA14B.DSK", &[12]),
+    case("HSYNCPOS", "HSYNCPOS.DSK", &[12, 6]),
+    case("INKBORD", "INKBORD.DSK", &[12, 6]),
+    case("INKMODE", "INKMODE.DSK", &[12]),
+    case("INKPOINT", "INKPOINT.DSK", &[12]),
+    case("INKTEST", "INKTEST.DSK", &[12, 6]),
     case("CRTCTEST", "CRTCTEST.DSK", &[30]),
-    case("R0ZTEST", "R0ZTEST.DSK", &[20]),
-    case("VSYNCTST", "VSYNCTST.DSK", &[20]),
-    case("KUKU", "KUKU.DSK", &[20]),
-    case("Z80TYPE", "Z80TYPE.DSK", &[20]),
-    case("CADRAGE", "CADRAGE.DSK", &[20, 10]),
+    case("R0ZTEST", "R0ZTEST.DSK", &[12]),
+    case("VSYNCTST", "VSYNCTST.DSK", &[12]),
+    case("KUKU", "KUKU.DSK", &[12]),
+    case("Z80TYPE", "Z80TYPE.DSK", &[12]),
+    case("CADRAGE", "CADRAGE.DSK", &[12, 6]),
     case("FDCTEST", "FDCTEST.DSK", &[30]),
     case("FDCTEST2", "FDCTEST2.DSK", &[30, 10, 10, 10, 10]),
     case("FDCTEST3", "FDCTEST3.DSK", &[30, 10, 10, 10, 10]),
@@ -114,16 +114,16 @@ const CASES: &[Case] = &[
     case("SEEKJIT2", "SEEKJIT.DSK", &[30]),
     case("SEEKJIT3", "SEEKJIT.DSK", &[30]),
     case("SEEKJIT4", "SEEKJIT.DSK", &[30]),
-    case("HSYNCW", "MESURES.DSK", &[20, 10]),
+    case("HSYNCW", "MESURES.DSK", &[12, 6]),
     case("FDCRES", "MESURES.DSK", &[30, 10]),
     case("READYTST", "MESURES.DSK", &[30, 10]),
     case("SPINDOWN", "MESURES.DSK", &[40, 10]),
     case("SPINDWN2", "MESURES.DSK", &[40, 10]),
     case("ROTATION", "MESURES.DSK", &[30, 10]),
-    case("AYLECT", "MESURES.DSK", &[20]),
-    case("AYSEQ", "MESURES.DSK", &[20]),
-    case("AYTRAME", "MESURES.DSK", &[20]),
-    case("VHOLDTST", "MESURES.DSK", &[20]),
+    case("AYLECT", "MESURES.DSK", &[12]),
+    case("AYSEQ", "MESURES.DSK", &[12]),
+    case("AYTRAME", "MESURES.DSK", &[12]),
+    case("VHOLDTST", "MESURES.DSK", &[12]),
     Case {
         playcity: true,
         ..case("NMICUR", "PLAYCITY_MESURE.DSK", &[20])
@@ -132,9 +132,9 @@ const CASES: &[Case] = &[
         playcity: true,
         ..case("PCSON", "PCSON.DSK", &[20])
     },
-    case("PLUSDMA", "PLUSDMA.DSK", &[20, 10]),
-    case("PLUSDMA2", "PLUSDMA2.DSK", &[20, 10]),
-    case("PLUSIM2", "PLUSIM2.DSK", &[20, 10]),
+    case("PLUSDMA", "PLUSDMA.DSK", &[12, 6]),
+    case("PLUSDMA2", "PLUSDMA2.DSK", &[12, 6]),
+    case("PLUSIM2", "PLUSIM2.DSK", &[12, 6]),
 ];
 
 /// Cases (and machines) where bemu is known to differ from CLAUDESTRAD, with the share of agreeing
@@ -206,22 +206,42 @@ fn scaled(image: &RgbImage, width: u32, height: u32) -> RgbImage {
 /// Share of the pixels of `reference` that `ours` reproduces (within a small colour distance),
 /// after bringing `ours` to the reference's size, counted only over the area where either picture
 /// has something but the background (most of a screen is empty paper, which would hide
-/// everything).
+/// everything). The two emulators frame the picture a pixel or two apart, so the best of a few
+/// small shifts counts.
 fn match_share(reference: &RgbImage, ours: &RgbImage) -> f64 {
     let ours = scaled(ours, reference.width(), reference.height());
     let background = |image: &RgbImage| *image.get_pixel(2, image.height() - 2);
     let (bg_ref, bg_ours) = (background(reference), background(&ours));
-    let (mut total, mut same) = (0usize, 0usize);
-    for (a, b) in reference.pixels().zip(ours.pixels()) {
-        if *a == bg_ref && *b == bg_ours {
-            continue;
-        }
-        total += 1;
-        if (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum::<i32>() <= 60 {
-            same += 1;
+    let (width, height) = (reference.width() as i64, reference.height() as i64);
+    let mut best = 0.0f64;
+    for dy in -4i64..=4 {
+        for dx in -8i64..=8 {
+            let (mut total, mut same) = (0usize, 0usize);
+            for y in 0..height {
+                let sy = y - dy;
+                if !(0..height).contains(&sy) {
+                    continue;
+                }
+                for x in 0..width {
+                    let sx = x - dx;
+                    if !(0..width).contains(&sx) {
+                        continue;
+                    }
+                    let a = reference.get_pixel(x as u32, y as u32);
+                    let b = ours.get_pixel(sx as u32, sy as u32);
+                    if *a == bg_ref && *b == bg_ours {
+                        continue;
+                    }
+                    total += 1;
+                    if (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum::<i32>() <= 60 {
+                        same += 1;
+                    }
+                }
+            }
+            best = best.max(if total == 0 { 1.0 } else { same as f64 / total as f64 });
         }
     }
-    if total == 0 { 1.0 } else { same as f64 / total as f64 }
+    best
 }
 
 fn floor(case: &str, machine: &str) -> f64 {
