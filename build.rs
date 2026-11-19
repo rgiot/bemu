@@ -66,6 +66,8 @@ fn main() {
     let mut config_groups: Vec<(usize, String, Vec<String>, Option<String>)> = Vec::new();
     // the configuration's values (an input's `key`)
     let mut config_values: Vec<(String, String)> = Vec::new();
+    // the configuration's switches (a toggle's `key`)
+    let mut config_toggles: Vec<(String, String)> = Vec::new();
     for row in rows.iter().skip(1) {
         let cell = |i: usize| row.get(i).map(|s| s.trim()).unwrap_or("");
         if cell(8) == "sep" {
@@ -93,8 +95,10 @@ fn main() {
         let config = cell(10);
         if !config.is_empty() && kind == "Kind::Input" {
             config_values.push((config.to_owned(), id.to_owned()));
+        } else if !config.is_empty() && kind == "Kind::Toggle" {
+            config_toggles.push((config.to_owned(), id.to_owned()));
         } else if !config.is_empty() {
-            assert_eq!(kind, "Kind::Radio", "doc/menu-ui.csv: {id}: only a radio item or an input has a Config");
+            assert_eq!(kind, "Kind::Radio", "doc/menu-ui.csv: {id}: only a radio item, an input or a toggle has a Config");
             let (order, key) = config
                 .split_once(':')
                 .unwrap_or_else(|| panic!("doc/menu-ui.csv: {id}: Config is order:key"));
@@ -167,6 +171,14 @@ fn main() {
          pub static CONFIG_VALUES: &[ConfigValue] = &[\n",
     );
     for (key, id) in &config_values {
+        let _ = writeln!(out, "    ConfigValue {{ key: {key:?}, id: {id:?} }},");
+    }
+    out.push_str("];\n");
+    out.push_str(
+        "/// The switches a configuration keeps, each flipped by a toggle command.\n\
+         pub static CONFIG_TOGGLES: &[ConfigValue] = &[\n",
+    );
+    for (key, id) in &config_toggles {
         let _ = writeln!(out, "    ConfigValue {{ key: {key:?}, id: {id:?} }},");
     }
     out.push_str("];\n");

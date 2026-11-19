@@ -294,8 +294,8 @@ Video,,,,,,,,sep,,
 Video,Interface zoom,Zoom in,,ui-zoom-in,,Zoom the emulator window's menus and bars in (its picture keeps its size),"Steps of 10 %, 25 % above 200 %. The debugger's windows of the system keep their own size; on the web, the windows inside the page zoom with it",act,,
 Video,Interface zoom,Zoom out,,ui-zoom-out,,Zoom the emulator window's menus and bars out,Down to 50 %,act,,
 Video,Interface zoom,Actual size,,ui-zoom-reset,,Back to the interface's own size (100 %),,act,,
-Video,Interface zoom,Maximal size,,video-free-zoom-toggle,,"The picture as large as the window allows, its aspect ratio kept: a CRT is drawn at the finest resolution that fits, then resized without moiré","Checkable; off by default: the picture is zoomed by a whole factor (x1, x2...)",tog,,
-Video,Interface zoom,Maximal integer size,,video-native-zoom-toggle,,"The picture at the largest whole factor that fits: a CRT is drawn directly at that resolution (its slots and scanlines finer), nothing resized",Checkable; off by default (the picture is then enlarged from the CRT's own resolution). Maximal size comes first when both are on,tog,,
+Video,Interface zoom,Maximal size,,video-free-zoom-toggle,,"The picture as large as the window allows, its aspect ratio kept: a CRT is drawn at the finest resolution that fits, then resized without moiré","Checkable; off by default: the picture is zoomed by a whole factor (x1, x2...)",tog,,maximalSize
+Video,Interface zoom,Maximal integer size,,video-native-zoom-toggle,,"The picture at the largest whole factor that fits: a CRT is drawn directly at that resolution (its slots and scanlines finer), nothing resized",Checkable; off by default (the picture is then enlarged from the CRT's own resolution). Maximal size comes first when both are on,tog,,maximalIntegerSize
 Video,,,,,,,,sep,,
 Video,Fullscreen,,,video-fullscreen-toggle,,Toggle fullscreen,winit window only (not minifb),tog,F11,
 Tools,Auto-type,Type text…,,autotype-text,,"Type text on the CPC keyboard (keys as CSL key_output: \n, \(RET), \(WAIT n)…)",Asks the text,inp,,

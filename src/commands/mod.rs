@@ -82,7 +82,8 @@ pub struct ConfigGroup {
     pub default: &'static str,
 }
 
-/// A value of the saved configuration: a number a command sets (its input).
+/// A value of the saved configuration: a number an input command sets, or a switch a toggle
+/// command flips.
 #[derive(Debug)]
 pub struct ConfigValue {
     /// Its key in the JSON.

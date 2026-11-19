@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::{
     state, Arg, ArgKind, Command, CommandError, CommandTarget, ConfigGroup, Outcome, CONFIG_GROUPS,
-    CONFIG_VALUES,
+    CONFIG_TOGGLES, CONFIG_VALUES,
 };
 
 /// The configuration of `target`, as JSON.
@@ -20,6 +20,9 @@ pub fn save(target: &mut dyn CommandTarget) -> String {
         if let Some(current) = current_value(target, value.id) {
             config.insert(value.key.to_owned(), current);
         }
+    }
+    for toggle in CONFIG_TOGGLES {
+        config.insert(toggle.key.to_owned(), json!(state(toggle.id, target).checked));
     }
     serde_json::to_string_pretty(&Value::Object(config)).unwrap()
 }
@@ -66,6 +69,18 @@ pub fn load(target: &mut dyn CommandTarget, text: &str) -> Result<Vec<String>, C
         match Command::with_arg(value.id, arg)?.execute(target) {
             Ok(_) | Err(CommandError::Unsupported) => {}
             Err(error) => notes.push(format!("{}: {error}", value.key)),
+        }
+    }
+    // the switches: left out, off; flipped when they are not as the file says
+    for toggle in CONFIG_TOGGLES {
+        let wanted = config.get(toggle.key).and_then(Value::as_bool).unwrap_or(false);
+        let now = state(toggle.id, target);
+        if !now.enabled || now.checked == wanted {
+            continue;
+        }
+        match Command::new(toggle.id)?.execute(target) {
+            Ok(_) | Err(CommandError::Unsupported) => {}
+            Err(error) => notes.push(format!("{}: {error}", toggle.key)),
         }
     }
     Ok(notes)
@@ -140,6 +155,19 @@ mod tests {
         assert_eq!(target.1.brightness, 100);
         assert_eq!(target.1.vhold, -100);
         assert_eq!(target.1.curvature, 4.0);
+    }
+
+    #[test]
+    fn the_zoom_switches_are_saved_and_loaded() {
+        let mut target = target();
+        load(&mut target, r#"{"maximalIntegerSize": true}"#).unwrap();
+        assert!(target.1.native_zoom && !target.1.free_zoom);
+        let saved: Value = serde_json::from_str(&save(&mut target)).unwrap();
+        assert_eq!(saved["maximalIntegerSize"], true);
+        assert_eq!(saved["maximalSize"], false);
+        // left out: off
+        load(&mut target, "{}").unwrap();
+        assert!(!target.1.native_zoom);
     }
 
     #[test]

@@ -82,8 +82,8 @@ slower.
   | `digiblaster` | `true` plugs a Digiblaster: an 8-bit DAC on the printer port | `false` |
   | `language` | `'en'`, or `'fr'`: the French 6128's ROMs and its AZERTY keyboard (typed text follows it) | `'en'` |
   | `brand` | `'amstrad'`, `'schneider'`, `'awa'`, `'orion'`, `'saisho'`, `'solavox'`, `'triumph'`, `'isp'` | `'amstrad'` |
-  | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'` (or `'gt64'`, green), `'mm12'` (grey), `'atari'` | `'raw'` |
-  | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `0` |
+  | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'` (or `'gt64'`, green), `'mm12'` (grey), `'atari'` | `'ctm'` |
+  | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `1` |
   | `blackLevel` | `0` to `255`: the grey a black ink is drawn at (the monitor's brightness knob) | `8` |
   | `brightness` | `-100` to `100`: the picture brighter or darker (a bounded gamma curve; darker also lowers the full levels). `0` leaves it as it is | `0` |
   | `hHold`, `vHold` | `-100` to `100`: the monitor's hold knobs. `0` is steady; H-hold slides the picture sideways and tears it near the ends, V-hold rolls it below about -60 and above about 60 | `0` |
@@ -100,6 +100,11 @@ slower.
   - `fullscreenKey` (default `'F11'`, or `null` for none).
   - `turboKey` (default `'F10'`, or `null` for none): toggles full speed, see "Speed".
   - `autoStart` (default `false`).
+
+**Picture size.** The picture is the largest whole factor of the CRT's resolution that fits the
+canvas. Video > Interface zoom > *Maximal integer size* draws the CRT directly at that whole factor
+(finer slots and scanlines, nothing resized); *Maximal size* uses the largest size that fits, by any
+factor, resized without moiré. It is the code of the desktop window, whose menus have the same items.
 
 **Menus.** On WebGPU / WebGL the page shows the emulator's menu bar over the picture, with
 every command of the desktop window (see the top README), the command palette (Ctrl+Shift+P:
