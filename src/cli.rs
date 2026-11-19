@@ -275,8 +275,19 @@ pub struct Args {
 
     /// What a black ink is drawn at: on a real tube a dark grey, blanking and sync being blacker
     /// (0). Not with the debug server, whose pictures stay exact.
-    #[arg(long, value_name = "0-255", default_value_t = DEFAULT_BLACK_LEVEL, help_heading = DISPLAY)]
+    #[arg(long, alias = "brightness", value_name = "0-255", default_value_t = DEFAULT_BLACK_LEVEL, help_heading = DISPLAY)]
     pub black_level: u8,
+
+    /// The monitor's H-hold knob, -100 to 100: 0 is where the monitor is set and every picture is
+    /// steady; away from it the picture slides sideways, and tears near the ends of the scale. Not
+    /// with the debug server.
+    #[arg(long, value_name = "-100-100", default_value_t = 0, allow_negative_numbers = true, value_parser = clap::value_parser!(i8).range(-100..=100), help_heading = DISPLAY)]
+    pub hhold: i8,
+
+    /// The monitor's V-hold knob, -100 to 100: 0 is where the monitor is set and every picture is
+    /// steady; below about -60 and above about 60 the picture rolls. Not with the debug server.
+    #[arg(long, value_name = "-100-100", default_value_t = 0, allow_negative_numbers = true, value_parser = clap::value_parser!(i8).range(-100..=100), help_heading = DISPLAY)]
+    pub vhold: i8,
 
     /// Draws where the CPU wrote to the CRTC and the Gate Array, on the screenshots and in the
     /// window (F6 shows or hides it there).

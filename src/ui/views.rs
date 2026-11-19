@@ -786,7 +786,7 @@ pub(super) fn preferences(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &m
                 );
             }
             ui.end_row();
-            ui.label("Black level");
+            ui.label("Brightness");
             let mut level = settings.black_level;
             if ui.add(egui::Slider::new(&mut level, 0..=255)).changed() {
                 push(
@@ -796,6 +796,17 @@ pub(super) fn preferences(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &m
                 );
             }
             ui.end_row();
+            for (label, id, hold) in [
+                ("H-hold", "video-hhold-set", settings.hhold),
+                ("V-hold", "video-vhold-set", settings.vhold),
+            ] {
+                ui.label(label);
+                let mut hold = hold;
+                if ui.add(egui::Slider::new(&mut hold, -100..=100)).changed() {
+                    push(bus, id, Some(Arg::Number(i64::from(hold))));
+                }
+                ui.end_row();
+            }
             ui.label("Volume");
             let mut volume = settings.volume;
             if ui

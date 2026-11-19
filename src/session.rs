@@ -363,7 +363,7 @@ impl Window {
             monitor.keep_full_frames();
             monitor
         } else {
-            viewing_monitor(core.settings.black_level)
+            viewing_monitor(core.settings.black_level, (core.settings.hhold, core.settings.vhold))
         };
     }
 
@@ -514,14 +514,17 @@ impl Window {
         }
         // the debug server's pictures are exact (no lifted black, whole frames)
         let exact = core.debugger.listening_port().is_some();
-        if wanted.black_level != applied.black_level || exact != self.exact_monitor {
+        if wanted.black_level != applied.black_level
+            || (wanted.hhold, wanted.vhold) != (applied.hhold, applied.vhold)
+            || exact != self.exact_monitor
+        {
             self.exact_monitor = exact;
             self.monitor = if exact {
                 let mut monitor = CrtMonitor::default();
                 monitor.keep_full_frames();
                 monitor
             } else {
-                viewing_monitor(wanted.black_level)
+                viewing_monitor(wanted.black_level, (wanted.hhold, wanted.vhold))
             };
         }
         if wanted.fullscreen != applied.fullscreen {
@@ -669,6 +672,8 @@ fn settings_of(args: &Args, sound: bool) -> HostSettings {
         display: args.display,
         curvature: args.curvature,
         black_level: args.black_level,
+        hhold: args.hhold,
+        vhold: args.vhold,
         crt_gpu: args.gpu,
         overlay: args.overlay,
         keyboard: args.keyboard,
@@ -752,7 +757,7 @@ pub fn run_window(
     let mut monitor = if has_server {
         CrtMonitor::default()
     } else {
-        viewing_monitor(args.black_level)
+        viewing_monitor(args.black_level, (args.hhold, args.vhold))
     };
     if has_server {
         monitor.keep_full_frames();

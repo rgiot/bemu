@@ -113,12 +113,14 @@ impl Emulator {
                 display,
                 curvature,
                 black_level: config.black_level(),
+                hhold: config.h_hold.unwrap_or(0),
+                vhold: config.v_hold.unwrap_or(0),
                 keyboard,
                 ..Default::default()
             })
         });
         Ok(Emulator {
-            monitor: Monitor::default().with_black_level(config.black_level()),
+            monitor: config.monitor(),
             config,
             display,
             curvature,
@@ -192,6 +194,8 @@ impl Emulator {
             ui.settings.display = display;
             ui.settings.curvature = curvature;
             ui.settings.black_level = self.config.black_level();
+            ui.settings.hhold = self.config.h_hold.unwrap_or(0);
+            ui.settings.vhold = self.config.v_hold.unwrap_or(0);
         }
         self.replace_machine(motherboard);
         Ok(())
@@ -865,9 +869,13 @@ impl Emulator {
                 if self.keyboard.mapping() != settings.keyboard {
                     self.keyboard.set_mapping(settings.keyboard);
                 }
-                if settings.black_level != self.config.black_level() {
+                if settings.black_level != self.config.black_level()
+                    || (Some(settings.hhold), Some(settings.vhold)) != (self.config.h_hold, self.config.v_hold)
+                {
                     self.config.black_level = Some(settings.black_level);
-                    self.monitor = Monitor::default().with_black_level(settings.black_level);
+                    self.config.h_hold = Some(settings.hhold);
+                    self.config.v_hold = Some(settings.vhold);
+                    self.monitor = self.config.monitor();
                 }
                 if settings.overlay != self.overlay.is_some() {
                     self.overlay = settings.overlay.then(amsrust::overlay::Overlay::default);
@@ -973,13 +981,13 @@ impl Emulator {
         // the deck keeps its tape, where it is
         motherboard.take_cassette_and_watches_from(&mut self.motherboard);
         self.motherboard = motherboard;
-        self.monitor = Monitor::default().with_black_level(self.config.black_level());
+        self.monitor = self.config.monitor();
     }
 
     /// The machine of a script that ends goes on as the page's.
     fn adopt(&mut self, runner: &mut CslRunner) {
         self.motherboard = amsrust::frame::end_script(runner);
-        self.monitor = Monitor::default().with_black_level(self.config.black_level());
+        self.monitor = self.config.monitor();
     }
 
     fn csl_frame(&mut self, step: ScriptStep) -> Result<(), JsError> {

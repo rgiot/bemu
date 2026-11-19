@@ -40,7 +40,7 @@ const MONITOR_FREE_RUN_LINES: usize = 350;
 /// Once locked, the line oscillator (AFC) only follows an HSYNC that ends
 /// in the last quarter of its period: a pulse half a line away (a second,
 /// cut-short HSYNC of the R3.JIT tests) is ignored.
-const MONITOR_HSYNC_WINDOW_START: usize = RASTER_LINE_LENGTH - 48;
+const MONITOR_HSYNC_WINDOW_MARGIN: usize = 48;
 /// Lines without an accepted HSYNC after which the line oscillator unlocks.
 const MONITOR_HSYNC_LOST_LINES: usize = 4;
 
@@ -49,6 +49,16 @@ const MONITOR_MIN_HSYNC_TICKS: usize = 12;
 /// Lines after the beam started a frame from which the frame oscillator accepts a VSYNC
 /// (Shaker DT: pulses 156 lines apart are not followed, 312 are).
 const MONITOR_VSYNC_WINDOW_START_LINES: usize = 200;
+/// The hold knobs of the monitor: -100 to 100, 0 the set position (what the tests and the pictures
+/// of the validation suite use). H-hold changes the free-running period of the line oscillator by up
+/// to this many ticks (1/16 usec) either way: the sync pulses pull it by 12 ticks a line at most, so
+/// near the ends of the scale the picture loses its lock and tears.
+const MONITOR_HHOLD_TICKS: i64 = 16;
+/// V-hold: the free-running period of the frame oscillator changes by up to this many lines
+/// (350 at 0). Below 312 the oscillator restarts before the VSYNC comes and the picture rolls.
+const MONITOR_VHOLD_LINES: i64 = 60;
+/// V-hold: and the line from which it listens to a VSYNC moves by this many lines (200 at 0).
+const MONITOR_VHOLD_WINDOW_LINES: i64 = 180;
 /// Shortest sync pulse the frame oscillator reacts to: it integrates the signal, and a CTM needs more
 /// than 11-12 usec (ACCC 16.2.4; Shaker DT J: an 8 usec C-VSYNC makes the picture roll). The
 /// integrator discharges while the sync is inactive, as fast as it charges: the line sync pulses cut
@@ -230,6 +240,14 @@ pub struct Monitor {
     next_shift: i32,
     /// The pull of a second sync far ahead of the line sync (see [`AheadPull`]).
     ahead: AheadPull,
+    /// The knobs on the back of the monitor (`with_holds`): -100 to 100, 0 the set position.
+    hhold: i8,
+    vhold: i8,
+    /// Free-running period of the line oscillator (ticks) and of the frame oscillator (lines), and
+    /// the line from which the frame oscillator listens to a VSYNC: what the knobs make of them.
+    line_length: usize,
+    frame_lines: usize,
+    vsync_window_lines: usize,
     vsync_color: Rgb<u8>,
     /// When the frame oscillator last restarted (`now` ticks).
     frame_t0: u64,
@@ -274,6 +292,11 @@ impl Monitor {
             shift: 0,
             next_shift: 0,
             ahead: AheadPull::default(),
+            hhold: 0,
+            vhold: 0,
+            line_length: RASTER_LINE_LENGTH,
+            frame_lines: MONITOR_FREE_RUN_LINES,
+            vsync_window_lines: MONITOR_VSYNC_WINDOW_START_LINES,
             vsync_color,
             frame_t0: 0,
             hsync_color,
@@ -281,6 +304,31 @@ impl Monitor {
             last_levels: None,
             spare: None,
         }
+    }
+
+    /// The H-hold and V-hold knobs of the monitor, -100 to 100 (0: the position the monitor is set
+    /// at, where every CPC picture is steady). H-hold detunes the line oscillator: the picture
+    /// shifts sideways as the sync pulls the oscillator, and tears when it cannot (near the ends of
+    /// the scale); V-hold detunes the frame oscillator: below about -60 it restarts the picture before
+    /// the VSYNC comes and the picture rolls.
+    pub fn with_holds(mut self, hhold: i8, vhold: i8) -> Self {
+        self.hhold = hhold.clamp(-100, 100);
+        self.vhold = vhold.clamp(-100, 100);
+        self.line_length =
+            (RASTER_LINE_LENGTH as i64 + i64::from(self.hhold) * MONITOR_HHOLD_TICKS / 100) as usize;
+        self.frame_lines =
+            (MONITOR_FREE_RUN_LINES as i64 + i64::from(self.vhold) * MONITOR_VHOLD_LINES / 100) as usize;
+        // the frame oscillator listens to a VSYNC late in its period: the later, the higher the knob is
+        // (a frame is 312 lines: from about +60 the VSYNC comes too early to be heard and the picture rolls)
+        self.vsync_window_lines = (MONITOR_VSYNC_WINDOW_START_LINES as i64
+            + i64::from(self.vhold.max(0)) * MONITOR_VHOLD_WINDOW_LINES / 100)
+            .clamp(20, 600) as usize;
+        self
+    }
+
+    /// The H-hold and V-hold knobs.
+    pub fn holds(&self) -> (i8, i8) {
+        (self.hhold, self.vhold)
     }
 
     /// A monitor whose black ink is drawn at `level` (0-255, the other
@@ -469,7 +517,7 @@ impl Monitor {
             && !sync
             && self.hsync_run == 0
             && self.vsync_level == 0
-            && self.x < RASTER_LINE_LENGTH
+            && self.x < self.line_length
             && self.hold == 0
         {
             self.vsync_seen = false;
@@ -480,7 +528,7 @@ impl Monitor {
         let hsync_pulse = self.hsync_run;
         if sync {
             if self.hsync_run == 0 {
-                self.hsync_listened = !self.locked || self.x >= MONITOR_HSYNC_WINDOW_START;
+                self.hsync_listened = !self.locked || self.x >= self.line_length - MONITOR_HSYNC_WINDOW_MARGIN;
             }
             self.hsync_run += 1;
         } else {
@@ -503,7 +551,7 @@ impl Monitor {
             // like the line oscillator, the frame oscillator only listens to a VSYNC that comes late
             // enough in its period: AMSpiriT shows the first of the two VSYNCs of Shaker DT (156
             // lines apart) as a black band in the middle of a picture that goes on
-            frame_start = !self.synchronised || self.line >= MONITOR_VSYNC_WINDOW_START_LINES;
+            frame_start = !self.synchronised || self.line >= self.vsync_window_lines;
         }
 
         // horizontal synchronisation: end of a pulse long enough, or the
@@ -513,8 +561,8 @@ impl Monitor {
         let was_locked_now = was_locked;
         let pulse_end = hsync_pulse > MONITOR_MIN_HSYNC_TICKS
             && !hsync
-            && (!self.locked || self.x >= MONITOR_HSYNC_WINDOW_START);
-        let free_run = self.x >= RASTER_LINE_LENGTH;
+            && (!self.locked || self.x >= self.line_length - MONITOR_HSYNC_WINDOW_MARGIN);
+        let free_run = self.x >= self.line_length;
         // a sync that comes after the oscillator went round only corrects its phase
         let late_pulse = hsync_pulse > MONITOR_MIN_HSYNC_TICKS
             && !hsync
@@ -577,7 +625,7 @@ impl Monitor {
             // however many line flybacks the sync pulses of the VSYNC made
             self.line = ((self.now - self.frame_t0 + MONITOR_ROW_PHASE_TICKS)
                 / RASTER_LINE_LENGTH as u64) as usize;
-            if self.line >= MONITOR_FREE_RUN_LINES {
+            if self.line >= self.frame_lines {
                 // no VSYNC: the frame oscillator rolls the picture
                 self.end_frame();
                 self.synchronised = true;
@@ -630,10 +678,10 @@ impl Monitor {
         let adj = std::mem::take(&mut self.sync_adj);
         // after a line the oscillator ran free (a line without a sync: R3=2 on CRTC 1), the sync
         // either comes just after it went round (late), or at the end of the next line as usual
-        let error = if self.ran_free && x_before < RASTER_LINE_LENGTH / 2 {
+        let error = if self.ran_free && x_before < self.line_length / 2 {
             x_before as i64
         } else {
-            x_before as i64 - RASTER_LINE_LENGTH as i64
+            x_before as i64 - self.line_length as i64
         };
         let error = error - adj;
         self.ran_free = false;
@@ -1049,6 +1097,115 @@ mod test {
         let shifts = shifts_by_width(&wave);
         assert!(shifts.iter().all(|&s| (0..=24).contains(&s)), "{shifts:?}");
         assert!(shifts.windows(2).all(|w| (w[0] - w[1]).abs() <= 12), "{shifts:?}");
+    }
+
+    /// A CRTC-like frame of 312 lines with a white bar at ticks 300..316 of every line and a white
+    /// band on lines 150..154 (the monitor's picture shows where the oscillators put them).
+    fn marked_frame(mon: &mut Monitor) {
+        for l in 0..312 {
+            let vsync = l < 16;
+            for t in 0..RASTER_LINE_LENGTH {
+                let hsync = (736..800).contains(&t);
+                let white = (300..316).contains(&t) || (150..154).contains(&l);
+                let rgb = if hsync || vsync {
+                    (0., 0., 0.)
+                } else if white {
+                    (100., 100., 100.)
+                } else {
+                    (0., 0., 100.)
+                };
+                mon.receive(rgb.into(), Sync { vsync, hsync });
+            }
+        }
+    }
+
+    /// Where the bar and the band are in the monitor's last picture: `(x, y)`.
+    fn marks(mon: &Monitor) -> (i32, i32) {
+        let image = mon.image();
+        let x = (0..MONITOR_ACTIVE_PIXELS as u32)
+            .find(|&x| image.get_pixel(x, 60).0[0] > 100)
+            .map_or(-1, |x| x as i32);
+        let y = (0..MONITOR_HEIGHT as u32)
+            .find(|&y| image.get_pixel(5, y).0[0] > 100)
+            .map_or(-1, |y| y as i32);
+        (x, y)
+    }
+
+    /// The x of the white bar on rows `rows` of the monitor's last picture.
+    fn bar_x(mon: &Monitor, rows: &[u32]) -> Vec<i32> {
+        let image = mon.image();
+        rows.iter()
+            .map(|&y| {
+                (0..MONITOR_ACTIVE_PIXELS as u32)
+                    .find(|&x| image.get_pixel(x, y).0[0] > 100)
+                    .map_or(-1, |x| x as i32)
+            })
+            .collect()
+    }
+
+    /// The monitor's last picture after `frames` frames with the knobs at (`h`, `v`): `(x, y)` marks.
+    fn marks_after(h: i8, v: i8, frames: usize) -> Vec<(i32, i32)> {
+        let mut mon = Monitor::default().with_holds(h, v);
+        (0..frames)
+            .map(|_| {
+                marked_frame(&mut mon);
+                marks(&mon)
+            })
+            .collect()
+    }
+
+    /// The knobs at 0 are the position the monitor is set at: nothing changes.
+    #[test]
+    fn the_holds_at_zero_change_nothing() {
+        let mut plain = Monitor::default();
+        let mut set = Monitor::default().with_holds(0, 0);
+        for _ in 0..3 {
+            marked_frame(&mut plain);
+            marked_frame(&mut set);
+        }
+        assert_eq!(plain.image(), set.image());
+        assert_eq!(set.holds(), (0, 0));
+    }
+
+    /// H-hold detunes the line oscillator: the sync pulls it, so the picture slides sideways, smoothly
+    /// and the same on every line, while the knob is within the pull's reach, and tears beyond.
+    #[test]
+    fn h_hold_slides_the_picture_then_tears_it() {
+        let x = |h: i8| marks_after(h, 0, 3)[2].0;
+        let slide: Vec<i32> = [-60, -40, -20, 0, 20, 40, 60].iter().map(|&h| x(h)).collect();
+        assert!(slide.windows(2).all(|w| w[0] > w[1]), "slides with the knob: {slide:?}");
+        assert!((x(0) - x(60)).abs() < 40 && (x(-60) - x(0)).abs() < 40, "{slide:?}");
+        for h in [100, -100] {
+            let mut mon = Monitor::default().with_holds(h, 0);
+            for _ in 0..3 {
+                marked_frame(&mut mon);
+            }
+            let rows = bar_x(&mon, &[30, 60, 90, 180, 210]);
+            assert!(rows.windows(2).any(|w| w[0] != w[1]), "tears at {h}: {rows:?}");
+        }
+        let mut mon = Monitor::default().with_holds(60, 0);
+        for _ in 0..3 {
+            marked_frame(&mut mon);
+        }
+        let rows = bar_x(&mon, &[30, 60, 90, 180, 210]);
+        assert!(rows.windows(2).all(|w| w[0] == w[1]), "steady at 60: {rows:?}");
+    }
+
+    /// V-hold detunes the frame oscillator: steady in a wide range around 0, a picture that rolls
+    /// when the oscillator restarts before the VSYNC comes (low) or the VSYNC comes before it listens
+    /// (high).
+    #[test]
+    fn v_hold_rolls_the_picture_at_both_ends() {
+        let steady = |v: i8| {
+            let y: Vec<i32> = marks_after(0, v, 6).iter().map(|m| m.1).collect();
+            y.windows(2).all(|w| w[0] == w[1])
+        };
+        for v in [-50, -20, 0, 20, 50] {
+            assert!(steady(v), "steady at {v}");
+        }
+        for v in [-100, -80, 80, 100] {
+            assert!(!steady(v), "rolls at {v}");
+        }
     }
 
     /// Shaker AT/F (R2 rewritten during the HSYNC): two extra pulses a line besides the line sync. AMSpiriT

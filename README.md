@@ -247,7 +247,10 @@ Ctrl+C stops a recording early; the file is still finished properly.
 
 `--csl script.csl` plays a CSL script headless: the machine, the discs, the keys typed and the
 waits it says, then the pictures it asks for with `screenshot` (or SSM codes). They are rendered as
-`--display`, `--curvature` and `--black-level` say, so a CRT's look is kept:
+`--display`, `--curvature` and `--black-level` say, so a CRT's look is kept (`--display gt64` or
+`gt65` is the green monitor, `mm12` the grey one; `--brightness` is `--black-level`, and `--hhold` and
+`--vhold`, -100 to 100, are the hold knobs of the monitor: 0 is steady, the picture slides, tears or
+rolls away from it):
 
 ```sh
 # one lossless WebP, DIR/demo.webp (a still for one screenshot, else an animation: --frame-ms each)
