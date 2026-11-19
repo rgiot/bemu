@@ -3,24 +3,28 @@
 //! the screens another emulator (CLAUDESTRAD) shows for a 6128 with CRTC 0, 1 and 2 (the 6128+
 //! for the Plus tests).
 //!
-//! There is no real-machine ground truth in the repository yet: the reference PNGs are what
-//! CLAUDESTRAD draws, not what a CPC draws. So a case does two things:
+//! The reference PNGs are what CLAUDESTRAD draws, not what a CPC draws: the real machines'
+//! pictures are the photos in `tests/fixtures/claudestrad/photos/<case>/` (AVIF, named after the
+//! machine when it is known: `crtc1_sans_m4_...`, `crtc2_m4_...`), to be read by a person. So a
+//! case does this:
 //!
-//! * it always checks that the disc boots and that the program ran (the screen is not the
-//!   firmware's blank BASIC screen any more) and that the run is deterministic where the
-//!   experiment isn't random;
-//! * it measures how many pixels differ from CLAUDESTRAD's screen, and writes the picture bemu
-//!   drew next to the reference (`target/claudestrad/<case>_<crtc>.png`), so differences can be
-//!   judged against the photos of real machines. A match below [`MIN_MATCH`] (or below the case's
-//!   own floor in [`KNOWN_DIFFERENCES`]) fails; one that is better than its floor is reported so
-//!   the floor can be raised.
+//! * it checks that the disc boots and that the program ran (the screen is not the firmware's
+//!   blank BASIC screen any more);
+//! * a screen of text is compared as text, read back from both pictures by `cpclib-ocr` (so the
+//!   framing and zoom of each emulator's picture do not matter), and must be identical;
+//! * any other screen is compared as pixels, over the best of a few small shifts. A match below
+//!   [`MIN_MATCH`] fails;
+//! * [`KNOWN_DIFFERENCES`] lists what bemu is known to draw otherwise (with the share of pixels
+//!   it reaches, for a pixel comparison): those are reported, not failed;
+//! * bemu's picture is written to `target/claudestrad/<case>_<machine>.png`, to put next to the
+//!   reference and the photos.
 //!
 //! Slow (minutes of emulated time over ~140 runs): they are ignored by default, run them with
 //! `cargo test --release --test claudestrad -- --ignored --nocapture`. Run one case with its name
 //! as a filter, e.g. `... --ignored intpos`.
 
-use amsrust::csl_runner::CslRunner;
 use amsrust::crtc::CrtcType;
+use amsrust::csl_runner::CslRunner;
 use amsrust::motherboard::{CpcModel, MotherboardBuilder};
 use image::RgbImage;
 use std::path::PathBuf;
@@ -138,7 +142,8 @@ const CASES: &[Case] = &[
 ];
 
 /// Cases (and machines) where bemu is known to differ from CLAUDESTRAD, with the share of agreeing
-/// pixels it reaches today. Keep it honest: a missing entry means "at least [`MIN_MATCH`]".
+/// pixels it reaches today (ignored for a screen of text, which is then only reported). Keep it
+/// honest: a missing entry means "identical text, or at least [`MIN_MATCH`] of the pixels".
 /// (Filled in from a first run, see the commit that added this file.)
 const KNOWN_DIFFERENCES: &[(&str, &str, f64)] = &[];
 
@@ -233,12 +238,20 @@ fn match_share(reference: &RgbImage, ours: &RgbImage) -> f64 {
                         continue;
                     }
                     total += 1;
-                    if (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum::<i32>() <= 60 {
+                    if (0..3)
+                        .map(|c| (a[c] as i32 - b[c] as i32).abs())
+                        .sum::<i32>()
+                        <= 60
+                    {
                         same += 1;
                     }
                 }
             }
-            best = best.max(if total == 0 { 1.0 } else { same as f64 / total as f64 });
+            best = best.max(if total == 0 {
+                1.0
+            } else {
+                same as f64 / total as f64
+            });
         }
     }
     best
@@ -270,12 +283,56 @@ fn check(case: &Case, which: Machine, failures: &mut Vec<String>) {
     let _ = std::fs::create_dir_all(&out);
     let _ = ours.save(out.join(format!("{}_{label}.png", case.name)));
 
-    let share = match_share(&reference, &ours);
-    println!("{:9} {:9} {:6.2}% of CLAUDESTRAD's pixels", case.name, label, share * 100.0);
     if blank_basic(&ours) && !blank_basic(&reference) {
-        failures.push(format!("{} on {label}: nothing ran (blank screen)", case.name));
+        failures.push(format!(
+            "{} on {label}: nothing ran (blank screen)",
+            case.name
+        ));
         return;
     }
+    let listed = KNOWN_DIFFERENCES
+        .iter()
+        .any(|(c, m, _)| *c == case.name && *m == label);
+
+    // A screen of text is compared as text (what the firmware printed, read back from both
+    // pictures with the CPC font), which does not depend on how each emulator frames or scales
+    // its picture; anything else (raster effects, colours) as pixels.
+    let (expected, got) = (read_text(&reference), read_text(&ours));
+    if expected.is_text(20) {
+        let (expected, got) = (expected.text(), got.text());
+        let rows = |t: &str| t.lines().count();
+        let agree = if case.random {
+            rows(&expected) == rows(&got)
+        } else {
+            expected == got
+        };
+        println!(
+            "{:9} {:9} text {}",
+            case.name,
+            label,
+            if agree {
+                "identical"
+            } else if listed {
+                "differs (known)"
+            } else {
+                "DIFFERS"
+            }
+        );
+        if !agree && !listed {
+            failures.push(format!(
+                "{} on {label}: the text differs from CLAUDESTRAD's\n--- CLAUDESTRAD\n{expected}\n--- bemu\n{got}",
+                case.name
+            ));
+        }
+        return;
+    }
+    let share = match_share(&reference, &ours);
+    println!(
+        "{:9} {:9} {:6.2}% of CLAUDESTRAD's pixels",
+        case.name,
+        label,
+        share * 100.0
+    );
     let wanted = floor(case.name, &label) - if case.random { 0.10 } else { 0.0 };
     if share + 1e-9 < wanted {
         failures.push(format!(
@@ -285,6 +342,19 @@ fn check(case: &Case, which: Machine, failures: &mut Vec<String>) {
             wanted * 100.0
         ));
     }
+}
+
+/// The text of a screen, read with the 6128's font.
+fn read_text(image: &RgbImage) -> cpclib_ocr::Screen {
+    let rom = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/roms/os6128.rom")).unwrap();
+    let ocr = cpclib_ocr::Ocr::new(cpclib_ocr::Font::from_lower_rom(&rom).unwrap());
+    let picture = cpclib_ocr::Picture::new(
+        image.width() as usize,
+        image.height() as usize,
+        image.as_raw().clone(),
+    )
+    .unwrap();
+    ocr.read(&picture)
 }
 
 fn run_case(name: &str) {
@@ -333,6 +403,27 @@ fn fixtures_are_all_wired() {
         cpclib_csl::parse_csl_with_rich_errors(&script(case), None)
             .unwrap_or_else(|_| panic!("{}: invalid CSL", case.name));
     }
+}
+
+/// The text of the references is readable (the OCR's check on real screens, fast).
+#[test]
+fn references_read_as_text() {
+    let image = image::open(format!("{FIXTURES}/refs/INTPOS_crtc1.png"))
+        .unwrap()
+        .to_rgb8();
+    let screen = read_text(&image);
+    assert!(screen.is_text(100), "{screen:?}");
+    let text = screen.text();
+    assert!(
+        text.starts_with("INTPOS (IM 1) - us depuis le HALT"),
+        "{text}"
+    );
+    assert!(text.contains("NOP            3282  3282"), "{text}");
+    // a graphics screen is not text
+    let image = image::open(format!("{FIXTURES}/refs/INKTEST_crtc1.png"))
+        .unwrap()
+        .to_rgb8();
+    assert!(!read_text(&image).is_text(20));
 }
 
 macro_rules! cases {
