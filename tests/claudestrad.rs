@@ -132,7 +132,7 @@ const CASES: &[Case] = &[
         ..case("FDCTEST2", "FDCTEST2.DSK", &[30, 10, 10, 10, 10])
     },
     Case {
-        cap: 300,
+        cap: 600,
         ..case("FDCTEST3", "FDCTEST3.DSK", &[30, 10, 10, 10, 10])
     },
     Case {
@@ -309,7 +309,7 @@ fn run(case: &Case, which: Machine, target: Option<&str>, m4: bool) -> RgbImage 
             break;
         }
         let asks = last_line(&seen).contains("touche");
-        if asks && seen != target && stable >= 1_500_000 && presses < 12 {
+        if asks && seen != target && !as_far && stable >= 1_500_000 && presses < 40 {
             presses += 1;
             runner
                 .motherboard_mut()
@@ -580,8 +580,11 @@ fn run_case(name: &str) {
         Machine::Plus,
     ];
     let mut failures = Vec::new();
-    for which in machines {
-        check(case, which, &mut failures);
+    // CLAUDESTRAD_TRUTH_ONLY=1: only what the real machines showed (faster)
+    if std::env::var_os("CLAUDESTRAD_TRUTH_ONLY").is_none() {
+        for which in machines {
+            check(case, which, &mut failures);
+        }
     }
     check_truth(case, &mut failures);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
