@@ -83,6 +83,9 @@ pub struct Core {
     pub(super) r6_border: bool,
     /// R6 was 0 during this frame's first line: the C4=R6 conflict of ACCC §18.3.2 (CRTC 0, 2).
     pub(super) r6_zero_seen: bool,
+    /// CRTC 0: R6 written with the value of C4 while R0=0 froze the counters: the BORDER lasts until the
+    /// next frame, whatever R6 is written next (Shaker BU/E, real CPC)
+    pub(super) r6_frozen_latch: bool,
 
     /// Interlace (ACCC §19): the parity of the frame (true = odd), ParityR6 that anticipates the
     /// next frame's (CRTC 0, 2), the parity of the C9 lines in interlace video mode, and whether
@@ -154,6 +157,7 @@ impl Default for Core {
             vertical_border: false,
             r6_border: false,
             r6_zero_seen: false,
+            r6_frozen_latch: false,
             parity_frame: false,
             parity_r6: false,
             parity_c9: false,
@@ -251,9 +255,23 @@ impl Core {
         }
     }
 
+    /// CRTC 0 with R0=0 (C0 and the counters frozen): R6 written with the value of C4 starts the BORDER
+    /// for good, even on the frame's first line, where R6=C4=0 otherwise only comes and goes (§18.3):
+    /// the real CPC shows a border from there to the frame's end (Shaker BU/E photo).
+    pub(super) fn latch_r6_in_frozen_line(&mut self) {
+        if self.vcc == self.regs[6] {
+            self.r6_border = true;
+            self.r6_frozen_latch = true;
+            self.set_pin(CrtcPin::DE, false);
+        }
+    }
+
     /// ACCC §18.2.2/§18.3.2 (CRTC 0 and 2): C4=R6 latches the BORDER until the next frame; with
     /// C4=R6=C9=0 it comes and goes at each character and only becomes final once C0=R1.
     pub(super) fn latched_r6_border(&mut self) -> bool {
+        if self.r6_frozen_latch {
+            return true;
+        }
         let first_line = self.vcc == 0 && self.vlc == 0;
         if self.hcc == 0 && first_line {
             self.r6_border = false;
@@ -335,6 +353,7 @@ impl Core {
         self.border_history = [false; 3];
         self.r6_border = false;
         self.r6_zero_seen = false;
+        self.r6_frozen_latch = false;
         self.parity_frame = false;
         self.parity_r6 = false;
         self.parity_c9 = false;

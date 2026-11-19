@@ -69,6 +69,47 @@ Gaps in the far second sync, and the line sync's width (`gen_pull3_probe.py` wit
   Onescreen Colonies #1 narrows the line sync for 2 lines: the few lines around it still differ from
   AMSpiriT (up to 5 pixels), by design.
 
+Real-CPC photos (the Shaker site's, `validation/tools/real_compare.py`) against bemu and AMSpiriT, modules A-D on CRTC 0:
+correlation after registration 0.675 for bemu, 0.674 for AMSpiriT: the two are the same distance from the real CPC
+on almost every screen (it cannot see a few pixels of shift). Where AMSpiriT is clearly closer: AT/F (0.71 against
+0.75), AY/C (0.82 against 0.86), AO/H, CT/D. AT/F and AY/C show it: in the band of lines where R2 or R3 is
+rewritten during the HSYNC, the real CPC and AMSpiriT draw slanted stripes (each line a little further), bemu a
+checkerboard (the picture alternates between two positions line by line): the same effect as gen_pull4_probe.py with
+R3 alternating 6/5 (AMSpiriT a steady 4 px, the mean; bemu 2, 4, 2, 4...). The cause: the line oscillator's phase
+detector follows the END of the pulse and subtracts the instant half-width (`sync_adj`), so an alternating width
+leaves a +/-8 tick error that the 3/8 PLL passes on. Tried and dropped: a low-pass on `sync_adj` alone (the ripple
+stays: the pulse end itself alternates), a start-of-pulse detector with the picture offset taken from the filtered
+width (steady plateaus drift; needs the offset and the PLL state separated, not a patch). Left for the real-CPC
+ground truth.
+
+Other CRTC types against the real photos (modules A, C, D played on CRTC 1, 2 and 4 with the suite's own SHAKER-x-n.CSL scripts,
+`ams_shaker_refs.bundle(n)` and `run_shaker_suite`, ~6 min a module): mean correlation 0.684 (CRTC 1), 0.685 (CRTC 2),
+0.714 (CRTC 4), against 0.705 on CRTC 0: nothing is broadly wrong. Outliers to look at (score on that CRTC against
+CRTC 0): AT/F on CRTC 4 0.26 (0.71; the real CPC shows large curved shifts, bemu the CRTC 0 picture: the monitor
+reacts differently to the R2/R3 update during the HSYNC of the CRTC 3/4 pulse), AP/F on CRTC 4 0.63 (1.02), AY/A on
+CRTC 1 0.63 (0.86), AP/I and AP/J on CRTC 1 and 2 (0.44-0.59 against 0.83-0.88: the picture looks the same, the
+registration of the photo may be at fault: check by eye first). A9/C on CRTC 1: the real photo's black is a dark grey
+(the tube's black level, not a bug). DT/J2 is a rolling picture, any score is noise. AO/H on CRTC 0 looked worse than
+AMSpiriT (0.29 against 0.39): same geometry, AMSpiriT's reference is a soft lossy WebP; not a bug.
+
+AT/F on CRTC 4 (`examples/probe_crtc_writes.rs`, `examples/probe_hsync.rs`; the test, run alone: boot SHAKE27A, key T, five spaces):
+per line the program writes R2=11 at C0=3, R2=22 at C0=12 (during the HSYNC R2=11 opened) and R2=46 at C0=34, R3=10. The Gate
+Array sends the monitor three 4 us C-HSYNC pulses a line on CRTC 0 and CRTC 4 alike, at the same phases (148, 532 and 996
+ticks): bemu gives CRTC 4 the pulses of CRTC 0 here. The real CPC photo on CRTC 4 shows large curved shifts instead of
+CRTC 0's mild stripes, so either the type 3/4 HSYNC (the C3l counter ends it; a start compare after an R2 write)
+makes other pulses, or the monitor reacts to them differently. `asic.rs` has its own `hsync_end` rule: the next step
+is the Compendium's section on R2 written during the HSYNC for CRTC 3/4 and a real-CPC capture of the pulses.
+
+Lines with several extra pulses (Shaker AT/F on CRTC 0, `probe_hsync`: R2 rewritten during the HSYNC makes three 4 us
+pulses a line, at 11 and 35 usec after the previous line sync and the line sync): AMSpiriT pulls the picture right by
+about 10 px over the whole band (ramp in 3, 9, 10 px over three lines), and after the pulses stop it relaxes back over
+~8 lines (11, 7, 4, 3, 2, 1, 1: the 3/8 PLL): the slanted stripes of the real photo. amsrust ignored any line with
+more than one extra pulse. Now the last pulse before the line sync decides, as that pulse alone: 13 px
+(`MONITOR_AHEAD_PULL` at 24 usec; AMSpiriT 10: the pulse before it may weigh a little), ramps within 1-3 px. Shaker: AT/F
+5.7 -> 2.7 %, D4/A and D4/B 11.8 -> 6.4 %, no other screen moves. D4 (R0=7: eight pulses per 1024 ticks) is still
+20 px off in the band where the picture shifts left (-31 against AMSpiriT's -20) and AMSpiriT overshoots by +15 when the
+pulses stop; the monitor's lock on a train of pulses is not understood yet.
+
 Ink writes (`gen_inkwrite_probe.py`): pen 1 set dark at the start of each line, light in the middle by
 OUT (C),r, OUT (n),A or OUTI (all writing in the same microsecond), mode 0, 1 or 2. AMSpiriT Lite 1.16: the
 three instructions reach the same pixel; the light colour starts 8 ticks into the character in modes 0 and

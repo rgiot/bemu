@@ -666,7 +666,11 @@ impl Monitor {
     fn discriminate(&mut self, start: u64) {
         let mut target = 0i32;
         let mut ahead_target = None;
-        if let (Some(previous), [(other, width)]) = (self.last_sync_start, self.pulses.as_slice()) {
+        // with several other pulses in the line (Shaker AT/F: R2 rewritten during the HSYNC makes three
+        // pulses a line) AMSpiriT, and the real CPC's photo, go by the last one before the line sync:
+        // the picture is pulled right by about 10 pixels, as by that pulse alone
+        let last = self.pulses.last().copied();
+        if let (Some(previous), Some((other, width))) = (self.last_sync_start, last.as_ref()) {
             let after = (*other - previous) as i64; // late for the previous sync
             // (a 1 usec pulse pulls 3: Shaker D3 D1-D4, once the line sync of 1 usec is placed right)
             let late_pull = ((*width - MONITOR_PULL_DEAD_WIDTH).max(0) * 5 + 6) / 12;
@@ -1045,6 +1049,34 @@ mod test {
         let shifts = shifts_by_width(&wave);
         assert!(shifts.iter().all(|&s| (0..=24).contains(&s)), "{shifts:?}");
         assert!(shifts.windows(2).all(|w| (w[0] - w[1]).abs() <= 12), "{shifts:?}");
+    }
+
+    /// Shaker AT/F (R2 rewritten during the HSYNC): two extra pulses a line besides the line sync. AMSpiriT
+    /// and the real CPC pull the picture right by the last of them, as that pulse alone (24 usec ahead:
+    /// 13 pixels, ramping in and out over a few lines); the monitor used to ignore lines with more than one.
+    #[test]
+    fn several_extra_pulses_pull_the_picture_by_the_last_one() {
+        let mut mon = Monitor::default();
+        let mut shift = 0;
+        for l in 0..60 {
+            for t in 0..RASTER_LINE_LENGTH {
+                let main = (736..800).contains(&t);
+                // a pulse 11 usec after the previous line sync, and one 24 usec before this one
+                let other = l >= 10 && l < 40 && ((176..240).contains(&t) || (352..416).contains(&t));
+                mon.receive(
+                    (100., 0., 0.).into(),
+                    Sync {
+                        vsync: false,
+                        hsync: main || other,
+                    },
+                );
+            }
+            if l == 35 {
+                shift = mon.shift;
+            }
+        }
+        assert!((12..=14).contains(&shift), "the plateau of the pull: {shift}");
+        assert_eq!(mon.shift, 0, "and the picture is back after the pulses");
     }
 
     /// A pulse the locked line oscillator does not listen to does not blank the beam
