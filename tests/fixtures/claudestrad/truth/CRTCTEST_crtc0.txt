@@ -1,0 +1,3 @@
+VSYNC avec R3=&28 : 13 x 10 us (~102 : types 1, 2 ; ~13 : 0, 3, 4)
+TIME pendant R3=0 : 1 (0 : types 0, 1 ; >20 : types 2, 3, 4)
+CRTC de type 0 (Hitachi HD6845S ou UMC UM6845)
