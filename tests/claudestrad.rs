@@ -272,12 +272,6 @@ fn run(case: &Case, which: Machine, target: Option<&str>, m4: bool) -> RgbImage 
     }
     // (an M4 stays plugged only if the machine is not rebuilt: no `reset` then)
     let reset = if m4 { "" } else { "reset\n" };
-    // the M4's ROM answers `RUN"` from its SD card: `|A` goes back to the floppy drive first
-    let select = if m4 {
-        "key_output '|A\\(RET)'\nwait 1000000\n"
-    } else {
-        ""
-    };
     let start = format!(
         "csl_version 1.1\n{reset}wait 6000000\ndisk_insert '{FIXTURES}/disks/{}'\n\
          key_delay 70000 70000 400000\nkey_output 'RUN\"{}\"\\(RET)'\nwait 4000000000\n",
