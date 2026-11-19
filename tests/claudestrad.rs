@@ -264,6 +264,20 @@ fn floor(case: &str, machine: &str) -> f64 {
         .map_or(MIN_MATCH, |(_, _, share)| *share)
 }
 
+/// The colour of the picture's corner: the border.
+fn corner(image: &RgbImage) -> [u8; 3] {
+    image.get_pixel(2, 2).0
+}
+
+/// The most frequent colour: the paper.
+fn dominant(image: &RgbImage) -> [u8; 3] {
+    let mut counts = std::collections::HashMap::new();
+    for pixel in image.pixels() {
+        *counts.entry(pixel.0).or_insert(0usize) += 1;
+    }
+    counts.into_iter().max_by_key(|(c, n)| (*n, *c)).unwrap().0
+}
+
 fn blank_basic(image: &RgbImage) -> bool {
     // a screen with at most a few text lines: almost all pixels are the paper
     let background = *image.get_pixel(2, image.height() - 2);
@@ -294,9 +308,9 @@ fn check(case: &Case, which: Machine, failures: &mut Vec<String>) {
         .iter()
         .any(|(c, m, _)| *c == case.name && *m == label);
 
-    // A screen of text is compared as text (what the firmware printed, read back from both
-    // pictures with the CPC font), which does not depend on how each emulator frames or scales
-    // its picture; anything else (raster effects, colours) as pixels.
+    // What the screen says (text, read back from both pictures with the CPC font: it does not
+    // depend on how each emulator frames or scales its picture) is compared apart from how it is
+    // drawn (the border and paper colours, then every pixel: raster effects, colours, shapes).
     let (expected, got) = (read_text(&reference), read_text(&ours));
     if expected.is_text(20) {
         let (expected, got) = (expected.text(), got.text());
@@ -324,7 +338,19 @@ fn check(case: &Case, which: Machine, failures: &mut Vec<String>) {
                 case.name
             ));
         }
-        return;
+    }
+    for (what, a, b) in [
+        ("border", corner(&reference), corner(&ours)),
+        ("paper", dominant(&reference), dominant(&ours)),
+    ] {
+        let distance: i32 = (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum();
+        if distance > 60 && !listed {
+            println!("{:9} {:9} {what} colour {a:?} vs {b:?}", case.name, label);
+            failures.push(format!(
+                "{} on {label}: the {what} colour is {b:?}, CLAUDESTRAD's is {a:?}",
+                case.name
+            ));
+        }
     }
     let share = match_share(&reference, &ours);
     println!(
