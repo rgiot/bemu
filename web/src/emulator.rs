@@ -29,6 +29,14 @@ const MAX_FRAME_T_STATES: usize = 2 * FRAME_T_STATES;
 type Callback = Rc<RefCell<Option<Function>>>;
 
 /// The configured machine, its drives 3.5" ones: they read both sides of any disc image.
+/// The card `T` of `old`'s expansion port, if there is one, onto `new`'s.
+#[cfg(any(feature = "dandanator", feature = "nova", feature = "albireo", feature = "m4"))]
+fn carry_card<T: amsrust::expansion_port::ExpansionDevice>(old: &mut Motherboard, new: &mut Motherboard) {
+    if let Some(card) = old.unplug_expansion::<T>() {
+        new.plug_expansion(card);
+    }
+}
+
 fn build_machine(config: &Config) -> Result<Motherboard, JsError> {
     let mut motherboard = config.machine().map_err(|e| JsError::new(&e))?.build();
     for drive in [FdcDrive::A, FdcDrive::B] {
@@ -50,6 +58,13 @@ pub struct Emulator {
     frame: Option<RgbImage>,
     /// The discs the page inserted, for a new machine.
     discs: [Option<DiscImage>; 2],
+    /// The M4's SD card, in memory: the page's files, whether the board is plugged or not.
+    #[cfg(feature = "m4")]
+    m4_card: amsrust::m4::MemoryCard,
+    /// The CPC+ cartridge the page inserted, for a new machine (kept while the model is a CPC+).
+    cartridge: Option<amsrust::asic::Cartridge>,
+    /// The upper ROMs the page inserted (slot, image), for a new machine.
+    roms: Vec<(u8, Vec<u8>)>,
     /// A CSL script playing, with its own machine.
     csl: Option<CslRunner>,
     /// What the script playing, or the last one, played (the CSL log window).
@@ -111,6 +126,10 @@ impl Emulator {
             motherboard,
             frame: None,
             discs: [None, None],
+            #[cfg(feature = "m4")]
+            m4_card: amsrust::m4::MemoryCard::new(),
+            cartridge: None,
+            roms: Vec::new(),
             csl: None,
             csl_log: None,
             files: MemFiles::default(),
@@ -275,8 +294,10 @@ impl Emulator {
         if !self.machine().model().is_plus() {
             return Err(JsError::new("a cartridge goes in a CPC+ (model 464plus, 6128plus or gx4000)"));
         }
+        // checked before anything changes: a bad file leaves the machine as it was
         let cartridge = amsrust::asic::Cartridge::from_bytes(bytes, "cartridge", entry.as_deref())
             .map_err(|e| JsError::new(&e))?;
+        self.cartridge = Some(cartridge.clone());
         let machine = self.machine();
         machine.insert_cartridge(Some(cartridge));
         machine.restart();
@@ -285,9 +306,243 @@ impl Emulator {
 
     /// The cartridge out of the machine, which restarts (on the system cartridge's BASIC).
     pub fn eject_cartridge(&mut self) {
+        self.cartridge = None;
         let machine = self.machine();
         machine.insert_cartridge(None);
         machine.restart();
+    }
+
+    /// An upper ROM (a 16 KB image: Protext, Maxam, UniDOS...) in `slot`, 0 to 255. The machine is not
+    /// reset: the firmware finds the ROM at the next reset. It stays in through `reset()` and `configure()`.
+    pub fn insert_rom(&mut self, slot: u8, bytes: &[u8]) -> Result<(), JsError> {
+        self.machine().set_upper_rom(slot, Some(bytes)).map_err(|e| JsError::new(&e))?;
+        self.roms.retain(|(taken, _)| *taken != slot);
+        self.roms.push((slot, bytes.to_vec()));
+        Ok(())
+    }
+
+    /// Empty the upper ROM `slot`.
+    pub fn remove_rom(&mut self, slot: u8) -> Result<(), JsError> {
+        self.machine().set_upper_rom(slot, None).map_err(|e| JsError::new(&e))?;
+        self.roms.retain(|(taken, _)| *taken != slot);
+        Ok(())
+    }
+
+    /// A Dandanator Mini (a 512 KB romset, uploaded: what the CPC programs stays in memory, see
+    /// `dandanator_flash`) on the expansion port, in place of the CPC's ROMs: the machine restarts to boot it.
+    pub fn insert_dandanator(&mut self, romset: &[u8]) -> Result<(), JsError> {
+        #[cfg(feature = "dandanator")]
+        {
+            use amsrust::dandanator::Dandanator;
+            let machine = self.machine();
+            machine.unplug_expansion::<Dandanator>();
+            machine.plug_expansion(Box::new(Dandanator::new(romset)));
+            machine.restart();
+            Ok(())
+        }
+        #[cfg(not(feature = "dandanator"))]
+        {
+            let _ = romset;
+            Err(JsError::new("this build has no Dandanator"))
+        }
+    }
+
+    /// The Dandanator unplugged; the machine restarts.
+    pub fn remove_dandanator(&mut self) {
+        #[cfg(feature = "dandanator")]
+        {
+            let machine = self.machine();
+            machine.unplug_expansion::<amsrust::dandanator::Dandanator>();
+            machine.restart();
+        }
+    }
+
+    /// The Dandanator's flash (512 KB), with what the CPC programmed in it; none without one.
+    pub fn dandanator_flash(&self) -> Option<Vec<u8>> {
+        #[cfg(feature = "dandanator")]
+        {
+            let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+            machine.expansion_port()?.device::<amsrust::dandanator::Dandanator>().map(|card| card.flash().to_vec())
+        }
+        #[cfg(not(feature = "dandanator"))]
+        None
+    }
+
+    /// A Nova (an ethernet card with 128 KB of NVRAM, kept in memory) on the expansion port.
+    pub fn plug_nova(&mut self) -> Result<(), JsError> {
+        #[cfg(feature = "nova")]
+        {
+            use amsrust::nova::Nova;
+            let card = Nova::new(None).map_err(|e| JsError::new(&e))?;
+            let machine = self.machine();
+            machine.unplug_expansion::<Nova>();
+            machine.plug_expansion(Box::new(card));
+            Ok(())
+        }
+        #[cfg(not(feature = "nova"))]
+        Err(JsError::new("this build has no Nova"))
+    }
+
+    /// The Nova unplugged.
+    pub fn unplug_nova(&mut self) {
+        #[cfg(feature = "nova")]
+        self.machine().unplug_expansion::<amsrust::nova::Nova>();
+    }
+
+    /// An Albireo (a CH376 board) on the expansion port, its USB key the FAT image `image`: what the CPC
+    /// writes stays in memory.
+    pub fn insert_albireo(&mut self, image: Vec<u8>) -> Result<(), JsError> {
+        #[cfg(feature = "albireo")]
+        {
+            use amsrust::ch376::Albireo;
+            let machine = self.machine();
+            machine.unplug_expansion::<Albireo>();
+            machine.plug_expansion(Box::new(Albireo::with_image(image)));
+            Ok(())
+        }
+        #[cfg(not(feature = "albireo"))]
+        {
+            let _ = image;
+            Err(JsError::new("this build has no Albireo"))
+        }
+    }
+
+    /// The Albireo unplugged.
+    pub fn remove_albireo(&mut self) {
+        #[cfg(feature = "albireo")]
+        self.machine().unplug_expansion::<amsrust::ch376::Albireo>();
+    }
+
+    /// An M4 board (Duke's SD/WiFi board; its ROM v2.0.8 in upper ROM slot 6) on the expansion port, its SD
+    /// card the files the page keeps in memory (`m4_put_file`...): the CPC reads them with `|DIR`, `|CD`,
+    /// `LOAD`, `RUN"` and the M4 tools, and what it saves is there for the page to take. The machine
+    /// restarts, so that the firmware finds the ROM. The WiFi, HTTP and the board's web page are not
+    /// emulated.
+    pub fn plug_m4(&mut self) -> Result<(), JsError> {
+        #[cfg(feature = "m4")]
+        {
+            use amsrust::m4::M4Board;
+            let card = M4Board::with_bundled_rom_in_memory(self.m4_card.clone()).map_err(|e| JsError::new(&e))?;
+            let machine = self.machine();
+            machine.unplug_expansion::<M4Board>();
+            machine.plug_expansion(Box::new(card));
+            machine.restart();
+            Ok(())
+        }
+        #[cfg(not(feature = "m4"))]
+        Err(JsError::new("this build has no M4"))
+    }
+
+    /// The M4 unplugged; the machine restarts. Its files stay for the next `plug_m4`.
+    pub fn unplug_m4(&mut self) {
+        #[cfg(feature = "m4")]
+        {
+            let machine = self.machine();
+            machine.unplug_expansion::<amsrust::m4::M4Board>();
+            machine.restart();
+        }
+    }
+
+    /// `path` ("games/demo.bin") of the M4's card written with `bytes`, its folders made.
+    pub fn m4_put_file(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), JsError> {
+        #[cfg(feature = "m4")]
+        return self.m4_card.write_file(path, bytes).map_err(|e| JsError::new(&e));
+        #[cfg(not(feature = "m4"))]
+        {
+            let _ = (path, bytes);
+            Err(JsError::new("this build has no M4"))
+        }
+    }
+
+    /// The file `path` of the M4's card; none if there is none.
+    pub fn m4_get_file(&self, path: &str) -> Option<Vec<u8>> {
+        #[cfg(feature = "m4")]
+        return self.m4_card.read_file(path);
+        #[cfg(not(feature = "m4"))]
+        {
+            let _ = path;
+            None
+        }
+    }
+
+    /// The folder `path` of the M4's card: `[{ name, folder, size }]`, folders first; none if it is not a folder.
+    pub fn m4_list(&self, path: &str) -> Option<Array> {
+        #[cfg(feature = "m4")]
+        return self.m4_card.list(path).map(|entries| {
+            entries
+                .into_iter()
+                .map(|(name, folder, size)| {
+                    let entry = Object::new();
+                    let _ = Reflect::set(&entry, &"name".into(), &name.into());
+                    let _ = Reflect::set(&entry, &"folder".into(), &folder.into());
+                    let _ = Reflect::set(&entry, &"size".into(), &(size as f64).into());
+                    JsValue::from(entry)
+                })
+                .collect()
+        });
+        #[cfg(not(feature = "m4"))]
+        {
+            let _ = path;
+            None
+        }
+    }
+
+    /// A file, or a folder and what is in it, taken from the M4's card; false if there was none.
+    pub fn m4_remove(&mut self, path: &str) -> bool {
+        #[cfg(feature = "m4")]
+        return self.m4_card.remove(path);
+        #[cfg(not(feature = "m4"))]
+        {
+            let _ = path;
+            false
+        }
+    }
+
+    /// A folder (and the ones above it) made on the M4's card.
+    pub fn m4_make_dir(&mut self, path: &str) -> Result<(), JsError> {
+        #[cfg(feature = "m4")]
+        return self.m4_card.make_dir(path).map_err(|e| JsError::new(&e));
+        #[cfg(not(feature = "m4"))]
+        {
+            let _ = path;
+            Err(JsError::new("this build has no M4"))
+        }
+    }
+
+    /// Record what the CPC writes to the cassette port (`SAVE` on the CPC) until `stop_tape_recording`.
+    pub fn start_tape_recording(&mut self) {
+        self.machine().start_tape_recording();
+    }
+
+    /// The recording as a CDT file; none when nothing was being recorded.
+    pub fn stop_tape_recording(&mut self) -> Option<Vec<u8>> {
+        self.machine().stop_tape_recording()
+    }
+
+    /// The seconds recorded so far; none when not recording.
+    pub fn tape_recording_seconds(&self) -> Option<f64> {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        machine.tape_recorder().map(|recorder| recorder.seconds())
+    }
+
+    /// What a DMP2000 printer (`dmp2000: true`) printed, as files named after `prefix`:
+    /// `[{ name, data }]` with `prefix.txt` (the text), `prefix.prn` (the bytes the CPC sent) and
+    /// `prefix_001.png`... (the sheets with ink). None without a printer.
+    pub fn printout(&self, prefix: &str) -> Option<Array> {
+        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
+        let printer = machine.printer_port()?.device_as::<amsrust::dmp2000::Dmp2000>()?;
+        Some(
+            printer
+                .files(prefix)
+                .into_iter()
+                .map(|(name, data)| {
+                    let file = Object::new();
+                    let _ = Reflect::set(&file, &"name".into(), &name.into());
+                    let _ = Reflect::set(&file, &"data".into(), &Uint8Array::from(data.as_slice()));
+                    JsValue::from(file)
+                })
+                .collect(),
+        )
     }
 
     /// Load an SNA snapshot in the machine.
@@ -686,7 +941,7 @@ impl Emulator {
         }
     }
 
-    /// `motherboard` replaces the machine: the discs go in, the sound goes on.
+    /// `motherboard` replaces the machine: the discs, the cartridge and the ROMs go in, the sound goes on.
     fn replace_machine(&mut self, mut motherboard: Motherboard) {
         motherboard.psg_mut().take_audio_output_from(self.motherboard.psg_mut());
         if let (Some(rate), None) = (self.audio_rate, motherboard.psg().audio_config()) {
@@ -694,6 +949,26 @@ impl Emulator {
         }
         for (unit, disc) in self.discs.iter().enumerate() {
             motherboard.fdc_mut().insert_image(fdc_drive(unit), disc.clone());
+        }
+        // the cards on the expansion port stay plugged, with what they hold (the Nova's NVRAM, the
+        // Albireo's key, the Dandanator's flash)
+        #[cfg(feature = "dandanator")]
+        carry_card::<amsrust::dandanator::Dandanator>(&mut self.motherboard, &mut motherboard);
+        #[cfg(feature = "nova")]
+        carry_card::<amsrust::nova::Nova>(&mut self.motherboard, &mut motherboard);
+        #[cfg(feature = "albireo")]
+        carry_card::<amsrust::ch376::Albireo>(&mut self.motherboard, &mut motherboard);
+        #[cfg(feature = "m4")]
+        carry_card::<amsrust::m4::M4Board>(&mut self.motherboard, &mut motherboard);
+        // the cartridge and the upper ROMs stay in (a CPC has no cartridge port: the cartridge waits)
+        if motherboard.model().is_plus() {
+            if let Some(cartridge) = &self.cartridge {
+                motherboard.insert_cartridge(Some(cartridge.clone()));
+            }
+        }
+        for (slot, rom) in &self.roms {
+            // a slot a model refuses (the disc interface's) is not fatal for the machine
+            let _ = motherboard.set_upper_rom(*slot, Some(rom));
         }
         // the deck keeps its tape, where it is
         motherboard.take_cassette_and_watches_from(&mut self.motherboard);

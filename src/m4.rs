@@ -1,4 +1,5 @@
-//! The M4 board (Duke's WiFi/SD expansion), on the expansion port, its SD card a host folder.
+//! The M4 board (Duke's WiFi/SD expansion), on the expansion port, its SD card a host folder, or
+//! files in memory (a web page's: [`MemoryCard`]).
 //!
 //! The board's ROM (Duke's open source M4ROM, https://github.com/M4Duke/m4rom, v2.0.8 as
 //! M4FIRM.BIN carries it, in `roms/m4rom.rom`) is served in upper ROM slot 6 through ROMDIS
@@ -10,13 +11,15 @@
 //! their formats are those M4ROM.s (v2.0.6) sends and reads.
 //!
 //! What the board does on its own (WiFi, HTTP, the ROM manager, disc images mounted from its
-//! web page) is not emulated: those commands answer "not supported".
+//! web page) is not emulated: those commands answer "not supported". (The WiFi is the host's
+//! network where there is one: not in a web page.)
 
 use std::any::Any;
 use std::collections::BTreeMap;
-use std::fs::{File, OpenOptions};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::fs::File;
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use cpclib_disc::amsdos::{AmsdosCatalog, AmsdosManagerNonMut};
 use cpclib_disc::edsk::{ExtendedDsk, Head};
@@ -79,9 +82,419 @@ const FR_EXIST: u8 = 8;
 /// The end of a file, for C_READ2.
 const EOF_STATUS: u8 = 20;
 
+/// How a file is opened, as `std::fs::OpenOptions` says it (reading is always allowed).
+#[derive(Clone, Copy, Default)]
+struct OpenMode {
+    write: bool,
+    create: bool,
+    truncate: bool,
+    create_new: bool,
+    append: bool,
+}
+
+/// What a file or a directory of the card is.
+struct Meta {
+    is_dir: bool,
+    len: u64,
+    read_only: bool,
+}
+
+/// A node of a [`MemoryCard`].
+enum Node {
+    Dir,
+    File(Arc<Mutex<Vec<u8>>>),
+}
+
+fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The parts of a path of the card (its root and `.` left out).
+fn parts_of(path: &Path) -> Vec<String> {
+    path.components()
+        .filter_map(|part| match part {
+            std::path::Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn not_found() -> io::Error {
+    io::Error::from(io::ErrorKind::NotFound)
+}
+
+/// An SD card kept in memory: files and folders by their names, as a web page gives them. It is
+/// a handle: a clone is the same card, so the page keeps one to put files in and take them out
+/// while the board has the other. Names are matched as given (the board looks them up ignoring
+/// case, as FAT does; the page's calls do not).
+#[derive(Clone, Default)]
+pub struct MemoryCard(Arc<Mutex<BTreeMap<Vec<String>, Node>>>);
+
+impl MemoryCard {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn is_dir_at(nodes: &BTreeMap<Vec<String>, Node>, key: &[String]) -> bool {
+        key.is_empty() || matches!(nodes.get(key), Some(Node::Dir))
+    }
+
+    fn meta(&self, key: &[String]) -> Option<Meta> {
+        let nodes = locked(&self.0);
+        match nodes.get(key) {
+            Some(Node::File(data)) => Some(Meta {
+                is_dir: false,
+                len: locked(data).len() as u64,
+                read_only: false,
+            }),
+            Some(Node::Dir) => Some(Meta { is_dir: true, len: 0, read_only: false }),
+            None if key.is_empty() => Some(Meta { is_dir: true, len: 0, read_only: false }),
+            None => None,
+        }
+    }
+
+    /// The names in directory `dir`.
+    fn names(&self, dir: &[String]) -> io::Result<Vec<String>> {
+        let nodes = locked(&self.0);
+        if !Self::is_dir_at(&nodes, dir) {
+            return Err(not_found());
+        }
+        Ok(nodes
+            .keys()
+            .filter(|key| key.len() == dir.len() + 1 && key.starts_with(dir))
+            .map(|key| key[dir.len()].clone())
+            .collect())
+    }
+
+    /// The directories above `key`, made.
+    fn make_parents(nodes: &mut BTreeMap<Vec<String>, Node>, key: &[String]) {
+        for depth in 1..key.len() {
+            nodes.entry(key[..depth].to_vec()).or_insert(Node::Dir);
+        }
+    }
+
+    fn open(&self, key: &[String], mode: OpenMode) -> io::Result<MemFile> {
+        let mut nodes = locked(&self.0);
+        let writable = mode.write || mode.append;
+        match nodes.get(key) {
+            Some(Node::File(data)) => {
+                if mode.create_new {
+                    return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+                }
+                if mode.truncate && writable {
+                    locked(data).clear();
+                }
+                Ok(MemFile { data: data.clone(), position: 0, writable, append: mode.append })
+            }
+            Some(Node::Dir) => Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+            None => {
+                let parent = &key[..key.len().saturating_sub(1)];
+                if key.is_empty() || !Self::is_dir_at(&nodes, parent) {
+                    return Err(not_found());
+                }
+                if !((mode.create || mode.create_new) && writable) {
+                    return Err(not_found());
+                }
+                let data = Arc::new(Mutex::new(Vec::new()));
+                nodes.insert(key.to_vec(), Node::File(data.clone()));
+                Ok(MemFile { data, position: 0, writable, append: mode.append })
+            }
+        }
+    }
+
+    fn remove_file(&self, key: &[String]) -> io::Result<()> {
+        let mut nodes = locked(&self.0);
+        match nodes.get(key) {
+            Some(Node::File(_)) => {
+                nodes.remove(key);
+                Ok(())
+            }
+            Some(Node::Dir) => Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+            None => Err(not_found()),
+        }
+    }
+
+    fn create_dir(&self, key: &[String]) -> io::Result<()> {
+        let mut nodes = locked(&self.0);
+        if key.is_empty() || nodes.contains_key(key) {
+            return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+        }
+        if !Self::is_dir_at(&nodes, &key[..key.len() - 1]) {
+            return Err(not_found());
+        }
+        nodes.insert(key.to_vec(), Node::Dir);
+        Ok(())
+    }
+
+    /// `from` (and what is below it) under the name `to`.
+    fn rename(&self, from: &[String], to: &[String]) -> io::Result<()> {
+        let mut nodes = locked(&self.0);
+        if !nodes.contains_key(from) {
+            return Err(not_found());
+        }
+        if nodes.contains_key(to) {
+            return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+        }
+        if to.is_empty() || !Self::is_dir_at(&nodes, &to[..to.len() - 1]) || to.starts_with(from) {
+            return Err(not_found());
+        }
+        let moved: Vec<Vec<String>> = nodes.keys().filter(|key| key.starts_with(from)).cloned().collect();
+        for key in moved {
+            if let Some(node) = nodes.remove(&key) {
+                let mut renamed = to.to_vec();
+                renamed.extend_from_slice(&key[from.len()..]);
+                nodes.insert(renamed, node);
+            }
+        }
+        Ok(())
+    }
+
+    fn read(&self, key: &[String]) -> io::Result<Vec<u8>> {
+        match locked(&self.0).get(key) {
+            Some(Node::File(data)) => Ok(locked(data).clone()),
+            Some(Node::Dir) => Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+            None => Err(not_found()),
+        }
+    }
+
+    /// The page's `path` ("games/demo.bin") written with `data`, its folders made.
+    pub fn write_file(&self, path: &str, data: Vec<u8>) -> Result<(), String> {
+        let key = parts_of(Path::new(path));
+        let mut nodes = locked(&self.0);
+        if key.is_empty() || matches!(nodes.get(&key), Some(Node::Dir)) {
+            return Err(format!("{path}: not a file name"));
+        }
+        for depth in 1..key.len() {
+            if matches!(nodes.get(&key[..depth]), Some(Node::File(_))) {
+                return Err(format!("{path}: {} is a file", key[..depth].join("/")));
+            }
+        }
+        Self::make_parents(&mut nodes, &key);
+        match nodes.get(&key) {
+            Some(Node::File(file)) => *locked(file) = data,
+            _ => {
+                nodes.insert(key, Node::File(Arc::new(Mutex::new(data))));
+            }
+        }
+        Ok(())
+    }
+
+    /// The page's `path`, if it is a file.
+    pub fn read_file(&self, path: &str) -> Option<Vec<u8>> {
+        self.read(&parts_of(Path::new(path))).ok()
+    }
+
+    /// A folder made (and the ones above it).
+    pub fn make_dir(&self, path: &str) -> Result<(), String> {
+        let key = parts_of(Path::new(path));
+        let mut nodes = locked(&self.0);
+        for depth in 1..=key.len() {
+            if matches!(nodes.get(&key[..depth]), Some(Node::File(_))) {
+                return Err(format!("{path}: {} is a file", key[..depth].join("/")));
+            }
+        }
+        Self::make_parents(&mut nodes, &key);
+        if !key.is_empty() {
+            nodes.entry(key).or_insert(Node::Dir);
+        }
+        Ok(())
+    }
+
+    /// The folder `path`'s entries: (name, is a folder, size), folders first; none if it is not a folder.
+    pub fn list(&self, path: &str) -> Option<Vec<(String, bool, u64)>> {
+        let dir = parts_of(Path::new(path));
+        let mut entries: Vec<(String, bool, u64)> = self
+            .names(&dir)
+            .ok()?
+            .into_iter()
+            .filter_map(|name| {
+                let mut key = dir.clone();
+                key.push(name.clone());
+                self.meta(&key).map(|meta| (name, meta.is_dir, meta.len))
+            })
+            .collect();
+        entries.sort_by_key(|(name, folder, _)| (!folder, name.to_ascii_uppercase()));
+        Some(entries)
+    }
+
+    /// A file, or a folder and what is in it, taken away; false if there was none.
+    pub fn remove(&self, path: &str) -> bool {
+        let key = parts_of(Path::new(path));
+        let mut nodes = locked(&self.0);
+        let before = nodes.len();
+        nodes.retain(|name, _| key.is_empty() || !name.starts_with(&key));
+        nodes.len() != before
+    }
+}
+
+/// A file of a [`MemoryCard`], open.
+struct MemFile {
+    data: Arc<Mutex<Vec<u8>>>,
+    position: u64,
+    writable: bool,
+    append: bool,
+}
+
+impl Read for MemFile {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let data = locked(&self.data);
+        let start = usize::try_from(self.position).unwrap_or(usize::MAX).min(data.len());
+        let count = buffer.len().min(data.len() - start);
+        buffer[..count].copy_from_slice(&data[start..start + count]);
+        self.position += count as u64;
+        Ok(count)
+    }
+}
+
+impl Write for MemFile {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if !self.writable {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
+        let mut data = locked(&self.data);
+        if self.append {
+            self.position = data.len() as u64;
+        }
+        let start = usize::try_from(self.position).unwrap_or(usize::MAX);
+        if start > data.len() {
+            data.resize(start, 0);
+        }
+        let overlap = buffer.len().min(data.len() - start);
+        data[start..start + overlap].copy_from_slice(&buffer[..overlap]);
+        data.extend_from_slice(&buffer[overlap..]);
+        self.position += buffer.len() as u64;
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Seek for MemFile {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        let size = locked(&self.data).len() as i64;
+        let target = match to {
+            SeekFrom::Start(offset) => i64::try_from(offset).unwrap_or(i64::MAX),
+            SeekFrom::End(offset) => size.saturating_add(offset),
+            SeekFrom::Current(offset) => (self.position as i64).saturating_add(offset),
+        };
+        if target < 0 {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        self.position = target as u64;
+        Ok(self.position)
+    }
+}
+
+/// Where the board's files are: a folder of the host (the paths are the host's), or a card in
+/// memory (the paths are below `/`).
+#[derive(Clone)]
+enum SdCard {
+    Host,
+    Memory(MemoryCard),
+}
+
+impl SdCard {
+    fn meta(&self, path: &Path) -> Option<Meta> {
+        match self {
+            Self::Host => std::fs::metadata(path).ok().map(|meta| Meta {
+                is_dir: meta.is_dir(),
+                len: meta.len(),
+                read_only: meta.permissions().readonly(),
+            }),
+            Self::Memory(card) => card.meta(&parts_of(path)),
+        }
+    }
+
+    fn is_dir(&self, path: &Path) -> bool {
+        self.meta(path).is_some_and(|meta| meta.is_dir)
+    }
+
+    fn is_file(&self, path: &Path) -> bool {
+        self.meta(path).is_some_and(|meta| !meta.is_dir)
+    }
+
+    /// The names in directory `dir` (none if it can't be read).
+    fn names(&self, dir: &Path) -> Vec<std::ffi::OsString> {
+        match self {
+            Self::Host => std::fs::read_dir(dir)
+                .map(|entries| entries.flatten().map(|entry| entry.file_name()).collect())
+                .unwrap_or_default(),
+            Self::Memory(card) => card
+                .names(&parts_of(dir))
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        }
+    }
+
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        match self {
+            Self::Host => std::fs::read(path),
+            Self::Memory(card) => card.read(&parts_of(path)),
+        }
+    }
+
+    fn open(&self, path: &Path, mode: OpenMode) -> io::Result<OpenFile> {
+        match self {
+            Self::Host => {
+                let mut options = std::fs::OpenOptions::new();
+                options
+                    .read(true)
+                    .write(mode.write)
+                    .create(mode.create)
+                    .truncate(mode.truncate)
+                    .create_new(mode.create_new)
+                    .append(mode.append);
+                options.open(path).map(OpenFile::Host)
+            }
+            Self::Memory(card) => card.open(&parts_of(path), mode).map(OpenFile::Shared),
+        }
+    }
+
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        match self {
+            Self::Host => std::fs::remove_file(path),
+            Self::Memory(card) => card.remove_file(&parts_of(path)),
+        }
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        match self {
+            Self::Host => std::fs::rename(from, to),
+            Self::Memory(card) => card.rename(&parts_of(from), &parts_of(to)),
+        }
+    }
+
+    fn copy(&self, from: &Path, to: &Path) -> io::Result<()> {
+        match self {
+            Self::Host => std::fs::copy(from, to).map(drop),
+            Self::Memory(card) => {
+                let data = card.read(&parts_of(from))?;
+                let mut file = card.open(
+                    &parts_of(to),
+                    OpenMode { write: true, create: true, truncate: true, ..OpenMode::default() },
+                )?;
+                file.write_all(&data)
+            }
+        }
+    }
+
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        match self {
+            Self::Host => std::fs::create_dir(path),
+            Self::Memory(card) => card.create_dir(&parts_of(path)),
+        }
+    }
+}
+
 /// An open file: on the SD card, or a snapshot's flattened memory (C_SNAFLAT).
 enum OpenFile {
     Host(File),
+    /// A file of a [`MemoryCard`].
+    Shared(MemFile),
     Memory(Cursor<Vec<u8>>),
 }
 
@@ -89,6 +502,7 @@ impl OpenFile {
     fn io(&mut self) -> &mut dyn ReadWriteSeek {
         match self {
             Self::Host(file) => file,
+            Self::Shared(file) => file,
             Self::Memory(cursor) => cursor,
         }
     }
@@ -125,7 +539,8 @@ pub struct M4Board {
     slot: u8,
     /// The command being received.
     command: Vec<u8>,
-    /// The SD card.
+    /// The SD card: where it is, and its root.
+    card: SdCard,
     root: PathBuf,
     /// The current directory, below `root`.
     cwd: Vec<String>,
@@ -153,6 +568,14 @@ const POLL_TICKS: u32 = 16_000;
 impl M4Board {
     /// The board with its ROM, `sd` its SD card.
     pub fn new(rom: &[u8], sd: impl Into<PathBuf>) -> Result<Self, String> {
+        let root = sd.into();
+        if !root.is_dir() {
+            return Err(format!("{}: not a folder", root.display()));
+        }
+        Self::build(rom, root, SdCard::Host)
+    }
+
+    fn build(rom: &[u8], root: PathBuf, card: SdCard) -> Result<Self, String> {
         let rom = match rom.len() {
             0x4080 => &rom[0x80..],
             len if len > 0x4000 => return Err(format!("the M4 ROM is 16K, not {len} bytes")),
@@ -160,14 +583,13 @@ impl M4Board {
         };
         let mut image = Box::new([0xffu8; 0x4000]);
         image[..rom.len()].copy_from_slice(rom);
-        let root = sd.into();
-        if !root.is_dir() {
-            return Err(format!("{}: not a folder", root.display()));
-        }
         #[cfg(all(feature = "m4-wifi", not(target_arch = "wasm32")))]
         let net = {
             let mut net = crate::m4_net::Network::new(true);
-            net.load_settings(&root);
+            // the settings file is the host card's
+            if matches!(card, SdCard::Host) {
+                net.load_settings(&root);
+            }
             net
         };
         Ok(Self {
@@ -175,6 +597,7 @@ impl M4Board {
             selected_rom: 0,
             slot: M4_ROM_SLOT,
             command: Vec::new(),
+            card,
             root,
             cwd: Vec::new(),
             files: BTreeMap::new(),
@@ -210,9 +633,19 @@ impl M4Board {
         self.write_rom(SOCK_INFO, &table);
     }
 
+    /// The board with its ROM, its SD card the files of `card` (a web page's).
+    pub fn with_memory_card(rom: &[u8], card: MemoryCard) -> Result<Self, String> {
+        Self::build(rom, PathBuf::from("/"), SdCard::Memory(card))
+    }
+
     /// The board with the M4 ROM v2.0.8, `sd` its SD card.
     pub fn with_bundled_rom(sd: impl Into<PathBuf>) -> Result<Self, String> {
         Self::new(crate::roms::M4, sd)
+    }
+
+    /// [`Self::with_memory_card`] with the M4 ROM v2.0.8.
+    pub fn with_bundled_rom_in_memory(card: MemoryCard) -> Result<Self, String> {
+        Self::with_memory_card(crate::roms::M4, card)
     }
 
     /// Its ROM in slot `slot` instead.
@@ -290,25 +723,25 @@ impl M4Board {
             }],
             C_ERASEFILE => self.status(
                 self.host_path(&string(params))
-                    .and_then(|path| std::fs::remove_file(path).map_err(|e| e.to_string())),
+                    .and_then(|path| self.card.remove_file(&path).map_err(|e| e.to_string())),
             ),
             C_RENAME => {
                 let (from, to) = two_strings(params);
                 self.status(self.host_path(&from).and_then(|from| {
                     let to = self.host_path(&to)?;
-                    std::fs::rename(from, to).map_err(|e| e.to_string())
+                    self.card.rename(&from, &to).map_err(|e| e.to_string())
                 }))
             }
             C_COPYFILE => {
                 let (from, to) = two_strings(params);
                 self.status(self.host_path(&from).and_then(|from| {
                     let to = self.host_path(&to)?;
-                    std::fs::copy(from, to).map(drop).map_err(|e| e.to_string())
+                    self.card.copy(&from, &to).map_err(|e| e.to_string())
                 }))
             }
             C_MAKEDIR => self.status(
                 self.host_path(&string(params))
-                    .and_then(|path| std::fs::create_dir(path).map_err(|e| e.to_string())),
+                    .and_then(|path| self.card.create_dir(&path).map_err(|e| e.to_string())),
             ),
             C_FSTAT => self.fstat(&string(params)),
             C_SNAFLAT => self.snapshot_flat(params),
@@ -419,7 +852,7 @@ impl M4Board {
         for part in &parts {
             // the long name, else the 8.3 one (ROMCON~1.BIN for romconfig.bin), the case ignored,
             // its spaces dropped as AMSDOS does (a name copied from CAT: "COLUMNS .BAS")
-            let entries = fat_directory(&path);
+            let entries = fat_directory(&self.card, &path);
             let compact: String = part.chars().filter(|c| *c != ' ').collect();
             let short = compact.trim_end_matches('.');
             let found = entries
@@ -444,11 +877,11 @@ impl M4Board {
             return false;
         };
         // a DSK image is entered as a directory, its AMSDOS files in it (read only)
-        let image = matches!(dsk_parts(&path), Some((_, None)))
-            && read_dsk(&path)
+        let image = matches!(dsk_parts(&self.card, &path), Some((_, None)))
+            && read_dsk(&self.card, &path)
                 .inspect_err(|e| eprintln!("M4: {} can't be entered: {e}", path.display()))
                 .is_ok();
-        if !path.is_dir() && !image {
+        if !self.card.is_dir(&path) && !image {
             return false;
         }
         let Ok(relative) = path.strip_prefix(&self.root) else {
@@ -480,11 +913,11 @@ impl M4Board {
             return vec![fd, FR_NO_PATH];
         };
         let writing = mode & FA_WRITE != 0;
-        if let Some((image, Some(file))) = dsk_parts(&path) {
+        if let Some((image, Some(file))) = dsk_parts(&self.card, &path) {
             if writing {
                 return vec![fd, FR_DENIED];
             }
-            return match dsk_file(&image, &file) {
+            return match dsk_file(&self.card, &image, &file) {
                 Some(data) => {
                     self.files.insert(fd, OpenFile::Memory(Cursor::new(data)));
                     vec![fd, 0]
@@ -492,44 +925,41 @@ impl M4Board {
                 None => vec![fd, FR_NO_FILE],
             };
         }
-        if !writing && !path.is_file() && !name.contains('.') {
+        if !writing && !self.card.is_file(&path) && !name.contains('.') {
             // as AMSDOS: the name as given, then .BAS, then .BIN
             for extension in ["bas", "bin"] {
                 if let Ok(candidate) = self.host_path(&format!("{name}.{extension}")) {
-                    if candidate.is_file() {
+                    if self.card.is_file(&candidate) {
                         path = candidate;
                         break;
                     }
                 }
             }
         }
-        if path.parent().is_some_and(|parent| !parent.is_dir()) {
+        if path.parent().is_some_and(|parent| !self.card.is_dir(parent)) {
             return vec![fd, FR_NO_PATH];
         }
-        if path.is_dir() {
+        if self.card.is_dir(&path) {
             // FatFs opens files only
             return vec![fd, FR_NO_FILE];
         }
-        let mut options = OpenOptions::new();
-        options.read(true).write(writing);
+        let mut options = OpenMode { write: writing, ..OpenMode::default() };
         match mode & 0x3c {
             FA_CREATE_ALWAYS => {
-                options.create(true).truncate(true);
+                options.create = true;
+                options.truncate = true;
             }
-            FA_CREATE_NEW => {
-                options.create_new(true);
-            }
-            FA_OPEN_ALWAYS => {
-                options.create(writing);
-            }
+            FA_CREATE_NEW => options.create_new = true,
+            FA_OPEN_ALWAYS => options.create = writing,
             FA_OPEN_APPEND => {
-                options.create(true).append(true);
+                options.create = true;
+                options.append = true;
             }
             _ => {}
         }
-        match options.open(&path) {
+        match self.card.open(&path, options) {
             Ok(file) => {
-                self.files.insert(fd, OpenFile::Host(file));
+                self.files.insert(fd, file);
                 let file_name = path
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
@@ -575,7 +1005,7 @@ impl M4Board {
             } else {
                 extension.to_owned()
             };
-            let _ = std::fs::rename(&path, path.with_extension(extension));
+            let _ = self.card.rename(&path, &path.with_extension(extension));
         }
         true
     }
@@ -664,7 +1094,7 @@ impl M4Board {
         let Ok(path) = self.host_path(name) else {
             return self.status(Err("Bad name.".into()));
         };
-        let Ok(metadata) = std::fs::metadata(&path) else {
+        let Some(metadata) = self.card.meta(&path) else {
             return self.status(Err("File not found.".into()));
         };
         let long_name = path
@@ -672,12 +1102,12 @@ impl M4Board {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let mut payload = vec![0];
-        payload.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&(metadata.len as u32).to_le_bytes());
         payload.extend_from_slice(&[0; 4]);
-        payload.push(if metadata.is_dir() { 0x10 } else { 0x20 });
+        payload.push(if metadata.is_dir { 0x10 } else { 0x20 });
         let mut short = path
             .parent()
-            .map(|dir| short_name_in(dir, &long_name))
+            .map(|dir| short_name_in(&self.card, dir, &long_name))
             .unwrap_or_default()
             .into_bytes();
         short.resize(13, 0);
@@ -713,7 +1143,7 @@ impl M4Board {
         let Ok(path) = self.host_path(".") else {
             return Vec::new();
         };
-        if let Some((_, catalog)) = dsk_files(&path) {
+        if let Some((_, catalog)) = dsk_files(&self.card, &path) {
             let mut entries: Vec<DirEntry> = (0..catalog.len())
                 .map(|index| &catalog[index])
                 .filter(|entry| !entry.system())
@@ -729,17 +1159,17 @@ impl M4Board {
             entries.sort_by_key(|entry| entry.name.to_ascii_uppercase());
             return entries;
         }
-        let mut entries: Vec<DirEntry> = fat_directory(&path)
+        let mut entries: Vec<DirEntry> = fat_directory(&self.card, &path)
             .into_iter()
             .filter_map(|(name, short)| {
-                let metadata = std::fs::metadata(path.join(&name)).ok()?;
+                let metadata = self.card.meta(&path.join(&name))?;
                 let name = name.to_string_lossy().into_owned();
                 (!name.starts_with('.')).then(|| DirEntry {
                     name,
                     short,
-                    directory: metadata.is_dir(),
-                    size: metadata.len(),
-                    read_only: metadata.permissions().readonly(),
+                    directory: metadata.is_dir,
+                    size: metadata.len,
+                    read_only: metadata.read_only,
                 })
             })
             .collect();
@@ -848,9 +1278,9 @@ impl ExpansionDevice for M4Board {
 /// The file type of a valid AMSDOS header (its checksum: bytes 0-66, at 67-68).
 /// A DSK image on the SD card (`path` itself), or a file of one (`path` in it): the image and
 /// the file's name.
-fn dsk_parts(path: &Path) -> Option<(PathBuf, Option<String>)> {
+fn dsk_parts(card: &SdCard, path: &Path) -> Option<(PathBuf, Option<String>)> {
     let is_image = |path: &Path| {
-        path.is_file()
+        card.is_file(path)
             && path
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("dsk"))
@@ -869,13 +1299,13 @@ fn dsk_parts(path: &Path) -> Option<(PathBuf, Option<String>)> {
 }
 
 /// A DSK image's disc and AMSDOS catalogue (its data format's, side A).
-fn dsk_files(image: &Path) -> Option<(ExtendedDsk, AmsdosCatalog)> {
-    read_dsk(image).ok()
+fn dsk_files(card: &SdCard, image: &Path) -> Option<(ExtendedDsk, AmsdosCatalog)> {
+    read_dsk(card, image).ok()
 }
 
 /// [`dsk_files`], or why the image can't be read as a directory.
-fn read_dsk(image: &Path) -> Result<(ExtendedDsk, AmsdosCatalog), String> {
-    let bytes = std::fs::read(image).map_err(|e| e.to_string())?;
+fn read_dsk(card: &SdCard, image: &Path) -> Result<(ExtendedDsk, AmsdosCatalog), String> {
+    let bytes = card.read(image).map_err(|e| e.to_string())?;
     let disc = ExtendedDsk::from_buffer(&bytes).map_err(|e| format!("not a DSK image: {e}"))?;
     let catalog = AmsdosManagerNonMut::new_from_disc(&disc, Head::A)
         .catalog()
@@ -886,8 +1316,8 @@ fn read_dsk(image: &Path) -> Result<(ExtendedDsk, AmsdosCatalog), String> {
 
 /// The file `name` of a DSK image, its AMSDOS header included, as AMSDOS finds it: the name as
 /// given, the case ignored, then with .BAS, then .BIN.
-fn dsk_file(image: &Path, name: &str) -> Option<Vec<u8>> {
-    let (disc, catalog) = dsk_files(image)?;
+fn dsk_file(card: &SdCard, image: &Path, name: &str) -> Option<Vec<u8>> {
+    let (disc, catalog) = dsk_files(card, image)?;
     // its spaces dropped, as AMSDOS does (a name copied from CAT: "COLUMNS .BAS")
     let name: String = name.chars().filter(|c| *c != ' ').collect();
     let name = name.trim_end_matches('.');
@@ -1065,10 +1495,8 @@ fn fat_short_names(names: &[String]) -> Vec<String> {
 
 /// The names in host directory `dir` (all of them: FAT numbers the hidden ones too), with their
 /// 8.3 names.
-fn fat_directory(dir: &Path) -> Vec<(std::ffi::OsString, String)> {
-    let names: Vec<std::ffi::OsString> = std::fs::read_dir(dir)
-        .map(|entries| entries.flatten().map(|entry| entry.file_name()).collect())
-        .unwrap_or_default();
+fn fat_directory(card: &SdCard, dir: &Path) -> Vec<(std::ffi::OsString, String)> {
+    let names = card.names(dir);
     let long: Vec<String> = names
         .iter()
         .map(|name| name.to_string_lossy().into_owned())
@@ -1077,8 +1505,8 @@ fn fat_directory(dir: &Path) -> Vec<(std::ffi::OsString, String)> {
 }
 
 /// The 8.3 name of `long` in host directory `dir`, `NAME.EXT` (`NAME.` without an extension).
-fn short_name_in(dir: &Path, long: &str) -> String {
-    let short = fat_directory(dir)
+fn short_name_in(card: &SdCard, dir: &Path, long: &str) -> String {
+    let short = fat_directory(card, dir)
         .into_iter()
         .find(|(name, _)| name.to_string_lossy() == long)
         .map(|(_, short)| short)
@@ -1110,8 +1538,13 @@ fn wildcard(pattern: &str, name: &str) -> bool {
 /// The time, as the board prints it (UTC).
 /// The time, as the board prints it (and UniDOS's node reads it): UTC plus `time_zone` hours.
 fn now(time_zone: i64) -> String {
-    let seconds = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::time::{SystemTime, UNIX_EPOCH};
+    // std's clock panics in a browser
+    #[cfg(target_arch = "wasm32")]
+    use web_time::{SystemTime, UNIX_EPOCH};
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
         + time_zone * 3600;
     let (days, time) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
@@ -1462,5 +1895,113 @@ mod test {
         assert!(wildcard("g?me*", "GAME.BIN"));
         assert_eq!(open_name(b"GAME.SNA\0xx"), "GAME.SNA");
         assert_eq!(open_name(b"GAME.SNAxyz"), "GAME.SNA");
+    }
+
+    /// The board over a memory card: what the CPC writes is on the card, what the page puts on the
+    /// card the CPC reads, the names matched ignoring case, folders made, listed and entered.
+    #[test]
+    fn a_memory_card_is_the_sd_card() {
+        let card = MemoryCard::new();
+        let mut board = M4Board::with_memory_card(&[0u8; 0x4000], card.clone()).unwrap();
+
+        // the CPC writes, the page reads
+        assert_eq!(
+            run(&mut board, C_OPEN, &named("hello.txt", FA_WRITE | FA_CREATE_ALWAYS)),
+            vec![2, 0]
+        );
+        assert_eq!(run(&mut board, C_WRITE, &[2, b'H', b'i', b'!']), vec![0]);
+        assert_eq!(run(&mut board, C_CLOSE, &[2]), vec![0]);
+        assert_eq!(card.read_file("hello.txt").unwrap(), b"Hi!");
+        assert_eq!(card.read_file("/hello.txt").unwrap(), b"Hi!");
+
+        // the page writes, the CPC reads, the name in another case
+        card.write_file("games/DEMO.BIN", vec![7; 2000]).unwrap();
+        assert_eq!(run(&mut board, C_OPEN, &named("HELLO.TXT", 0x01)), vec![1, 0]);
+        assert_eq!(run(&mut board, C_FSIZE, &[1])[..2], [3, 0]);
+        assert_eq!(run(&mut board, C_READ, &[1, 2, 0]), vec![0, b'H', b'i']);
+        assert_eq!(run(&mut board, C_CLOSE, &[1]), vec![0]);
+        assert_eq!(
+            run(&mut board, C_OPEN, &named("Games/demo.bin", 0x01)),
+            vec![1, 0],
+            "a file in a folder"
+        );
+        assert_eq!(run(&mut board, C_READ, &[1, 2, 0]), vec![0, 7, 7]);
+        run(&mut board, C_CLOSE, &[1]);
+        assert_eq!(
+            run(&mut board, C_OPEN, &named("missing.bin", 0x01)),
+            vec![1, FR_NO_FILE]
+        );
+
+        // listed (folders first), entered, made, renamed, copied, erased
+        assert_eq!(run(&mut board, C_MAKEDIR, &nul_terminated("saves")), vec![0]);
+        run(&mut board, C_DIRSETARGS, &[0]);
+        assert_eq!(&run(&mut board, C_READDIR, &[])[..6], b">GAMES");
+        assert_eq!(&run(&mut board, C_READDIR, &[])[..6], b">SAVES");
+        assert_eq!(&run(&mut board, C_READDIR, &[])[..17], b"HELLO   .TXT   1K");
+        assert!(run(&mut board, C_READDIR, &[]).is_empty());
+        assert_eq!(run(&mut board, C_CD, &nul_terminated("GAMES")), vec![0]);
+        assert_eq!(board.path(), "/games");
+        assert_eq!(run(&mut board, C_CD, &nul_terminated("nowhere")), vec![0xff]);
+        assert_eq!(
+            run(&mut board, C_RENAME, &[nul_terminated("demo.bin"), nul_terminated("other.bin")].concat()),
+            vec![0]
+        );
+        assert_eq!(
+            run(&mut board, C_COPYFILE, &[nul_terminated("other.bin"), nul_terminated("../saves/copy.bin")].concat()),
+            vec![0]
+        );
+        assert_eq!(card.read_file("saves/copy.bin").unwrap(), vec![7; 2000]);
+        assert_eq!(run(&mut board, C_ERASEFILE, &nul_terminated("other.bin")), vec![0]);
+        assert_eq!(card.read_file("games/other.bin"), None);
+        assert_eq!(run(&mut board, C_ERASEFILE, &nul_terminated("other.bin")).first(), Some(&0xff));
+        assert_eq!(run(&mut board, C_CD, &nul_terminated("../../..")), vec![0]);
+        assert_eq!(board.path(), "/", "not above the card");
+    }
+
+    /// A name without extension is given AMSDOS's on a memory card too, and a file can be appended to.
+    #[test]
+    fn a_memory_card_names_and_appends() {
+        let card = MemoryCard::new();
+        let mut board = M4Board::with_memory_card(&[0u8; 0x4000], card.clone()).unwrap();
+        run(&mut board, C_OPEN, &named("prog", FA_WRITE | FA_CREATE_ALWAYS));
+        run(&mut board, C_WRITE, &[2, 1, 2, 3]);
+        run(&mut board, C_CLOSE, &[2]);
+        assert_eq!(card.read_file("prog.bas").unwrap(), vec![1, 2, 3]);
+        assert_eq!(card.read_file("prog"), None);
+
+        run(&mut board, C_OPEN, &named("log.txt", FA_WRITE | FA_CREATE_ALWAYS));
+        run(&mut board, C_WRITE, &[2, b'a']);
+        run(&mut board, C_CLOSE, &[2]);
+        run(&mut board, C_OPEN, &named("log.txt", FA_WRITE | FA_OPEN_APPEND));
+        run(&mut board, C_WRITE, &[2, b'b']);
+        run(&mut board, C_CLOSE, &[2]);
+        assert_eq!(card.read_file("log.txt").unwrap(), b"ab");
+        assert_eq!(
+            run(&mut board, C_OPEN, &named("log.txt", FA_WRITE | FA_CREATE_NEW)),
+            vec![2, FR_EXIST]
+        );
+    }
+
+    /// The page's side of the card: files in folders, listed, taken away.
+    #[test]
+    fn a_memory_card_is_kept_by_the_page() {
+        let card = MemoryCard::new();
+        card.write_file("a/b/c.txt", b"x".to_vec()).unwrap();
+        card.write_file("a/d.txt", b"yy".to_vec()).unwrap();
+        card.make_dir("empty").unwrap();
+        assert_eq!(
+            card.list("").unwrap(),
+            vec![("a".to_owned(), true, 0), ("empty".to_owned(), true, 0)]
+        );
+        assert_eq!(
+            card.list("a").unwrap(),
+            vec![("b".to_owned(), true, 0), ("d.txt".to_owned(), false, 2)]
+        );
+        assert_eq!(card.list("a/d.txt"), None, "not a folder");
+        assert!(card.write_file("a/d.txt/e", vec![]).is_err(), "under a file");
+        assert!(card.remove("a/b"));
+        assert_eq!(card.read_file("a/b/c.txt"), None);
+        assert!(!card.remove("a/b"));
+        assert_eq!(card.read_file("a/d.txt").unwrap(), b"yy");
     }
 }

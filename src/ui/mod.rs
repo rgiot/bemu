@@ -20,6 +20,7 @@ mod menu;
 mod paging;
 mod paint;
 mod palette;
+mod printer;
 mod prompt;
 mod psg;
 mod screen;

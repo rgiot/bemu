@@ -77,6 +77,7 @@ slower.
   | `gateArray` | `'40007'`, `'40008'`, `'40010'` | `'40010'` |
   | `ramKb` | `64`, `128`, … `576` (standard extra banks), or `4160` (a 4 MB expansion) | the model's |
   | `discInterface` | `true` / `false` | the model's |
+  | `dmp2000` | `true` plugs an Amstrad DMP2000 printer on the printer port (read what it printed with `printout()`); `dmp2000Charset`: `'usa'` (default), `'france'`, `'germany'`, `'uk'`, `'denmark'`, `'sweden'`, `'italy'`, `'spain'` or `'japan'` | `false` |
   | `playcity` | `true` plugs a PlayCity: two more AYs (right, left) and a CTC (raster NMI, timer interrupts) | `false` |
   | `digiblaster` | `true` plugs a Digiblaster: an 8-bit DAC on the printer port | `false` |
   | `language` | `'en'`, or `'fr'`: the French 6128's ROMs and its AZERTY keyboard (typed text follows it) | `'en'` |
@@ -121,10 +122,18 @@ have the focus, to the CPC otherwise.
 | `swapDisc(drive, source, entry)` | changes the disc of the running machine: the new disc is in the drive at once |
 | `insertTape(source)`, `ejectTape()` | a CDT tape in the cassette deck, PLAY down: it plays when the CPC starts the motor (`RUN"` on a 464, `\|TAPE` first on a 664/6128); returns what was skipped of it |
 | `tapeControl(key)` | the deck's keys: `'play'`, `'stop'`, `'rewind'` |
-| `insertCartridge(source, entry?)`, `ejectCartridge()` | a CPC+ cartridge (a `.cpr`, or a zip holding one: its first `.cpr`, or the one named `entry`); the machine must be a CPC+ (`model: '6128plus'`, `'464plus'` or `'gx4000'`) and restarts to boot it. A CSL script's `rom_config` of a cartridge works too, given the file with `addFile` |
+| `insertCartridge(source, entry?)`, `ejectCartridge()` | a CPC+ cartridge (a `.cpr`, or a zip holding one: its first `.cpr`, or the one named `entry`); the machine must be a CPC+ (`model: '6128plus'`, `'464plus'` or `'gx4000'`) and restarts to boot it. It stays in through `reset()` and `configure()` (like the discs) until `ejectCartridge()`. A CSL script's `rom_config` of a cartridge works too, given the file with `addFile` |
+| `insertRom(slot, source)`, `removeRom(slot)` | an upper ROM (16 KB, slot 0 to 255) in the machine; the firmware finds it at the next `reset()`, and it stays in until `removeRom(slot)`. A CSL script's upper `rom_config` works too, given the ROM with `addFile` (an `inner://` embedded ROM needs none) |
+| `insertDandanator(source)`, `removeDandanator()`, `dandanatorFlash()` | a Dandanator Mini on the expansion port (`source`: its 512 KB romset), which takes the place of the CPC's ROMs: the machine restarts to boot it. `dandanatorFlash()` gives the flash with what the CPC programmed in it (`Uint8Array`) |
+| `plugM4()`, `unplugM4()` | an M4 board (SD card and WiFi) on the expansion port, its SD card files in memory; the machine restarts so that the firmware finds its ROM (upper ROM slot 6). The CPC sees the files with `\|DIR`, `\|CD`, `LOAD`, `RUN"` and the M4 tools. The WiFi, HTTP and the board's web page are not emulated |
+| `m4PutFile(path, source)`, `m4GetFile(path)`, `m4List(path?)`, `m4Remove(path)`, `m4MakeDir(path)` | the M4's SD card from the page: `path` is `'games/demo.bin'` (the folders are made); `m4List` gives `[{ name, folder, size }]`. Names are matched as given by these (the CPC's are matched ignoring case). The card stays when the board is unplugged |
+| `plugNova()`, `unplugNova()` | a Nova (ethernet, 128 KB of NVRAM kept in memory) on the expansion port |
+| `insertAlbireo(source)`, `removeAlbireo()` | an Albireo (CH376 USB board) on the expansion port, its USB key the FAT image `source`; what the CPC writes stays in memory |
+| `startTapeRecording()`, `stopTapeRecording()` | records what the CPC writes to the cassette port (`SAVE`); stopping gives the CDT file (`Uint8Array`), or `undefined` if nothing was recording. A `reset()` ends it |
+| `printout(prefix?)` | what a DMP2000 printer (`dmp2000: true`) printed: `[{ name, data }]`, the text (`.txt`), the bytes sent (`.prn`) and a PNG per sheet with ink; `undefined` without a printer. The menu bar's Debug > View > Printer window shows it live, as text and as the paper |
 | `loadSnapshot(source)` | an SNA snapshot |
 | `saveSnapshot()` | the machine's state as an SNA file (`Uint8Array`, version 3), to save or give back to `loadSnapshot` |
-| `api(method, path, query, body)` | bemu's debug API, as the desktop's `--debug-server` serves it and answered by the same code (`api('GET', '/api/ping')`, `api('POST', '/api/config', '', '{"paused":true}')`): `{ status, contentType, body, headers }`, `body` a `Uint8Array`; the query as in a URL, the body a string or bytes. The routes are documented by a desktop bemu at `/api/doc` |
+| `api(method, path, query, body)` | bemu's debug API, as the desktop's `--debug-server` serves it and answered by the same code (`api('GET', '/api/ping')`, `api('POST', '/api/config', '', '{"paused":true}')`): `{ status, contentType, body, headers }`, `body` a `Uint8Array`; the query as in a URL, the body a string or bytes. The routes are documented by a desktop bemu at `/api/doc`; `POST /api/media` takes a snapshot, a disc, a tape or a CPC+ cartridge (`.cpr`) by its content |
 | `debugEvents()` | the debug events since the last call, each as `/api/events` streams it (`event: NAME\ndata: JSON\n\n`); the first call subscribes, from then on the debugger watches every instruction. cpclib's debugger uses both to debug a page in a VS Code tab |
 | `addFile(name, source)` | a file a CSL script names (`disk_insert`, `tape_insert`, `snapshot_load`, `csl_load`) |
 | `runCsl(script, { files })` | play a CSL script live, see below |

@@ -93,6 +93,7 @@ view-psg,/api/psg,added,
 view-ppi,new,added,
 view-fdc,/api/fdc,added,
 view-tape,new,added,
+view-printer,new,added,
 view-csl-log,new,added,
 counter-new,POST /api/counters,added,"ACE, RVM"
 counter-toggle,POST /api/counters,added,

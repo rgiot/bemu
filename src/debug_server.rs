@@ -2435,6 +2435,7 @@ impl DebugServer {
         {
             // a CPC+ cartridge (a .cpr, recognised by its RIFF "AMS!" header, or named by ?name=; a zip
             // holding one by `games.zip#game.cpr`): the machine restarts to boot it
+            // (the same rule as the `cartridge-insert` command of the menus)
             if !motherboard.model().is_plus() {
                 return Err(ApiError::new("a cartridge goes in a CPC+"));
             }

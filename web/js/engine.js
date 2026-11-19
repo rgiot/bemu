@@ -123,7 +123,33 @@ export class Engine {
     insertTape(bytes) { return this.#core.insert_tape(bytes); }
     ejectTape() { this.#core.eject_tape(); }
     tapeControl(key) { this.#core.tape_control(key); }
+    // cards on the expansion port: they stay plugged through reset and configure
+    insertDandanator(bytes) { this.#core.insert_dandanator(bytes); }
+    removeDandanator() { this.#core.remove_dandanator(); }
+    dandanatorFlash() { return this.#core.dandanator_flash(); }
+    plugNova() { this.#core.plug_nova(); }
+    unplugNova() { this.#core.unplug_nova(); }
+    insertAlbireo(bytes) { this.#core.insert_albireo(bytes); }
+    removeAlbireo() { this.#core.remove_albireo(); }
+    // the M4 board, its SD card the page's files in memory
+    plugM4() { this.#core.plug_m4(); }
+    unplugM4() { this.#core.unplug_m4(); }
+    m4PutFile(path, bytes) { this.#core.m4_put_file(path, bytes); }
+    m4GetFile(path) { return this.#core.m4_get_file(path); }
+    m4List(path) { return this.#core.m4_list(path); }
+    m4Remove(path) { return this.#core.m4_remove(path); }
+    m4MakeDir(path) { this.#core.m4_make_dir(path); }
+    // records what the CPC writes to the cassette port; stopTapeRecording gives the CDT (or undefined)
+    startTapeRecording() { this.#core.start_tape_recording(); }
+    stopTapeRecording() { return this.#core.stop_tape_recording(); }
+    // what a DMP2000 printed: [{ name, data }], or undefined without a printer
+    printout(prefix) { return this.#core.printout(prefix); }
+    // an upper ROM in a slot (0-255), found by the firmware at the next reset; removeRom empties the slot
+    insertRom(slot, bytes) { this.#core.insert_rom(slot, bytes); }
+    removeRom(slot) { this.#core.remove_rom(slot); }
+    // a CPC+ cartridge (a CPR, or a zip holding one) in; the machine restarts to boot it. Throws on a CPC.
     insertCartridge(bytes, entry) { this.#core.insert_cartridge(bytes, entry); }
+    // the cartridge out; the machine restarts
     ejectCartridge() { this.#core.eject_cartridge(); }
     loadSnapshot(bytes) { this.#core.load_snapshot(bytes); }
     addFile(name, bytes) { this.#core.add_file(name, bytes); }
