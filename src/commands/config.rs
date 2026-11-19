@@ -78,6 +78,8 @@ pub fn save(target: &dyn CommandTarget) -> String {
     if let Some(settings) = target.settings() {
         config.insert("curvature".into(), json!(settings.curvature));
         config.insert("blackLevel".into(), json!(settings.black_level));
+        config.insert("hHold".into(), json!(settings.hhold));
+        config.insert("vHold".into(), json!(settings.vhold));
     }
     serde_json::to_string_pretty(&Value::Object(config)).unwrap()
 }
@@ -118,6 +120,12 @@ pub fn load(target: &mut dyn CommandTarget, text: &str) -> Result<Vec<String>, C
         }
         if let Some(level) = config.get("blackLevel").and_then(Value::as_u64) {
             settings.black_level = level.min(255) as u8;
+        }
+        if let Some(hold) = config.get("hHold").and_then(Value::as_i64) {
+            settings.hhold = hold.clamp(-100, 100) as i8;
+        }
+        if let Some(hold) = config.get("vHold").and_then(Value::as_i64) {
+            settings.vhold = hold.clamp(-100, 100) as i8;
         }
     }
     Ok(notes)

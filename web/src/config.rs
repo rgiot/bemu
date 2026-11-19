@@ -39,12 +39,15 @@ pub struct Config {
     /// The name of the boot banner: "amstrad", "schneider", "awa", "orion", "saisho", "solavox",
     /// "triumph" or "isp".
     pub brand: Option<String>,
-    /// "raw", or a CRT: "ctm", "trinitron", "gt65", "atari".
+    /// "raw", or a CRT: "ctm", "trinitron", "gt65" (or "gt64", green), "mm12" (grey), "atari".
     pub display: Option<String>,
     /// How curved a CRT's glass is, times its profile's bulge: 0 (flat) to 4, 1 by default.
     pub curvature: Option<f32>,
     /// The level a black ink is drawn at, 0-255 (8 by default: a tube's dark grey).
     pub black_level: Option<u8>,
+    /// The monitor's H-hold and V-hold knobs, -100 to 100 (0 by default: steady).
+    pub h_hold: Option<i8>,
+    pub v_hold: Option<i8>,
     /// "symbolic" (the default: a key types its character) or "positional" (a key presses the
     /// CPC key at its place, for games).
     pub keyboard: Option<String>,
@@ -169,6 +172,13 @@ impl Config {
 
     pub fn black_level(&self) -> u8 {
         self.black_level.unwrap_or(8)
+    }
+
+    /// A monitor with the black level and the hold knobs the config says.
+    pub fn monitor(&self) -> amsrust::monitor::Monitor {
+        amsrust::monitor::Monitor::default()
+            .with_black_level(self.black_level())
+            .with_holds(self.h_hold.unwrap_or(0), self.v_hold.unwrap_or(0))
     }
 }
 

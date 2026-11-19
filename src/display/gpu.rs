@@ -38,7 +38,9 @@ struct Uniforms {
     warp_k: [f32; 2],
     warp_corner: f32,
     edged: f32,
-    pad: f32,
+    /// A monochrome tube: 1, and the colour of its phosphor (see `CrtParams::phosphor`); else 0.
+    mono: f32,
+    tint: [f32; 3],
 }
 
 impl Uniforms {
@@ -63,7 +65,8 @@ impl Uniforms {
             warp_k: [warp.k.0, warp.k.1],
             warp_corner: warp.corner,
             edged: if warp.is_flat() { 0.0 } else { 1.0 },
-            pad: 0.0,
+            mono: p.phosphor.map_or(0.0, |_| 1.0),
+            tint: p.phosphor.unwrap_or([1.0; 3]),
         }
     }
 }

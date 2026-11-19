@@ -125,6 +125,34 @@ pub(super) fn run(command: &Command, target: &mut dyn CommandTarget) -> CommandR
             settings(target)?.black_level = arg.number()?.clamp(0, 255) as u8;
             done()
         }
+        "video-hhold-set" => {
+            let default = target.settings().map_or(0, |s| s.hhold) as i64;
+            let arg = arg!(
+                command,
+                "H-hold (-100 to 100)",
+                ArgKind::Number {
+                    min: -100,
+                    max: 100,
+                    default
+                }
+            );
+            settings(target)?.hhold = arg.number()?.clamp(-100, 100) as i8;
+            done()
+        }
+        "video-vhold-set" => {
+            let default = target.settings().map_or(0, |s| s.vhold) as i64;
+            let arg = arg!(
+                command,
+                "V-hold (-100 to 100)",
+                ArgKind::Number {
+                    min: -100,
+                    max: 100,
+                    default
+                }
+            );
+            settings(target)?.vhold = arg.number()?.clamp(-100, 100) as i8;
+            done()
+        }
         "video-crt-gpu-toggle" => {
             let settings = settings(target)?;
             settings.crt_gpu = !settings.crt_gpu;
@@ -184,7 +212,9 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
         }
         "screenshot-save" => host_can(target, HostRequest::Screenshot(None)),
         "screenshot-copy" => host_can(target, HostRequest::CopyScreenshot),
-        "video-curvature-set" | "video-black-level-set" => needs_settings,
+        "video-curvature-set" | "video-black-level-set" | "video-hhold-set" | "video-vhold-set" => {
+            needs_settings
+        }
         // a page always draws the CRT on the GPU (or raw on Canvas 2D)
         "video-crt-gpu-toggle" => CommandState {
             enabled: has_settings && cfg!(feature = "crt-gpu") && files,

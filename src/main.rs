@@ -78,9 +78,11 @@ mod watch;
 
 use cli::{parse_args, Args};
 
-/// The monitor for a picture to look at: its black ink above the blanking.
-fn viewing_monitor(black_level: u8) -> CrtMonitor {
-    CrtMonitor::default().with_black_level(black_level)
+/// The monitor for a picture to look at: its black ink above the blanking, its hold knobs set.
+fn viewing_monitor(black_level: u8, holds: (i8, i8)) -> CrtMonitor {
+    CrtMonitor::default()
+        .with_black_level(black_level)
+        .with_holds(holds.0, holds.1)
 }
 
 fn insert_disc(path: &str, drive: FdcDrive, motherboard: &mut amsrust::motherboard::Motherboard) {
@@ -143,6 +145,7 @@ fn run_csl(args: &Args, script: &str) {
         (!args.display.is_raw()).then(|| args.display.filter_on(args.gpu, args.curvature)),
     );
     runner.set_black_level(args.black_level);
+    runner.set_holds(args.hhold, args.vhold);
     runner.set_drive_kind(0, args.drive_a);
     runner.set_drive_kind(1, args.drive_b);
     runner.set_verbose(true);
@@ -485,6 +488,7 @@ fn main() {
             args.display,
             filter.as_mut(),
             args.black_level,
+            (args.hhold, args.vhold),
             args.overlay,
         ),
         None if args.window => {
@@ -518,6 +522,7 @@ fn main() {
             &mut typist,
             filter.as_mut(),
             args.black_level,
+            (args.hhold, args.vhold),
         ),
         None => {
             let mut handle = |_motherboard: &mut amsrust::motherboard::Motherboard| false;
@@ -1012,6 +1017,7 @@ fn run_headless(
     mode: amsrust::display::DisplayMode,
     filter: &mut dyn DisplayFilter,
     black_level: u8,
+    holds: (i8, i8),
     show_overlay: bool,
 ) {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{dir}: {e}"));
@@ -1045,7 +1051,7 @@ fn run_headless(
                 type_due_keys(typist, motherboard);
                 poll_sound_export(motherboard);
             }
-            let mut monitor = viewing_monitor(black_level);
+            let mut monitor = viewing_monitor(black_level, holds);
             motherboard.watch_io_writes(show_overlay);
             let mut seen = 0u64;
             while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
@@ -1091,7 +1097,7 @@ fn run_headless(
             break;
         }
 
-        let mut monitor = viewing_monitor(black_level);
+        let mut monitor = viewing_monitor(black_level, holds);
         let mut frame = None;
         // the writes of the frame captured only
         motherboard.watch_io_writes(show_overlay);
@@ -1169,6 +1175,7 @@ fn run_recording(
     typist: &mut Option<Typist>,
     filter: &mut dyn DisplayFilter,
     black_level: u8,
+    holds: (i8, i8),
 ) {
     motherboard.set_audio_output(Some(RECORD_AUDIO()));
     let mut recorder = start_recorder(
@@ -1180,7 +1187,7 @@ fn run_recording(
     let (width, height) = filter.output_size();
     let mut buffer = vec![0u32; width * height];
     let target_t_states = seconds as usize * T_STATES_PER_SECOND;
-    let mut monitor = viewing_monitor(black_level);
+    let mut monitor = viewing_monitor(black_level, holds);
     while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
         type_due_keys(typist, motherboard);
         let mut frame = None;

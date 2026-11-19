@@ -22,7 +22,7 @@
 //! picture instead (as [`super::Curved`] does) resamples the fine pattern of the mask and shows
 //! moire.
 
-use super::crt::{coverage, CrtParams, Warp, SRC_HEIGHT, SRC_WIDTH};
+use super::crt::{coverage, CrtParams, Warp, LUMA, SRC_HEIGHT, SRC_WIDTH};
 use super::DisplayFilter;
 use image::RgbImage;
 
@@ -64,6 +64,8 @@ struct Tables {
     /// `gain` and the calibration of the mask's losses.
     scale: f32,
     linear: [f32; 256],
+    /// A monochrome tube: its one phosphor (the green plane) shows the luminance of the picture.
+    luma: bool,
 }
 
 impl Tables {
@@ -144,6 +146,7 @@ impl Tables {
             channel_masks,
             scale: p.gain * p.white_norm(),
             linear,
+            luma: p.phosphor.is_some(),
         }
     }
 }
@@ -210,6 +213,12 @@ impl CpuCrt {
             let width = (src.width() as usize).min(SRC_WIDTH);
             let row = &src.as_raw()[j * src.width() as usize * 3..][..width * 3];
             for (x, pixel) in row.chunks_exact(3).enumerate() {
+                if tables.luma {
+                    planes[1][x + PAD] = (0..3)
+                        .map(|c| LUMA[c] * tables.linear[pixel[c] as usize])
+                        .sum();
+                    continue;
+                }
                 for c in 0..3 {
                     planes[c][x + PAD] = tables.linear[pixel[c] as usize];
                 }
@@ -308,9 +317,14 @@ impl CpuCrt {
         let (g_l, g_c, g_r) = (&g[..n], &g[slot..][..n], &g[2 * slot..][..n]);
         let (b_l, b_c, b_r) = (&b[..n], &b[slot..][..n], &b[2 * slot..][..n]);
         for x in 0..n {
-            let red = centre * r_c[x] + h * (r_l[x] + r_r[x]);
-            let green = centre * g_c[x] + h * (g_l[x] + g_r[x]);
-            let blue = centre * b_c[x] + h * (b_l[x] + b_r[x]);
+            let mut red = centre * r_c[x] + h * (r_l[x] + r_r[x]);
+            let mut green = centre * g_c[x] + h * (g_l[x] + g_r[x]);
+            let mut blue = centre * b_c[x] + h * (b_l[x] + b_r[x]);
+            if let Some(tint) = params.phosphor {
+                // the one phosphor is lit in `green`: its colour
+                (red, blue) = (tint[0] * green, tint[2] * green);
+                green *= tint[1];
+            }
             out[x] = (encode(red) << 16 | encode(green) << 8 | encode(blue)) as u32;
         }
     }
@@ -465,6 +479,48 @@ mod test {
         let mut dst = vec![0; w * h];
         filter.render(src, &mut dst);
         (dst, w, h)
+    }
+
+    /// The brightest pixel of a render, as `[r, g, b]`.
+    fn brightest(profile: CrtProfile, color: [u8; 3]) -> [i32; 3] {
+        let (dst, _, _) = render(profile, &field(color));
+        let best = dst
+            .iter()
+            .copied()
+            .max_by_key(|p| (p >> 16 & 255) + (p >> 8 & 255) + (p & 255));
+        let p = best.unwrap();
+        [
+            (p >> 16 & 255) as i32,
+            (p >> 8 & 255) as i32,
+            (p & 255) as i32,
+        ]
+    }
+
+    /// The GT64/GT65 is a green tube and the MM12 a grey one: every slot shows the luminance of the
+    /// picture in the colour of the phosphor, whatever the colour of the picture.
+    #[test]
+    fn mono_tubes_show_the_luminance_in_their_phosphor() {
+        let [r, g, b] = brightest(CrtProfile::Gt65, [255, 255, 255]);
+        assert!(
+            g > 200 && r < g / 2 && b < g * 2 / 3 && b > r,
+            "green: {r} {g} {b}"
+        );
+        let [r, g, b] = brightest(CrtProfile::Mm12, [255, 255, 255]);
+        assert!(
+            g > 180 && (r - g).abs() < 30 && (b - g).abs() < 30,
+            "grey: {r} {g} {b}"
+        );
+        // luminance: green is brighter than red, and red brighter than blue
+        let green = brightest(CrtProfile::Gt65, [0, 255, 0])[1];
+        let red = brightest(CrtProfile::Gt65, [255, 0, 0])[1];
+        let blue = brightest(CrtProfile::Gt65, [0, 0, 255])[1];
+        assert!(
+            green > red && red > blue && blue > 0,
+            "{green} {red} {blue}"
+        );
+        // a colour tube keeps its colours
+        let [r, g, b] = brightest(CrtProfile::Ctm644, [255, 0, 0]);
+        assert!(r > 100 && g == 0 && b == 0);
     }
 
     /// Straightforward per-pixel implementation of the model, without any

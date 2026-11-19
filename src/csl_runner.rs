@@ -609,6 +609,11 @@ impl CslRunner {
         self.monitor = std::mem::take(&mut self.monitor).with_black_level(level);
     }
 
+    /// The monitor's H-hold and V-hold knobs, -100 to 100 (see `--hhold`).
+    pub fn set_holds(&mut self, hhold: i8, vhold: i8) {
+        self.monitor = std::mem::take(&mut self.monitor).with_holds(hhold, vhold);
+    }
+
     /// Make drive `unit` (0 = A, 1 = B) a 3" or a 3.5" one, now and after each `reset`.
     pub fn set_drive_kind(&mut self, unit: usize, kind: crate::fdc::DriveKind) {
         self.drive_kinds[unit] = kind;

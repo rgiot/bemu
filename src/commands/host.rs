@@ -124,8 +124,11 @@ pub struct HostSettings {
     pub display: DisplayMode,
     /// The CRT glass' curvature, 0 (flat) to 4.
     pub curvature: f32,
-    /// The grey of a black ink, 0-255.
+    /// The grey of a black ink, 0-255 (the monitor's brightness knob).
     pub black_level: u8,
+    /// The monitor's H-hold and V-hold knobs, -100 to 100 (0: steady, see `Monitor::with_holds`).
+    pub hhold: i8,
+    pub vhold: i8,
     /// The CRT drawn by the GPU.
     pub crt_gpu: bool,
     /// The picture fills the window at any zoom (Video > Fill the window): by default it is
@@ -229,6 +232,8 @@ impl Default for HostSettings {
             display: DisplayMode::default(),
             curvature: 1.0,
             black_level: 8,
+            hhold: 0,
+            vhold: 0,
             ui_zoom: 1.0,
             crt_gpu: false,
             free_zoom: false,
