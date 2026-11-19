@@ -45,6 +45,8 @@ pub struct Config {
     pub curvature: Option<f32>,
     /// The level a black ink is drawn at, 0-255 (8 by default: a tube's dark grey).
     pub black_level: Option<u8>,
+    /// The picture brighter or darker, -100 to 100 (0 by default: as it is).
+    pub brightness: Option<i8>,
     /// The monitor's H-hold and V-hold knobs, -100 to 100 (0 by default: steady).
     pub h_hold: Option<i8>,
     pub v_hold: Option<i8>,
@@ -178,6 +180,7 @@ impl Config {
     pub fn monitor(&self) -> amsrust::monitor::Monitor {
         amsrust::monitor::Monitor::default()
             .with_black_level(self.black_level())
+            .with_brightness(self.brightness.unwrap_or(0))
             .with_holds(self.h_hold.unwrap_or(0), self.v_hold.unwrap_or(0))
     }
 }

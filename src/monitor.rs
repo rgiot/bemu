@@ -254,6 +254,8 @@ pub struct Monitor {
     hsync_color: Rgb<u8>,
     /// Level (0-255) the beam draws a black ink at: see [`Monitor::with_black_level`].
     black_level: u8,
+    /// Brightness curve of the 256 levels, see [`Monitor::with_brightness`] (`None`: as is).
+    brightness: Option<Box<[u8; 256]>>,
     /// The last levels converted (their bits) and their pixel: the levels change far less
     /// often than every tick.
     last_levels: Option<([u32; 3], Rgb<u8>)>,
@@ -301,6 +303,7 @@ impl Monitor {
             frame_t0: 0,
             hsync_color,
             black_level: 0,
+            brightness: None,
             last_levels: None,
             spare: None,
         }
@@ -346,6 +349,26 @@ impl Monitor {
         self
     }
 
+    /// A monitor whose picture is brighter (up to 100) or darker (down to -100) than it is, 0
+    /// leaving it as is. Brighter: a gamma curve of the levels (down to 1/1.6), so the greys rise
+    /// while black and a full level stay where they are (nothing is brighter than full). Darker:
+    /// the same curve the other way, and the whole range scaled down to 60 % at -100, a full
+    /// yellow included. Neither end goes too far. What is not drawn (blanking, sync) stays 0.
+    pub fn with_brightness(mut self, brightness: i8) -> Self {
+        self.brightness = (brightness != 0).then(|| {
+            let knob = f32::from(brightness.clamp(-100, 100)) / 100.0;
+            let gamma = 1.6f32.powf(-knob);
+            let gain = 1.0 - 0.4 * (-knob).max(0.0);
+            let mut curve = Box::new([0u8; 256]);
+            for (level, out) in curve.iter_mut().enumerate() {
+                *out = (255.0 * gain * (level as f32 / 255.0).powf(gamma)).round() as u8;
+            }
+            curve
+        });
+        self.last_levels = None;
+        self
+    }
+
     /// Give back a frame of [`Self::take_frame`] that is no longer needed: a later frame is drawn
     /// in it rather than in a newly allocated one.
     pub fn recycle(&mut self, frame: RgbImage) {
@@ -360,7 +383,12 @@ impl Monitor {
         match self.last_levels {
             Some((last, pixel)) if last == bits => pixel,
             _ => {
-                let pixel = pixel_of(rgb, self.black_level);
+                let mut pixel = pixel_of(rgb, self.black_level);
+                if let Some(curve) = &self.brightness {
+                    for channel in &mut pixel.0 {
+                        *channel = curve[usize::from(*channel)];
+                    }
+                }
                 self.last_levels = Some((bits, pixel));
                 pixel
             }
@@ -830,6 +858,31 @@ fn pixel_of(rgb: RgbLevels, black: u8) -> Rgb<u8> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn brightness_moves_the_grey_but_not_black_nor_white() {
+        let grey = RgbLevels::from((50.0, 50.0, 50.0));
+        let at = |brightness: i8| {
+            Monitor::default()
+                .with_brightness(brightness)
+                .pixel(grey)
+                .0[0]
+        };
+        assert!(at(100) > at(0) && at(0) > at(-100), "{} {} {}", at(100), at(0), at(-100));
+        // a moderate range: never washed out, never crushed
+        assert!(at(100) < 200 && at(-100) > 40);
+        for brightness in [-100, 100] {
+            let mut monitor = Monitor::default().with_brightness(brightness);
+            assert_eq!(monitor.pixel(RgbLevels::from((0.0, 0.0, 0.0))).0, [0, 0, 0]);
+        }
+        // nothing is brighter than full, but a full level (BASIC's yellow) darkens, within reason
+        let full = RgbLevels::from((100.0, 100.0, 0.0));
+        let yellow = |brightness: i8| Monitor::default().with_brightness(brightness).pixel(full).0;
+        assert_eq!(yellow(100), [255, 255, 0]);
+        assert_eq!(yellow(0), [255, 255, 0]);
+        assert!(yellow(-50)[0] < 255 && yellow(-100)[0] < yellow(-50)[0]);
+        assert!(yellow(-100)[0] >= 150);
+    }
 
     #[test]
     fn idle_fast_path_matches_full_monitor_for_varied_syncs() {

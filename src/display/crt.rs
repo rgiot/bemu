@@ -38,8 +38,8 @@ pub enum CrtProfile {
     Ctm644,
     /// Aperture grille (vertical wires): no gap between the vertical slots.
     Trinitron,
-    /// Amstrad GT64 / GT65, the green monitors: one green phosphor, no mask structure, visible
-    /// scanlines only. The colours are shown as their luminance.
+    /// Amstrad GT64 / GT65, the green monitors: the CTM's slot mask and scanlines in one green
+    /// phosphor. The colours are shown as their luminance.
     Gt65,
     /// Amstrad MM12, a grey monochrome monitor: as the GT65, in a grey phosphor.
     Mm12,
@@ -204,24 +204,15 @@ impl CrtParams {
                 gain: 3.0,
                 ..base
             },
-            // no mask to speak of: every slot is lit, so a third of the colour tubes' gain
+            // the CTM's slot mask and grid in one phosphor: every slot is lit, so a third of the
+            // colour tubes' gain
             CrtProfile::Gt65 => Self {
-                slot_fill: (1.0, 1.2),
-                stagger: 0.0,
-                spill: 0.0,
-                halation: 0.0,
-                beam_sigma_v: 0.42,
                 gain: 1.0,
                 // a P31 green phosphor: green, a little blue and less red
                 phosphor: Some([0.12, 1.0, 0.16]),
                 ..base
             },
             CrtProfile::Mm12 => Self {
-                slot_fill: (1.0, 1.2),
-                stagger: 0.0,
-                spill: 0.0,
-                halation: 0.0,
-                beam_sigma_v: 0.42,
                 gain: 1.0,
                 phosphor: Some([0.78, 0.80, 0.84]),
                 ..base
@@ -234,6 +225,17 @@ impl CrtParams {
                 gain: 3.0,
                 ..base
             },
+        }
+    }
+
+    /// The same tube drawn `level` times larger in both directions (`level` >= 1): a picture to
+    /// shrink to a large window, the slots and the scanlines finer relative to it.
+    pub fn scaled(&self, level: usize) -> Self {
+        let level = level.max(1);
+        Self {
+            triad_px: self.triad_px * level,
+            rows_per_line: self.rows_per_line * level,
+            ..self.clone()
         }
     }
 
@@ -400,7 +402,7 @@ mod test {
     #[test]
     fn calibrated_gain_makes_up_for_the_mask() {
         let ctm = CrtProfile::Ctm644.params().white_norm();
-        let grille = CrtProfile::Gt65.params().white_norm();
+        let grille = CrtProfile::Trinitron.params().white_norm();
         assert!(ctm > grille, "{ctm} {grille}");
     }
 

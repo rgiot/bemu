@@ -24,7 +24,7 @@ struct CrtState {
 }
 
 pub struct Gpu {
-    /// The picture fills the canvas at any zoom (Video > Fill the window), else by whole factors.
+    /// The picture fills the canvas at any zoom (Video > Maximal size), else by whole factors.
     free_zoom: bool,
     /// The picture resized without moiré (a CRT's at a fractional zoom, any below x1).
     resampler: Option<amsrust::display::Resampler>,

@@ -111,18 +111,18 @@ pub(super) fn run(command: &Command, target: &mut dyn CommandTarget) -> CommandR
             settings(target)?.curvature = curvature.clamp(0.0, 4.0);
             done()
         }
-        "video-black-level-set" => {
-            let default = target.settings().map_or(8, |s| s.black_level) as i64;
+        "video-brightness-set" => {
+            let default = target.settings().map_or(0, |s| s.brightness) as i64;
             let arg = arg!(
                 command,
-                "Black level (0-255)",
+                "Brightness (-100 to 100)",
                 ArgKind::Number {
-                    min: 0,
-                    max: 255,
+                    min: -100,
+                    max: 100,
                     default
                 }
             );
-            settings(target)?.black_level = arg.number()?.clamp(0, 255) as u8;
+            settings(target)?.brightness = arg.number()?.clamp(-100, 100) as i8;
             done()
         }
         "video-hhold-set" => {
@@ -212,7 +212,7 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
         }
         "screenshot-save" => host_can(target, HostRequest::Screenshot(None)),
         "screenshot-copy" => host_can(target, HostRequest::CopyScreenshot),
-        "video-curvature-set" | "video-black-level-set" | "video-hhold-set" | "video-vhold-set" => {
+        "video-curvature-set" | "video-brightness-set" | "video-hhold-set" | "video-vhold-set" => {
             needs_settings
         }
         // a page always draws the CRT on the GPU (or raw on Canvas 2D)

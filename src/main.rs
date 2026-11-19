@@ -3,13 +3,13 @@
 //!
 //! ```text
 //! amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]
-//!         [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute]]
+//!         [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--console] [--mute]
 //!         [--record file [--seconds N]] [--type text [--type-at N]] [--display raw]
 //!         [--debug-server [--debug-port N] [--debug-paused]]
 //! ```
 //!
-//! With no `--screenshot`/`--window`, drops into the existing interactive
-//! monitor (`amsrust::debug::Monitor`) once everything is loaded: `h` at its
+//! With `--console` (and no `--screenshot`/`--record`/`--debug-server`), drops into the existing
+//! interactive monitor (`amsrust::debug::Monitor`) once everything is loaded: `h` at its
 //! `>>` prompt lists its commands (`run`/`next`/`step`/`continue`,
 //! breakpoints, `info z`/`info crtc`/`info ga`, `disassemble`...) - a real
 //! debugger, for stepping through what a piece of software actually does.
@@ -19,21 +19,21 @@
 //! `<dir>` every `--every` seconds (default 2) - useful to eyeball what a
 //! disc/snapshot does without a terminal to type commands into.
 //!
-//! With `--window`, opens a live window instead, redrawn once per emulated
+//! Without `--console`, opens a live window, redrawn once per emulated
 //! video frame (the CPC's own ~50Hz) with the keyboard driving the CPC's
 //! keyboard matrix directly - for actually playing a game/demo rather than
 //! debugging it. No menus, no mouse/joystick support yet: close the window
 //! to quit.
 //!
-//! Sound: built with `--features audio`, `--window` plays the PSG on the
+//! Sound: built with `--features audio`, the window plays the PSG on the
 //! default audio output device (see `host_audio.rs`), and the device's
 //! clock then sets the emulation speed; `--mute` turns it off. Without the
 //! feature the window is silent.
 //!
 //! With `--record <file>` (e.g. `capture.mp4`), records a video, picture
 //! and sound, through `ffmpeg` (which must be installed; the extension picks
-//! the format, see `recorder.rs`). With `--window`, records what is played
-//! until the window is closed; otherwise runs headless for `--seconds`
+//! the format, see `recorder.rs`). In the window, records what is played
+//! until it is closed; with `--console` runs headless for `--seconds`
 //! (default 30) of emulated time. Ctrl+C (or SIGTERM) ends a recording
 //! early, the file being finished properly.
 //!
@@ -48,8 +48,8 @@
 //!
 //! `--debug-server` starts the HTTP debug server compatible with the
 //! AMSpiriT-Lite web API on `127.0.0.1:6128` (`--debug-port` to change it),
-//! see `amsrust::debug_server`: with `--window` the window is driven by it,
-//! otherwise the machine runs headless in real time (Ctrl+C to quit).
+//! see `amsrust::debug_server`: in the window it is driven by it, with
+//! `--console` the machine runs headless in real time (Ctrl+C to quit).
 //!
 //! `--sna` restores CPU registers, the base 64K of RAM, the CRTC's
 //! registers, the gate array's ink/mode/ROM-paging state and the PSG's
@@ -435,7 +435,7 @@ fn main() {
         breakpoints.symbols.extend(&symbols);
     }
     let monitor_mode = args.screenshot_dir.is_none()
-        && !args.window
+        && !args.window()
         && args.record.is_none()
         && !args.debug_server();
     if !breakpoints.is_empty() && !monitor_mode && !args.debug_server() {
@@ -473,8 +473,8 @@ fn main() {
         eprintln!("--type is ignored in the interactive monitor");
     }
     let mut reloader = args.watch.then(|| Reloader::new(&args));
-    if reloader.is_some() && !(args.window || args.debug_server()) {
-        eprintln!("--watch needs --window or --debug-server");
+    if reloader.is_some() && !(args.window() || args.debug_server()) {
+        eprintln!("--watch needs the window or --debug-server");
     }
 
     match args.screenshot_dir {
@@ -491,7 +491,7 @@ fn main() {
             (args.hhold, args.vhold),
             args.overlay,
         ),
-        None if args.window => {
+        None if args.window() => {
             let server = start_debug_server(&args, &breakpoints, &mut motherboard);
             // without the server, the window's own debugger: the same symbols and breakpoints
             let debugger = match server {
@@ -1166,7 +1166,7 @@ fn finish_recorder(recorder: recorder::Recorder, path: &str) {
     }
 }
 
-/// `--record` without `--window`: run `seconds` of emulated time headless,
+/// `--record` with `--console`: run `seconds` of emulated time headless,
 /// recording every frame and the sound.
 fn run_recording(
     motherboard: &mut Motherboard,

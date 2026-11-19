@@ -149,6 +149,7 @@ dependencies = [
  "cpclib-dap",
  "cpclib-disc",
  "cpclib-macros",
+ "cpclib-ocr",
  "cpclib-tokens",
  "ctrlc",
  "delegate 0.5.1",
@@ -1365,6 +1366,10 @@ dependencies = [
  "quote",
  "syn 3.0.6",
 ]
+
+[[package]]
+name = "cpclib-ocr"
+version = "0.1.0"
 
 [[package]]
 name = "cpclib-sna"

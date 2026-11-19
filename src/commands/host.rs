@@ -126,12 +126,15 @@ pub struct HostSettings {
     pub curvature: f32,
     /// The grey of a black ink, 0-255 (the monitor's brightness knob).
     pub black_level: u8,
+    /// The picture brighter (up to 100) or darker (down to -100), 0 as it is: a gamma curve
+    /// of a moderate range, see `Monitor::with_brightness`.
+    pub brightness: i8,
     /// The monitor's H-hold and V-hold knobs, -100 to 100 (0: steady, see `Monitor::with_holds`).
     pub hhold: i8,
     pub vhold: i8,
     /// The CRT drawn by the GPU.
     pub crt_gpu: bool,
-    /// The picture fills the window at any zoom (Video > Fill the window): by default it is
+    /// The picture as large as the window allows (Video > Maximal size): by default it is
     /// zoomed by a whole factor, every CPC pixel the same size.
     pub free_zoom: bool,
     pub fullscreen: bool,
@@ -232,6 +235,7 @@ impl Default for HostSettings {
             display: DisplayMode::default(),
             curvature: 1.0,
             black_level: 8,
+            brightness: 0,
             hhold: 0,
             vhold: 0,
             ui_zoom: 1.0,

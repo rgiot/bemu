@@ -1,0 +1,11 @@
+[package]
+name = "cpclib-ocr"
+version = "0.1.0"
+edition = "2021"
+authors = ["Romain Giot <giot.romain@gmail.com>"]
+description = "A naive OCR for Amstrad CPC screens: reads the text the firmware (or any program using its font) printed in a picture of the screen"
+license = "MIT OR Apache-2.0"
+
+# No dependency on purpose: the picture is a plain RGB buffer, so that any emulator (or a photo
+# turned into a buffer) can use it, whatever its image library.
+[dependencies]

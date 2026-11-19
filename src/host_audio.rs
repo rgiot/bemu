@@ -1,4 +1,4 @@
-//! Sound output for the `amsrust` binary's `--window` mode (part of the
+//! Sound output for the `amsrust` binary's window mode (part of the
 //! binary, not of the library: the library only produces samples, see
 //! `amsrust::psg::AudioConfig`).
 //!

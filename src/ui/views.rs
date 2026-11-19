@@ -787,11 +787,11 @@ pub(super) fn preferences(ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &m
             }
             ui.end_row();
             ui.label("Brightness");
-            let mut level = settings.black_level;
-            if ui.add(egui::Slider::new(&mut level, 0..=255)).changed() {
+            let mut level = settings.brightness;
+            if ui.add(egui::Slider::new(&mut level, -100..=100)).changed() {
                 push(
                     bus,
-                    "video-black-level-set",
+                    "video-brightness-set",
                     Some(Arg::Number(i64::from(level))),
                 );
             }

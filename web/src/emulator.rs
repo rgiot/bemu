@@ -113,6 +113,7 @@ impl Emulator {
                 display,
                 curvature,
                 black_level: config.black_level(),
+                brightness: config.brightness.unwrap_or(0),
                 hhold: config.h_hold.unwrap_or(0),
                 vhold: config.v_hold.unwrap_or(0),
                 keyboard,
@@ -194,6 +195,7 @@ impl Emulator {
             ui.settings.display = display;
             ui.settings.curvature = curvature;
             ui.settings.black_level = self.config.black_level();
+            ui.settings.brightness = self.config.brightness.unwrap_or(0);
             ui.settings.hhold = self.config.h_hold.unwrap_or(0);
             ui.settings.vhold = self.config.v_hold.unwrap_or(0);
         }
@@ -864,9 +866,11 @@ impl Emulator {
                     self.keyboard.set_mapping(settings.keyboard);
                 }
                 if settings.black_level != self.config.black_level()
+                    || settings.brightness != self.config.brightness.unwrap_or(0)
                     || (Some(settings.hhold), Some(settings.vhold)) != (self.config.h_hold, self.config.v_hold)
                 {
                     self.config.black_level = Some(settings.black_level);
+                    self.config.brightness = Some(settings.brightness);
                     self.config.h_hold = Some(settings.hhold);
                     self.config.v_hold = Some(settings.vhold);
                     self.monitor = self.config.monitor();

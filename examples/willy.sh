@@ -71,4 +71,4 @@ fi
 if [ -n "$soundfont" ]; then
     set -- "$@" --willy-s2p "$soundfont"
 fi
-exec cargo run --release -- --window --willy-opl3 "$@"
+exec cargo run --release -- --willy-opl3 "$@"
