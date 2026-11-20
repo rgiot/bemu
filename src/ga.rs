@@ -1094,7 +1094,7 @@ pub struct GateArray {
     mode_latched: bool,
     /// Ticks left before the INT line rises (see `schedule_interrupt`).
     interrupt_delay: Option<u32>,
-    /// Ticks added to the INT delay for this CRTC type (experiment).
+    /// Ticks the CRTC says to add to the INT delay (see `CrtcChip::interrupt_skew_ticks`).
     interrupt_skew: i32,
     /// The interrupt requested last is the CPC+'s programmable raster interrupt, not R52's.
     raster_interrupt: bool,

@@ -230,6 +230,14 @@ pub trait CrtcChip: Debug + Send {
     /// An HSYNC is starting (C0=R2).
     fn hsync_starting(&mut self, _core: &mut Core) {}
 
+    /// Ticks added to the delay between the end of the HSYNC and the Gate Array's INT line going
+    /// down: negative when this chip's interrupt comes earlier than the others'. Measured on real
+    /// machines (the user's photos of INTPOS2 and INTREP: on a CRTC 2 an interrupt lands one
+    /// microsecond earlier in some alignments than on a CRTC 1, the same program and the same R3).
+    fn interrupt_skew_ticks(&self) -> i32 {
+        0
+    }
+
     /// `Some(blank)` while R3l=2 on CRTC 0: the Gate Array's blanking follows this window
     /// instead of the HSYNC pin.
     fn hsync_blank_window(&self, _core: &Core) -> Option<bool> {
