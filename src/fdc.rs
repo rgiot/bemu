@@ -1673,8 +1673,12 @@ impl Fdc {
         }
 
         if formatted {
+            // What the chip leaves in the result registers after FORMAT, as a real 6128 (the user's
+            // photos of FDCRES) shows it: the track, the sector size in units of 128 bytes where the
+            // head would be, the number of sectors where R would be, and N.
             self.xfer.c = track_number;
-            self.xfer.h = head;
+            self.xfer.h = 1u8.checked_shl(u32::from(n)).unwrap_or(0);
+            self.xfer.r = self.command[FMT_SC];
             self.xfer.n = n;
         } else {
             // off the end of the disc

@@ -344,6 +344,11 @@ pub struct Z80 {
     /// T-states left idle at the end of the last microsecond of the last
     /// executed instruction (0 to 3).
     last_idle_t: u8,
+    /// How many of them an INT arriving in them is too late for (see `instruction_finished`): the
+    /// same, less one when the instruction ends with a memory write. The Z80 samples INT on the
+    /// last T-state of a write, which the real CPC's photos of INTPOS3/INTREP show (an
+    /// `LD (HL),A` takes an INT that comes during its last microsecond, an `INC HL` does not).
+    int_idle_t: u8,
     /// The output being written: IORQ and /WR active from T-state `start` to `end` (T2 to T3 of
     /// the real I/O cycle once stretched by the Gate Array's /WAIT, see `tstates`), counted from
     /// the T1 of the Output M-cycle; `t` is the T-state of the next tick.
@@ -2168,7 +2173,7 @@ impl Z80 {
         // an INT first seen in the idle T-states padding the instruction came after the Z80 sampled
         let int_too_late = self
             .int_first_t
-            .is_some_and(|t| t + u32::from(self.last_idle_t) >= self.instr_t);
+            .is_some_and(|t| t + u32::from(self.int_idle_t) >= self.instr_t);
         if self.interruption_received && self.iff1 && !shadowed && !int_too_late
         /*
         && matches!(
@@ -2223,6 +2228,10 @@ impl Z80 {
         let repeat =
             prefix == OpcodePrefix::Ed && matches!(op, 0xb0..=0xb3 | 0xb8..=0xbb) && pc == start;
         self.last_idle_t = super::tstates::idle_tail(prefix, op, taken, repeat);
+        self.int_idle_t = self.last_idle_t
+            - u8::from(
+                self.last_idle_t > 0 && super::tstates::ends_with_write(prefix, op, taken),
+            );
     }
 
     /// T-states the last executed instruction left idle in its last microsecond.

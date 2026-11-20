@@ -524,6 +524,9 @@ fn format_track_creates_the_sectors_the_cpu_describes() {
     }
     let result = receive(&mut fdc, 7);
     assert_eq!(result[0] & 0xc0, 0x00, "formatted normally");
+    // what a real 6128 returns (FDCRES on the user's machine): the track, 1 << N where H would be,
+    // the number of sectors where R would be, and N
+    assert_eq!(&result[3..], &[1, 4, 3, 2]);
 
     // Read ID now walks the new sectors in the order they were described
     let mut ids = Vec::new();
