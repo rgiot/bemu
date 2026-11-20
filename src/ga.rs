@@ -1094,6 +1094,8 @@ pub struct GateArray {
     mode_latched: bool,
     /// Ticks left before the INT line rises (see `schedule_interrupt`).
     interrupt_delay: Option<u32>,
+    /// Ticks added to the INT delay for this CRTC type (experiment).
+    interrupt_skew: i32,
     /// The interrupt requested last is the CPC+'s programmable raster interrupt, not R52's.
     raster_interrupt: bool,
     /// T-states the last executed instruction left idle (see `z80::tstates`).
@@ -1182,6 +1184,7 @@ impl Default for GateArray {
             mode_history: History::new(VideoMode::Mode1),
             mode_latched: false,
             interrupt_delay: None,
+            interrupt_skew: 0,
             raster_interrupt: false,
             last_idle_t: 0,
             ack_armed: false,
@@ -1349,7 +1352,7 @@ impl GateArray {
     /// HSYNC regardless of the CRTC" - R52 itself counts on the HSYNC end,
     /// only the INT line it raises comes up a microsecond later.
     fn schedule_interrupt(&mut self) {
-        self.interrupt_delay = Some(INTERRUPT_AFTER_HSYNC_TICKS);
+        self.interrupt_delay = Some((INTERRUPT_AFTER_HSYNC_TICKS as i32 + self.interrupt_skew).max(1) as u32);
     }
 
     /// The CRTC HSYNC as the GA sees it (a few pixels late, see
@@ -1883,6 +1886,10 @@ impl GateArray {
     pub fn set_crtc_hsync_two_wide(&mut self, window: Option<bool>) {
         self.crtc_hsync_two_wide = window.is_some();
         self.blank_window = self.blank_pipe.delay(window);
+    }
+
+    pub fn set_interrupt_skew(&mut self, ticks: i32) {
+        self.interrupt_skew = ticks;
     }
 
     pub fn set_monitor_hsync_advance(&mut self, ticks: u8) {

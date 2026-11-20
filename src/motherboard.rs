@@ -1097,6 +1097,11 @@ impl Motherboard {
             }
         }
         self.ga.set_last_idle_t(self.cpu.last_idle_t());
+        self.ga.set_interrupt_skew(if self.crtc.crtc_type() == CrtcType::Crtc2 {
+            crtc2_interrupt_skew()
+        } else {
+            0
+        });
         self.ga
             .set_monitor_hsync_advance(self.crtc.hsync_late_ticks());
         self.ga
@@ -3152,4 +3157,15 @@ mod model_test {
         assert_eq!("cpc464".parse::<CpcModel>(), Ok(CpcModel::Cpc464));
         assert!("6129".parse::<CpcModel>().is_err());
     }
+}
+
+/// EXPERIMENT: ticks added to the CRTC 2's interrupt delay (BEMU_CRTC2_INT_SKEW).
+fn crtc2_interrupt_skew() -> i32 {
+    static SKEW: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    *SKEW.get_or_init(|| {
+        std::env::var("BEMU_CRTC2_INT_SKEW")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    })
 }
