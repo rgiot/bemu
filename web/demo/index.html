@@ -130,8 +130,12 @@ document.querySelector('#mute').onchange = (event) => emu.setMuted(event.target.
 const speed = document.querySelector('#speed');
 speed.onchange = () => { emu.setSpeed(speed.value); emu.canvas.focus(); };
 document.querySelector('#step').onclick = () => emu.stepFrame();
-emu.on('stats', ({ fps, speed: times, audio }) =>
+// the speed, and where the time goes (what to report for a slow machine): the emulation of a frame
+// (20 ms is real time), the drawing of a picture (the CRT shader), and the backend and display in use
+emu.on('stats', ({ fps, speed: times, audio, performance: p }) =>
   document.querySelector('#stats').textContent = `${fps.toFixed(1)} frames/s, ${times.toFixed(2)}\u00d7 real time` +
+    `; emulation ${p.frameMs.toFixed(1)} ms/frame (max ${p.maxFrameMs.toFixed(0)}), drawing ${p.drawMs.toFixed(1)} ms` +
+    ` (${p.drawFps.toFixed(0)}/s), ${emu.backend}, ${form.elements.display.value}` +
     (audio ? `; audio underruns: ${audio.underruns}, buffer: ${audio.bufferedMs.toFixed(0)}/${audio.targetMs.toFixed(0)} ms` : ''));
 document.querySelector('#type').onclick = () => {
   emu.typeText(document.querySelector('#text').value + '\n');

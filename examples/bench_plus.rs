@@ -2,8 +2,9 @@
 //! audio and the video (frames built by the monitor) as a page has them:
 //! `cargo run --release --example bench_plus -- [game.cpr] [seconds] [model]`
 //! (model: 6128plus by default; 6128 to compare with a CPC, which takes no cartridge).
-//! With `PLAY=1` a few keys are pressed from the 3rd second, as a player's; `SHOT=file.png` saves
-//! the last picture.
+//! With `PLAY=1` a few keys are pressed from the 3rd second, as a player's; `KEYS=3:Return,5:Space`
+//! taps the keys named (`CpcKey` variants) at the seconds given instead; `SHOT=file.png` saves the
+//! last picture.
 
 use amsrust::asic::Cartridge;
 use amsrust::keyboard::CpcKey;
@@ -42,12 +43,32 @@ fn main() {
     // fifth of a second (a game needs a key to start, then moves)
     let keys = [CpcKey::Space, CpcKey::Return, CpcKey::CursorLeft, CpcKey::CursorRight, CpcKey::CursorDown, CpcKey::CursorUp, CpcKey::Joy0Left, CpcKey::Joy0Right, CpcKey::Joy0Fire1, CpcKey::Z, CpcKey::X];
     let mut pressed: Option<CpcKey> = None;
+    // KEYS=second:Key[:tenths of a second held],...: from that second, 0.1 s by default
+    let scripted: Vec<(usize, CpcKey, usize)> = std::env::var("KEYS")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|item| {
+            let mut fields = item.split(':');
+            let (second, name) = (fields.next()?, fields.next()?);
+            let held = fields.next().and_then(|tenths| tenths.parse().ok()).unwrap_or(1);
+            let key = (0..200).filter_map(amsrust::keyboard::key_at).find(|key| format!("{key:?}") == name)?;
+            Some((second.parse().ok()?, key, held))
+        })
+        .collect();
     let mut step = 0usize;
     let total = Instant::now();
     for second in 0..seconds {
         let start = Instant::now();
         let end = (second + 1) * 4_000_000;
         while motherboard.t_state_counter().value() < end {
+            let tick = motherboard.t_state_counter().value();
+            for (at, key, held) in &scripted {
+                let from = at * 4_000_000;
+                let down = (from..from + held * 400_000).contains(&tick);
+                if motherboard.keyboard().is_pressed(*key) != down {
+                    motherboard.keyboard_mut().set_pressed(*key, down);
+                }
+            }
             // 800,000 T-states: a fifth of a second
             let slot = motherboard.t_state_counter().value() / 400_000;
             if play && second >= 3 && slot != step {
