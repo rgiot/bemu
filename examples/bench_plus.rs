@@ -4,7 +4,7 @@
 //! (model: 6128plus by default; 6128 to compare with a CPC, which takes no cartridge).
 //! With `PLAY=1` a few keys are pressed from the 3rd second, as a player's; `KEYS=3:Return,5:Space`
 //! taps the keys named (`CpcKey` variants) at the seconds given instead; `SHOT=file.png` saves the
-//! last picture.
+//! last picture, `SHOTS=dir[:from_second]` one every 10 frames from then on.
 
 use amsrust::asic::Cartridge;
 use amsrust::keyboard::CpcKey;
@@ -43,6 +43,10 @@ fn main() {
     // fifth of a second (a game needs a key to start, then moves)
     let keys = [CpcKey::Space, CpcKey::Return, CpcKey::CursorLeft, CpcKey::CursorRight, CpcKey::CursorDown, CpcKey::CursorUp, CpcKey::Joy0Left, CpcKey::Joy0Right, CpcKey::Joy0Fire1, CpcKey::Z, CpcKey::X];
     let mut pressed: Option<CpcKey> = None;
+    let shots = std::env::var("SHOTS").ok().map(|spec| {
+        let (dir, from) = spec.split_once(':').unwrap_or((&spec, "0"));
+        (std::path::PathBuf::from(dir), from.parse::<usize>().unwrap_or(0) * 50)
+    });
     // KEYS=second:Key[:tenths of a second held],...: from that second, 0.1 s by default
     let scripted: Vec<(usize, CpcKey, usize)> = std::env::var("KEYS")
         .unwrap_or_default()
@@ -62,9 +66,11 @@ fn main() {
         let end = (second + 1) * 4_000_000;
         while motherboard.t_state_counter().value() < end {
             let tick = motherboard.t_state_counter().value();
-            for (at, key, held) in &scripted {
-                let from = at * 4_000_000;
-                let down = (from..from + held * 400_000).contains(&tick);
+            // a key is down while any of its taps is on (a key tapped several times has several entries)
+            for (_, key, _) in &scripted {
+                let down = scripted.iter().any(|(at, other, held)| {
+                    other == key && (at * 4_000_000..at * 4_000_000 + held * 400_000).contains(&tick)
+                });
                 if motherboard.keyboard().is_pressed(*key) != down {
                     motherboard.keyboard_mut().set_pressed(*key, down);
                 }
@@ -86,6 +92,11 @@ fn main() {
                 monitor.receive(rgb, sync);
                 if let Some(frame) = monitor.take_frame() {
                     frames += 1;
+                    if let Some((dir, from)) = &shots {
+                        if frames >= *from && frames % 10 == 0 {
+                            frame.save(dir.join(format!("f{frames:05}.png"))).expect("a picture");
+                        }
+                    }
                     if let Some(old) = last.replace(frame) {
                         monitor.recycle(old);
                     }
