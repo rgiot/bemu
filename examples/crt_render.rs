@@ -2,7 +2,7 @@
 //! raw mode) through a CRT model, for tuning it without running a machine.
 //!
 //! ```text
-//! cargo run --release --example crt_render -- in.png out.png ctm [triad_px] [bench] [curve=F] [gpu]
+//! cargo run --release --example crt_render -- in.png out.png ctm [triad_px] [bench] [curve=F] [gpu] [neutral]
 //! ```
 
 use amsrust::display::{Backend, CrtParams, DisplayFilter, DisplayMode, KernelCrt, RawFilter, Warp};
@@ -38,6 +38,20 @@ fn main() {
     };
     if let Some(curvature) = curve("curve=") {
         filter = mode.filter_on(rest.iter().any(|a| a == "gpu"), curvature);
+    }
+    // neutral: without the touches of TuxAPE's (cold white, blue gun off and wider, finer beam at low
+    // light), as the CTM was drawn before them
+    if let (true, DisplayMode::Crt(profile)) = (rest.iter().any(|a| a == "neutral"), mode) {
+        let params = CrtParams {
+            blue_shift: 0.0,
+            blue_width: 1.0,
+            beam_thin: 1.0,
+            white: [1.0; 3],
+            ..profile.params()
+        };
+        let warp = curve("curve=").map_or(Warp::FLAT, |c| mode.warp(c));
+        let backend = if rest.iter().any(|a| a == "gpu") { Backend::Gpu } else { Backend::Cpu };
+        filter = Box::new(KernelCrt::new(params, warp, backend).expect("no CRT rendering here"));
     }
     if rest.iter().any(|a| a == "bench") {
         let (w, h) = filter.output_size();
