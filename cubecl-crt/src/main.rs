@@ -1,11 +1,6 @@
 //! Spike and benchmark: the CRT model of bemu as the CubeCL kernels of the application itself
 //! (`src/display/kernel.rs`, included as it is), compared with the CPU renderer.
-// The kernels of the application itself (`src/display/kernel.rs`), where `super::crt` is `amsrust`'s.
-mod display {
-    pub use amsrust::display::crt;
-    #[path = "../../../src/display/kernel.rs"]
-    pub mod kernel;
-}
+mod display;
 use amsrust::display::crt::{SRC_HEIGHT, SRC_WIDTH};
 use amsrust::display::{CpuCrt, CrtProfile, DisplayFilter, Warp};
 use cubecl::prelude::*;
