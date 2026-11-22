@@ -30,4 +30,9 @@ channel values each:
   device -> a fullscreen pass that binds it as read-only storage (`BufferBinding` with CubeCL's offset)
   and draws it into a texture. Read back, it is the kernel's picture: worst difference 5, 24 values
   off by more than 3, against the CPU renderer (curved CTM644).
-* Not done: the browser (WebGPU), and the integration into `Picture` (the quad pass replaces `CrtPass`).
+* **The browser**: the same kernel (`src/kernel.rs`, included unchanged) built for wasm32, initialised
+  with `init_setup_async::<WebGpu>` and read with `read_async`, runs in headless Chromium (WebGPU on
+  SwiftShader, Playwright): CTM644 curved, 1440x1088, same first pixels as the native run and a sum of
+  the picture within 0.01 % of it (rounding of `exp`/`sqrt` between the two adapters). The `.wasm` is
+  29 MB (13 MB gzipped) before any `wasm-opt`.
+* Not done: the integration into `Picture` (the quad pass replaces `CrtPass`).
