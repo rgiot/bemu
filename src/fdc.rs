@@ -77,23 +77,14 @@ mod st3 {
 const BYTE_US: u64 = 32;
 const TRACK_BYTES: u64 = 6250;
 /// Pause between two bytes of the command and result phases (RQM drops for about 12 us).
-const PHASE_GAP_US_DEFAULT: u64 = 12;
-fn phase_gap_us() -> u64 {
-    // EXPERIMENT: BEMU_FDC_GAP (microseconds)
-    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        std::env::var("BEMU_FDC_GAP").ok().and_then(|v| v.parse().ok()).unwrap_or(PHASE_GAP_US_DEFAULT)
-    })
-}
+const PHASE_GAP_US: u64 = 12;
 /// Head settling after the last step of a seek.
-const SETTLE_US_DEFAULT: u64 = 15_000;
-fn settle_us() -> u64 {
-    // EXPERIMENT: BEMU_FDC_SETTLE (microseconds)
-    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        std::env::var("BEMU_FDC_SETTLE").ok().and_then(|v| v.parse().ok()).unwrap_or(SETTLE_US_DEFAULT)
-    })
-}
+const SETTLE_US: u64 = 15_000;
+
+/// How long a real 765 takes to execute SENSE INTERRUPT STATUS before its first result byte is
+/// ready: the user's 6128 polls it in 164.9 us a turn (SEEKJIT3), where the program's own delays
+/// and an instant answer make 123.9 us; a 72 us answer gives 164.9.
+const SENSE_INTERRUPT_US: u64 = 72;
 /// Bytes between the index hole and the first sector's sync (gap 4a, sync, IAM, gap 1).
 const TRACK_HEAD_BYTES: u64 = 146;
 
@@ -172,7 +163,10 @@ impl DriveKind {
     pub fn seek_us(self, steps: u64, step_us: u64) -> u64 {
         match self {
             DriveKind::Gotek => 1,
-            _ if steps > 0 => steps * step_us + settle_us(),
+            // the user's real 3" drive (SEEKJIT4): the time is the steps and nothing more, a seek of
+            // 2 tracks takes twice one of 1, no 15 ms of head settling
+            DriveKind::ThreeInch if steps > 0 => steps * step_us,
+            _ if steps > 0 => steps * step_us + SETTLE_US,
             _ => 1_000,
         }
     }
@@ -818,7 +812,7 @@ impl Fdc {
             Phase::Result => {
                 let byte = self.result.get(self.result_pos).copied().unwrap_or(0xff);
                 self.result_pos += 1;
-                self.rqm_at = self.now_us + phase_gap_us();
+                self.rqm_at = self.now_us + PHASE_GAP_US;
                 if self.result_pos >= self.result.len() {
                     self.go_to_command_phase();
                 }
@@ -836,7 +830,7 @@ impl Fdc {
         self.command_len = 1;
         self.st = msr::RQM;
         if self.timing {
-            self.rqm_at = self.now_us + phase_gap_us();
+            self.rqm_at = self.now_us + PHASE_GAP_US;
         }
     }
 
@@ -889,13 +883,8 @@ impl Fdc {
         self.st = msr::RQM | msr::DIO | msr::CB;
         if self.timing {
             self.rqm_at = self.t_cursor.max(self.now_us);
-            if matches!(self.current_cmd, Cmd::SenseInterruptStatus | Cmd::SenseDriveStatus) {
-                // EXPERIMENT: BEMU_FDC_SENSE_DELAY (microseconds)
-                static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-                let d = *V.get_or_init(|| {
-                    std::env::var("BEMU_FDC_SENSE_DELAY").ok().and_then(|v| v.parse().ok()).unwrap_or(0)
-                });
-                self.rqm_at = self.rqm_at.max(self.now_us + d);
+            if self.current_cmd == Cmd::SenseInterruptStatus {
+                self.rqm_at = self.rqm_at.max(self.now_us + SENSE_INTERRUPT_US);
             }
         }
     }
@@ -909,7 +898,7 @@ impl Fdc {
             self.st |= msr::CB;
         }
         self.command.push(val);
-        self.rqm_at = self.now_us + phase_gap_us();
+        self.rqm_at = self.now_us + PHASE_GAP_US;
 
         if self.command.len() == self.command_len {
             self.dispatch_command();
