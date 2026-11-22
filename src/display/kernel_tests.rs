@@ -18,6 +18,10 @@ fn bare(profile: CrtProfile) -> CrtParams {
         veil: 0.0,
         vignette: 0.0,
         glow: 0.0,
+        blue_shift: 0.0,
+        blue_width: 1.0,
+        beam_thin: 1.0,
+        white: [1.0; 3],
         ..profile.params()
     }
 }
@@ -140,6 +144,10 @@ fn flat_light(profile: CrtProfile) -> CrtParams {
         vignette: 0.0,
         glow: 0.0,
         veil: 0.035,
+        blue_shift: 0.0,
+        blue_width: 1.0,
+        beam_thin: 1.0,
+        white: [1.0; 3],
         ..CrtParams::from_profile(profile)
     }
 }
@@ -344,10 +352,11 @@ fn channel_light(dst: &[u32], w: usize, gun: usize) -> f64 {
 }
 
 /// The tube's white is a cold one (TuxAPE; the photographs' whites are bluer still): blue above
-/// green above red on a white field, and the three equal on a tube without it.
+/// green above red on a grey field (a white clips every gun at 1), and the three equal on a tube
+/// without it.
 #[test]
 fn the_white_of_a_ctm_is_cold() {
-    let white = field([255, 255, 255]);
+    let white = field([160, 160, 160]);
     let (cold, w, _) = render_with(&mut beam_only(|_| {}), &white);
     let (r, g, b) = (channel_light(&cold, w, 0), channel_light(&cold, w, 1), channel_light(&cold, w, 2));
     assert!(b > g && g > r, "red {r}, green {g}, blue {b}");
