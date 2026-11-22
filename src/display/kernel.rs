@@ -42,6 +42,11 @@ pub const WARP_KY: usize = 23;
 pub const WARP_CORNER: usize = 24;
 pub const EDGED: usize = 25;
 
+// the tables of `luts` (see `Pipeline::new`): the Gaussian weights of 1024 phases, and the slot mask
+pub const PHASES: usize = 1024;
+pub const V_OFF: usize = PHASES * 4;
+pub const M_OFF: usize = V_OFF + PHASES * 2;
+
 #[cube]
 fn gauss(d: f32, sigma: f32) -> f32 {
     f32::exp(-d * d / (2.0 * sigma * sigma))
@@ -72,29 +77,6 @@ fn gun(frame: &[u32], pr: &[f32], i: i32, j: i32, c: u32, sw: u32, sh: u32) -> f
     out
 }
 
-#[cube]
-fn slot_distance(pr: &[f32], x: i32, y: i32) -> f32 {
-    let sw = pr[SLOT_PX] as i32;
-    let slot_w = pr[SLOT_PX];
-    let slot = x / sw;
-    let triad = slot / 3;
-    let mut shift = 0.0f32;
-    if triad % 2 == 1 {
-        shift = pr[STAGGER] * pr[PITCH];
-    }
-    let px = (x as f32 + 0.5) - slot as f32 * slot_w - slot_w / 2.0;
-    let t = y as f32 + 0.5 - shift;
-    let py = (t - pr[PITCH] * f32::floor(t / pr[PITCH])) - pr[PITCH] / 2.0;
-    let hx = pr[FILL_X] * slot_w / 2.0;
-    let hy = pr[FILL_Y] * pr[PITCH] / 2.0;
-    let r = f32::max(pr[CORNER] * f32::min(hx, hy), 0.0);
-    let qx = f32::abs(px) - (hx - r);
-    let qy = f32::abs(py) - (hy - r);
-    let ox = f32::max(qx, 0.0);
-    let oy = f32::max(qy, 0.0);
-    f32::sqrt(ox * ox + oy * oy) + f32::min(f32::max(qx, qy), 0.0) - r
-}
-
 /// The phosphor of the slot at output column `x`: a mono tube has the one (called green).
 #[cube]
 fn slot_channel(pr: &[f32], x: i32) -> u32 {
@@ -106,9 +88,10 @@ fn slot_channel(pr: &[f32], x: i32) -> u32 {
 }
 
 /// The light of the slot at output column `x`, row `y`, in its own phosphor; none outside the
-/// picture.
+/// picture. The Gaussian weights and the slot mask come from the tables `luts` (a phase of 1/1024
+/// of a pixel: below the rounding of the picture).
 #[cube]
-fn slot_light(frame: &[u32], pr: &[f32], x: i32, y: i32, sw_: u32, sh_: u32) -> f32 {
+fn slot_light(frame: &[u32], luts: &[f32], pr: &[f32], x: i32, y: i32, sw_: u32, sh_: u32) -> f32 {
     let mut out = 0.0f32;
     if x >= 0 && x < pr[OUT_W] as i32 {
         let sw = pr[SLOT_PX] as i32;
@@ -121,17 +104,15 @@ fn slot_light(frame: &[u32], pr: &[f32], x: i32, y: i32, sw_: u32, sh_: u32) -> 
         let qy = ((y as f32 + 0.5) / oh) * 2.0 - 1.0;
         let wx = (qx * (1.0 + pr[WARP_KX] * qy * qy) + 1.0) / 2.0;
         let wy = (qy * (1.0 + pr[WARP_KY] * qx * qx) + 1.0) / 2.0;
-        let u = wx * ow / pr[X_RATIO];
-        let first = f32::floor(u - 0.5) as i32 - 1;
-        let w0 = gauss(u - (first as f32 + 0.5), pr[SIGMA_H]);
-        let w1 = gauss(u - ((first + 1) as f32 + 0.5), pr[SIGMA_H]);
-        let w2 = gauss(u - ((first + 2) as f32 + 0.5), pr[SIGMA_H]);
-        let w3 = gauss(u - ((first + 3) as f32 + 0.5), pr[SIGMA_H]);
-        let sum = w0 + w1 + w2 + w3;
+        let v = wx * ow / pr[X_RATIO] - 0.5;
+        let fl = f32::floor(v);
+        let first = fl as i32 - 1;
+        let hp = u32::min(((v - fl) * 1024.0) as u32, 1023u32) as usize * 4;
+        let (w0, w1, w2, w3) = (luts[hp], luts[hp + 1], luts[hp + 2], luts[hp + 3]);
         let f = wy * oh / pr[ROWS] - 0.5;
         let line = f32::floor(f) as i32;
-        let a = gauss(f - line as f32, pr[SIGMA_V]);
-        let b = gauss(line as f32 + 1.0 - f, pr[SIGMA_V]);
+        let vp = V_OFF + u32::min(((f - line as f32) * 1024.0) as u32, 1023u32) as usize * 2;
+        let (a, b) = (luts[vp], luts[vp + 1]);
         let la = w0 * gun(frame, pr, first, line, c, sw_, sh_)
             + w1 * gun(frame, pr, first + 1, line, c, sw_, sh_)
             + w2 * gun(frame, pr, first + 2, line, c, sw_, sh_)
@@ -140,9 +121,32 @@ fn slot_light(frame: &[u32], pr: &[f32], x: i32, y: i32, sw_: u32, sh_: u32) -> 
             + w1 * gun(frame, pr, first + 1, line + 1, c, sw_, sh_)
             + w2 * gun(frame, pr, first + 2, line + 1, c, sw_, sh_)
             + w3 * gun(frame, pr, first + 3, line + 1, c, sw_, sh_);
-        let level = (a * la + b * lb) / sum;
-        let cov = f32::clamp(0.5 - (slot_distance(pr, x, y) - pr[SPILL] * level), 0.0, 1.0);
+        let level = a * la + b * lb;
+        let period = (6 * sw) as usize;
+        let distance = luts[M_OFF + (y as usize % pr[PITCH] as usize) * period + x as usize % period];
+        let cov = f32::clamp(0.5 - (distance - pr[SPILL] * level), 0.0, 1.0);
         out = level * cov * pr[SCALE];
+    }
+    out
+}
+
+/// The light of the slot of every pixel (its own phosphor), once: the halation of the neighbours is
+/// then a sum of three of them.
+#[cube(launch_unchecked)]
+pub fn slots(frame: &[u32], luts: &[f32], pr: &[f32], lights: &mut [f32], src_w: u32, src_h: u32) {
+    let i = ABSOLUTE_POS;
+    if i < lights.len() {
+        let w = pr[OUT_W] as usize;
+        lights[i] = slot_light(frame, luts, pr, (i % w) as i32, (i / w) as i32, src_w, src_h);
+    }
+}
+
+/// The light of the slot at column `x` of row `y`, from [`slots`]; none outside.
+#[cube]
+fn lit(lights: &[f32], pr: &[f32], x: i32, y: i32) -> f32 {
+    let mut out = 0.0f32;
+    if x >= 0 && x < pr[OUT_W] as i32 {
+        out = lights[(y as u32 * pr[OUT_W] as u32 + x as u32) as usize];
     }
     out
 }
@@ -185,7 +189,7 @@ fn encode(v: f32, add: f32, fall: f32, alpha: f32) -> u32 {
 }
 
 #[cube(launch_unchecked)]
-pub fn crt(frame: &[u32], glow: &[f32], pr: &[f32], out: &mut [u32], src_w: u32, src_h: u32) {
+pub fn crt(lights: &[f32], glow: &[f32], pr: &[f32], out: &mut [u32]) {
     let i = ABSOLUTE_POS;
     if i < out.len() {
         let w = pr[OUT_W] as usize;
@@ -196,9 +200,9 @@ pub fn crt(frame: &[u32], glow: &[f32], pr: &[f32], out: &mut [u32], src_w: u32,
         let h = pr[HALATION];
         let (xl, xr) = (x - sw, x + sw);
         let (ll, lc, lr) = (
-            h * slot_light(frame, pr, xl, y, src_w, src_h),
-            (1.0 - 2.0 * h) * slot_light(frame, pr, x, y, src_w, src_h),
-            h * slot_light(frame, pr, xr, y, src_w, src_h),
+            h * lit(lights, pr, xl, y),
+            (1.0 - 2.0 * h) * lit(lights, pr, x, y),
+            h * lit(lights, pr, xr, y),
         );
         let (cl, cc, cr) = (slot_channel(pr, xl), slot_channel(pr, x), slot_channel(pr, xr));
         let mut r = only(cl, 0u32, ll) + only(cc, 0u32, lc) + only(cr, 0u32, lr);
@@ -388,6 +392,9 @@ pub struct Pipeline {
     taps: cubecl::server::Handle,
     glow: cubecl::server::Handle,
     params: cubecl::server::Handle,
+    luts: cubecl::server::Handle,
+    lights: cubecl::server::Handle,
+    luts_len: usize,
     out: cubecl::server::Handle,
     close_radius: u32,
     wide_radius: u32,
@@ -408,6 +415,7 @@ impl Pipeline {
         let close = gauss_taps(GLOW_CLOSE.0 / 4.0);
         let wide = gauss_taps(GLOW_WIDE.0 / 16.0);
         let taps: Vec<f32> = close.iter().chain(wide.iter()).copied().collect();
+        let luts = luts(params);
         let cells = |n: usize| client.create_from_slice(&vec![0u8; n * 16]);
         Self {
             fine: cells(FINE),
@@ -419,6 +427,9 @@ impl Pipeline {
             taps: client.create_from_slice(f32::as_bytes(&taps)),
             glow: cells(FINE),
             params: client.create_from_slice(f32::as_bytes(&pack(params, warp))),
+            luts_len: luts.len(),
+            luts: client.create_from_slice(f32::as_bytes(&luts)),
+            lights: client.empty(w * h * 4),
             out: client.empty(w * h * 4),
             close_radius: (close.len() / 2) as u32,
             wide_radius: (wide.len() / 2) as u32,
@@ -479,15 +490,50 @@ impl Pipeline {
                 arg(&self.close, FINE * 4), arg(&self.wide, COARSE * 4), arg(&self.glow, FINE * 4),
                 self.kernel_weights.0, self.kernel_weights.1,
             );
+            let count = || CubeCount::Static((self.out_len as u32).div_ceil(self.cube_dim), 1, 1);
+            slots::launch_unchecked(
+                client,
+                count(),
+                CubeDim::new_1d(self.cube_dim),
+                arg(frame, frame_words), arg(&self.luts, self.luts_len), arg(&self.params, 26),
+                arg(&self.lights, self.out_len),
+                sw, sh,
+            );
             crt::launch_unchecked(
                 client,
-                CubeCount::Static((self.out_len as u32).div_ceil(self.cube_dim), 1, 1),
+                count(),
                 CubeDim::new_1d(self.cube_dim),
-                arg(frame, frame_words), arg(&self.glow, FINE * 4), arg(&self.params, 26), arg(&self.out, self.out_len),
-                sw, sh,
+                arg(&self.lights, self.out_len), arg(&self.glow, FINE * 4), arg(&self.params, 26),
+                arg(&self.out, self.out_len),
             );
         }
     }
+}
+
+/// The tables the kernels look up instead of evaluating Gaussians and the slot mask per pixel:
+/// `PHASES` x 4 weights of the horizontal taps (normalised) for the fractional position of the beam
+/// in the source, `PHASES` x 2 weights of the two scanlines, and the distance to the slot of one
+/// period of the mask (`6 * slot` pixels across, one pitch down).
+pub fn luts(p: &CrtParams) -> Vec<f32> {
+    let mut v = Vec::with_capacity(M_OFF + 6 * p.slot_px() * p.pitch_rows());
+    let gauss = |d: f32, sigma: f32| (-d * d / (2.0 * sigma * sigma)).exp();
+    for phase in 0..PHASES {
+        let frac = (phase as f32 + 0.5) / PHASES as f32;
+        let w: Vec<f32> = (0..4).map(|t| gauss(1.0 + frac - t as f32, p.beam_sigma_h)).collect();
+        let sum: f32 = w.iter().sum();
+        v.extend(w.iter().map(|w| w / sum));
+    }
+    for phase in 0..PHASES {
+        let frac = (phase as f32 + 0.5) / PHASES as f32;
+        v.push(gauss(frac, p.beam_sigma_v));
+        v.push(gauss(1.0 - frac, p.beam_sigma_v));
+    }
+    for y in 0..p.pitch_rows() {
+        for x in 0..6 * p.slot_px() {
+            v.push(p.slot_distance(x, y));
+        }
+    }
+    v
 }
 
 pub fn pack(p: &CrtParams, warp: Warp) -> Vec<f32> {

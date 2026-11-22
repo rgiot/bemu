@@ -2,7 +2,7 @@
 //! (`src/display/kernel.rs`, included as it is), compared with the CPU renderer.
 mod display;
 use amsrust::display::crt::{SRC_HEIGHT, SRC_WIDTH};
-use amsrust::display::{CpuCrt, CrtProfile, DisplayFilter, Warp};
+use amsrust::display::{CrtProfile, Warp};
 use cubecl::prelude::*;
 use cubecl::wgpu::wgpu;
 use cubecl_runtime::runtime::Runtime;
@@ -164,59 +164,34 @@ fn quad_pass_check() {
         }
     }
     let cpu_sum = want.iter().fold(0u64, |a, &v| a + v as u64);
-    println!("CPU renderer sum {cpu_sum} first {:06x} {:06x} {:06x}", want[0], want[700 * w + 500], want[w * h - 1]);
-    println!("quad pass of the kernel's buffer vs the CPU renderer: worst {worst}, {off} values off by >3 of {}", w * h * 3);
+    println!("CPU backend sum {cpu_sum} first {:06x} {:06x} {:06x}", want[0], want[700 * w + 500], want[w * h - 1]);
+    println!("quad pass of the kernel's buffer vs the CPU backend: worst {worst}, {off} values off by >3 of {}", w * h * 3);
 }
 
-/// The same kernels on CubeCL's CPU backend (LLVM JIT): timing and accuracy against the old CPU renderer.
-fn cpu_backend_check() {
+/// The picture of the kernels on CubeCL's CPU backend (LLVM JIT): the reference the GPU's is
+/// compared with, and its timing.
+fn cpu_reference(params: &amsrust::display::CrtParams, warp: Warp, src: &RgbImage) -> (Vec<u32>, f64, f64) {
     type C = cubecl::cpu::CpuRuntime;
     let client = <C as Runtime>::client(&Default::default());
-    for (profile, warp) in [
-        (CrtProfile::Ctm644, Warp::FLAT),
-        (CrtProfile::Ctm644, Warp::of(CrtProfile::Ctm644, 1.0)),
-        (CrtProfile::Gt65, Warp::of(CrtProfile::Gt65, 1.0)),
-    ] {
-        let params = profile.params();
-        let (w, h) = params.output_size();
-        let src = test_picture();
-        let mut old = CpuCrt::new(params.clone()).curved(warp);
-        let mut want = vec![0u32; w * h];
+    let frame = client.create_from_slice(src.as_raw());
+    let mut pipeline = Pipeline::new(&client, params, warp);
+    pipeline.cube_dim = 32;
+    let words = src.as_raw().len() / 4;
+    let t = std::time::Instant::now();
+    pipeline.run(&client, &frame, words, src.width(), src.height());
+    let mut bytes = client.read_one(pipeline.out().clone()).unwrap().to_vec();
+    let first = t.elapsed().as_secs_f64() * 1e3;
+    let mut best = f64::MAX;
+    for _ in 0..4 {
         let t = std::time::Instant::now();
-        old.render(&src, &mut want);
-        let old_ms = t.elapsed().as_secs_f64() * 1e3;
-        let frame = client.create_from_slice(src.as_raw());
-        let mut pipeline = Pipeline::new(&client, &params, warp);
-        if let Some(d) = std::env::var("CUBE_DIM").ok().and_then(|d| d.parse().ok()) {
-            pipeline.cube_dim = d;
-        }
-        let t = std::time::Instant::now();
-        pipeline.run(&client, &frame, src.as_raw().len() / 4, src.width(), src.height());
-        let first = client.read_one(pipeline.out().clone()).unwrap().to_vec();
-        let first_ms = t.elapsed().as_secs_f64() * 1e3;
-        let mut best = f64::MAX;
-        let mut got_bytes = first;
-        for _ in 0..4 {
-            let t = std::time::Instant::now();
-            pipeline.run(&client, &frame, src.as_raw().len() / 4, src.width(), src.height());
-            got_bytes = client.read_one(pipeline.out().clone()).unwrap().to_vec();
-            best = best.min(t.elapsed().as_secs_f64() * 1e3);
-        }
-        let got = u32::from_bytes(&got_bytes);
-        let (mut worst, mut off) = (0i32, 0usize);
-        for (p, q) in want.iter().zip(got) {
-            for s in [0, 8, 16] {
-                let d = (((p >> s) & 255) as i32 - ((q >> s) & 255) as i32).abs();
-                worst = worst.max(d);
-                off += (d > 3) as usize;
-            }
-        }
-        println!("CubeCL CPU backend {profile:?} {} {w}x{h}: worst {worst}, {off} off by >3; first frame {first_ms:.0} ms (JIT), then {best:.1} ms; old CPU renderer {old_ms:.1} ms", if warp.is_flat() { "flat" } else { "curved" });
+        pipeline.run(&client, &frame, words, src.width(), src.height());
+        bytes = client.read_one(pipeline.out().clone()).unwrap().to_vec();
+        best = best.min(t.elapsed().as_secs_f64() * 1e3);
     }
+    (u32::from_bytes(&bytes).to_vec(), first, best)
 }
 
 fn main() {
-    cpu_backend_check();
     quad_pass_check();
     shared_device_check();
     type R = cubecl::wgpu::WgpuRuntime;
@@ -229,11 +204,7 @@ fn main() {
         let params = profile.params();
         let (w, h) = params.output_size();
         let src = test_picture();
-        let mut cpu = CpuCrt::new(params.clone()).curved(warp);
-        let mut want = vec![0u32; w * h];
-        let t = std::time::Instant::now();
-        cpu.render(&src, &mut want);
-        let cpu_ms = t.elapsed().as_secs_f64() * 1e3;
+        let (want, jit_ms, cpu_ms) = cpu_reference(&params, warp, &src);
 
         let frame = client.create_from_slice(src.as_raw());
         let words = src.as_raw().len() / 4;
@@ -255,6 +226,6 @@ fn main() {
                 off += (d > 3) as usize;
             }
         }
-        println!("{profile:?} {} {w}x{h}: worst {worst}, {off} values off by >3 of {}; cpu {cpu_ms:.1} ms (all of it), gpu {best:.1} ms (glow + picture + readback; the CPU only copies the frame)", if warp.is_flat() { "flat" } else { "curved" }, w * h * 3);
+        println!("{profile:?} {} {w}x{h}: worst {worst}, {off} values off by >3 of {}; CPU backend {cpu_ms:.1} ms (first frame {jit_ms:.0} ms with the JIT), GPU {best:.1} ms (glow + picture + readback)", if warp.is_flat() { "flat" } else { "curved" }, w * h * 3);
     }
 }
