@@ -47,6 +47,9 @@ pub struct MediaPaths {
     pub discs: [Option<String>; 2],
     /// The discs used lately, the last first, per drive.
     pub recent_discs: [Vec<String>; 2],
+    /// The disc images of the archive each drive's disc came from (their paths in it), when it
+    /// came from one: the other versions or sides one may insert instead.
+    pub archive_discs: [Vec<String>; 2],
     /// The snapshot last loaded or saved.
     pub snapshot: Option<PathBuf>,
     /// The tape's file.
@@ -67,7 +70,31 @@ impl MediaPaths {
             recent.insert(0, path.clone());
             recent.truncate(RECENT_DISCS);
         }
+        self.archive_discs[drive] = path
+            .as_deref()
+            .map(crate::disc_image::archive_disc_entries_of_file)
+            .unwrap_or_default();
         self.discs[drive] = path;
+    }
+
+    /// Drive `drive`'s disc removed.
+    pub fn disc_removed(&mut self, drive: usize) {
+        self.discs[drive] = None;
+        self.archive_discs[drive].clear();
+    }
+
+    /// The archive entry drive `drive`'s disc is (the first disc image when none is named).
+    pub fn archive_disc(&self, drive: usize) -> Option<&str> {
+        let spec = self.discs[drive].as_deref()?;
+        let entries = &self.archive_discs[drive];
+        match crate::disc_image::split_disc_spec(spec).1 {
+            Some(entry) => entries
+                .iter()
+                .find(|e| e.as_str() == entry)
+                .or_else(|| entries.iter().find(|e| e.eq_ignore_ascii_case(entry)))
+                .map(String::as_str),
+            None => entries.first().map(String::as_str),
+        }
     }
 }
 
@@ -141,6 +168,9 @@ pub struct HostSettings {
     /// integer size); `free_zoom` comes first.
     pub native_zoom: bool,
     pub fullscreen: bool,
+    /// A page too slow for real time makes the picture of some frames only (Video > Skip frames
+    /// when too slow): off, every picture is made (a video recording wants that).
+    pub frame_skip: bool,
     /// The CRTC / Gate Array writes drawn on the picture.
     pub overlay: bool,
     pub keyboard: KeyboardMapping,
@@ -246,6 +276,7 @@ impl Default for HostSettings {
             free_zoom: false,
             native_zoom: false,
             fullscreen: false,
+            frame_skip: false,
             overlay: false,
             keyboard: KeyboardMapping::default(),
             host_layout: None,
