@@ -173,7 +173,26 @@ pub struct CrtParams {
     /// for a full white (the green of a GT65, the grey of an MM12). Every slot is lit by the
     /// luminance of the picture instead of the gun of its colour. `None`: a colour tube.
     pub phosphor: Option<[f32; 3]>,
+    /// The light a black reaches, as a share of the light of a white field (as a camera or an eye
+    /// takes it, the mask and the scanlines averaged): a tube never is black. The dark areas of the
+    /// photographs of real CPCs on a CTM (the Shaker site's, 89 screens of the five CRTC types) are
+    /// at 3.5 % of the light of the white of the same picture (half of the screens between 2.8 and
+    /// 5.1 %), where bemu's black ink gave 0.1 %: the beam at the level of a black ink and the
+    /// glass's glare. See [`Self::veil_light`].
+    pub veil: f32,
+    /// How much darker the edge of the picture is than its centre, the light falling as
+    /// `1 - vignette * r²` with `r` 1 at the middle of an edge. Measured on the photographs: the
+    /// white of a CTM's screen is 0.72 of the centre's at the middle of the edge, 0.62 at the
+    /// corners' distance (a camera's lens takes its share of it). It is more than the photographs'
+    /// 0.30 a unit of r² in light because the white of the model is clipped: the centre is above 1.
+    pub vignette: f32,
 }
+
+/// What the real CTMs' photographs show of a black, see [`CrtParams::veil`].
+pub const VEIL: f32 = 0.035;
+
+/// What the real CTMs' photographs show of the edges, see [`CrtParams::vignette`].
+pub const VIGNETTE: f32 = 0.55;
 
 /// The luminance of a pixel's light: the green screen of the CPC shows the colours as the
 /// luminance they would have on a black and white television.
@@ -194,6 +213,8 @@ impl CrtParams {
             halation: 0.10,
             gain: 3.0,
             phosphor: None,
+            veil: VEIL,
+            vignette: VIGNETTE,
         };
         match profile {
             CrtProfile::Ctm644 => base,
@@ -237,6 +258,47 @@ impl CrtParams {
             rows_per_line: self.rows_per_line * level,
             ..self.clone()
         }
+    }
+
+    /// The light, added to every slot whatever its gun, that makes a black the [`Self::veil`] of a
+    /// white field's mean light, which is worked out as the renderers do: each slot's light, the
+    /// halation of its neighbours, the clipping of what is too bright, averaged over a period of
+    /// the pattern and over the three guns (the one phosphor of a mono tube).
+    pub fn veil_light(&self) -> f32 {
+        if self.veil <= 0.0 {
+            return 0.0;
+        }
+        let scale = self.gain * self.white_norm();
+        let (slot, pitch) = (self.slot_px() as isize, self.pitch_rows());
+        let period = self.rows_per_line * pitch;
+        let width = 2 * self.triad_px;
+        let (h, centre) = (self.halation, 1.0 - 2.0 * self.halation);
+        let gauss = |d: f32| (-d * d / (2.0 * self.beam_sigma_v * self.beam_sigma_v)).exp();
+        let mut total = 0.0;
+        let guns: &[usize] = if self.phosphor.is_some() { &[1] } else { &[0, 1, 2] };
+        for y in 0..period {
+            let f = (y as f32 + 0.5) / self.rows_per_line as f32 - 0.5;
+            let line = f.floor();
+            let level = gauss(f - line) + gauss(line + 1.0 - f);
+            let light: Vec<f32> = (0..width)
+                .map(|x| level * coverage(self.slot_distance(x, y), self.spill, level) * scale)
+                .collect();
+            for &gun in guns {
+                // the light of the gun at output column `x`: lit slots only
+                let own = |x: isize| {
+                    let x = x.rem_euclid(width as isize) as usize;
+                    if self.channel(x) == gun {
+                        light[x]
+                    } else {
+                        0.0
+                    }
+                };
+                for x in 0..width as isize {
+                    total += (centre * own(x) + h * (own(x - slot) + own(x + slot))).min(1.0);
+                }
+            }
+        }
+        self.veil * total / (period * width * guns.len()) as f32
     }
 
     /// Width of a slot, in output pixels.
