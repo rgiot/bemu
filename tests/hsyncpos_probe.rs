@@ -81,3 +81,11 @@ fn print_the_profiles() {
     }
     println!("rms {:.2} ticks", rms(&ours, &real));
 }
+
+/// The monitor follows HSYNCPOS as CLAUDESTRAD's CTM 644 does (and the real CTM 644's photo): within
+/// 2 ticks (RMS) over the 260 lines, 0.9 when this was written.
+#[test]
+fn the_picture_follows_the_hsync_as_the_ctm_644_does() {
+    let rms = rms(&profile(), &real_profile());
+    assert!(rms < 2.0, "{rms:.2} ticks from CLAUDESTRAD's profile");
+}
