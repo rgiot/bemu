@@ -50,7 +50,7 @@ sevenz-rust2 = { version = "0.24", default-features = false }
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
 # the menus, the command palette and the debugger's windows (`gui`), in the window and the page
-egui = { version = "0.37", optional = true }
+egui = { version = "0.37", optional = true, features = ["default_fonts"] }
 egui-wgpu = { version = "0.37", optional = true, default-features = false }
 # the debugger's views: disassembly with NOP costs, the call stack, the CRTC's checks (without
 # its debug adapter: the views only)
