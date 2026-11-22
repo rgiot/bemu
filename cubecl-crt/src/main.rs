@@ -1,8 +1,9 @@
 //! Spike: the CRT model of bemu (crt.wgsl) as one CubeCL kernel, compared with the CPU renderer.
 use amsrust::display::crt::{GlowField, SRC_HEIGHT, SRC_WIDTH};
-use amsrust::display::{CpuCrt, CrtParams, CrtProfile, DisplayFilter};
+use amsrust::display::{CpuCrt, CrtParams, CrtProfile, DisplayFilter, Warp};
 use cubecl::prelude::*;
 use cubecl_runtime::runtime::Runtime;
+use cubecl::wgpu::wgpu;
 use image::{Rgb, RgbImage};
 
 // parameter slots
@@ -26,6 +27,10 @@ const TINT: usize = 16; // 3 values
 const VEIL: usize = 19;
 const VIGNETTE: usize = 20;
 const GLOW: usize = 21;
+const WARP_KX: usize = 22;
+const WARP_KY: usize = 23;
+const WARP_CORNER: usize = 24;
+const EDGED: usize = 25;
 
 #[cube]
 fn gauss(d: f32, sigma: f32) -> f32 {
@@ -90,8 +95,15 @@ fn light(frame: &[u32], pr: &[f32], x: i32, y: i32, ch: u32) -> f32 {
         if pr[MONO] > 0.5 {
             c = 1u32;
         }
-        let bx = (slot as f32 + 0.5) * sw as f32;
-        let by = y as f32 + 0.5;
+        // the beam's raster bends under the fixed mask: the slot reads where its centre's warped place is
+        let ow = pr[OUT_W];
+        let oh = pr[OUT_H];
+        let qx = ((slot as f32 + 0.5) * sw as f32 / ow) * 2.0 - 1.0;
+        let qy = ((y as f32 + 0.5) / oh) * 2.0 - 1.0;
+        let wx = (qx * (1.0 + pr[WARP_KX] * qy * qy) + 1.0) / 2.0;
+        let wy = (qy * (1.0 + pr[WARP_KY] * qx * qx) + 1.0) / 2.0;
+        let bx = wx * ow;
+        let by = wy * oh;
         let u = bx / pr[X_RATIO];
         let first = f32::floor(u - 0.5) as i32 - 1;
         let mut sum = 0.0f32;
@@ -159,7 +171,20 @@ fn channel_value(frame: &[u32], glow: &[f32], pr: &[f32], x: i32, y: i32, ch: u3
     let dx = u * 2.0 - 1.0;
     let dy = v * 2.0 - 1.0;
     rgb *= f32::max(1.0 - pr[VIGNETTE] * (dx * dx + dy * dy), 0.0);
-    f32::sqrt(f32::clamp(rgb, 0.0, 1.0))
+    // the glass's rounded edge, smoothed over about a pixel
+    let qx = u * 2.0 - 1.0;
+    let qy = v * 2.0 - 1.0;
+    let wx = qx * (1.0 + pr[WARP_KX] * qy * qy);
+    let wy = qy * (1.0 + pr[WARP_KY] * qx * qx);
+    let ex = f32::abs(wx) - (1.0 - pr[WARP_CORNER]);
+    let ey = f32::abs(wy) - (1.0 - pr[WARP_CORNER]);
+    let ox = f32::max(ex, 0.0);
+    let oy = f32::max(ey, 0.0);
+    let distance = f32::sqrt(ox * ox + oy * oy) + f32::min(f32::max(ex, ey), 0.0) - pr[WARP_CORNER];
+    let pixel = 2.0 / f32::max(pr[OUT_W], pr[OUT_H]);
+    let edge = f32::clamp(0.5 - distance / pixel, 0.0, 1.0);
+    let alpha = (1.0 - pr[EDGED]) + pr[EDGED] * edge;
+    f32::sqrt(f32::clamp(rgb, 0.0, 1.0)) * alpha
 }
 
 #[cube(launch_unchecked)]
@@ -184,9 +209,9 @@ fn test_picture() -> RgbImage {
     src
 }
 
-fn pack(p: &CrtParams) -> Vec<f32> {
+fn pack(p: &CrtParams, warp: Warp) -> Vec<f32> {
     let (w, h) = p.output_size();
-    let mut v = vec![0.0f32; 22];
+    let mut v = vec![0.0f32; 26];
     v[OUT_W] = w as f32;
     v[OUT_H] = h as f32;
     v[SLOT_PX] = p.slot_px() as f32;
@@ -208,21 +233,70 @@ fn pack(p: &CrtParams) -> Vec<f32> {
     v[VEIL] = p.veil_light();
     v[VIGNETTE] = p.vignette;
     v[GLOW] = p.glow_light();
+    v[WARP_KX] = warp.k.0;
+    v[WARP_KY] = warp.k.1;
+    v[WARP_CORNER] = warp.corner;
+    v[EDGED] = if warp.is_flat() { 0.0 } else { 1.0 };
     v
 }
 
+/// The app's own wgpu device, shared with CubeCL (`init_device`), and the output buffer of a
+/// kernel taken back as a `wgpu::Buffer` of that device: what a render pass would read directly.
+fn shared_device_check() {
+    use cubecl::wgpu::{init_device, RuntimeOptions, WgpuDevice, WgpuServer, WgpuSetup};
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+    let setup = WgpuSetup { instance, backend: adapter.get_info().backend, adapter, device: device.clone(), queue: queue.clone() };
+    let cube_device: WgpuDevice = init_device(setup, RuntimeOptions::default());
+    let client = <cubecl::wgpu::WgpuRuntime as Runtime>::client(&cube_device);
+    let data: Vec<u32> = (0..1024u32).collect();
+    let input = client.create_from_slice(u32::as_bytes(&data));
+    let out = client.empty(1024 * 4);
+    unsafe {
+        copy_kernel::launch_unchecked(&client, CubeCount::Static(4, 1, 1), CubeDim::new_1d(256),
+            BufferArg::from_raw_parts(input, 1024), BufferArg::from_raw_parts(out.clone(), 1024));
+    }
+    let resource = client.get_resource::<WgpuServer<cubecl::wgpu::AutoCompiler>>(out.clone()).unwrap();
+    let res = resource.resource();
+    println!("shared device: buffer usage {:?}, size {}, offset {}", res.buffer.usage(), res.buffer.size(), res.offset);
+    // read it with our own wgpu queue, not with CubeCL's
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None, size: 4096, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+    let mut enc = device.create_command_encoder(&Default::default());
+    enc.copy_buffer_to_buffer(&res.buffer, res.offset, &staging, 0, 4096);
+    queue.submit([enc.finish()]);
+    staging.slice(..).map_async(wgpu::MapMode::Read, |r| r.unwrap());
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let got: Vec<u32> = bytemuck::cast_slice(&staging.slice(..).get_mapped_range().unwrap()).to_vec();
+    let ok = got.iter().enumerate().all(|(i, &v)| v == i as u32 * 2);
+    println!("read back through our own wgpu queue: {}", if ok { "same data: OK" } else { "DIFFERENT" });
+}
+
+#[cube(launch_unchecked)]
+fn copy_kernel(input: &[u32], out: &mut [u32]) {
+    if ABSOLUTE_POS < out.len() {
+        out[ABSOLUTE_POS] = input[ABSOLUTE_POS] * 2u32;
+    }
+}
+
 fn main() {
+    shared_device_check();
     type R = cubecl::wgpu::WgpuRuntime;
     let client = R::client(&Default::default());
-    for profile in [CrtProfile::Ctm644, CrtProfile::Gt65] {
+    for (profile, warp) in [
+        (CrtProfile::Ctm644, Warp::FLAT),
+        (CrtProfile::Ctm644, Warp::of(CrtProfile::Ctm644, 1.0)),
+        (CrtProfile::Gt65, Warp::of(CrtProfile::Gt65, 1.0)),
+    ] {
         let params = profile.params();
         let (w, h) = params.output_size();
         let src = test_picture();
         let frame: Vec<u32> = src.pixels().map(|p| p[0] as u32 | (p[1] as u32) << 8 | (p[2] as u32) << 16).collect();
         let glow = GlowField::new(&src).texels();
-        let pr = pack(&params);
+        let pr = pack(&params, warp);
 
-        let mut cpu = CpuCrt::new(params.clone());
+        let mut cpu = CpuCrt::new(params.clone()).curved(warp);
         let mut want = vec![0u32; w * h];
         let t = std::time::Instant::now();
         cpu.render(&src, &mut want);
@@ -260,6 +334,6 @@ fn main() {
                 off += (d > 3) as usize;
             }
         }
-        println!("{profile:?} {w}x{h}: worst {worst}, {off} values off by >3 of {}; cpu {cpu_ms:.1} ms, cubecl(lavapipe) {best:.1} ms", w * h * 3);
+        println!("{profile:?} {} {w}x{h}: worst {worst}, {off} values off by >3 of {}; cpu {cpu_ms:.1} ms, cubecl(lavapipe) {best:.1} ms", if warp.is_flat() { "flat" } else { "curved" }, w * h * 3);
     }
 }

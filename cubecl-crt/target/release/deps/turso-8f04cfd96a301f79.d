@@ -1,0 +1,13 @@
+/home/user/bemu/cubecl-crt/target/release/deps/turso-8f04cfd96a301f79.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/batch.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/connection.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/params.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/rows.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/transaction.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/value.rs
+
+/home/user/bemu/cubecl-crt/target/release/deps/libturso-8f04cfd96a301f79.rlib: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/batch.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/connection.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/params.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/rows.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/transaction.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/value.rs
+
+/home/user/bemu/cubecl-crt/target/release/deps/libturso-8f04cfd96a301f79.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/batch.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/connection.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/params.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/rows.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/transaction.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/value.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/lib.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/batch.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/connection.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/params.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/rows.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/transaction.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/turso-0.8.4/src/value.rs:

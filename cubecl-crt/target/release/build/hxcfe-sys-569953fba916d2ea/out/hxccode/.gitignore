@@ -1,0 +1,14 @@
+*.obj
+*.o
+*.dll
+*.exe
+*.so
+*.map
+*.a
+*.dylib
+*.app
+*.dmg
+dosdiskbrowser
+hxcfe
+bmptoh
+hxcfloppyemulator
