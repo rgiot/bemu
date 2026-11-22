@@ -309,3 +309,119 @@ fn curved_glass_shows_no_colour_moire() {
         }
     }
 }
+
+/// Just the beam of a CTM: no veil, glow or vignette, so that what the new touches do shows.
+fn beam_only(edit: impl FnOnce(&mut CrtParams)) -> KernelCrt {
+    let mut params = CrtParams {
+        veil: 0.0,
+        vignette: 0.0,
+        glow: 0.0,
+        ..CrtProfile::Ctm644.params()
+    };
+    edit(&mut params);
+    KernelCrt::new(params, Warp::FLAT, Backend::Cpu).unwrap()
+}
+
+fn render_with(filter: &mut KernelCrt, src: &RgbImage) -> (Vec<u32>, usize, usize) {
+    let (w, h) = filter.output_size();
+    let mut dst = vec![0; w * h];
+    filter.render(src, &mut dst);
+    (dst, w, h)
+}
+
+/// The mean of a channel (0: blue, 1: green, 2: red, the low byte first) over the picture's slots of
+/// that gun, in light.
+fn channel_light(dst: &[u32], w: usize, gun: usize) -> f64 {
+    let shift = 16 - 8 * gun;
+    let (mut sum, mut n) = (0.0, 0usize);
+    for (i, p) in dst.iter().enumerate() {
+        if i % w % 3 == gun {
+            sum += ((p >> shift & 255) as f64 / 255.0).powi(2);
+            n += 1;
+        }
+    }
+    sum / n as f64
+}
+
+/// The tube's white is a cold one (TuxAPE; the photographs' whites are bluer still): blue above
+/// green above red on a white field, and the three equal on a tube without it.
+#[test]
+fn the_white_of_a_ctm_is_cold() {
+    let white = field([255, 255, 255]);
+    let (cold, w, _) = render_with(&mut beam_only(|_| {}), &white);
+    let (r, g, b) = (channel_light(&cold, w, 0), channel_light(&cold, w, 1), channel_light(&cold, w, 2));
+    assert!(b > g && g > r, "red {r}, green {g}, blue {b}");
+    let (neutral, w, _) = render_with(&mut beam_only(|p| p.white = [1.0; 3]), &white);
+    let (r, g, b) = (channel_light(&neutral, w, 0), channel_light(&neutral, w, 1), channel_light(&neutral, w, 2));
+    assert!((r - g).abs() < 0.03 && (g - b).abs() < 0.03, "red {r}, green {g}, blue {b}");
+}
+
+/// Where, along a row, a gun's light falls under half of its level on the white side of an edge
+/// (white on the left, black on the right): interpolated between the gun's own slots.
+fn edge_position(dst: &[u32], w: usize, y: usize, gun: usize) -> f64 {
+    let shift = 16 - 8 * gun;
+    let slots: Vec<(usize, f64)> = (gun..w).step_by(3).map(|x| (x, (dst[y * w + x] >> shift & 255) as f64)).collect();
+    let top = slots.iter().take(20).map(|s| s.1).fold(0.0, f64::max);
+    let at = slots.iter().position(|s| s.1 < top / 2.0).expect("an edge");
+    let ((x0, v0), (x1, v1)) = (slots[at - 1], slots[at]);
+    x0 as f64 + (x1 - x0) as f64 * (v0 - top / 2.0) / (v0 - v1)
+}
+
+/// The blue gun lands to the right of the red and green (TuxAPE: a fifth of a pixel).
+#[test]
+fn blue_lands_to_the_right_of_red() {
+    let mut src = field([0, 0, 0]);
+    for y in 0..SRC_HEIGHT as u32 {
+        for x in 0..(SRC_WIDTH / 2) as u32 {
+            src.put_pixel(x, y, Rgb([255, 255, 255]));
+        }
+    }
+    let shifted = |filter: &mut KernelCrt| {
+        let (dst, w, h) = render_with(filter, &src);
+        // averaged over a few rows of the middle: the mask's stagger moves the slots about
+        let rows = [h / 2, h / 2 + 4, h / 2 + 8];
+        let at = |gun| rows.iter().map(|&y| edge_position(&dst, w, y, gun)).sum::<f64>() / rows.len() as f64;
+        at(2) - at(0)
+    };
+    let with = shifted(&mut beam_only(|p| p.white = [1.0; 3]));
+    let without = shifted(&mut beam_only(|p| {
+        p.white = [1.0; 3];
+        p.blue_shift = 0.0;
+        p.blue_width = 1.0;
+    }));
+    // (the blue slots sit two pixels right of the red's in a triad: that is the same in both)
+    assert!(with - without > 0.4 && with - without < 3.0, "blue edge {with} px from red's, {without} without");
+}
+
+/// How much the scanlines show on a grey field: the dark between two lines against the light on
+/// them, over the rows of a period.
+fn scanline_contrast(filter: &mut KernelCrt, level: u8) -> f64 {
+    let (dst, w, h) = render_with(filter, &field([level, level, level]));
+    let rows = 4;
+    let mut sum = vec![0.0f64; rows];
+    for y in h / 4..3 * h / 4 {
+        for x in (w / 4..3 * w / 4).step_by(1) {
+            sum[y % rows] += ((dst[y * w + x] >> 8 & 255) as f64 / 255.0).powi(2);
+        }
+    }
+    let (min, max) = (sum.iter().cloned().fold(f64::MAX, f64::min), sum.iter().cloned().fold(0.0, f64::max));
+    (max - min) / (max + min)
+}
+
+/// The beam is finer at low light, so the scanlines show more there than with a constant width.
+#[test]
+fn the_beam_is_finer_at_low_light() {
+    let thin = scanline_contrast(&mut beam_only(|p| p.white = [1.0; 3]), 100);
+    let constant = scanline_contrast(&mut beam_only(|p| {
+        p.white = [1.0; 3];
+        p.beam_thin = 1.0;
+    }), 100);
+    assert!(thin > constant, "contrast {thin} with a finer beam at low light, {constant} without");
+    // and at a white the two are the same beam
+    let white_thin = scanline_contrast(&mut beam_only(|p| p.white = [1.0; 3]), 255);
+    let white_constant = scanline_contrast(&mut beam_only(|p| {
+        p.white = [1.0; 3];
+        p.beam_thin = 1.0;
+    }), 255);
+    assert!((white_thin - white_constant).abs() < 0.02, "{white_thin} / {white_constant}");
+}

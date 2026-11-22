@@ -188,6 +188,20 @@ pub struct CrtParams {
     pub vignette: f32,
     /// How strong the glow is, 1 as TuxAPE's. See `kernel.rs` (the glow of the frame).
     pub glow: f32,
+    /// How far to the right of the red and green the blue gun lands (convergence), in pixels of the
+    /// monitor's frame (the source is 768 across): TuxAPE measured a fifth of a mode 1 pixel on
+    /// photographs of a CTM. 0 on the other tubes.
+    pub blue_shift: f32,
+    /// How much wider the blue gun's spot is than the others' (its Gaussian's sigma times this).
+    pub blue_width: f32,
+    /// How much finer the beam is at low light: the scanline's Gaussian is this share of its width
+    /// at a black and all of it at a white, growing with the level (a beam's spot swells with its
+    /// current; TuxAPE: "scan lines show most in the middle tones", 0.27 to 0.37 of a line).
+    /// 1: a constant width.
+    pub beam_thin: f32,
+    /// What the tube's white is: the light of each gun times this (a cold white: TuxAPE's
+    /// 0.95, 0.99, 1.05). Ignored by the monochrome tubes.
+    pub white: [f32; 3],
 }
 
 /// The floor under the glow: none, a black picture is black.
@@ -251,9 +265,21 @@ impl CrtParams {
             veil: VEIL,
             vignette: VIGNETTE,
             glow: GLOW,
+            blue_shift: 0.0,
+            blue_width: 1.0,
+            beam_thin: 1.0,
+            white: [1.0; 3],
         };
         match profile {
-            CrtProfile::Ctm644 => base,
+            // what TuxAPE measured on photographs of a CTM: a blue gun a fifth of a pixel off and
+            // wider, a beam finer at low light, a cold white
+            CrtProfile::Ctm644 => Self {
+                blue_shift: 0.4,
+                blue_width: 1.5,
+                beam_thin: 0.73,
+                white: [0.95, 0.99, 1.05],
+                ..base
+            },
             CrtProfile::Trinitron => Self {
                 slot_fill: (0.9, 1.2),
                 stagger: 0.0,

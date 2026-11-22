@@ -41,11 +41,20 @@ pub const WARP_KX: usize = 22;
 pub const WARP_KY: usize = 23;
 pub const WARP_CORNER: usize = 24;
 pub const EDGED: usize = 25;
+pub const BLUE_SHIFT: usize = 26;
+pub const WHITE: usize = 27; // 3 values
 
 // the tables of `luts` (see `Pipeline::new`): the Gaussian weights of 1024 phases, and the slot mask
 pub const PHASES: usize = 1024;
-pub const V_OFF: usize = PHASES * 4;
-pub const M_OFF: usize = V_OFF + PHASES * 2;
+/// The scanline's weights are tabulated for this many levels of light.
+pub const V_LEVELS: usize = 16;
+/// The horizontal weights of the red and green guns, then of the blue (wider), the scanline's
+/// weights by level, then the slot mask.
+pub const HB_OFF: usize = PHASES * 4;
+pub const V_OFF: usize = 2 * PHASES * 4;
+pub const M_OFF: usize = V_OFF + V_LEVELS * PHASES;
+/// The parameters' count.
+pub const PARAMS: usize = 30;
 
 #[cube]
 fn gauss(d: f32, sigma: f32) -> f32 {
@@ -104,15 +113,19 @@ fn slot_light(frame: &[u32], luts: &[f32], pr: &[f32], x: i32, y: i32, sw_: u32,
         let qy = ((y as f32 + 0.5) / oh) * 2.0 - 1.0;
         let wx = (qx * (1.0 + pr[WARP_KX] * qy * qy) + 1.0) / 2.0;
         let wy = (qy * (1.0 + pr[WARP_KY] * qx * qx) + 1.0) / 2.0;
-        let v = wx * ow / pr[X_RATIO] - 0.5;
+        // the blue gun lands a little to the right of the others (the beam is read to its left)
+        let mut v = wx * ow / pr[X_RATIO] - 0.5;
+        let mut table = 0usize;
+        if c == 2u32 && pr[MONO] < 0.5 {
+            v = v - pr[BLUE_SHIFT];
+            table = HB_OFF;
+        }
         let fl = f32::floor(v);
         let first = fl as i32 - 1;
-        let hp = u32::min(((v - fl) * 1024.0) as u32, 1023u32) as usize * 4;
+        let hp = table + u32::min(((v - fl) * 1024.0) as u32, 1023u32) as usize * 4;
         let (w0, w1, w2, w3) = (luts[hp], luts[hp + 1], luts[hp + 2], luts[hp + 3]);
         let f = wy * oh / pr[ROWS] - 0.5;
         let line = f32::floor(f) as i32;
-        let vp = V_OFF + u32::min(((f - line as f32) * 1024.0) as u32, 1023u32) as usize * 2;
-        let (a, b) = (luts[vp], luts[vp + 1]);
         let la = w0 * gun(frame, pr, first, line, c, sw_, sh_)
             + w1 * gun(frame, pr, first + 1, line, c, sw_, sh_)
             + w2 * gun(frame, pr, first + 2, line, c, sw_, sh_)
@@ -121,6 +134,12 @@ fn slot_light(frame: &[u32], luts: &[f32], pr: &[f32], x: i32, y: i32, sw_: u32,
             + w1 * gun(frame, pr, first + 1, line + 1, c, sw_, sh_)
             + w2 * gun(frame, pr, first + 2, line + 1, c, sw_, sh_)
             + w3 * gun(frame, pr, first + 3, line + 1, c, sw_, sh_);
+        // a scanline is wider the brighter it is: weights by the level of each line
+        let phase = u32::min(((f - line as f32) * 1024.0) as u32, 1023u32) as usize;
+        let lv0 = (f32::min(la, 1.0) * 15.0 + 0.5) as usize;
+        let lv1 = (f32::min(lb, 1.0) * 15.0 + 0.5) as usize;
+        let a = luts[V_OFF + lv0 * 1024 + phase];
+        let b = luts[V_OFF + lv1 * 1024 + 1023 - phase];
         let level = a * la + b * lb;
         let period = (6 * sw) as usize;
         let distance = luts[M_OFF + (y as usize % pr[PITCH] as usize) * period + x as usize % period];
@@ -238,9 +257,9 @@ pub fn crt(lights: &[f32], glow: &[f32], pr: &[f32], out: &mut [u32]) {
         let pixel = 2.0 / f32::max(pr[OUT_W], pr[OUT_H]);
         let edge = f32::clamp(0.5 - distance / pixel, 0.0, 1.0);
         let alpha = (1.0 - pr[EDGED]) + pr[EDGED] * edge;
-        out[i] = (encode(r, ar, fall, alpha) << 16u32)
-            | (encode(g, ag, fall, alpha) << 8u32)
-            | encode(b, ab, fall, alpha);
+        out[i] = (encode(r, ar, fall * pr[WHITE], alpha) << 16u32)
+            | (encode(g, ag, fall * pr[WHITE + 1], alpha) << 8u32)
+            | encode(b, ab, fall * pr[WHITE + 2], alpha);
     }
 }
 
@@ -473,7 +492,7 @@ impl Pipeline {
                 client,
                 count(),
                 CubeDim::new_1d(self.cube_dim),
-                arg(frame, frame_words), arg(&self.luts, self.luts_len), arg(&self.params, 26),
+                arg(frame, frame_words), arg(&self.luts, self.luts_len), arg(&self.params, PARAMS),
                 arg(&self.lights, self.out_len),
                 sw, sh,
             );
@@ -481,7 +500,7 @@ impl Pipeline {
                 client,
                 count(),
                 CubeDim::new_1d(self.cube_dim),
-                arg(&self.lights, self.out_len), arg(&self.glow, FINE * 4), arg(&self.params, 26),
+                arg(&self.lights, self.out_len), arg(&self.glow, FINE * 4), arg(&self.params, PARAMS),
                 arg(&self.out, self.out_len),
             );
         }
@@ -495,16 +514,24 @@ impl Pipeline {
 pub fn luts(p: &CrtParams) -> Vec<f32> {
     let mut v = Vec::with_capacity(M_OFF + 6 * p.slot_px() * p.pitch_rows());
     let gauss = |d: f32, sigma: f32| (-d * d / (2.0 * sigma * sigma)).exp();
-    for phase in 0..PHASES {
-        let frac = (phase as f32 + 0.5) / PHASES as f32;
-        let w: Vec<f32> = (0..4).map(|t| gauss(1.0 + frac - t as f32, p.beam_sigma_h)).collect();
-        let sum: f32 = w.iter().sum();
-        v.extend(w.iter().map(|w| w / sum));
+    // the horizontal taps: the red and green guns, then the blue (a wider spot)
+    for sigma in [p.beam_sigma_h, p.beam_sigma_h * p.blue_width] {
+        for phase in 0..PHASES {
+            let frac = (phase as f32 + 0.5) / PHASES as f32;
+            let w: Vec<f32> = (0..4).map(|t| gauss(1.0 + frac - t as f32, sigma)).collect();
+            let sum: f32 = w.iter().sum();
+            v.extend(w.iter().map(|w| w / sum));
+        }
     }
-    for phase in 0..PHASES {
-        let frac = (phase as f32 + 0.5) / PHASES as f32;
-        v.push(gauss(frac, p.beam_sigma_v));
-        v.push(gauss(1.0 - frac, p.beam_sigma_v));
+    // the scanline: its sigma grows from `beam_thin` of the full width at a black to all of it at a
+    // white; the weight of the line above the beam at `frac` is `T[level][frac]` and the line
+    // below's is `T[level][1 - frac]` (the table's last phase is the first's mirror)
+    for level in 0..V_LEVELS {
+        let share = p.beam_thin + (1.0 - p.beam_thin) * level as f32 / (V_LEVELS - 1) as f32;
+        for phase in 0..PHASES {
+            let frac = (phase as f32 + 0.5) / PHASES as f32;
+            v.push(gauss(frac, p.beam_sigma_v * share));
+        }
     }
     for y in 0..p.pitch_rows() {
         for x in 0..6 * p.slot_px() {
@@ -516,7 +543,7 @@ pub fn luts(p: &CrtParams) -> Vec<f32> {
 
 pub fn pack(p: &CrtParams, warp: Warp) -> Vec<f32> {
     let (w, h) = p.output_size();
-    let mut v = vec![0.0f32; 26];
+    let mut v = vec![0.0f32; PARAMS];
     v[OUT_W] = w as f32;
     v[OUT_H] = h as f32;
     v[SLOT_PX] = p.slot_px() as f32;
@@ -542,6 +569,8 @@ pub fn pack(p: &CrtParams, warp: Warp) -> Vec<f32> {
     v[WARP_KY] = warp.k.1;
     v[WARP_CORNER] = warp.corner;
     v[EDGED] = if warp.is_flat() { 0.0 } else { 1.0 };
+    v[BLUE_SHIFT] = p.blue_shift;
+    v[WHITE..WHITE + 3].copy_from_slice(&if p.phosphor.is_some() { [1.0; 3] } else { p.white });
     v
 }
 
