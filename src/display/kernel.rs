@@ -444,7 +444,7 @@ impl Pipeline {
             close_radius: (close.len() / 2) as u32,
             wide_radius: (wide.len() / 2) as u32,
             close_taps: close.len(),
-            kernel_weights: (GLOW_CLOSE.1, GLOW_WIDE.1),
+            kernel_weights: (GLOW_CLOSE.1 * params.glow_halo, GLOW_WIDE.1),
             out_len: w * h,
             cube_dim: 256,
         }

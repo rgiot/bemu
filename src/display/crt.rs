@@ -188,6 +188,11 @@ pub struct CrtParams {
     pub vignette: f32,
     /// How strong the glow is, 1 as TuxAPE's. See `kernel.rs` (the glow of the frame).
     pub glow: f32,
+    /// The share kept of the glow's **close** part, the halo around the bright (1: TuxAPE's weight
+    /// [`GLOW_CLOSE`]). The wide part, which lifts the dark of a picture to what the photographs
+    /// show, is `glow` alone: the photographs cannot tell the halo (their dark areas ask for the
+    /// wide part), and on a real CTM it is seen much weaker than TuxAPE's.
+    pub glow_halo: f32,
     /// How far to the right of the red and green the blue gun lands (convergence), in pixels of the
     /// monitor's frame (the source is 768 across): TuxAPE measured a fifth of a mode 1 pixel on
     /// photographs of a CTM. 0 on the other tubes.
@@ -227,6 +232,9 @@ pub const GLOW_WIDE: (f32, f32) = (160.0, 0.085);
 /// gives 0.085 for the wide one, TuxAPE's own value (the data cannot tell the close one, whose
 /// light is under a pixel of the edge of the bright).
 pub const GLOW: f32 = 1.0;
+/// The share of the close part of the glow kept: a third of TuxAPE's (a real CTM's halo, as the
+/// owner of one sees it, is much weaker than that).
+pub const GLOW_HALO: f32 = 0.3;
 
 /// The taps of a Gaussian of `sigma` cells, from -4 sigma to 4 sigma, their sum 1: what the CPU
 /// blur and the GPU's (`kernel.rs`) share.
@@ -265,6 +273,7 @@ impl CrtParams {
             veil: VEIL,
             vignette: VIGNETTE,
             glow: GLOW,
+            glow_halo: GLOW_HALO,
             blue_shift: 0.0,
             blue_width: 1.0,
             beam_thin: 1.0,

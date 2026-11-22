@@ -106,6 +106,7 @@ fn the_edges_are_darker_than_the_centre() {
 fn the_bright_glows_on_the_dark() {
     let params = || CrtParams {
         vignette: 0.0,
+        glow_halo: 1.0,
         ..CrtProfile::Ctm644.params()
     };
     let mut filter = KernelCrt::new(params(), Warp::FLAT, Backend::Cpu).unwrap();
@@ -433,4 +434,44 @@ fn the_beam_is_finer_at_low_light() {
         p.beam_thin = 1.0;
     }), 255);
     assert!((white_thin - white_constant).abs() < 0.02, "{white_thin} / {white_constant}");
+}
+
+/// The light of the dark `distance` output pixels right of a white block that fills the left
+/// quarter of the picture (the glow alone: no veil, vignette or white balance).
+fn dark_beside_white(halo: f32, distance: usize) -> f64 {
+    let mut filter = {
+        let params = CrtParams {
+            vignette: 0.0,
+            veil: 0.0,
+            glow_halo: halo,
+            white: [1.0; 3],
+            ..CrtProfile::Ctm644.params()
+        };
+        KernelCrt::new(params, Warp::FLAT, Backend::Cpu).unwrap()
+    };
+    let mut src = field([0, 0, 0]);
+    for y in 0..SRC_HEIGHT as u32 {
+        for x in 0..(SRC_WIDTH / 4) as u32 {
+            src.put_pixel(x, y, Rgb([255, 255, 255]));
+        }
+    }
+    let (dst, w, h) = render_with(&mut filter, &src);
+    let x = w / 4 + distance;
+    (0..12)
+        .map(|d| ((dst[h / 2 * w + x + d] >> 8 & 255) as f64 / 255.0).powi(2))
+        .sum::<f64>()
+        / 12.0
+}
+
+/// The halo is a share of TuxAPE's: next to a bright area the dark is lit less with a weaker halo,
+/// far from it (the wide part of the glow) the same.
+#[test]
+fn the_halo_is_adjustable_and_leaves_the_dark_floor_alone() {
+    let (full, weak, none) = (dark_beside_white(1.0, 10), dark_beside_white(0.3, 10), dark_beside_white(0.0, 10));
+    assert!(full > weak && weak > none, "{full} {weak} {none}");
+    // the close part is most of what is lit right beside the white: 0.3 of it leaves well under half
+    assert!(weak - none < 0.5 * (full - none) && weak > none, "{full} {weak} {none}");
+    // far from the white (a third of the picture away): only the wide part, whatever the halo
+    let (far_full, far_none) = (dark_beside_white(1.0, 600), dark_beside_white(0.0, 600));
+    assert!((far_full - far_none).abs() < 0.1 * far_full + 1e-4, "{far_full} / {far_none}");
 }
