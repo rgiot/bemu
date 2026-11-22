@@ -1,0 +1,4 @@
+~Boucle de 10 us par trame : 1894
+1 aucun changement en 0,7 s (D0B reste a 1) 81 20 02
+2 aucun changement en 0,7 s (D0B reste a 1) 81 20 00
+3 aucun changement en 0,7 s (D0B reste a 1) 81 20 02

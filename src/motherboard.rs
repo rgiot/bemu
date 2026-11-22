@@ -1097,6 +1097,7 @@ impl Motherboard {
             }
         }
         self.ga.set_last_idle_t(self.cpu.last_idle_t());
+        self.ga.set_interrupt_skew(self.crtc.interrupt_skew_ticks());
         self.ga
             .set_monitor_hsync_advance(self.crtc.hsync_late_ticks());
         self.ga

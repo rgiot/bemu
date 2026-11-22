@@ -80,6 +80,11 @@ const TRACK_BYTES: u64 = 6250;
 const PHASE_GAP_US: u64 = 12;
 /// Head settling after the last step of a seek.
 const SETTLE_US: u64 = 15_000;
+
+/// How long a real 765 takes to execute SENSE INTERRUPT STATUS before its first result byte is
+/// ready: the user's 6128 polls it in 164.9 us a turn (SEEKJIT3), where the program's own delays
+/// and an instant answer make 123.9 us; a 71 us answer gives 165.2 (the value of SEEKJIT3 during a seek).
+const SENSE_INTERRUPT_US: u64 = 71;
 /// Bytes between the index hole and the first sector's sync (gap 4a, sync, IAM, gap 1).
 const TRACK_HEAD_BYTES: u64 = 146;
 
@@ -153,11 +158,73 @@ impl DriveKind {
         self != DriveKind::ThreeInch
     }
 
+    /// The disc can be taken out and put back the other side up (a 3" drive has one head).
+    pub fn can_flip(self) -> bool {
+        self == DriveKind::ThreeInch
+    }
+
+    /// The side of the image the FDC's head `head` reads: on a 3" drive the side put up (`flipped`),
+    /// whatever the FDC asks; on a drive with two heads the one selected.
+    pub fn surface(self, flipped: bool, head: u8) -> u8 {
+        match self {
+            DriveKind::ThreeInch => u8::from(flipped),
+            DriveKind::ThreeAndHalfInch | DriveKind::Gotek => head,
+        }
+    }
+
+    /// One turn of the disc, in microseconds. The user's real 6128 turns its 3" disc in 204.7 ms,
+    /// not 200: 200 turns took 2050 frames of 19.968 ms (ROTATION). The data rate is the chip's, so
+    /// the track just has a longer gap.
+    pub fn turn_us(self) -> u64 {
+        match self {
+            DriveKind::ThreeInch => TRACK_BYTES * BYTE_US * 10_233 / 10_000,
+            DriveKind::ThreeAndHalfInch | DriveKind::Gotek => TRACK_BYTES * BYTE_US,
+        }
+    }
+
+    /// How long the drive takes to be READY after its motor is switched on, in microseconds, when
+    /// the motor was off for `off_s` seconds (None: not since the machine started). On the user's
+    /// real 6128 and its 3" drive (READYTST, SPINDOWN, SPINDWN2, frames of 19.968 ms): 12 to 13
+    /// frames when the motor was off for less than 0.14 s, about 22.5 when it was off for 0.24 to 3 s
+    /// (the spindle still turns), 28 from a stop (6 s or more, and from power on); in between, a
+    /// straight line. The other kinds are ready at once.
+    pub fn spin_up_us(self, off_s: Option<f64>) -> u64 {
+        if self != DriveKind::ThreeInch {
+            return 0;
+        }
+        const FRAME_US: f64 = 19_968.0;
+        let frames = match off_s {
+            None => 28.0,
+            Some(s) if s >= 6.0 => 28.0,
+            Some(s) if s >= 3.0 => 22.5 + (s - 3.0) / 3.0 * 5.5,
+            Some(s) if s >= 0.24 => 22.5,
+            Some(s) if s >= 0.14 => 12.7 + (s - 0.14) / 0.10 * 9.8,
+            Some(_) => 12.7,
+        };
+        (frames * FRAME_US) as u64
+    }
+
+    /// How long after its READY line the drive reads IDs and sectors: the first READ ID that works
+    /// comes 31 frames after the motor on the real 6128, 3.5 frames after READY (READYTST).
+    pub fn read_ready_delay_us(self) -> u64 {
+        match self {
+            DriveKind::ThreeInch => 70_000,
+            DriveKind::ThreeAndHalfInch | DriveKind::Gotek => 0,
+        }
+    }
+
     /// How long a seek of `steps` tracks takes, the FDC stepping every `step_us`: a real
     /// drive's head moves then settles, a Gotek's has nothing to move.
     pub fn seek_us(self, steps: u64, step_us: u64) -> u64 {
         match self {
             DriveKind::Gotek => 1,
+            // the user's real 3" drive (SEEKJIT4): the time is the steps and nothing more, a seek of
+            // 2 tracks takes twice one of 1, no 15 ms of head settling
+            // (86 SEEKJIT4 loops a track on the real drive, 80 when a step takes the 12 ms
+            // SPECIFY asks: 43/40 of it; a seek of 2 tracks or more costs about 12 loops more, 1.8 ms)
+            DriveKind::ThreeInch if steps > 0 => {
+                steps * step_us * 43 / 40 + if steps >= 2 { 1_800 } else { 0 }
+            }
             _ if steps > 0 => steps * step_us + SETTLE_US,
             _ => 1_000,
         }
@@ -397,6 +464,13 @@ struct Transfer {
 
 pub struct Fdc {
     motor: bool,
+    /// When the motor was last switched off (None: not since the machine started), and from when
+    /// the drive is ready after it was switched on: a real 3" drive needs its spindle to reach its
+    /// speed (see `spin_up_us`).
+    motor_off_at: Option<u64>,
+    ready_at: u64,
+    /// From when the heads read IDs and sectors: a little after the READY line (see `set_motor`).
+    read_ready_at: u64,
     /// Commands that reached their execution phase (sector transfers), wrapping: a drive light's flashes.
     executions: u32,
     drives: [Drive; NB_UNITS],
@@ -457,6 +531,9 @@ impl Default for Fdc {
     fn default() -> Self {
         let mut fdc = Self {
             motor: false,
+            motor_off_at: None,
+            ready_at: 0,
+            read_ready_at: 0,
             executions: 0,
             drives: Default::default(),
             st: 0,
@@ -567,7 +644,7 @@ impl Fdc {
                 self.drives[unit].track = track;
                 self.drives[unit].cursor = 0;
                 self.pending_interrupt[unit] = Some(st0);
-                self.seeking &= !(1 << unit);
+                // (D0B-D3B stay set after the seek: only SENSE INTERRUPT STATUS clears them, as on the user's real 6128, SEEKJIT2: no change of D0B in 0.7 s)
             } else {
                 i += 1;
             }
@@ -585,7 +662,27 @@ impl Fdc {
     }
 
     pub fn set_motor(&mut self, on: bool) {
+        if on && !self.motor {
+            self.ready_at = self.now_us + self.spin_up_us();
+            self.read_ready_at = self.ready_at
+                + if self.timing {
+                    self.drives[self.selected_drive()].kind.read_ready_delay_us()
+                } else {
+                    0
+                };
+        } else if !on && self.motor {
+            self.motor_off_at = Some(self.now_us);
+        }
         self.motor = on;
+    }
+
+    /// How long the selected drive takes to be READY after its motor is switched on.
+    fn spin_up_us(&self) -> u64 {
+        if !self.timing {
+            return 0;
+        }
+        let off_s = self.motor_off_at.map(|t| self.now_us.saturating_sub(t) as f64 / 1e6);
+        self.drives[self.selected_drive()].kind.spin_up_us(off_s)
     }
 
     /// ST0, ST1 and ST2 of the last command (for debuggers).
@@ -676,7 +773,7 @@ impl Fdc {
     pub fn flip_disc(&mut self, drive: FdcDrive) -> Option<u8> {
         let unit = drive.index();
         let d = &mut self.drives[unit];
-        if d.disc.is_none() || d.kind != DriveKind::ThreeInch {
+        if d.disc.is_none() || !d.kind.can_flip() {
             return None;
         }
         d.flipped = !d.flipped;
@@ -717,10 +814,7 @@ impl Fdc {
     /// up, whatever the FDC asks; on a 3.5" drive the head selected.
     fn surface(&self, unit: usize, head: u8) -> u8 {
         let drive = &self.drives[unit];
-        match drive.kind {
-            DriveKind::ThreeInch => u8::from(drive.flipped),
-            DriveKind::ThreeAndHalfInch | DriveKind::Gotek => head,
-        }
+        drive.kind.surface(drive.flipped, head)
     }
 
     /// The FDC wrote to the disc of a drive since it went in or since [`Fdc::mark_saved`].
@@ -875,6 +969,9 @@ impl Fdc {
         self.st = msr::RQM | msr::DIO | msr::CB;
         if self.timing {
             self.rqm_at = self.t_cursor.max(self.now_us);
+            if self.current_cmd == Cmd::SenseInterruptStatus {
+                self.rqm_at = self.rqm_at.max(self.now_us + SENSE_INTERRUPT_US);
+            }
         }
     }
 
@@ -983,7 +1080,16 @@ impl Fdc {
 
     /// The drive is ready when it spins with a disc in it.
     fn ready(&self, unit: usize) -> bool {
-        self.motor && self.drives[unit].disc.is_some()
+        self.motor
+            && self.drives[unit].disc.is_some()
+            && (!self.timing || self.now_us >= self.read_ready_at)
+    }
+
+    /// The drive's READY line (ST3's RY): up as the spindle reaches its speed.
+    fn ready_line(&self, unit: usize) -> bool {
+        self.motor
+            && self.drives[unit].disc.is_some()
+            && (!self.timing || self.now_us >= self.ready_at)
     }
 
     // ---- Recalibrate / Seek ----
@@ -1020,6 +1126,7 @@ impl Fdc {
         match self.pending_interrupt.iter().position(Option::is_some) {
             Some(unit) => {
                 let st0 = self.pending_interrupt[unit].take().unwrap_or(0);
+                self.seeking &= !(1 << unit);
                 self.result = vec![st0, self.drives[unit].track];
             }
             // No interrupt pending: the chip treats this as an invalid
@@ -1042,7 +1149,7 @@ impl Fdc {
         if drive.kind.is_double_sided() {
             st3 |= st3::TS;
         }
-        if self.ready(unit) {
+        if self.ready_line(unit) {
             st3 |= st3::RY;
         }
 
@@ -1058,17 +1165,20 @@ impl Fdc {
         let drive = &self.drives[unit];
         let disc = drive.disc.as_ref()?;
         // a bitstream says where its sectors are; for a DSK they are laid out as Format Track would
-        if let Some(timing) = disc.track_timing(side, drive.track) {
-            return Some(Layout {
+        let mut layout = if let Some(timing) = disc.track_timing(side, drive.track) {
+            Layout {
                 id_start: timing.id_start.clone(),
                 id_end: timing.id_end.clone(),
                 data_start: timing.data_start.clone(),
                 period: timing.period.max(1),
-            });
-        }
-        disc.track(side, drive.track)
-            .filter(|track| !track.sectors.is_empty())
-            .map(Layout::of)
+            }
+        } else {
+            disc.track(side, drive.track)
+                .filter(|track| !track.sectors.is_empty())
+                .map(Layout::of)?
+        };
+        layout.period = layout.period * drive.kind.turn_us() / (TRACK_BYTES * BYTE_US);
+        Some(layout)
     }
 
     /// The sector that passes next under the head at `t_cursor` becomes the cursor.
@@ -1087,9 +1197,14 @@ impl Fdc {
     }
 
     /// A search that finds nothing goes on for two turns of the disc.
+    /// One turn of the disc under `unit`'s head, in microseconds.
+    fn turn_us(&self, unit: usize) -> u64 {
+        self.drives[unit].kind.turn_us()
+    }
+
     fn lose_two_turns(&mut self) {
         if self.timing {
-            self.t_cursor += 2 * TRACK_BYTES * BYTE_US;
+            self.t_cursor += 2 * self.turn_us(self.xfer.unit);
         }
     }
 
@@ -1185,7 +1300,7 @@ impl Fdc {
                         self.t_cursor =
                             occurrence(self.t_cursor, layout.id_end[index], layout.period);
                     }
-                    None => self.t_cursor += 2 * TRACK_BYTES * BYTE_US,
+                    None => self.t_cursor += 2 * self.turn_us(unit),
                 }
             }
             let sectors = self.sectors(unit, head);
@@ -1257,7 +1372,7 @@ impl Fdc {
                 // Read Track starts at the index hole
                 let period = self
                     .layout(unit, self.xfer.head)
-                    .map_or(TRACK_BYTES * BYTE_US, |l| l.period);
+                    .map_or(self.turn_us(unit), |l| l.period);
                 self.t_cursor = occurrence(self.now_us, 0, period);
             }
             if !self.next_read_track_sector() {
@@ -1617,7 +1732,7 @@ impl Fdc {
 
         if self.timing {
             // everything happens in one turn of the disc, from the index hole
-            let turn = TRACK_BYTES * BYTE_US;
+            let turn = self.turn_us(unit);
             let t_index = occurrence(self.now_us, 0, turn);
             self.data_t0 = t_index + TRACK_HEAD_BYTES * BYTE_US;
             self.t_cursor = t_index + turn;
@@ -1673,8 +1788,12 @@ impl Fdc {
         }
 
         if formatted {
+            // What the chip leaves in the result registers after FORMAT, as a real 6128 (the user's
+            // photos of FDCRES) shows it: the track, the sector size in units of 128 bytes where the
+            // head would be, the number of sectors where R would be, and N.
             self.xfer.c = track_number;
-            self.xfer.h = head;
+            self.xfer.h = 1u8.checked_shl(u32::from(n)).unwrap_or(0);
+            self.xfer.r = self.command[FMT_SC];
             self.xfer.n = n;
         } else {
             // off the end of the disc

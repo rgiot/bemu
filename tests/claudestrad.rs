@@ -24,7 +24,8 @@
 //! as a filter, e.g. `... --ignored intpos`.
 
 use amsrust::crtc::CrtcType;
-use amsrust::csl_runner::CslRunner;
+use amsrust::csl_runner::{CslRunner, Progress};
+use amsrust::keyboard::CpcKey;
 use amsrust::motherboard::{CpcModel, MotherboardBuilder};
 use image::RgbImage;
 use std::path::PathBuf;
@@ -65,6 +66,12 @@ struct Case {
     /// The outcome varies from run to run on a real machine (random timing): the picture is not
     /// compared as strictly.
     random: bool,
+    /// The most emulated seconds to play when the reference is a screen of text (the run stops as
+    /// soon as the screen reaches the reference's, or stays as it is).
+    cap: u32,
+    /// Compare the text at all: not for screens whose rows are drawn in several modes, where the
+    /// font does not read back.
+    text: bool,
 }
 
 const fn case(name: &'static str, disk: &'static str, waits: &'static [u32]) -> Case {
@@ -75,6 +82,8 @@ const fn case(name: &'static str, disk: &'static str, waits: &'static [u32]) -> 
         waits,
         playcity: false,
         random: false,
+        cap: 90,
+        text: true,
     }
 }
 
@@ -97,9 +106,15 @@ const CASES: &[Case] = &[
     },
     case("PALA14", "PALA14.DSK", &[12]),
     case("PALA14B", "PALA14B.DSK", &[12]),
-    case("HSYNCPOS", "HSYNCPOS.DSK", &[12, 6]),
-    case("INKBORD", "INKBORD.DSK", &[12, 6]),
-    case("INKMODE", "INKMODE.DSK", &[12]),
+    case("HSYNCPOS", "HSYNCPOS.DSK", &[25, 20]),
+    Case {
+        text: false,
+        ..case("INKBORD", "INKBORD.DSK", &[12, 6])
+    },
+    Case {
+        text: false,
+        ..case("INKMODE", "INKMODE.DSK", &[12])
+    },
     case("INKPOINT", "INKPOINT.DSK", &[12]),
     case("INKTEST", "INKTEST.DSK", &[12, 6]),
     case("CRTCTEST", "CRTCTEST.DSK", &[30]),
@@ -108,22 +123,58 @@ const CASES: &[Case] = &[
     case("KUKU", "KUKU.DSK", &[12]),
     case("Z80TYPE", "Z80TYPE.DSK", &[12]),
     case("CADRAGE", "CADRAGE.DSK", &[12, 6]),
-    case("FDCTEST", "FDCTEST.DSK", &[30]),
-    case("FDCTEST2", "FDCTEST2.DSK", &[30, 10, 10, 10, 10]),
-    case("FDCTEST3", "FDCTEST3.DSK", &[30, 10, 10, 10, 10]),
+    Case {
+        cap: 250,
+        ..case("FDCTEST", "FDCTEST.DSK", &[30])
+    },
+    Case {
+        cap: 300,
+        ..case("FDCTEST2", "FDCTEST2.DSK", &[30, 10, 10, 10, 10])
+    },
+    Case {
+        cap: 600,
+        ..case("FDCTEST3", "FDCTEST3.DSK", &[30, 10, 10, 10, 10])
+    },
     Case {
         program: "SEEKJIT",
-        ..case("SEEKJIT", "SEEKJIT.DSK", &[30])
+        ..Case {
+            cap: 150,
+            ..case("SEEKJIT", "SEEKJIT.DSK", &[30])
+        }
     },
-    case("SEEKJIT2", "SEEKJIT.DSK", &[30]),
-    case("SEEKJIT3", "SEEKJIT.DSK", &[30]),
-    case("SEEKJIT4", "SEEKJIT.DSK", &[30]),
-    case("HSYNCW", "MESURES.DSK", &[12, 6]),
-    case("FDCRES", "MESURES.DSK", &[30, 10]),
-    case("READYTST", "MESURES.DSK", &[30, 10]),
-    case("SPINDOWN", "MESURES.DSK", &[40, 10]),
-    case("SPINDWN2", "MESURES.DSK", &[40, 10]),
-    case("ROTATION", "MESURES.DSK", &[30, 10]),
+    Case {
+        cap: 150,
+        ..case("SEEKJIT2", "SEEKJIT.DSK", &[30])
+    },
+    Case {
+        cap: 150,
+        ..case("SEEKJIT3", "SEEKJIT.DSK", &[30])
+    },
+    Case {
+        cap: 150,
+        ..case("SEEKJIT4", "SEEKJIT.DSK", &[30])
+    },
+    case("HSYNCW", "MESURES.DSK", &[25, 20]),
+    Case {
+        cap: 120,
+        ..case("FDCRES", "MESURES.DSK", &[30, 10])
+    },
+    Case {
+        cap: 120,
+        ..case("READYTST", "MESURES.DSK", &[30, 10])
+    },
+    Case {
+        cap: 200,
+        ..case("SPINDOWN", "MESURES.DSK", &[40, 10])
+    },
+    Case {
+        cap: 200,
+        ..case("SPINDWN2", "MESURES.DSK", &[40, 10])
+    },
+    Case {
+        cap: 150,
+        ..case("ROTATION", "MESURES.DSK", &[30, 10])
+    },
     case("AYLECT", "MESURES.DSK", &[12]),
     case("AYSEQ", "MESURES.DSK", &[12]),
     case("AYTRAME", "MESURES.DSK", &[12]),
@@ -185,7 +236,11 @@ fn script(case: &Case) -> String {
     s
 }
 
-fn run(case: &Case, which: Machine) -> RgbImage {
+/// Plays the case. With a `target` (the text of the reference screen) the run is adaptive: it
+/// looks at the screen twice per emulated second, presses a key when the program asks for one,
+/// and stops when the screen shows the target (or is as far along as the target and no longer
+/// changes), or after the case's cap. Without one (a graphics screen), it plays the fixed waits.
+fn run(case: &Case, which: Machine, target: Option<&str>, m4: bool) -> RgbImage {
     let dir = std::env::temp_dir().join(format!(
         "amsrust_claudestrad_{}_{}",
         case.name,
@@ -194,13 +249,82 @@ fn run(case: &Case, which: Machine) -> RgbImage {
     let _ = std::fs::remove_dir_all(&dir);
     let mut runner = CslRunner::new(&dir);
     runner.set_machine(machine(which, case.playcity));
+    let Some(target) = target else {
+        assert!(!m4, "an M4 run needs the adaptive path");
+        runner
+            .run_text(&script(case), std::env::current_dir().unwrap())
+            .unwrap_or_else(|e| panic!("{}: the CSL fails: {e}", case.name));
+        return image::open(dir.join("shot_01.png"))
+            .or_else(|_| image::open(dir.join("shot.png")))
+            .unwrap_or_else(|e| panic!("{}: no screenshot: {e}", case.name))
+            .to_rgb8();
+    };
+
+    // boot, load the disc, type the command, then wait for good: the loop below decides what
+    // happens next (the keys, the end)
+    #[cfg(feature = "m4")]
+    if m4 {
+        let sd = std::env::temp_dir().join(format!("bemu-claudestrad-m4-{}", std::process::id()));
+        std::fs::create_dir_all(&sd).unwrap();
+        runner.motherboard_mut().plug_expansion(Box::new(
+            amsrust::m4::M4Board::with_bundled_rom(&sd).unwrap(),
+        ));
+    }
+    // (an M4 stays plugged only if the machine is not rebuilt: no `reset` then)
+    let reset = if m4 { "" } else { "reset\n" };
+    let start = format!(
+        "csl_version 1.1\n{reset}wait 6000000\ndisk_insert '{FIXTURES}/disks/{}'\n\
+         key_delay 70000 70000 400000\nkey_output 'RUN\"{}\"\\(RET)'\nwait 4000000000\n",
+        case.disk, case.program
+    );
     runner
-        .run_text(&script(case), std::env::current_dir().unwrap())
+        .start_text(&start, std::env::current_dir().unwrap())
         .unwrap_or_else(|e| panic!("{}: the CSL fails: {e}", case.name));
-    image::open(dir.join("shot_01.png"))
-        .or_else(|_| image::open(dir.join("shot.png")))
-        .unwrap_or_else(|e| panic!("{}: no screenshot: {e}", case.name))
-        .to_rgb8()
+
+    let last_line = |text: &str| text.lines().last().unwrap_or("").trim().to_lowercase();
+    let wanted_end: String = last_line(target).chars().take(8).collect();
+    let (mut seen, mut changed_at, mut next_look, mut presses) = (String::new(), 0u64, 0u64, 0);
+    let cap = case.cap as u64 * 1_000_000;
+    loop {
+        if let Progress::Done(_) = runner.advance(400_000).expect("the script plays") {
+            break;
+        }
+        let now = runner.elapsed_us();
+        if now < next_look || now < 8_000_000 {
+            continue;
+        }
+        next_look = now + 500_000;
+        let Some(frame) = runner.last_frame() else {
+            continue;
+        };
+        let text = read_text(frame).text();
+        if text != seen {
+            seen = text;
+            changed_at = now;
+        }
+        let stable = now - changed_at;
+        let as_far = last_line(&seen).starts_with(&wanted_end);
+        if (seen == target && stable >= 2_000_000) || (as_far && stable >= 3_000_000) || now >= cap
+        {
+            break;
+        }
+        let asks = last_line(&seen).contains("touche");
+        if asks && seen != target && !as_far && stable >= 1_500_000 && presses < 40 {
+            presses += 1;
+            runner
+                .motherboard_mut()
+                .keyboard_mut()
+                .set_pressed(CpcKey::Space, true);
+            runner.advance(250_000).expect("the script plays");
+            runner
+                .motherboard_mut()
+                .keyboard_mut()
+                .set_pressed(CpcKey::Space, false);
+            runner.advance(150_000).expect("the script plays");
+            changed_at = runner.elapsed_us();
+        }
+    }
+    runner.last_frame().expect("a frame").clone()
 }
 
 /// Brings `image` (any size) to `width` x `height` by nearest neighbour.
@@ -264,6 +388,20 @@ fn floor(case: &str, machine: &str) -> f64 {
         .map_or(MIN_MATCH, |(_, _, share)| *share)
 }
 
+/// The colour of the picture's corner: the border.
+fn corner(image: &RgbImage) -> [u8; 3] {
+    image.get_pixel(2, 2).0
+}
+
+/// The most frequent colour: the paper.
+fn dominant(image: &RgbImage) -> [u8; 3] {
+    let mut counts = std::collections::HashMap::new();
+    for pixel in image.pixels() {
+        *counts.entry(pixel.0).or_insert(0usize) += 1;
+    }
+    counts.into_iter().max_by_key(|(c, n)| (*n, *c)).unwrap().0
+}
+
 fn blank_basic(image: &RgbImage) -> bool {
     // a screen with at most a few text lines: almost all pixels are the paper
     let background = *image.get_pixel(2, image.height() - 2);
@@ -278,7 +416,9 @@ fn check(case: &Case, which: Machine, failures: &mut Vec<String>) {
         return;
     }
     let reference = image::open(&reference).unwrap().to_rgb8();
-    let ours = run(case, which);
+    let expected = read_text(&reference);
+    let target = (case.text && expected.is_text(20)).then(|| expected.text());
+    let ours = run(case, which, target.as_deref(), false);
     let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/claudestrad");
     let _ = std::fs::create_dir_all(&out);
     let _ = ours.save(out.join(format!("{}_{label}.png", case.name)));
@@ -294,12 +434,11 @@ fn check(case: &Case, which: Machine, failures: &mut Vec<String>) {
         .iter()
         .any(|(c, m, _)| *c == case.name && *m == label);
 
-    // A screen of text is compared as text (what the firmware printed, read back from both
-    // pictures with the CPC font), which does not depend on how each emulator frames or scales
-    // its picture; anything else (raster effects, colours) as pixels.
-    let (expected, got) = (read_text(&reference), read_text(&ours));
-    if expected.is_text(20) {
-        let (expected, got) = (expected.text(), got.text());
+    // What the screen says (text, read back from both pictures with the CPC font: it does not
+    // depend on how each emulator frames or scales its picture) is compared apart from how it is
+    // drawn (the border and paper colours, then every pixel: raster effects, colours, shapes).
+    if let Some(expected) = target {
+        let got = read_text(&ours).text();
         let rows = |t: &str| t.lines().count();
         let agree = if case.random {
             rows(&expected) == rows(&got)
@@ -324,7 +463,19 @@ fn check(case: &Case, which: Machine, failures: &mut Vec<String>) {
                 case.name
             ));
         }
-        return;
+    }
+    for (what, a, b) in [
+        ("border", corner(&reference), corner(&ours)),
+        ("paper", dominant(&reference), dominant(&ours)),
+    ] {
+        let distance: i32 = (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum();
+        if distance > 60 && !listed {
+            println!("{:9} {:9} {what} colour {a:?} vs {b:?}", case.name, label);
+            failures.push(format!(
+                "{} on {label}: the {what} colour is {b:?}, CLAUDESTRAD's is {a:?}",
+                case.name
+            ));
+        }
     }
     let share = match_share(&reference, &ours);
     println!(
@@ -357,6 +508,100 @@ fn read_text(image: &RgbImage) -> cpclib_ocr::Screen {
     ocr.read(&picture)
 }
 
+/// What the real machines showed (`truth/<case>_<machine>.txt`, see its README): each of its lines
+/// must be a line of what bemu prints for the same machine.
+fn check_truth(case: &Case, failures: &mut Vec<String>) {
+    let dir = format!("{FIXTURES}/truth");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().into_string().unwrap())
+        .filter(|f| f.starts_with(&format!("{}_crtc", case.name)) && f.ends_with(".txt"))
+        .collect();
+    files.sort();
+    for file in files {
+        let label = file
+            .trim_start_matches(&format!("{}_", case.name))
+            .trim_end_matches(".txt")
+            .to_owned();
+        let m4 = label.ends_with("_m4");
+        let crtc: u8 = label[4..5].parse().unwrap();
+        // The M4's ROM answers `RUN"` from its SD card, so the disc in drive A is never read
+        // (`|A` did not bring it back): the photos with an M4 cannot be replayed yet.
+        if m4 {
+            println!(
+                "{:9} {label:9} real machine: skipped (M4 runs are not supported yet)",
+                case.name
+            );
+            continue;
+        }
+        let which = Machine::Crtc(crtc);
+        // the screen CLAUDESTRAD shows is where the run stops
+        let reference = image::open(format!("{FIXTURES}/refs/{}_crtc{crtc}.png", case.name))
+            .unwrap()
+            .to_rgb8();
+        let target = read_text(&reference).text();
+        let ours = run(case, which, Some(&target), m4);
+        let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/claudestrad");
+        let _ = std::fs::create_dir_all(&out);
+        let _ = ours.save(out.join(format!("{}_{label}.png", case.name)));
+        let squash = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
+        let got: Vec<String> = read_text(&ours).text().lines().map(squash).collect();
+        let truth = std::fs::read_to_string(format!("{dir}/{file}")).unwrap();
+        // a line that starts with `~` is a measurement that varies a little on a real machine (a
+        // count of loops, a number of frames): its numbers (decimal, or hex after `&`) may differ by
+        // 1.5% and 1 count, the rest must be identical
+        let number = |t: &str| -> Option<f64> {
+            match t.strip_prefix('&') {
+                Some(hex) => i64::from_str_radix(hex, 16).ok().map(|v| v as f64),
+                None => t.trim_end_matches(',').parse::<f64>().ok(),
+            }
+        };
+        let close = |want: &str, line: &str| -> bool {
+            let (a, b): (Vec<&str>, Vec<&str>) =
+                (want.split(' ').collect(), line.split(' ').collect());
+            a.len() == b.len()
+                && a.iter().zip(&b).all(|(x, y)| match (number(x), number(y)) {
+                    (Some(x), Some(y)) => (x - y).abs() <= (x.abs() * 0.015).max(1.0),
+                    _ => x == y,
+                })
+        };
+        let missing: Vec<String> = truth
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter(|l| match l.strip_prefix('~') {
+                Some(approx) => {
+                    let want = squash(approx);
+                    !got.iter().any(|g| close(&want, g))
+                }
+                None => !got.contains(&squash(l)),
+            })
+            .map(|l| squash(l.trim_start_matches('~')))
+            .collect();
+        println!(
+            "{:9} {:9} real machine: {}",
+            case.name,
+            label,
+            if missing.is_empty() {
+                "identical".to_owned()
+            } else {
+                format!("{} line(s) DIFFER", missing.len())
+            }
+        );
+        let listed = KNOWN_DIFFERENCES
+            .iter()
+            .any(|(c, m, _)| *c == case.name && *m == format!("truth:{label}"));
+        if !missing.is_empty() && !listed {
+            failures.push(format!(
+                "{} as {label}: the real machine shows lines bemu does not:\n{}\n--- bemu\n{}",
+                case.name,
+                missing.join("\n"),
+                got.join("\n")
+            ));
+        }
+    }
+}
+
 fn run_case(name: &str) {
     let case = CASES.iter().find(|c| c.name == name).expect("a known case");
     let machines = [
@@ -366,9 +611,13 @@ fn run_case(name: &str) {
         Machine::Plus,
     ];
     let mut failures = Vec::new();
-    for which in machines {
-        check(case, which, &mut failures);
+    // CLAUDESTRAD_TRUTH_ONLY=1: only what the real machines showed (faster)
+    if std::env::var_os("CLAUDESTRAD_TRUTH_ONLY").is_none() {
+        for which in machines {
+            check(case, which, &mut failures);
+        }
     }
+    check_truth(case, &mut failures);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 

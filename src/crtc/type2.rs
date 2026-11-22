@@ -69,6 +69,12 @@ impl CrtcChip for Crtc2 {
         CrtcType::Crtc2
     }
 
+    /// Between -3 and -6 ticks reproduces the real CRTC 2 (INTPOS2 and INTREP on a CRTC 2 without
+    /// M4: -2 and +8 do not, -4 to -16 do); -4 is the smallest change that does.
+    fn interrupt_skew_ticks(&self) -> i32 {
+        -4
+    }
+
     fn name(&self) -> &'static str {
         "MC6845"
     }
