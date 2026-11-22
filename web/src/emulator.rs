@@ -13,6 +13,7 @@ use amsrust::display::{CrtProfile, DisplayMode};
 use amsrust::fdc::{DriveKind, FdcDrive};
 use amsrust::input::{HostInput, HostKey, HostKeyboard};
 use amsrust::monitor::Monitor;
+use amsrust::pacer::{Env, Pacer};
 use amsrust::motherboard::Motherboard;
 use amsrust::psg::AudioConfig;
 use image::RgbImage;
@@ -86,6 +87,10 @@ pub struct Emulator {
     gamepad_error_reported: bool,
     /// Frames completed, see [`Self::frame_count`].
     frames: u64,
+    /// Which frames to run at each refresh and sound report (`pacer_*`).
+    pacer: Pacer,
+    /// The page's clock (`performance.now()`), for the pacer.
+    clock: Option<Function>,
     /// The menus, the palette and the debugger (`config.menu`, WebGPU / WebGL only).
     ui: Option<WebUi>,
     /// The debugger without the menus (none with them: theirs is the one): what [`Self::api`]
@@ -146,6 +151,8 @@ impl Emulator {
             typed: Vec::new(),
             gamepad_error_reported: false,
             frames: 0,
+            pacer: Pacer::new(),
+            clock: None,
             debugger: ui.is_none().then(amsrust::debug_server::DebugServer::offline),
             ui,
             overlay: None,
@@ -814,6 +821,96 @@ impl Emulator {
         self.frames as f64
     }
 
+    // ------------------------------------------------------------ the pacer (see amsrust::pacer)
+
+    /// The page's clock in milliseconds (`performance.now()`, or a fake one), for the pacer.
+    pub fn set_clock(&mut self, clock: Function) {
+        self.clock = Some(clock);
+    }
+
+    /// Run `f` with the pacer taken out of `self`, which it drives.
+    fn with_pacer<R>(&mut self, f: impl FnOnce(&mut Pacer, &mut Emulator) -> Result<R, String>) -> Result<R, JsError> {
+        let mut pacer = std::mem::take(&mut self.pacer);
+        let result = f(&mut pacer, self);
+        self.pacer = pacer;
+        result.map_err(|e| JsError::new(&e))
+    }
+
+    pub fn pacer_start(&mut self) {
+        self.pacer.start();
+    }
+
+    pub fn pacer_pause(&mut self) {
+        self.pacer.pause();
+    }
+
+    pub fn pacer_running(&self) -> bool {
+        self.pacer.running()
+    }
+
+    pub fn pacer_refreshes_per_frame(&self) -> u32 {
+        self.pacer.refreshes_per_frame()
+    }
+
+    /// 'auto' (true): a machine too slow for real time makes no picture for some frames.
+    pub fn pacer_frame_skip(&mut self, on: bool) {
+        self.pacer.set_frame_skip(on);
+    }
+
+    /// Times real time: 1, more, or `Infinity`. What is queued of the sound is dropped.
+    pub fn pacer_set_speed(&mut self, speed: f64) -> Result<(), JsError> {
+        self.with_pacer(|pacer, env| {
+            pacer.set_speed(env, speed);
+            Ok(())
+        })
+    }
+
+    /// While paused: one more frame, shown.
+    pub fn pacer_step_frame(&mut self) -> Result<(), JsError> {
+        self.with_pacer(|pacer, env| pacer.step_frame(env))
+    }
+
+    /// The display or the frame changed: draw at once while paused.
+    pub fn pacer_redraw_if_paused(&mut self) -> Result<(), JsError> {
+        self.with_pacer(|pacer, env| pacer.redraw_if_paused(env))
+    }
+
+    /// The sound goes to a worklet playing at `rate` (see [`Self::enable_audio`]).
+    pub fn pacer_attach_audio(&mut self, rate: f64) -> Result<(), JsError> {
+        self.with_pacer(|pacer, env| {
+            pacer.attach_audio(env, rate);
+            Ok(())
+        })
+    }
+
+    pub fn pacer_detach_audio(&mut self) {
+        self.pacer.detach_audio();
+    }
+
+    /// The sound made since the last call, to post to the worklet.
+    pub fn pacer_take_outgoing(&mut self) -> Vec<f32> {
+        self.pacer.take_outgoing()
+    }
+
+    /// One refresh of the display, at `time` (ms): the frames to run, the picture to draw. The
+    /// 'stats' event (an object) when a second has passed, else `undefined`.
+    pub fn pacer_tick(&mut self, time: f64) -> Result<JsValue, JsError> {
+        let report = self.with_pacer(|pacer, env| pacer.tick(env, time))?;
+        Ok(report.map_or(JsValue::UNDEFINED, |r| stats_object(&r)))
+    }
+
+    /// The worklet's report of its queue: the new sound target (seconds) when an underrun made it
+    /// grow, else `NaN`. The frames the speakers will miss are emulated at once.
+    pub fn pacer_audio_report(&mut self, fill: f64, playing: bool, received: f64, underruns: f64) -> Result<f64, JsError> {
+        self.with_pacer(|pacer, env| pacer.audio_report(env, fill, playing, received, underruns))
+            .map(|target| target.unwrap_or(f64::NAN))
+    }
+
+    /// Seconds of sound queued and not yet played, at `now` (ms).
+    pub fn pacer_audio_buffered(&self, now: f64) -> f64 {
+        self.pacer.audio_buffered(now)
+    }
+
     /// Type `text` on the keyboard, a character after the other as the host's typed characters
     /// are (`\n` is RETURN). Not while a CSL script plays: the keyboard is the script's.
     pub fn type_text(&mut self, text: &str) {
@@ -932,10 +1029,7 @@ impl Emulator {
         let mut samples = self.machine().take_audio_samples();
         // Audio > Mono: both channels the mix of the two
         if self.ui.as_ref().is_some_and(|ui| !ui.settings.stereo) {
-            for pair in samples.chunks_mut(2) {
-                let mono = pair.iter().sum::<f32>() / pair.len() as f32;
-                pair.fill(mono);
-            }
+            amsrust::audio_mix::fold_to_mono(&mut samples, 2);
         }
         // Audio > Record WAV: what the page plays
         if let Some((recorded, ..)) = self.ui.as_mut().and_then(|ui| ui.wav.as_mut()) {
@@ -1195,4 +1289,66 @@ fn api_debugger<'a>(
         (None, Some(debugger)) => debugger,
         (None, None) => unreachable!("a page has the menus' debugger or its own"),
     }
+}
+
+/// An error of the page's calls as plain text.
+fn js_message(error: JsError) -> String {
+    let value: JsValue = error.into();
+    js_sys::Error::from(value).message().into()
+}
+
+impl Env for Emulator {
+    fn now(&mut self) -> f64 {
+        self.clock
+            .as_ref()
+            .and_then(|clock| clock.call0(&JsValue::NULL).ok())
+            .and_then(|now| now.as_f64())
+            .unwrap_or(0.0)
+    }
+
+    fn run_frame(&mut self, unseen: bool) -> Result<(), String> {
+        let result = if unseen { self.advance_frame_unseen() } else { self.advance_frame() };
+        result.map_err(js_message)
+    }
+
+    fn take_audio(&mut self) -> Vec<f32> {
+        self.audio_samples()
+    }
+
+    fn draw(&mut self) -> Result<(), String> {
+        self.redraw().map_err(js_message)
+    }
+}
+
+/// The 'stats' event of `engine.js`: `{ fps, speed, performance: {..}, audio }`.
+fn stats_object(report: &amsrust::pacer::StatsReport) -> JsValue {
+    let set = |object: &Object, key: &str, value: f64| {
+        let _ = Reflect::set(object, &key.into(), &JsValue::from_f64(value));
+    };
+    let performance = Object::new();
+    set(&performance, "frameMs", report.frame_ms);
+    set(&performance, "maxFrameMs", report.max_frame_ms);
+    set(&performance, "drawMs", report.draw_ms);
+    set(&performance, "draws", f64::from(report.draws));
+    set(&performance, "drawFps", report.draw_fps);
+    set(&performance, "refreshFps", report.refresh_fps);
+    set(&performance, "replaced", f64::from(report.replaced));
+    set(&performance, "hidden", report.hidden);
+    let object = Object::new();
+    set(&object, "fps", report.fps);
+    set(&object, "speed", report.speed);
+    let _ = Reflect::set(&object, &"performance".into(), &performance);
+    let audio = match report.audio {
+        Some((underruns, buffered_ms, target_ms, playing)) => {
+            let audio = Object::new();
+            set(&audio, "underruns", underruns);
+            set(&audio, "bufferedMs", buffered_ms);
+            set(&audio, "targetMs", target_ms);
+            let _ = Reflect::set(&audio, &"playing".into(), &JsValue::from_bool(playing));
+            audio.into()
+        }
+        None => JsValue::NULL,
+    };
+    let _ = Reflect::set(&object, &"audio".into(), &audio);
+    object.into()
 }

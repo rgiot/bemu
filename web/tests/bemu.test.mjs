@@ -14,22 +14,35 @@ try {
     const { Bemu, WorkerTransport } = await import(pathToFileURL(join(dir, 'bemu.js')));
     const { Engine, LocalTransport } = await import(pathToFileURL(join(dir, 'engine.js')));
 
+    // The pacing lives in the core now (`amsrust::pacer`, tested in Rust): the stub core runs one
+    // frame per `pacer_tick`, so that these tests keep to what the page's JavaScript does.
+    function pacerCore(core, advance = () => {}) {
+        let running = false;
+        return Object.assign(core, {
+            set_clock() {}, pacer_running: () => running, pacer_start() { running = true; }, pacer_pause() { running = false; },
+            pacer_refreshes_per_frame: () => 0, pacer_frame_skip() {}, pacer_set_speed() {},
+            pacer_step_frame() { advance(); }, pacer_redraw_if_paused() {}, pacer_attach_audio() {},
+            pacer_detach_audio() {}, pacer_take_outgoing: () => new Float32Array(0),
+            pacer_tick() { advance(); }, pacer_audio_report: () => NaN
+        });
+    }
+
     function machine(advance = () => {}) {
         const canvas = { addEventListener() {}, removeEventListener() {} };
-        const core = {
+        const core = pacerCore({
             on_screenshot() {}, on_csl_done() {}, backend: () => 'canvas2d',
             advance_frame: advance, redraw() {}, audio_samples: () => [], free() {}
-        };
+        }, advance);
         const transport = new LocalTransport(({ emit, onTick }) => new Engine(core, { canvas, emit, onTick }));
         return { emu: new Bemu(canvas, transport, {}), core };
     }
 
     // The engine alone, with a clock and display refreshes the test drives.
     function engineWith(advance) {
-        const core = {
+        const core = pacerCore({
             on_screenshot() {}, on_csl_done() {}, backend: () => 'canvas2d',
             advance_frame: advance, redraw() {}, audio_samples: () => [], free() {}
-        };
+        }, advance);
         const clock = { now: 0, scheduled: null };
         const scheduler = { request: (fn) => { clock.scheduled = fn; return 1; }, cancel() {} };
         const engine = new Engine(core, { scheduler, now: () => clock.now });
@@ -56,10 +69,10 @@ try {
         const messages = [];
         let frames = 0;
         globalThis.self = { navigator: { userAgent: 'Firefox/123' }, postMessage: (message) => messages.push(message) };
-        globalThis.testCreateCore = () => ({
+        globalThis.testCreateCore = () => pacerCore({
             on_screenshot() {}, on_csl_done() {}, backend: () => 'canvas2d',
             advance_frame() { frames++; }, redraw() {}, audio_samples: () => [], free() {}
-        });
+        }, () => { frames++; });
         try {
             await import(pathToFileURL(join(dir, 'worker.js')));
             await self.onmessage({ data: { type: 'init', id: 1, canvas: {}, config: {}, webgpu: false } });
@@ -75,105 +88,6 @@ try {
             globalThis.self = previousSelf;
             globalThis.testCreateCore = previousCreate;
         }
-    });
-
-    await test('a stale worklet report does not cause frames already in transit to be generated again', () => {
-        let frames = 0;
-        const { engine, core, clock } = engineWith(() => { frames++; });
-        core.enable_audio = () => {};
-        core.audio_samples = () => new Float32Array(960 * 2);
-        const port = { postMessage() {}, close() {} };
-        engine.attachAudio(port, 48000);
-        engine.start();
-        clock.scheduled(0);
-        assert.equal(frames, 4);
-        port.onmessage({ data: { fill: 0, received: 0, playing: false, underruns: 0 } });
-        assert.equal(frames, 4, 'audio already sent but not reported must remain accounted for');
-        port.onmessage({ data: { fill: 1000, received: 3840, playing: true, underruns: 0 } });
-        assert.equal(frames, 6, 'a report that acknowledges drained samples triggers a refill');
-        engine.destroy();
-    });
-
-    await test('audio reports refill even when a 50 Hz display misses a refresh', () => {
-        let frames = 0;
-        const { engine, core, clock } = engineWith(() => { frames++; });
-        core.enable_audio = () => {};
-        core.audio_samples = () => new Float32Array(960 * 2);
-        const port = { postMessage() {}, close() {} };
-        engine.attachAudio(port, 48000);
-        engine.start();
-        for (let i = 0; i < 35; i++) {
-            clock.now = i * 20;
-            clock.scheduled(clock.now);
-        }
-        assert.equal(engine.state().refreshesPerFrame, 1);
-        const before = frames;
-        port.onmessage({ data: { fill: 0, received: frames * 960, playing: true, underruns: 0 } });
-        assert.ok(frames > before, 'audio must refill without waiting for another refresh');
-        engine.destroy();
-    });
-
-    await test('Canvas 2D redraws audio-driven frames even when the display tick needs no new frame', () => {
-        let frames = 0;
-        let draws = 0;
-        const { engine, core, clock } = engineWith(() => { frames++; });
-        core.enable_audio = () => {};
-        core.audio_samples = () => new Float32Array(960 * 2);
-        core.redraw = () => { draws++; };
-        const port = { postMessage() {}, close() {} };
-        engine.attachAudio(port, 48000);
-        engine.start();
-        clock.scheduled(0);
-        const firstDraws = draws;
-        port.onmessage({ data: { fill: 0, received: frames * 960, playing: true, underruns: 0 } });
-        const refilledFrames = frames;
-        assert.ok(refilledFrames > 4);
-        clock.scheduled(1);
-        assert.equal(frames, refilledFrames);
-        assert.equal(draws, firstDraws + 1);
-        engine.destroy();
-    });
-
-    await test('a refresh draws an audio-generated frame before running another', () => {
-        let frames = 0;
-        const displayed = [];
-        const { engine, core, clock } = engineWith(() => { frames++; });
-        core.enable_audio = () => {};
-        core.audio_samples = () => new Float32Array(960 * 2);
-        core.redraw = () => displayed.push(frames);
-        const port = { postMessage() {}, close() {} };
-        engine.attachAudio(port, 48000);
-        engine.start();
-        clock.scheduled(0);
-        assert.deepEqual(displayed, [4]);
-        port.onmessage({ data: { fill: 0, received: 3840, playing: true, underruns: 0 } });
-        assert.equal(frames, 8);
-        clock.scheduled(16);
-        assert.deepEqual(displayed, [4, 8]);
-        assert.equal(frames, 8, 'a pending frame is not overwritten by refresh work');
-        engine.destroy();
-    });
-
-    await test('audio-generated pictures are drawn even between 100 Hz pacing slots', () => {
-        let frames = 0;
-        let draws = 0;
-        const { engine, core, clock } = engineWith(() => { frames++; });
-        core.enable_audio = () => {};
-        core.audio_samples = () => new Float32Array(960 * 2);
-        core.redraw = () => { draws++; };
-        const port = { postMessage() {}, close() {} };
-        engine.attachAudio(port, 48000);
-        engine.start();
-        for (let i = 0; i < 35; i++) {
-            clock.now = i * 10;
-            clock.scheduled(clock.now);
-        }
-        assert.equal(engine.state().refreshesPerFrame, 2);
-        port.onmessage({ data: { fill: 0, received: frames * 960, playing: true, underruns: 0 } });
-        const before = draws;
-        clock.scheduled(clock.now + 10);
-        assert.equal(draws, before + 1);
-        engine.destroy();
     });
 
     await test('Canvas 2D resizes its physical backing store', () => {
@@ -216,112 +130,19 @@ try {
         delete globalThis.testWasmOptions;
     });
 
-    await test('normal-speed catch-up yields after a slow frame and retains the debt', () => {
-        let frames = 0;
-        const { engine, clock } = engineWith(() => { frames++; clock.now += 30; });
-        engine.start();
-        clock.scheduled(0);
-        assert.equal(frames, 1);
-        clock.scheduled(100);
-        assert.equal(frames, 2, 'a slow refresh must not execute four frames');
-        clock.scheduled(101);
-        assert.equal(frames, 3, 'unexecuted frames remain owed');
-        engine.destroy();
-    });
-
-    await test('fast catch-up can run several frames and does not redraw an unchanged Canvas 2D frame', () => {
-        let frames = 0;
-        let draws = 0;
-        const { engine, core, clock } = engineWith(() => { frames++; clock.now++; });
-        core.redraw = () => { draws++; };
-        engine.start();
-        clock.scheduled(0);
-        clock.scheduled(1);
-        assert.equal(draws, 1);
-        clock.scheduled(100);
-        assert.equal(frames, 5);
-        assert.equal(draws, 2);
-        engine.destroy();
-    });
-
-    await test('GPU skips unchanged frames but redraws display changes and resizes', () => {
-        let draws = 0;
-        const { engine, core, clock } = engineWith(() => {});
-        core.backend = () => 'webgpu';
-        core.redraw = () => { draws++; };
-        core.set_display = () => {};
-        core.resize = () => {};
-        engine.start();
-        clock.scheduled(0);
-        clock.scheduled(1);
-        assert.equal(draws, 1);
-        engine.setDisplay('ctm');
-        clock.scheduled(2);
-        assert.equal(draws, 2);
-        engine.resize(1440, 1088);
-        clock.scheduled(3);
-        assert.equal(draws, 3);
-        engine.pause();
-        engine.setDisplay('raw');
-        assert.equal(draws, 4);
-        engine.destroy();
-    });
-
-    await test('stats report measured frame and draw costs', () => {
-        const clock = { now: 0, scheduled: null };
-        const scheduler = { request: (fn) => { clock.scheduled = fn; return 1; }, cancel() {} };
-        const core = {
-            on_screenshot() {}, on_csl_done() {}, backend: () => 'webgpu', free() {},
-            advance_frame() { clock.now += 3; }, redraw() { clock.now += 2; }
-        };
-        const events = [];
-        const engine = new Engine(core, { scheduler, now: () => clock.now, emit: (name, value) => events.push([name, value]) });
-        engine.start();
-        clock.scheduled(0);
-        clock.scheduled(1000);
-        const stats = events.find(([name]) => name === 'stats')[1];
-        assert.deepEqual(stats.performance, { frameMs: 3, maxFrameMs: 3, drawMs: 2, draws: 1, drawFps: 1, refreshFps: 1, replaced: 0, hidden: 0 });
-        engine.destroy();
-    });
-
-    await test('stats distinguish audio-refilled frames replaced before drawing', () => {
-        const clock = { now: 0, scheduled: null };
-        const scheduler = { request: (fn) => { clock.scheduled = fn; return 1; }, cancel() {} };
-        const events = [];
-        const core = {
-            on_screenshot() {}, on_csl_done() {}, backend: () => 'webgpu', free() {},
-            enable_audio() {}, advance_frame() {}, redraw() {},
-            audio_samples: () => new Float32Array(960 * 2)
-        };
-        const engine = new Engine(core, { scheduler, now: () => clock.now, emit: (name, value) => events.push([name, value]) });
-        const port = { postMessage() {}, close() {} };
-        engine.attachAudio(port, 48000);
-        engine.start();
-        clock.scheduled(0);
-        port.onmessage({ data: { fill: 0, received: 3840, playing: true, underruns: 0 } });
-        clock.now = 1000;
-        clock.scheduled(1000);
-        const stats = events.find(([name]) => name === 'stats')[1];
-        assert.equal(stats.fps, 8);
-        assert.equal(stats.performance.drawFps, 1);
-        assert.equal(stats.performance.refreshFps, 1);
-        assert.equal(stats.performance.replaced, 6);
-        engine.destroy();
-    });
-
     // A machine too slow for real time makes no picture for some of its frames (the emulation is the
     // same, a frame without picture costs a third less): never more than two in a row.
     function framesBehind({ audio, skip = true }) {
         const clock = { now: 0, scheduled: null };
         const scheduler = { request: (fn) => { clock.scheduled = fn; return 1; }, cancel() {} };
         const run = [];
-        const core = {
+        const core = pacerCore({
             on_screenshot() {}, on_csl_done() {}, backend: () => 'webgpu', free() {}, redraw() {},
             enable_audio() {},
             advance_frame() { run.push('S'); },
             advance_frame_unseen() { run.push('U'); },
             audio_samples: () => new Float32Array(960 * 2)
-        };
+        });
         const events = [];
         const engine = new Engine(core, { scheduler, now: () => clock.now, emit: (name, value) => events.push([name, value]) });
         const port = { postMessage() {}, close() {} };
@@ -330,33 +151,6 @@ try {
         engine.start();
         return { engine, clock, run, port, events };
     }
-
-    await test('behind the sound, some frames are made without a picture, a shown one at least every third', () => {
-        const { engine, clock, run, port } = framesBehind({ audio: true });
-        clock.scheduled(0);
-        // the sound reports an empty buffer again and again: the machine cannot fill it
-        for (let i = 0; i < 6; i++) port.onmessage({ data: { fill: 0, received: 3840 * (i + 1), playing: true, underruns: 0 } });
-        const frames = run.join('');
-        assert.ok(frames.includes('U'), frames);
-        assert.ok(!frames.includes('UUU'), `at most two without a picture in a row: ${frames}`);
-        assert.ok(frames.includes('S'), frames);
-        engine.destroy();
-    });
-
-    await test('every picture is made by default, however far behind the sound', () => {
-        const { engine, clock, run, port } = framesBehind({ audio: true, skip: false });
-        clock.scheduled(0);
-        for (let i = 0; i < 6; i++) port.onmessage({ data: { fill: 0, received: 3840 * (i + 1), playing: true, underruns: 0 } });
-        assert.ok(run.length > 0 && !run.includes('U'), run.join(''));
-        engine.setFrameSkip('auto');
-        for (let i = 6; i < 12; i++) port.onmessage({ data: { fill: 0, received: 3840 * (i + 1), playing: true, underruns: 0 } });
-        assert.ok(run.includes('U'), 'auto skips');
-        engine.setFrameSkip('off');
-        run.length = 0;
-        for (let i = 12; i < 18; i++) port.onmessage({ data: { fill: 0, received: 3840 * (i + 1), playing: true, underruns: 0 } });
-        assert.ok(run.length > 0 && !run.includes('U'), 'off again');
-        engine.destroy();
-    });
 
     await test('frameSkip is the engine\'s setting: the machine\'s configuration does not get it', async () => {
         const { emu, core } = machine();
@@ -373,52 +167,6 @@ try {
         assert.equal(modes.length, 1, 'kept when the configuration does not say');
         await assert.rejects(async () => emu.setFrameSkip('sometimes'), /frameSkip must be/);
         await assert.rejects(async () => emu.configure({ frameSkip: 3 }), /frameSkip must be/);
-    });
-
-    await test('a machine that keeps the sound filled shows every frame', () => {
-        const { engine, clock, run, port } = framesBehind({ audio: true });
-        // 0.3 s queued: well above half of the target, nothing to catch up
-        port.onmessage({ data: { fill: 14400, received: 0, playing: true, underruns: 0 } });
-        clock.scheduled(0);
-        clock.scheduled(20);
-        assert.ok(!run.includes('U'), run.join(''));
-        engine.destroy();
-    });
-
-    await test('without sound, a refresh that owes several frames makes the first ones without a picture', () => {
-        const { engine, clock, run, events } = framesBehind({ audio: false });
-        clock.scheduled(0);
-        clock.now = 3 * 312 * 64 / 1000;
-        clock.scheduled(clock.now);
-        assert.deepEqual(run.slice(-3), ['U', 'U', 'S'], run.join(''));
-        clock.now = 1000;
-        clock.scheduled(1000);
-        const stats = events.find(([name]) => name === 'stats')[1];
-        assert.ok(stats.performance.hidden > 0);
-        engine.destroy();
-    });
-
-    await test('frames are not hidden above real time, nor by a core that has no frames without a picture', () => {
-        const fast = framesBehind({ audio: false });
-        fast.engine.setSpeed(2);
-        fast.clock.scheduled(0);
-        fast.clock.now = 100;
-        fast.clock.scheduled(100);
-        // the faster modes hide frames their own way (and not 'because behind')
-        assert.ok(fast.run.length > 0);
-        assert.equal(fast.events.find(([name]) => name === 'stats'), undefined);
-        fast.engine.destroy();
-
-        const frames = [];
-        const { engine, core, clock } = engineWith(() => frames.push('S'));
-        core.audio_samples = () => new Float32Array(960 * 2);
-        engine.start();
-        clock.scheduled(0);
-        clock.now = 3 * 312 * 64 / 1000;
-        clock.scheduled(clock.now);
-        assert.deepEqual(frames, ['S', 'S', 'S', 'S'].slice(0, frames.length));
-        assert.ok(frames.length >= 3, 'every owed frame is shown: this core has no frame without a picture');
-        engine.destroy();
     });
 
     await test('unavailable AudioWorklet reports a useful error, closes, and can retry', async () => {
@@ -607,7 +355,7 @@ try {
             addEventListener() {}, removeEventListener() {}
         };
         let display = 'ctm';
-        const core = {
+        const core = pacerCore({
             on_screenshot() {}, on_csl_done() {}, backend: () => 'webgpu',
             ctm_min_width: () => 1440, ctm_min_height: () => 1088,
             ctm_width: () => display === 'ctm' ? 1440 : 0,
@@ -615,7 +363,7 @@ try {
             set_display: (value) => { display = value; },
             configure: (config) => { display = config.display ?? 'raw'; },
             resize() {}, redraw() {}, free() {}
-        };
+        });
         const transport = new LocalTransport(({ emit, onTick }) => new Engine(core, { canvas, emit, onTick }));
         const emu = new Bemu(canvas, transport, {});
         const warnings = [];

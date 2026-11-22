@@ -20,9 +20,9 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 /// How much sound the window loop keeps queued ahead of the device.
-pub const TARGET_LATENCY: Duration = Duration::from_millis(60);
+pub const TARGET_LATENCY: Duration = amsrust::audio_mix::Pacing::DESKTOP.target;
 /// Beyond this, the oldest samples are dropped so the latency can't grow.
-pub const MAX_LATENCY: Duration = Duration::from_millis(250);
+pub const MAX_LATENCY: Duration = amsrust::audio_mix::Pacing::DESKTOP.max;
 
 /// Interleaved samples (`channels` per frame) between the emulator and the
 /// audio device.

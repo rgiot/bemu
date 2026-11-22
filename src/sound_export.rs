@@ -86,6 +86,15 @@ impl<W: Write + Seek> WavWriter<W> {
     }
 }
 
+/// `samples` (interleaved, -1 to 1) as a 16-bit PCM WAV file, in memory (the web page's
+/// Audio > Record WAV).
+pub fn wav_bytes(samples: &[f32], sample_rate: u32, channels: u16) -> Vec<u8> {
+    let mut wav = WavWriter::new(std::io::Cursor::new(Vec::new()), sample_rate, channels)
+        .expect("a WAV header in memory");
+    wav.samples(samples).expect("samples in memory");
+    wav.finish().expect("a WAV in memory").into_inner()
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -114,6 +123,15 @@ mod test {
         );
         assert_eq!(&ym[data + 26..data + 28], &[0xff, 0x0e], "register 13");
         assert!(ym.ends_with(b"End!"));
+    }
+
+    #[test]
+    fn wav_bytes_is_the_writer_in_memory() {
+        let file = wav_bytes(&[0.0, 1.0, -1.0, 0.5], 48_000, 2);
+        assert_eq!(&file[..4], b"RIFF");
+        assert_eq!(file.len(), 44 + 8);
+        assert_eq!(u32::from_le_bytes(file[24..28].try_into().unwrap()), 48_000);
+        assert_eq!(i16::from_le_bytes([file[46], file[47]]), 32767);
     }
 
     #[test]
