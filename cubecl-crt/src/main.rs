@@ -170,6 +170,20 @@ fn quad_pass_check() {
 }
 
 fn main() {
+    {
+        let src = test_picture();
+        let t = std::time::Instant::now();
+        for _ in 0..20 {
+            std::hint::black_box(GlowField::new(&src).texels());
+        }
+        println!("per frame on the CPU: glow field {:.2} ms", t.elapsed().as_secs_f64() * 1e3 / 20.0);
+        let t = std::time::Instant::now();
+        for _ in 0..20 {
+            let f: Vec<u32> = src.pixels().map(|p| p[0] as u32 | (p[1] as u32) << 8 | (p[2] as u32) << 16).collect();
+            std::hint::black_box(f);
+        }
+        println!("per frame on the CPU: frame words {:.2} ms", t.elapsed().as_secs_f64() * 1e3 / 20.0);
+    }
     quad_pass_check();
     shared_device_check();
     type R = cubecl::wgpu::WgpuRuntime;
@@ -224,6 +238,6 @@ fn main() {
                 off += (d > 3) as usize;
             }
         }
-        println!("{profile:?} {} {w}x{h}: worst {worst}, {off} values off by >3 of {}; cpu {cpu_ms:.1} ms, cubecl(lavapipe) {best:.1} ms", if warp.is_flat() { "flat" } else { "curved" }, w * h * 3);
+        println!("{profile:?} {} {w}x{h}: worst {worst}, {off} values off by >3 of {}; cpu {cpu_ms:.1} ms, cubecl(this GPU) {best:.1} ms", if warp.is_flat() { "flat" } else { "curved" }, w * h * 3);
     }
 }
