@@ -9,6 +9,7 @@ File,Drive A,Save disc,,drive-a-save-disc,,Write the disc of drive A back to its
 File,Drive A,Save disc as…,,drive-a-save-disc-as,,Write the disc of drive A to a new file (DSK or HFE),Enable only when there is a disc in the drive,inp,,
 File,Drive A,,,,,,,sep,,
 File,Drive A,Insert recent disc,,drive-a-insert-recent,,Submenu of the last discs used in drive A,Dynamic list stored in the preferences; one entry = drive-x-select-disc with that path,sub,,
+File,Drive A,Disc of the archive,,drive-a-insert-from-archive,,"Submenu of the disc images in the archive (zip, 7z, tar.gz) the disc of drive A came from, to insert another one","Enabled when the archive holds several disc images (a 3"" and a 3.5"" version, the sides of a game); one entry = drive-a-select-disc with archive#entry",sub,,
 File,Drive A,,,,,,,sep,,
 File,Drive A,Kind,"3""",drive-a-original,,"Drive A is an original CPC 3"" drive",Radio. Default for 664/6128 (drive A),rad,,8:driveA*
 File,Drive A,Kind,"3""5",drive-a-pc,,"Drive A is a double-sided 3.5"" PC drive (80 tracks, FDC side select)",Radio,rad,,8:driveA
@@ -23,6 +24,7 @@ File,Drive B,Save disc,,drive-b-save-disc,,Write the disc of drive B back to its
 File,Drive B,Save disc as…,,drive-b-save-disc-as,,Write the disc of drive B to a new file (DSK or HFE),Enable only when there is a disc in the drive,inp,,
 File,Drive B,,,,,,,sep,,
 File,Drive B,Insert recent disc,,drive-b-insert-recent,,Submenu of the last discs used in drive B,Dynamic list stored in the preferences; one entry = drive-x-select-disc with that path,sub,,
+File,Drive B,Disc of the archive,,drive-b-insert-from-archive,,"Submenu of the disc images in the archive (zip, 7z, tar.gz) the disc of drive B came from, to insert another one","Enabled when the archive holds several disc images (a 3"" and a 3.5"" version, the sides of a game); one entry = drive-b-select-disc with archive#entry",sub,,
 File,Drive B,,,,,,,sep,,
 File,Drive B,Kind,"3""",drive-b-original,,"Drive B is an original CPC 3"" drive",Radio. Default for 664/6128 (drive A),rad,,9:driveB*
 File,Drive B,Kind,"3""5",drive-b-pc,,"Drive B is a double-sided 3.5"" PC drive (80 tracks, FDC side select)",Radio,rad,,9:driveB
