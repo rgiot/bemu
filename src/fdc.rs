@@ -158,6 +158,61 @@ impl DriveKind {
         self != DriveKind::ThreeInch
     }
 
+    /// The disc can be taken out and put back the other side up (a 3" drive has one head).
+    pub fn can_flip(self) -> bool {
+        self == DriveKind::ThreeInch
+    }
+
+    /// The side of the image the FDC's head `head` reads: on a 3" drive the side put up (`flipped`),
+    /// whatever the FDC asks; on a drive with two heads the one selected.
+    pub fn surface(self, flipped: bool, head: u8) -> u8 {
+        match self {
+            DriveKind::ThreeInch => u8::from(flipped),
+            DriveKind::ThreeAndHalfInch | DriveKind::Gotek => head,
+        }
+    }
+
+    /// One turn of the disc, in microseconds. The user's real 6128 turns its 3" disc in 204.7 ms,
+    /// not 200: 200 turns took 2050 frames of 19.968 ms (ROTATION). The data rate is the chip's, so
+    /// the track just has a longer gap.
+    pub fn turn_us(self) -> u64 {
+        match self {
+            DriveKind::ThreeInch => TRACK_BYTES * BYTE_US * 10_233 / 10_000,
+            DriveKind::ThreeAndHalfInch | DriveKind::Gotek => TRACK_BYTES * BYTE_US,
+        }
+    }
+
+    /// How long the drive takes to be READY after its motor is switched on, in microseconds, when
+    /// the motor was off for `off_s` seconds (None: not since the machine started). On the user's
+    /// real 6128 and its 3" drive (READYTST, SPINDOWN, SPINDWN2, frames of 19.968 ms): 12 to 13
+    /// frames when the motor was off for less than 0.14 s, about 22.5 when it was off for 0.24 to 3 s
+    /// (the spindle still turns), 28 from a stop (6 s or more, and from power on); in between, a
+    /// straight line. The other kinds are ready at once.
+    pub fn spin_up_us(self, off_s: Option<f64>) -> u64 {
+        if self != DriveKind::ThreeInch {
+            return 0;
+        }
+        const FRAME_US: f64 = 19_968.0;
+        let frames = match off_s {
+            None => 28.0,
+            Some(s) if s >= 6.0 => 28.0,
+            Some(s) if s >= 3.0 => 22.5 + (s - 3.0) / 3.0 * 5.5,
+            Some(s) if s >= 0.24 => 22.5,
+            Some(s) if s >= 0.14 => 12.7 + (s - 0.14) / 0.10 * 9.8,
+            Some(_) => 12.7,
+        };
+        (frames * FRAME_US) as u64
+    }
+
+    /// How long after its READY line the drive reads IDs and sectors: the first READ ID that works
+    /// comes 31 frames after the motor on the real 6128, 3.5 frames after READY (READYTST).
+    pub fn read_ready_delay_us(self) -> u64 {
+        match self {
+            DriveKind::ThreeInch => 70_000,
+            DriveKind::ThreeAndHalfInch | DriveKind::Gotek => 0,
+        }
+    }
+
     /// How long a seek of `steps` tracks takes, the FDC stepping every `step_us`: a real
     /// drive's head moves then settles, a Gotek's has nothing to move.
     pub fn seek_us(self, steps: u64, step_us: u64) -> u64 {
@@ -608,37 +663,26 @@ impl Fdc {
 
     pub fn set_motor(&mut self, on: bool) {
         if on && !self.motor {
-            let spin_up = self.spin_up_us();
-            self.ready_at = self.now_us + spin_up;
-            // READYTST on the real 6128: the first READ ID that works comes 31 frames after the
-            // motor, 3.5 frames after the READY line (27 to 28): the speed has to settle
-            self.read_ready_at = self.ready_at + if spin_up > 0 { 70_000 } else { 0 };
+            self.ready_at = self.now_us + self.spin_up_us();
+            self.read_ready_at = self.ready_at
+                + if self.timing {
+                    self.drives[self.selected_drive()].kind.read_ready_delay_us()
+                } else {
+                    0
+                };
         } else if !on && self.motor {
             self.motor_off_at = Some(self.now_us);
         }
         self.motor = on;
     }
 
-    /// How long the drive takes to be READY after its motor is switched on, in microseconds. On the
-    /// user's real 6128 and its 3" drive (READYTST, SPINDOWN, SPINDWN2, frames of 19.968 ms): 12 to 13
-    /// frames when the motor was off for less than 0.14 s, about 22.5 when it was off for 0.24 to 3 s
-    /// (the spindle still turns), 28 from a stop (6 s or more, and from power on); in between, a
-    /// straight line. Only a 3" drive has this; the other kinds are ready at once.
+    /// How long the selected drive takes to be READY after its motor is switched on.
     fn spin_up_us(&self) -> u64 {
-        if !self.timing || self.drives[self.selected_drive()].kind != DriveKind::ThreeInch {
+        if !self.timing {
             return 0;
         }
-        const FRAME_US: f64 = 19_968.0;
         let off_s = self.motor_off_at.map(|t| self.now_us.saturating_sub(t) as f64 / 1e6);
-        let frames = match off_s {
-            None => 28.0,
-            Some(s) if s >= 6.0 => 28.0,
-            Some(s) if s >= 3.0 => 22.5 + (s - 3.0) / 3.0 * 5.5,
-            Some(s) if s >= 0.24 => 22.5,
-            Some(s) if s >= 0.14 => 12.7 + (s - 0.14) / 0.10 * 9.8,
-            Some(_) => 12.7,
-        };
-        (frames * FRAME_US) as u64
+        self.drives[self.selected_drive()].kind.spin_up_us(off_s)
     }
 
     /// ST0, ST1 and ST2 of the last command (for debuggers).
@@ -729,7 +773,7 @@ impl Fdc {
     pub fn flip_disc(&mut self, drive: FdcDrive) -> Option<u8> {
         let unit = drive.index();
         let d = &mut self.drives[unit];
-        if d.disc.is_none() || d.kind != DriveKind::ThreeInch {
+        if d.disc.is_none() || !d.kind.can_flip() {
             return None;
         }
         d.flipped = !d.flipped;
@@ -770,10 +814,7 @@ impl Fdc {
     /// up, whatever the FDC asks; on a 3.5" drive the head selected.
     fn surface(&self, unit: usize, head: u8) -> u8 {
         let drive = &self.drives[unit];
-        match drive.kind {
-            DriveKind::ThreeInch => u8::from(drive.flipped),
-            DriveKind::ThreeAndHalfInch | DriveKind::Gotek => head,
-        }
+        drive.kind.surface(drive.flipped, head)
     }
 
     /// The FDC wrote to the disc of a drive since it went in or since [`Fdc::mark_saved`].
@@ -1136,11 +1177,7 @@ impl Fdc {
                 .filter(|track| !track.sectors.is_empty())
                 .map(Layout::of)?
         };
-        if drive.kind == DriveKind::ThreeInch {
-            // the user's real 6128 turns its 3" disc in 204.7 ms, not 200: 200 turns took 2050 frames
-            // of 19.968 ms (ROTATION); the data rate is the chip's, so the track just has a longer gap
-            layout.period = layout.period * 10_233 / 10_000;
-        }
+        layout.period = layout.period * drive.kind.turn_us() / (TRACK_BYTES * BYTE_US);
         Some(layout)
     }
 
@@ -1160,15 +1197,9 @@ impl Fdc {
     }
 
     /// A search that finds nothing goes on for two turns of the disc.
-    /// One turn of the disc under `unit`'s head, in microseconds (a real 3" drive turns slower than
-    /// 300 rpm, see `layout`).
+    /// One turn of the disc under `unit`'s head, in microseconds.
     fn turn_us(&self, unit: usize) -> u64 {
-        let turn = TRACK_BYTES * BYTE_US;
-        if self.drives[unit].kind == DriveKind::ThreeInch {
-            turn * 10_233 / 10_000
-        } else {
-            turn
-        }
+        self.drives[unit].kind.turn_us()
     }
 
     fn lose_two_turns(&mut self) {

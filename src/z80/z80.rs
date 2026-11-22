@@ -2292,8 +2292,11 @@ impl Z80 {
         // 27.5, CPCSyntaxError's 19 T-states), so the wait is shorter
         let extra: u8 = match (im2, self.last_idle_t >= 2) {
             (false, false) => 2,
-            (false, true) | (true, false) => 1,
-            (true, true) => 0,
+            (false, true) => 1,
+            // IM 2 answers one microsecond later than ACCC's 6 us on the user's real 6128 (INTLAT:
+            // the loop counts of 11 of its 12 instructions fit that, to 1 count)
+            (true, false) => 2,
+            (true, true) => 1,
         };
         self.next_state = if extra == 0 {
             MCycle::Write(TState::T1, 0)
