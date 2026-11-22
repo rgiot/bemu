@@ -34,12 +34,32 @@ struct Params {
     // the light of a black (`CrtParams::veil`)
     veil: f32,
     vignette: f32,
-    pad1: f32,
+    // the light of the glow where the picture is white (`CrtParams::glow_light`)
+    glow: f32,
     pad2: f32,
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var src: texture_2d<f32>;
+// the glow of the frame (`GlowField` of crt.rs), in units of a white's light
+@group(0) @binding(2) var glow_map: texture_2d<f32>;
+
+const GLOW_W: i32 = 192;
+const GLOW_H: i32 = 68;
+
+// `GlowField::at`: bilinear between the cells, (u, v) in 0..1 over the picture
+fn glow_at(u: f32, v: f32) -> vec3<f32> {
+    let gx = clamp(u * f32(GLOW_W) - 0.5, 0.0, f32(GLOW_W - 1));
+    let gy = clamp(v * f32(GLOW_H) - 0.5, 0.0, f32(GLOW_H - 1));
+    let x0 = i32(floor(gx));
+    let y0 = i32(floor(gy));
+    let x1 = min(x0 + 1, GLOW_W - 1);
+    let y1 = min(y0 + 1, GLOW_H - 1);
+    let f = vec2<f32>(gx - f32(x0), gy - f32(y0));
+    let top = mix(textureLoad(glow_map, vec2<i32>(x0, y0), 0).rgb, textureLoad(glow_map, vec2<i32>(x1, y0), 0).rgb, f.x);
+    let bottom = mix(textureLoad(glow_map, vec2<i32>(x0, y1), 0).rgb, textureLoad(glow_map, vec2<i32>(x1, y1), 0).rgb, f.x);
+    return mix(top, bottom, f.y);
+}
 
 const SRC_W: i32 = 768;
 const SRC_H: i32 = 272;
@@ -151,6 +171,12 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var rgb = (1.0 - 2.0 * p.halation) * light(x, y) + p.halation * (light(x - sw, y) + light(x + sw, y));
     // the veil of the glass: a share of a white's light everywhere, in the phosphor's colour
     rgb += p.veil * select(vec3<f32>(1.0), vec3<f32>(p.tint_r, p.tint_g, p.tint_b), p.mono > 0.5);
+    // the glow of the picture around (a mono tube: of its luminance, in its colour)
+    var g = glow_at((f32(x) + 0.5) / f32(p.out_w), (f32(y) + 0.5) / f32(p.out_h));
+    if (p.mono > 0.5) {
+        g = vec3<f32>(dot(g, vec3<f32>(0.299, 0.587, 0.114))) * vec3<f32>(p.tint_r, p.tint_g, p.tint_b);
+    }
+    rgb += p.glow * g;
     // the glass's rounded edge, smoothed over about a pixel (as the blit of a flat picture)
     let q = warped((vec2<f32>(f32(x), f32(y)) + 0.5) / vec2<f32>(f32(p.out_w), f32(p.out_h))) * 2.0 - 1.0;
     let e = abs(q) - (1.0 - p.warp_corner);

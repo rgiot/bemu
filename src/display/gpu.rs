@@ -10,7 +10,7 @@
 //! feed any frontend, the recorder and the screenshots; a frontend that
 //! presents the texture itself would skip that read-back.
 
-use super::crt::{CrtParams, Warp, SRC_HEIGHT, SRC_WIDTH};
+use super::crt::{CrtParams, GlowField, Warp, GLOW_H, GLOW_W, SRC_HEIGHT, SRC_WIDTH};
 #[cfg(not(target_arch = "wasm32"))]
 use super::DisplayFilter;
 use image::RgbImage;
@@ -44,7 +44,9 @@ struct Uniforms {
     /// The light of a black, see `CrtParams::veil` (and its neighbours: the vignette, padding)
     veil: f32,
     vignette: f32,
-    pad: [f32; 2],
+    /// The light of the glow where the picture is white, see `CrtParams::glow_light`
+    glow: f32,
+    pad: f32,
 }
 
 impl Uniforms {
@@ -73,7 +75,8 @@ impl Uniforms {
             tint: p.phosphor.unwrap_or([1.0; 3]),
             veil: p.veil_light(),
             vignette: p.vignette,
-            pad: [0.0; 2],
+            glow: p.glow_light(),
+            pad: 0.0,
         }
     }
 }
@@ -238,6 +241,9 @@ pub struct FrameTexture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     rgba: Vec<u8>,
+    /// The glow of the frame (see [`GlowField`]), four floats a cell
+    glow: wgpu::Texture,
+    glow_view: wgpu::TextureView,
 }
 
 impl FrameTexture {
@@ -257,10 +263,27 @@ impl FrameTexture {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let glow = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("glow of the frame"),
+            size: wgpu::Extent3d {
+                width: GLOW_W as u32,
+                height: GLOW_H as u32,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let glow_view = glow.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
             texture,
             view,
             rgba: vec![0; SRC_WIDTH * SRC_HEIGHT * 4],
+            glow,
+            glow_view,
         }
     }
 
@@ -268,8 +291,27 @@ impl FrameTexture {
         &self.view
     }
 
+    pub fn glow_view(&self) -> &wgpu::TextureView {
+        &self.glow_view
+    }
+
     /// Upload `src` (any size up to the monitor's: the rest is black).
     pub fn upload(&mut self, queue: &wgpu::Queue, src: &RgbImage) {
+        let texels = GlowField::new(src).texels();
+        queue.write_texture(
+            self.glow.as_image_copy(),
+            bytemuck::cast_slice(&texels),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(GLOW_W as u32 * 16),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: GLOW_W as u32,
+                height: GLOW_H as u32,
+                depth_or_array_layers: 1,
+            },
+        );
         self.rgba.fill(0);
         let width = (src.width() as usize).min(SRC_WIDTH);
         for y in 0..(src.height() as usize).min(SRC_HEIGHT) {
@@ -346,6 +388,16 @@ impl CrtPass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -359,6 +411,10 @@ impl CrtPass {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(frame.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(frame.glow_view()),
                 },
             ],
         });
