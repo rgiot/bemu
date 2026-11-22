@@ -26,4 +26,8 @@ channel values each:
 * **Version constraint**: cubecl 0.11.4 uses **wgpu 30**; bemu is on wgpu 27 and egui-wgpu 0.33.
   egui-wgpu 0.37 is on wgpu 30: adopting CubeCL means moving bemu to wgpu 30 / egui 0.37.
 * CubeCL's CPU backend needs an LLVM bundle downloaded by its build script (not tried).
-* Not done: the browser (WebGPU), the quad pass that draws the buffer, `Picture` integration.
+* **The whole path of a frame without readback** (`quad_pass_check`): kernel -> buffer of the shared
+  device -> a fullscreen pass that binds it as read-only storage (`BufferBinding` with CubeCL's offset)
+  and draws it into a texture. Read back, it is the kernel's picture: worst difference 5, 24 values
+  off by more than 3, against the CPU renderer (curved CTM644).
+* Not done: the browser (WebGPU), and the integration into `Picture` (the quad pass replaces `CrtPass`).
