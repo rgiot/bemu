@@ -889,6 +889,14 @@ impl Fdc {
         self.st = msr::RQM | msr::DIO | msr::CB;
         if self.timing {
             self.rqm_at = self.t_cursor.max(self.now_us);
+            if matches!(self.current_cmd, Cmd::SenseInterruptStatus | Cmd::SenseDriveStatus) {
+                // EXPERIMENT: BEMU_FDC_SENSE_DELAY (microseconds)
+                static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+                let d = *V.get_or_init(|| {
+                    std::env::var("BEMU_FDC_SENSE_DELAY").ok().and_then(|v| v.parse().ok()).unwrap_or(0)
+                });
+                self.rqm_at = self.rqm_at.max(self.now_us + d);
+            }
         }
     }
 
