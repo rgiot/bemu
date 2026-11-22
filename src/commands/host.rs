@@ -141,6 +141,9 @@ pub struct HostSettings {
     /// integer size); `free_zoom` comes first.
     pub native_zoom: bool,
     pub fullscreen: bool,
+    /// A page too slow for real time makes the picture of some frames only (Video > Skip frames
+    /// when too slow): off, every picture is made (a video recording wants that).
+    pub frame_skip: bool,
     /// The CRTC / Gate Array writes drawn on the picture.
     pub overlay: bool,
     pub keyboard: KeyboardMapping,
@@ -246,6 +249,7 @@ impl Default for HostSettings {
             free_zoom: false,
             native_zoom: false,
             fullscreen: false,
+            frame_skip: false,
             overlay: false,
             keyboard: KeyboardMapping::default(),
             host_layout: None,
