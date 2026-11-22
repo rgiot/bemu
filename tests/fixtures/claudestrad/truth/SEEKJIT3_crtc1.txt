@@ -1,2 +1,2 @@
-Controleur au repos : 1213 tours, soit 164.9 us par tour
-Pendant un SEEK : 1211 tours, soit 165.2 us par tour
+~Controleur au repos : 1213 tours, soit 164.9 us par tour
+~Pendant un SEEK : 1211 tours, soit 165.2 us par tour

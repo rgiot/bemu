@@ -548,10 +548,35 @@ fn check_truth(case: &Case, failures: &mut Vec<String>) {
         let squash = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
         let got: Vec<String> = read_text(&ours).text().lines().map(squash).collect();
         let truth = std::fs::read_to_string(format!("{dir}/{file}")).unwrap();
+        // a line that starts with `~` is a measurement that varies a little on a real machine (a
+        // count of loops, a number of frames): its numbers (decimal, or hex after `&`) may differ by
+        // 1.5% and 1 count, the rest must be identical
+        let number = |t: &str| -> Option<f64> {
+            match t.strip_prefix('&') {
+                Some(hex) => i64::from_str_radix(hex, 16).ok().map(|v| v as f64),
+                None => t.trim_end_matches(',').parse::<f64>().ok(),
+            }
+        };
+        let close = |want: &str, line: &str| -> bool {
+            let (a, b): (Vec<&str>, Vec<&str>) =
+                (want.split(' ').collect(), line.split(' ').collect());
+            a.len() == b.len()
+                && a.iter().zip(&b).all(|(x, y)| match (number(x), number(y)) {
+                    (Some(x), Some(y)) => (x - y).abs() <= (x.abs() * 0.015).max(1.0),
+                    _ => x == y,
+                })
+        };
         let missing: Vec<String> = truth
             .lines()
-            .map(squash)
-            .filter(|l| !l.is_empty() && !got.contains(l))
+            .filter(|l| !l.trim().is_empty())
+            .filter(|l| match l.strip_prefix('~') {
+                Some(approx) => {
+                    let want = squash(approx);
+                    !got.iter().any(|g| close(&want, g))
+                }
+                None => !got.contains(&squash(l)),
+            })
+            .map(|l| squash(l.trim_start_matches('~')))
             .collect();
         println!(
             "{:9} {:9} real machine: {}",
