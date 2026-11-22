@@ -3,7 +3,7 @@
 //! lines) and what is drawn shows how the monitor's line oscillator follows it. Run on a bare machine
 //! with a CRTC 1, the monitor fed directly, in seconds. The target is the real CRTC 1 and CTM 644:
 //! the left edge of the picture on each line, read off the photo
-//! (tests/fixtures/claudestrad/truth/HSYNCPOS_crtc1_profile.txt, in ticks).
+//! (tests/fixtures/claudestrad/truth/HSYNCPOS_crtc1_claudestrad_profile.txt, in ticks).
 
 use amsrust::crtc::CrtcType;
 use amsrust::monitor::Monitor;
@@ -51,7 +51,7 @@ fn profile() -> Vec<Option<f64>> {
 
 /// The real profile of the photo (None where the photo has no edge).
 fn real_profile() -> Vec<Option<f64>> {
-    include_str!("fixtures/claudestrad/truth/HSYNCPOS_crtc1_profile.txt")
+    include_str!("fixtures/claudestrad/truth/HSYNCPOS_crtc1_claudestrad_profile.txt")
         .lines()
         .filter(|l| !l.starts_with('#'))
         .map(|l| l.trim().parse::<f64>().ok())

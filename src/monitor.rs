@@ -45,7 +45,12 @@ const MONITOR_HSYNC_WINDOW_START: usize = RASTER_LINE_LENGTH - 48;
 const MONITOR_HSYNC_LOST_LINES: usize = 4;
 
 /// Shortest C-HSYNC pulse (in ticks of 1/16 usec) the monitor reacts to.
-const MONITOR_MIN_HSYNC_TICKS: usize = 12;
+const MONITOR_MIN_HSYNC_TICKS_DEFAULT: usize = 12;
+fn min_hsync_ticks() -> usize {
+    // EXPERIMENT: BEMU_MIN_HSYNC
+    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("BEMU_MIN_HSYNC").ok().and_then(|v| v.parse().ok()).unwrap_or(MONITOR_MIN_HSYNC_TICKS_DEFAULT))
+}
 /// Lines after the beam started a frame from which the frame oscillator accepts a VSYNC
 /// (Shaker DT: pulses 156 lines apart are not followed, 312 are).
 const MONITOR_VSYNC_WINDOW_START_LINES: usize = 200;
@@ -213,6 +218,7 @@ pub struct Monitor {
     ran_free: bool,
     /// Lines left in which a small phase error is still followed (a correction is going on)
     pll_active: u32,
+    pll_rem: i64,
     /// ticks the pulse's end is ahead of the middle-referenced position (see `follow_sync`)
     sync_adj: i64,
     /// Ticks the beam still waits before the next line starts (a sync that came early)
@@ -266,6 +272,7 @@ impl Monitor {
             synchronised: false,
             ran_free: false,
             pll_active: 0,
+            pll_rem: 0,
             sync_adj: 0,
             hold: 0,
             now: 0,
@@ -511,12 +518,12 @@ impl Monitor {
         let x_before = self.x;
         let was_locked = self.locked;
         let was_locked_now = was_locked;
-        let pulse_end = hsync_pulse > MONITOR_MIN_HSYNC_TICKS
+        let pulse_end = hsync_pulse > min_hsync_ticks()
             && !hsync
             && (!self.locked || self.x >= MONITOR_HSYNC_WINDOW_START);
         let free_run = self.x >= RASTER_LINE_LENGTH;
         // a sync that comes after the oscillator went round only corrects its phase
-        let late_pulse = hsync_pulse > MONITOR_MIN_HSYNC_TICKS
+        let late_pulse = hsync_pulse > min_hsync_ticks()
             && !hsync
             && !pulse_end
             && was_locked_now
@@ -646,10 +653,29 @@ impl Monitor {
         } else if self.pll_active > 0 {
             self.pll_active -= 1;
         }
-        let pull = if error.abs() <= 1 {
-            error
+        // EXPERIMENT: BEMU_PLL_GAIN=num/den (with BEMU_PLL_REM=1: the remainder is carried)
+        static P: std::sync::OnceLock<(i64, i64, bool)> = std::sync::OnceLock::new();
+        let (n, d, carry) = *P.get_or_init(|| {
+            let g = std::env::var("BEMU_PLL_GAIN").ok().and_then(|v| {
+                let (a, b) = v.split_once('/')?;
+                Some((a.parse().ok()?, b.parse().ok()?))
+            });
+            let (n, d) = g.unwrap_or((0, 0));
+            (n, d, std::env::var("BEMU_PLL_REM").is_ok())
+        });
+        let pull = if d == 0 {
+            if error.abs() <= 1 {
+                error
+            } else {
+                ((error * 3 + 4 * error.signum()) / 8)
+                    .clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL)
+            }
+        } else if carry {
+            let accum = error * n + self.pll_rem;
+            self.pll_rem = accum % d;
+            (accum / d).clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL)
         } else {
-            ((error * 3 + 4 * error.signum()) / 8)
+            ((error * n + (d / 2) * error.signum()) / d)
                 .clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL)
         };
         let start = error - pull + adj; // ticks since the new line start, at this sync
