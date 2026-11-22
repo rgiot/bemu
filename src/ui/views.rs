@@ -1411,10 +1411,10 @@ mod joystick_tests {
             ..Default::default()
         };
         let mut stick = JoystickState::default();
-        let _ = ctx.run(input, |ctx| {
+        let _ = ctx.run_ui(input, |root| {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
-                .show(ctx, |ui| {
+                .show(root, |ui| {
                     stick = joystick_controls(ui, egui::Id::new("test-stick"))
                 });
         });
@@ -1445,8 +1445,8 @@ mod joystick_tests {
             ..Default::default()
         };
         let mut sticks = Joysticks::default();
-        let output = ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let output = ctx.run_ui(input, |root| {
+            egui::CentralPanel::default().show(root, |ui| {
                 egui::ScrollArea::both()
                     .auto_shrink([true, true])
                     .show(ui, |ui| {

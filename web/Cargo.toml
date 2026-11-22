@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 amsrust = { path = "..", default-features = false, features = ["crt-gpu", "gui"] }
 # the menu bar, the command palette and the debugger's windows (amsrust::ui), drawn over the picture
-egui = "0.33"
+egui = "0.37"
 image = "0.23.14"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
@@ -19,7 +19,7 @@ wasm-bindgen = "0.2.130"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3.106"
 web-sys = { version = "0.3.106", features = ["Window", "Document", "Element", "HtmlCanvasElement", "OffscreenCanvas", "OffscreenCanvasRenderingContext2d", "CanvasRenderingContext2d", "ImageData", "console", "Navigator", "Gamepad", "GamepadButton", "GamepadEvent", "HtmlElement"] }
-wgpu = { version = "27", default-features = false, features = ["wgsl", "webgpu", "webgl"] }
+wgpu = { version = "30", default-features = false, features = ["wgsl", "webgpu", "webgl"] }
 console_error_panic_hook = "0.1"
 
 [features]

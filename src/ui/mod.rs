@@ -112,7 +112,7 @@ pub struct NativeView {
 fn new_context() -> egui::Context {
     let ctx = egui::Context::default();
     ctx.set_theme(egui::Theme::Dark);
-    ctx.style_mut(|style| {
+    ctx.global_style_mut(|style| {
         style.interaction.tooltip_delay = 0.4;
     });
     ctx
@@ -308,8 +308,9 @@ impl Gui {
         let ctx = self.view_contexts.get(&key)?.clone();
         let windows = &mut self.windows;
         let mut wanted = egui::Vec2::ZERO;
-        let output = ctx.run(raw, |ctx| {
-            let panel = egui::CentralPanel::default().show(ctx, |ui| {
+        let output = ctx.run_ui(raw, |ui| {
+            let ctx = ui.ctx().clone();
+            let panel = egui::CentralPanel::default().show(ui, |ui| {
                 // both ways: the lines keep their length (no wrapping to the window's width),
                 // so the content says how wide the window is to be
                 egui::ScrollArea::both()
@@ -324,7 +325,7 @@ impl Gui {
             });
             // with the panel's margins
             wanted = panel.inner
-                + egui::Frame::central_panel(&ctx.style())
+                + egui::Frame::central_panel(&ctx.global_style())
                     .total_margin()
                     .sum();
         });
@@ -426,15 +427,15 @@ impl Gui {
     /// Whether the keys go to the interface (a field, the palette, a menu) rather than the CPC.
     pub fn wants_keyboard(&self) -> bool {
         // (a field of a debugger's own window takes the keys of that window only)
-        self.ctx.wants_keyboard_input()
+        self.ctx.egui_wants_keyboard_input()
             || self.palette.is_some()
             || self.prompt.is_some()
-            || self.ctx.is_popup_open()
+            || self.ctx.any_popup_open()
     }
 
     /// Whether the pointer is over the interface.
     pub fn wants_pointer(&self) -> bool {
-        self.ctx.wants_pointer_input()
+        self.ctx.egui_wants_pointer_input()
     }
 
     /// The height of the menu bar, in points (0 without it, and in fullscreen, where it is drawn
@@ -456,7 +457,7 @@ impl Gui {
             i.pointer.delta() != egui::Vec2::ZERO
                 || i.pointer.any_down()
                 || i.pointer.any_click()
-                || i.raw_scroll_delta != egui::Vec2::ZERO
+                || i.smooth_scroll_delta != egui::Vec2::ZERO
         });
         if used {
             self.pointer_seen = now;
@@ -496,12 +497,13 @@ impl Gui {
     ) -> egui::FullOutput {
         let ctx = self.ctx.clone();
         apply_zoom(&ctx, target);
-        let output = ctx.run(raw, |ctx| self.ui(ctx, target, bus));
+        let output = ctx.run_ui(raw, |ui| self.ui(ui, target, bus));
         self.follow_links();
         output
     }
 
-    fn ui(&mut self, ctx: &egui::Context, target: &dyn CommandTarget, bus: &mut CommandBus) {
+    fn ui(&mut self, ui: &mut egui::Ui, target: &dyn CommandTarget, bus: &mut CommandBus) {
+        let ctx = &ui.ctx().clone();
         self.shortcuts(ctx, target, bus);
         // stopped (Pause, F8, a breakpoint, a step done): the code where it stopped is what one
         // looks at, the first Disassembly window back on the PC, in front
@@ -559,8 +561,8 @@ impl Gui {
         self.menu_height = if visible {
             let windows: Vec<(u8, String)> =
                 self.views.iter().map(|key| (key.0, key.title())).collect();
-            let panel = egui::TopBottomPanel::top("menu")
-                .show(ctx, |ui| menu::bar(ui, target, bus, &windows));
+            let panel = egui::Panel::top("menu")
+                .show(ui, |ui| menu::bar(ui, target, bus, &windows));
             match panel.inner {
                 Some(menu::WindowAction::Focus(key)) => self.focus.push(ViewKey(key)),
                 Some(menu::WindowAction::CloseAll) => {
@@ -577,8 +579,8 @@ impl Gui {
         };
         // the status bar, with the menus (shown and hidden together)
         self.status_height = if visible {
-            egui::TopBottomPanel::bottom("status")
-                .show(ctx, |ui| chips::status_bar(ui, target))
+            egui::Panel::bottom("status")
+                .show(ui, |ui| chips::status_bar(ui, target))
                 .response
                 .rect
                 .height()
@@ -666,7 +668,7 @@ impl Gui {
     fn shortcuts(&mut self, ctx: &egui::Context, target: &dyn CommandTarget, bus: &mut CommandBus) {
         // Ctrl+V comes as a paste (egui reads the clipboard): typed on the CPC, unless a field
         // of the interface has the keyboard
-        if !ctx.wants_keyboard_input() {
+        if !ctx.egui_wants_keyboard_input() {
             let pasted = ctx.input_mut(|i| {
                 let mut pasted = None;
                 i.events.retain(|event| match event {

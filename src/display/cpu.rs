@@ -22,7 +22,7 @@
 //! picture instead (as [`super::Curved`] does) resamples the fine pattern of the mask and shows
 //! moire.
 
-use super::crt::{coverage, CrtParams, Warp, LUMA, SRC_HEIGHT, SRC_WIDTH};
+use super::crt::{coverage, CrtParams, GlowField, Warp, LUMA, SRC_HEIGHT, SRC_WIDTH};
 use super::DisplayFilter;
 use image::RgbImage;
 
@@ -68,6 +68,8 @@ struct Tables {
     luma: bool,
     /// The light of a black, see `CrtParams::veil_light`.
     veil: f32,
+    /// The glow of a white, see `CrtParams::glow_light`.
+    glow: f32,
 }
 
 impl Tables {
@@ -150,6 +152,7 @@ impl Tables {
             linear,
             luma: p.phosphor.is_some(),
             veil: p.veil_light(),
+            glow: p.glow_light(),
         }
     }
 }
@@ -254,6 +257,7 @@ impl CpuCrt {
     fn vertical(
         params: &CrtParams,
         tables: &Tables,
+        glow: &GlowField,
         lines: &[f32],
         zeros: &[f32],
         first: usize,
@@ -304,19 +308,28 @@ impl CpuCrt {
                 gc[x] = light * m1[x];
                 bc[x] = light * m2[x];
             }
-            Self::finish_row(params, tables.veil, y, &lit, out);
+            Self::finish_row(params, tables, glow, y, &lit, out);
         }
     }
 
     /// The light of each gun on a row (with `slot` zeros on each side) through the glass's
     /// halation, gamma-encoded into `out`.
-    fn finish_row(params: &CrtParams, veil: f32, y: usize, lit: &[Vec<f32>; 3], out: &mut [u32]) {
+    fn finish_row(
+        params: &CrtParams,
+        tables: &Tables,
+        glow: &GlowField,
+        y: usize,
+        lit: &[Vec<f32>; 3],
+        out: &mut [u32],
+    ) {
+        let veil = tables.veil;
         let slot = params.slot_px();
         let n = out.len();
         let (h, centre) = (params.halation, 1.0 - 2.0 * params.halation);
         let [r, g, b] = lit;
         let (out_w, out_h) = params.output_size();
-        let dy = (y as f32 + 0.5) / out_h as f32 * 2.0 - 1.0;
+        let v = (y as f32 + 0.5) / out_h as f32;
+        let dy = v * 2.0 - 1.0;
         let encode = |light: f32| (light.clamp(0.0, 1.0).sqrt() * 255.0 + 0.5) as i32;
         let (r_l, r_c, r_r) = (&r[..n], &r[slot..][..n], &r[2 * slot..][..n]);
         let (g_l, g_c, g_r) = (&g[..n], &g[slot..][..n], &g[2 * slot..][..n]);
@@ -325,17 +338,25 @@ impl CpuCrt {
             let mut red = centre * r_c[x] + h * (r_l[x] + r_r[x]);
             let mut green = centre * g_c[x] + h * (g_l[x] + g_r[x]);
             let mut blue = centre * b_c[x] + h * (b_l[x] + b_r[x]);
+            // the glow of the picture around
+            let g = glow.at((x as f32 + 0.5) / out_w as f32, v);
+            let g = if params.phosphor.is_some() {
+                let l = LUMA[0] * g[0] + LUMA[1] * g[1] + LUMA[2] * g[2];
+                [l; 3]
+            } else {
+                g
+            };
             if let Some(tint) = params.phosphor {
                 // the one phosphor is lit in `green`: its colour
                 (red, blue) = (tint[0] * green, tint[2] * green);
                 green *= tint[1];
-                red += veil * tint[0];
-                green += veil * tint[1];
-                blue += veil * tint[2];
+                red += (veil + tables.glow * g[0]) * tint[0];
+                green += (veil + tables.glow * g[1]) * tint[1];
+                blue += (veil + tables.glow * g[2]) * tint[2];
             } else {
-                red += veil;
-                green += veil;
-                blue += veil;
+                red += veil + tables.glow * g[0];
+                green += veil + tables.glow * g[1];
+                blue += veil + tables.glow * g[2];
             }
             // the light falls off towards the edges of the picture
             let dx = (x as f32 + 0.5) / out_w as f32 * 2.0 - 1.0;
@@ -352,6 +373,7 @@ impl CpuCrt {
     fn vertical_curved(
         params: &CrtParams,
         tables: &Tables,
+        glow: &GlowField,
         warp: Warp,
         planes: &[Planes],
         first: usize,
@@ -406,8 +428,8 @@ impl CpuCrt {
                 lit[c][x + slot] =
                     level * coverage(distance[x], params.spill, level) * tables.scale;
             }
-            Self::finish_row(params, tables.veil, y, &lit, out);
-            // the glass's rounded edge fades the pixels themselves (as `crt.wgsl`)
+            Self::finish_row(params, tables, glow, y, &lit, out);
+            // the glass's rounded edge fades the pixels themselves (as `kernel.rs`)
             for (x, pixel_out) in out.iter_mut().enumerate() {
                 let (_, _, alpha) = warp.source((x as f32 + 0.5) * pixel.0, v, pixel);
                 if alpha < 1.0 {
@@ -440,6 +462,7 @@ impl DisplayFilter for CpuCrt {
         } = self;
         let (params, tables, threads, warp) = (&*params, &*tables, *threads, *warp);
 
+        let glow = &GlowField::new(src);
         let band = |total: usize| total.div_ceil(threads).max(1);
         if !warp.is_flat() {
             for (j, line) in planes.iter_mut().enumerate() {
@@ -449,7 +472,7 @@ impl DisplayFilter for CpuCrt {
             std::thread::scope(|scope| {
                 for (i, chunk) in dst.chunks_mut(band(out_h) * out_w).enumerate() {
                     scope.spawn(move || {
-                        Self::vertical_curved(params, tables, warp, planes, i * band(out_h), chunk)
+                        Self::vertical_curved(params, tables, glow, warp, planes, i * band(out_h), chunk)
                     });
                 }
             });
@@ -470,9 +493,9 @@ impl DisplayFilter for CpuCrt {
             for (i, chunk) in dst.chunks_mut(band(out_h) * out_w).enumerate() {
                 let first = i * band(out_h);
                 if threads == 1 {
-                    Self::vertical(params, tables, lines, zeros, first, chunk);
+                    Self::vertical(params, tables, glow, lines, zeros, first, chunk);
                 } else {
-                    scope.spawn(move || Self::vertical(params, tables, lines, zeros, first, chunk));
+                    scope.spawn(move || Self::vertical(params, tables, glow, lines, zeros, first, chunk));
                 }
             }
         });
@@ -495,6 +518,7 @@ mod test {
         CrtParams {
             veil: 0.0,
             vignette: 0.0,
+            glow: 0.0,
             ..profile.params()
         }
     }
@@ -680,10 +704,51 @@ mod test {
         assert!((edge / centre - 0.71).abs() < 0.08, "{}", edge / centre);
     }
 
+    /// What is bright lights what is around it (TuxAPE's glow): the dark beside a white area is
+    /// lit more than the dark far from it, which is lit more than nothing, and a black picture is
+    /// black.
+    #[test]
+    fn the_bright_glows_on_the_dark() {
+        let params = || CrtParams {
+            vignette: 0.0,
+            ..CrtProfile::Ctm644.params()
+        };
+        let mut filter = CpuCrt::new(params());
+        let (w, h) = filter.output_size();
+        let mut dst = vec![0; w * h];
+        filter.render(&field([0, 0, 0]), &mut dst);
+        assert!(dst.iter().all(|&p| p == 0), "a black picture is black");
+        // the left quarter white
+        let mut src = field([0, 0, 0]);
+        for y in 0..SRC_HEIGHT as u32 {
+            for x in 0..(SRC_WIDTH / 4) as u32 {
+                src.put_pixel(x, y, Rgb([255, 255, 255]));
+            }
+        }
+        filter.render(&src, &mut dst);
+        let light = |x: usize| {
+            let row = h / 2;
+            (0..12)
+                .map(|d| {
+                    let p = dst[row * w + x + d];
+                    ((p >> 8 & 255) as f64 / 255.0).powi(2)
+                })
+                .sum::<f64>()
+                / 12.0
+        };
+        let (near, mid, far) = (light(w / 4 + 10), light(w / 2), light(w - 60));
+        assert!(near > mid && mid > far && far > 0.0, "{near} {mid} {far}");
+        // a few hundredths beside it, a trace far across
+        assert!((0.01..0.12).contains(&near), "{near}");
+        assert!(far < 0.005, "{far}");
+    }
+
     /// A profile's parameters with an even light, for the tests of the veil.
     fn flat_light(profile: CrtProfile) -> CrtParams {
         CrtParams {
             vignette: 0.0,
+            glow: 0.0,
+            veil: 0.035,
             ..CrtParams::from_profile(profile)
         }
     }
@@ -699,7 +764,7 @@ mod test {
             let (w, h) = filter.output_size();
             let mut dst = vec![0; w * h];
             filter.render(&black, &mut dst);
-            let want = |t: f32| (CrtParams::from_profile(profile).veil_light() * t).sqrt() * 255.0;
+            let want = |t: f32| (flat_light(profile).veil_light() * t).sqrt() * 255.0;
             let [r, g, b] = [
                 (dst[0] >> 16 & 255) as f32,
                 (dst[0] >> 8 & 255) as f32,
@@ -712,7 +777,7 @@ mod test {
         }
         // 3.5 % of the mean light of a white field: a black of about 35 on the encoded scale,
         // where it was 0
-        let r = CrtParams::from_profile(CrtProfile::Ctm644).veil_light().sqrt() * 255.0;
+        let r = flat_light(CrtProfile::Ctm644).veil_light().sqrt() * 255.0;
         assert!((33.0..=37.0).contains(&r), "{r}");
         // and measured on a white field, it is the share of the photographs
         let (white, w, _) = render(CrtProfile::Ctm644, &field([255, 255, 255]));
@@ -741,7 +806,7 @@ mod test {
             (400..404).map(|y| mean(&dark, y)).sum::<f64>() / 4.0,
         );
         // (a scanline's gap is darker than a line's middle: the rows average over four)
-        assert!((dark / white - 0.035).abs() < 0.012, "ratio {} dark {dark} white {white} veil {}", dark / white, CrtParams::from_profile(CrtProfile::Ctm644).veil_light());
+        assert!((dark / white - 0.035).abs() < 0.012, "ratio {} dark {dark} white {white} veil {}", dark / white, flat_light(CrtProfile::Ctm644).veil_light());
     }
 
     #[test]

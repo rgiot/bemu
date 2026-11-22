@@ -19,3 +19,4 @@ m4sd
 *.sna
 *.mp4
 *.log
+/cubecl-crt/target

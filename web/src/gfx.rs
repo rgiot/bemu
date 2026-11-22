@@ -191,18 +191,18 @@ impl Flat {
 impl Gpu {
     async fn new(canvas: Canvas) -> Result<Self, String> {
         let (width, height) = (canvas.size().0.max(1), canvas.size().1.max(1));
-        let webgpu = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let webgpu = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         // wgpu chooses WebGPU when navigator.gpu exists, even if requestAdapter returns null.
         // Probe before creating a surface so a failed WebGPU context cannot lock the canvas.
         let instance = if webgpu.request_adapter(&wgpu::RequestAdapterOptions::default()).await.is_ok() {
             webgpu
         } else {
-            wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            wgpu::Instance::new(wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::GL,
-                ..Default::default()
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
             })
         };
         let target = match canvas {
@@ -219,9 +219,16 @@ impl Gpu {
             })
             .await
             .map_err(|e| format!("no WebGPU adapter: {e}"))?;
+        // The CRT's kernel needs compute shaders and storage buffers: the limits of WebGPU, not of
+        // the WebGL fallback (where the picture stays raw).
+        let webgpu = adapter.get_info().backend == wgpu::Backend::BrowserWebGpu;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+                required_limits: if webgpu {
+                    wgpu::Limits::default().using_resolution(adapter.limits())
+                } else {
+                    wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+                },
                 ..Default::default()
             })
             .await
@@ -243,11 +250,23 @@ impl Gpu {
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: capabilities.alpha_modes[0],
             view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::default(),
             desired_maximum_frame_latency: 2
         };
         surface.configure(&device, &config);
 
-        let picture = Picture::new(&device, format);
+        let cube = if webgpu {
+            match amsrust::display::GpuContext::new(&instance, &adapter, &device, &queue) {
+                Ok(cube) => Some(cube),
+                Err(e) => {
+                    web_sys::console::warn_1(&format!("no CRT picture: {e}").into());
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let picture = Picture::new(&device, format, cube);
         Ok(Self { surface, device, queue, config, picture, painter: None })
     }
 
@@ -268,13 +287,16 @@ impl Gpu {
         ui: Option<(&amsrust::ui::Gui, egui::FullOutput)>
     ) -> Result<Option<egui::FullOutput>, String> {
         let surface_texture = match self.surface.get_current_texture() {
-            Ok(texture) => texture,
-            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+            wgpu::CurrentSurfaceTexture::Success(texture)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(ui.map(|(_, output)| output));
             },
-            Err(wgpu::SurfaceError::Timeout) => return Ok(ui.map(|(_, output)| output)),
-            Err(e) => return Err(format!("cannot draw in the canvas: {e}"))
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(ui.map(|(_, output)| output))
+            },
+            other => return Err(format!("cannot draw in the canvas: {other:?}"))
         };
         let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -301,7 +323,7 @@ impl Gpu {
             painter.paint(&self.device, &self.queue, &mut encoder, &view, [self.config.width, self.config.height], gui.context(), output);
         }
         self.queue.submit([encoder.finish()]);
-        surface_texture.present();
+        self.queue.present(surface_texture);
         Ok(None)
     }
 }

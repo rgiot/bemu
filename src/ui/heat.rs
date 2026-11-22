@@ -115,7 +115,7 @@ impl Heats {
 
 /// The heat of `values` (what `key` names) in the window of `ui`, kept in its context under
 /// `id`: for the windows that keep no state of their own.
-pub fn watch(ui: &egui::Ui, id: impl Hash, key: u64, mb: &Motherboard, values: &[u32]) -> Heat {
+pub fn watch(ui: &egui::Ui, id: impl Hash + std::fmt::Debug, key: u64, mb: &Motherboard, values: &[u32]) -> Heat {
     let id = egui::Id::new(("heat", id));
     let mut heat: Heat = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     observe(ui, &mut heat, key, mb, values);
