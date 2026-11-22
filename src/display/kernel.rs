@@ -13,6 +13,8 @@ use super::crt::{
     SRC_WIDTH,
 };
 use cubecl::prelude::*;
+use image::RgbImage;
+use std::borrow::Cow;
 
 // parameter slots
 pub const OUT_W: usize = 0;
@@ -519,3 +521,24 @@ pub fn pack(p: &CrtParams, warp: Warp) -> Vec<f32> {
     v
 }
 
+
+/// The bytes the kernels read of a frame, and its size: the RGB bytes as they are (what is larger
+/// than the monitor's picture is cut), padded to whole words.
+pub fn frame_bytes(src: &RgbImage) -> (Cow<'_, [u8]>, u32, u32) {
+    let (w, h) = (
+        (src.width() as usize).min(SRC_WIDTH),
+        (src.height() as usize).min(SRC_HEIGHT),
+    );
+    let raw = src.as_raw();
+    let mut bytes = Cow::Borrowed(&raw[..w * h * 3]);
+    if w != src.width() as usize {
+        let row = src.width() as usize * 3;
+        bytes = Cow::Owned((0..h).flat_map(|y| raw[y * row..][..w * 3].iter().copied()).collect());
+    }
+    if bytes.len() % 4 != 0 {
+        let mut padded = bytes.into_owned();
+        padded.resize(padded.len().div_ceil(4) * 4, 0);
+        bytes = Cow::Owned(padded);
+    }
+    (bytes, w as u32, h as u32)
+}

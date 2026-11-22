@@ -68,7 +68,7 @@ impl CrtProfile {
 
 /// The curved glass of the tube, as the viewer sees the flat picture through it: a barrel warp
 /// of the whole picture (the CRT model's output), with the glass's rounded corners. The same
-/// formula runs on the CPU ([`super::Curved`]) and in the GPU blit (`blit.wgsl`).
+/// formula runs in the GPU blit (`blit.wgsl`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Warp {
     /// Horizontal and vertical bulge: a point at (x, y) of [-1, 1]² shows the flat picture's
@@ -186,7 +186,7 @@ pub struct CrtParams {
     /// corners' distance (a camera's lens takes its share of it). It is more than the photographs'
     /// 0.30 a unit of r² in light because the white of the model is clipped: the centre is above 1.
     pub vignette: f32,
-    /// How strong the glow is, 1 as TuxAPE's. See [`GlowField`].
+    /// How strong the glow is, 1 as TuxAPE's. See `kernel.rs` (the glow of the frame).
     pub glow: f32,
 }
 
@@ -224,123 +224,6 @@ pub fn gauss_taps(sigma: f32) -> Vec<f32> {
     let sum: f32 = kernel.iter().sum();
     kernel.iter_mut().for_each(|k| *k /= sum);
     kernel
-}
-
-/// The glow of a frame, in units of a white's light: the light of the source blurred two ways,
-/// weighted, on a grid of [`GLOW_W`] × [`GLOW_H`] cells.
-pub struct GlowField {
-    cells: Vec<[f32; 3]>,
-}
-
-impl GlowField {
-    pub fn new(src: &image::RgbImage) -> Self {
-        let mut level = [0.0f32; 256];
-        for (i, l) in level.iter_mut().enumerate() {
-            *l = (i as f32 / 255.0).powi(2);
-        }
-        // the source's light, by cells
-        let mut light = vec![[0.0f32; 3]; GLOW_W * GLOW_H];
-        let (w, h) = (src.width() as usize, src.height() as usize);
-        let raw = src.as_raw();
-        for y in 0..h.min(SRC_HEIGHT) {
-            for x in 0..w.min(SRC_WIDTH) {
-                let cell = &mut light[(y / 4) * GLOW_W + x / 4];
-                for c in 0..3 {
-                    cell[c] += level[raw[(y * w + x) * 3 + c] as usize] / 16.0;
-                }
-            }
-        }
-        let close = Self::blur(&light, GLOW_W, GLOW_H, GLOW_CLOSE.0 / 4.0);
-        // the wide one on a grid four times coarser, then back (it is smooth)
-        let (cw, ch) = (GLOW_CW, GLOW_CH);
-        let mut coarse = vec![[0.0f32; 3]; cw * ch];
-        for y in 0..GLOW_H {
-            for x in 0..GLOW_W {
-                for c in 0..3 {
-                    coarse[(y / 4) * cw + x / 4][c] += light[y * GLOW_W + x][c] / 16.0;
-                }
-            }
-        }
-        let wide = Self::blur(&coarse, cw, ch, GLOW_WIDE.0 / 16.0);
-        let mut cells = vec![[0.0f32; 3]; GLOW_W * GLOW_H];
-        for y in 0..GLOW_H {
-            for x in 0..GLOW_W {
-                let at = |gx: f32, gy: f32| {
-                    let (gx, gy) = (gx.clamp(0.0, (cw - 1) as f32), gy.clamp(0.0, (ch - 1) as f32));
-                    let (x0, y0) = (gx.floor() as usize, gy.floor() as usize);
-                    let (x1, y1) = ((x0 + 1).min(cw - 1), (y0 + 1).min(ch - 1));
-                    let (fx, fy) = (gx - x0 as f32, gy - y0 as f32);
-                    let mut o = [0.0; 3];
-                    for c in 0..3 {
-                        let top = wide[y0 * cw + x0][c] * (1.0 - fx) + wide[y0 * cw + x1][c] * fx;
-                        let bottom = wide[y1 * cw + x0][c] * (1.0 - fx) + wide[y1 * cw + x1][c] * fx;
-                        o[c] = top * (1.0 - fy) + bottom * fy;
-                    }
-                    o
-                };
-                let wide = at((x as f32 + 0.5) / 4.0 - 0.5, (y as f32 + 0.5) / 4.0 - 0.5);
-                for c in 0..3 {
-                    cells[y * GLOW_W + x][c] =
-                        GLOW_CLOSE.1 * close[y * GLOW_W + x][c] + GLOW_WIDE.1 * wide[c];
-                }
-            }
-        }
-        Self { cells }
-    }
-
-    /// Gaussian blur (zero outside the picture) with `sigma` cells.
-    fn blur(cells: &[[f32; 3]], w: usize, h: usize, sigma: f32) -> Vec<[f32; 3]> {
-        let kernel = gauss_taps(sigma);
-        let radius = (kernel.len() / 2) as isize;
-        let mut tmp = vec![[0.0f32; 3]; w * h];
-        let mut out = vec![[0.0f32; 3]; w * h];
-        for y in 0..h {
-            for x in 0..w {
-                for (k, d) in kernel.iter().zip(-radius..=radius) {
-                    let sx = x as isize + d;
-                    if (0..w as isize).contains(&sx) {
-                        for c in 0..3 {
-                            tmp[y * w + x][c] += k * cells[y * w + sx as usize][c];
-                        }
-                    }
-                }
-            }
-        }
-        for y in 0..h {
-            for x in 0..w {
-                for (k, d) in kernel.iter().zip(-radius..=radius) {
-                    let sy = y as isize + d;
-                    if (0..h as isize).contains(&sy) {
-                        for c in 0..3 {
-                            out[y * w + x][c] += k * tmp[sy as usize * w + x][c];
-                        }
-                    }
-                }
-            }
-        }
-        out
-    }
-
-    /// The glow at the place `(u, v)` of the picture (0 to 1 each), bilinear between the cells.
-    pub fn at(&self, u: f32, v: f32) -> [f32; 3] {
-        let gx = (u * GLOW_W as f32 - 0.5).clamp(0.0, (GLOW_W - 1) as f32);
-        let gy = (v * GLOW_H as f32 - 0.5).clamp(0.0, (GLOW_H - 1) as f32);
-        let (x0, y0) = (gx.floor() as usize, gy.floor() as usize);
-        let (x1, y1) = ((x0 + 1).min(GLOW_W - 1), (y0 + 1).min(GLOW_H - 1));
-        let (fx, fy) = (gx - x0 as f32, gy - y0 as f32);
-        let mut o = [0.0; 3];
-        for c in 0..3 {
-            let top = self.cells[y0 * GLOW_W + x0][c] * (1.0 - fx) + self.cells[y0 * GLOW_W + x1][c] * fx;
-            let bottom = self.cells[y1 * GLOW_W + x0][c] * (1.0 - fx) + self.cells[y1 * GLOW_W + x1][c] * fx;
-            o[c] = top * (1.0 - fy) + bottom * fy;
-        }
-        o
-    }
-
-    /// The cells as texels of four floats (the fourth is 0), row by row.
-    pub fn texels(&self) -> Vec<f32> {
-        self.cells.iter().flat_map(|c| [c[0], c[1], c[2], 0.0]).collect()
-    }
 }
 
 /// What the real CTMs' photographs show of the edges, see [`CrtParams::vignette`].
@@ -425,7 +308,7 @@ impl CrtParams {
         self.veil * self.white_light()
     }
 
-    /// The light of the glow where the picture is white (see [`GlowField`]).
+    /// The light of the glow where the picture is white (see `kernel.rs`).
     pub fn glow_light(&self) -> f32 {
         self.glow * self.white_light()
     }
