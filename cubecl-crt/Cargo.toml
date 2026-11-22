@@ -1,0 +1,19 @@
+# Spike: the CRT model as one CubeCL kernel (see README.md). Not part of bemu's build.
+[package]
+name = "cubecl-crt"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+cubecl = { version = "=0.11.4", default-features = false, features = ["std", "wgpu"] }
+cubecl-runtime = "=0.11.4"
+amsrust = { path = "..", default-features = false }
+image = "0.23.14"
+pollster = "0.4"
+bytemuck = "1"
+
+[profile.release]
+opt-level = 3
