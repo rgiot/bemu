@@ -649,8 +649,22 @@ impl Monitor {
         let pull = if error.abs() <= 1 {
             error
         } else {
-            ((error * 3 + 4 * error.signum()) / 8)
-                .clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL)
+            {
+                // EXPERIMENT: BEMU_PLL_GAIN=num/den, BEMU_PLL_DEAD=ticks
+                static P: std::sync::OnceLock<(i64, i64, i64)> = std::sync::OnceLock::new();
+                let (n, d, dead) = *P.get_or_init(|| {
+                    let g = std::env::var("BEMU_PLL_GAIN").ok().and_then(|v| {
+                        let (a, b) = v.split_once('/')?;
+                        Some((a.parse().ok()?, b.parse().ok()?))
+                    });
+                    let dead = std::env::var("BEMU_PLL_DEAD").ok().and_then(|v| v.parse().ok());
+                    let (n, d) = g.unwrap_or((3, 8));
+                    (n, d, dead.unwrap_or(0))
+                });
+                let e = if error.abs() <= dead { 0 } else { error - error.signum() * dead };
+                ((e * n + (d / 2) * e.signum()) / d)
+                    .clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL)
+            }
         };
         let start = error - pull + adj; // ticks since the new line start, at this sync
         if start >= 0 {
