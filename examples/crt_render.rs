@@ -11,7 +11,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [input, output, mode, rest @ ..] = &args[..] else {
         eprintln!(
-            "usage: crt_render in.png out.png raw|ctm|trinitron|gt65|atari [triad_px] [bench]"
+            "usage: crt_render in.png out.png raw|ctm|trinitron|gt65|gt64|mm12|atari [triad_px] [bench]"
         );
         std::process::exit(2);
     };

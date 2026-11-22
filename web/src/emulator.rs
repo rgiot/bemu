@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use amsrust::display::PictureSize;
 use amsrust::csl_runner::{CslReport, CslRunner, MemFiles, ScreenshotSink};
 use amsrust::frame::{ScriptStep, FRAME_T_STATES};
 use amsrust::disc_image::{load_disc_bytes, DiscImage};
@@ -113,12 +114,15 @@ impl Emulator {
                 display,
                 curvature,
                 black_level: config.black_level(),
+                brightness: config.brightness.unwrap_or(0),
+                hhold: config.h_hold.unwrap_or(0),
+                vhold: config.v_hold.unwrap_or(0),
                 keyboard,
                 ..Default::default()
             })
         });
         Ok(Emulator {
-            monitor: Monitor::default().with_black_level(config.black_level()),
+            monitor: config.monitor(),
             config,
             display,
             curvature,
@@ -192,6 +196,9 @@ impl Emulator {
             ui.settings.display = display;
             ui.settings.curvature = curvature;
             ui.settings.black_level = self.config.black_level();
+            ui.settings.brightness = self.config.brightness.unwrap_or(0);
+            ui.settings.hhold = self.config.h_hold.unwrap_or(0);
+            ui.settings.vhold = self.config.v_hold.unwrap_or(0);
         }
         self.replace_machine(motherboard);
         Ok(())
@@ -205,7 +212,7 @@ impl Emulator {
         Ok(())
     }
 
-    /// "raw", "ctm", "trinitron", "gt65" or "atari" (Canvas 2D shows them raw).
+    /// "raw", "ctm", "trinitron", "gt65", "gt64", "mm12" or "atari" (Canvas 2D shows them raw).
     pub fn set_display(&mut self, name: &str) -> Result<(), JsError> {
         self.display = name.parse().map_err(|e: String| JsError::new(&e))?;
         self.config.display = Some(name.to_owned());
@@ -519,12 +526,6 @@ impl Emulator {
         self.machine().stop_tape_recording()
     }
 
-    /// The seconds recorded so far; none when not recording.
-    pub fn tape_recording_seconds(&self) -> Option<f64> {
-        let machine = self.csl.as_ref().map_or(&self.motherboard, CslRunner::motherboard);
-        machine.tape_recorder().map(|recorder| recorder.seconds())
-    }
-
     /// What a DMP2000 printer (`dmp2000: true`) printed, as files named after `prefix`:
     /// `[{ name, data }]` with `prefix.txt` (the text), `prefix.prn` (the bytes the CPC sent) and
     /// `prefix_001.png`... (the sheets with ink). None without a printer.
@@ -659,6 +660,13 @@ impl Emulator {
     pub fn ui_fullscreen(&mut self, on: bool) {
         if let Some(ui) = &mut self.ui {
             ui.page_fullscreen(on);
+        }
+    }
+
+    /// Whether the page skips frames when too slow (its `frameSkip`), for the menus.
+    pub fn ui_frame_skip(&mut self, on: bool) {
+        if let Some(ui) = &mut self.ui {
+            ui.page_frame_skip(on);
         }
     }
 
@@ -865,9 +873,15 @@ impl Emulator {
                 if self.keyboard.mapping() != settings.keyboard {
                     self.keyboard.set_mapping(settings.keyboard);
                 }
-                if settings.black_level != self.config.black_level() {
+                if settings.black_level != self.config.black_level()
+                    || settings.brightness != self.config.brightness.unwrap_or(0)
+                    || (Some(settings.hhold), Some(settings.vhold)) != (self.config.h_hold, self.config.v_hold)
+                {
                     self.config.black_level = Some(settings.black_level);
-                    self.monitor = Monitor::default().with_black_level(settings.black_level);
+                    self.config.brightness = Some(settings.brightness);
+                    self.config.h_hold = Some(settings.hhold);
+                    self.config.v_hold = Some(settings.vhold);
+                    self.monitor = self.config.monitor();
                 }
                 if settings.overlay != self.overlay.is_some() {
                     self.overlay = settings.overlay.then(amsrust::overlay::Overlay::default);
@@ -886,7 +900,7 @@ impl Emulator {
         let shown_frame = paused.as_ref().or(self.frame.as_ref());
         let result = match (shown_frame, ui) {
             (Some(frame), Some((mut ui, output))) => {
-                self.gfx.set_free_zoom(ui.settings.free_zoom);
+                self.gfx.set_picture_size(PictureSize::of(ui.settings.free_zoom, ui.settings.native_zoom));
                 let shown = self.gfx.show_with_ui(frame, self.display, self.curvature, Some((&ui.gui, output)));
                 let shown = shown.map(|undrawn| {
                     if let Some(output) = undrawn {
@@ -973,13 +987,13 @@ impl Emulator {
         // the deck keeps its tape, where it is
         motherboard.take_cassette_and_watches_from(&mut self.motherboard);
         self.motherboard = motherboard;
-        self.monitor = Monitor::default().with_black_level(self.config.black_level());
+        self.monitor = self.config.monitor();
     }
 
     /// The machine of a script that ends goes on as the page's.
     fn adopt(&mut self, runner: &mut CslRunner) {
         self.motherboard = amsrust::frame::end_script(runner);
-        self.monitor = Monitor::default().with_black_level(self.config.black_level());
+        self.monitor = self.config.monitor();
     }
 
     fn csl_frame(&mut self, step: ScriptStep) -> Result<(), JsError> {

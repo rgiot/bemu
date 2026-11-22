@@ -58,8 +58,10 @@ impl Painter {
         textures: &egui::TexturesDelta,
     ) {
         let jobs = ctx.tessellate(shapes, pixels_per_point);
-        for (id, delta) in &textures.set {
-            self.renderer.update_texture(device, queue, *id, delta);
+        for (id, deltas) in &textures.set {
+            for delta in deltas {
+                self.renderer.update_texture(device, queue, *id, delta);
+            }
         }
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: size,
@@ -84,6 +86,7 @@ impl Painter {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 })
                 .forget_lifetime();
             self.renderer.render(&mut pass, &jobs, &screen);

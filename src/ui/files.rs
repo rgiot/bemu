@@ -212,8 +212,8 @@ mod tests {
             ..Default::default()
         };
         let mut chosen = None;
-        let _ = ctx.run(raw, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| chosen = browser.show(ui));
+        let _ = ctx.run_ui(raw, |root| {
+            egui::CentralPanel::default().show(root, |ui| chosen = browser.show(ui));
         });
         chosen
     }

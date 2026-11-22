@@ -129,7 +129,7 @@ fn level(
 fn indent(ui: &egui::Ui) -> egui::Atom<'static> {
     let spacing = ui.spacing();
     let width = (spacing.icon_width - spacing.button_padding.x).max(0.0);
-    egui::Atom::custom(egui::Id::new("menu-indent"), egui::vec2(width, 0.0))
+    egui::Atom::custom(egui::IdSalt::new("menu-indent"), egui::vec2(width, 0.0))
 }
 
 fn hover(spec: &CommandSpec) -> String {
@@ -155,17 +155,37 @@ fn item(
     };
     let why_not = format!("Not available now\n\n{}", spec.note);
     if spec.kind == Kind::Submenu {
-        // the recent discs of a drive
+        // the recent discs of a drive, or the disc images of the archive its disc came from:
+        // (what the entry shows, its argument, whether it is the disc in the drive)
         let drive = usize::from(spec.id.starts_with("drive-b"));
-        let recent = target
+        let of_archive = spec.id.ends_with("insert-from-archive");
+        let entries: Vec<(String, String, bool)> = target
             .settings()
-            .map(|s| s.media.recent_discs[drive].clone())
+            .map(|s| {
+                if of_archive {
+                    let current = s.media.archive_disc(drive);
+                    s.media.archive_discs[drive]
+                        .iter()
+                        .map(|e| (e.clone(), e.clone(), current == Some(e.as_str())))
+                        .collect()
+                } else {
+                    s.media.recent_discs[drive]
+                        .iter()
+                        .map(|p| (p.clone(), p.clone(), false))
+                        .collect()
+                }
+            })
             .unwrap_or_default();
-        ui.add_enabled_ui(!recent.is_empty(), |ui| {
+        let response = ui.add_enabled_ui(state.enabled, |ui| {
             ui.menu_button((indent(ui), label), |ui| {
-                for path in recent {
-                    if ui.button(&path).clicked() {
-                        if let Ok(command) = Command::with_arg(spec.id, Arg::Text(path)) {
+                for (shown, arg, current) in entries {
+                    let clicked = if of_archive {
+                        ui.radio(current, shown).clicked()
+                    } else {
+                        ui.button(shown).clicked()
+                    };
+                    if clicked {
+                        if let Ok(command) = Command::with_arg(spec.id, Arg::Text(arg)) {
                             bus.push(command);
                         }
                         ui.close();
@@ -173,6 +193,10 @@ fn item(
                 }
             });
         });
+        response
+            .response
+            .on_hover_text(hover(spec))
+            .on_disabled_hover_text(why_not);
         return;
     }
     let mut button = egui::Button::new((indent(ui), label));
@@ -222,8 +246,8 @@ mod tests {
             ..Default::default()
         };
         let mut tops = Vec::new();
-        let _ = ctx.run(raw, |ctx| {
-            egui::TopBottomPanel::top("bar").show(ctx, |ui| {
+        let _ = ctx.run_ui(raw, |root| {
+            egui::Panel::top("bar").show(root, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     for name in ["File", "Machine"] {
                         tops.push(ui.menu_button(name, |ui| ui.label(name)).response);

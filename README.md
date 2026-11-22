@@ -34,7 +34,7 @@ as an expansion on a 464/664. In the library:
 `MotherboardBuilder::set_model`, `set_extra_ram_pages`, `set_disc_interface`.
 
 ```sh
-cargo run --release -- --model 464 --ram 128 --ddi --window --dsk game.dsk
+cargo run --release -- --model 464 --ram 128 --ddi --dsk game.dsk
 ```
 
 ### CPC+ and GX4000
@@ -48,8 +48,8 @@ and makes the machine a 6128+ unless `--model` names another CPC+. In a CSL scri
 `cpc_model 4|5|6` and `rom_config C 0 'game.cpr'` (`rom_dir`), at the next `reset`.
 
 ```sh
-cargo run --release -- --cart sonic.cpr --window
-cargo run --release -- --model 6128plus --dsk demo.dsk --window   # f1 for BASIC, then RUN"
+cargo run --release -- --cart sonic.cpr
+cargo run --release -- --model 6128plus --dsk demo.dsk   # f1 for BASIC, then RUN"
 ```
 
 What the ASIC adds is emulated: the lock (the sequence on `&BCxx`), RMR2 (`&7Fxx`, `&A0-&BF`:
@@ -86,12 +86,12 @@ commands go on with side 1, Sense Drive Status reports two sides, and the head r
 same. `validation/demos/batman` has both: the 3" set and the one disc version for a 3.5" drive.
 
 ```sh
-cargo run --release -- --window --drive-a 3.5 --dsk 'batman_forever.zip#Batman Forever (One disk version).dsk'
+cargo run --release -- --drive-a 3.5 --dsk 'batman_forever.zip#Batman Forever (One disk version).dsk'
 ```
 
 ## Menus and command palette
 
-The window (`--window`, the default winit frontend) has a menu bar with every command of the
+The window (the default, with the winit frontend) has a menu bar with every command of the
 emulator, from `doc/menu-ui.csv` (the menu specification, compiled into the binary by
 `build.rs`): media, debugger, machine, sound, video, tools. Ctrl+Shift+P opens the command
 palette: type a few letters of a command (`crtc 1`, `flip b`, `snapshot`), Enter runs it. A
@@ -218,7 +218,7 @@ Sound is played live in the window by default (the `audio` feature, on; build wi
 Linux it needs the ALSA headers, e.g. `libasound2-dev`):
 
 ```sh
-cargo run --release -- --window --dsk game.dsk
+cargo run --release -- --dsk game.dsk
 ```
 
 The audio device's clock then paces the emulation; `--mute` silences it.
@@ -236,9 +236,9 @@ installed; the file extension picks the format), at the CPC's exact frame rate
 
 ```sh
 # 30 emulated seconds (--seconds), headless
-cargo run --release -- --dsk demo.dsk --record demo.mp4 --seconds 30
+cargo run --release -- --console --dsk demo.dsk --record demo.mp4 --seconds 30
 # what the window shows and plays, until it is closed
-cargo run --release -- --window --dsk game.dsk --record game.mkv
+cargo run --release -- --dsk game.dsk --record game.mkv
 ```
 
 Ctrl+C stops a recording early; the file is still finished properly.
@@ -247,7 +247,10 @@ Ctrl+C stops a recording early; the file is still finished properly.
 
 `--csl script.csl` plays a CSL script headless: the machine, the discs, the keys typed and the
 waits it says, then the pictures it asks for with `screenshot` (or SSM codes). They are rendered as
-`--display`, `--curvature` and `--black-level` say, so a CRT's look is kept:
+`--display`, `--curvature` and `--black-level` say, so a CRT's look is kept (`--display gt64` or
+`gt65` is the green monitor, `mm12` the grey one; `--brightness` is `--black-level`, and `--hhold` and
+`--vhold`, -100 to 100, are the hold knobs of the monitor: 0 is steady, the picture slides, tears or
+rolls away from it):
 
 ```sh
 # one lossless WebP, DIR/demo.webp (a still for one screenshot, else an animation: --frame-ms each)
@@ -264,7 +267,7 @@ default) each screenshot is a PNG named by the script (`screenshot_name`).
 `--debug-server` serves an HTTP debug API compatible with the
 [AMSpiriT-Lite web API](https://github.com/AMSpiriT-Emulator/amspirit-releases/blob/main/docs/lite/web_api.md)
 on `127.0.0.1:6128` (`--debug-port N` to change it), for debugger front ends
-such as `cpclib-dap`. It runs with `--window` or headless (real time, Ctrl+C to
+such as `cpclib-dap`. It runs with the window or headless with `--console` (real time, Ctrl+C to
 quit; `--debug-paused` starts it paused, so a debugger sets its breakpoints
 before anything runs). `GET /api/doc` lists the implemented endpoints;
 extensions to the AMSpiriT API are flagged there, and `ping` answers
@@ -355,7 +358,7 @@ name (`COLUMN~1.DSK`, as `CAT` shows it) is copied from the screen, or written `
 
 ## Example scripts
 
-`examples/` holds scripts that set a machine up and run something on it (`--window`); each
+`examples/` holds scripts that set a machine up and run something on it; each
 one's header says more.
 
 | script | what it shows |

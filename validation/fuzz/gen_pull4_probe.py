@@ -4,6 +4,8 @@ gen_pull3_probe.py (line sync at C0=50, an extra HSYNC at C0=X of width We on ch
 striped mode 1 screen, CRTC 1, one frame long loop), but R3 is also rewritten on every line: We
 before the extra pulse, the line sync's width (6, or 5 on chosen lines) after it.
   gen_pull4_probe.py <out.sna> <phase_us> <We> <X|-> <extra lines> [<narrow lines>]
+X may be `sweep:A:B:N`: every line has an extra pulse, at C0=A on the first N lines and one character
+nearer B every N lines (the rows of the picture then draw the pull against the pulse's position).
 Lines are `first:count,first:count...` of the 200 (`-`: none); the narrow ones have a line sync
 of width 5, or `first:count:width` (an R3 of 1 to 6), `first:count:w1/w2/...` (the widths in turn, from
 line `first` on: an R3 wave). The phase for AMSpiriT and bemu: 24 (as gen_pull3_probe.py)."""
@@ -11,7 +13,15 @@ import struct
 import sys
 
 out, phase, we = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
-x = None if sys.argv[4] == '-' else int(sys.argv[4])
+# X: the extra pulse's C0, or `-` (none), or `sweep:A:B:N` (every line has one, at C0=A on the first N lines,
+# then one character nearer B every N lines: the picture's rows show the pull as a function of the position)
+SWEEP = None
+if sys.argv[4].startswith('sweep:'):
+    _, a, b, n = sys.argv[4].split(':')
+    SWEEP = (int(a), int(b), int(n))
+    x = int(a)
+else:
+    x = None if sys.argv[4] == '-' else int(sys.argv[4])
 MAIN = 50
 
 
@@ -25,7 +35,7 @@ def lines(spec):
     return out
 
 
-extra = lines(sys.argv[5]) if len(sys.argv) > 5 else set(range(200))
+extra = set(range(200)) if SWEEP else (lines(sys.argv[5]) if len(sys.argv) > 5 else set(range(200)))
 def widths(spec):
     """line -> the line sync's width (6 if not given)"""
     out = {}
@@ -46,7 +56,12 @@ narrow = widths(sys.argv[6]) if len(sys.argv) > 6 else {}
 TABLE = 0x8000
 table = bytearray()
 for i in range(201):
-    table.append(x if x is not None and (i + 1) in extra else MAIN)
+    if SWEEP:
+        a, b, n = SWEEP
+        step = 1 if b >= a else -1
+        table.append(a + step * min((i + 1) // n, abs(b - a)))
+    else:
+        table.append(x if x is not None and (i + 1) in extra else MAIN)
     table.append(0x80 | narrow.get(i + 1, 6))
 code = bytearray()
 T = [0]

@@ -133,7 +133,7 @@ pub struct Args {
     #[arg(long, value_name = "PATH", help_heading = MEDIA)]
     pub save_sna: Option<String>,
 
-    /// Takes the --sna/--dsk/--dsk-b/--cdt files again when they change (with --window or
+    /// Takes the --sna/--dsk/--dsk-b/--cdt files again when they change (in the window or with
     /// --debug-server).
     ///
     /// For an edit, assemble, see loop: a disc or tape goes in again, then the snapshot is
@@ -182,9 +182,14 @@ pub struct Args {
     #[arg(long, value_name = "S", default_value_t = 0.0, value_parser = parse_seconds, help_heading = RUN)]
     pub from: f64,
 
-    /// A live, playable window redrawn at the CPC's ~50 Hz, keyboard included; close it to quit.
+    /// No window: the interactive monitor in the terminal, or with --record / --debug-server a
+    /// run without a picture on screen. (The live, playable window is the default.)
     #[arg(long, help_heading = RUN)]
-    pub window: bool,
+    pub console: bool,
+
+    /// The window is the default: accepted, for the scripts that still pass it.
+    #[arg(long = "window", hide = true, conflicts_with = "console")]
+    pub window_flag: bool,
 
     /// The window silent (a build with --features audio plays the sound).
     #[arg(long, help_heading = RUN)]
@@ -214,8 +219,8 @@ pub struct Args {
     #[arg(long, value_enum, default_value_t = DEFAULT_FRONTEND, help_heading = RUN)]
     pub frontend: FrontendKind,
 
-    /// A video with sound through ffmpeg: what the window shows until it is closed, or without
-    /// --window, --seconds run headless.
+    /// A video with sound through ffmpeg: what the window shows until it is closed, or with
+    /// --console, --seconds run without one.
     #[arg(long, value_name = "FILE", help_heading = RECORD)]
     pub record: Option<String>,
 
@@ -242,7 +247,7 @@ pub struct Args {
     pub type_at: f64,
 
     /// Serves the AMSpiriT-Lite compatible debug API on 127.0.0.1 (GET /api/doc lists the
-    /// endpoints), with --window or headless.
+    /// endpoints), with the window or with --console.
     #[arg(long, help_heading = DEBUG)]
     debug_server: bool,
 
@@ -262,21 +267,34 @@ pub struct Args {
 
     /// How the picture is rendered, in the window, the recording and the screenshots (raw: the
     /// monitor's ideal picture; the others CRT approximations). F9 cycles them in the window.
-    #[arg(long, value_name = DisplayMode::NAMES, default_value = "raw", help_heading = DISPLAY)]
-    pub display: DisplayMode,
+    /// The window shows a ctm by default, the headless runs the raw picture.
+    #[arg(long, value_name = DisplayMode::NAMES, help_heading = DISPLAY)]
+    display: Option<DisplayMode>,
 
     /// Renders the CRTs on the GPU (a build with --features crt-gpu).
     #[arg(long = "crt-gpu", help_heading = DISPLAY)]
     pub gpu: bool,
 
-    /// How curved a CRT's glass is, times its tube's own bulge: 0 (flat) to 4.
-    #[arg(long, default_value_t = 0.0, value_parser = parse_curvature, help_heading = DISPLAY)]
-    pub curvature: f32,
+    /// How curved a CRT's glass is, times its tube's own bulge: 0 (flat) to 4. 1 by default in
+    /// the window, flat in the headless runs.
+    #[arg(long, value_parser = parse_curvature, help_heading = DISPLAY)]
+    curvature: Option<f32>,
 
     /// What a black ink is drawn at: on a real tube a dark grey, blanking and sync being blacker
     /// (0). Not with the debug server, whose pictures stay exact.
-    #[arg(long, value_name = "0-255", default_value_t = DEFAULT_BLACK_LEVEL, help_heading = DISPLAY)]
+    #[arg(long, alias = "brightness", value_name = "0-255", default_value_t = DEFAULT_BLACK_LEVEL, help_heading = DISPLAY)]
     pub black_level: u8,
+
+    /// The monitor's H-hold knob, -100 to 100: 0 is where the monitor is set and every picture is
+    /// steady; away from it the picture slides sideways, and tears near the ends of the scale. Not
+    /// with the debug server.
+    #[arg(long, value_name = "-100-100", default_value_t = 0, allow_negative_numbers = true, value_parser = clap::value_parser!(i8).range(-100..=100), help_heading = DISPLAY)]
+    pub hhold: i8,
+
+    /// The monitor's V-hold knob, -100 to 100: 0 is where the monitor is set and every picture is
+    /// steady; below about -60 and above about 60 the picture rolls. Not with the debug server.
+    #[arg(long, value_name = "-100-100", default_value_t = 0, allow_negative_numbers = true, value_parser = clap::value_parser!(i8).range(-100..=100), help_heading = DISPLAY)]
+    pub vhold: i8,
 
     /// Draws where the CPU wrote to the CRTC and the Gate Array, on the screenshots and in the
     /// window (F6 shows or hides it there).
@@ -413,8 +431,9 @@ pub struct Args {
 }
 
 const AFTER_HELP: &str = "\
-With no --screenshot, --window, --record or --debug-server, drops into the interactive monitor
-once everything is loaded ('h' at its prompt lists its commands).
+With --console (and no --screenshot, --record or --debug-server), drops into the interactive
+monitor once everything is loaded ('h' at its prompt lists its commands). Without it, a live
+window opens.
 
 In the window: F10 toggles full speed (the emulation as fast as it can, silent, the picture shown
 50 times a second), F8 pauses and resumes (through the debug server when it runs, its clients
@@ -457,6 +476,28 @@ impl Args {
             Some(base) => Some(base.clone()),
             None => self.willy_opl3.then(|| "&FEBC".to_owned()),
         }
+    }
+
+    /// How the picture is rendered: `--display`, else a ctm in the window and the raw picture
+    /// where there is none (a screenshot, a console run).
+    pub fn display(&self) -> DisplayMode {
+        self.display.unwrap_or(if self.window() && self.screenshot_dir.is_none() {
+            DisplayMode::Crt(amsrust::display::CrtProfile::Ctm644)
+        } else {
+            DisplayMode::Raw
+        })
+    }
+
+    /// The glass's curvature: `--curvature`, else 1 for a CRT in the window, flat otherwise.
+    pub fn curvature(&self) -> f32 {
+        self.curvature.unwrap_or(
+            if self.window() && self.screenshot_dir.is_none() { 1.0 } else { 0.0 },
+        )
+    }
+
+    /// Whether the live window runs: the default, unless --console.
+    pub fn window(&self) -> bool {
+        !self.console
     }
 
     pub fn debug_server(&self) -> bool {

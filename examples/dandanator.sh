@@ -29,4 +29,4 @@ if [ -z "$romset" ]; then
             https://raw.githubusercontent.com/teiram/dandanator-cpc/master/src/test/resources/romset/dandanator_2.0.rom
     fi
 fi
-exec cargo run --release -- --window --dandanator "$romset" $writable
+exec cargo run --release -- --dandanator "$romset" $writable

@@ -3,13 +3,13 @@
 //!
 //! ```text
 //! amsrust [--crtc 0-4] [--dsk path] [--dsk-b path] [--sna path]
-//!         [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--window [--mute]]
+//!         [--screenshot dir [--seconds N] [--every N|Nf] [--from S]] [--console] [--mute]
 //!         [--record file [--seconds N]] [--type text [--type-at N]] [--display raw]
 //!         [--debug-server [--debug-port N] [--debug-paused]]
 //! ```
 //!
-//! With no `--screenshot`/`--window`, drops into the existing interactive
-//! monitor (`amsrust::debug::Monitor`) once everything is loaded: `h` at its
+//! With `--console` (and no `--screenshot`/`--record`/`--debug-server`), drops into the existing
+//! interactive monitor (`amsrust::debug::Monitor`) once everything is loaded: `h` at its
 //! `>>` prompt lists its commands (`run`/`next`/`step`/`continue`,
 //! breakpoints, `info z`/`info crtc`/`info ga`, `disassemble`...) - a real
 //! debugger, for stepping through what a piece of software actually does.
@@ -19,21 +19,21 @@
 //! `<dir>` every `--every` seconds (default 2) - useful to eyeball what a
 //! disc/snapshot does without a terminal to type commands into.
 //!
-//! With `--window`, opens a live window instead, redrawn once per emulated
+//! Without `--console`, opens a live window, redrawn once per emulated
 //! video frame (the CPC's own ~50Hz) with the keyboard driving the CPC's
 //! keyboard matrix directly - for actually playing a game/demo rather than
 //! debugging it. No menus, no mouse/joystick support yet: close the window
 //! to quit.
 //!
-//! Sound: built with `--features audio`, `--window` plays the PSG on the
+//! Sound: built with `--features audio`, the window plays the PSG on the
 //! default audio output device (see `host_audio.rs`), and the device's
 //! clock then sets the emulation speed; `--mute` turns it off. Without the
 //! feature the window is silent.
 //!
 //! With `--record <file>` (e.g. `capture.mp4`), records a video, picture
 //! and sound, through `ffmpeg` (which must be installed; the extension picks
-//! the format, see `recorder.rs`). With `--window`, records what is played
-//! until the window is closed; otherwise runs headless for `--seconds`
+//! the format, see `recorder.rs`). In the window, records what is played
+//! until it is closed; with `--console` runs headless for `--seconds`
 //! (default 30) of emulated time. Ctrl+C (or SIGTERM) ends a recording
 //! early, the file being finished properly.
 //!
@@ -48,8 +48,8 @@
 //!
 //! `--debug-server` starts the HTTP debug server compatible with the
 //! AMSpiriT-Lite web API on `127.0.0.1:6128` (`--debug-port` to change it),
-//! see `amsrust::debug_server`: with `--window` the window is driven by it,
-//! otherwise the machine runs headless in real time (Ctrl+C to quit).
+//! see `amsrust::debug_server`: in the window it is driven by it, with
+//! `--console` the machine runs headless in real time (Ctrl+C to quit).
 //!
 //! `--sna` restores CPU registers, the base 64K of RAM, the CRTC's
 //! registers, the gate array's ink/mode/ROM-paging state and the PSG's
@@ -78,9 +78,11 @@ mod watch;
 
 use cli::{parse_args, Args};
 
-/// The monitor for a picture to look at: its black ink above the blanking.
-fn viewing_monitor(black_level: u8) -> CrtMonitor {
-    CrtMonitor::default().with_black_level(black_level)
+/// The monitor for a picture to look at: its black ink above the blanking, its hold knobs set.
+fn viewing_monitor(black_level: u8, holds: (i8, i8)) -> CrtMonitor {
+    CrtMonitor::default()
+        .with_black_level(black_level)
+        .with_holds(holds.0, holds.1)
 }
 
 fn insert_disc(path: &str, drive: FdcDrive, motherboard: &mut amsrust::motherboard::Motherboard) {
@@ -140,9 +142,10 @@ fn run_csl(args: &Args, script: &str) {
     let dir = args.screenshot_dir.as_deref().unwrap_or(".");
     let mut runner = CslRunner::with_io(Box::new(files), Box::new(PictureFiles(pictures)), dir);
     runner.set_display_filter(
-        (!args.display.is_raw()).then(|| args.display.filter_on(args.gpu, args.curvature)),
+        (!args.display().is_raw()).then(|| args.display().filter_on(args.gpu, args.curvature())),
     );
     runner.set_black_level(args.black_level);
+    runner.set_holds(args.hhold, args.vhold);
     runner.set_drive_kind(0, args.drive_a);
     runner.set_drive_kind(1, args.drive_b);
     runner.set_verbose(true);
@@ -179,7 +182,7 @@ fn main() {
     if let Some(script) = &args.csl {
         return run_csl(&args, script);
     }
-    let mut filter = args.display.filter_on(args.gpu, args.curvature);
+    let mut filter = args.display().filter_on(args.gpu, args.curvature());
     if args.record.is_some() {
         // Only when recording: elsewhere (the interactive monitor) Ctrl+C
         // keeps its usual meaning.
@@ -432,7 +435,7 @@ fn main() {
         breakpoints.symbols.extend(&symbols);
     }
     let monitor_mode = args.screenshot_dir.is_none()
-        && !args.window
+        && !args.window()
         && args.record.is_none()
         && !args.debug_server();
     if !breakpoints.is_empty() && !monitor_mode && !args.debug_server() {
@@ -470,11 +473,11 @@ fn main() {
         eprintln!("--type is ignored in the interactive monitor");
     }
     let mut reloader = args.watch.then(|| Reloader::new(&args));
-    if reloader.is_some() && !(args.window || args.debug_server()) {
-        eprintln!("--watch needs --window or --debug-server");
+    if reloader.is_some() && !(args.window() || args.debug_server()) {
+        eprintln!("--watch needs the window or --debug-server");
     }
 
-    match args.screenshot_dir {
+    match args.screenshot_dir.clone() {
         Some(dir) => run_headless(
             &mut motherboard,
             &dir,
@@ -482,12 +485,13 @@ fn main() {
             args.every,
             args.from,
             &mut typist,
-            args.display,
+            args.display(),
             filter.as_mut(),
             args.black_level,
+            (args.hhold, args.vhold),
             args.overlay,
         ),
-        None if args.window => {
+        None if args.window() => {
             let server = start_debug_server(&args, &breakpoints, &mut motherboard);
             // without the server, the window's own debugger: the same symbols and breakpoints
             let debugger = match server {
@@ -518,6 +522,7 @@ fn main() {
             &mut typist,
             filter.as_mut(),
             args.black_level,
+            (args.hhold, args.vhold),
         ),
         None => {
             let mut handle = |_motherboard: &mut amsrust::motherboard::Motherboard| false;
@@ -1012,6 +1017,7 @@ fn run_headless(
     mode: amsrust::display::DisplayMode,
     filter: &mut dyn DisplayFilter,
     black_level: u8,
+    holds: (i8, i8),
     show_overlay: bool,
 ) {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{dir}: {e}"));
@@ -1045,7 +1051,7 @@ fn run_headless(
                 type_due_keys(typist, motherboard);
                 poll_sound_export(motherboard);
             }
-            let mut monitor = viewing_monitor(black_level);
+            let mut monitor = viewing_monitor(black_level, holds);
             motherboard.watch_io_writes(show_overlay);
             let mut seen = 0u64;
             while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
@@ -1091,7 +1097,7 @@ fn run_headless(
             break;
         }
 
-        let mut monitor = viewing_monitor(black_level);
+        let mut monitor = viewing_monitor(black_level, holds);
         let mut frame = None;
         // the writes of the frame captured only
         motherboard.watch_io_writes(show_overlay);
@@ -1160,7 +1166,7 @@ fn finish_recorder(recorder: recorder::Recorder, path: &str) {
     }
 }
 
-/// `--record` without `--window`: run `seconds` of emulated time headless,
+/// `--record` with `--console`: run `seconds` of emulated time headless,
 /// recording every frame and the sound.
 fn run_recording(
     motherboard: &mut Motherboard,
@@ -1169,6 +1175,7 @@ fn run_recording(
     typist: &mut Option<Typist>,
     filter: &mut dyn DisplayFilter,
     black_level: u8,
+    holds: (i8, i8),
 ) {
     motherboard.set_audio_output(Some(RECORD_AUDIO()));
     let mut recorder = start_recorder(
@@ -1180,7 +1187,7 @@ fn run_recording(
     let (width, height) = filter.output_size();
     let mut buffer = vec![0u32; width * height];
     let target_t_states = seconds as usize * T_STATES_PER_SECOND;
-    let mut monitor = viewing_monitor(black_level);
+    let mut monitor = viewing_monitor(black_level, holds);
     while motherboard.t_state_counter().value() < target_t_states && !stop_requested() {
         type_due_keys(typist, motherboard);
         let mut frame = None;

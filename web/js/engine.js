@@ -23,6 +23,12 @@ const BUSY_MIN_MS = 40;
 const BUSY_MAX_MS = 100;
 /** Limit catch-up work at normal speed so a slow machine can still service input and audio. */
 const REALTIME_BUDGET_MS = FRAME_MS;
+/** Frame skip 'auto': behind the sound is less than this share of its target queued. A machine too slow
+ * for real time then stops making the picture of some frames (a frame without picture costs about a
+ * third less), so that the program keeps its 50 Hz: at most this many in a row, so a picture comes at
+ * least every third frame (17 a second). */
+const BEHIND_SHARE = 0.5;
+const MAX_HIDDEN_FRAMES = 2;
 
 let wasm;
 export function loadWasm(url) {
@@ -61,7 +67,11 @@ export class Engine {
     #audio = null;
     /** Times real time: 1, more, or Infinity (as fast as possible). */
     #speed = 1;
-    #stats = { since: undefined, frames: 0, frameMs: 0, maxFrameMs: 0, draws: 0, drawMs: 0, replaced: 0, refreshes: 0 };
+    #stats = { since: undefined, frames: 0, frameMs: 0, maxFrameMs: 0, draws: 0, drawMs: 0, replaced: 0, refreshes: 0, hidden: 0 };
+    /** Frames in a row run without a picture because the machine is behind. */
+    #hiddenRun = 0;
+    /** Whether a machine behind may skip the picture of some frames ('auto'; 'off', the default: every picture). */
+    #frameSkip = false;
 
     /**
      * `core`: the wasm Emulator. `emit(event, detail)`: what the page hears ('screenshot',
@@ -109,6 +119,13 @@ export class Engine {
         this.#redrawIfPaused();
     }
     setKeyboard(mapping) { this.#core.set_keyboard(mapping); }
+    /** 'auto': a machine too slow for real time makes no picture for some frames; 'off': every picture. */
+    setFrameSkip(mode) {
+        this.#frameSkip = mode === 'auto';
+        this.#hiddenRun = 0;
+        // the menus' Video > Skip frames when too slow follows
+        this.#core.ui_frame_skip?.(this.#frameSkip);
+    }
     resize(width, height) {
         if (this.#canvas) {
             if (this.#canvas.width !== width) this.#canvas.width = width;
@@ -281,6 +298,10 @@ export class Engine {
                     this.setSpeed(request.value === null ? Infinity : request.value);
                     this.#emit('ui-request', request);
                     break;
+                case 'frameSkip':
+                    this.setFrameSkip(request.on ? 'auto' : 'off');
+                    this.#emit('ui-request', request);
+                    break;
                 case 'runCsl': this.runCsl(request.text); break;
                 case 'stopCsl': this.stopCsl(); break;
                 case 'copyScreenshot': {
@@ -349,11 +370,30 @@ export class Engine {
     }
 
     /**
+     * Whether the next frame is made without a picture, because the machine cannot keep real time
+     * (frame skip 'auto' only): the sound has less than half its target queued (without sound: more
+     * than a frame owed). The
+     * emulation is the same, only the picture is not made; a frame is shown at least every
+     * `MAX_HIDDEN_FRAMES + 1`.
+     */
+    #hideWhenBehind() {
+        const audio = this.#audio;
+        const behind = this.#frameSkip && this.#speed === 1 && typeof this.#core.advance_frame_unseen === 'function' &&
+            (audio ? this.#audioBuffered() < audio.target * BEHIND_SHARE : this.#owed >= 2 * FRAME_MS);
+        if (behind && this.#hiddenRun < MAX_HIDDEN_FRAMES) {
+            this.#hiddenRun++;
+            return true;
+        }
+        this.#hiddenRun = 0;
+        return false;
+    }
+
+    /**
      * A frame emulated, not drawn; its sound queued at real time, dropped otherwise. `unseen`: no
      * frame of it is shown (above real time, all but the last of a refresh), it runs without
      * any picture.
      */
-    #runFrame(unseen = false) {
+    #runFrame(unseen = this.#hideWhenBehind()) {
         const start = this.#now();
         if (unseen) this.#core.advance_frame_unseen();
         else this.#core.advance_frame();
@@ -366,6 +406,7 @@ export class Engine {
             this.#fresh = true;
         }
         this.#stats.frames++;
+        if (unseen && this.#speed === 1) this.#stats.hidden++;
         const audio = this.#audio;
         if (!audio) return;
         const samples = this.#core.audio_samples();
@@ -457,7 +498,7 @@ export class Engine {
         if (stats.since === undefined) {
             stats.since = time;
             stats.frames = 0;
-            stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = stats.replaced = stats.refreshes = 0;
+            stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = stats.replaced = stats.refreshes = stats.hidden = 0;
             return;
         }
         if (time - stats.since < 1000) return;
@@ -469,11 +510,12 @@ export class Engine {
             draws: stats.draws,
             drawFps: stats.draws * 1000 / (time - stats.since),
             refreshFps: stats.refreshes * 1000 / (time - stats.since),
-            replaced: stats.replaced
+            replaced: stats.replaced,
+            hidden: stats.hidden * 1000 / (time - stats.since)
         };
         stats.since = time;
         stats.frames = 0;
-        stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = stats.replaced = stats.refreshes = 0;
+        stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = stats.replaced = stats.refreshes = stats.hidden = 0;
         const audio = this.#audio;
         this.#emit('stats', {
             fps, speed: fps * FRAME_MS / 1000, performance,

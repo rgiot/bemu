@@ -235,6 +235,9 @@ pub const NB_LINES: usize = 10;
 #[derive(Debug, Clone, Copy)]
 pub struct KeyboardMatrix {
     lines: [u8; NB_LINES],
+    /// Each line as the PSG reads it, the keyclash included: kept up to date when a key changes,
+    /// as the motherboard reads a line on every tick.
+    resolved: [u8; NB_LINES],
 }
 
 impl Default for KeyboardMatrix {
@@ -242,6 +245,7 @@ impl Default for KeyboardMatrix {
         // Active-low: 0xff means nothing on that line is pressed.
         Self {
             lines: [0xff; NB_LINES],
+            resolved: [0xff; NB_LINES],
         }
     }
 }
@@ -254,6 +258,7 @@ impl KeyboardMatrix {
         } else {
             self.lines[line as usize] |= 1 << bit;
         }
+        self.resolve();
     }
 
     pub fn is_pressed(&self, key: CpcKey) -> bool {
@@ -272,39 +277,52 @@ impl KeyboardMatrix {
     /// selected, a path key(line,B1)+key(other,B1)+key(other,B2) pulls bit B2
     /// low on `line` even though no key on `line` is wired to B2.
     pub fn line(&self, line: u8) -> u8 {
-        let line = line as usize;
-        let mut result = self.lines.get(line).copied().unwrap_or(0xff);
-        // Keyclash: without diodes, cross-line paths create phantom keys.
-        // key(line,B1) + key(other,B1) + key(other,B2) => bit B2 reads low on `line`.
-        for other in 0..NB_LINES {
-            if other == line {
-                continue;
-            }
-            let other_line = self.lines[other];
-            // Bits pressed on both this line and the other line (shared bits).
-            let shared = (!result) & (!other_line);
-            if shared == 0 {
-                continue;
-            }
-            let other_pressed = !other_line;
-            if shared.count_ones() >= 2 {
-                // Two or more shared bits: every pressed bit on `other`
-                // becomes a phantom on `line`.
-                result &= !other_pressed;
-            } else {
-                // Exactly one shared bit B1: every other pressed bit on `other`
-                // becomes a phantom on `line`.
-                let b1 = shared.trailing_zeros();
-                result &= !(other_pressed & !(1 << b1));
-            }
+        self.resolved.get(usize::from(line)).copied().unwrap_or(0xff)
+    }
+
+    /// `resolved` from `lines`: each line with the phantom keys of the keyclash.
+    fn resolve(&mut self) {
+        // nothing pressed, or pressed on one line only (what almost every tick sees): no clash
+        let lines_with_keys = self.lines.iter().filter(|&&bits| bits != 0xff).count();
+        if lines_with_keys <= 1 {
+            self.resolved = self.lines;
+            return;
         }
-        result
+        for line in 0..NB_LINES {
+            let mut result = self.lines[line];
+            // Keyclash: without diodes, cross-line paths create phantom keys.
+            // key(line,B1) + key(other,B1) + key(other,B2) => bit B2 reads low on `line`.
+            for other in 0..NB_LINES {
+                if other == line {
+                    continue;
+                }
+                let other_line = self.lines[other];
+                // Bits pressed on both this line and the other line (shared bits).
+                let shared = (!result) & (!other_line);
+                if shared == 0 {
+                    continue;
+                }
+                let other_pressed = !other_line;
+                if shared.count_ones() >= 2 {
+                    // Two or more shared bits: every pressed bit on `other`
+                    // becomes a phantom on `line`.
+                    result &= !other_pressed;
+                } else {
+                    // Exactly one shared bit B1: every other pressed bit on `other`
+                    // becomes a phantom on `line`.
+                    let b1 = shared.trailing_zeros();
+                    result &= !(other_pressed & !(1 << b1));
+                }
+            }
+            self.resolved[line] = result;
+        }
     }
 
     /// Directly set every line - the wire format for
     /// `CslInstruction::KeyboardWrite`.
     pub fn set_lines(&mut self, lines: [u8; NB_LINES]) {
         self.lines = lines;
+        self.resolve();
     }
 
     pub fn lines(&self) -> [u8; NB_LINES] {
@@ -313,6 +331,7 @@ impl KeyboardMatrix {
 
     pub fn release_all(&mut self) {
         self.lines = [0xff; NB_LINES];
+        self.resolve();
     }
 }
 
@@ -669,5 +688,44 @@ mod layout_test {
         machine.set_model(CpcModel::Cpc464);
         assert!(machine.set_keyboard_layout(KeyboardLayout::French).is_err());
         assert_eq!(machine.keyboard_layout(), KeyboardLayout::Uk);
+    }
+
+    /// The lines kept up to date are the ones the keyclash rules give, whatever keys were pressed
+    /// and released before (the rules computed here from scratch, for every line).
+    #[test]
+    fn the_cached_lines_follow_every_key_change() {
+        fn by_the_rules(lines: &[u8; NB_LINES], line: usize) -> u8 {
+            let mut result = lines[line];
+            for other in (0..NB_LINES).filter(|&other| other != line) {
+                let other_pressed = !lines[other];
+                let shared = !result & other_pressed;
+                if shared.count_ones() >= 2 {
+                    result &= !other_pressed;
+                } else if shared != 0 {
+                    result &= !(other_pressed & !(1 << shared.trailing_zeros()));
+                }
+            }
+            result
+        }
+        let mut matrix = KeyboardMatrix::default();
+        let mut seed = 12345u32;
+        for step in 0..3000 {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            let key = key_at(usize::try_from(seed >> 8).unwrap() % 100);
+            let Some(key) = key else { continue };
+            match step % 500 {
+                499 => matrix.release_all(),
+                250 => matrix.set_lines(std::array::from_fn(|line| (seed >> line) as u8 | 0x0f)),
+                _ => matrix.set_pressed(key, seed & 0x4000_0000 != 0),
+            }
+            for line in 0..NB_LINES {
+                assert_eq!(
+                    matrix.line(line as u8),
+                    by_the_rules(&matrix.lines(), line),
+                    "step {step}, line {line}"
+                );
+            }
+            assert_eq!(matrix.line(NB_LINES as u8), 0xff, "no such line");
+        }
     }
 }

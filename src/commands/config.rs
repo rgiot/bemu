@@ -3,81 +3,26 @@
 
 use serde_json::{json, Value};
 
-use super::{state, Command, CommandError, CommandTarget, COMMANDS};
-
-/// The radio groups a configuration keeps: its key, the items' menus and their ids' start (one
-/// checked command each).
-const GROUPS: &[(&str, &[&str], &str)] = &[
-    ("platform", &["Machine", "Platform"], "machine-platform-"),
-    ("crtc", &["Machine", "CRTC"], "machine-crtc-"),
-    ("gateArray", &["Machine", "Gate Array"], "machine-ga-"),
-    (
-        "language",
-        &["Machine", "ROM language"],
-        "machine-language-",
-    ),
-    ("brand", &["Machine", "Brand"], "machine-brand-"),
-    (
-        "discInterface",
-        &["Machine", "Disc interface"],
-        "machine-disc-interface-",
-    ),
-    ("ram", &["Machine", "Memory expansion"], "machine-ram-"),
-    ("driveA", &["File", "Drive A", "Kind"], "drive-a-"),
-    ("driveB", &["File", "Drive B", "Kind"], "drive-b-"),
-    ("rendering", &["Video", "Rendering"], "video-rendering-"),
-    ("keyboard", &["Machine", "Keyboard"], "keyboard-mapping-"),
-    (
-        "hostLayout",
-        &["Machine", "Keyboard"],
-        "keyboard-host-layout-",
-    ),
-    ("speed", &["Debug", "Speed"], "speed-"),
-    ("audio", &["Audio"], "audio-"),
-];
-
-/// The defaults: a 6128, CRTC 0, a GA 40010, the raw display (File > Machine > Restore).
-const DEFAULTS: &[(&str, &str)] = &[
-    ("platform", "machine-platform-cpc6128"),
-    ("crtc", "machine-crtc-0"),
-    ("gateArray", "machine-ga-40010"),
-    ("language", "machine-language-en"),
-    ("brand", "machine-brand-amstrad"),
-    ("discInterface", "machine-disc-interface-default"),
-    ("ram", "machine-ram-default"),
-    ("driveA", "drive-a-original"),
-    ("driveB", "drive-b-original"),
-    ("rendering", "video-rendering-raw"),
-    ("keyboard", "keyboard-mapping-symbolic"),
-    ("hostLayout", "keyboard-host-layout-auto"),
-    ("speed", "speed-normal"),
-    ("audio", "audio-stereo"),
-];
-
-/// The radio items of a group.
-fn radio_items<'a>(
-    menus: &'a [&'a str],
-    prefix: &'a str,
-) -> impl Iterator<Item = &'static str> + 'a {
-    COMMANDS
-        .iter()
-        .filter(move |spec| {
-            spec.kind == super::Kind::Radio && spec.menus() == menus && spec.id.starts_with(prefix)
-        })
-        .map(|spec| spec.id)
-}
+use super::{
+    state, Arg, ArgKind, Command, CommandError, CommandTarget, ConfigGroup, Outcome, CONFIG_GROUPS,
+    CONFIG_TOGGLES, CONFIG_VALUES,
+};
 
 /// The configuration of `target`, as JSON.
-pub fn save(target: &dyn CommandTarget) -> String {
+pub fn save(target: &mut dyn CommandTarget) -> String {
     let mut config = serde_json::Map::new();
-    for (key, menus, prefix) in GROUPS {
-        if let Some(id) = radio_items(menus, prefix).find(|id| state(id, target).checked) {
-            config.insert((*key).to_owned(), json!(id));
+    for group in CONFIG_GROUPS {
+        if let Some(id) = group.items.iter().find(|id| state(id, target).checked) {
+            config.insert(group.key.to_owned(), json!(id));
         }
     }
-    if let Some(settings) = target.settings() {
-        config.insert("curvature".into(), json!(settings.curvature));
-        config.insert("blackLevel".into(), json!(settings.black_level));
+    for value in CONFIG_VALUES {
+        if let Some(current) = current_value(target, value.id) {
+            config.insert(value.key.to_owned(), current);
+        }
+    }
+    for toggle in CONFIG_TOGGLES {
+        config.insert(toggle.key.to_owned(), json!(state(toggle.id, target).checked));
     }
     serde_json::to_string_pretty(&Value::Object(config)).unwrap()
 }
@@ -89,14 +34,11 @@ pub fn load(target: &mut dyn CommandTarget, text: &str) -> Result<Vec<String>, C
     let config: Value = serde_json::from_str(text)
         .map_err(|e| CommandError::Invalid(format!("configuration: {e}")))?;
     let mut notes = Vec::new();
-    // the platform first: it sets the CRTC of a CPC+ and the language back
-    for (key, default) in DEFAULTS {
-        let (_, menus, prefix) = GROUPS
-            .iter()
-            .find(|(k, _, _)| k == key)
-            .expect("a default per group");
+    // in the order of the specification's `Config` column: the platform first, it sets the CRTC
+    // of a CPC+ and the language back
+    for ConfigGroup { key, items, default } in CONFIG_GROUPS {
         let id = match config.get(*key).and_then(Value::as_str) {
-            Some(id) if radio_items(menus, prefix).any(|item| item == id) => id,
+            Some(id) if items.contains(&id) => id,
             Some(other) => {
                 notes.push(format!("{key}: {other} is not one of its values"));
                 default
@@ -112,13 +54,145 @@ pub fn load(target: &mut dyn CommandTarget, text: &str) -> Result<Vec<String>, C
             Err(error) => notes.push(format!("{key}: {error}")),
         }
     }
-    if let Some(settings) = target.settings_mut() {
-        if let Some(curvature) = config.get("curvature").and_then(Value::as_f64) {
-            settings.curvature = (curvature as f32).clamp(0.0, 4.0);
+    for value in CONFIG_VALUES {
+        let Some(number) = config.get(value.key).and_then(Value::as_f64) else {
+            continue;
+        };
+        // the input's own range applies: a value out of it is clamped there
+        let Some(arg) = (match current_kind(target, value.id) {
+            Some(ArgKind::Number { .. }) => Some(Arg::Number(number.round() as i64)),
+            Some(ArgKind::Decimal { .. }) => Some(Arg::Text(number.to_string())),
+            _ => None,
+        }) else {
+            continue;
+        };
+        match Command::with_arg(value.id, arg)?.execute(target) {
+            Ok(_) | Err(CommandError::Unsupported) => {}
+            Err(error) => notes.push(format!("{}: {error}", value.key)),
         }
-        if let Some(level) = config.get("blackLevel").and_then(Value::as_u64) {
-            settings.black_level = level.min(255) as u8;
+    }
+    // the switches: left out, off; flipped when they are not as the file says
+    for toggle in CONFIG_TOGGLES {
+        let wanted = config.get(toggle.key).and_then(Value::as_bool).unwrap_or(false);
+        let now = state(toggle.id, target);
+        if !now.enabled || now.checked == wanted {
+            continue;
+        }
+        match Command::new(toggle.id)?.execute(target) {
+            Ok(_) | Err(CommandError::Unsupported) => {}
+            Err(error) => notes.push(format!("{}: {error}", toggle.key)),
         }
     }
     Ok(notes)
+}
+
+/// What the input `id` asks for: run without its argument, it only describes the question, its
+/// default being the value now (nothing is changed).
+fn current_kind(target: &mut dyn CommandTarget, id: &str) -> Option<ArgKind> {
+    match Command::new(id).ok()?.execute(target) {
+        Ok(Outcome::NeedsArg(prompt)) => Some(prompt.kind),
+        _ => None,
+    }
+}
+
+/// The value the input `id` has now, as JSON.
+fn current_value(target: &mut dyn CommandTarget, id: &str) -> Option<Value> {
+    match current_kind(target, id)? {
+        ArgKind::Number { default, .. } => Some(json!(default)),
+        ArgKind::Decimal { default, .. } => Some(json!(default)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::HostSettings;
+    use crate::motherboard::Motherboard;
+
+    struct Target(Motherboard, HostSettings);
+
+    impl CommandTarget for Target {
+        fn motherboard(&self) -> &Motherboard {
+            &self.0
+        }
+        fn motherboard_mut(&mut self) -> &mut Motherboard {
+            &mut self.0
+        }
+        fn settings(&self) -> Option<&HostSettings> {
+            Some(&self.1)
+        }
+        fn settings_mut(&mut self) -> Option<&mut HostSettings> {
+            Some(&mut self.1)
+        }
+        fn has_file_system(&self) -> bool {
+            false
+        }
+    }
+
+    fn target() -> Target {
+        Target(Motherboard::default(), HostSettings::default())
+    }
+
+    #[test]
+    fn the_values_go_through_their_commands_and_back() {
+        let mut target = target();
+        let json = load(&mut target, r#"{"brightness": 40, "hHold": -30, "curvature": 2.5}"#);
+        assert_eq!(json.unwrap(), Vec::<String>::new());
+        assert_eq!(target.1.brightness, 40);
+        assert_eq!(target.1.hhold, -30);
+        assert_eq!(target.1.curvature, 2.5);
+        let saved: Value = serde_json::from_str(&save(&mut target)).unwrap();
+        assert_eq!(saved["brightness"], 40);
+        assert_eq!(saved["hHold"], -30);
+        assert_eq!(saved["curvature"], 2.5);
+    }
+
+    #[test]
+    fn a_value_out_of_range_is_clamped_by_its_command() {
+        let mut target = target();
+        load(&mut target, r#"{"brightness": 900, "vHold": -900, "curvature": 99}"#).unwrap();
+        assert_eq!(target.1.brightness, 100);
+        assert_eq!(target.1.vhold, -100);
+        assert_eq!(target.1.curvature, 4.0);
+    }
+
+    #[test]
+    fn the_zoom_switches_are_saved_and_loaded() {
+        let mut target = target();
+        load(&mut target, r#"{"maximalIntegerSize": true}"#).unwrap();
+        assert!(target.1.native_zoom && !target.1.free_zoom);
+        let saved: Value = serde_json::from_str(&save(&mut target)).unwrap();
+        assert_eq!(saved["maximalIntegerSize"], true);
+        assert_eq!(saved["maximalSize"], false);
+        // left out: off
+        load(&mut target, "{}").unwrap();
+        assert!(!target.1.native_zoom);
+    }
+
+    #[test]
+    fn every_group_and_value_of_the_specification_is_saved() {
+        let mut target = target();
+        let saved: Value = serde_json::from_str(&save(&mut target)).unwrap();
+        for value in CONFIG_VALUES {
+            assert!(saved.get(value.key).is_some(), "{} is not saved", value.key);
+        }
+        for group in CONFIG_GROUPS {
+            assert!(group.items.contains(&group.default), "{}", group.key);
+        }
+    }
+
+    /// Video > Skip frames when too slow: a switch of the configuration, off by default (a video
+    /// recording wants every picture). The window and a page apply it.
+    #[test]
+    fn the_frame_skip_switch_is_saved_and_off_by_default() {
+        let mut target = target();
+        let saved: Value = serde_json::from_str(&save(&mut target)).unwrap();
+        assert_eq!(saved["frameSkip"], false);
+        Command::new("video-frame-skip-toggle").unwrap().execute(&mut target).unwrap();
+        assert!(target.1.frame_skip);
+        let saved: Value = serde_json::from_str(&save(&mut target)).unwrap();
+        assert_eq!(saved["frameSkip"], true);
+        assert!(state("video-frame-skip-toggle", &target).enabled);
+    }
 }

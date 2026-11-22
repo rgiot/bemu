@@ -71,6 +71,27 @@ pub struct CommandSpec {
     pub note: &'static str,
 }
 
+/// A radio group of the saved configuration (the `Config` column of `doc/menu-ui.csv`).
+#[derive(Debug)]
+pub struct ConfigGroup {
+    /// Its key in the JSON.
+    pub key: &'static str,
+    /// The commands of its items.
+    pub items: &'static [&'static str],
+    /// The item a configuration without the key (or File > Machine > Restore) goes back to.
+    pub default: &'static str,
+}
+
+/// A value of the saved configuration: a number an input command sets, or a switch a toggle
+/// command flips.
+#[derive(Debug)]
+pub struct ConfigValue {
+    /// Its key in the JSON.
+    pub key: &'static str,
+    /// The input command that sets it.
+    pub id: &'static str,
+}
+
 include!(concat!(env!("OUT_DIR"), "/commands_table.rs"));
 
 impl CommandSpec {

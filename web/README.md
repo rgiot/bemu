@@ -82,10 +82,13 @@ slower.
   | `digiblaster` | `true` plugs a Digiblaster: an 8-bit DAC on the printer port | `false` |
   | `language` | `'en'`, or `'fr'`: the French 6128's ROMs and its AZERTY keyboard (typed text follows it) | `'en'` |
   | `brand` | `'amstrad'`, `'schneider'`, `'awa'`, `'orion'`, `'saisho'`, `'solavox'`, `'triumph'`, `'isp'` | `'amstrad'` |
-  | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'`, `'atari'` | `'raw'` |
-  | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `0` |
-  | `blackLevel` | `0` to `255`: the grey a black ink is drawn at | `8` |
+  | `display` | `'raw'`, `'ctm'`, `'trinitron'`, `'gt65'` (or `'gt64'`, green), `'mm12'` (grey), `'atari'` | `'ctm'` |
+  | `curvature` | `0` (flat) to `4`: how curved a CRT's glass is, times its profile's bulge (WebGPU) | `1` |
+  | `blackLevel` | `0` to `255`: the grey a black ink is drawn at (the monitor's brightness knob) | `8` |
+  | `brightness` | `-100` to `100`: the picture brighter or darker (a bounded gamma curve; darker also lowers the full levels). `0` leaves it as it is | `0` |
+  | `hHold`, `vHold` | `-100` to `100`: the monitor's hold knobs. `0` is steady; H-hold slides the picture sideways and tears it near the ends, V-hold rolls it below about -60 and above about 60 | `0` |
   | `menu` | `false` hides the menu bar, the command palette (Ctrl+Shift+P) and the debugger's windows drawn over the picture (WebGPU / WebGL only) | `true` |
+  | `frameSkip` | `'off'`: every frame's picture is made, however slow the machine (what a video recording wants: nothing is skipped); `'auto'`: a machine too slow for real time makes no picture for some frames, see "A machine too slow". Not part of the machine: `configure()` keeps the current value when it is not given | `'off'` |
   | `keyboard` | `'symbolic'`: a key types the character it types on your keyboard (whatever its language and the CPC's), for typing; `'positional'`: a key presses the CPC key at its place (`KeyboardEvent.code`), for games | `'symbolic'` |
 
 - **`options`**:
@@ -98,6 +101,11 @@ slower.
   - `fullscreenKey` (default `'F11'`, or `null` for none).
   - `turboKey` (default `'F10'`, or `null` for none): toggles full speed, see "Speed".
   - `autoStart` (default `false`).
+
+**Picture size.** The picture is the largest whole factor of the CRT's resolution that fits the
+canvas. Video > Interface zoom > *Maximal integer size* draws the CRT directly at that whole factor
+(finer slots and scanlines, nothing resized); *Maximal size* uses the largest size that fits, by any
+factor, resized without moiré. It is the code of the desktop window, whose menus have the same items.
 
 **Menus.** On WebGPU / WebGL the page shows the emulator's menu bar over the picture, with
 every command of the desktop window (see the top README), the command palette (Ctrl+Shift+P:
@@ -117,6 +125,7 @@ have the focus, to the CPC otherwise.
 | `configure(config)` | a new machine; the discs stay in |
 | `setDisplay(name)` | `'raw'` or a CRT profile |
 | `setCurvature(c)` | how curved a CRT's glass is, as the `curvature` configuration |
+| `setFrameSkip(mode)` | `'off'` or `'auto'`, as the `frameSkip` configuration |
 | `setKeyboard(mapping)` | `'symbolic'` or `'positional'`, as the `keyboard` configuration |
 | `insertDisc(drive, source)`, `eject(drive)` | a DSK image in drive `'A'` or `'B'` |
 | `swapDisc(drive, source, entry)` | changes the disc of the running machine: the new disc is in the drive at once |
@@ -129,8 +138,8 @@ have the focus, to the CPC otherwise.
 | `m4PutFile(path, source)`, `m4GetFile(path)`, `m4List(path?)`, `m4Remove(path)`, `m4MakeDir(path)` | the M4's SD card from the page: `path` is `'games/demo.bin'` (the folders are made); `m4List` gives `[{ name, folder, size }]`. Names are matched as given by these (the CPC's are matched ignoring case). The card stays when the board is unplugged |
 | `plugNova()`, `unplugNova()` | a Nova (ethernet, 128 KB of NVRAM kept in memory) on the expansion port |
 | `insertAlbireo(source)`, `removeAlbireo()` | an Albireo (CH376 USB board) on the expansion port, its USB key the FAT image `source`; what the CPC writes stays in memory |
-| `startTapeRecording()`, `stopTapeRecording()` | records what the CPC writes to the cassette port (`SAVE`); stopping gives the CDT file (`Uint8Array`), or `undefined` if nothing was recording. A `reset()` ends it |
-| `printout(prefix?)` | what a DMP2000 printer (`dmp2000: true`) printed: `[{ name, data }]`, the text (`.txt`), the bytes sent (`.prn`) and a PNG per sheet with ink; `undefined` without a printer. The menu bar's Debug > View > Printer window shows it live, as text and as the paper |
+| `startTapeRecording()`, `stopTapeRecording()` | records what the CPC writes to the cassette port (`SAVE`); stopping gives the CDT file (`Uint8Array`), or `undefined` if nothing was recording. The recording goes on through `reset()` and `configure()` |
+| `printout(prefix?)` | what a DMP2000 printer (`dmp2000: true`) printed: `[{ name, data }]`, the text (`.txt`), the bytes sent (`.prn`) and a PNG per sheet with ink; `undefined` without a printer. A `reset()` or `configure()` makes a new printer, with a blank paper: take the printout first. The menu bar's Debug > View > Printer window shows it live, as text and as the paper |
 | `loadSnapshot(source)` | an SNA snapshot |
 | `saveSnapshot()` | the machine's state as an SNA file (`Uint8Array`, version 3), to save or give back to `loadSnapshot` |
 | `api(method, path, query, body)` | bemu's debug API, as the desktop's `--debug-server` serves it and answered by the same code (`api('GET', '/api/ping')`, `api('POST', '/api/config', '', '{"paused":true}')`): `{ status, contentType, body, headers }`, `body` a `Uint8Array`; the query as in a URL, the body a string or bytes. The routes are documented by a desktop bemu at `/api/doc`; `POST /api/media` takes a snapshot, a disc, a tape or a CPC+ cartridge (`.cpr`) by its content |
@@ -181,9 +190,24 @@ have the focus, to the CPC otherwise.
   that the audio buffer ran dry; it does not detect every possible audio glitch. `performance`
   contains `frameMs` (average), `maxFrameMs`, `drawMs` (average CPU-side draw call duration),
   `draws` (count), `drawFps` and `refreshFps` (per second), and `replaced` (frame advances
-  replaced by another before a draw). These count draw submissions and scheduled callbacks,
+  replaced by another before a draw) and `hidden` (frames a second made without a picture,
+  see "A machine too slow"). These count draw submissions and scheduled callbacks,
   not frames actually presented by the browser or GPU. Draw timing does not measure asynchronous
   GPU completion.
+
+### A machine too slow
+
+By default (`frameSkip: 'off'`) every frame's picture is made, however slow the machine: a video
+recorded from the canvas is perfect, if the emulation is slower than real time. With
+`frameSkip: 'auto'`, at normal speed, when the machine cannot keep real time (the sound has less
+than half of its target queued; without sound, more than a frame is owed), the engine stops making
+the picture of some frames: a frame without picture costs about a third less, and the program runs
+the same (same state, same sound). At most two frames in a row, so a picture comes at least every
+third frame (17 a second). The game keeps its 50 Hz where it would slow down, in exchange for a less
+fluid picture. `stats.performance.hidden` counts them; the demo shows it (its "Frame skip" menu, or
+`?frameskip=auto`). The native window has it too (Video > Skip frames when too slow, `frameSkip` in the saved configuration), behind the sound device's clock; a video, WAV or YM recording, a screenshot series, the debugger, a CSL script and the I/O overlay always see every frame. On a native build (CPC+ game, 12 emulated seconds per measure): every frame
+shown 1.21 times real time, one frame in two 1.48, one in three 1.60
+(`cargo run --release --example bench_frameskip -- game.cpr 12 2`).
 
 To bypass stale cached assets when testing, add a new `?bemuVersion=...` value to the demo URL
 and reload. The demo passes this value to the emulator module, which propagates its query string

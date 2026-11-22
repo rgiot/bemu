@@ -7,7 +7,9 @@
 //! the screenshots of the test suites (which use the monitor's frames
 //! directly) are not affected.
 
-// The CRT on the CPU runs on threads: a web page has the GPU one (WebGPU) instead.
+// The CRT on the CPU runs on threads: a web page has the GPU one (WebGPU) instead. The GPU's is
+// written once as a CubeCL kernel (`kernel.rs`: Vulkan, Metal, DX12 and WebGPU); `cpu.rs` is the
+// software fallback and the reference its tests compare the kernel with.
 #[cfg(not(target_arch = "wasm32"))]
 mod cpu;
 pub mod crt;
@@ -15,6 +17,10 @@ pub mod crt;
 mod curved;
 #[cfg(feature = "crt-gpu")]
 mod gpu;
+#[cfg(feature = "crt-gpu")]
+mod kernel;
+#[cfg(feature = "crt-gpu")]
+mod picture;
 pub mod resize;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -25,7 +31,9 @@ pub use curved::Curved;
 #[cfg(all(feature = "crt-gpu", not(target_arch = "wasm32")))]
 pub use gpu::{wait_for, GpuCrt};
 #[cfg(feature = "crt-gpu")]
-pub use gpu::{Blit, CrtPass, FrameTexture, Resampler};
+pub use gpu::{crt_inputs, Blit, CrtPass, FrameTexture, GpuContext, Resampler};
+#[cfg(feature = "crt-gpu")]
+pub use picture::{picture_scale, Picture};
 
 use image::RgbImage;
 use std::str::FromStr;
@@ -35,6 +43,32 @@ pub const RAW_WIDTH: usize = 48 * 8 * 2; // 768
 /// Height of the raw output: each of the monitor's 272 lines drawn twice,
 /// for a roughly correct 4:3 aspect instead of a squashed one.
 pub const RAW_HEIGHT: usize = 272 * 2;
+
+/// How large the picture is shown in its room.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PictureSize {
+    /// A whole factor of the picture (the profile's resolution for a CRT): every CPC pixel the
+    /// same size, the largest that fits.
+    #[default]
+    Whole,
+    /// A whole factor too, but a CRT is drawn directly at that resolution (its slots and
+    /// scanlines finer) instead of enlarging the picture of the profile.
+    Integer,
+    /// The largest size that fits, by any factor: a CRT is drawn at the finest resolution that
+    /// covers the room, then resized without moiré.
+    Maximal,
+}
+
+impl PictureSize {
+    /// From the settings' two switches (`Maximal` first).
+    pub fn of(maximal: bool, integer: bool) -> Self {
+        match (maximal, integer) {
+            (true, _) => Self::Maximal,
+            (false, true) => Self::Integer,
+            (false, false) => Self::Whole,
+        }
+    }
+}
 
 /// What `--display` selects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -47,7 +81,7 @@ pub enum DisplayMode {
 }
 
 impl DisplayMode {
-    pub const NAMES: &'static str = "raw|ctm|trinitron|gt65|atari";
+    pub const NAMES: &'static str = "raw|ctm|trinitron|gt65|mm12|atari";
 
     pub fn is_raw(self) -> bool {
         self == Self::Raw
@@ -67,7 +101,8 @@ impl DisplayMode {
             Self::Raw => Self::Crt(CrtProfile::Ctm644),
             Self::Crt(CrtProfile::Ctm644) => Self::Crt(CrtProfile::Trinitron),
             Self::Crt(CrtProfile::Trinitron) => Self::Crt(CrtProfile::Gt65),
-            Self::Crt(CrtProfile::Gt65) => Self::Crt(CrtProfile::AtariColor),
+            Self::Crt(CrtProfile::Gt65) => Self::Crt(CrtProfile::Mm12),
+            Self::Crt(CrtProfile::Mm12) => Self::Crt(CrtProfile::AtariColor),
             Self::Crt(CrtProfile::AtariColor) => Self::Raw,
         }
     }
@@ -176,6 +211,13 @@ mod test {
     use super::*;
 
     #[test]
+    fn the_size_comes_from_the_two_switches() {
+        assert_eq!(PictureSize::of(false, false), PictureSize::Whole);
+        assert_eq!(PictureSize::of(false, true), PictureSize::Integer);
+        assert_eq!(PictureSize::of(true, true), PictureSize::Maximal);
+    }
+
+    #[test]
     fn raw_doubles_each_line_and_letterboxes() {
         let mut src = RgbImage::new(2, 1);
         src.put_pixel(0, 0, image::Rgb([1, 2, 3]));
@@ -196,6 +238,15 @@ mod test {
             "ctm".parse::<DisplayMode>(),
             Ok(DisplayMode::Crt(CrtProfile::Ctm644))
         );
+        // GT64 and GT65 are the same green tube
+        assert_eq!(
+            "gt64".parse::<DisplayMode>(),
+            Ok(DisplayMode::Crt(CrtProfile::Gt65))
+        );
+        assert_eq!(
+            "mm12".parse::<DisplayMode>(),
+            Ok(DisplayMode::Crt(CrtProfile::Mm12))
+        );
         assert!("nope".parse::<DisplayMode>().is_err());
     }
 
@@ -209,7 +260,7 @@ mod test {
             seen.push(mode);
             mode = mode.next();
         }
-        assert_eq!(seen.len(), 5);
+        assert_eq!(seen.len(), 6);
     }
 
     #[test]

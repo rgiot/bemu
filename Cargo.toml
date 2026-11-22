@@ -40,6 +40,9 @@ tuple-map = "0.4.0"
 smallvec = "1.6.1"
 ym2149 = "0.9.1"
 bytemuck = { version = "1", optional = true, features = ["derive"] }
+# The CRT model on the GPU, written once (src/display/kernel.rs): it runs on wgpu 30, natively and in a page
+cubecl = { version = "=0.11.4", optional = true, default-features = false, features = ["std", "wgpu"] }
+cubecl-runtime = { version = "=0.11.4", optional = true }
 # disc images inside zip, 7z and tar.gz archives (--dsk file.zip, file.zip#name.dsk)
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # 7z and tar.gz archives too
@@ -47,8 +50,8 @@ sevenz-rust2 = { version = "0.24", default-features = false }
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
 # the menus, the command palette and the debugger's windows (`gui`), in the window and the page
-egui = { version = "0.33", optional = true }
-egui-wgpu = { version = "0.33", optional = true, default-features = false }
+egui = { version = "0.37", optional = true }
+egui-wgpu = { version = "0.37", optional = true, default-features = false }
 # the debugger's views: disassembly with NOP costs, the call stack, the CRTC's checks (without
 # its debug adapter: the views only)
 cpclib-dap = { path = "../rust.cpcdemotools/cpclib-dap", optional = true, default-features = false }
@@ -78,21 +81,21 @@ futures-util = { version = "0.3", default-features = false }
 # Host-connected joypads, polled with gilrs on the winit frontend (`--frontend winit`).
 gilrs = { version = "0.11", optional = true }
 # GPU CRT filter (`--features crt-gpu`), see src/display/gpu.rs
-wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "vulkan"] }
+wgpu = { version = "30", optional = true, default-features = false, features = ["wgsl", "vulkan"] }
 # `--frontend winit`: a window drawn by the GPU, see src/frontend/winit_gpu.rs
 winit = { version = "0.30", optional = true }
-egui-winit = { version = "0.33", optional = true, default-features = false, features = ["clipboard", "links", "wayland", "x11"] }
+egui-winit = { version = "0.37", optional = true, default-features = false, features = ["clipboard", "links", "wayland", "x11"] }
 
 # wgpu needs a native backend per OS; "vulkan" alone leaves macOS with none.
 [target.'cfg(target_os = "macos")'.dependencies]
-wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "metal"] }
+wgpu = { version = "30", optional = true, default-features = false, features = ["wgsl", "metal"] }
 
 # A web page (see web/): no terminal, sockets, threads or native windows; the CRT on WebGPU.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cpclib = {path = "../rust.cpcdemotools/cpclib", default-features = false}
 cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm", default-features = false}
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens", default-features = false}
-wgpu = { version = "27", optional = true, default-features = false, features = ["wgsl", "webgpu"] }
+wgpu = { version = "30", optional = true, default-features = false, features = ["wgsl", "webgpu"] }
 getrandom = { version = "0.2", features = ["js"] }
 # std::time::Instant panics in a browser: the debugger's frame rate uses this one there
 web-time = "1"
@@ -161,7 +164,7 @@ orgams = []
 # an audio system library uses `--no-default-features`.
 audio = ["dep:cpal"]
 # The CRT display filter on the GPU (wgpu), besides the CPU one.
-crt-gpu = ["dep:wgpu", "dep:bytemuck"]
+crt-gpu = ["dep:wgpu", "dep:bytemuck", "dep:cubecl", "dep:cubecl-runtime"]
 # A winit + wgpu window that shows the (CRT) picture without reading it back.
 gpu-window = ["crt-gpu", "dep:winit", "gui", "dep:egui-winit", "dep:gilrs"]
 # The menu bar, the command palette and the debugger's windows (egui), drawn by the GPU.

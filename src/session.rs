@@ -1,4 +1,4 @@
-//! `--window`: the live window, its menus and command palette (with the `gui` feature, on the
+//! The live window (the default, `--console` turns it off), its menus and command palette (with the `gui` feature, on the
 //! winit frontend), driven by the commands of `amsrust::commands`.
 //!
 //! [`Core`] is what the commands act on (their receiver): the machine, the debugger (always
@@ -34,6 +34,37 @@ use crate::{
     recording_wav, recording_ym, start_wav, start_ym, stop_requested, type_due_keys,
     viewing_monitor, AudioOut, Reloader, Typist, FRAME_SHOWN_EVERY, FRAME_T_STATES, RECORD_AUDIO,
 };
+
+/// Frame skip: the most frames in a row made without a picture (a picture at least every third).
+const MAX_HIDDEN_FRAMES: usize = 2;
+
+/// Whether the next frame is made without a picture: `wanted` (frame skip is on, nothing needs the
+/// picture, the machine is behind) and fewer than [`MAX_HIDDEN_FRAMES`] came just before.
+fn skip_picture(wanted: bool, hidden_run: usize) -> bool {
+    wanted && hidden_run < MAX_HIDDEN_FRAMES
+}
+
+#[cfg(test)]
+mod frame_skip_tests {
+    use super::*;
+
+    /// A machine always behind shows a picture every third frame, never two frames in a row without.
+    #[test]
+    fn a_picture_comes_at_least_every_third_frame() {
+        let mut run = 0;
+        let mut pictures = Vec::new();
+        for frame in 0..9 {
+            let skipped = skip_picture(true, run);
+            run = if skipped { run + 1 } else { 0 };
+            if !skipped {
+                pictures.push(frame);
+            }
+        }
+        assert_eq!(pictures, [2, 5, 8]);
+        // not behind (or not wanted): every picture
+        assert!((0..9).all(|_| !skip_picture(false, 0)));
+    }
+}
 
 /// What the commands act on.
 struct Core<'m> {
@@ -363,7 +394,8 @@ impl Window {
             monitor.keep_full_frames();
             monitor
         } else {
-            viewing_monitor(core.settings.black_level)
+            viewing_monitor(core.settings.black_level, (core.settings.hhold, core.settings.vhold))
+                .with_brightness(core.settings.brightness)
         };
     }
 
@@ -514,21 +546,27 @@ impl Window {
         }
         // the debug server's pictures are exact (no lifted black, whole frames)
         let exact = core.debugger.listening_port().is_some();
-        if wanted.black_level != applied.black_level || exact != self.exact_monitor {
+        if wanted.black_level != applied.black_level
+            || wanted.brightness != applied.brightness
+            || (wanted.hhold, wanted.vhold) != (applied.hhold, applied.vhold)
+            || exact != self.exact_monitor
+        {
             self.exact_monitor = exact;
             self.monitor = if exact {
                 let mut monitor = CrtMonitor::default();
                 monitor.keep_full_frames();
                 monitor
             } else {
-                viewing_monitor(wanted.black_level)
+                viewing_monitor(wanted.black_level, (wanted.hhold, wanted.vhold))
+                    .with_brightness(wanted.brightness)
             };
         }
         if wanted.fullscreen != applied.fullscreen {
             self.window.set_fullscreen(wanted.fullscreen);
         }
-        if wanted.free_zoom != applied.free_zoom {
-            self.window.set_free_zoom(wanted.free_zoom);
+        if (wanted.free_zoom, wanted.native_zoom) != (applied.free_zoom, applied.native_zoom) {
+            self.window
+                .set_picture_size(amsrust::display::PictureSize::of(wanted.free_zoom, wanted.native_zoom));
         }
         // the files of the media in use, inserted from the command line or the menus
         let media = &wanted.media;
@@ -573,6 +611,20 @@ impl Window {
             Speed::Factor(factor) if factor == 1.0 && !settings.muted => self.paced_fps,
             Speed::Factor(factor) => (50.0 * factor).round().max(1.0) as usize,
         }
+    }
+
+    /// Whether the machine is behind real time: the sound queued ahead of the device is under half
+    /// of its target (the sound paces the window), else the last turn of the loop took more than a
+    /// frame and a half.
+    fn behind(&self, settings: &HostSettings, last_turn: std::time::Duration) -> bool {
+        #[cfg(feature = "audio")]
+        if !settings.muted {
+            if let Some(audio) = &self.audio {
+                return audio.buffered() < crate::host_audio::TARGET_LATENCY / 2;
+            }
+        }
+        let _ = settings;
+        last_turn > std::time::Duration::from_millis(30)
     }
 
     /// Hand the frame's sound to the device: at the real speed only, at the volume chosen.
@@ -666,9 +718,11 @@ fn settings_of(args: &Args, sound: bool) -> HostSettings {
         } else {
             Speed::default()
         },
-        display: args.display,
-        curvature: args.curvature,
+        display: args.display(),
+        curvature: args.curvature(),
         black_level: args.black_level,
+        hhold: args.hhold,
+        vhold: args.vhold,
         crt_gpu: args.gpu,
         overlay: args.overlay,
         keyboard: args.keyboard,
@@ -708,7 +762,7 @@ pub fn run_window(
 ) {
     let sound = !args.mute;
     let record = args.record.as_deref();
-    let mode: DisplayMode = args.display;
+    let mode: DisplayMode = args.display();
     let (width, height) = mode.output_size();
     #[cfg(feature = "gui")]
     let gui = (args.frontend == FrontendKind::Winit).then(amsrust::ui::Gui::new);
@@ -721,7 +775,7 @@ pub fn run_window(
         FrontendKind::Winit => Box::new(
             frontend::WinitGpuFrontend::open(
                 (width, height),
-                args.curvature,
+                args.curvature(),
                 gui.as_ref().map(|gui| gui.context().clone()),
             )
             .unwrap_or_else(|e| panic!("{e}")),
@@ -752,12 +806,12 @@ pub fn run_window(
     let mut monitor = if has_server {
         CrtMonitor::default()
     } else {
-        viewing_monitor(args.black_level)
+        viewing_monitor(args.black_level, (args.hhold, args.vhold))
     };
     if has_server {
         monitor.keep_full_frames();
     }
-    let filter = mode.filter_on(gpu, args.curvature);
+    let filter = mode.filter_on(gpu, args.curvature());
     let (fw, fh) = filter.output_size();
     let mut window = Window {
         window,
@@ -815,6 +869,9 @@ pub fn run_window(
     let mut bus = CommandBus::default();
     // at full speed, the frames shown (at most 50 a second)
     let mut last_present = std::time::Instant::now();
+    // frame skip: the frames in a row made without a picture, and when the loop last turned
+    let mut hidden_run = 0_usize;
+    let mut last_turn_at = std::time::Instant::now();
 
     while window.window.is_open() && !stop_requested() && !window.quit {
         let mut input = window.window.poll_input();
@@ -918,7 +975,38 @@ pub fn run_window(
             && window.series.is_none()
             && !core.debugger.is_active()
             && last_present.elapsed() < FRAME_SHOWN_EVERY;
-        core.motherboard.set_video(!unseen);
+        // Frame skip (Video > Skip frames when too slow), at the real speed: a machine behind real
+        // time makes no picture for some frames, two in a row at most, so that the program keeps
+        // its speed. The same emulation, the sound kept. A recording, the debugger, a script and
+        // what draws on the picture see every frame.
+        let last_turn = last_turn_at.elapsed();
+        last_turn_at = std::time::Instant::now();
+        let skipped = core.settings.frame_skip
+            && !turbo
+            && core.settings.speed == Speed::Factor(1.0)
+            && core.csl.is_none()
+            && core.recording.is_empty()
+            && !recording_wav()
+            && !recording_ym()
+            && window.recorder.is_none()
+            && window.series.is_none()
+            && window.overlay.is_none()
+            && !core.debugger.is_active()
+            && window.behind(&core.settings, last_turn);
+        let skipped = skip_picture(skipped, hidden_run);
+        hidden_run = if skipped { hidden_run + 1 } else { 0 };
+        core.motherboard.set_video(!(unseen || skipped));
+        if skipped {
+            let end = core.motherboard.t_state_counter().value() + FRAME_T_STATES;
+            while core.motherboard.t_state_counter().value() < end {
+                core.motherboard.execute_next_opcode_no_video();
+            }
+            let samples = core.motherboard_mut().take_audio_samples();
+            export_samples(core.motherboard_mut(), &samples);
+            core.motherboard.take_io_writes().for_each(drop);
+            window.play(&core.settings, &samples);
+            continue;
+        }
         if unseen {
             let end = core.motherboard.t_state_counter().value() + FRAME_T_STATES;
             while core.motherboard.t_state_counter().value() < end {

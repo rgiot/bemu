@@ -111,18 +111,46 @@ pub(super) fn run(command: &Command, target: &mut dyn CommandTarget) -> CommandR
             settings(target)?.curvature = curvature.clamp(0.0, 4.0);
             done()
         }
-        "video-black-level-set" => {
-            let default = target.settings().map_or(8, |s| s.black_level) as i64;
+        "video-brightness-set" => {
+            let default = target.settings().map_or(0, |s| s.brightness) as i64;
             let arg = arg!(
                 command,
-                "Black level (0-255)",
+                "Brightness (-100 to 100)",
                 ArgKind::Number {
-                    min: 0,
-                    max: 255,
+                    min: -100,
+                    max: 100,
                     default
                 }
             );
-            settings(target)?.black_level = arg.number()?.clamp(0, 255) as u8;
+            settings(target)?.brightness = arg.number()?.clamp(-100, 100) as i8;
+            done()
+        }
+        "video-hhold-set" => {
+            let default = target.settings().map_or(0, |s| s.hhold) as i64;
+            let arg = arg!(
+                command,
+                "H-hold (-100 to 100)",
+                ArgKind::Number {
+                    min: -100,
+                    max: 100,
+                    default
+                }
+            );
+            settings(target)?.hhold = arg.number()?.clamp(-100, 100) as i8;
+            done()
+        }
+        "video-vhold-set" => {
+            let default = target.settings().map_or(0, |s| s.vhold) as i64;
+            let arg = arg!(
+                command,
+                "V-hold (-100 to 100)",
+                ArgKind::Number {
+                    min: -100,
+                    max: 100,
+                    default
+                }
+            );
+            settings(target)?.vhold = arg.number()?.clamp(-100, 100) as i8;
             done()
         }
         "video-crt-gpu-toggle" => {
@@ -135,9 +163,19 @@ pub(super) fn run(command: &Command, target: &mut dyn CommandTarget) -> CommandR
             settings.free_zoom = !settings.free_zoom;
             done()
         }
+        "video-native-zoom-toggle" => {
+            let settings = settings(target)?;
+            settings.native_zoom = !settings.native_zoom;
+            done()
+        }
         "video-fullscreen-toggle" => {
             let settings = settings(target)?;
             settings.fullscreen = !settings.fullscreen;
+            done()
+        }
+        "video-frame-skip-toggle" => {
+            let settings = settings(target)?;
+            settings.frame_skip = !settings.frame_skip;
             done()
         }
         _ => Err(elsewhere()),
@@ -184,14 +222,22 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
         }
         "screenshot-save" => host_can(target, HostRequest::Screenshot(None)),
         "screenshot-copy" => host_can(target, HostRequest::CopyScreenshot),
-        "video-curvature-set" | "video-black-level-set" => needs_settings,
+        "video-curvature-set" | "video-brightness-set" | "video-hhold-set" | "video-vhold-set" => {
+            needs_settings
+        }
         // a page always draws the CRT on the GPU (or raw on Canvas 2D)
         "video-crt-gpu-toggle" => CommandState {
             enabled: has_settings && cfg!(feature = "crt-gpu") && files,
             checked: settings.is_some_and(|s| s.crt_gpu),
         },
         "video-free-zoom-toggle" => toggle(settings.is_some_and(|s| s.free_zoom)),
+        "video-native-zoom-toggle" => toggle(settings.is_some_and(|s| s.native_zoom)),
         "video-fullscreen-toggle" => toggle(settings.is_some_and(|s| s.fullscreen)),
+        // the window skips frames (src/session.rs), and a page's engine (web/js/engine.js)
+        "video-frame-skip-toggle" => CommandState {
+            enabled: has_settings,
+            checked: settings.is_some_and(|s| s.frame_skip),
+        },
         _ => return None,
     })
 }

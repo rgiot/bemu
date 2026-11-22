@@ -16,6 +16,20 @@ engineUrl.search = new URL(import.meta.url).search;
 const { createCore, Engine, FRAME_MS, LocalTransport } = await import(engineUrl);
 
 /** Identifies the audio/cache diagnostic protocol, not the exact WASM build. */
+/** 'off' or 'auto' for a frameSkip value (false and true too). */
+function checkedFrameSkip(value) {
+    if (value === undefined) return undefined;
+    if (value === 'off' || value === false) return 'off';
+    if (value === 'auto' || value === true) return 'auto';
+    throw new Error(`frameSkip must be 'off' or 'auto', not ${JSON.stringify(value)}`);
+}
+
+/** A configuration without its frameSkip (the machine's configuration), and that one, checked. */
+function splitConfig(config = {}) {
+    const { frameSkip, ...machine } = config ?? {};
+    return { machine, frameSkip: checkedFrameSkip(frameSkip) };
+}
+
 export const DIAGNOSTIC_REVISION = 'audio-start-20261107';
 
 function moduleUrl(path) {
@@ -146,6 +160,9 @@ export class Bemu {
      * With `worker`, the emulation runs in a Web Worker when the browser can draw in one.
      */
     static async create(target, config = {}, options = {}) {
+        // frameSkip is the engine's, not the machine's
+        const { machine: machineConfig, frameSkip } = splitConfig(config);
+        config = machineConfig;
         let canvas = target;
         if (!(target instanceof HTMLCanvasElement)) {
             canvas = document.createElement('canvas');
@@ -185,6 +202,7 @@ export class Bemu {
                     ? await WorkerTransport.create({ canvas, config, webgpu: attempt.webgpu, wasmUrl: options.wasmUrl })
                     : await Bemu.#localTransport(canvas, config, attempt.webgpu, options.wasmUrl);
                 const emu = new Bemu(canvas, transport, options, size);
+                if (frameSkip) await emu.setFrameSkip(frameSkip);
                 if (options.autoStart) emu.start();
                 return emu;
             } catch (error) {
@@ -357,9 +375,19 @@ export class Bemu {
     // emulator refuses (a bad configuration, a disc that cannot be read...).
 
     /** A new machine (the discs stay in). */
-    configure(config) { return this.#transport.call('configure', [config]); }
+    async configure(config) {
+        const { machine, frameSkip } = splitConfig(config);
+        if (frameSkip) await this.setFrameSkip(frameSkip);
+        return this.#transport.call('configure', [machine]);
+    }
+    /**
+     * 'off' (the default): every frame's picture is made, however slow the machine (what a video recording
+     * wants). 'auto': a machine too slow for real time makes no picture for some frames (at most two in a
+     * row), so that the program keeps its speed: see README.md, "A machine too slow".
+     */
+    async setFrameSkip(mode) { return this.#transport.call('setFrameSkip', [checkedFrameSkip(mode)]); }
     reset() { return this.#transport.call('reset'); }
-    /** 'raw', 'ctm', 'trinitron', 'gt65' or 'atari'. */
+    /** 'raw', 'ctm', 'trinitron', 'gt65', 'gt64', 'mm12' or 'atari'. */
     setDisplay(name) { return this.#transport.call('setDisplay', [name]); }
 
     /** How curved a CRT's glass is, times its profile's bulge: 0 (flat) to 4, 1 by default. */
@@ -442,14 +470,15 @@ export class Bemu {
     /**
      * Records what the CPC writes to the cassette port (`SAVE`, `SAVE"X",B`...), until `stopTapeRecording()`,
      * which resolves with the CDT file (a `Uint8Array`), or `undefined` when nothing was being recorded.
-     * A `reset()` or `configure()` ends the recording.
+     * The recording goes on through `reset()` and `configure()`, as the tape does.
      */
     startTapeRecording() { return this.#transport.call('startTapeRecording'); }
     stopTapeRecording() { return this.#transport.call('stopTapeRecording'); }
     /**
      * What a DMP2000 printer (configuration `dmp2000: true`) printed, as files: `[{ name, data }]` with
      * `prefix.txt`, `prefix.prn` (the bytes sent) and `prefix_001.png`... (the sheets with ink), or
-     * `undefined` without a printer. `prefix` is 'printout' by default.
+     * `undefined` without a printer. `prefix` is 'printout' by default. A `reset()` or `configure()` makes a new
+     * printer with a blank paper: take the printout first.
      */
     printout(prefix = 'printout') { return this.#transport.call('printout', [prefix]); }
 

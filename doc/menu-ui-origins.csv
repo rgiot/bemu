@@ -6,6 +6,7 @@ drive-a-remove-disc,web eject(),draft,"WinAPE, ACE, Caprice"
 drive-a-save-disc,--save-discs (automatic only); web getDisc(),added,"WinAPE, ACE"
 drive-a-save-disc-as,examples/dsk_to_hfe (HFE conversion),added,"WinAPE, ACE"
 drive-a-insert-recent,new,added,"WinAPE, ACE, RVM"
+drive-a-insert-from-archive,new,added,
 drive-a-original,--drive-a 3 / --drive-b 3,filled,
 drive-a-pc,--drive-a 3.5 / --drive-b 3.5,filled,
 drive-a-gotek,yes,filled,ACE
@@ -16,6 +17,7 @@ drive-b-remove-disc,web eject(),added,"WinAPE, ACE, Caprice"
 drive-b-save-disc,--save-discs (automatic only); web getDisc(),added,"WinAPE, ACE"
 drive-b-save-disc-as,examples/dsk_to_hfe (HFE conversion),added,"WinAPE, ACE"
 drive-b-insert-recent,new,added,"WinAPE, ACE, RVM"
+drive-b-insert-from-archive,new,added,
 drive-b-original,--drive-a 3 / --drive-b 3,added,
 drive-b-pc,--drive-a 3.5 / --drive-b 3.5,added,
 drive-b-gotek,yes,added,ACE
@@ -227,13 +229,18 @@ video-start,--record,filled,
 video-rendering-raw,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
 video-rendering-ctm,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
 video-rendering-gt65,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
+video-rendering-mm12,--display; web setDisplay,added,
 video-rendering-trinitron,--display; web setDisplay,filled,"WinAPE (colour / green), ACE"
 video-rendering-atari,--display; web setDisplay,added,"WinAPE (colour / green), ACE"
 video-rendering-next,F9,added,
 video-curvature-set,--curvature; web setCurvature,added,
-video-black-level-set,--black-level,added,
+video-brightness-set,,added,
+video-hhold-set,--hhold,added,
+video-vhold-set,--vhold,added,
 video-crt-gpu-toggle,--crt-gpu,added,
 video-free-zoom-toggle,,added,
+video-frame-skip-toggle,,added,
+video-native-zoom-toggle,,added,
 ui-zoom-in,,added,
 ui-zoom-out,,added,
 ui-zoom-reset,,added,

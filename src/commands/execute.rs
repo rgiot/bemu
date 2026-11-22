@@ -44,10 +44,11 @@ const PLATFORMS: [(&str, CpcModel); 6] = [
     ("gx4000", CpcModel::Gx4000),
 ];
 
-const RENDERINGS: [(&str, DisplayMode); 5] = [
+const RENDERINGS: [(&str, DisplayMode); 6] = [
     ("raw", DisplayMode::Raw),
     ("ctm", DisplayMode::Crt(CrtProfile::Ctm644)),
     ("gt65", DisplayMode::Crt(CrtProfile::Gt65)),
+    ("mm12", DisplayMode::Crt(CrtProfile::Mm12)),
     ("trinitron", DisplayMode::Crt(CrtProfile::Trinitron)),
     ("atari", DisplayMode::Crt(CrtProfile::AtariColor)),
 ];
@@ -250,6 +251,21 @@ fn disc_command(command: &Command, target: &mut dyn CommandTarget) -> Option<Com
             );
             insert_disc(target, drive, index, &arg)
         }
+        "insert-from-archive" => {
+            let entry = arg!(command, "Disc of the archive", ArgKind::Text).text();
+            let archive = target
+                .settings()
+                .filter(|s| !s.media.archive_discs[index].is_empty())
+                .and_then(|s| s.media.discs[index].clone())
+                .ok_or_else(|| {
+                    CommandError::Unavailable(format!(
+                        "drive {letter}: the disc does not come from an archive"
+                    ))
+                })?;
+            let (path, _) = crate::disc_image::split_disc_spec(&archive);
+            let spec = format!("{path}#{entry}");
+            insert_disc(target, drive, index, &Arg::Text(spec))
+        }
         "new-disc" => {
             let arg = arg!(
                 command,
@@ -288,7 +304,7 @@ fn disc_command(command: &Command, target: &mut dyn CommandTarget) -> Option<Com
             target.motherboard_mut().insert_disc(drive, None);
             target.motherboard_mut().set_disc_file(drive, None);
             if let Some(settings) = target.settings_mut() {
-                settings.media.discs[index] = None;
+                settings.media.disc_removed(index);
             }
             said(format!("drive {letter}: no disc"))
         }
@@ -383,6 +399,13 @@ fn disc_state(id: &str, target: &dyn CommandTarget) -> Option<CommandState> {
                 && target
                     .settings()
                     .is_some_and(|s| !s.media.recent_discs[index].is_empty()),
+        ),
+        // another disc image of the archive the disc came from
+        "insert-from-archive" => CommandState::enabled(
+            files
+                && target
+                    .settings()
+                    .is_some_and(|s| s.media.archive_discs[index].len() > 1),
         ),
         "flip-disc" => CommandState::enabled(has_disc && !fdc.drive_kind(drive).is_double_sided()),
         "remove-disc" | "save-disc-as" => CommandState::enabled(has_disc),
@@ -741,5 +764,91 @@ mod ui_zoom_test {
         assert_eq!(ui_zoom_step(2.25, -1), 2.0);
         assert_eq!(ui_zoom_step(0.5, -1), 0.5);
         assert_eq!(ui_zoom_step(3.0, 1), 3.0);
+    }
+}
+
+#[cfg(test)]
+mod archive_test {
+    use super::*;
+    use crate::commands::HostSettings;
+
+    /// A machine and a host with files.
+    struct Host(Mb, HostSettings);
+
+    impl CommandTarget for Host {
+        fn motherboard(&self) -> &Mb {
+            &self.0
+        }
+        fn motherboard_mut(&mut self) -> &mut Mb {
+            &mut self.0
+        }
+        fn settings(&self) -> Option<&HostSettings> {
+            Some(&self.1)
+        }
+        fn settings_mut(&mut self) -> Option<&mut HostSettings> {
+            Some(&mut self.1)
+        }
+    }
+
+    /// A demo released as a zip of its 3.5" and 3" discs: the first one goes in, the menu lists
+    /// both, and the other one replaces it.
+    #[test]
+    fn another_disc_of_the_archive_goes_in() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("amsrust_archive_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rhino = std::fs::read("validation/RHINO.DSK").unwrap();
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for name in [
+            "readme.txt",
+            "demo 3.5.dsk",
+            "3/demo face A.dsk",
+            "3/demo face B.dsk",
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(if name.ends_with(".txt") {
+                b"hi"
+            } else {
+                &rhino
+            })
+            .unwrap();
+        }
+        let path = dir.join("demo.zip");
+        std::fs::write(&path, zip.finish().unwrap().into_inner()).unwrap();
+        let path = path.display().to_string();
+
+        let mut host = Host(Mb::default(), HostSettings::default());
+        let id = "drive-a-insert-from-archive";
+        assert!(!state(id, &host).enabled, "no disc, no archive");
+        Command::with_arg("drive-a-select-disc", Arg::Text(path.clone()))
+            .unwrap()
+            .execute(&mut host)
+            .unwrap();
+        let media = &host.1.media;
+        assert_eq!(
+            media.archive_discs[0],
+            ["demo 3.5.dsk", "3/demo face A.dsk", "3/demo face B.dsk"]
+        );
+        assert_eq!(media.archive_disc(0), Some("demo 3.5.dsk"));
+        assert!(state(id, &host).enabled);
+
+        Command::with_arg(id, Arg::Text("3/demo face A.dsk".into()))
+            .unwrap()
+            .execute(&mut host)
+            .unwrap();
+        let media = &host.1.media;
+        assert_eq!(media.discs[0], Some(format!("{path}#3/demo face A.dsk")));
+        assert_eq!(media.archive_disc(0), Some("3/demo face A.dsk"));
+        assert_eq!(media.archive_discs[0].len(), 3, "the archive still listed");
+        assert!(host.0.fdc().has_disk(FdcDrive::A));
+
+        Command::new("drive-a-remove-disc")
+            .unwrap()
+            .execute(&mut host)
+            .unwrap();
+        assert!(host.1.media.archive_discs[0].is_empty());
+        assert!(!state(id, &host).enabled);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

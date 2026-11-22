@@ -33,9 +33,10 @@
   <label>Disc interface <select name="discInterface"><option value="">model's</option><option value="true">yes</option><option value="false">no</option></select></label>
   <label>Language <select name="language"><option>en</option><option>fr</option></select></label>
   <label>Brand <select name="brand"><option>amstrad</option><option>schneider</option><option>awa</option><option>orion</option></select></label>
-  <label>Display <select name="display"><option>raw</option><option>ctm</option><option>trinitron</option><option>gt65</option><option>atari</option></select></label>
+  <label>Display <select name="display"><option>raw</option><option>ctm</option><option>trinitron</option><option>gt65</option><option>mm12</option><option>atari</option></select></label>
   <label>Curvature <input name="curvature" type="range" min="0" max="2" step="0.25" value="1"></label>
   <label>Keyboard <select name="keyboard"><option>symbolic</option><option>positional</option></select></label>
+  <label title="off: every picture is made, however slow the machine (to record a video); auto: a machine too slow for real time makes no picture for some frames">Frame skip <select name="frameSkip"><option>off</option><option>auto</option></select></label>
   <button type="submit">Apply (resets)</button>
 </form>
 
@@ -74,7 +75,7 @@ const status = (text) => document.querySelector('#status').textContent = text;
 // the configuration: the form, set from the URL (?model=464&crtc=1&ga=40010&display=ctm...)
 for (const [key, name] of [['model', 'model'], ['crtc', 'crtc'], ['ga', 'gateArray'], ['ram', 'ramKb'],
                            ['ddi', 'discInterface'], ['lang', 'language'], ['brand', 'brand'], ['display', 'display'], ['curvature', 'curvature'],
-                           ['keyboard', 'keyboard']]) {
+                           ['keyboard', 'keyboard'], ['frameskip', 'frameSkip']]) {
   if (params.has(key)) form.elements[name].value = params.get(key);
 }
 function config() {
@@ -121,6 +122,9 @@ form.addEventListener('submit', (event) => { event.preventDefault(); emu.configu
 form.elements.display.addEventListener('change', () => emu.setDisplay(form.elements.display.value));
 form.elements.curvature.addEventListener('input', () => emu.setCurvature(Number(form.elements.curvature.value)));
 form.elements.keyboard.addEventListener('change', () => emu.setKeyboard(form.elements.keyboard.value));
+form.elements.frameSkip.addEventListener('change', () => emu.setFrameSkip(form.elements.frameSkip.value));
+// the menu bar's Video > Skip frames when too slow moves the page's menu too
+emu.on('ui-request', (request) => { if (request.type === 'frameSkip') form.elements.frameSkip.value = request.on ? 'auto' : 'off'; });
 document.querySelector('#start').onclick = () => emu.start();
 document.querySelector('#pause').onclick = () => emu.pause();
 document.querySelector('#reset').onclick = () => emu.reset();
@@ -130,8 +134,13 @@ document.querySelector('#mute').onchange = (event) => emu.setMuted(event.target.
 const speed = document.querySelector('#speed');
 speed.onchange = () => { emu.setSpeed(speed.value); emu.canvas.focus(); };
 document.querySelector('#step').onclick = () => emu.stepFrame();
-emu.on('stats', ({ fps, speed: times, audio }) =>
+// the speed, and where the time goes (what to report for a slow machine): the emulation of a frame
+// (20 ms is real time), the drawing of a picture (the CRT shader), and the backend and display in use
+emu.on('stats', ({ fps, speed: times, audio, performance: p }) =>
   document.querySelector('#stats').textContent = `${fps.toFixed(1)} frames/s, ${times.toFixed(2)}\u00d7 real time` +
+    `; emulation ${p.frameMs.toFixed(1)} ms/frame (max ${p.maxFrameMs.toFixed(0)}), drawing ${p.drawMs.toFixed(1)} ms` +
+    ` (${p.drawFps.toFixed(0)}/s), ${emu.backend}, ${form.elements.display.value}` +
+    (p.hidden > 0 ? `; ${p.hidden.toFixed(0)}/s frames without a picture (too slow for real time)` : '') +
     (audio ? `; audio underruns: ${audio.underruns}, buffer: ${audio.bufferedMs.toFixed(0)}/${audio.targetMs.toFixed(0)} ms` : ''));
 document.querySelector('#type').onclick = () => {
   emu.typeText(document.querySelector('#text').value + '\n');

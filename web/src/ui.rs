@@ -40,6 +40,10 @@ pub enum PageRequest {
     Fullscreen {
         on: bool,
     },
+    /// Frame skip on (`'auto'`) or off.
+    FrameSkip {
+        on: bool,
+    },
     /// Type the page's clipboard on the CPC keyboard.
     Paste,
     /// The last frame to the clipboard.
@@ -96,6 +100,7 @@ struct PageSettings {
     volume: u8,
     muted: bool,
     fullscreen: bool,
+    frame_skip: bool,
 }
 
 impl PageSettings {
@@ -105,6 +110,7 @@ impl PageSettings {
             volume: settings.volume,
             muted: settings.muted,
             fullscreen: settings.fullscreen,
+            frame_skip: settings.frame_skip,
         }
     }
 }
@@ -246,6 +252,8 @@ impl WebUi {
             unit: egui::MouseWheelUnit::Point,
             delta: egui::vec2(-dx, -dy),
             modifiers: self.modifiers,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
         });
     }
 
@@ -341,8 +349,9 @@ impl WebUi {
             )),
             viewports: std::iter::once((egui::ViewportId::ROOT, viewport)).collect(),
             time: Some(self.now),
-            modifiers: self.modifiers,
-            events: std::mem::take(&mut self.events),
+            events: std::iter::once(egui::Event::ModifiersChanged(self.modifiers))
+                .chain(std::mem::take(&mut self.events))
+                .collect(),
             focused: true,
             ..Default::default()
         };
@@ -453,6 +462,9 @@ impl WebUi {
         if wanted.fullscreen != applied.fullscreen {
             self.page.push(PageRequest::Fullscreen { on: wanted.fullscreen });
         }
+        if wanted.frame_skip != applied.frame_skip {
+            self.page.push(PageRequest::FrameSkip { on: wanted.frame_skip });
+        }
         self.applied = wanted;
     }
 
@@ -466,6 +478,12 @@ impl WebUi {
     pub fn page_fullscreen(&mut self, on: bool) {
         self.settings.fullscreen = on;
         self.applied.fullscreen = on;
+    }
+
+    /// The page's frame skip (its configuration, `setFrameSkip`).
+    pub fn page_frame_skip(&mut self, on: bool) {
+        self.settings.frame_skip = on;
+        self.applied.frame_skip = on;
     }
 
     /// The page's volume (its own controls).

@@ -119,9 +119,9 @@ pub trait Frontend {
         let _ = curvature;
     }
 
-    /// Let the picture fill the window at any zoom (`on`), or zoom it by a whole factor only.
-    fn set_free_zoom(&mut self, on: bool) {
-        let _ = on;
+    /// How large the picture is shown in the window (see [`amsrust::display::PictureSize`]).
+    fn set_picture_size(&mut self, size: amsrust::display::PictureSize) {
+        let _ = size;
     }
 
     /// Go fullscreen, or back to the window.
