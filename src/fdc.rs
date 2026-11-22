@@ -1159,9 +1159,20 @@ impl Fdc {
     }
 
     /// A search that finds nothing goes on for two turns of the disc.
+    /// One turn of the disc under `unit`'s head, in microseconds (a real 3" drive turns slower than
+    /// 300 rpm, see `layout`).
+    fn turn_us(&self, unit: usize) -> u64 {
+        let turn = TRACK_BYTES * BYTE_US;
+        if self.drives[unit].kind == DriveKind::ThreeInch {
+            turn * 10_233 / 10_000
+        } else {
+            turn
+        }
+    }
+
     fn lose_two_turns(&mut self) {
         if self.timing {
-            self.t_cursor += 2 * TRACK_BYTES * BYTE_US;
+            self.t_cursor += 2 * self.turn_us(self.xfer.unit);
         }
     }
 
@@ -1257,7 +1268,7 @@ impl Fdc {
                         self.t_cursor =
                             occurrence(self.t_cursor, layout.id_end[index], layout.period);
                     }
-                    None => self.t_cursor += 2 * TRACK_BYTES * BYTE_US,
+                    None => self.t_cursor += 2 * self.turn_us(unit),
                 }
             }
             let sectors = self.sectors(unit, head);
@@ -1329,7 +1340,7 @@ impl Fdc {
                 // Read Track starts at the index hole
                 let period = self
                     .layout(unit, self.xfer.head)
-                    .map_or(TRACK_BYTES * BYTE_US, |l| l.period);
+                    .map_or(self.turn_us(unit), |l| l.period);
                 self.t_cursor = occurrence(self.now_us, 0, period);
             }
             if !self.next_read_track_sector() {
@@ -1689,7 +1700,7 @@ impl Fdc {
 
         if self.timing {
             // everything happens in one turn of the disc, from the index hole
-            let turn = TRACK_BYTES * BYTE_US;
+            let turn = self.turn_us(unit);
             let t_index = occurrence(self.now_us, 0, turn);
             self.data_t0 = t_index + TRACK_HEAD_BYTES * BYTE_US;
             self.t_cursor = t_index + turn;
