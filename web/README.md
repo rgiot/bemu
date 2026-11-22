@@ -88,6 +88,7 @@ slower.
   | `brightness` | `-100` to `100`: the picture brighter or darker (a bounded gamma curve; darker also lowers the full levels). `0` leaves it as it is | `0` |
   | `hHold`, `vHold` | `-100` to `100`: the monitor's hold knobs. `0` is steady; H-hold slides the picture sideways and tears it near the ends, V-hold rolls it below about -60 and above about 60 | `0` |
   | `menu` | `false` hides the menu bar, the command palette (Ctrl+Shift+P) and the debugger's windows drawn over the picture (WebGPU / WebGL only) | `true` |
+  | `frameSkip` | `'off'`: every frame's picture is made, however slow the machine (what a video recording wants: nothing is skipped); `'auto'`: a machine too slow for real time makes no picture for some frames, see "A machine too slow". Not part of the machine: `configure()` keeps the current value when it is not given | `'off'` |
   | `keyboard` | `'symbolic'`: a key types the character it types on your keyboard (whatever its language and the CPC's), for typing; `'positional'`: a key presses the CPC key at its place (`KeyboardEvent.code`), for games | `'symbolic'` |
 
 - **`options`**:
@@ -124,6 +125,7 @@ have the focus, to the CPC otherwise.
 | `configure(config)` | a new machine; the discs stay in |
 | `setDisplay(name)` | `'raw'` or a CRT profile |
 | `setCurvature(c)` | how curved a CRT's glass is, as the `curvature` configuration |
+| `setFrameSkip(mode)` | `'off'` or `'auto'`, as the `frameSkip` configuration |
 | `setKeyboard(mapping)` | `'symbolic'` or `'positional'`, as the `keyboard` configuration |
 | `insertDisc(drive, source)`, `eject(drive)` | a DSK image in drive `'A'` or `'B'` |
 | `swapDisc(drive, source, entry)` | changes the disc of the running machine: the new disc is in the drive at once |
@@ -195,14 +197,17 @@ have the focus, to the CPC otherwise.
 
 ### A machine too slow
 
-At normal speed, when the machine cannot keep real time (the sound has less than half of its
-target queued; without sound, more than a frame is owed), the engine stops making the picture of
-some frames: a frame without picture costs about a third less, and the program runs the same
-(same state, same sound). At most two frames in a row, so a picture comes at least every third
-frame (17 a second). The game keeps its 50 Hz where it would slow down, in exchange for a less fluid
-picture. `stats.performance.hidden` counts them; the demo shows it. On a native build (CPC+ game, 6
-emulated seconds per measure): every frame shown 1.21 times real time, one frame in two 1.48, one in
-three 1.60 (`cargo run --release --example bench_frameskip -- game.cpr 12 2`).
+By default (`frameSkip: 'off'`) every frame's picture is made, however slow the machine: a video
+recorded from the canvas is perfect, if the emulation is slower than real time. With
+`frameSkip: 'auto'`, at normal speed, when the machine cannot keep real time (the sound has less
+than half of its target queued; without sound, more than a frame is owed), the engine stops making
+the picture of some frames: a frame without picture costs about a third less, and the program runs
+the same (same state, same sound). At most two frames in a row, so a picture comes at least every
+third frame (17 a second). The game keeps its 50 Hz where it would slow down, in exchange for a less
+fluid picture. `stats.performance.hidden` counts them; the demo shows it (its "Frame skip" menu, or
+`?frameskip=auto`). On a native build (CPC+ game, 12 emulated seconds per measure): every frame
+shown 1.21 times real time, one frame in two 1.48, one in three 1.60
+(`cargo run --release --example bench_frameskip -- game.cpr 12 2`).
 
 To bypass stale cached assets when testing, add a new `?bemuVersion=...` value to the demo URL
 and reload. The demo passes this value to the emulator module, which propagates its query string

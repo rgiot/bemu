@@ -311,7 +311,7 @@ try {
 
     // A machine too slow for real time makes no picture for some of its frames (the emulation is the
     // same, a frame without picture costs a third less): never more than two in a row.
-    function framesBehind({ audio }) {
+    function framesBehind({ audio, skip = true }) {
         const clock = { now: 0, scheduled: null };
         const scheduler = { request: (fn) => { clock.scheduled = fn; return 1; }, cancel() {} };
         const run = [];
@@ -326,6 +326,7 @@ try {
         const engine = new Engine(core, { scheduler, now: () => clock.now, emit: (name, value) => events.push([name, value]) });
         const port = { postMessage() {}, close() {} };
         if (audio) engine.attachAudio(port, 48000);
+        if (skip) engine.setFrameSkip('auto');
         engine.start();
         return { engine, clock, run, port, events };
     }
@@ -340,6 +341,38 @@ try {
         assert.ok(!frames.includes('UUU'), `at most two without a picture in a row: ${frames}`);
         assert.ok(frames.includes('S'), frames);
         engine.destroy();
+    });
+
+    await test('every picture is made by default, however far behind the sound', () => {
+        const { engine, clock, run, port } = framesBehind({ audio: true, skip: false });
+        clock.scheduled(0);
+        for (let i = 0; i < 6; i++) port.onmessage({ data: { fill: 0, received: 3840 * (i + 1), playing: true, underruns: 0 } });
+        assert.ok(run.length > 0 && !run.includes('U'), run.join(''));
+        engine.setFrameSkip('auto');
+        for (let i = 6; i < 12; i++) port.onmessage({ data: { fill: 0, received: 3840 * (i + 1), playing: true, underruns: 0 } });
+        assert.ok(run.includes('U'), 'auto skips');
+        engine.setFrameSkip('off');
+        run.length = 0;
+        for (let i = 12; i < 18; i++) port.onmessage({ data: { fill: 0, received: 3840 * (i + 1), playing: true, underruns: 0 } });
+        assert.ok(run.length > 0 && !run.includes('U'), 'off again');
+        engine.destroy();
+    });
+
+    await test('frameSkip is the engine\'s setting: the machine\'s configuration does not get it', async () => {
+        const { emu, core } = machine();
+        const received = [];
+        core.configure = (config) => received.push(config);
+        const modes = [];
+        const set = emu.setFrameSkip.bind(emu);
+        emu.setFrameSkip = (mode) => { modes.push(mode); return set(mode); };
+        await emu.configure({ model: '464', frameSkip: 'auto' });
+        assert.deepEqual(received, [{ model: '464' }]);
+        assert.deepEqual(modes, ['auto']);
+        await emu.configure({ model: '6128' });
+        assert.deepEqual(received.at(-1), { model: '6128' });
+        assert.equal(modes.length, 1, 'kept when the configuration does not say');
+        await assert.rejects(async () => emu.setFrameSkip('sometimes'), /frameSkip must be/);
+        await assert.rejects(async () => emu.configure({ frameSkip: 3 }), /frameSkip must be/);
     });
 
     await test('a machine that keeps the sound filled shows every frame', () => {

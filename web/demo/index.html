@@ -36,6 +36,7 @@
   <label>Display <select name="display"><option>raw</option><option>ctm</option><option>trinitron</option><option>gt65</option><option>mm12</option><option>atari</option></select></label>
   <label>Curvature <input name="curvature" type="range" min="0" max="2" step="0.25" value="1"></label>
   <label>Keyboard <select name="keyboard"><option>symbolic</option><option>positional</option></select></label>
+  <label title="off: every picture is made, however slow the machine (to record a video); auto: a machine too slow for real time makes no picture for some frames">Frame skip <select name="frameSkip"><option>off</option><option>auto</option></select></label>
   <button type="submit">Apply (resets)</button>
 </form>
 
@@ -74,7 +75,7 @@ const status = (text) => document.querySelector('#status').textContent = text;
 // the configuration: the form, set from the URL (?model=464&crtc=1&ga=40010&display=ctm...)
 for (const [key, name] of [['model', 'model'], ['crtc', 'crtc'], ['ga', 'gateArray'], ['ram', 'ramKb'],
                            ['ddi', 'discInterface'], ['lang', 'language'], ['brand', 'brand'], ['display', 'display'], ['curvature', 'curvature'],
-                           ['keyboard', 'keyboard']]) {
+                           ['keyboard', 'keyboard'], ['frameskip', 'frameSkip']]) {
   if (params.has(key)) form.elements[name].value = params.get(key);
 }
 function config() {
@@ -121,6 +122,7 @@ form.addEventListener('submit', (event) => { event.preventDefault(); emu.configu
 form.elements.display.addEventListener('change', () => emu.setDisplay(form.elements.display.value));
 form.elements.curvature.addEventListener('input', () => emu.setCurvature(Number(form.elements.curvature.value)));
 form.elements.keyboard.addEventListener('change', () => emu.setKeyboard(form.elements.keyboard.value));
+form.elements.frameSkip.addEventListener('change', () => emu.setFrameSkip(form.elements.frameSkip.value));
 document.querySelector('#start').onclick = () => emu.start();
 document.querySelector('#pause').onclick = () => emu.pause();
 document.querySelector('#reset').onclick = () => emu.reset();
