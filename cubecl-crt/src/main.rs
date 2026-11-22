@@ -168,7 +168,52 @@ fn quad_pass_check() {
     println!("quad pass of the kernel's buffer vs the CPU renderer: worst {worst}, {off} values off by >3 of {}", w * h * 3);
 }
 
+/// The same kernels on CubeCL's CPU backend (LLVM JIT): timing and accuracy against the old CPU renderer.
+fn cpu_backend_check() {
+    type C = cubecl::cpu::CpuRuntime;
+    let client = <C as Runtime>::client(&Default::default());
+    for (profile, warp) in [
+        (CrtProfile::Ctm644, Warp::FLAT),
+        (CrtProfile::Ctm644, Warp::of(CrtProfile::Ctm644, 1.0)),
+        (CrtProfile::Gt65, Warp::of(CrtProfile::Gt65, 1.0)),
+    ] {
+        let params = profile.params();
+        let (w, h) = params.output_size();
+        let src = test_picture();
+        let mut old = CpuCrt::new(params.clone()).curved(warp);
+        let mut want = vec![0u32; w * h];
+        let t = std::time::Instant::now();
+        old.render(&src, &mut want);
+        let old_ms = t.elapsed().as_secs_f64() * 1e3;
+        let frame = client.create_from_slice(src.as_raw());
+        let pipeline = Pipeline::new(&client, &params, warp);
+        let t = std::time::Instant::now();
+        pipeline.run(&client, &frame, src.as_raw().len() / 4, src.width(), src.height());
+        let first = client.read_one(pipeline.out().clone()).unwrap().to_vec();
+        let first_ms = t.elapsed().as_secs_f64() * 1e3;
+        let mut best = f64::MAX;
+        let mut got_bytes = first;
+        for _ in 0..4 {
+            let t = std::time::Instant::now();
+            pipeline.run(&client, &frame, src.as_raw().len() / 4, src.width(), src.height());
+            got_bytes = client.read_one(pipeline.out().clone()).unwrap().to_vec();
+            best = best.min(t.elapsed().as_secs_f64() * 1e3);
+        }
+        let got = u32::from_bytes(&got_bytes);
+        let (mut worst, mut off) = (0i32, 0usize);
+        for (p, q) in want.iter().zip(got) {
+            for s in [0, 8, 16] {
+                let d = (((p >> s) & 255) as i32 - ((q >> s) & 255) as i32).abs();
+                worst = worst.max(d);
+                off += (d > 3) as usize;
+            }
+        }
+        println!("CubeCL CPU backend {profile:?} {} {w}x{h}: worst {worst}, {off} off by >3; first frame {first_ms:.0} ms (JIT), then {best:.1} ms; old CPU renderer {old_ms:.1} ms", if warp.is_flat() { "flat" } else { "curved" });
+    }
+}
+
 fn main() {
+    cpu_backend_check();
     quad_pass_check();
     shared_device_check();
     type R = cubecl::wgpu::WgpuRuntime;
