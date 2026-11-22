@@ -77,9 +77,23 @@ mod st3 {
 const BYTE_US: u64 = 32;
 const TRACK_BYTES: u64 = 6250;
 /// Pause between two bytes of the command and result phases (RQM drops for about 12 us).
-const PHASE_GAP_US: u64 = 12;
+const PHASE_GAP_US_DEFAULT: u64 = 12;
+fn phase_gap_us() -> u64 {
+    // EXPERIMENT: BEMU_FDC_GAP (microseconds)
+    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("BEMU_FDC_GAP").ok().and_then(|v| v.parse().ok()).unwrap_or(PHASE_GAP_US_DEFAULT)
+    })
+}
 /// Head settling after the last step of a seek.
-const SETTLE_US: u64 = 15_000;
+const SETTLE_US_DEFAULT: u64 = 15_000;
+fn settle_us() -> u64 {
+    // EXPERIMENT: BEMU_FDC_SETTLE (microseconds)
+    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("BEMU_FDC_SETTLE").ok().and_then(|v| v.parse().ok()).unwrap_or(SETTLE_US_DEFAULT)
+    })
+}
 /// Bytes between the index hole and the first sector's sync (gap 4a, sync, IAM, gap 1).
 const TRACK_HEAD_BYTES: u64 = 146;
 
@@ -158,7 +172,7 @@ impl DriveKind {
     pub fn seek_us(self, steps: u64, step_us: u64) -> u64 {
         match self {
             DriveKind::Gotek => 1,
-            _ if steps > 0 => steps * step_us + SETTLE_US,
+            _ if steps > 0 => steps * step_us + settle_us(),
             _ => 1_000,
         }
     }
@@ -804,7 +818,7 @@ impl Fdc {
             Phase::Result => {
                 let byte = self.result.get(self.result_pos).copied().unwrap_or(0xff);
                 self.result_pos += 1;
-                self.rqm_at = self.now_us + PHASE_GAP_US;
+                self.rqm_at = self.now_us + phase_gap_us();
                 if self.result_pos >= self.result.len() {
                     self.go_to_command_phase();
                 }
@@ -822,7 +836,7 @@ impl Fdc {
         self.command_len = 1;
         self.st = msr::RQM;
         if self.timing {
-            self.rqm_at = self.now_us + PHASE_GAP_US;
+            self.rqm_at = self.now_us + phase_gap_us();
         }
     }
 
@@ -887,7 +901,7 @@ impl Fdc {
             self.st |= msr::CB;
         }
         self.command.push(val);
-        self.rqm_at = self.now_us + PHASE_GAP_US;
+        self.rqm_at = self.now_us + phase_gap_us();
 
         if self.command.len() == self.command_len {
             self.dispatch_command();
