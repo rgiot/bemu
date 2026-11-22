@@ -209,7 +209,9 @@ pub struct CrtParams {
     pub white: [f32; 3],
 }
 
-/// The floor under the glow: none, a black picture is black.
+/// The veil's default share of a white's light: none, a black picture is black (the dark areas
+/// of the photographs, 3.5 % of the white, are the glow's wide part: see [`GLOW_WIDE`]). `veil`
+/// stays a parameter for a constant floor.
 pub const VEIL: f32 = 0.0;
 
 /// The glow's grid: a cell is 4 pixels of the source.
@@ -232,13 +234,14 @@ pub const GLOW_WIDE: (f32, f32) = (160.0, 0.085);
 /// gives 0.085 for the wide one, TuxAPE's own value (the data cannot tell the close one, whose
 /// light is under a pixel of the edge of the bright).
 pub const GLOW: f32 = 1.0;
-/// The share of the close part of the glow kept: a third of TuxAPE's (a real CTM's halo, as the
-/// owner of one sees it, is much weaker than that).
+/// The share of the close part of the glow kept: 0.3 of TuxAPE's (a real CTM's halo, as the owner
+/// of one sees it, is much weaker than that).
 pub const GLOW_HALO: f32 = 0.3;
 
 /// The taps of a Gaussian of `sigma` cells, from -4 sigma to 4 sigma, their sum 1: what the CPU
 /// blur and the GPU's (`kernel.rs`) share.
 pub fn gauss_taps(sigma: f32) -> Vec<f32> {
+    let sigma = sigma.max(1e-3);
     let radius = (sigma * 4.0).ceil() as isize;
     let mut kernel: Vec<f32> = (-radius..=radius)
         .map(|d| (-((d * d) as f32) / (2.0 * sigma * sigma)).exp())
@@ -331,9 +334,6 @@ impl CrtParams {
         }
     }
 
-    /// The mean light of a white field, worked out as the renderers do: each slot's light, the
-    /// halation of its neighbours, the clipping of what is too bright, averaged over a period of
-    /// the pattern and over the three guns (the one phosphor of a mono tube).
     /// The light, added to every slot whatever its gun, that makes a black the [`Self::veil`] of a
     /// white field's mean light.
     pub fn veil_light(&self) -> f32 {
@@ -346,6 +346,39 @@ impl CrtParams {
     /// The light of the glow where the picture is white (see `kernel.rs`).
     pub fn glow_light(&self) -> f32 {
         self.glow * self.white_light()
+    }
+
+    /// Whether the parameters can be rendered: finite, widths and fills above zero, a triad of whole
+    /// slots (the kernels index tables by them: a NaN or a zero would read out of bounds).
+    pub fn validate(&self) -> Result<(), String> {
+        let positive = [
+            ("beam_sigma_h", self.beam_sigma_h),
+            ("beam_sigma_v", self.beam_sigma_v),
+            ("blue_width", self.blue_width),
+            ("beam_thin", self.beam_thin),
+            ("slot_fill.0", self.slot_fill.0),
+            ("slot_fill.1", self.slot_fill.1),
+            ("gain", self.gain),
+        ];
+        for (name, value) in positive {
+            if !(value.is_finite() && value > 0.0) {
+                return Err(format!("CRT parameter {name} must be above 0, not {value}"));
+            }
+        }
+        if self.beam_thin > 1.0 {
+            return Err(format!("CRT parameter beam_thin must be at most 1, not {}", self.beam_thin));
+        }
+        let others = [self.spill, self.halation, self.veil, self.vignette, self.glow, self.glow_halo, self.blue_shift];
+        if others.iter().chain(self.white.iter()).any(|v| !v.is_finite()) {
+            return Err("a CRT parameter is not finite".into());
+        }
+        if self.triad_px == 0 || self.triad_px % 3 != 0 || self.rows_per_line == 0 || self.pitch_rows() == 0 {
+            return Err(format!(
+                "CRT triad_px ({}) must be a multiple of 3 and rows_per_line ({}) above 0",
+                self.triad_px, self.rows_per_line
+            ));
+        }
+        Ok(())
     }
 
     /// The mean light of a white field, worked out as the renderers do: each slot's light, the

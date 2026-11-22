@@ -113,7 +113,8 @@ impl Emulator {
         let keyboard = config.keyboard().map_err(|e| JsError::new(&e))?;
         let motherboard = build_machine(&config)?;
         let canvas = Canvas::from_js(canvas).map_err(|e| JsError::new(&e))?;
-        let gfx = Gfx::new(canvas, webgpu).await.map_err(|e| JsError::new(&e))?;
+        let mut gfx = Gfx::new(canvas, webgpu).await.map_err(|e| JsError::new(&e))?;
+        gfx.prewarm(display, curvature);
         let ui = (config.menu != Some(false) && gfx.backend() == "webgpu").then(|| {
             WebUi::new(amsrust::commands::HostSettings {
                 display,

@@ -1,12 +1,12 @@
 //! The CRT model on the GPU, written once as a CubeCL kernel (native Vulkan / Metal / DX12 and the
-//! browser's WebGPU): one thread per output pixel, the model of `cpu.rs` evaluated per pixel (the
+//! browser's WebGPU): one thread per output pixel, the model evaluated per pixel (the
 //! beam's Gaussian taps at the slot's centre, through the glass; the slot mask's coverage; the
 //! halation of the neighbouring slots; the veil, the glow, the vignette; the glass's edge; the
 //! gamma).
 //!
 //! The arguments are plain buffers: the monitor's frame (its RGB bytes as they are, `src_w` x `src_h`
-//! pixels), the glow cells (four floats a cell; worked out on the GPU too, by [`Pipeline`], as
-//! [`super::crt::GlowField`] does for the CPU renderer), the parameters of [`pack`], and the
+//! pixels), the glow cells (four floats a cell; worked out on the GPU too, by [`Pipeline`], as one
+//! pipeline: see [`Pipeline`]), the parameters of [`pack`], and the
 //! picture (`0xRRGGBB` words, row after row).
 use super::crt::{
     gauss_taps, CrtParams, Warp, GLOW_CH, GLOW_CLOSE, GLOW_CW, GLOW_H, GLOW_W, GLOW_WIDE, SRC_HEIGHT,
@@ -421,6 +421,26 @@ pub struct Pipeline {
 
 const FINE: usize = GLOW_W * GLOW_H;
 const COARSE: usize = GLOW_CW * GLOW_CH;
+// the glow kernels are `launch_unchecked` and bake these sizes in as literals (192, 68, 48, 18,
+// 13056 = 192 * 68, 13920 = 13056 + 864): a change of the grids must change them together
+const _: () = assert!(
+    GLOW_W == 192 && GLOW_H == 68 && GLOW_CW == 48 && GLOW_CH == 18 && FINE == 13056 && COARSE == 864
+);
+
+/// The most cubes a dimension of a launch may have (wgpu's default limit).
+const MAX_CUBES: u32 = 65535;
+
+/// The cubes to run `n` threads in cubes of `dim`: in one dimension, or spread over two when there
+/// would be more than the GPU's limit (a picture drawn at 4x or more); the kernels' `i < len`
+/// guards and the linear `ABSOLUTE_POS` make the split invisible.
+pub fn cube_count(n: usize, dim: u32) -> CubeCount {
+    let cubes = (n as u32).div_ceil(dim);
+    if cubes <= MAX_CUBES {
+        CubeCount::Static(cubes.max(1), 1, 1)
+    } else {
+        CubeCount::Static(MAX_CUBES, cubes.div_ceil(MAX_CUBES), 1)
+    }
+}
 
 impl Pipeline {
     pub fn new(client: &cubecl::client::Client, params: &CrtParams, warp: Warp) -> Self {
@@ -450,6 +470,11 @@ impl Pipeline {
         }
     }
 
+    /// The parameters' buffer (`pack`: the glass is in it).
+    pub fn params_handle(&self) -> &cubecl::server::Handle {
+        &self.params
+    }
+
     /// The picture's buffer.
     pub fn out(&self) -> &cubecl::server::Handle {
         &self.out
@@ -464,7 +489,7 @@ impl Pipeline {
     /// the picture, in the buffers of `self`.
     pub fn run(&self, client: &cubecl::client::Client, frame: &cubecl::server::Handle, frame_words: usize, sw: u32, sh: u32) {
         let arg = |h: &cubecl::server::Handle, len: usize| unsafe { BufferArg::from_raw_parts(h.clone(), len) };
-        let one_d = |n: usize| (CubeCount::Static((n as u32).div_ceil(64), 1, 1), CubeDim::new_1d(64));
+        let one_d = |n: usize| (cube_count(n, 64), CubeDim::new_1d(64));
         // SAFETY: the buffers have the sizes the kernels index (see their loops' bounds)
         unsafe {
             let both = FINE + COARSE;
@@ -487,7 +512,7 @@ impl Pipeline {
                 arg(&self.blurred, both * 4), arg(&self.glow, FINE * 4),
                 self.kernel_weights.0, self.kernel_weights.1,
             );
-            let count = || CubeCount::Static((self.out_len as u32).div_ceil(self.cube_dim), 1, 1);
+            let count = || cube_count(self.out_len, self.cube_dim);
             slots::launch_unchecked(
                 client,
                 count(),
@@ -583,6 +608,10 @@ pub fn frame_bytes(src: &RgbImage) -> (Cow<'_, [u8]>, u32, u32) {
         (src.height() as usize).min(SRC_HEIGHT),
     );
     let raw = src.as_raw();
+    if w == 0 || h == 0 {
+        // an empty frame: one black word, so that there is a buffer to bind
+        return (Cow::Owned(vec![0u8; 4]), 0, 0);
+    }
     let mut bytes = Cow::Borrowed(&raw[..w * h * 3]);
     if w != src.width() as usize {
         let row = src.width() as usize * 3;

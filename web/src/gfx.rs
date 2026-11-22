@@ -106,6 +106,14 @@ impl Gfx {
         Ok(Self::Flat(Flat { context, source, source_context, size, rgba: vec![255; RAW_WIDTH * RAW_HEIGHT * 4] }))
     }
 
+    /// Compile the CRT's kernels now (a page that starts on a CRT display), not in the middle of
+    /// its first frame.
+    pub fn prewarm(&mut self, mode: DisplayMode, curvature: f32) {
+        if let Self::Gpu(gpu) = self {
+            gpu.picture.prewarm(&gpu.device, &gpu.queue, mode, mode.warp(curvature));
+        }
+    }
+
     /// How large the picture is shown in the canvas.
     pub fn set_picture_size(&mut self, size: PictureSize) {
         if let Self::Gpu(gpu) = self {

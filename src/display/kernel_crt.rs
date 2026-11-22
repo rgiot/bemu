@@ -59,6 +59,7 @@ pub struct KernelCrt {
 impl KernelCrt {
     /// Fails (with a message) where `backend` is not available.
     pub fn new(params: CrtParams, warp: Warp, backend: Backend) -> Result<Self, String> {
+        params.validate()?;
         let client = match backend {
             Backend::Gpu => gpu_client()?,
             Backend::Cpu => cpu_client()?,
