@@ -123,6 +123,8 @@ form.elements.display.addEventListener('change', () => emu.setDisplay(form.eleme
 form.elements.curvature.addEventListener('input', () => emu.setCurvature(Number(form.elements.curvature.value)));
 form.elements.keyboard.addEventListener('change', () => emu.setKeyboard(form.elements.keyboard.value));
 form.elements.frameSkip.addEventListener('change', () => emu.setFrameSkip(form.elements.frameSkip.value));
+// the menu bar's Video > Skip frames when too slow moves the page's menu too
+emu.on('ui-request', (request) => { if (request.type === 'frameSkip') form.elements.frameSkip.value = request.on ? 'auto' : 'off'; });
 document.querySelector('#start').onclick = () => emu.start();
 document.querySelector('#pause').onclick = () => emu.pause();
 document.querySelector('#reset').onclick = () => emu.reset();

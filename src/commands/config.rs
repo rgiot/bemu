@@ -181,4 +181,18 @@ mod tests {
             assert!(group.items.contains(&group.default), "{}", group.key);
         }
     }
+
+    /// Video > Skip frames when too slow: a switch of the configuration, off by default (a video
+    /// recording wants every picture). Only a page applies it, so only a page enables the item.
+    #[test]
+    fn the_frame_skip_switch_is_saved_and_off_by_default() {
+        let mut target = target();
+        let saved: Value = serde_json::from_str(&save(&mut target)).unwrap();
+        assert_eq!(saved["frameSkip"], false);
+        Command::new("video-frame-skip-toggle").unwrap().execute(&mut target).unwrap();
+        assert!(target.1.frame_skip);
+        let saved: Value = serde_json::from_str(&save(&mut target)).unwrap();
+        assert_eq!(saved["frameSkip"], true);
+        assert_eq!(state("video-frame-skip-toggle", &target).enabled, cfg!(target_arch = "wasm32"));
+    }
 }

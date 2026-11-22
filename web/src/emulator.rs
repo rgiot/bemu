@@ -663,6 +663,13 @@ impl Emulator {
         }
     }
 
+    /// Whether the page skips frames when too slow (its `frameSkip`), for the menus.
+    pub fn ui_frame_skip(&mut self, on: bool) {
+        if let Some(ui) = &mut self.ui {
+            ui.page_frame_skip(on);
+        }
+    }
+
     /// The page's volume (0-1) and mute, for the menus.
     pub fn ui_volume(&mut self, volume: f64, muted: bool) {
         if let Some(ui) = &mut self.ui {

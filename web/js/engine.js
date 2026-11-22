@@ -123,6 +123,8 @@ export class Engine {
     setFrameSkip(mode) {
         this.#frameSkip = mode === 'auto';
         this.#hiddenRun = 0;
+        // the menus' Video > Skip frames when too slow follows
+        this.#core.ui_frame_skip?.(this.#frameSkip);
     }
     resize(width, height) {
         if (this.#canvas) {
@@ -294,6 +296,10 @@ export class Engine {
             switch (request.type) {
                 case 'speed':
                     this.setSpeed(request.value === null ? Infinity : request.value);
+                    this.#emit('ui-request', request);
+                    break;
+                case 'frameSkip':
+                    this.setFrameSkip(request.on ? 'auto' : 'off');
                     this.#emit('ui-request', request);
                     break;
                 case 'runCsl': this.runCsl(request.text); break;
