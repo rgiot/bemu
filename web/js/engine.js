@@ -6,29 +6,9 @@ const bindingsUrl = new URL('./bemu_web.js', import.meta.url);
 bindingsUrl.search = new URL(import.meta.url).search;
 const { default: init, Emulator } = await import(bindingsUrl);
 
-/** The CPC's frame: 312 lines of 64 µs. */
+/** The CPC's frame: 312 lines of 64 µs (the pacer in Rust, `amsrust::pacer`, has the same figure
+ * from the library's `FRAME_T_STATES`: this is for the page's own use). */
 export const FRAME_MS = 312 * 64 / 1000;
-/** Sound kept ahead of the speakers, in seconds. */
-const AUDIO_TARGET_S = 0.06;
-/** After an underrun the target grows by this factor, up to the maximum: a slow or busy machine
- * trades latency for continuity. */
-const AUDIO_TARGET_GROWTH = 1.5;
-const AUDIO_TARGET_MAX_S = 0.2;
-const AUDIO_MAX_S = 0.4;
-/** At more than real time, the emulation takes this share of each animation frame (the rest is
- * the page's: drawing, input), between these many milliseconds: on a computer too slow to keep
- * up, the refreshes get longer and so does the emulation's share. */
-const BUSY_SHARE = 0.9;
-const BUSY_MIN_MS = 40;
-const BUSY_MAX_MS = 100;
-/** Limit catch-up work at normal speed so a slow machine can still service input and audio. */
-const REALTIME_BUDGET_MS = FRAME_MS;
-/** Frame skip 'auto': behind the sound is less than this share of its target queued. A machine too slow
- * for real time then stops making the picture of some frames (a frame without picture costs about a
- * third less), so that the program keeps its 50 Hz: at most this many in a row, so a picture comes at
- * least every third frame (17 a second). */
-const BEHIND_SHARE = 0.5;
-const MAX_HIDDEN_FRAMES = 2;
 
 let wasm;
 export function loadWasm(url) {
@@ -50,33 +30,19 @@ const defaultScheduler = {
 };
 
 export class Engine {
-    #core; #canvas; #emit; #onTick; #scheduler; #now;
-    #running = false;
-    /** The frame or its display settings changed since the last draw. */
-    #fresh = false;
-    /** A generated picture is waiting for a draw, independently of display-setting changes. */
-    #framePending = false;
+    #core; #canvas; #emit; #onTick; #scheduler;
     #frameRequest = 0;
-    #lastTime = undefined;
-    #owed = 0;
-    #intervals = [];
-    /** 1, 2, 3 or 4 refreshes of a display at 50, 100, 150 or 200 Hz per CPC frame; 0 at
-     * another rate. */
-    #refreshesPerFrame = 0;
-    #refreshes = 0;
+    /** The sound feed: the worklet's port and its sample rate (the pacing is the core's, in Rust). */
     #audio = null;
     /** Times real time: 1, more, or Infinity (as fast as possible). */
     #speed = 1;
-    #stats = { since: undefined, frames: 0, frameMs: 0, maxFrameMs: 0, draws: 0, drawMs: 0, replaced: 0, refreshes: 0, hidden: 0 };
-    /** Frames in a row run without a picture because the machine is behind. */
-    #hiddenRun = 0;
-    /** Whether a machine behind may skip the picture of some frames ('auto'; 'off', the default: every picture). */
-    #frameSkip = false;
 
     /**
-     * `core`: the wasm Emulator. `emit(event, detail)`: what the page hears ('screenshot',
-     * 'csl-done', 'stats', 'error'). `onTick()`: after each refresh. `scheduler`: { request(callback), cancel(id) } for the
-     * display's refreshes. `canvas`: resized when the page's size changes.
+     * `core`: the wasm Emulator, which holds the pacing (`pacer_*`: which frames to run at each
+     * refresh and each report of the sound). `emit(event, detail)`: what the page hears
+     * ('screenshot', 'csl-done', 'stats', 'error'). `onTick()`: after each refresh. `scheduler`:
+     * { request(callback), cancel(id) } for the display's refreshes. `canvas`: resized when the
+     * page's size changes. `now`: the clock the pacing reads, in milliseconds.
      */
     constructor(core, { canvas, emit = () => {}, onTick = () => {}, scheduler = defaultScheduler, now = () => performance.now() } = {}) {
         this.#core = core;
@@ -84,7 +50,7 @@ export class Engine {
         this.#emit = emit;
         this.#onTick = onTick;
         this.#scheduler = scheduler;
-        this.#now = now;
+        core.set_clock(now);
         core.on_screenshot((name, png) => emit('screenshot', { name, png }));
         core.on_csl_done((report) => emit('csl-done', report));
     }
@@ -94,9 +60,9 @@ export class Engine {
         const tape = this.#core.tape_position?.();
         return {
             backend: this.#core.backend(),
-            running: this.#running,
+            running: this.#core.pacer_running(),
             speed: this.#speed,
-            refreshesPerFrame: this.#refreshesPerFrame,
+            refreshesPerFrame: this.#core.pacer_refreshes_per_frame(),
             cslRunning: this.#core.csl_running?.() ?? false,
             ctm: [this.#core.ctm_width?.() ?? 0, this.#core.ctm_height?.() ?? 0],
             ctmMinimum: [this.#core.ctm_min_width?.() ?? 0, this.#core.ctm_min_height?.() ?? 0],
@@ -121,10 +87,10 @@ export class Engine {
     setKeyboard(mapping) { this.#core.set_keyboard(mapping); }
     /** 'auto': a machine too slow for real time makes no picture for some frames; 'off': every picture. */
     setFrameSkip(mode) {
-        this.#frameSkip = mode === 'auto';
-        this.#hiddenRun = 0;
+        const on = mode === 'auto';
+        this.#core.pacer_frame_skip(on);
         // the menus' Video > Skip frames when too slow follows
-        this.#core.ui_frame_skip?.(this.#frameSkip);
+        this.#core.ui_frame_skip?.(on);
     }
     resize(width, height) {
         if (this.#canvas) {
@@ -210,9 +176,8 @@ export class Engine {
     debugEvents() { return this.#core.debug_events(); }
 
     setSpeed(value) {
-        if (value !== 1) this.#core.audio_samples(); // what is queued is dropped, not played late
+        this.#core.pacer_set_speed(value); // what is queued of the sound is dropped, not played late
         this.#speed = value;
-        this.#owed = 0;
         this.#core.ui_speed?.(value); // the menus show it
     }
     /** The page is fullscreen or not, its volume: the menus show them. */
@@ -221,27 +186,21 @@ export class Engine {
 
     /** While paused: one more frame, shown. */
     stepFrame() {
-        if (this.#running) return;
+        if (this.#core.pacer_running()) return;
         this.#safely(() => {
-            this.#core.advance_frame();
-            this.#core.audio_samples();
-            this.#fresh = true;
-            this.#framePending = true;
-            this.#draw();
+            this.#core.pacer_step_frame();
+            this.#uiRequests();
         });
     }
 
     start() {
-        if (this.#running) return;
-        this.#running = true;
-        this.#lastTime = undefined;
-        this.#owed = 0;
-        this.#stats.since = undefined;
+        if (this.#core.pacer_running()) return;
+        this.#core.pacer_start();
         this.#frameRequest = this.#scheduler.request((time) => this.tick(time));
     }
 
     pause() {
-        this.#running = false;
+        this.#core.pacer_pause();
         this.#scheduler.cancel(this.#frameRequest);
     }
 
@@ -252,11 +211,8 @@ export class Engine {
     attachAudio(port, sampleRate) {
         this.#audio?.port.close?.();
         this.#core.enable_audio(sampleRate);
-        const audio = {
-            port, rate: sampleRate, target: AUDIO_TARGET_S,
-            // Count frames in transit as well as those in the last worklet report.
-            fill: 0, arrivedAt: this.#now(), playing: false, underruns: 0, sent: 0, received: 0
-        };
+        this.#core.pacer_attach_audio(sampleRate);
+        const audio = { port, rate: sampleRate };
         port.onmessage = (event) => this.#audioReport(audio, event.data);
         this.#audio = audio;
     }
@@ -267,6 +223,7 @@ export class Engine {
             this.#audio.port.onmessage = null;
             this.#audio.port.close?.();
             this.#audio = null;
+            this.#core.pacer_detach_audio();
         }
         this.#core.free();
     }
@@ -274,19 +231,10 @@ export class Engine {
     // ---------------------------------------------------------------- internals
 
     #redrawIfPaused() {
-        this.#fresh = true;
-        if (!this.#running) this.#safely(() => this.#draw());
-    }
-
-    #draw() {
-        if (!this.#fresh) return;
-        const start = this.#now();
-        this.#core.redraw();
-        this.#uiRequests();
-        this.#stats.drawMs += this.#now() - start;
-        this.#stats.draws++;
-        this.#fresh = false;
-        this.#framePending = false;
+        this.#safely(() => {
+            this.#core.pacer_redraw_if_paused();
+            if (!this.#core.pacer_running()) this.#uiRequests();
+        });
     }
 
     /** What the menus asked: the speed and the scripts here, the rest by the page. */
@@ -326,14 +274,14 @@ export class Engine {
         }
     }
 
-    /** Seconds of sound queued and not yet played, from the worklet's last report. */
-    #audioBuffered() {
-        const audio = this.#audio;
-        if (!audio) return 0;
-        const played = audio.playing ? Math.max(0, this.#now() - audio.arrivedAt) / 1000 : 0;
-        return Math.max(0, (audio.fill + audio.sent - audio.received) / audio.rate - played);
+    /** The sound the core made, to the worklet. */
+    #flushAudio() {
+        if (!this.#audio) return;
+        const samples = this.#core.pacer_take_outgoing();
+        if (samples.length > 0) this.#audio.port.postMessage(samples, [samples.buffer]);
     }
 
+    /** The worklet's report of its queue; the pacing, in the core, emulates what the speakers will miss. */
     #audioReport(audio, report) {
         if (!report || !Number.isFinite(report.received) || !Number.isFinite(report.fill) ||
             !Number.isFinite(report.underruns)) {
@@ -341,200 +289,24 @@ export class Engine {
             this.#emit('error', new Error('Invalid audio worklet report. Reload the page to update cached emulator files.'));
             return;
         }
-        audio.fill = report.fill;
-        audio.arrivedAt = this.#now();
-        audio.playing = report.playing;
-        audio.received = report.received;
-        if (report.underruns > audio.underruns) {
-            audio.underruns = report.underruns;
-            audio.target = Math.min(audio.target * AUDIO_TARGET_GROWTH, AUDIO_TARGET_MAX_S);
-            audio.port.postMessage({ target: audio.target });
-        }
-        this.#refill();
-    }
-
-    /**
-     * On the sound's clock (its reports come every ~20 ms whatever the display does): emulate the
-     * frames the speakers will miss, including when display refreshes are delayed.
-     */
-    #refill() {
-        const audio = this.#audio;
-        if (!audio || !this.#running || this.#speed !== 1) return;
-        const frames = Math.max(0, Math.min(4, Math.ceil((audio.target - this.#audioBuffered()) * 1000 / FRAME_MS)));
-        const start = this.#now();
         this.#safely(() => {
-            for (let i = 0; i < frames && (i === 0 || this.#now() - start < REALTIME_BUDGET_MS); i++) {
-                this.#runFrame();
-            }
+            const target = this.#core.pacer_audio_report(report.fill, !!report.playing, report.received, report.underruns);
+            if (!Number.isNaN(target)) audio.port.postMessage({ target });
+            this.#flushAudio();
         });
-    }
-
-    /**
-     * Whether the next frame is made without a picture, because the machine cannot keep real time
-     * (frame skip 'auto' only): the sound has less than half its target queued (without sound: more
-     * than a frame owed). The
-     * emulation is the same, only the picture is not made; a frame is shown at least every
-     * `MAX_HIDDEN_FRAMES + 1`.
-     */
-    #hideWhenBehind() {
-        const audio = this.#audio;
-        const behind = this.#frameSkip && this.#speed === 1 && typeof this.#core.advance_frame_unseen === 'function' &&
-            (audio ? this.#audioBuffered() < audio.target * BEHIND_SHARE : this.#owed >= 2 * FRAME_MS);
-        if (behind && this.#hiddenRun < MAX_HIDDEN_FRAMES) {
-            this.#hiddenRun++;
-            return true;
-        }
-        this.#hiddenRun = 0;
-        return false;
-    }
-
-    /**
-     * A frame emulated, not drawn; its sound queued at real time, dropped otherwise. `unseen`: no
-     * frame of it is shown (above real time, all but the last of a refresh), it runs without
-     * any picture.
-     */
-    #runFrame(unseen = this.#hideWhenBehind()) {
-        const start = this.#now();
-        if (unseen) this.#core.advance_frame_unseen();
-        else this.#core.advance_frame();
-        const frameMs = this.#now() - start;
-        this.#stats.frameMs += frameMs;
-        this.#stats.maxFrameMs = Math.max(this.#stats.maxFrameMs, frameMs);
-        if (!unseen) {
-            if (this.#framePending) this.#stats.replaced++;
-            this.#framePending = true;
-            this.#fresh = true;
-        }
-        this.#stats.frames++;
-        if (unseen && this.#speed === 1) this.#stats.hidden++;
-        const audio = this.#audio;
-        if (!audio) return;
-        const samples = this.#core.audio_samples();
-        if (samples.length === 0 || this.#speed !== 1) return;
-        if (this.#audioBuffered() > AUDIO_MAX_S) return; // too far ahead: drop
-        audio.sent += samples.length / 2;
-        audio.port.postMessage(samples, [samples.buffer]);
     }
 
     /** One refresh of the display, at `time` (milliseconds). */
     tick(time) {
-        if (!this.#running) return;
+        if (!this.#core.pacer_running()) return;
         this.#frameRequest = this.#scheduler.request((next) => this.tick(next));
-        const elapsed = this.#lastTime === undefined ? FRAME_MS : time - this.#lastTime;
-        this.#lastTime = time;
-        this.#measureRefresh(elapsed);
         this.#safely(() => {
-            this.#emitStats(time);
-            this.#stats.refreshes++;
-            // Audio reports may have produced a picture since the last refresh. Present it
-            // before doing more emulation: replacing it here loses a whole display opportunity.
-            if (this.#speed === 1 && this.#audio && this.#framePending) {
-                this.#draw();
-                return;
-            }
-            const budget = Math.min(Math.max(elapsed * BUSY_SHARE, BUSY_MIN_MS), BUSY_MAX_MS);
-            if (this.#speed === Infinity) {
-                // full speed: frames without picture for most of the refresh, then one shown
-                const start = this.#now();
-                while (this.#now() - start < budget) this.#runFrame(true);
-                this.#runFrame();
-                this.#draw();
-                return;
-            }
-            if (this.#speed !== 1) {
-                // n times real time, by the browser's clock
-                this.#owed = Math.min(this.#owed + elapsed * this.#speed, 4 * this.#speed * FRAME_MS);
-                const start = this.#now();
-                while (this.#owed >= 2 * FRAME_MS && this.#now() - start < budget) {
-                    this.#runFrame(true);
-                    this.#owed -= FRAME_MS;
-                }
-                if (this.#owed >= FRAME_MS) {
-                    this.#runFrame();
-                    this.#owed -= FRAME_MS;
-                }
-                this.#draw();
-                return;
-            }
-            if (this.#refreshesPerFrame > 0) {
-                // one CPC frame every refresh of a 50 Hz display, every other one at 100 Hz...:
-                // each frame on the screen as long as the others (the last one stays shown)
-                if (++this.#refreshes >= this.#refreshesPerFrame) {
-                    this.#refreshes = 0;
-                    const audio = this.#audio;
-                    if (!audio) {
-                        this.#runFrame();
-                    } else if (this.#audioBuffered() < audio.target) {
-                        this.#runFrame();
-                    }
-                    this.#draw();
-                }
-                return;
-            }
-            let frames;
-            if (this.#audio) {
-                // the sound's clock: keep a little of it ahead of the speakers
-                frames = Math.ceil((this.#audio.target - this.#audioBuffered()) * 1000 / FRAME_MS);
-            } else {
-                this.#owed = Math.min(this.#owed + elapsed, 4 * FRAME_MS);
-                frames = Math.floor(this.#owed / FRAME_MS);
-            }
-            frames = Math.max(0, Math.min(frames, 4));
-            const start = this.#now();
-            let completed = 0;
-            while (completed < frames && (completed === 0 || this.#now() - start < REALTIME_BUDGET_MS)) {
-                this.#runFrame();
-                completed++;
-            }
-            if (!this.#audio) this.#owed -= completed * FRAME_MS;
-            this.#draw();
+            const stats = this.#core.pacer_tick(time);
+            this.#flushAudio();
+            this.#uiRequests();
+            if (stats) this.#emit('stats', stats);
         });
         this.#onTick();
-    }
-
-    /** The 'stats' event, once a second. */
-    #emitStats(time) {
-        const stats = this.#stats;
-        if (stats.since === undefined) {
-            stats.since = time;
-            stats.frames = 0;
-            stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = stats.replaced = stats.refreshes = stats.hidden = 0;
-            return;
-        }
-        if (time - stats.since < 1000) return;
-        const fps = stats.frames * 1000 / (time - stats.since);
-        const performance = {
-            frameMs: stats.frames ? stats.frameMs / stats.frames : 0,
-            maxFrameMs: stats.maxFrameMs,
-            drawMs: stats.draws ? stats.drawMs / stats.draws : 0,
-            draws: stats.draws,
-            drawFps: stats.draws * 1000 / (time - stats.since),
-            refreshFps: stats.refreshes * 1000 / (time - stats.since),
-            replaced: stats.replaced,
-            hidden: stats.hidden * 1000 / (time - stats.since)
-        };
-        stats.since = time;
-        stats.frames = 0;
-        stats.frameMs = stats.maxFrameMs = stats.draws = stats.drawMs = stats.replaced = stats.refreshes = stats.hidden = 0;
-        const audio = this.#audio;
-        this.#emit('stats', {
-            fps, speed: fps * FRAME_MS / 1000, performance,
-            audio: audio ? {
-                underruns: audio.underruns, bufferedMs: this.#audioBuffered() * 1000,
-                targetMs: audio.target * 1000, playing: audio.playing
-            } : null
-        });
-    }
-
-    /** Whether the display refreshes at about 50 Hz, from the last 60 animation frames. */
-    #measureRefresh(elapsed) {
-        this.#intervals.push(elapsed);
-        if (this.#intervals.length > 60) this.#intervals.shift();
-        if (this.#intervals.length < 30) return;
-        const sorted = [...this.#intervals].sort((a, b) => a - b);
-        const median = sorted[sorted.length >> 1];
-        const hertz = 1000 / median;
-        this.#refreshesPerFrame = [1, 2, 3, 4].find((k) => Math.abs(hertz - 50 * k) < 1.5 * k) ?? 0;
     }
 }
 
