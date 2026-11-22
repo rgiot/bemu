@@ -676,7 +676,7 @@ mod test {
                 ((x / 3 + y) * 11 % 256) as u8,
             ]);
         }
-        // flat, and through each glass (the beam bent under the mask: `crt.wgsl` and `cpu.rs`)
+        // flat, and through each glass (the beam bent under the mask: `kernel.rs` and `cpu.rs`)
         let cases = [CrtProfile::Ctm644, CrtProfile::Trinitron]
             .into_iter()
             .flat_map(|profile| [(profile, Warp::FLAT), (profile, Warp::of(profile, 1.0))]);

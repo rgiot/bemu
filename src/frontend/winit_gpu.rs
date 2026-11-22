@@ -1,8 +1,8 @@
 //! [`Frontend`] on winit and wgpu: the window is drawn by the GPU.
 //!
-//! The monitor's frame is uploaded as a texture; for a CRT display the shader
-//! pass of `amsrust::display::CrtPass` (the one of the GPU filter, see
-//! `crt.wgsl`) draws the tube's picture in a texture of its own size, and a
+//! The monitor's frame is uploaded as a texture; for a CRT display the pass
+//! of `amsrust::display::CrtPass` (the one of the GPU filter: the CubeCL kernel of
+//! `display/kernel.rs`, which runs on this device) draws the tube's picture in a texture of its own size, and a
 //! blit scales it, letterboxed, to the window with a linear filter. Nothing is
 //! read back: the CPU never sees the filtered picture (a recording asks for a
 //! CPU filter next to it).

@@ -7,7 +7,9 @@
 //! the screenshots of the test suites (which use the monitor's frames
 //! directly) are not affected.
 
-// The CRT on the CPU runs on threads: a web page has the GPU one (WebGPU) instead.
+// The CRT on the CPU runs on threads: a web page has the GPU one (WebGPU) instead. The GPU's is
+// written once as a CubeCL kernel (`kernel.rs`: Vulkan, Metal, DX12 and WebGPU); `cpu.rs` is the
+// software fallback and the reference its tests compare the kernel with.
 #[cfg(not(target_arch = "wasm32"))]
 mod cpu;
 pub mod crt;

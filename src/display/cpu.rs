@@ -429,7 +429,7 @@ impl CpuCrt {
                     level * coverage(distance[x], params.spill, level) * tables.scale;
             }
             Self::finish_row(params, tables, glow, y, &lit, out);
-            // the glass's rounded edge fades the pixels themselves (as `crt.wgsl`)
+            // the glass's rounded edge fades the pixels themselves (as `kernel.rs`)
             for (x, pixel_out) in out.iter_mut().enumerate() {
                 let (_, _, alpha) = warp.source((x as f32 + 0.5) * pixel.0, v, pixel);
                 if alpha < 1.0 {
