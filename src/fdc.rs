@@ -83,8 +83,8 @@ const SETTLE_US: u64 = 15_000;
 
 /// How long a real 765 takes to execute SENSE INTERRUPT STATUS before its first result byte is
 /// ready: the user's 6128 polls it in 164.9 us a turn (SEEKJIT3), where the program's own delays
-/// and an instant answer make 123.9 us; a 72 us answer gives 164.9.
-const SENSE_INTERRUPT_US: u64 = 72;
+/// and an instant answer make 123.9 us; a 71 us answer gives 165.2 (the value of SEEKJIT3 during a seek).
+const SENSE_INTERRUPT_US: u64 = 71;
 /// Bytes between the index hole and the first sector's sync (gap 4a, sync, IAM, gap 1).
 const TRACK_HEAD_BYTES: u64 = 146;
 
@@ -165,7 +165,11 @@ impl DriveKind {
             DriveKind::Gotek => 1,
             // the user's real 3" drive (SEEKJIT4): the time is the steps and nothing more, a seek of
             // 2 tracks takes twice one of 1, no 15 ms of head settling
-            DriveKind::ThreeInch if steps > 0 => steps * step_us,
+            // (86 SEEKJIT4 loops a track on the real drive, 80 when a step takes the 12 ms
+            // SPECIFY asks: 43/40 of it; a seek of 2 tracks or more costs about 12 loops more, 1.8 ms)
+            DriveKind::ThreeInch if steps > 0 => {
+                steps * step_us * 43 / 40 + if steps >= 2 { 1_800 } else { 0 }
+            }
             _ if steps > 0 => steps * step_us + SETTLE_US,
             _ => 1_000,
         }
