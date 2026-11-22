@@ -302,8 +302,8 @@ mod tests {
         let ctx = egui::Context::default();
         let mut draw = |mb: &Motherboard, state: &mut PrinterWindow, time: f64| {
             let input = egui::RawInput { time: Some(time), ..Default::default() };
-            let _ = ctx.run(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| show(ui, mb, state, &mut bus));
+            let _ = ctx.run_ui(input, |root| {
+                egui::CentralPanel::default().show(root, |ui| show(ui, mb, state, &mut bus));
             });
         };
 

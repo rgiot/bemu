@@ -129,7 +129,7 @@ fn level(
 fn indent(ui: &egui::Ui) -> egui::Atom<'static> {
     let spacing = ui.spacing();
     let width = (spacing.icon_width - spacing.button_padding.x).max(0.0);
-    egui::Atom::custom(egui::Id::new("menu-indent"), egui::vec2(width, 0.0))
+    egui::Atom::custom(egui::IdSalt::new("menu-indent"), egui::vec2(width, 0.0))
 }
 
 fn hover(spec: &CommandSpec) -> String {
@@ -222,8 +222,8 @@ mod tests {
             ..Default::default()
         };
         let mut tops = Vec::new();
-        let _ = ctx.run(raw, |ctx| {
-            egui::TopBottomPanel::top("bar").show(ctx, |ui| {
+        let _ = ctx.run_ui(raw, |root| {
+            egui::Panel::top("bar").show(root, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     for name in ["File", "Machine"] {
                         tops.push(ui.menu_button(name, |ui| ui.label(name)).response);

@@ -231,7 +231,7 @@ impl Palette {
                 open = self.contents(ui, &keys, target, bus, recent);
             });
         self.frames += 1;
-        if self.frames > 2 && ctx.input(|i| i.pointer.any_click()) && !ctx.is_pointer_over_area() {
+        if self.frames > 2 && ctx.input(|i| i.pointer.any_click()) && !ctx.is_pointer_over_egui() {
             return false;
         }
         open

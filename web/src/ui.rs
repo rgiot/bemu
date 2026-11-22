@@ -246,6 +246,8 @@ impl WebUi {
             unit: egui::MouseWheelUnit::Point,
             delta: egui::vec2(-dx, -dy),
             modifiers: self.modifiers,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
         });
     }
 
@@ -341,8 +343,9 @@ impl WebUi {
             )),
             viewports: std::iter::once((egui::ViewportId::ROOT, viewport)).collect(),
             time: Some(self.now),
-            modifiers: self.modifiers,
-            events: std::mem::take(&mut self.events),
+            events: std::iter::once(egui::Event::ModifiersChanged(self.modifiers))
+                .chain(std::mem::take(&mut self.events))
+                .collect(),
             focused: true,
             ..Default::default()
         };

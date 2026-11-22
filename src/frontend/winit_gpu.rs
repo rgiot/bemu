@@ -218,6 +218,7 @@ impl ViewWindow {
             },
             alpha_mode: capabilities.alpha_modes[0],
             view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::default(),
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&gfx.device, &config);
@@ -319,12 +320,13 @@ impl ViewWindow {
             self.resize(gfx, size.width, size.height);
         }
         let surface_texture = match self.surface.get_current_texture() {
-            Ok(texture) => texture,
-            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+            wgpu::CurrentSurfaceTexture::Success(texture)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&gfx.device, &self.config);
                 return;
             }
-            Err(_) => return,
+            _ => return,
         };
         let view = surface_texture
             .texture
@@ -347,6 +349,7 @@ impl ViewWindow {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         }));
         let format = self.config.format;
         let painter = self
@@ -364,7 +367,7 @@ impl ViewWindow {
             &output.textures_delta,
         );
         gfx.queue.submit([encoder.finish()]);
-        surface_texture.present();
+        gfx.queue.present(surface_texture);
     }
 }
 
@@ -387,7 +390,7 @@ struct Gfx {
 impl Gfx {
     fn new(window: Arc<Window>, curvature: f32) -> Result<Self, String> {
         let size = window.inner_size();
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance
             .create_surface(window)
             .map_err(|e| format!("cannot draw in the window: {e}"))?;
@@ -415,6 +418,7 @@ impl Gfx {
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: capabilities.alpha_modes[0],
             view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::default(),
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
@@ -451,13 +455,16 @@ impl Gfx {
         ui: Option<&mut UiLayer>,
     ) -> Result<bool, String> {
         let surface_texture = match self.surface.get_current_texture() {
-            Ok(texture) => texture,
-            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+            wgpu::CurrentSurfaceTexture::Success(texture)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(false);
             }
-            Err(wgpu::SurfaceError::Timeout) => return Ok(false),
-            Err(e) => return Err(format!("cannot draw in the window: {e}")),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(false)
+            }
+            other => return Err(format!("cannot draw in the window: {other:?}")),
         };
         let view = surface_texture
             .texture
@@ -506,7 +513,7 @@ impl Gfx {
             );
         }
         self.queue.submit([encoder.finish()]);
-        surface_texture.present();
+        self.queue.present(surface_texture);
         self.shown = Some(mode);
         Ok(true)
     }
@@ -1087,7 +1094,7 @@ impl ApplicationHandler for App {
         if let (Some(ui), Some(window)) = (&mut self.ui, &self.window) {
             if let Some(state) = &mut ui.state {
                 let response = state.on_window_event(window, &event);
-                let typing = ui.ctx.wants_keyboard_input() || ui.ctx.is_popup_open();
+                let typing = ui.ctx.egui_wants_keyboard_input() || ui.ctx.any_popup_open();
                 if let WindowEvent::KeyboardInput { event: key, .. } = &event {
                     if key.state == ElementState::Pressed
                         && (response.consumed || typing || is_ui_shortcut(key, self.modifiers))

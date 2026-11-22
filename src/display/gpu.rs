@@ -141,8 +141,8 @@ impl Blit {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("blit"),
@@ -162,7 +162,7 @@ impl Blit {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         let sampler = |filter| {
@@ -420,8 +420,8 @@ impl CrtPass {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("crt"),
@@ -441,7 +441,7 @@ impl CrtPass {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self {
@@ -488,6 +488,7 @@ impl CrtPass {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
@@ -537,7 +538,7 @@ impl GpuCrt {
 
     /// Seen through the glass `warp` (see [`CrtPass::new`]).
     pub fn curved(params: CrtParams, warp: Warp) -> Result<Self, String> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
             .map_err(|e| format!("no GPU adapter: {e}"))?;
         let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
@@ -614,7 +615,7 @@ impl DisplayFilter for GpuCrt {
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("GPU wait failed");
         {
-            let data = slice.get_mapped_range();
+            let data = slice.get_mapped_range().expect("mapped range");
             for (y, row) in dst.chunks_exact_mut(out_w).enumerate() {
                 let bytes = &data[y * self.padded_row..][..out_w * 4];
                 for (pixel, rgba) in row.iter_mut().zip(bytes.chunks_exact(4)) {
@@ -683,7 +684,7 @@ mod test {
     #[test]
     fn blit_warp_matches_cpu() {
         use crate::display::{Curved, RawFilter, RAW_HEIGHT, RAW_WIDTH};
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let Ok(adapter) =
             block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         else {
@@ -740,6 +741,7 @@ mod test {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             blit.draw(&mut pass, &bind_group);
         }
@@ -765,6 +767,7 @@ mod test {
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         let gpu: Vec<u32> = slice
             .get_mapped_range()
+            .expect("mapped range")
             .chunks_exact(4)
             .map(|rgba| (rgba[0] as u32) << 16 | (rgba[1] as u32) << 8 | rgba[2] as u32)
             .collect();
@@ -848,8 +851,8 @@ impl Resampler {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("resample"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
         let pipeline = |format: wgpu::TextureFormat| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -870,7 +873,7 @@ impl Resampler {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -970,6 +973,7 @@ impl Resampler {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&self.along_x);
         pass.set_bind_group(0, &x_bind_group, &[]);
