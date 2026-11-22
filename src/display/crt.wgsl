@@ -31,6 +31,11 @@ struct Params {
     tint_r: f32,
     tint_g: f32,
     tint_b: f32,
+    // the light of a black (`CrtParams::veil`)
+    veil: f32,
+    pad0: f32,
+    pad1: f32,
+    pad2: f32,
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
@@ -143,7 +148,9 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let x = i32(pos.x);
     let y = i32(pos.y);
     let sw = i32(p.slot_px);
-    let rgb = (1.0 - 2.0 * p.halation) * light(x, y) + p.halation * (light(x - sw, y) + light(x + sw, y));
+    var rgb = (1.0 - 2.0 * p.halation) * light(x, y) + p.halation * (light(x - sw, y) + light(x + sw, y));
+    // the veil of the glass: a share of a white's light everywhere, in the phosphor's colour
+    rgb += p.veil * select(vec3<f32>(1.0), vec3<f32>(p.tint_r, p.tint_g, p.tint_b), p.mono > 0.5);
     // the glass's rounded edge, smoothed over about a pixel (as the blit of a flat picture)
     let q = warped((vec2<f32>(f32(x), f32(y)) + 0.5) / vec2<f32>(f32(p.out_w), f32(p.out_h))) * 2.0 - 1.0;
     let e = abs(q) - (1.0 - p.warp_corner);

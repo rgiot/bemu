@@ -41,6 +41,9 @@ struct Uniforms {
     /// A monochrome tube: 1, and the colour of its phosphor (see `CrtParams::phosphor`); else 0.
     mono: f32,
     tint: [f32; 3],
+    /// The light of a black, see `CrtParams::veil` (and three floats of padding)
+    veil: f32,
+    pad: [f32; 3],
 }
 
 impl Uniforms {
@@ -67,6 +70,8 @@ impl Uniforms {
             edged: if warp.is_flat() { 0.0 } else { 1.0 },
             mono: p.phosphor.map_or(0.0, |_| 1.0),
             tint: p.phosphor.unwrap_or([1.0; 3]),
+            veil: p.veil_light(),
+            pad: [0.0; 3],
         }
     }
 }
