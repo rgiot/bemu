@@ -580,7 +580,8 @@ mod test {
         }
         assert_eq!(p.refreshes_per_frame(), 1);
         let before = env.frames;
-        silent_report(&mut p, &mut env, env.frames as f64 * 960.0, 0.0, true);
+        let received = env.frames as f64 * 960.0;
+        silent_report(&mut p, &mut env, received, 0.0, true);
         assert!(env.frames > before, "audio must refill without waiting for another refresh");
     }
 
