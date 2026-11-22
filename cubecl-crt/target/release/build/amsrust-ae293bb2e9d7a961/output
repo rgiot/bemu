@@ -1,2 +1,0 @@
-cargo:rerun-if-changed=doc/menu-ui.csv
-cargo:rerun-if-changed=build.rs

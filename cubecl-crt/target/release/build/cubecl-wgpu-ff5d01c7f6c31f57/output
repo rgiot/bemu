@@ -1,8 +1,0 @@
-cargo:rustc-check-cfg=cfg(apple_silicon)
-cargo:rustc-check-cfg=cfg(renderdoc)
-cargo:rerun-if-env-changed=CUBECL_VULKAN_VALIDATE
-cargo:rerun-if-env-changed=CARGO_FEATURE_STD
-cargo:rerun-if-env-changed=CARGO_FEATURE_SPIRV
-cargo:rerun-if-env-changed=VULKAN_SDK
-cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS
-cargo:rerun-if-env-changed=CUBECL_DEBUG_PLIRON
