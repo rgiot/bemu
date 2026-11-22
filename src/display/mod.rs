@@ -17,6 +17,8 @@ mod gpu;
 mod kernel;
 #[cfg(all(feature = "crt-gpu", not(target_arch = "wasm32")))]
 mod kernel_crt;
+#[cfg(all(test, feature = "crt-gpu", crt_cpu))]
+mod kernel_tests;
 #[cfg(feature = "crt-gpu")]
 mod picture;
 pub mod resize;
