@@ -1,0 +1,11 @@
+cargo:rustc-check-cfg=cfg(multi_threading)
+cargo:rustc-cfg=multi_threading
+cargo:rustc-check-cfg=cfg(stream_local)
+cargo:rustc-cfg=stream_local
+cargo:rustc-check-cfg=cfg(std_io)
+cargo:rustc-cfg=std_io
+cargo:rustc-check-cfg=cfg(native_cache)
+cargo:rustc-cfg=native_cache
+cargo:rustc-check-cfg=cfg(browser_cache)
+cargo:rustc-check-cfg=cfg(tokio_rt)
+cargo:rustc-check-cfg=cfg(backtrace)
