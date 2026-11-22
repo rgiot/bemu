@@ -485,6 +485,11 @@ impl Crtc {
         self.core.hsync_late_ticks
     }
 
+    /// See [`CrtcChip::interrupt_skew_ticks`].
+    pub fn interrupt_skew_ticks(&self) -> i32 {
+        self.chip.interrupt_skew_ticks()
+    }
+
     /// Start recording the register writes (diagnostics).
     pub fn start_write_log(&mut self) {
         self.core.write_log = Some(Vec::new());

@@ -332,7 +332,9 @@ fn test_interrupt_after_dec_hl_has_a_shorter_response() {
 }
 
 /// IM 2: the handler address is read at I<<8 | #FF (nothing drives the data
-/// bus on a CPC) and the response lasts 6 us (19 T-states + the acknowledge).
+/// bus on a CPC) and the response lasts 7 us after an instruction with fewer than 2 idle T-states
+/// (6 after one with 2 or more): a microsecond more than ACCC's figure, as the user's real 6128
+/// counts it (INTLAT: tests/intlat_probe.rs, 11 of its 12 loop counts equal to the unit).
 #[test]
 fn test_interrupt_mode_2_vectors_through_the_i_register() {
     let mut motherboard = MotherboardBuilder::default()
@@ -358,8 +360,8 @@ fn test_interrupt_mode_2_vectors_through_the_i_register() {
         }
         before = now;
     }
-    // the interrupted NOP (1 us) then the response (6 us)
-    assert_eq!(found, Some(1 + 6), "NOP + IM 2 response in us");
+    // the interrupted NOP (1 us) then the response (7 us)
+    assert_eq!(found, Some(1 + 7), "NOP + IM 2 response in us");
 }
 
 /// NMOS Z80: an interrupt accepted right after `LD A,I` (or `LD A,R`) leaves P/V at 0, not IFF2

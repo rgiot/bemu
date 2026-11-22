@@ -44,8 +44,10 @@ const MONITOR_HSYNC_WINDOW_MARGIN: usize = 48;
 /// Lines without an accepted HSYNC after which the line oscillator unlocks.
 const MONITOR_HSYNC_LOST_LINES: usize = 4;
 
-/// Shortest C-HSYNC pulse (in ticks of 1/16 usec) the monitor reacts to.
-const MONITOR_MIN_HSYNC_TICKS: usize = 12;
+/// Shortest C-HSYNC pulse (in ticks of 1/16 usec) the monitor reacts to: more than 1.5 usec. A CTM 644
+/// ignores a 1 usec C-HSYNC (R3=3 on a CRTC 1): its picture holds where it was, where AMSpiriT Lite moves
+/// it 24 ticks right (HSYNCPOS: CLAUDESTRAD, which agrees with the real CTM 644's photo, holds it).
+const MONITOR_MIN_HSYNC_TICKS: usize = 24;
 /// Lines after the beam started a frame from which the frame oscillator accepts a VSYNC
 /// (Shaker DT: pulses 156 lines apart are not followed, 312 are).
 const MONITOR_VSYNC_WINDOW_START_LINES: usize = 200;
@@ -223,6 +225,7 @@ pub struct Monitor {
     ran_free: bool,
     /// Lines left in which a small phase error is still followed (a correction is going on)
     pll_active: u32,
+    pll_rem: i64,
     /// ticks the pulse's end is ahead of the middle-referenced position (see `follow_sync`)
     sync_adj: i64,
     /// Ticks the beam still waits before the next line starts (a sync that came early)
@@ -286,6 +289,7 @@ impl Monitor {
             synchronised: false,
             ran_free: false,
             pll_active: 0,
+            pll_rem: 0,
             sync_adj: 0,
             hold: 0,
             now: 0,
@@ -701,7 +705,7 @@ impl Monitor {
     }
 
     /// The line oscillator's phase detector: a sync that comes `error` ticks away from where the
-    /// oscillator expected it (negative: early) pulls the start of the line by 3/8 of it, at most
+    /// oscillator expected it (negative: early) pulls the start of the line by a fifth of it, at most
     /// 12 ticks a line, so a moving HSYNC (the waving screens of What a Cool Weekend) shows a smooth
     /// curve; measured against AMSpiriT with validation/fuzz/gen_wave_probe.py. Far outside
     /// that range, or when the oscillator was not locked, the beam simply restarts.
@@ -725,12 +729,12 @@ impl Monitor {
         } else if self.pll_active > 0 {
             self.pll_active -= 1;
         }
-        let pull = if error.abs() <= 1 {
-            error
-        } else {
-            ((error * 3 + 4 * error.signum()) / 8)
-                .clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL)
-        };
+        // a fifth of the error each line, the remainder of the division carried to the next line: the
+        // picture follows a step as a smooth exponential and gets there (CLAUDESTRAD, which agrees with
+        // the real CTM 644's photo: 3, 4, 5, 6, 6, 7, 7, 7, 7, 8 for a step of 8; tests/hsyncpos_probe.rs)
+        let accum = error + self.pll_rem;
+        self.pll_rem = accum % 5;
+        let pull = (accum / 5).clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL);
         let start = error - pull + adj; // ticks since the new line start, at this sync
         if start >= 0 {
             self.x = start as usize;

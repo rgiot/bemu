@@ -220,6 +220,22 @@ pub(crate) fn idle_tail(prefix: OpcodePrefix, op: u8, taken: bool, repeat: bool)
     (((offset + 3) & !3) - offset) as u8
 }
 
+/// Whether the instruction ends with a memory write (a store, a push, a call, a read-modify-write).
+pub(crate) fn ends_with_write(prefix: OpcodePrefix, op: u8, taken: bool) -> bool {
+    match prefix {
+        OpcodePrefix::None => match op {
+            0x02 | 0x12 | 0x22 | 0x32 | 0x34 | 0x35 | 0x36 | 0x70..=0x75 | 0x77 => true,
+            0xc5 | 0xd5 | 0xe5 | 0xf5 | 0xcd => true,
+            _ if op >= 0xc0 && op & 7 == 7 => true,
+            _ if op >= 0xc0 && op & 7 == 4 => taken,
+            _ => false,
+        },
+        OpcodePrefix::Cb => op & 7 == 6 && op >> 6 != 1,
+        OpcodePrefix::Ed => matches!(op, 0x43 | 0x53 | 0x63 | 0x73),
+        _ => false,
+    }
+}
+
 /// The T-state of each microsecond in which the Gate Array leaves /WAIT inactive (ACCC 4.4.2:
 /// "3 Tw followed by a no Tw cycle"; the opcode fetch of an aligned instruction samples it on
 /// its T2).
