@@ -205,7 +205,7 @@ the picture of some frames: a frame without picture costs about a third less, an
 the same (same state, same sound). At most two frames in a row, so a picture comes at least every
 third frame (17 a second). The game keeps its 50 Hz where it would slow down, in exchange for a less
 fluid picture. `stats.performance.hidden` counts them; the demo shows it (its "Frame skip" menu, or
-`?frameskip=auto`). On a native build (CPC+ game, 12 emulated seconds per measure): every frame
+`?frameskip=auto`). The native window has it too (Video > Skip frames when too slow, `frameSkip` in the saved configuration), behind the sound device's clock; a video, WAV or YM recording, a screenshot series, the debugger, a CSL script and the I/O overlay always see every frame. On a native build (CPC+ game, 12 emulated seconds per measure): every frame
 shown 1.21 times real time, one frame in two 1.48, one in three 1.60
 (`cargo run --release --example bench_frameskip -- game.cpr 12 2`).
 

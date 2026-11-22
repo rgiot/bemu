@@ -233,9 +233,9 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
         "video-free-zoom-toggle" => toggle(settings.is_some_and(|s| s.free_zoom)),
         "video-native-zoom-toggle" => toggle(settings.is_some_and(|s| s.native_zoom)),
         "video-fullscreen-toggle" => toggle(settings.is_some_and(|s| s.fullscreen)),
-        // only a web page skips frames (its engine does: see web/js/engine.js)
+        // the window skips frames (src/session.rs), and a page's engine (web/js/engine.js)
         "video-frame-skip-toggle" => CommandState {
-            enabled: has_settings && cfg!(target_arch = "wasm32"),
+            enabled: has_settings,
             checked: settings.is_some_and(|s| s.frame_skip),
         },
         _ => return None,
