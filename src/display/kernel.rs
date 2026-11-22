@@ -392,6 +392,9 @@ pub struct Pipeline {
     close_taps: usize,
     kernel_weights: (f32, f32),
     out_len: usize,
+    /// The units of a cube (the CPU backend runs a cube on one thread: a smaller one spreads
+    /// the picture over more of them).
+    pub cube_dim: u32,
 }
 
 const FINE: usize = GLOW_W * GLOW_H;
@@ -420,6 +423,7 @@ impl Pipeline {
             close_taps: close.len(),
             kernel_weights: (GLOW_CLOSE.1, GLOW_WIDE.1),
             out_len: w * h,
+            cube_dim: 256,
         }
     }
 
@@ -475,8 +479,8 @@ impl Pipeline {
             );
             crt::launch_unchecked(
                 client,
-                CubeCount::Static((self.out_len as u32).div_ceil(256), 1, 1),
-                CubeDim::new_1d(256),
+                CubeCount::Static((self.out_len as u32).div_ceil(self.cube_dim), 1, 1),
+                CubeDim::new_1d(self.cube_dim),
                 arg(frame, frame_words), arg(&self.glow, FINE * 4), arg(&self.params, 26), arg(&self.out, self.out_len),
                 sw, sh,
             );

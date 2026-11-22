@@ -186,7 +186,10 @@ fn cpu_backend_check() {
         old.render(&src, &mut want);
         let old_ms = t.elapsed().as_secs_f64() * 1e3;
         let frame = client.create_from_slice(src.as_raw());
-        let pipeline = Pipeline::new(&client, &params, warp);
+        let mut pipeline = Pipeline::new(&client, &params, warp);
+        if let Some(d) = std::env::var("CUBE_DIM").ok().and_then(|d| d.parse().ok()) {
+            pipeline.cube_dim = d;
+        }
         let t = std::time::Instant::now();
         pipeline.run(&client, &frame, src.as_raw().len() / 4, src.width(), src.height());
         let first = client.read_one(pipeline.out().clone()).unwrap().to_vec();
