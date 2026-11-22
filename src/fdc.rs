@@ -414,6 +414,8 @@ pub struct Fdc {
     /// speed (see `spin_up_us`).
     motor_off_at: Option<u64>,
     ready_at: u64,
+    /// From when the heads read IDs and sectors: a little after the READY line (see `set_motor`).
+    read_ready_at: u64,
     /// Commands that reached their execution phase (sector transfers), wrapping: a drive light's flashes.
     executions: u32,
     drives: [Drive; NB_UNITS],
@@ -476,6 +478,7 @@ impl Default for Fdc {
             motor: false,
             motor_off_at: None,
             ready_at: 0,
+            read_ready_at: 0,
             executions: 0,
             drives: Default::default(),
             st: 0,
@@ -605,7 +608,11 @@ impl Fdc {
 
     pub fn set_motor(&mut self, on: bool) {
         if on && !self.motor {
-            self.ready_at = self.now_us + self.spin_up_us();
+            let spin_up = self.spin_up_us();
+            self.ready_at = self.now_us + spin_up;
+            // READYTST on the real 6128: the first READ ID that works comes 31 frames after the
+            // motor, 3.5 frames after the READY line (27 to 28): the speed has to settle
+            self.read_ready_at = self.ready_at + if spin_up > 0 { 70_000 } else { 0 };
         } else if !on && self.motor {
             self.motor_off_at = Some(self.now_us);
         }
@@ -1034,6 +1041,13 @@ impl Fdc {
     fn ready(&self, unit: usize) -> bool {
         self.motor
             && self.drives[unit].disc.is_some()
+            && (!self.timing || self.now_us >= self.read_ready_at)
+    }
+
+    /// The drive's READY line (ST3's RY): up as the spindle reaches its speed.
+    fn ready_line(&self, unit: usize) -> bool {
+        self.motor
+            && self.drives[unit].disc.is_some()
             && (!self.timing || self.now_us >= self.ready_at)
     }
 
@@ -1093,7 +1107,7 @@ impl Fdc {
         if drive.kind.is_double_sided() {
             st3 |= st3::TS;
         }
-        if self.ready(unit) {
+        if self.ready_line(unit) {
             st3 |= st3::RY;
         }
 
