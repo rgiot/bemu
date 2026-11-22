@@ -180,10 +180,19 @@ pub struct CrtParams {
     /// 5.1 %), where bemu's black ink gave 0.1 %: the beam at the level of a black ink and the
     /// glass's glare. See [`Self::veil_light`].
     pub veil: f32,
+    /// How much darker the edge of the picture is than its centre, the light falling as
+    /// `1 - vignette * r²` with `r` 1 at the middle of an edge. Measured on the photographs: the
+    /// white of a CTM's screen is 0.72 of the centre's at the middle of the edge, 0.62 at the
+    /// corners' distance (a camera's lens takes its share of it). It is more than the photographs'
+    /// 0.30 a unit of r² in light because the white of the model is clipped: the centre is above 1.
+    pub vignette: f32,
 }
 
 /// What the real CTMs' photographs show of a black, see [`CrtParams::veil`].
 pub const VEIL: f32 = 0.035;
+
+/// What the real CTMs' photographs show of the edges, see [`CrtParams::vignette`].
+pub const VIGNETTE: f32 = 0.55;
 
 /// The luminance of a pixel's light: the green screen of the CPC shows the colours as the
 /// luminance they would have on a black and white television.
@@ -205,6 +214,7 @@ impl CrtParams {
             gain: 3.0,
             phosphor: None,
             veil: VEIL,
+            vignette: VIGNETTE,
         };
         match profile {
             CrtProfile::Ctm644 => base,

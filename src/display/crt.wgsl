@@ -33,7 +33,7 @@ struct Params {
     tint_b: f32,
     // the light of a black (`CrtParams::veil`)
     veil: f32,
-    pad0: f32,
+    vignette: f32,
     pad1: f32,
     pad2: f32,
 }
@@ -156,6 +156,8 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let e = abs(q) - (1.0 - p.warp_corner);
     let distance = length(max(e, vec2<f32>(0.0))) + min(max(e.x, e.y), 0.0) - p.warp_corner;
     let pixel = 2.0 / f32(max(p.out_w, p.out_h));
+    let v = (vec2<f32>(f32(x), f32(y)) + 0.5) / vec2<f32>(f32(p.out_w), f32(p.out_h)) * 2.0 - 1.0;
+    rgb *= max(1.0 - p.vignette * dot(v, v), 0.0);
     let alpha = mix(1.0, clamp(0.5 - distance / pixel, 0.0, 1.0), p.edged);
     return vec4<f32>(sqrt(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0))) * alpha, 1.0);
 }
