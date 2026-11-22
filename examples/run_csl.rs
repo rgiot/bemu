@@ -58,7 +58,7 @@ fn main() {
             });
         runner.set_drive_kind(unit, kind);
     }
-    runner.set_display_filter((!display.is_raw()).then(|| display.filter_on(false, curvature)));
+    runner.set_display_filter((!display.is_raw()).then(|| display.filter_on(true, curvature)));
     runner.set_black_level(black_level);
     runner.set_verbose(true);
     match runner.run_file(&script) {
