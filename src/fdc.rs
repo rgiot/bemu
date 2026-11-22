@@ -1123,17 +1123,24 @@ impl Fdc {
         let drive = &self.drives[unit];
         let disc = drive.disc.as_ref()?;
         // a bitstream says where its sectors are; for a DSK they are laid out as Format Track would
-        if let Some(timing) = disc.track_timing(side, drive.track) {
-            return Some(Layout {
+        let mut layout = if let Some(timing) = disc.track_timing(side, drive.track) {
+            Layout {
                 id_start: timing.id_start.clone(),
                 id_end: timing.id_end.clone(),
                 data_start: timing.data_start.clone(),
                 period: timing.period.max(1),
-            });
+            }
+        } else {
+            disc.track(side, drive.track)
+                .filter(|track| !track.sectors.is_empty())
+                .map(Layout::of)?
+        };
+        if drive.kind == DriveKind::ThreeInch {
+            // the user's real 6128 turns its 3" disc in 204.7 ms, not 200: 200 turns took 2050 frames
+            // of 19.968 ms (ROTATION); the data rate is the chip's, so the track just has a longer gap
+            layout.period = layout.period * 10_233 / 10_000;
         }
-        disc.track(side, drive.track)
-            .filter(|track| !track.sectors.is_empty())
-            .map(Layout::of)
+        Some(layout)
     }
 
     /// The sector that passes next under the head at `t_cursor` becomes the cursor.

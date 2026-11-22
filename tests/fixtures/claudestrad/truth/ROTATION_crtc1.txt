@@ -1,2 +1,2 @@
-200 tours = 2050 trames de 19,968 ms
+~200 tours = 2050 trames de 19,968 ms
 (300 tr/min exact = 2003 trames)
