@@ -589,7 +589,7 @@ impl Fdc {
                 self.drives[unit].track = track;
                 self.drives[unit].cursor = 0;
                 self.pending_interrupt[unit] = Some(st0);
-                self.seeking &= !(1 << unit);
+                // (D0B-D3B stay set after the seek: only SENSE INTERRUPT STATUS clears them, as on the user's real 6128, SEEKJIT2: no change of D0B in 0.7 s)
             } else {
                 i += 1;
             }
@@ -1085,6 +1085,7 @@ impl Fdc {
         match self.pending_interrupt.iter().position(Option::is_some) {
             Some(unit) => {
                 let st0 = self.pending_interrupt[unit].take().unwrap_or(0);
+                self.seeking &= !(1 << unit);
                 self.result = vec![st0, self.drives[unit].track];
             }
             // No interrupt pending: the chip treats this as an invalid
