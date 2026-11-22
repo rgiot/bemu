@@ -530,26 +530,9 @@ fn shortcut(key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<&'static st
         .map(|spec| spec.id)
 }
 
-/// `samples` (interleaved, -1 to 1) as a 16-bit PCM WAV file.
+/// `samples` (interleaved, -1 to 1) as a 16-bit PCM WAV file: the library's writer.
 fn wav(samples: &[f32], rate: u32, channels: u16) -> Vec<u8> {
-    let data_len = (samples.len() * 2) as u32;
-    let mut wav = Vec::with_capacity(44 + samples.len() * 2);
-    wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
-    wav.extend_from_slice(b"WAVEfmt ");
-    wav.extend_from_slice(&16u32.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
-    wav.extend_from_slice(&channels.to_le_bytes());
-    wav.extend_from_slice(&rate.to_le_bytes());
-    wav.extend_from_slice(&(rate * u32::from(channels) * 2).to_le_bytes());
-    wav.extend_from_slice(&(channels * 2).to_le_bytes());
-    wav.extend_from_slice(&16u16.to_le_bytes());
-    wav.extend_from_slice(b"data");
-    wav.extend_from_slice(&data_len.to_le_bytes());
-    for sample in samples {
-        wav.extend_from_slice(&((sample.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
-    }
-    wav
+    amsrust::sound_export::wav_bytes(samples, rate, channels)
 }
 
 #[cfg(test)]

@@ -620,7 +620,7 @@ impl Window {
         #[cfg(feature = "audio")]
         if !settings.muted {
             if let Some(audio) = &self.audio {
-                return audio.buffered() < crate::host_audio::TARGET_LATENCY / 2;
+                return amsrust::audio_mix::Pacing::DESKTOP.is_behind(audio.buffered());
             }
         }
         let _ = settings;
@@ -632,22 +632,17 @@ impl Window {
         if settings.muted || settings.speed != Speed::Factor(1.0) {
             return;
         }
-        let stereo = self.audio_stereo();
-        let gain = f32::from(settings.volume) / 100.0;
-        if gain == 1.0 && (settings.stereo || !stereo) {
+        let channels = if self.audio_stereo() { 2 } else { 1 };
+        let mix = amsrust::audio_mix::Mix {
+            stereo: settings.stereo,
+            volume: settings.volume,
+        };
+        if mix.is_neutral(channels) {
             play_frame_audio(self.audio.as_ref(), samples, self.window.as_ref());
             return;
         }
         let mut samples = samples.to_vec();
-        if stereo && !settings.stereo {
-            for pair in samples.chunks_mut(2) {
-                let mono = pair.iter().sum::<f32>() / pair.len() as f32;
-                pair.fill(mono);
-            }
-        }
-        for sample in &mut samples {
-            *sample *= gain;
-        }
+        mix.apply(&mut samples, channels);
         play_frame_audio(self.audio.as_ref(), &samples, self.window.as_ref());
     }
 

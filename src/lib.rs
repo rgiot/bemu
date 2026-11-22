@@ -28,6 +28,7 @@ pub mod nova;
 pub mod overlay;
 pub mod pal;
 pub mod ppi;
+pub mod audio_mix;
 pub mod psg;
 pub mod roms;
 pub mod shakerland;

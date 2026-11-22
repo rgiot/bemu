@@ -932,10 +932,7 @@ impl Emulator {
         let mut samples = self.machine().take_audio_samples();
         // Audio > Mono: both channels the mix of the two
         if self.ui.as_ref().is_some_and(|ui| !ui.settings.stereo) {
-            for pair in samples.chunks_mut(2) {
-                let mono = pair.iter().sum::<f32>() / pair.len() as f32;
-                pair.fill(mono);
-            }
+            amsrust::audio_mix::fold_to_mono(&mut samples, 2);
         }
         // Audio > Record WAV: what the page plays
         if let Some((recorded, ..)) = self.ui.as_mut().and_then(|ui| ui.wav.as_mut()) {
