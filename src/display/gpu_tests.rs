@@ -49,11 +49,14 @@ fn the_gpu_gives_the_cpu_backends_picture() {
         };
         let mut cpu = KernelCrt::new(profile.params(), warp, Backend::Cpu).unwrap();
         let (w, h) = cpu.output_size();
-        for src in [pattern(), noise()] {
+        for (name, src) in [("pattern", pattern()), ("noise", noise())] {
             let (mut a, mut b) = (vec![0; w * h], vec![0; w * h]);
             cpu.render(&src, &mut a);
             gpu.render(&src, &mut b);
             let (worst, off) = compare(&a, &b);
+            // where the worst difference is (for the report)
+            let (at, _) = a.iter().zip(&b).enumerate().map(|(i, (p, q))| (i, [0, 8, 16].iter().map(|s| (((p >> s) & 255) as i32 - ((q >> s) & 255) as i32).abs()).max().unwrap())).max_by_key(|x| x.1).unwrap();
+            println!("{profile:?} {curvature} {name}: worst {worst} at ({}, {}) cpu {:06x} gpu {:06x}, {off} off", at % w, at / w, a[at], b[at]);
             assert!(worst <= 6 && off < w * h * 3 / 1000, "{profile:?} {curvature}: worst {worst}, {off} values off by more than 3");
         }
     }
