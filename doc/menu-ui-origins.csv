@@ -6,6 +6,7 @@ drive-a-remove-disc,web eject(),draft,"WinAPE, ACE, Caprice"
 drive-a-save-disc,--save-discs (automatic only); web getDisc(),added,"WinAPE, ACE"
 drive-a-save-disc-as,examples/dsk_to_hfe (HFE conversion),added,"WinAPE, ACE"
 drive-a-insert-recent,new,added,"WinAPE, ACE, RVM"
+drive-a-insert-from-archive,new,added,
 drive-a-original,--drive-a 3 / --drive-b 3,filled,
 drive-a-pc,--drive-a 3.5 / --drive-b 3.5,filled,
 drive-a-gotek,yes,filled,ACE
@@ -16,6 +17,7 @@ drive-b-remove-disc,web eject(),added,"WinAPE, ACE, Caprice"
 drive-b-save-disc,--save-discs (automatic only); web getDisc(),added,"WinAPE, ACE"
 drive-b-save-disc-as,examples/dsk_to_hfe (HFE conversion),added,"WinAPE, ACE"
 drive-b-insert-recent,new,added,"WinAPE, ACE, RVM"
+drive-b-insert-from-archive,new,added,
 drive-b-original,--drive-a 3 / --drive-b 3,added,
 drive-b-pc,--drive-a 3.5 / --drive-b 3.5,added,
 drive-b-gotek,yes,added,ACE

@@ -726,13 +726,60 @@ pub(crate) fn zip_entry_by_file_name(bytes: &[u8], name: &str) -> Option<Vec<u8>
     Some(data)
 }
 
+/// The paths of the disc images (DSK, HFE) the archive `bytes` (zip, 7z or tar.gz) holds, in the
+/// archive's order; none when it is not an archive.
+pub fn archive_disc_entries(bytes: &[u8]) -> Vec<String> {
+    if !is_archive(bytes) {
+        return Vec::new();
+    }
+    let names: Vec<String> = if bytes.starts_with(b"PK\x03\x04") {
+        let Ok(mut archive) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
+            return Vec::new();
+        };
+        // in the order they are stored in
+        (0..archive.len())
+            .filter_map(|i| archive.by_index_raw(i).ok().map(|f| f.name().to_owned()))
+            .collect()
+    } else {
+        unpack_all(bytes)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    };
+    names
+        .into_iter()
+        .filter(|n| !n.ends_with('/') && has_extension(n, &DISC_EXTENSIONS))
+        .collect()
+}
+
+/// The disc images of the archive the disc argument `spec` names (`games.zip` or
+/// `games.zip#side b.dsk`): see [`archive_disc_entries`]. None when `spec` is not an archive's.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn archive_disc_entries_of_file(spec: &str) -> Vec<String> {
+    let (path, _) = split_disc_spec(spec);
+    if !has_extension(path, &ARCHIVE_EXTENSIONS) {
+        return Vec::new();
+    }
+    std::fs::read(path)
+        .map(|bytes| archive_disc_entries(&bytes))
+        .unwrap_or_default()
+}
+
+/// A page has no file to read.
+#[cfg(target_arch = "wasm32")]
+pub fn archive_disc_entries_of_file(_spec: &str) -> Vec<String> {
+    Vec::new()
+}
+
+/// The extensions of the archives a disc may come from.
+const ARCHIVE_EXTENSIONS: [&str; 4] = ["zip", "7z", "gz", "tgz"];
+
 /// Split a disc argument into the file and, for a zip archive, the entry after a `#`
 /// (`games.zip#side b.dsk`). A `#` in a name that is not an archive's stays in the path.
 pub fn split_disc_spec(spec: &str) -> (&str, Option<&str>) {
     match spec.rsplit_once('#') {
-        Some((path, entry))
-            if has_extension(path, &["zip", "7z", "gz", "tgz"]) && !entry.is_empty() =>
-        {
+        Some((path, entry)) if has_extension(path, &ARCHIVE_EXTENSIONS) && !entry.is_empty() => {
             (path, Some(entry))
         }
         _ => (spec, None),
@@ -917,6 +964,19 @@ mod test {
             };
             assert_eq!(ids(ta), ids(tb), "track {track}");
         }
+    }
+
+    #[test]
+    fn an_archive_lists_its_disc_images() {
+        let zip = zip_of(&[
+            ("readme.txt", b"x"),
+            ("dir/", b""),
+            ("b.DSK", b"x"),
+            ("a.hfe", b"x"),
+        ]);
+        assert_eq!(archive_disc_entries(&zip), ["b.DSK", "a.hfe"]);
+        assert!(archive_disc_entries(b"MV - CPC").is_empty());
+        assert!(archive_disc_entries_of_file("validation/RHINO.DSK").is_empty());
     }
 
     #[test]
