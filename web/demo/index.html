@@ -136,6 +136,7 @@ emu.on('stats', ({ fps, speed: times, audio, performance: p }) =>
   document.querySelector('#stats').textContent = `${fps.toFixed(1)} frames/s, ${times.toFixed(2)}\u00d7 real time` +
     `; emulation ${p.frameMs.toFixed(1)} ms/frame (max ${p.maxFrameMs.toFixed(0)}), drawing ${p.drawMs.toFixed(1)} ms` +
     ` (${p.drawFps.toFixed(0)}/s), ${emu.backend}, ${form.elements.display.value}` +
+    (p.hidden > 0 ? `; ${p.hidden.toFixed(0)}/s frames without a picture (too slow for real time)` : '') +
     (audio ? `; audio underruns: ${audio.underruns}, buffer: ${audio.bufferedMs.toFixed(0)}/${audio.targetMs.toFixed(0)} ms` : ''));
 document.querySelector('#type').onclick = () => {
   emu.typeText(document.querySelector('#text').value + '\n');

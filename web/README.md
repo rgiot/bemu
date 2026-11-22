@@ -188,9 +188,21 @@ have the focus, to the CPC otherwise.
   that the audio buffer ran dry; it does not detect every possible audio glitch. `performance`
   contains `frameMs` (average), `maxFrameMs`, `drawMs` (average CPU-side draw call duration),
   `draws` (count), `drawFps` and `refreshFps` (per second), and `replaced` (frame advances
-  replaced by another before a draw). These count draw submissions and scheduled callbacks,
+  replaced by another before a draw) and `hidden` (frames a second made without a picture,
+  see "A machine too slow"). These count draw submissions and scheduled callbacks,
   not frames actually presented by the browser or GPU. Draw timing does not measure asynchronous
   GPU completion.
+
+### A machine too slow
+
+At normal speed, when the machine cannot keep real time (the sound has less than half of its
+target queued; without sound, more than a frame is owed), the engine stops making the picture of
+some frames: a frame without picture costs about a third less, and the program runs the same
+(same state, same sound). At most two frames in a row, so a picture comes at least every third
+frame (17 a second). The game keeps its 50 Hz where it would slow down, in exchange for a less fluid
+picture. `stats.performance.hidden` counts them; the demo shows it. On a native build (CPC+ game, 6
+emulated seconds per measure): every frame shown 1.21 times real time, one frame in two 1.48, one in
+three 1.60 (`cargo run --release --example bench_frameskip -- game.cpr 12 2`).
 
 To bypass stale cached assets when testing, add a new `?bemuVersion=...` value to the demo URL
 and reload. The demo passes this value to the emulator module, which propagates its query string
