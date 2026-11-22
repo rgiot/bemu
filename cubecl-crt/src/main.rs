@@ -148,9 +148,7 @@ fn quad_pass_check() {
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let data = staging.slice(..).get_mapped_range().unwrap();
 
-    let mut cpu = CpuCrt::new(params.clone()).curved(warp);
-    let mut want = vec![0u32; w * h];
-    cpu.render(&src, &mut want);
+    let (want, _, _) = cpu_reference(&params, warp, &src);
     let (mut worst, mut off) = (0i32, 0usize);
     for y in 0..h {
         for x in 0..w {
