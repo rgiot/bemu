@@ -233,20 +233,6 @@ impl FrameTexture {
     }
 }
 
-/// The frame as the kernel takes it (words `0xBBGGRR`, padded with black to the monitor's size) and
-/// its glow cells ([`GlowField`]).
-pub fn crt_inputs(src: &RgbImage) -> (Vec<u32>, Vec<f32>) {
-    let mut frame = vec![0u32; SRC_WIDTH * SRC_HEIGHT];
-    let width = (src.width() as usize).min(SRC_WIDTH);
-    for y in 0..(src.height() as usize).min(SRC_HEIGHT) {
-        let row = &src.as_raw()[y * src.width() as usize * 3..][..width * 3];
-        for (x, p) in row.chunks_exact(3).enumerate() {
-            frame[y * SRC_WIDTH + x] = p[0] as u32 | (p[1] as u32) << 8 | (p[2] as u32) << 16;
-        }
-    }
-    (frame, GlowField::new(src).texels())
-}
-
 type Server = cubecl::wgpu::WgpuServer<cubecl::wgpu::AutoCompiler>;
 
 /// CubeCL running on the application's own wgpu device: the kernel's picture is a buffer of that
@@ -319,37 +305,73 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 /// buffer, and a pass draws it into a `Rgba8Unorm` target of [`CrtParams::output_size`].
 pub struct CrtPass {
     ctx: GpuContext,
-    out_len: usize,
-    // the handles keep the buffers alive
-    frame: cubecl::server::Handle,
-    glow: cubecl::server::Handle,
-    params: cubecl::server::Handle,
-    out: cubecl::server::Handle,
-    frame_buffer: (wgpu::Buffer, u64),
-    glow_buffer: (wgpu::Buffer, u64),
+    pipeline_cube: super::kernel::Pipeline,
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
 }
 
+/// The monitor's frame on the GPU: its RGB bytes as they are (no conversion on the CPU), for the
+/// kernels of [`CrtPass`].
+pub struct GpuFrame {
+    ctx: GpuContext,
+    handle: cubecl::server::Handle,
+    buffer: (wgpu::Buffer, u64),
+    /// The words of the buffer.
+    words: usize,
+    /// The size of the frame in it.
+    size: (u32, u32),
+}
+
+impl GpuFrame {
+    pub fn new(ctx: &GpuContext) -> Self {
+        let words = SRC_WIDTH * SRC_HEIGHT * 3 / 4 + 1;
+        let handle = ctx.client.create_from_slice(&vec![0u8; words * 4]);
+        let buffer = ctx.buffer(&handle);
+        Self {
+            ctx: ctx.clone(),
+            handle,
+            buffer,
+            words,
+            size: (SRC_WIDTH as u32, SRC_HEIGHT as u32),
+        }
+    }
+
+    /// The monitor's next frame (what is larger than the monitor's picture is cut).
+    pub fn upload(&mut self, queue: &wgpu::Queue, src: &RgbImage) {
+        let (w, h) = (
+            (src.width() as usize).min(SRC_WIDTH),
+            (src.height() as usize).min(SRC_HEIGHT),
+        );
+        // what the kernels still have to read is submitted before the new frame is written
+        let _ = self.ctx.client.flush();
+        let raw = src.as_raw();
+        let mut bytes = std::borrow::Cow::Borrowed(&raw[..w * h * 3]);
+        if w != src.width() as usize {
+            let row = src.width() as usize * 3;
+            bytes = std::borrow::Cow::Owned((0..h).flat_map(|y| raw[y * row..][..w * 3].iter().copied()).collect());
+        }
+        if bytes.len() % 4 != 0 {
+            let mut padded = bytes.into_owned();
+            padded.resize(padded.len().div_ceil(4) * 4, 0);
+            bytes = std::borrow::Cow::Owned(padded);
+        }
+        queue.write_buffer(&self.buffer.0, self.buffer.1, &bytes);
+        self.size = (w as u32, h as u32);
+        debug_assert!(bytes.len() <= self.words * 4);
+    }
+}
+
 impl CrtPass {
-    /// Seen through the glass `warp`: the beam's raster bends under the fixed mask. The frame is
-    /// black until [`Self::upload`].
+    /// Seen through the glass `warp`: the beam's raster bends under the fixed mask.
     pub fn new(
         ctx: &GpuContext,
         device: &wgpu::Device,
         params: &CrtParams,
         warp: Warp,
     ) -> Result<Self, String> {
-        let client = &ctx.client;
         let (w, h) = params.output_size();
-        let frame = client.create_from_slice(&vec![0u8; SRC_WIDTH * SRC_HEIGHT * 4]);
-        let glow = client.create_from_slice(&vec![0u8; GLOW_W * GLOW_H * 16]);
-        let packed = super::kernel::pack(params, warp);
-        let params_handle = client.create_from_slice(bytemuck::cast_slice(&packed));
-        let out = client.empty(w * h * 4);
-        let frame_buffer = ctx.buffer(&frame);
-        let glow_buffer = ctx.buffer(&glow);
-        let out_buffer = ctx.buffer(&out);
+        let pipeline_cube = super::kernel::Pipeline::new(&ctx.client, params, warp);
+        let out_buffer = ctx.buffer(pipeline_cube.out());
 
         let align = device.limits().min_storage_buffer_offset_alignment as u64;
         if out_buffer.1 % align != 0 {
@@ -445,24 +467,16 @@ impl CrtPass {
         });
         Ok(Self {
             ctx: ctx.clone(),
-            out_len: w * h,
-            frame,
-            glow,
-            params: params_handle,
-            out,
-            frame_buffer,
-            glow_buffer,
+            pipeline_cube,
             pipeline,
             bind_group,
         })
     }
 
-    /// The monitor's next frame, as [`crt_inputs`] makes it.
-    pub fn upload(&self, queue: &wgpu::Queue, frame: &[u32], glow: &[f32]) {
-        // what the kernel still has to read is submitted before the new frame is written
-        let _ = self.ctx.client.flush();
-        queue.write_buffer(&self.frame_buffer.0, self.frame_buffer.1, bytemuck::cast_slice(frame));
-        queue.write_buffer(&self.glow_buffer.0, self.glow_buffer.1, bytemuck::cast_slice(glow));
+    /// The glow cells the kernels worked out last (four floats a cell), read back: for the tests.
+    pub fn glow_cells(&self) -> Vec<f32> {
+        let bytes = self.ctx.client.read_one(self.pipeline_cube.glow().clone()).expect("the glow");
+        bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
     }
 
     /// A texture the pass can draw in, of the picture's size.
@@ -488,22 +502,11 @@ impl CrtPass {
         })
     }
 
-    /// Run the kernel (submitted now), then draw its picture into `target` with `encoder`.
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
-        use cubecl::prelude::*;
-        let n = self.out_len as u32;
-        // SAFETY: the buffers are the sizes the kernel reads and writes (`kernel.rs`)
-        unsafe {
-            super::kernel::crt::launch_unchecked(
-                &self.ctx.client,
-                CubeCount::Static(n.div_ceil(256), 1, 1),
-                CubeDim::new_1d(256),
-                BufferArg::from_raw_parts(self.frame.clone(), SRC_WIDTH * SRC_HEIGHT),
-                BufferArg::from_raw_parts(self.glow.clone(), GLOW_W * GLOW_H * 4),
-                BufferArg::from_raw_parts(self.params.clone(), 26),
-                BufferArg::from_raw_parts(self.out.clone(), self.out_len),
-            );
-        }
+    /// Run the kernels on `frame` (submitted now), then draw the picture into `target` with
+    /// `encoder`.
+    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, frame: &GpuFrame) {
+        self.pipeline_cube
+            .run(&self.ctx.client, &frame.handle, frame.words, frame.size.0, frame.size.1);
         let _ = self.ctx.client.flush();
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("crt"),
@@ -535,6 +538,7 @@ pub struct GpuCrt {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pass: CrtPass,
+    frame: GpuFrame,
     target: wgpu::Texture,
     readback: wgpu::Buffer,
     /// Bytes per row of `readback`, a multiple of wgpu's copy alignment.
@@ -577,6 +581,7 @@ impl GpuCrt {
         let (out_w, out_h) = params.output_size();
         let ctx = GpuContext::new(&instance, &adapter, &device, &queue)?;
         let pass = CrtPass::new(&ctx, &device, &params, warp)?;
+        let frame = GpuFrame::new(&ctx);
         let target = CrtPass::create_target(&device, &params, wgpu::TextureUsages::COPY_SRC);
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
         let padded_row = (out_w * 4).div_ceil(align) * align;
@@ -591,6 +596,7 @@ impl GpuCrt {
             device,
             queue,
             pass,
+            frame,
             target,
             readback,
             padded_row,
@@ -608,8 +614,7 @@ impl DisplayFilter for GpuCrt {
         let (out_w, out_h) = self.params.output_size();
         assert_eq!(dst.len(), out_w * out_h);
 
-        let (frame, glow) = crt_inputs(src);
-        self.pass.upload(&self.queue, &frame, &glow);
+        self.frame.upload(&self.queue, src);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -618,6 +623,7 @@ impl DisplayFilter for GpuCrt {
             &self
                 .target
                 .create_view(&wgpu::TextureViewDescriptor::default()),
+            &self.frame,
         );
         encoder.copy_texture_to_buffer(
             self.target.as_image_copy(),
@@ -708,6 +714,71 @@ mod test {
                 "{profile:?} {warp:?}: {off} channel values differ by more than 3 (worst {worst})"
             );
         }
+    }
+
+    /// A device with CubeCL on it, if the machine has an adapter.
+    fn cube() -> Option<(wgpu::Device, wgpu::Queue, GpuContext)> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let Ok(adapter) = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("skipped: no GPU adapter");
+            return None;
+        };
+        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+        let ctx = GpuContext::new(&instance, &adapter, &device, &queue).ok()?;
+        Some((device, queue, ctx))
+    }
+
+    /// The glow the kernels work out on the GPU is the one of `GlowField` (the CPU renderer's), for
+    /// a frame of the monitor's size and for a smaller one.
+    #[test]
+    fn the_glow_is_the_same_on_the_gpu() {
+        let Some((device, queue, ctx)) = cube() else { return };
+        let params = CrtProfile::Ctm644.params();
+        let pass = CrtPass::new(&ctx, &device, &params, Warp::FLAT).unwrap();
+        let target = CrtPass::create_target(&device, &params, wgpu::TextureUsages::empty());
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut frame = GpuFrame::new(&ctx);
+        for (w, h) in [(SRC_WIDTH as u32, SRC_HEIGHT as u32), (384, 200), (770, 280)] {
+            let mut src = RgbImage::new(w, h);
+            for (x, y, pixel) in src.enumerate_pixels_mut() {
+                *pixel = Rgb([(x * 7 % 256) as u8, (y * 5 % 256) as u8, ((x / 3 + y) * 11 % 256) as u8]);
+            }
+            frame.upload(&queue, &src);
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            pass.encode(&mut encoder, &view, &frame);
+            queue.submit([encoder.finish()]);
+            let want = GlowField::new(&src).texels();
+            let got = pass.glow_cells();
+            assert_eq!(got.len(), want.len());
+            let worst = got.iter().zip(&want).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+            assert!(worst < 1e-4, "{w}x{h}: the glow differs by {worst}");
+        }
+    }
+
+    /// A frame smaller than the monitor's (the kernels read its own width) gives the CPU's picture.
+    #[test]
+    fn gpu_matches_cpu_on_a_smaller_frame() {
+        let mut src = RgbImage::new(384, 200);
+        for (x, y, pixel) in src.enumerate_pixels_mut() {
+            *pixel = Rgb([(x * 7 % 256) as u8, (y * 5 % 256) as u8, ((x / 3 + y) * 11 % 256) as u8]);
+        }
+        let params = CrtProfile::Ctm644.params();
+        let Ok(mut gpu) = GpuCrt::new(params.clone()) else {
+            eprintln!("skipped: no GPU");
+            return;
+        };
+        let mut cpu = CpuCrt::new(params);
+        let (w, h) = cpu.output_size();
+        let (mut a, mut b) = (vec![0; w * h], vec![0; w * h]);
+        cpu.render(&src, &mut a);
+        gpu.render(&src, &mut b);
+        let off = a
+            .iter()
+            .zip(&b)
+            .flat_map(|(p, q)| [0, 8, 16].map(|s| (((p >> s) & 255) as i32 - ((q >> s) & 255) as i32).abs()))
+            .filter(|&d| d > 3)
+            .count();
+        assert!(off < w * h / 1000, "{off} channel values differ by more than 3");
     }
 
     /// The blit's glass is the CPU's [`crate::display::Curved`]: the same pixels are lit.

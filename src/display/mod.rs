@@ -31,7 +31,7 @@ pub use curved::Curved;
 #[cfg(all(feature = "crt-gpu", not(target_arch = "wasm32")))]
 pub use gpu::{wait_for, GpuCrt};
 #[cfg(feature = "crt-gpu")]
-pub use gpu::{crt_inputs, Blit, CrtPass, FrameTexture, GpuContext, Resampler};
+pub use gpu::{Blit, CrtPass, FrameTexture, GpuContext, GpuFrame, Resampler};
 #[cfg(feature = "crt-gpu")]
 pub use picture::{picture_scale, Picture};
 

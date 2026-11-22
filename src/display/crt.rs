@@ -196,6 +196,9 @@ pub const VEIL: f32 = 0.0;
 /// The glow's grid: a cell is 4 pixels of the source.
 pub const GLOW_W: usize = SRC_WIDTH / 4;
 pub const GLOW_H: usize = SRC_HEIGHT / 4;
+/// The coarse grid of the wide blur: four fine cells to a coarse one (and a last row).
+pub const GLOW_CW: usize = GLOW_W / 4;
+pub const GLOW_CH: usize = GLOW_H / 4 + 1;
 
 /// The glow of what is bright on what is around it, as TuxAPE's view of a CTM has it (what it
 /// measured on photographs: right beside a large bright area the dark is lit to a few hundredths
@@ -210,6 +213,18 @@ pub const GLOW_WIDE: (f32, f32) = (160.0, 0.085);
 /// gives 0.085 for the wide one, TuxAPE's own value (the data cannot tell the close one, whose
 /// light is under a pixel of the edge of the bright).
 pub const GLOW: f32 = 1.0;
+
+/// The taps of a Gaussian of `sigma` cells, from -4 sigma to 4 sigma, their sum 1: what the CPU
+/// blur and the GPU's (`kernel.rs`) share.
+pub fn gauss_taps(sigma: f32) -> Vec<f32> {
+    let radius = (sigma * 4.0).ceil() as isize;
+    let mut kernel: Vec<f32> = (-radius..=radius)
+        .map(|d| (-((d * d) as f32) / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let sum: f32 = kernel.iter().sum();
+    kernel.iter_mut().for_each(|k| *k /= sum);
+    kernel
+}
 
 /// The glow of a frame, in units of a white's light: the light of the source blurred two ways,
 /// weighted, on a grid of [`GLOW_W`] × [`GLOW_H`] cells.
@@ -237,7 +252,7 @@ impl GlowField {
         }
         let close = Self::blur(&light, GLOW_W, GLOW_H, GLOW_CLOSE.0 / 4.0);
         // the wide one on a grid four times coarser, then back (it is smooth)
-        let (cw, ch) = (GLOW_W / 4, GLOW_H / 4 + 1);
+        let (cw, ch) = (GLOW_CW, GLOW_CH);
         let mut coarse = vec![[0.0f32; 3]; cw * ch];
         for y in 0..GLOW_H {
             for x in 0..GLOW_W {
@@ -275,12 +290,8 @@ impl GlowField {
 
     /// Gaussian blur (zero outside the picture) with `sigma` cells.
     fn blur(cells: &[[f32; 3]], w: usize, h: usize, sigma: f32) -> Vec<[f32; 3]> {
-        let radius = (sigma * 4.0).ceil() as isize;
-        let mut kernel: Vec<f32> = (-radius..=radius)
-            .map(|d| (-((d * d) as f32) / (2.0 * sigma * sigma)).exp())
-            .collect();
-        let sum: f32 = kernel.iter().sum();
-        kernel.iter_mut().for_each(|k| *k /= sum);
+        let kernel = gauss_taps(sigma);
+        let radius = (kernel.len() / 2) as isize;
         let mut tmp = vec![[0.0f32; 3]; w * h];
         let mut out = vec![[0.0f32; 3]; w * h];
         for y in 0..h {
