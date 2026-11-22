@@ -1,4 +1,4 @@
-Moteur allume -> READY : 27 28 28 trames de 20 ms
+~Moteur allume -> READY : 27 28 28 trames de 20 ms
 Moteur coupe -> READY a 0 : 0 trames de 20 ms
-Moteur allume -> READ ID reussi : 31 trames
+~Moteur allume -> READ ID reussi : 31 trames
 ST0 du 1er READ ID : 48 ST0 du dernier : 00

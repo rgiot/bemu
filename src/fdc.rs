@@ -409,6 +409,11 @@ struct Transfer {
 
 pub struct Fdc {
     motor: bool,
+    /// When the motor was last switched off (None: not since the machine started), and from when
+    /// the drive is ready after it was switched on: a real 3" drive needs its spindle to reach its
+    /// speed (see `spin_up_us`).
+    motor_off_at: Option<u64>,
+    ready_at: u64,
     /// Commands that reached their execution phase (sector transfers), wrapping: a drive light's flashes.
     executions: u32,
     drives: [Drive; NB_UNITS],
@@ -469,6 +474,8 @@ impl Default for Fdc {
     fn default() -> Self {
         let mut fdc = Self {
             motor: false,
+            motor_off_at: None,
+            ready_at: 0,
             executions: 0,
             drives: Default::default(),
             st: 0,
@@ -597,7 +604,34 @@ impl Fdc {
     }
 
     pub fn set_motor(&mut self, on: bool) {
+        if on && !self.motor {
+            self.ready_at = self.now_us + self.spin_up_us();
+        } else if !on && self.motor {
+            self.motor_off_at = Some(self.now_us);
+        }
         self.motor = on;
+    }
+
+    /// How long the drive takes to be READY after its motor is switched on, in microseconds. On the
+    /// user's real 6128 and its 3" drive (READYTST, SPINDOWN, SPINDWN2, frames of 19.968 ms): 12 to 13
+    /// frames when the motor was off for less than 0.14 s, about 22.5 when it was off for 0.24 to 3 s
+    /// (the spindle still turns), 28 from a stop (6 s or more, and from power on); in between, a
+    /// straight line. Only a 3" drive has this; the other kinds are ready at once.
+    fn spin_up_us(&self) -> u64 {
+        if !self.timing || self.drives[self.selected_drive()].kind != DriveKind::ThreeInch {
+            return 0;
+        }
+        const FRAME_US: f64 = 19_968.0;
+        let off_s = self.motor_off_at.map(|t| self.now_us.saturating_sub(t) as f64 / 1e6);
+        let frames = match off_s {
+            None => 28.0,
+            Some(s) if s >= 6.0 => 28.0,
+            Some(s) if s >= 3.0 => 22.5 + (s - 3.0) / 3.0 * 5.5,
+            Some(s) if s >= 0.24 => 22.5,
+            Some(s) if s >= 0.14 => 12.7 + (s - 0.14) / 0.10 * 9.8,
+            Some(_) => 12.7,
+        };
+        (frames * FRAME_US) as u64
     }
 
     /// ST0, ST1 and ST2 of the last command (for debuggers).
@@ -998,7 +1032,9 @@ impl Fdc {
 
     /// The drive is ready when it spins with a disc in it.
     fn ready(&self, unit: usize) -> bool {
-        self.motor && self.drives[unit].disc.is_some()
+        self.motor
+            && self.drives[unit].disc.is_some()
+            && (!self.timing || self.now_us >= self.ready_at)
     }
 
     // ---- Recalibrate / Seek ----
