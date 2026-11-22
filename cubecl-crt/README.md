@@ -34,5 +34,5 @@ channel values each:
   with `init_setup_async::<WebGpu>` and read with `read_async`, runs in headless Chromium (WebGPU on
   SwiftShader, Playwright): CTM644 curved, 1440x1088, same first pixels as the native run and a sum of
   the picture within 0.01 % of it (rounding of `exp`/`sqrt` between the two adapters). The `.wasm` is
-  29 MB (13 MB gzipped) before any `wasm-opt`.
+  29 MB (6.5 MB gzipped) before any `wasm-opt`.
 * Not done: the integration into `Picture` (the quad pass replaces `CrtPass`).
