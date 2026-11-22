@@ -362,8 +362,7 @@ impl GpuFrame {
 }
 
 impl CrtPass {
-    /// Seen through the glass `warp`: the beam's raster bends under the fixed mask. The frame is
-    /// black until [`Self::upload`].
+    /// Seen through the glass `warp`: the beam's raster bends under the fixed mask.
     pub fn new(
         ctx: &GpuContext,
         device: &wgpu::Device,
@@ -615,8 +614,7 @@ impl DisplayFilter for GpuCrt {
         let (out_w, out_h) = self.params.output_size();
         assert_eq!(dst.len(), out_w * out_h);
 
-        let (frame, glow) = crt_inputs(src);
-        self.pass.upload(&self.queue, &frame, &glow);
+        self.frame.upload(&self.queue, src);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
