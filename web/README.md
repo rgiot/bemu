@@ -303,7 +303,7 @@ queue target grows (up to 200 ms): a slow or busy machine trades latency for con
 
 ### Drawing
 - **WebGPU:** used when the browser has it. The picture fills the canvas, letterboxed, with the
-  CRT profiles drawn on the GPU (the shader of the desktop's `--crt-gpu`), seen through the
+  CRT profiles drawn on the GPU (the CubeCL kernels of the desktop's `--crt-gpu`, on by default there), seen through the
   tube's glass, flat by default; `curvature: 1` bulges the picture and rounds the corners, as
   on the desktop. The raw display is never curved. CTM's 1440×1088 phosphor texture uses
   pixel-aligned integer scaling when the canvas drawing buffer is large enough, with black

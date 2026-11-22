@@ -7,31 +7,29 @@
 //! the screenshots of the test suites (which use the monitor's frames
 //! directly) are not affected.
 
-// The CRT on the CPU runs on threads: a web page has the GPU one (WebGPU) instead. The GPU's is
-// written once as a CubeCL kernel (`kernel.rs`: Vulkan, Metal, DX12 and WebGPU); `cpu.rs` is the
-// software fallback and the reference its tests compare the kernel with.
-#[cfg(not(target_arch = "wasm32"))]
-mod cpu;
+// The CRT is written once, as a CubeCL kernel (`kernel.rs`): it runs on the GPU (Vulkan, Metal,
+// DX12 and a page's WebGPU, drawn by `CrtPass`) and, for the filters that read the picture back
+// (`KernelCrt`: recordings, screenshots), on CubeCL's CPU backend when there is no GPU.
 pub mod crt;
-#[cfg(not(target_arch = "wasm32"))]
-mod curved;
 #[cfg(feature = "crt-gpu")]
 mod gpu;
 #[cfg(feature = "crt-gpu")]
 mod kernel;
+#[cfg(all(feature = "crt-gpu", not(target_arch = "wasm32")))]
+mod kernel_crt;
+#[cfg(all(test, feature = "crt-gpu", crt_cpu))]
+mod kernel_tests;
 #[cfg(feature = "crt-gpu")]
 mod picture;
 pub mod resize;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use cpu::CpuCrt;
 pub use crt::{CrtParams, CrtProfile, Warp};
-#[cfg(not(target_arch = "wasm32"))]
-pub use curved::Curved;
 #[cfg(all(feature = "crt-gpu", not(target_arch = "wasm32")))]
-pub use gpu::{wait_for, GpuCrt};
+pub use gpu::wait_for;
+#[cfg(all(feature = "crt-gpu", not(target_arch = "wasm32")))]
+pub use kernel_crt::{Backend, KernelCrt};
 #[cfg(feature = "crt-gpu")]
-pub use gpu::{crt_inputs, Blit, CrtPass, FrameTexture, GpuContext, Resampler};
+pub use gpu::{Blit, CrtPass, FrameTexture, GpuContext, GpuFrame, Resampler};
 #[cfg(feature = "crt-gpu")]
 pub use picture::{picture_scale, Picture};
 
@@ -107,30 +105,43 @@ impl DisplayMode {
         }
     }
 
-    /// The filter implementing this mode, on the CPU.
+    /// The filter implementing this mode, on the CPU (CubeCL's CPU backend: no adapter needed).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn filter(self) -> Box<dyn DisplayFilter> {
         self.filter_on(false, 0.0)
     }
 
-    /// The filter implementing this mode, on the GPU if `gpu` and possible
-    /// (built with `crt-gpu` and an adapter available), else on the CPU. A CRT is seen through
-    /// its glass, curved `curvature` times its profile's bulge (0: flat), see [`Warp`].
+    /// The filter implementing this mode: the CRT kernels on the GPU if `gpu` and possible (an
+    /// adapter is available), else on the CPU backend (the other way round if `gpu` is false: the
+    /// CPU's picture does not depend on the machine). A CRT is seen through its glass, curved
+    /// `curvature` times its profile's bulge (0: flat), see [`Warp`]. The raw picture where no CRT
+    /// can be rendered (built without `crt-gpu`, no adapter and no software rendering).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn filter_on(self, gpu: bool, curvature: f32) -> Box<dyn DisplayFilter> {
         let warp = self.warp(curvature);
         if let Self::Crt(profile) = self {
-            // the CRT models bend the beam's raster under a fixed mask (no moire)
-            if gpu {
-                #[cfg(feature = "crt-gpu")]
-                match GpuCrt::curved(profile.params(), warp) {
-                    Ok(filter) => return Box::new(filter),
-                    Err(e) => eprintln!("{e}: the CRT is rendered on the CPU"),
+            #[cfg(feature = "crt-gpu")]
+            {
+                let order = if gpu {
+                    [Backend::Gpu, Backend::Cpu]
+                } else {
+                    [Backend::Cpu, Backend::Gpu]
+                };
+                let mut errors = Vec::new();
+                for backend in order {
+                    match KernelCrt::new(profile.params(), warp, backend) {
+                        Ok(filter) => return Box::new(filter),
+                        Err(e) => errors.push(e),
+                    }
                 }
-                #[cfg(not(feature = "crt-gpu"))]
-                eprintln!("built without the crt-gpu feature: the CRT is rendered on the CPU");
+                eprintln!("no CRT rendering ({}): the raw picture is shown", errors.join("; "));
             }
-            return Box::new(CpuCrt::new(profile.params()).curved(warp));
+            #[cfg(not(feature = "crt-gpu"))]
+            {
+                let _ = (profile, warp, gpu);
+                eprintln!("built without the crt-gpu feature: the raw picture is shown");
+            }
+            return Box::new(RawFilter);
         }
         // raw: the doubled picture, never curved (see `warp`)
         Box::new(RawFilter)

@@ -11,7 +11,7 @@
 //! feed any frontend, the recorder and the screenshots; a frontend that
 //! presents the texture itself would skip that read-back.
 
-use super::crt::{CrtParams, GlowField, Warp, GLOW_H, GLOW_W, SRC_HEIGHT, SRC_WIDTH};
+use super::crt::{CrtParams, Warp, SRC_HEIGHT, SRC_WIDTH};
 #[cfg(not(target_arch = "wasm32"))]
 use super::DisplayFilter;
 use image::RgbImage;
@@ -233,20 +233,6 @@ impl FrameTexture {
     }
 }
 
-/// The frame as the kernel takes it (words `0xBBGGRR`, padded with black to the monitor's size) and
-/// its glow cells ([`GlowField`]).
-pub fn crt_inputs(src: &RgbImage) -> (Vec<u32>, Vec<f32>) {
-    let mut frame = vec![0u32; SRC_WIDTH * SRC_HEIGHT];
-    let width = (src.width() as usize).min(SRC_WIDTH);
-    for y in 0..(src.height() as usize).min(SRC_HEIGHT) {
-        let row = &src.as_raw()[y * src.width() as usize * 3..][..width * 3];
-        for (x, p) in row.chunks_exact(3).enumerate() {
-            frame[y * SRC_WIDTH + x] = p[0] as u32 | (p[1] as u32) << 8 | (p[2] as u32) << 16;
-        }
-    }
-    (frame, GlowField::new(src).texels())
-}
-
 type Server = cubecl::wgpu::WgpuServer<cubecl::wgpu::AutoCompiler>;
 
 /// CubeCL running on the application's own wgpu device: the kernel's picture is a buffer of that
@@ -319,37 +305,59 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 /// buffer, and a pass draws it into a `Rgba8Unorm` target of [`CrtParams::output_size`].
 pub struct CrtPass {
     ctx: GpuContext,
-    out_len: usize,
-    // the handles keep the buffers alive
-    frame: cubecl::server::Handle,
-    glow: cubecl::server::Handle,
-    params: cubecl::server::Handle,
-    out: cubecl::server::Handle,
-    frame_buffer: (wgpu::Buffer, u64),
-    glow_buffer: (wgpu::Buffer, u64),
+    pipeline_cube: super::kernel::Pipeline,
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
 }
 
+/// The monitor's frame on the GPU: its RGB bytes as they are (no conversion on the CPU), for the
+/// kernels of [`CrtPass`].
+pub struct GpuFrame {
+    ctx: GpuContext,
+    handle: cubecl::server::Handle,
+    buffer: (wgpu::Buffer, u64),
+    /// The words of the buffer.
+    words: usize,
+    /// The size of the frame in it.
+    size: (u32, u32),
+}
+
+impl GpuFrame {
+    pub fn new(ctx: &GpuContext) -> Self {
+        let words = SRC_WIDTH * SRC_HEIGHT * 3 / 4 + 1;
+        let handle = ctx.client.create_from_slice(&vec![0u8; words * 4]);
+        let buffer = ctx.buffer(&handle);
+        Self {
+            ctx: ctx.clone(),
+            handle,
+            buffer,
+            words,
+            size: (SRC_WIDTH as u32, SRC_HEIGHT as u32),
+        }
+    }
+
+    /// The monitor's next frame (what is larger than the monitor's picture is cut).
+    pub fn upload(&mut self, queue: &wgpu::Queue, src: &RgbImage) {
+        // what the kernels still have to read is submitted before the new frame is written
+        let _ = self.ctx.client.flush();
+        let (bytes, w, h) = super::kernel::frame_bytes(src);
+        debug_assert!(bytes.len() <= self.words * 4);
+        queue.write_buffer(&self.buffer.0, self.buffer.1, &bytes);
+        self.size = (w, h);
+    }
+}
+
 impl CrtPass {
-    /// Seen through the glass `warp`: the beam's raster bends under the fixed mask. The frame is
-    /// black until [`Self::upload`].
+    /// Seen through the glass `warp`: the beam's raster bends under the fixed mask.
     pub fn new(
         ctx: &GpuContext,
         device: &wgpu::Device,
         params: &CrtParams,
         warp: Warp,
     ) -> Result<Self, String> {
-        let client = &ctx.client;
         let (w, h) = params.output_size();
-        let frame = client.create_from_slice(&vec![0u8; SRC_WIDTH * SRC_HEIGHT * 4]);
-        let glow = client.create_from_slice(&vec![0u8; GLOW_W * GLOW_H * 16]);
-        let packed = super::kernel::pack(params, warp);
-        let params_handle = client.create_from_slice(bytemuck::cast_slice(&packed));
-        let out = client.empty(w * h * 4);
-        let frame_buffer = ctx.buffer(&frame);
-        let glow_buffer = ctx.buffer(&glow);
-        let out_buffer = ctx.buffer(&out);
+        let pipeline_cube = super::kernel::Pipeline::new(&ctx.client, params, warp);
+        let out_buffer = ctx.buffer(pipeline_cube.out());
 
         let align = device.limits().min_storage_buffer_offset_alignment as u64;
         if out_buffer.1 % align != 0 {
@@ -445,24 +453,16 @@ impl CrtPass {
         });
         Ok(Self {
             ctx: ctx.clone(),
-            out_len: w * h,
-            frame,
-            glow,
-            params: params_handle,
-            out,
-            frame_buffer,
-            glow_buffer,
+            pipeline_cube,
             pipeline,
             bind_group,
         })
     }
 
-    /// The monitor's next frame, as [`crt_inputs`] makes it.
-    pub fn upload(&self, queue: &wgpu::Queue, frame: &[u32], glow: &[f32]) {
-        // what the kernel still has to read is submitted before the new frame is written
-        let _ = self.ctx.client.flush();
-        queue.write_buffer(&self.frame_buffer.0, self.frame_buffer.1, bytemuck::cast_slice(frame));
-        queue.write_buffer(&self.glow_buffer.0, self.glow_buffer.1, bytemuck::cast_slice(glow));
+    /// The glow cells the kernels worked out last (four floats a cell), read back: for the tests.
+    pub fn glow_cells(&self) -> Vec<f32> {
+        let bytes = self.ctx.client.read_one(self.pipeline_cube.glow().clone()).expect("the glow");
+        bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
     }
 
     /// A texture the pass can draw in, of the picture's size.
@@ -488,22 +488,11 @@ impl CrtPass {
         })
     }
 
-    /// Run the kernel (submitted now), then draw its picture into `target` with `encoder`.
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
-        use cubecl::prelude::*;
-        let n = self.out_len as u32;
-        // SAFETY: the buffers are the sizes the kernel reads and writes (`kernel.rs`)
-        unsafe {
-            super::kernel::crt::launch_unchecked(
-                &self.ctx.client,
-                CubeCount::Static(n.div_ceil(256), 1, 1),
-                CubeDim::new_1d(256),
-                BufferArg::from_raw_parts(self.frame.clone(), SRC_WIDTH * SRC_HEIGHT),
-                BufferArg::from_raw_parts(self.glow.clone(), GLOW_W * GLOW_H * 4),
-                BufferArg::from_raw_parts(self.params.clone(), 26),
-                BufferArg::from_raw_parts(self.out.clone(), self.out_len),
-            );
-        }
+    /// Run the kernels on `frame` (submitted now), then draw the picture into `target` with
+    /// `encoder`.
+    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, frame: &GpuFrame) {
+        self.pipeline_cube
+            .run(&self.ctx.client, &frame.handle, frame.words, frame.size.0, frame.size.1);
         let _ = self.ctx.client.flush();
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("crt"),
@@ -527,20 +516,6 @@ impl CrtPass {
     }
 }
 
-/// The CRT filter on the GPU, with the picture read back (a [`DisplayFilter`]). Not in a web
-/// page, where nothing waits for the GPU: there the page presents [`CrtPass`]'s target itself.
-#[cfg(not(target_arch = "wasm32"))]
-pub struct GpuCrt {
-    params: CrtParams,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    pass: CrtPass,
-    target: wgpu::Texture,
-    readback: wgpu::Buffer,
-    /// Bytes per row of `readback`, a multiple of wgpu's copy alignment.
-    padded_row: usize,
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
     let mut future = std::pin::pin!(future);
@@ -557,264 +532,6 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn wait_for<F: std::future::Future>(future: F) -> F::Output {
     block_on(future)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl GpuCrt {
-    /// Fails (with a message) when no usable adapter is available.
-    pub fn new(params: CrtParams) -> Result<Self, String> {
-        Self::curved(params, Warp::FLAT)
-    }
-
-    /// Seen through the glass `warp` (see [`CrtPass::new`]).
-    pub fn curved(params: CrtParams, warp: Warp) -> Result<Self, String> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .map_err(|e| format!("no GPU adapter: {e}"))?;
-        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-            .map_err(|e| format!("cannot use the GPU: {e}"))?;
-
-        let (out_w, out_h) = params.output_size();
-        let ctx = GpuContext::new(&instance, &adapter, &device, &queue)?;
-        let pass = CrtPass::new(&ctx, &device, &params, warp)?;
-        let target = CrtPass::create_target(&device, &params, wgpu::TextureUsages::COPY_SRC);
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
-        let padded_row = (out_w * 4).div_ceil(align) * align;
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("read back"),
-            size: (padded_row * out_h) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        Ok(Self {
-            params,
-            device,
-            queue,
-            pass,
-            target,
-            readback,
-            padded_row,
-        })
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl DisplayFilter for GpuCrt {
-    fn output_size(&self) -> (usize, usize) {
-        self.params.output_size()
-    }
-
-    fn render(&mut self, src: &RgbImage, dst: &mut [u32]) {
-        let (out_w, out_h) = self.params.output_size();
-        assert_eq!(dst.len(), out_w * out_h);
-
-        let (frame, glow) = crt_inputs(src);
-        self.pass.upload(&self.queue, &frame, &glow);
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        self.pass.encode(
-            &mut encoder,
-            &self
-                .target
-                .create_view(&wgpu::TextureViewDescriptor::default()),
-        );
-        encoder.copy_texture_to_buffer(
-            self.target.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &self.readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(self.padded_row as u32),
-                    rows_per_image: None,
-                },
-            },
-            wgpu::Extent3d {
-                width: out_w as u32,
-                height: out_h as u32,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.queue.submit([encoder.finish()]);
-
-        let slice = self.readback.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |result| {
-            result.expect("cannot map the read-back buffer")
-        });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("GPU wait failed");
-        {
-            let data = slice.get_mapped_range().expect("mapped range");
-            for (y, row) in dst.chunks_exact_mut(out_w).enumerate() {
-                let bytes = &data[y * self.padded_row..][..out_w * 4];
-                for (pixel, rgba) in row.iter_mut().zip(bytes.chunks_exact(4)) {
-                    *pixel = (rgba[0] as u32) << 16 | (rgba[1] as u32) << 8 | rgba[2] as u32;
-                }
-            }
-        }
-        self.readback.unmap();
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::display::{CpuCrt, CrtProfile};
-    use image::Rgb;
-
-    /// The shader is the CPU model evaluated per pixel: both must agree to
-    /// within the rounding of their different `exp`/`sqrt`. Skipped when the
-    /// machine has no GPU (or software Vulkan) adapter.
-    #[test]
-    fn gpu_matches_cpu() {
-        let mut src = RgbImage::new(SRC_WIDTH as u32, SRC_HEIGHT as u32);
-        for (x, y, pixel) in src.enumerate_pixels_mut() {
-            *pixel = Rgb([
-                (x * 7 % 256) as u8,
-                (y * 5 % 256) as u8,
-                ((x / 3 + y) * 11 % 256) as u8,
-            ]);
-        }
-        // flat, and through each glass (the beam bent under the mask: `kernel.rs` and `cpu.rs`)
-        let cases = [CrtProfile::Ctm644, CrtProfile::Trinitron]
-            .into_iter()
-            .flat_map(|profile| [(profile, Warp::FLAT), (profile, Warp::of(profile, 1.0))]);
-        for (profile, warp) in cases {
-            let params = profile.params();
-            let mut gpu = match GpuCrt::curved(params.clone(), warp) {
-                Ok(gpu) => gpu,
-                Err(e) => {
-                    eprintln!("skipped: {e}");
-                    return;
-                }
-            };
-            let mut cpu = CpuCrt::new(params).curved(warp);
-            let (w, h) = cpu.output_size();
-            let (mut a, mut b) = (vec![0; w * h], vec![0; w * h]);
-            cpu.render(&src, &mut a);
-            gpu.render(&src, &mut b);
-            let mut worst = 0;
-            let mut off = 0usize;
-            for (p, q) in a.iter().zip(&b) {
-                for shift in [0, 8, 16] {
-                    let d = (((p >> shift) & 255) as i32 - ((q >> shift) & 255) as i32).abs();
-                    worst = worst.max(d);
-                    off += (d > 3) as usize;
-                }
-            }
-            assert!(
-                off < w * h / 1000,
-                "{profile:?} {warp:?}: {off} channel values differ by more than 3 (worst {worst})"
-            );
-        }
-    }
-
-    /// The blit's glass is the CPU's [`crate::display::Curved`]: the same pixels are lit.
-    #[test]
-    fn blit_warp_matches_cpu() {
-        use crate::display::{Curved, RawFilter, RAW_HEIGHT, RAW_WIDTH};
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let Ok(adapter) =
-            block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-        else {
-            eprintln!("skipped: no GPU adapter");
-            return;
-        };
-        let (device, queue) =
-            block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
-        let mut src = RgbImage::new(SRC_WIDTH as u32, SRC_HEIGHT as u32);
-        src.pixels_mut()
-            .for_each(|pixel| *pixel = Rgb([200, 100, 50]));
-        let warp = Warp::of(CrtProfile::Ctm644, 1.0);
-
-        let mut frame = FrameTexture::new(&device);
-        frame.upload(&queue, &src);
-        let format = wgpu::TextureFormat::Rgba8Unorm;
-        let blit = Blit::new(&device, format);
-        let bind_group = blit.bind_group(&device, frame.view(), false, warp);
-        let (w, h) = (RAW_WIDTH as u32, RAW_HEIGHT as u32);
-        let target = device.create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            size: wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: (w * h * 4) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        {
-            let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            blit.draw(&mut pass, &bind_group);
-        }
-        encoder.copy_texture_to_buffer(
-            target.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(w * 4),
-                    rows_per_image: None,
-                },
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
-        queue.submit([encoder.finish()]);
-        let slice = readback.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |result| result.unwrap());
-        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-        let gpu: Vec<u32> = slice
-            .get_mapped_range()
-            .expect("mapped range")
-            .chunks_exact(4)
-            .map(|rgba| (rgba[0] as u32) << 16 | (rgba[1] as u32) << 8 | rgba[2] as u32)
-            .collect();
-
-        let mut cpu = vec![0; gpu.len()];
-        Curved::new(Box::new(RawFilter), warp).render(&src, &mut cpu);
-        assert_eq!(gpu[0], 0);
-        assert_eq!(gpu[gpu.len() / 2 + w as usize / 2], 0xc8_64_32);
-        let off = gpu
-            .iter()
-            .zip(&cpu)
-            .filter(|(p, q)| {
-                (0..3).any(|c| ((*p >> (c * 8)) & 255).abs_diff((*q >> (c * 8)) & 255) > 24)
-            })
-            .count();
-        assert!(off < gpu.len() / 500, "{off} pixels differ");
-    }
 }
 
 /// The uniforms of `resample.wgsl`.

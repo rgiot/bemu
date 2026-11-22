@@ -285,7 +285,7 @@ impl Window {
                     return self.notify("no picture yet".into(), true);
                 };
                 let path = path.unwrap_or_else(|| PathBuf::from("bemu.png"));
-                let picture = core.settings.display.filter().render_to_image(frame);
+                let picture = core.settings.display.filter_on(core.settings.crt_gpu, 0.0).render_to_image(frame);
                 match picture.save(&path) {
                     Ok(()) => self.notify(format!("{}: screenshot saved", path.display()), false),
                     Err(e) => self.notify(format!("{}: {e}", path.display()), true),
@@ -294,7 +294,7 @@ impl Window {
             #[cfg(feature = "gui")]
             HostRequest::CopyScreenshot => {
                 if let (Some(gui), Some(frame)) = (&self.gui, &self.last_frame) {
-                    let picture = core.settings.display.filter().render_to_image(frame);
+                    let picture = core.settings.display.filter_on(core.settings.crt_gpu, 0.0).render_to_image(frame);
                     let size = [picture.width() as usize, picture.height() as usize];
                     gui.context()
                         .copy_image(egui::ColorImage::from_rgb(size, picture.as_raw()));
@@ -449,7 +449,7 @@ impl Window {
                 self.filter = core
                     .settings
                     .display
-                    .filter_on(false, core.settings.curvature);
+                    .filter_on(core.settings.crt_gpu, core.settings.curvature);
                 let (width, height) = self.filter.output_size();
                 self.buffer = vec![0; width * height];
                 match crate::recorder::Recorder::start(
@@ -1059,7 +1059,7 @@ pub fn run_window(
             if series.seen.is_multiple_of(series.every) {
                 let path = series.folder.join(format!("bemu_{:04}.png", series.shot));
                 series.shot += 1;
-                let picture = core.settings.display.filter().render_to_image(&frame);
+                let picture = core.settings.display.filter_on(core.settings.crt_gpu, 0.0).render_to_image(&frame);
                 if let Err(e) = picture.save(&path) {
                     eprintln!("{}: {e}", path.display());
                 }

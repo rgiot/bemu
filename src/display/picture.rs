@@ -9,7 +9,7 @@
 use image::RgbImage;
 
 use super::crt::{CrtParams, Warp, SRC_HEIGHT, SRC_WIDTH};
-use super::gpu::{crt_inputs, Blit, CrtPass, FrameTexture, GpuContext, Resampler};
+use super::gpu::{Blit, CrtPass, FrameTexture, GpuContext, GpuFrame, Resampler};
 use super::{DisplayMode, PictureSize, RAW_HEIGHT, RAW_WIDTH};
 
 /// The most a CRT's picture is drawn larger than its profile's (a texture of 4320 x 3264).
@@ -36,9 +36,8 @@ pub struct Picture {
     /// CubeCL on the device (the CRT's kernel), if it can run compute shaders: without it a CRT
     /// display shows the raw picture.
     cube: Option<GpuContext>,
-    /// The last frame uploaded, for the CRT's kernel, and whether it is not yet in its buffers.
-    last: Option<RgbImage>,
-    fresh: bool,
+    /// The last frame uploaded, as the CRT's kernels read it.
+    gpu_frame: Option<GpuFrame>,
     /// The picture resized without moiré (a CRT's at a fractional zoom, any below x1).
     resampler: Option<Resampler>,
     format: wgpu::TextureFormat,
@@ -60,9 +59,8 @@ impl Picture {
             blit,
             raw_bind_group,
             crt: None,
+            gpu_frame: cube.as_ref().map(GpuFrame::new),
             cube,
-            last: None,
-            fresh: false,
             resampler: None,
             format,
             size: PictureSize::default(),
@@ -72,9 +70,8 @@ impl Picture {
     /// The monitor's next frame.
     pub fn upload(&mut self, queue: &wgpu::Queue, frame: &RgbImage) {
         self.frame.upload(queue, frame);
-        if self.cube.is_some() {
-            self.last = Some(frame.clone());
-            self.fresh = true;
+        if let Some(gpu_frame) = &mut self.gpu_frame {
+            gpu_frame.upload(queue, frame);
         }
     }
 
@@ -155,17 +152,11 @@ impl Picture {
         let made = self.use_mode(device, mode, level, warp);
         let crt_shown = matches!(mode, DisplayMode::Crt(_)) && self.crt.is_some();
         if let (true, Some(crt)) = (crt_shown, self.crt.as_ref()) {
-            if made || self.fresh {
-                if let Some(last) = &self.last {
-                    let (frame, glow) = crt_inputs(last);
-                    crt.pass.upload(queue, &frame, &glow);
-                }
-                self.fresh = false;
-            }
-            if !again || made {
+            if let (true, Some(frame)) = (!again || made, self.gpu_frame.as_ref()) {
                 crt.pass.encode(
                     encoder,
                     &crt.target.create_view(&wgpu::TextureViewDescriptor::default()),
+                    frame,
                 );
             }
         }

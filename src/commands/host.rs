@@ -272,7 +272,7 @@ impl Default for HostSettings {
             hhold: 0,
             vhold: 0,
             ui_zoom: 1.0,
-            crt_gpu: false,
+            crt_gpu: true,
             free_zoom: false,
             native_zoom: false,
             fullscreen: false,
