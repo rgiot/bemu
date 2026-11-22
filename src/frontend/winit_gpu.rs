@@ -28,7 +28,7 @@
 
 use super::Frontend;
 use amsrust::display::{
-    wait_for, DisplayMode, Picture,
+    wait_for, DisplayMode, GpuContext, Picture,
 };
 use amsrust::input::{HostInput, HostKey};
 use amsrust::joystick::Joysticks;
@@ -423,7 +423,15 @@ impl Gfx {
         };
         surface.configure(&device, &config);
 
-        let picture = Picture::new(&device, format);
+        // the CRT's kernel runs on this device; without compute shaders the picture stays raw
+        let cube = match GpuContext::new(&instance, &adapter, &device, &queue) {
+            Ok(cube) => Some(cube),
+            Err(e) => {
+                eprintln!("no CRT picture: {e}");
+                None
+            }
+        };
+        let picture = Picture::new(&device, format, cube);
         Ok(Self {
             instance,
             adapter,

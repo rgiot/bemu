@@ -219,9 +219,16 @@ impl Gpu {
             })
             .await
             .map_err(|e| format!("no WebGPU adapter: {e}"))?;
+        // The CRT's kernel needs compute shaders and storage buffers: the limits of WebGPU, not of
+        // the WebGL fallback (where the picture stays raw).
+        let webgpu = adapter.get_info().backend == wgpu::Backend::BrowserWebGpu;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+                required_limits: if webgpu {
+                    wgpu::Limits::default().using_resolution(adapter.limits())
+                } else {
+                    wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+                },
                 ..Default::default()
             })
             .await
@@ -248,7 +255,18 @@ impl Gpu {
         };
         surface.configure(&device, &config);
 
-        let picture = Picture::new(&device, format);
+        let cube = if webgpu {
+            match amsrust::display::GpuContext::new(&instance, &adapter, &device, &queue) {
+                Ok(cube) => Some(cube),
+                Err(e) => {
+                    web_sys::console::warn_1(&format!("no CRT picture: {e}").into());
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let picture = Picture::new(&device, format, cube);
         Ok(Self { surface, device, queue, config, picture, painter: None })
     }
 

@@ -9,7 +9,7 @@
 use image::RgbImage;
 
 use super::crt::{CrtParams, Warp, SRC_HEIGHT, SRC_WIDTH};
-use super::gpu::{Blit, CrtPass, FrameTexture, Resampler};
+use super::gpu::{crt_inputs, Blit, CrtPass, FrameTexture, GpuContext, Resampler};
 use super::{DisplayMode, PictureSize, RAW_HEIGHT, RAW_WIDTH};
 
 /// The most a CRT's picture is drawn larger than its profile's (a texture of 4320 x 3264).
@@ -33,6 +33,12 @@ pub struct Picture {
     blit: Blit,
     raw_bind_group: wgpu::BindGroup,
     crt: Option<CrtState>,
+    /// CubeCL on the device (the CRT's kernel), if it can run compute shaders: without it a CRT
+    /// display shows the raw picture.
+    cube: Option<GpuContext>,
+    /// The last frame uploaded, for the CRT's kernel, and whether it is not yet in its buffers.
+    last: Option<RgbImage>,
+    fresh: bool,
     /// The picture resized without moiré (a CRT's at a fractional zoom, any below x1).
     resampler: Option<Resampler>,
     format: wgpu::TextureFormat,
@@ -40,8 +46,12 @@ pub struct Picture {
 }
 
 impl Picture {
-    /// A picture drawn in targets of `format`.
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    /// A picture drawn in targets of `format`; `cube`: CubeCL on `device` (see [`GpuContext::new`]).
+    pub fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        cube: Option<GpuContext>,
+    ) -> Self {
         let frame = FrameTexture::new(device);
         let blit = Blit::new(device, format);
         let raw_bind_group = blit.bind_group(device, frame.view(), false, Warp::FLAT);
@@ -50,6 +60,9 @@ impl Picture {
             blit,
             raw_bind_group,
             crt: None,
+            cube,
+            last: None,
+            fresh: false,
             resampler: None,
             format,
             size: PictureSize::default(),
@@ -59,6 +72,10 @@ impl Picture {
     /// The monitor's next frame.
     pub fn upload(&mut self, queue: &wgpu::Queue, frame: &RgbImage) {
         self.frame.upload(queue, frame);
+        if self.cube.is_some() {
+            self.last = Some(frame.clone());
+            self.fresh = true;
+        }
     }
 
     /// How large a CRT's picture is drawn for `room`, in whole multiples of its profile's.
@@ -89,7 +106,17 @@ impl Picture {
             return false;
         }
         let params: CrtParams = profile.params().scaled(level);
-        let pass = CrtPass::new(device, &params, &self.frame, warp);
+        let Some(cube) = &self.cube else {
+            return false;
+        };
+        let pass = match CrtPass::new(cube, device, &params, warp) {
+            Ok(pass) => pass,
+            Err(e) => {
+                eprintln!("no CRT picture: {e}");
+                self.cube = None;
+                return false;
+            }
+        };
         let target = CrtPass::create_target(device, &params, wgpu::TextureUsages::TEXTURE_BINDING);
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         // the CRT pass already bends the beam under the glass
@@ -128,6 +155,13 @@ impl Picture {
         let made = self.use_mode(device, mode, level, warp);
         let crt_shown = matches!(mode, DisplayMode::Crt(_)) && self.crt.is_some();
         if let (true, Some(crt)) = (crt_shown, self.crt.as_ref()) {
+            if made || self.fresh {
+                if let Some(last) = &self.last {
+                    let (frame, glow) = crt_inputs(last);
+                    crt.pass.upload(queue, &frame, &glow);
+                }
+                self.fresh = false;
+            }
             if !again || made {
                 crt.pass.encode(
                     encoder,

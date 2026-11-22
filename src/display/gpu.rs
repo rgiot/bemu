@@ -1,10 +1,11 @@
 //! GPU renderer of the CRT model of [`super::crt`] (`--features crt-gpu`).
 //!
 //! The approach is inspired by the rendering source code of the ACE-DL
-//! emulator (`CTM_Render.c`), see `crt.rs`; the shader, `crt.wgsl`, is the
-//! same analytic model as the CPU's, evaluated per output pixel, so it works
-//! at any output size and needs no precomputed table: the monitor's frame is
-//! uploaded as a texture and one full-screen triangle draws the picture.
+//! emulator (`CTM_Render.c`), see `crt.rs`; the model is the same analytic one as the CPU's,
+//! evaluated per output pixel by a CubeCL kernel (`kernel.rs`: Vulkan, Metal, DX12 and the
+//! browser's WebGPU from one Rust source), so it works at any output size and needs no precomputed
+//! table. The kernel runs on the application's own wgpu device ([`GpuContext`]) and writes the
+//! picture in a buffer; a full-screen triangle draws that buffer in a texture.
 //!
 //! [`GpuCrt`] is a [`DisplayFilter`] that reads the picture back, so it can
 //! feed any frontend, the recorder and the screenshots; a frontend that
@@ -14,72 +15,6 @@ use super::crt::{CrtParams, GlowField, Warp, GLOW_H, GLOW_W, SRC_HEIGHT, SRC_WID
 #[cfg(not(target_arch = "wasm32"))]
 use super::DisplayFilter;
 use image::RgbImage;
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Uniforms {
-    out_w: u32,
-    out_h: u32,
-    slot_px: u32,
-    rows_per_line: u32,
-    pitch: f32,
-    fill_x: f32,
-    fill_y: f32,
-    corner: f32,
-    stagger: f32,
-    sigma_h: f32,
-    sigma_v: f32,
-    spill: f32,
-    halation: f32,
-    scale: f32,
-    x_ratio: f32,
-    /// The glass (see [`Warp`]): its bulge, its corners' radius, and 1 if curved at all
-    /// (scalars in `crt.wgsl`, where a `vec2` would be aligned on 8 bytes).
-    warp_k: [f32; 2],
-    warp_corner: f32,
-    edged: f32,
-    /// A monochrome tube: 1, and the colour of its phosphor (see `CrtParams::phosphor`); else 0.
-    mono: f32,
-    tint: [f32; 3],
-    /// The light of a black, see `CrtParams::veil` (and its neighbours: the vignette, padding)
-    veil: f32,
-    vignette: f32,
-    /// The light of the glow where the picture is white, see `CrtParams::glow_light`
-    glow: f32,
-    pad: f32,
-}
-
-impl Uniforms {
-    fn new(p: &CrtParams, warp: Warp) -> Self {
-        let (out_w, out_h) = p.output_size();
-        Self {
-            out_w: out_w as u32,
-            out_h: out_h as u32,
-            slot_px: p.slot_px() as u32,
-            rows_per_line: p.rows_per_line as u32,
-            pitch: p.pitch_rows() as f32,
-            fill_x: p.slot_fill.0,
-            fill_y: p.slot_fill.1,
-            corner: p.corner_radius,
-            stagger: p.stagger,
-            sigma_h: p.beam_sigma_h,
-            sigma_v: p.beam_sigma_v,
-            spill: p.spill,
-            halation: p.halation,
-            scale: p.gain * p.white_norm(),
-            x_ratio: p.x_ratio(),
-            warp_k: [warp.k.0, warp.k.1],
-            warp_corner: warp.corner,
-            edged: if warp.is_flat() { 0.0 } else { 1.0 },
-            mono: p.phosphor.map_or(0.0, |_| 1.0),
-            tint: p.phosphor.unwrap_or([1.0; 3]),
-            veil: p.veil_light(),
-            vignette: p.vignette,
-            glow: p.glow_light(),
-            pad: 0.0,
-        }
-    }
-}
 
 /// The [`Warp`] of `blit.wgsl`.
 #[repr(C)]
@@ -241,9 +176,6 @@ pub struct FrameTexture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     rgba: Vec<u8>,
-    /// The glow of the frame (see [`GlowField`]), four floats a cell
-    glow: wgpu::Texture,
-    glow_view: wgpu::TextureView,
 }
 
 impl FrameTexture {
@@ -263,27 +195,10 @@ impl FrameTexture {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let glow = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("glow of the frame"),
-            size: wgpu::Extent3d {
-                width: GLOW_W as u32,
-                height: GLOW_H as u32,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let glow_view = glow.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
             texture,
             view,
             rgba: vec![0; SRC_WIDTH * SRC_HEIGHT * 4],
-            glow,
-            glow_view,
         }
     }
 
@@ -291,27 +206,8 @@ impl FrameTexture {
         &self.view
     }
 
-    pub fn glow_view(&self) -> &wgpu::TextureView {
-        &self.glow_view
-    }
-
     /// Upload `src` (any size up to the monitor's: the rest is black).
     pub fn upload(&mut self, queue: &wgpu::Queue, src: &RgbImage) {
-        let texels = GlowField::new(src).texels();
-        queue.write_texture(
-            self.glow.as_image_copy(),
-            bytemuck::cast_slice(&texels),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(GLOW_W as u32 * 16),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d {
-                width: GLOW_W as u32,
-                height: GLOW_H as u32,
-                depth_or_array_layers: 1,
-            },
-        );
         self.rgba.fill(0);
         let width = (src.width() as usize).min(SRC_WIDTH);
         for y in 0..(src.height() as usize).min(SRC_HEIGHT) {
@@ -337,33 +233,142 @@ impl FrameTexture {
     }
 }
 
-/// The shader pass of `crt.wgsl`: draws the CRT picture of a [`FrameTexture`]
-/// into a `Rgba8Unorm` target of [`CrtParams::output_size`].
+/// The frame as the kernel takes it (words `0xBBGGRR`, padded with black to the monitor's size) and
+/// its glow cells ([`GlowField`]).
+pub fn crt_inputs(src: &RgbImage) -> (Vec<u32>, Vec<f32>) {
+    let mut frame = vec![0u32; SRC_WIDTH * SRC_HEIGHT];
+    let width = (src.width() as usize).min(SRC_WIDTH);
+    for y in 0..(src.height() as usize).min(SRC_HEIGHT) {
+        let row = &src.as_raw()[y * src.width() as usize * 3..][..width * 3];
+        for (x, p) in row.chunks_exact(3).enumerate() {
+            frame[y * SRC_WIDTH + x] = p[0] as u32 | (p[1] as u32) << 8 | (p[2] as u32) << 16;
+        }
+    }
+    (frame, GlowField::new(src).texels())
+}
+
+type Server = cubecl::wgpu::WgpuServer<cubecl::wgpu::AutoCompiler>;
+
+/// CubeCL running on the application's own wgpu device: the kernel's picture is a buffer of that
+/// device, which a render pass of the application then reads.
+#[derive(Clone)]
+pub struct GpuContext {
+    client: cubecl::client::Client,
+}
+
+impl GpuContext {
+    /// Fails (with a message) when the device cannot run compute shaders (a WebGL page).
+    pub fn new(
+        instance: &wgpu::Instance,
+        adapter: &wgpu::Adapter,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<Self, String> {
+        use cubecl_runtime::runtime::Runtime;
+        if !adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+        {
+            return Err("this GPU cannot run compute shaders".into());
+        }
+        let setup = cubecl::wgpu::WgpuSetup {
+            instance: instance.clone(),
+            backend: adapter.get_info().backend,
+            adapter: adapter.clone(),
+            device: device.clone(),
+            queue: queue.clone(),
+        };
+        let cube = cubecl::wgpu::try_init_device(setup, cubecl::wgpu::RuntimeOptions::default())
+            .map_err(|e| format!("cannot start CubeCL on this device: {e:?}"))?;
+        Ok(Self {
+            client: <cubecl::wgpu::WgpuRuntime as Runtime>::client(&cube),
+        })
+    }
+
+    /// The buffer of the device behind `handle`, and where the handle starts in it.
+    fn buffer(&self, handle: &cubecl::server::Handle) -> (wgpu::Buffer, u64) {
+        let managed = self
+            .client
+            .get_resource::<Server>(handle.clone())
+            .expect("a buffer of the device");
+        let resource = managed.resource();
+        (resource.buffer.clone(), resource.offset)
+    }
+}
+
+/// Draws the words of a buffer (`0xRRGGBB`, row after row) in a texture of the picture's size.
+const SHOW: &str = r#"
+@group(0) @binding(0) var<storage, read> pixels: array<u32>;
+struct Size { w: u32, h: u32 }
+@group(0) @binding(1) var<uniform> size: Size;
+@vertex
+fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let x = f32((i << 1u) & 2u);
+    let y = f32(i & 2u);
+    return vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+}
+@fragment
+fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let v = pixels[u32(pos.y) * size.w + u32(pos.x)];
+    return vec4<f32>(f32((v >> 16u) & 255u), f32((v >> 8u) & 255u), f32(v & 255u), 255.0) / 255.0;
+}
+"#;
+
+/// The CRT pass: the CubeCL kernel of `kernel.rs` computes the picture of the frame uploaded, in a
+/// buffer, and a pass draws it into a `Rgba8Unorm` target of [`CrtParams::output_size`].
 pub struct CrtPass {
+    ctx: GpuContext,
+    out_len: usize,
+    // the handles keep the buffers alive
+    frame: cubecl::server::Handle,
+    glow: cubecl::server::Handle,
+    params: cubecl::server::Handle,
+    out: cubecl::server::Handle,
+    frame_buffer: (wgpu::Buffer, u64),
+    glow_buffer: (wgpu::Buffer, u64),
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
 }
 
 impl CrtPass {
-    /// Seen through the glass `warp`: the beam's raster bends under the fixed mask.
+    /// Seen through the glass `warp`: the beam's raster bends under the fixed mask. The frame is
+    /// black until [`Self::upload`].
     pub fn new(
+        ctx: &GpuContext,
         device: &wgpu::Device,
         params: &CrtParams,
-        frame: &FrameTexture,
         warp: Warp,
-    ) -> Self {
-        let uniforms = Uniforms::new(params, warp);
-        let uniform_buffer = wgpu::util::DeviceExt::create_buffer_init(
-            device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("crt parameters"),
-                contents: bytemuck::bytes_of(&uniforms),
-                usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+    ) -> Result<Self, String> {
+        let client = &ctx.client;
+        let (w, h) = params.output_size();
+        let frame = client.create_from_slice(&vec![0u8; SRC_WIDTH * SRC_HEIGHT * 4]);
+        let glow = client.create_from_slice(&vec![0u8; GLOW_W * GLOW_H * 16]);
+        let packed = super::kernel::pack(params, warp);
+        let params_handle = client.create_from_slice(bytemuck::cast_slice(&packed));
+        let out = client.empty(w * h * 4);
+        let frame_buffer = ctx.buffer(&frame);
+        let glow_buffer = ctx.buffer(&glow);
+        let out_buffer = ctx.buffer(&out);
+
+        let align = device.limits().min_storage_buffer_offset_alignment as u64;
+        if out_buffer.1 % align != 0 {
+            return Err(format!("the picture's buffer is at {}, not a multiple of {align}", out_buffer.1));
+        }
+        let size = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("crt picture size"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        size.slice(..)
+            .get_mapped_range_mut()
+            .expect("mapped range")
+            .copy_from_slice(bytemuck::cast_slice(&[w as u32, h as u32, 0u32, 0u32]));
+        size.unmap();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("crt"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("crt.wgsl").into()),
+            label: Some("crt picture"),
+            source: wgpu::ShaderSource::Wgsl(SHOW.into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
@@ -372,7 +377,7 @@ impl CrtPass {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -381,20 +386,10 @@ impl CrtPass {
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
                     count: None,
                 },
@@ -406,15 +401,15 @@ impl CrtPass {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &out_buffer.0,
+                        offset: out_buffer.1,
+                        size: wgpu::BufferSize::new((w * h * 4) as u64),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(frame.view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(frame.glow_view()),
+                    resource: size.as_entire_binding(),
                 },
             ],
         });
@@ -424,7 +419,7 @@ impl CrtPass {
             immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("crt"),
+            label: Some("crt picture"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &module,
@@ -436,7 +431,11 @@ impl CrtPass {
                 module: &module,
                 entry_point: Some("fs"),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
@@ -444,10 +443,26 @@ impl CrtPass {
             multiview_mask: None,
             cache: None,
         });
-        Self {
+        Ok(Self {
+            ctx: ctx.clone(),
+            out_len: w * h,
+            frame,
+            glow,
+            params: params_handle,
+            out,
+            frame_buffer,
+            glow_buffer,
             pipeline,
             bind_group,
-        }
+        })
+    }
+
+    /// The monitor's next frame, as [`crt_inputs`] makes it.
+    pub fn upload(&self, queue: &wgpu::Queue, frame: &[u32], glow: &[f32]) {
+        // what the kernel still has to read is submitted before the new frame is written
+        let _ = self.ctx.client.flush();
+        queue.write_buffer(&self.frame_buffer.0, self.frame_buffer.1, bytemuck::cast_slice(frame));
+        queue.write_buffer(&self.glow_buffer.0, self.glow_buffer.1, bytemuck::cast_slice(glow));
     }
 
     /// A texture the pass can draw in, of the picture's size.
@@ -473,7 +488,23 @@ impl CrtPass {
         })
     }
 
+    /// Run the kernel (submitted now), then draw its picture into `target` with `encoder`.
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+        use cubecl::prelude::*;
+        let n = self.out_len as u32;
+        // SAFETY: the buffers are the sizes the kernel reads and writes (`kernel.rs`)
+        unsafe {
+            super::kernel::crt::launch_unchecked(
+                &self.ctx.client,
+                CubeCount::Static(n.div_ceil(256), 1, 1),
+                CubeDim::new_1d(256),
+                BufferArg::from_raw_parts(self.frame.clone(), SRC_WIDTH * SRC_HEIGHT),
+                BufferArg::from_raw_parts(self.glow.clone(), GLOW_W * GLOW_H * 4),
+                BufferArg::from_raw_parts(self.params.clone(), 26),
+                BufferArg::from_raw_parts(self.out.clone(), self.out_len),
+            );
+        }
+        let _ = self.ctx.client.flush();
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("crt"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -503,7 +534,6 @@ pub struct GpuCrt {
     params: CrtParams,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    frame: FrameTexture,
     pass: CrtPass,
     target: wgpu::Texture,
     readback: wgpu::Buffer,
@@ -545,8 +575,8 @@ impl GpuCrt {
             .map_err(|e| format!("cannot use the GPU: {e}"))?;
 
         let (out_w, out_h) = params.output_size();
-        let frame = FrameTexture::new(&device);
-        let pass = CrtPass::new(&device, &params, &frame, warp);
+        let ctx = GpuContext::new(&instance, &adapter, &device, &queue)?;
+        let pass = CrtPass::new(&ctx, &device, &params, warp)?;
         let target = CrtPass::create_target(&device, &params, wgpu::TextureUsages::COPY_SRC);
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
         let padded_row = (out_w * 4).div_ceil(align) * align;
@@ -560,7 +590,6 @@ impl GpuCrt {
             params,
             device,
             queue,
-            frame,
             pass,
             target,
             readback,
@@ -579,7 +608,8 @@ impl DisplayFilter for GpuCrt {
         let (out_w, out_h) = self.params.output_size();
         assert_eq!(dst.len(), out_w * out_h);
 
-        self.frame.upload(&self.queue, src);
+        let (frame, glow) = crt_inputs(src);
+        self.pass.upload(&self.queue, &frame, &glow);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
