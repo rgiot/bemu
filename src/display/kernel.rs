@@ -246,83 +246,79 @@ pub fn crt(lights: &[f32], glow: &[f32], pr: &[f32], out: &mut [u32]) {
 
 // ---- the glow of the frame, on the GPU (`GlowField::new` of crt.rs, step for step) ----
 
-/// The mean light of the 4 x 4 source pixels of each fine cell (`GLOW_W` x `GLOW_H` cells).
+/// The cells of the glow's two grids, in one buffer (`FINE` fine cells, then `COARSE` coarse ones,
+/// four floats each): the mean light of the 4 x 4 source pixels of a fine cell, and of the 16 x 16
+/// of a coarse one (the frame's pixels beyond its size are black).
 #[cube(launch_unchecked)]
-pub fn glow_cells(frame: &[u32], fine: &mut [f32], sw: u32, sh: u32) {
+pub fn glow_cells(frame: &[u32], grid: &mut [f32], sw: u32, sh: u32) {
     let i = ABSOLUTE_POS;
-    if i < 13056 {
-        let cx = (i % 192) as u32;
-        let cy = (i / 192) as u32;
+    if i < 13920 {
+        let mut cx = (i % 192) as u32;
+        let mut cy = (i / 192) as u32;
+        let mut size = 4u32;
+        if i >= 13056 {
+            let j = (i - 13056) as u32;
+            cx = j % 48u32;
+            cy = j / 48u32;
+            size = 16u32;
+        }
         let mut r = 0.0f32;
         let mut g = 0.0f32;
         let mut b = 0.0f32;
-        for dy in 0..4u32 {
-            for dx in 0..4u32 {
-                let x = cx * 4u32 + dx;
-                let y = cy * 4u32 + dy;
+        for dy in 0..size {
+            for dx in 0..size {
+                let x = cx * size + dx;
+                let y = cy * size + dy;
                 if x < sw && y < sh {
                     let at = (y * sw + x) * 3u32;
                     let lr = byte(frame, at) / 255.0;
                     let lg = byte(frame, at + 1u32) / 255.0;
                     let lb = byte(frame, at + 2u32) / 255.0;
-                    r += lr * lr / 16.0;
-                    g += lg * lg / 16.0;
-                    b += lb * lb / 16.0;
+                    r += lr * lr;
+                    g += lg * lg;
+                    b += lb * lb;
                 }
             }
         }
-        fine[i * 4] = r;
-        fine[i * 4 + 1] = g;
-        fine[i * 4 + 2] = b;
-        fine[i * 4 + 3] = 0.0;
+        let n = (size * size) as f32;
+        grid[i * 4] = r / n;
+        grid[i * 4 + 1] = g / n;
+        grid[i * 4 + 2] = b / n;
+        grid[i * 4 + 3] = 0.0;
     }
 }
 
-/// The coarse grid of the wide blur: the mean of 4 x 4 fine cells.
-#[cube(launch_unchecked)]
-pub fn glow_coarse(fine: &[f32], coarse: &mut [f32]) {
-    let i = ABSOLUTE_POS;
-    if i < 864 {
-        let gx = (i % 48) as u32;
-        let gy = (i / 48) as u32;
-        let mut r = 0.0f32;
-        let mut g = 0.0f32;
-        let mut b = 0.0f32;
-        for dy in 0..4u32 {
-            let fy = gy * 4u32 + dy;
-            if fy < 68u32 {
-                for dx in 0..4u32 {
-                    let at = ((fy * 192u32 + gx * 4u32 + dx) * 4u32) as usize;
-                    r += fine[at] / 16.0;
-                    g += fine[at + 1] / 16.0;
-                    b += fine[at + 2] / 16.0;
-                }
-            }
-        }
-        coarse[i * 4] = r;
-        coarse[i * 4 + 1] = g;
-        coarse[i * 4 + 2] = b;
-        coarse[i * 4 + 3] = 0.0;
-    }
-}
-
-/// One pass of a separable Gaussian blur (zero outside the grid) of a `w` x `h` grid, along the
-/// rows (`horizontal` 1) or the columns; its `2 * radius + 1` taps are `taps[offset..]`.
+/// One pass of the separable Gaussian blurs (zero outside the grid) of both grids at once: the fine
+/// grid (192 x 68) with the close taps, the coarse one (48 x 18) with the wide ones, along the rows
+/// (`horizontal` 1) or the columns. The taps are `taps[..]` (close first, then wide, from `offset`).
 #[cube(launch_unchecked)]
 pub fn glow_blur(
     src: &[f32],
     taps: &[f32],
     dst: &mut [f32],
-    w: u32,
-    h: u32,
     horizontal: u32,
-    radius: u32,
+    close_radius: u32,
+    wide_radius: u32,
     offset: u32,
 ) {
     let i = ABSOLUTE_POS;
-    if i < (w * h) as usize {
-        let x = (i as u32 % w) as i32;
-        let y = (i as u32 / w) as i32;
+    if i < 13920 {
+        let mut base = 0u32;
+        let mut w = 192u32;
+        let mut h = 68u32;
+        let mut radius = close_radius;
+        let mut first = 0u32;
+        let mut j = i as u32;
+        if i >= 13056 {
+            base = 13056u32;
+            w = 48u32;
+            h = 18u32;
+            radius = wide_radius;
+            first = offset;
+            j = (i - 13056) as u32;
+        }
+        let x = (j % w) as i32;
+        let y = (j / w) as i32;
         let mut r = 0.0f32;
         let mut g = 0.0f32;
         let mut b = 0.0f32;
@@ -336,8 +332,8 @@ pub fn glow_blur(
                 sy = y + d;
             }
             if sx >= 0 && sx < w as i32 && sy >= 0 && sy < h as i32 {
-                let at = ((sy as u32 * w + sx as u32) * 4u32) as usize;
-                let k = taps[(offset + t) as usize];
+                let at = ((base + sy as u32 * w + sx as u32) * 4u32) as usize;
+                let k = taps[(first + t) as usize];
                 r += k * src[at];
                 g += k * src[at + 1];
                 b += k * src[at + 2];
@@ -352,16 +348,16 @@ pub fn glow_blur(
 
 #[cube]
 fn bilinear(wide: &[f32], x0: u32, x1: u32, y0: u32, y1: u32, fx: f32, fy: f32, c: u32) -> f32 {
-    let top = wide[((y0 * 48u32 + x0) * 4u32 + c) as usize] * (1.0 - fx)
-        + wide[((y0 * 48u32 + x1) * 4u32 + c) as usize] * fx;
-    let bottom = wide[((y1 * 48u32 + x0) * 4u32 + c) as usize] * (1.0 - fx)
-        + wide[((y1 * 48u32 + x1) * 4u32 + c) as usize] * fx;
+    let top = wide[((13056u32 + y0 * 48u32 + x0) * 4u32 + c) as usize] * (1.0 - fx)
+        + wide[((13056u32 + y0 * 48u32 + x1) * 4u32 + c) as usize] * fx;
+    let bottom = wide[((13056u32 + y1 * 48u32 + x0) * 4u32 + c) as usize] * (1.0 - fx)
+        + wide[((13056u32 + y1 * 48u32 + x1) * 4u32 + c) as usize] * fx;
     top * (1.0 - fy) + bottom * fy
 }
 
 /// The glow cells the `crt` kernel reads: the close blur plus the (bilinear) wide one, weighted.
 #[cube(launch_unchecked)]
-pub fn glow_merge(close: &[f32], wide: &[f32], glow: &mut [f32], kc: f32, kw: f32) {
+pub fn glow_merge(blurred: &[f32], glow: &mut [f32], kc: f32, kw: f32) {
     let i = ABSOLUTE_POS;
     if i < 13056 {
         let x = (i % 192) as u32;
@@ -374,21 +370,19 @@ pub fn glow_merge(close: &[f32], wide: &[f32], glow: &mut [f32], kc: f32, kw: f3
         let y1 = u32::min(y0 + 1u32, 17u32);
         let fx = gx - x0 as f32;
         let fy = gy - y0 as f32;
-        glow[i * 4] = kc * close[i * 4] + kw * bilinear(wide, x0, x1, y0, y1, fx, fy, 0u32);
-        glow[i * 4 + 1] = kc * close[i * 4 + 1] + kw * bilinear(wide, x0, x1, y0, y1, fx, fy, 1u32);
-        glow[i * 4 + 2] = kc * close[i * 4 + 2] + kw * bilinear(wide, x0, x1, y0, y1, fx, fy, 2u32);
+        glow[i * 4] = kc * blurred[i * 4] + kw * bilinear(blurred, x0, x1, y0, y1, fx, fy, 0u32);
+        glow[i * 4 + 1] = kc * blurred[i * 4 + 1] + kw * bilinear(blurred, x0, x1, y0, y1, fx, fy, 1u32);
+        glow[i * 4 + 2] = kc * blurred[i * 4 + 2] + kw * bilinear(blurred, x0, x1, y0, y1, fx, fy, 2u32);
         glow[i * 4 + 3] = 0.0;
     }
 }
 
 /// Every buffer and launch of a frame's picture: the glow of the frame, then the `crt` kernel.
 pub struct Pipeline {
-    fine: cubecl::server::Handle,
-    coarse: cubecl::server::Handle,
-    tmp_fine: cubecl::server::Handle,
-    close: cubecl::server::Handle,
-    tmp_coarse: cubecl::server::Handle,
-    wide: cubecl::server::Handle,
+    /// The cells of both grids, then the same blurred along the rows, then along the columns.
+    grid: cubecl::server::Handle,
+    tmp: cubecl::server::Handle,
+    blurred: cubecl::server::Handle,
     taps: cubecl::server::Handle,
     glow: cubecl::server::Handle,
     params: cubecl::server::Handle,
@@ -418,12 +412,9 @@ impl Pipeline {
         let luts = luts(params);
         let cells = |n: usize| client.create_from_slice(&vec![0u8; n * 16]);
         Self {
-            fine: cells(FINE),
-            coarse: cells(COARSE),
-            tmp_fine: cells(FINE),
-            close: cells(FINE),
-            tmp_coarse: cells(COARSE),
-            wide: cells(COARSE),
+            grid: cells(FINE + COARSE),
+            tmp: cells(FINE + COARSE),
+            blurred: cells(FINE + COARSE),
             taps: client.create_from_slice(f32::as_bytes(&taps)),
             glow: cells(FINE),
             params: client.create_from_slice(f32::as_bytes(&pack(params, warp))),
@@ -457,37 +448,24 @@ impl Pipeline {
         let one_d = |n: usize| (CubeCount::Static((n as u32).div_ceil(64), 1, 1), CubeDim::new_1d(64));
         // SAFETY: the buffers have the sizes the kernels index (see their loops' bounds)
         unsafe {
-            let (count, dim) = one_d(FINE);
-            glow_cells::launch_unchecked(client, count, dim, arg(frame, frame_words), arg(&self.fine, FINE * 4), sw, sh);
-            let (count, dim) = one_d(COARSE);
-            glow_coarse::launch_unchecked(client, count, dim, arg(&self.fine, FINE * 4), arg(&self.coarse, COARSE * 4));
+            let both = FINE + COARSE;
             let taps_len = self.close_taps + (2 * self.wide_radius + 1) as usize;
-            let (count, dim) = one_d(FINE);
+            let (count, dim) = one_d(both);
+            glow_cells::launch_unchecked(client, count.clone(), dim, arg(frame, frame_words), arg(&self.grid, both * 4), sw, sh);
             glow_blur::launch_unchecked(
                 client, count.clone(), dim,
-                arg(&self.fine, FINE * 4), arg(&self.taps, taps_len), arg(&self.tmp_fine, FINE * 4),
-                GLOW_W as u32, GLOW_H as u32, 1u32, self.close_radius, 0u32,
+                arg(&self.grid, both * 4), arg(&self.taps, taps_len), arg(&self.tmp, both * 4),
+                1u32, self.close_radius, self.wide_radius, self.close_taps as u32,
             );
             glow_blur::launch_unchecked(
                 client, count, dim,
-                arg(&self.tmp_fine, FINE * 4), arg(&self.taps, taps_len), arg(&self.close, FINE * 4),
-                GLOW_W as u32, GLOW_H as u32, 0u32, self.close_radius, 0u32,
-            );
-            let (count, dim) = one_d(COARSE);
-            glow_blur::launch_unchecked(
-                client, count.clone(), dim,
-                arg(&self.coarse, COARSE * 4), arg(&self.taps, taps_len), arg(&self.tmp_coarse, COARSE * 4),
-                GLOW_CW as u32, GLOW_CH as u32, 1u32, self.wide_radius, self.close_taps as u32,
-            );
-            glow_blur::launch_unchecked(
-                client, count, dim,
-                arg(&self.tmp_coarse, COARSE * 4), arg(&self.taps, taps_len), arg(&self.wide, COARSE * 4),
-                GLOW_CW as u32, GLOW_CH as u32, 0u32, self.wide_radius, self.close_taps as u32,
+                arg(&self.tmp, both * 4), arg(&self.taps, taps_len), arg(&self.blurred, both * 4),
+                0u32, self.close_radius, self.wide_radius, self.close_taps as u32,
             );
             let (count, dim) = one_d(FINE);
             glow_merge::launch_unchecked(
                 client, count, dim,
-                arg(&self.close, FINE * 4), arg(&self.wide, COARSE * 4), arg(&self.glow, FINE * 4),
+                arg(&self.blurred, both * 4), arg(&self.glow, FINE * 4),
                 self.kernel_weights.0, self.kernel_weights.1,
             );
             let count = || CubeCount::Static((self.out_len as u32).div_ceil(self.cube_dim), 1, 1);
