@@ -10,7 +10,7 @@ instructions (`CSL:6: +339454 keyboard_write(...)`); this script turns them into
 
 `--cart` starts the script with a GX4000 and that cartridge (else the header is `reset` alone);
 `--shift` moves everything after the reset by US microseconds. A `keyboard_write` that only
-holds line 9 becomes `joystick 0 ...` (CSL 1.3).
+holds line 9 becomes `joystick 0 ...` (CSL 1.6).
 """
 import argparse
 import re
@@ -24,7 +24,7 @@ parser.add_argument("--cart")
 parser.add_argument("--shift", type=int, default=0)
 args = parser.parse_args()
 
-lines = ["csl_version 1.3"]
+lines = ["csl_version 1.6"]
 if args.cart:
     lines += ["cpc_model 6", f"rom_config C 0 '{args.cart}'"]
 lines.append("reset")

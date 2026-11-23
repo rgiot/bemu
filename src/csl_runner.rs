@@ -2094,7 +2094,7 @@ mod test {
     /// their width; `screenshot_name` names a zoomed one as it says.
     #[test]
     fn a_screenshot_is_zoomed_as_the_script_says() {
-        let script = "csl_version 1.3\nreset\nwait 1000000\nscreenshot\nscreenshot 0.25\n\
+        let script = "csl_version 1.6\nreset\nwait 1000000\nscreenshot\nscreenshot 0.25\n\
                       screenshot 200px\nscreenshot_name 'small'\nscreenshot vsync 0.5\n";
         let shots = Collected::default();
         let mut runner = CslRunner::with_io(
@@ -2322,7 +2322,7 @@ mod test {
         );
         runner
             .run_text(
-                "csl_version 1.3\nreset\njoystick 0 right fire1\nwait 1000\n",
+                "csl_version 1.6\nreset\njoystick 0 right fire1\nwait 1000\n",
                 ".",
             )
             .unwrap();
@@ -2332,7 +2332,7 @@ mod test {
         );
         runner
             .run_text(
-                "csl_version 1.3\njoystick 1 up\nwait 1000\njoystick 0\nwait 1000\n",
+                "csl_version 1.6\njoystick 1 up\nwait 1000\njoystick 0\nwait 1000\n",
                 ".",
             )
             .unwrap();

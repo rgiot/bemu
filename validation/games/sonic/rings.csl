@@ -2,7 +2,7 @@
 ; rings_amspirit.csl (made by ../../tools/amspirit_replay.py from its log). Sonic runs right,
 ; jumps, takes rings, loses them on the spikes (scattered rings: multiplexed sprites).
 ; amspirit_1.16.0/ holds AMSpiriT's shots of some of these frames.
-csl_version 1.3
+csl_version 1.6
 cpc_model 6
 rom_config C 0 'Sonic the Hedgehog (UK) (64K) (2025) [Original].cpr'
 reset

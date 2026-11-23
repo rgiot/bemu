@@ -1,5 +1,5 @@
 ; DRIVETIME on a CRTC 0 6128: run it, screenshot the times
-csl_version 1.0
+csl_version 1.4
 crtc_select 0
 key_delay 70000 70000 400000
 reset

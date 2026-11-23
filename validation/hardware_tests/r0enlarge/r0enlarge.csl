@@ -1,4 +1,4 @@
-csl_version 1.0
+csl_version 1.4
 crtc_select 0
 reset
 wait 3000000
