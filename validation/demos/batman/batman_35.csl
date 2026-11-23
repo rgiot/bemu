@@ -1,6 +1,6 @@
 ; Batman Forever, the one disk version: needs a double-sided 3.5" drive A
 ; (run_csl ... --drive-a 3.5; on a 3" drive it says WRONG DISK FOR YOUR CONFIGURATION)
-csl_version 1.0
+csl_version 1.4
 crtc_select 0
 key_delay 70000 70000 400000
 reset

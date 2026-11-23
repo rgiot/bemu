@@ -11,12 +11,12 @@ Compared with AMSpiriT Lite 1.16.0 (the Linux AppImage of amspirit.fr, run headl
 
 ## Scripts
 
-- `sonic.csl` (CSL 1.3): boots the cartridge on a GX4000, screenshots the disclaimer and the
+- `sonic.csl` (CSL 1.6): boots the cartridge on a GX4000, screenshots the disclaimer and the
   title, `joystick 0 fire1` starts the game, `joystick 0 right` runs into the first Motobug.
 
       cargo run --release --example run_csl -- validation/games/sonic/sonic.csl /tmp/sonic
 
-- `rings.csl` (CSL 1.3): the ring route. Sonic runs right and jumps every second: kills the
+- `rings.csl` (CSL 1.6): the ring route. Sonic runs right and jumps every second: kills the
   Motobug, takes rings, loses ten on the spikes (they scatter: multiplexed sprites), takes some
   again. 80 screenshots. Its `wait`s are the emulated times AMSpiriT played
   `rings_amspirit.csl` (the same route in CSL 1.2, `keyboard_write` line 9 for the joystick):

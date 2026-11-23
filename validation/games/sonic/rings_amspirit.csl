@@ -3,7 +3,7 @@
 ;   AppRun --turbo --no-splash -m GX4000 -l EN --script rings_amspirit.csl --debug-script \
 ;     --save-log ams.log 'Sonic the Hedgehog (UK) (64K) (2025) [Original].cpr'
 ; then ../../tools/amspirit_replay.py ams.log ... rings.csl replays its exact input times.
-csl_version 1.2
+csl_version 1.4
 reset
 wait 15000000
 keyboard_write 255,255,255,255,255,255,255,255,255,223
