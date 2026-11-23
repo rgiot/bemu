@@ -475,6 +475,11 @@ impl Pipeline {
         &self.params
     }
 
+    /// The light of every slot (the `slots` kernel's output), for the tests.
+    pub fn lights(&self) -> &cubecl::server::Handle {
+        &self.lights
+    }
+
     /// The picture's buffer.
     pub fn out(&self) -> &cubecl::server::Handle {
         &self.out

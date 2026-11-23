@@ -135,3 +135,25 @@ fn the_application_path_draws_the_kernels_picture() {
         assert!(worst <= 6 && off < w * h * 3 / 1000, "worst {worst}, {off} values off by more than 3");
     }
 }
+
+/// Where the first kernel's output differs between the backends (a diagnostic).
+#[test]
+fn the_slot_lights_of_the_backends_differ_where() {
+    let profile = CrtProfile::Ctm644;
+    let Ok(mut gpu) = KernelCrt::new(profile.params(), Warp::FLAT, Backend::Gpu) else {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    };
+    let mut cpu = KernelCrt::new(profile.params(), Warp::FLAT, Backend::Cpu).unwrap();
+    let w = profile.params().output_size().0;
+    let src = pattern();
+    let (a, b) = (cpu.slot_lights(&src), gpu.slot_lights(&src));
+    let mut shown = 0;
+    for (i, (p, q)) in a.iter().zip(&b).enumerate() {
+        if (p - q).abs() > 0.02 && shown < 12 {
+            println!("slot light at ({}, {}): cpu {p} gpu {q}", i % w, i / w);
+            shown += 1;
+        }
+    }
+    println!("{} slot lights differ by more than 0.02", a.iter().zip(&b).filter(|(p, q)| (*p - *q).abs() > 0.02).count());
+}
