@@ -49,25 +49,11 @@ fn the_gpu_gives_the_cpu_backends_picture() {
         };
         let mut cpu = KernelCrt::new(profile.params(), warp, Backend::Cpu).unwrap();
         let (w, h) = cpu.output_size();
-        for (name, src) in [("pattern", pattern()), ("noise", noise())] {
+        for src in [pattern(), noise()] {
             let (mut a, mut b) = (vec![0; w * h], vec![0; w * h]);
             cpu.render(&src, &mut a);
             gpu.render(&src, &mut b);
             let (worst, off) = compare(&a, &b);
-            // where the worst difference is (for the report)
-            let (at, _) = a.iter().zip(&b).enumerate().map(|(i, (p, q))| (i, [0, 8, 16].iter().map(|s| (((p >> s) & 255) as i32 - ((q >> s) & 255) as i32).abs()).max().unwrap())).max_by_key(|x| x.1).unwrap();
-            let mut by_y = std::collections::BTreeMap::new();
-            let mut by_channel = [0usize; 3];
-            for (i, (p, q)) in a.iter().zip(&b).enumerate() {
-                for (c, shift) in [16, 8, 0].into_iter().enumerate() {
-                    if (((p >> shift) & 255) as i32 - ((q >> shift) & 255) as i32).abs() > 3 {
-                        *by_y.entry(i / w).or_insert(0usize) += 1;
-                        by_channel[c] += 1;
-                    }
-                }
-            }
-            println!("off by channel (r, g, b) {by_channel:?}; rows: {:?}", by_y.iter().take(12).collect::<Vec<_>>());
-            println!("{profile:?} {curvature} {name}: worst {worst} at ({}, {}) cpu {:06x} gpu {:06x}, {off} off", at % w, at / w, a[at], b[at]);
             assert!(worst <= 6 && off < w * h * 3 / 1000, "{profile:?} {curvature}: worst {worst}, {off} values off by more than 3");
         }
     }
@@ -136,9 +122,11 @@ fn the_application_path_draws_the_kernels_picture() {
     }
 }
 
-/// Where the first kernel's output differs between the backends (a diagnostic).
+/// The first kernel's output (the light of every slot) is the same on both backends: a read of the
+/// line above the picture (the top rows) once differed on a GPU, whose rule for a read out of
+/// bounds is not the CPU's.
 #[test]
-fn the_slot_lights_of_the_backends_differ_where() {
+fn the_slot_lights_are_the_same_on_both_backends() {
     let profile = CrtProfile::Ctm644;
     let Ok(mut gpu) = KernelCrt::new(profile.params(), Warp::FLAT, Backend::Gpu) else {
         eprintln!("skipped: no GPU adapter");
@@ -146,14 +134,16 @@ fn the_slot_lights_of_the_backends_differ_where() {
     };
     let mut cpu = KernelCrt::new(profile.params(), Warp::FLAT, Backend::Cpu).unwrap();
     let w = profile.params().output_size().0;
-    let src = pattern();
-    let (a, b) = (cpu.slot_lights(&src), gpu.slot_lights(&src));
-    let mut shown = 0;
-    for (i, (p, q)) in a.iter().zip(&b).enumerate() {
-        if (p - q).abs() > 0.02 && shown < 12 {
-            println!("slot light at ({}, {}): cpu {p} gpu {q}", i % w, i / w);
-            shown += 1;
-        }
+    for src in [pattern(), noise()] {
+        let (a, b) = (cpu.slot_lights(&src), gpu.slot_lights(&src));
+        let wrong: Vec<(usize, usize)> = a
+            .iter()
+            .zip(&b)
+            .enumerate()
+            .filter(|(_, (p, q))| (**p - **q).abs() > 0.02)
+            .map(|(i, _)| (i % w, i / w))
+            .take(5)
+            .collect();
+        assert!(wrong.is_empty(), "slot lights differ at {wrong:?}");
     }
-    println!("{} slot lights differ by more than 0.02", a.iter().zip(&b).filter(|(p, q)| (*p - *q).abs() > 0.02).count());
 }
