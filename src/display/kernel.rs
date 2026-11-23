@@ -67,26 +67,31 @@ fn byte(frame: &[u32], at: u32) -> f32 {
     ((frame[(at >> 2u32) as usize] >> ((at & 3u32) * 8u32)) & 255u32) as f32
 }
 
-/// Linear light of gun `c` of the source pixel (i, j); black outside the `sw` x `sh` frame.
+/// Linear light of gun `c` of the source pixel (i, j); black outside the `sw` x `sh` frame. The
+/// bytes are read at a clamped place whatever the pixel (no read outside the buffer, so no
+/// backend's out-of-bounds rule gets a say), then the outside is made black.
 #[cube]
 fn gun(frame: &[u32], pr: &[f32], i: i32, j: i32, c: u32, sw: u32, sh: u32) -> f32 {
+    let inside = i >= 0 && i < sw as i32 && j >= 0 && j < sh as i32;
+    let ci = u32::min(i32::max(i, 0) as u32, u32::max(sw, 1u32) - 1u32);
+    let cj = u32::min(i32::max(j, 0) as u32, u32::max(sh, 1u32) - 1u32);
+    let at = (cj * sw + ci) * 3u32;
     let mut out = 0.0f32;
-    if i >= 0 && i < sw as i32 && j >= 0 && j < sh as i32 {
-        let at = (j as u32 * sw + i as u32) * 3u32;
-        if pr[MONO] > 0.5 {
-            let r = byte(frame, at) / 255.0;
-            let g = byte(frame, at + 1u32) / 255.0;
-            let b = byte(frame, at + 2u32) / 255.0;
-            out = 0.299 * r * r + 0.587 * g * g + 0.114 * b * b;
-        } else {
-            let s = byte(frame, at + c) / 255.0;
-            out = s * s;
-        }
+    if pr[MONO] > 0.5 {
+        let r = byte(frame, at) / 255.0;
+        let g = byte(frame, at + 1u32) / 255.0;
+        let b = byte(frame, at + 2u32) / 255.0;
+        out = 0.299 * r * r + 0.587 * g * g + 0.114 * b * b;
+    } else {
+        let s = byte(frame, at + c) / 255.0;
+        out = s * s;
+    }
+    if !inside {
+        out = 0.0;
     }
     out
 }
 
-/// The phosphor of the slot at output column `x`: a mono tube has the one (called green).
 #[cube]
 fn slot_channel(pr: &[f32], x: i32) -> u32 {
     let mut c = ((x / pr[SLOT_PX] as i32) % 3) as u32;
