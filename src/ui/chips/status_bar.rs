@@ -134,6 +134,14 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
                      emulates each second. Under 100 % the emulation does not keep up.",
                 );
             }
+            // what draws the CRT: said, so that nobody has to guess whether the GPU is used
+            if let Some(renderer) = settings.map(|s| s.crt_renderer.as_str()).filter(|r| !r.is_empty()) {
+                crate::ui::widgets::rule(ui);
+                ui.label(format!("CRT: {renderer}")).on_hover_text(
+                    "What draws the picture: the GPU, or the CPU when Video > GPU acceleration is \
+                     off (slower, the same picture on every machine).",
+                );
+            }
             if let Some(port) = target.debugger().and_then(|d| d.listening_port()) {
                 crate::ui::widgets::rule(ui);
                 ui.label(format!("debug server :{port}"));

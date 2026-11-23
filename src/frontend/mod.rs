@@ -114,6 +114,18 @@ pub trait Frontend {
         let _ = on;
     }
 
+    /// Hardware acceleration of the CRT (Video > GPU acceleration): off, a frontend that draws
+    /// the CRT itself makes it on the CPU.
+    fn set_hardware(&mut self, on: bool) {
+        let _ = on;
+    }
+
+    /// What made the picture last shown ("GPU · name", "CPU (software rendering)", the raw
+    /// picture), for the interface; `None` where the frontend does not know.
+    fn renderer(&self) -> Option<String> {
+        None
+    }
+
     /// How curved the CRTs' glass is (see `DisplayMode::warp`), for a frontend that draws them.
     fn set_curvature(&mut self, curvature: f32) {
         let _ = curvature;

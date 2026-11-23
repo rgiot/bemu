@@ -431,7 +431,8 @@ impl Gfx {
                 None
             }
         };
-        let picture = Picture::new(&device, format, cube);
+        let mut picture = Picture::new(&device, format, cube);
+        picture.adapter = adapter.get_info().name;
         Ok(Self {
             instance,
             adapter,
@@ -774,6 +775,8 @@ struct App {
     curvature: f32,
     /// See `Picture::size`.
     picture_size: amsrust::display::PictureSize,
+    /// The CRT is made by the GPU (Video > GPU acceleration).
+    hardware: bool,
     window: Option<Arc<Window>>,
     gfx: Option<Gfx>,
     /// Keys held, by physical key, so that a release is matched with its
@@ -1211,6 +1214,7 @@ impl WinitGpuFrontend {
                 size,
                 curvature,
                 picture_size: amsrust::display::PictureSize::default(),
+                hardware: true,
                 window: None,
                 gfx: None,
                 held: HashMap::new(),
@@ -1464,9 +1468,11 @@ impl Frontend for WinitGpuFrontend {
 
     fn present_frame(&mut self, frame: &RgbImage, mode: DisplayMode) -> Result<(), String> {
         let picture_size = self.app.picture_size;
+        let hardware = self.app.hardware;
         let size = self.app.window.as_ref().map(|w| w.inner_size());
         let gfx = self.gfx()?;
         gfx.picture.size = picture_size;
+        gfx.picture.hardware = hardware;
         // the surface at the window's size now: one of the old size would be stretched
         if let Some(size) = size {
             gfx.resize(size.width, size.height);
@@ -1575,6 +1581,15 @@ impl Frontend for WinitGpuFrontend {
         if let Some(gfx) = &mut self.app.gfx {
             gfx.picture.size = size;
         }
+    }
+
+    fn set_hardware(&mut self, on: bool) {
+        self.app.hardware = on;
+    }
+
+    fn renderer(&self) -> Option<String> {
+        let gfx = self.app.gfx.as_ref()?;
+        Some(gfx.picture.renderer().to_owned()).filter(|r| !r.is_empty())
     }
 
     fn set_curvature(&mut self, curvature: f32) {

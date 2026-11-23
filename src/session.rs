@@ -601,6 +601,7 @@ impl Window {
         let (width, height) = self.filter.output_size();
         self.buffer = vec![0; width * height];
         self.window.set_curvature(settings.curvature);
+        self.window.set_hardware(settings.crt_gpu);
     }
 
     /// The frames a second the window paces (0: the sound device's clock does it, or full
@@ -719,6 +720,7 @@ fn settings_of(args: &Args, sound: bool) -> HostSettings {
         hhold: args.hhold,
         vhold: args.vhold,
         crt_gpu: args.gpu,
+        crt_renderer: String::new(),
         overlay: args.overlay,
         keyboard: args.keyboard,
         host_layout: args.host_keyboard_layout,
@@ -761,7 +763,7 @@ pub fn run_window(
     let (width, height) = mode.output_size();
     #[cfg(feature = "gui")]
     let gui = (args.frontend == FrontendKind::Winit).then(amsrust::ui::Gui::new);
-    let window: Box<dyn Frontend> = match args.frontend {
+    let mut window: Box<dyn Frontend> = match args.frontend {
         FrontendKind::Minifb => Box::new(
             MinifbFrontend::open("amsrust", width, height, args.host_keyboard_layout)
                 .unwrap_or_else(|e| panic!("{e}")),
@@ -779,6 +781,7 @@ pub fn run_window(
         FrontendKind::Winit => panic!("--frontend winit needs a build with --features gpu-window"),
     };
     let direct = window.direct();
+    window.set_hardware(args.gpu);
     let gpu = args.gpu && !direct;
     let audio = open_audio(sound, motherboard);
     let has_server = server.is_ok();
@@ -1079,6 +1082,11 @@ pub fn run_window(
                 .present(&window.buffer, window.filter.output_size())
         };
         shown.unwrap_or_else(|e| panic!("{e}"));
+        if let Some(renderer) = window.window.renderer() {
+            if core.settings.crt_renderer != renderer {
+                core.settings.crt_renderer = renderer;
+            }
+        }
         // the next frame is drawn in this one
         window.monitor.recycle(frame);
     }
