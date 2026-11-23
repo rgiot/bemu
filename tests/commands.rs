@@ -346,8 +346,8 @@ fn a_drive_becomes_a_gotek() {
     assert_eq!(kind, DriveKind::Gotek);
     // both heads, no head to move
     assert!(kind.is_double_sided());
-    assert_eq!(kind.seek_us(40, 3_000), 1);
-    assert!(DriveKind::ThreeAndHalfInch.seek_us(40, 3_000) > 100_000);
+    assert_eq!(kind.seek_us(40, 3_000, 0), 1);
+    assert!(DriveKind::ThreeAndHalfInch.seek_us(40, 3_000, 0) > 100_000);
     assert_eq!("gotek".parse::<DriveKind>(), Ok(DriveKind::Gotek));
 }
 
