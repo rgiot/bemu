@@ -55,6 +55,12 @@ pub const V_OFF: usize = 2 * PHASES * 4;
 pub const M_OFF: usize = V_OFF + V_LEVELS * PHASES;
 /// The parameters' count.
 pub const PARAMS: usize = 30;
+/// The frame as linear light, padded with zeros: `PAD` pixels around the monitor's 768 x 272, so
+/// that a beam's taps beyond the picture read black without any test (a read outside is clamped
+/// into the border).
+pub const PAD: usize = 4;
+pub const LIN_W: usize = SRC_WIDTH + 2 * PAD;
+pub const LIN_H: usize = SRC_HEIGHT + 2 * PAD;
 
 #[cube]
 fn gauss(d: f32, sigma: f32) -> f32 {
@@ -67,29 +73,18 @@ fn byte(frame: &[u32], at: u32) -> f32 {
     ((frame[(at >> 2u32) as usize] >> ((at & 3u32) * 8u32)) & 255u32) as f32
 }
 
-/// Linear light of gun `c` of the source pixel (i, j); black outside the `sw` x `sh` frame. The
-/// bytes are read at a clamped place whatever the pixel (no read outside the buffer, so no
-/// backend's out-of-bounds rule gets a say), then the outside is made black.
+/// Linear light of gun `c` of the source pixel (i, j), from the padded linear frame (`to_linear`):
+/// black beyond the picture, where the index is clamped into the zeros of the border. A mono tube
+/// reads the luminance (the fourth float of a pixel) whatever the gun.
 #[cube]
-fn gun(frame: &[u32], pr: &[f32], i: i32, j: i32, c: u32, sw: u32, sh: u32) -> f32 {
-    let inside = i >= 0 && i < sw as i32 && j >= 0 && j < sh as i32;
-    let ci = u32::min(i32::max(i, 0) as u32, u32::max(sw, 1u32) - 1u32);
-    let cj = u32::min(i32::max(j, 0) as u32, u32::max(sh, 1u32) - 1u32);
-    let at = (cj * sw + ci) * 3u32;
-    let mut out = 0.0f32;
+fn gun(lin: &[f32], pr: &[f32], i: i32, j: i32, c: u32) -> f32 {
+    let pi = i32::clamp(i + 4, 0, 775) as u32;
+    let pj = i32::clamp(j + 4, 0, 279) as u32;
+    let mut ch = c;
     if pr[MONO] > 0.5 {
-        let r = byte(frame, at) / 255.0;
-        let g = byte(frame, at + 1u32) / 255.0;
-        let b = byte(frame, at + 2u32) / 255.0;
-        out = 0.299 * r * r + 0.587 * g * g + 0.114 * b * b;
-    } else {
-        let s = byte(frame, at + c) / 255.0;
-        out = s * s;
+        ch = 3u32;
     }
-    if !inside {
-        out = 0.0;
-    }
-    out
+    lin[((pj * 776u32 + pi) * 4u32 + ch) as usize]
 }
 
 #[cube]
@@ -105,7 +100,7 @@ fn slot_channel(pr: &[f32], x: i32) -> u32 {
 /// picture. The Gaussian weights and the slot mask come from the tables `luts` (a phase of 1/1024
 /// of a pixel: below the rounding of the picture).
 #[cube]
-fn slot_light(frame: &[u32], luts: &[f32], pr: &[f32], x: i32, y: i32, sw_: u32, sh_: u32) -> f32 {
+fn slot_light(lin: &[f32], luts: &[f32], pr: &[f32], x: i32, y: i32) -> f32 {
     let mut out = 0.0f32;
     if x >= 0 && x < pr[OUT_W] as i32 {
         let sw = pr[SLOT_PX] as i32;
@@ -131,14 +126,14 @@ fn slot_light(frame: &[u32], luts: &[f32], pr: &[f32], x: i32, y: i32, sw_: u32,
         let (w0, w1, w2, w3) = (luts[hp], luts[hp + 1], luts[hp + 2], luts[hp + 3]);
         let f = wy * oh / pr[ROWS] - 0.5;
         let line = f32::floor(f) as i32;
-        let la = w0 * gun(frame, pr, first, line, c, sw_, sh_)
-            + w1 * gun(frame, pr, first + 1, line, c, sw_, sh_)
-            + w2 * gun(frame, pr, first + 2, line, c, sw_, sh_)
-            + w3 * gun(frame, pr, first + 3, line, c, sw_, sh_);
-        let lb = w0 * gun(frame, pr, first, line + 1, c, sw_, sh_)
-            + w1 * gun(frame, pr, first + 1, line + 1, c, sw_, sh_)
-            + w2 * gun(frame, pr, first + 2, line + 1, c, sw_, sh_)
-            + w3 * gun(frame, pr, first + 3, line + 1, c, sw_, sh_);
+        let la = w0 * gun(lin, pr, first, line, c)
+            + w1 * gun(lin, pr, first + 1, line, c)
+            + w2 * gun(lin, pr, first + 2, line, c)
+            + w3 * gun(lin, pr, first + 3, line, c);
+        let lb = w0 * gun(lin, pr, first, line + 1, c)
+            + w1 * gun(lin, pr, first + 1, line + 1, c)
+            + w2 * gun(lin, pr, first + 2, line + 1, c)
+            + w3 * gun(lin, pr, first + 3, line + 1, c);
         // a scanline is wider the brighter it is: weights by the level of each line
         let phase = u32::min(((f - line as f32) * 1024.0) as u32, 1023u32) as usize;
         let lv0 = (f32::min(la, 1.0) * 15.0 + 0.5) as usize;
@@ -157,11 +152,11 @@ fn slot_light(frame: &[u32], luts: &[f32], pr: &[f32], x: i32, y: i32, sw_: u32,
 /// The light of the slot of every pixel (its own phosphor), once: the halation of the neighbours is
 /// then a sum of three of them.
 #[cube(launch_unchecked)]
-pub fn slots(frame: &[u32], luts: &[f32], pr: &[f32], lights: &mut [f32], src_w: u32, src_h: u32) {
+pub fn slots(lin: &[f32], luts: &[f32], pr: &[f32], lights: &mut [f32]) {
     let i = ABSOLUTE_POS;
     if i < lights.len() {
         let w = pr[OUT_W] as usize;
-        lights[i] = slot_light(frame, luts, pr, (i % w) as i32, (i / w) as i32, src_w, src_h);
+        lights[i] = slot_light(lin, luts, pr, (i % w) as i32, (i / w) as i32);
     }
 }
 
@@ -274,8 +269,31 @@ pub fn crt(lights: &[f32], glow: &[f32], pr: &[f32], out: &mut [u32]) {
 /// four floats each): the mean light of the 4 x 4 source pixels of a fine cell, and of the 16 x 16
 /// of a coarse one (the frame's pixels beyond its size are black).
 #[cube(launch_unchecked)]
-pub fn glow_cells(frame: &[u32], grid: &mut [f32], sw: u32, sh: u32) {
+pub fn glow_cells(frame: &[u32], grid: &mut [f32], lin: &mut [f32], sw: u32, sh: u32) {
     let i = ABSOLUTE_POS;
+    if i >= 13920 && i < 231200 {
+        // the same launch also makes the padded linear frame (nothing here reads the other half)
+        let k = (i - 13920) as u32;
+        let px = (k % 776u32) as i32 - 4;
+        let py = (k / 776u32) as i32 - 4;
+        let mut r = 0.0f32;
+        let mut g = 0.0f32;
+        let mut b = 0.0f32;
+        if px >= 0 && py >= 0 && (px as u32) < sw && (py as u32) < sh {
+            let at = (py as u32 * sw + px as u32) * 3u32;
+            let lr = byte(frame, at) / 255.0;
+            let lg = byte(frame, at + 1u32) / 255.0;
+            let lb = byte(frame, at + 2u32) / 255.0;
+            r = lr * lr;
+            g = lg * lg;
+            b = lb * lb;
+        }
+        let at = (k * 4u32) as usize;
+        lin[at] = r;
+        lin[at + 1] = g;
+        lin[at + 2] = b;
+        lin[at + 3] = 0.299 * r + 0.587 * g + 0.114 * b;
+    }
     if i < 13920 {
         let mut cx = (i % 192) as u32;
         let mut cy = (i / 192) as u32;
@@ -411,6 +429,8 @@ pub struct Pipeline {
     glow: cubecl::server::Handle,
     params: cubecl::server::Handle,
     luts: cubecl::server::Handle,
+    /// The frame as padded linear light (`to_linear`, made by `glow_cells`).
+    lin: cubecl::server::Handle,
     lights: cubecl::server::Handle,
     luts_len: usize,
     out: cubecl::server::Handle,
@@ -431,6 +451,8 @@ const COARSE: usize = GLOW_CW * GLOW_CH;
 const _: () = assert!(
     GLOW_W == 192 && GLOW_H == 68 && GLOW_CW == 48 && GLOW_CH == 18 && FINE == 13056 && COARSE == 864
 );
+
+const _: () = assert!(LIN_W == 776 && LIN_H == 280 && LIN_W * LIN_H == 217_280 && PAD == 4 && 13920 + 217_280 == 231_200);
 
 /// The most cubes a dimension of a launch may have (wgpu's default limit).
 const MAX_CUBES: u32 = 65535;
@@ -462,6 +484,7 @@ impl Pipeline {
             taps: client.create_from_slice(f32::as_bytes(&taps)),
             glow: cells(FINE),
             params: client.create_from_slice(f32::as_bytes(&pack(params, warp))),
+            lin: client.create_from_slice(&vec![0u8; LIN_W * LIN_H * 16]),
             luts_len: luts.len(),
             luts: client.create_from_slice(f32::as_bytes(&luts)),
             lights: client.empty(w * h * 4),
@@ -519,7 +542,11 @@ impl Pipeline {
             let both = FINE + COARSE;
             let taps_len = self.close_taps + (2 * self.wide_radius + 1) as usize;
             let (count, dim) = one_d(both);
-            glow_cells::launch_unchecked(client, count.clone(), dim, arg(frame, frame_words), arg(&self.grid, both * 4), sw, sh);
+            let (cells_count, _) = one_d(both + LIN_W * LIN_H);
+            glow_cells::launch_unchecked(
+                client, cells_count, dim,
+                arg(frame, frame_words), arg(&self.grid, both * 4), arg(&self.lin, LIN_W * LIN_H * 4), sw, sh,
+            );
             after("glow_cells");
             glow_blur::launch_unchecked(
                 client, count.clone(), dim,
@@ -545,9 +572,8 @@ impl Pipeline {
                 client,
                 count(),
                 CubeDim::new_1d(self.cube_dim),
-                arg(frame, frame_words), arg(&self.luts, self.luts_len), arg(&self.params, PARAMS),
+                arg(&self.lin, LIN_W * LIN_H * 4), arg(&self.luts, self.luts_len), arg(&self.params, PARAMS),
                 arg(&self.lights, self.out_len),
-                sw, sh,
             );
             after("slots");
             crt::launch_unchecked(
