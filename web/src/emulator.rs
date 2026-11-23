@@ -999,6 +999,7 @@ impl Emulator {
         let result = match (shown_frame, ui) {
             (Some(frame), Some((mut ui, output))) => {
                 self.gfx.set_picture_size(PictureSize::of(ui.settings.free_zoom, ui.settings.native_zoom));
+                self.gfx.set_hardware(ui.settings.crt_gpu);
                 let shown = self.gfx.show_with_ui(frame, self.display, self.curvature, Some((&ui.gui, output)));
                 let shown = shown.map(|undrawn| {
                     if let Some(output) = undrawn {

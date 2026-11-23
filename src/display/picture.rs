@@ -143,7 +143,7 @@ impl Picture {
         let DisplayMode::Crt(profile) = mode else {
             return false;
         };
-        if self.hardware || self.software_unavailable {
+        if self.hardware || self.software_unavailable || cfg!(target_arch = "wasm32") {
             return false;
         }
         if self.software.as_ref().is_some_and(|s| s.mode == mode && s.warp == warp) {
@@ -199,7 +199,7 @@ impl Picture {
             self.frame.upload(queue, frame);
             self.raw_stale = false;
         }
-        if !self.hardware && !self.software_unavailable {
+        if !self.hardware && !self.software_unavailable && !cfg!(target_arch = "wasm32") {
             // the CPU makes the picture, from the frame as it is
             match &mut self.soft_frame {
                 Some(last) => last.clone_from(frame),
@@ -320,10 +320,12 @@ impl Picture {
             }
         }
         let soft = self.use_software(device, mode, warp);
-        if !soft {
+        // a page has no CPU rendering: with the acceleration off it shows the raw picture
+        let raw_only = !soft && !self.hardware && cfg!(target_arch = "wasm32") && matches!(mode, DisplayMode::Crt(_));
+        if !soft && !raw_only {
             self.use_mode(device, queue, mode, level, warp);
         }
-        let gpu_crt = !soft && matches!(mode, DisplayMode::Crt(_)) && self.crt.is_some();
+        let gpu_crt = !soft && !raw_only && matches!(mode, DisplayMode::Crt(_)) && self.crt.is_some();
         if soft {
             if let (Some(state), Some(frame)) = (self.software.as_mut(), self.soft_frame.as_ref().or(self.last_rgb.as_ref())) {
                 if state.dirty {
@@ -395,6 +397,8 @@ impl Picture {
             } else {
                 format!("GPU · {}{unavailable}", self.adapter)
             }
+        } else if raw_only {
+            "raw picture (GPU acceleration is off)".to_owned()
         } else if matches!(mode, DisplayMode::Crt(_)) {
             "raw picture (the GPU cannot run the CRT)".to_owned()
         } else {

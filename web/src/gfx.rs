@@ -121,6 +121,13 @@ impl Gfx {
         }
     }
 
+    /// Hardware acceleration of the CRT (Video > GPU acceleration): off, a page shows the raw picture.
+    pub fn set_hardware(&mut self, on: bool) {
+        if let Self::Gpu(gpu) = self {
+            gpu.picture.hardware = on;
+        }
+    }
+
     /// What made the last picture, for the status bar ("GPU · name (WebGPU)", the raw picture).
     pub fn renderer(&self) -> String {
         match self {
