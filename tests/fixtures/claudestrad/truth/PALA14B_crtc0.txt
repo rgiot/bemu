@@ -1,0 +1,7 @@
+&7F  Z=&C4  R15=&00  :  C4  C4  C4  C4
+&3F  Z=&C4  R15=&00  :  C4  C4  C4  C4
+&3F  Z=&C4  R15=&C4  :  C4  C4  C4  C4
+&3F  Z=&C4  R15=&C7  :  C4  C4  C4  C4
+&3F  Z=&C5  R15=&C6  :  C5  C5  C5  C5
+&3F  Z=&C4  R15=&FF  :  C4  C4  C4  C4
+&3F  Z=&C4  R15=&44  :  C4  C4  C4  C4

@@ -48,6 +48,10 @@ impl CrtcChip for Crtc1 {
         "UM6845R"
     }
 
+    fn drives_bus_in_a_write(&self) -> bool {
+        true
+    }
+
     fn write_mask(&self, reg: u8) -> u8 {
         WRITE_MASK.get(usize::from(reg)).copied().unwrap_or(0)
     }

@@ -238,6 +238,13 @@ pub trait CrtcChip: Debug + Send {
         0
     }
 
+    /// An OUT to a port that also selects this chip for a read (A14=0, A9=A8=1) makes it drive the
+    /// data bus against the Z80: the lines are ANDed (PALA14B: only the real 6128's CRTC 1 does it;
+    /// the photos of a CRTC 0 and a CRTC 2 show the Z80's byte intact).
+    fn drives_bus_in_a_write(&self) -> bool {
+        false
+    }
+
     /// `Some(blank)` while R3l=2 on CRTC 0: the Gate Array's blanking follows this window
     /// instead of the HSYNC pin.
     fn hsync_blank_window(&self, _core: &Core) -> Option<bool> {
@@ -301,8 +308,8 @@ pub trait CrtcChip: Debug + Send {
         false
     }
 
-    /// ACCC 18.3.2: on the first line of a frame with R6=0, CRTC 0 and 2 alternate a byte of video
-    /// and a byte of BORDER.
+    /// ACCC 18.3.2: on the first line of a frame with R6=0, CRTC 2 alternates a byte of video and a
+    /// byte of BORDER (the user's KUKU photos: a CRTC 2 shows a dashed line, but a CRTC 0 a solid one).
     fn has_r6_zero_conflict(&self) -> bool {
         false
     }
