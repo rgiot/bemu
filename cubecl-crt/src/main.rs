@@ -189,7 +189,52 @@ fn cpu_reference(params: &amsrust::display::CrtParams, warp: Warp, src: &RgbImag
     (u32::from_bytes(&bytes).to_vec(), first, best)
 }
 
+/// Where the time goes: each launch of a frame waited for, averaged over a few frames.
+fn launch_profile(client: &cubecl::client::Client, params: &amsrust::display::CrtParams, warp: Warp, src: &RgbImage, cube_dim: u32) -> Vec<(&'static str, f64)> {
+    let frame = client.create_from_slice(src.as_raw());
+    let mut pipeline = Pipeline::new(client, params, warp);
+    pipeline.cube_dim = cube_dim;
+    let words = src.as_raw().len() / 4;
+    let mut totals: Vec<(&'static str, f64)> = Vec::new();
+    let frames = 6;
+    for frame_number in 0..frames + 1 {
+        let mut last = std::time::Instant::now();
+        let mut step = 0;
+        pipeline.run_with(client, &frame, words, src.width(), src.height(), |name| {
+            let _ = pollster::block_on(client.sync());
+            let now = std::time::Instant::now();
+            let ms = (now - last).as_secs_f64() * 1e3;
+            last = now;
+            // the first frame compiles the kernels: left out
+            if frame_number > 0 {
+                if totals.len() <= step {
+                    totals.push((name, 0.0));
+                }
+                totals[step].1 += ms / frames as f64;
+            }
+            step += 1;
+        });
+    }
+    totals
+}
+
+fn print_profile(label: &str, profile: &[(&'static str, f64)]) {
+    let total: f64 = profile.iter().map(|p| p.1).sum();
+    let parts: Vec<String> = profile.iter().map(|(n, ms)| format!("{n} {ms:.2}")).collect();
+    println!("{label}: {total:.1} ms ({})", parts.join(", "));
+}
+
 fn main() {
+    {
+        let src = test_picture();
+        for (label, warp) in [("flat", Warp::FLAT), ("curved", Warp::of(CrtProfile::Ctm644, 1.0))] {
+            let params = CrtProfile::Ctm644.params();
+            let cpu = <cubecl::cpu::CpuRuntime as Runtime>::client(&Default::default());
+            print_profile(&format!("CPU backend, CTM {label}, launch by launch"), &launch_profile(&cpu, &params, warp, &src, 32));
+            let gpu = <cubecl::wgpu::WgpuRuntime as Runtime>::client(&Default::default());
+            print_profile(&format!("GPU (this adapter), CTM {label}, launch by launch"), &launch_profile(&gpu, &params, warp, &src, 256));
+        }
+    }
     quad_pass_check();
     shared_device_check();
     type R = cubecl::wgpu::WgpuRuntime;

@@ -1,12 +1,12 @@
 //! The CRT model on the GPU, written once as a CubeCL kernel (native Vulkan / Metal / DX12 and the
-//! browser's WebGPU): one thread per output pixel, the model of `cpu.rs` evaluated per pixel (the
+//! browser's WebGPU): one thread per output pixel, the model evaluated per pixel (the
 //! beam's Gaussian taps at the slot's centre, through the glass; the slot mask's coverage; the
 //! halation of the neighbouring slots; the veil, the glow, the vignette; the glass's edge; the
 //! gamma).
 //!
 //! The arguments are plain buffers: the monitor's frame (its RGB bytes as they are, `src_w` x `src_h`
-//! pixels), the glow cells (four floats a cell; worked out on the GPU too, by [`Pipeline`], as
-//! [`super::crt::GlowField`] does for the CPU renderer), the parameters of [`pack`], and the
+//! pixels), the glow cells (four floats a cell; worked out on the GPU too, by [`Pipeline`], as one
+//! pipeline: see [`Pipeline`]), the parameters of [`pack`], and the
 //! picture (`0xRRGGBB` words, row after row).
 use super::crt::{
     gauss_taps, CrtParams, Warp, GLOW_CH, GLOW_CLOSE, GLOW_CW, GLOW_H, GLOW_W, GLOW_WIDE, SRC_HEIGHT,
@@ -67,26 +67,31 @@ fn byte(frame: &[u32], at: u32) -> f32 {
     ((frame[(at >> 2u32) as usize] >> ((at & 3u32) * 8u32)) & 255u32) as f32
 }
 
-/// Linear light of gun `c` of the source pixel (i, j); black outside the `sw` x `sh` frame.
+/// Linear light of gun `c` of the source pixel (i, j); black outside the `sw` x `sh` frame. The
+/// bytes are read at a clamped place whatever the pixel (no read outside the buffer, so no
+/// backend's out-of-bounds rule gets a say), then the outside is made black.
 #[cube]
 fn gun(frame: &[u32], pr: &[f32], i: i32, j: i32, c: u32, sw: u32, sh: u32) -> f32 {
+    let inside = i >= 0 && i < sw as i32 && j >= 0 && j < sh as i32;
+    let ci = u32::min(i32::max(i, 0) as u32, u32::max(sw, 1u32) - 1u32);
+    let cj = u32::min(i32::max(j, 0) as u32, u32::max(sh, 1u32) - 1u32);
+    let at = (cj * sw + ci) * 3u32;
     let mut out = 0.0f32;
-    if i >= 0 && i < sw as i32 && j >= 0 && j < sh as i32 {
-        let at = (j as u32 * sw + i as u32) * 3u32;
-        if pr[MONO] > 0.5 {
-            let r = byte(frame, at) / 255.0;
-            let g = byte(frame, at + 1u32) / 255.0;
-            let b = byte(frame, at + 2u32) / 255.0;
-            out = 0.299 * r * r + 0.587 * g * g + 0.114 * b * b;
-        } else {
-            let s = byte(frame, at + c) / 255.0;
-            out = s * s;
-        }
+    if pr[MONO] > 0.5 {
+        let r = byte(frame, at) / 255.0;
+        let g = byte(frame, at + 1u32) / 255.0;
+        let b = byte(frame, at + 2u32) / 255.0;
+        out = 0.299 * r * r + 0.587 * g * g + 0.114 * b * b;
+    } else {
+        let s = byte(frame, at + c) / 255.0;
+        out = s * s;
+    }
+    if !inside {
+        out = 0.0;
     }
     out
 }
 
-/// The phosphor of the slot at output column `x`: a mono tube has the one (called green).
 #[cube]
 fn slot_channel(pr: &[f32], x: i32) -> u32 {
     let mut c = ((x / pr[SLOT_PX] as i32) % 3) as u32;
@@ -421,6 +426,26 @@ pub struct Pipeline {
 
 const FINE: usize = GLOW_W * GLOW_H;
 const COARSE: usize = GLOW_CW * GLOW_CH;
+// the glow kernels are `launch_unchecked` and bake these sizes in as literals (192, 68, 48, 18,
+// 13056 = 192 * 68, 13920 = 13056 + 864): a change of the grids must change them together
+const _: () = assert!(
+    GLOW_W == 192 && GLOW_H == 68 && GLOW_CW == 48 && GLOW_CH == 18 && FINE == 13056 && COARSE == 864
+);
+
+/// The most cubes a dimension of a launch may have (wgpu's default limit).
+const MAX_CUBES: u32 = 65535;
+
+/// The cubes to run `n` threads in cubes of `dim`: in one dimension, or spread over two when there
+/// would be more than the GPU's limit (a picture drawn at 4x or more); the kernels' `i < len`
+/// guards and the linear `ABSOLUTE_POS` make the split invisible.
+pub fn cube_count(n: usize, dim: u32) -> CubeCount {
+    let cubes = (n as u32).div_ceil(dim);
+    if cubes <= MAX_CUBES {
+        CubeCount::Static(cubes.max(1), 1, 1)
+    } else {
+        CubeCount::Static(MAX_CUBES, cubes.div_ceil(MAX_CUBES), 1)
+    }
+}
 
 impl Pipeline {
     pub fn new(client: &cubecl::client::Client, params: &CrtParams, warp: Warp) -> Self {
@@ -444,10 +469,20 @@ impl Pipeline {
             close_radius: (close.len() / 2) as u32,
             wide_radius: (wide.len() / 2) as u32,
             close_taps: close.len(),
-            kernel_weights: (GLOW_CLOSE.1, GLOW_WIDE.1),
+            kernel_weights: (GLOW_CLOSE.1 * params.glow_halo, GLOW_WIDE.1),
             out_len: w * h,
             cube_dim: 256,
         }
+    }
+
+    /// The parameters' buffer (`pack`: the glass is in it).
+    pub fn params_handle(&self) -> &cubecl::server::Handle {
+        &self.params
+    }
+
+    /// The light of every slot (the `slots` kernel's output), for the tests.
+    pub fn lights(&self) -> &cubecl::server::Handle {
+        &self.lights
     }
 
     /// The picture's buffer.
@@ -463,31 +498,49 @@ impl Pipeline {
     /// Work out the glow of `frame` (`sw` x `sh` pixels of RGB bytes, `sw` <= 768, `sh` <= 272) and
     /// the picture, in the buffers of `self`.
     pub fn run(&self, client: &cubecl::client::Client, frame: &cubecl::server::Handle, frame_words: usize, sw: u32, sh: u32) {
+        self.run_with(client, frame, frame_words, sw, sh, |_| {});
+    }
+
+    /// [`Self::run`], calling `after(name)` after each launch (a benchmark waits for the launch
+    /// there to time it).
+    pub fn run_with(
+        &self,
+        client: &cubecl::client::Client,
+        frame: &cubecl::server::Handle,
+        frame_words: usize,
+        sw: u32,
+        sh: u32,
+        mut after: impl FnMut(&'static str),
+    ) {
         let arg = |h: &cubecl::server::Handle, len: usize| unsafe { BufferArg::from_raw_parts(h.clone(), len) };
-        let one_d = |n: usize| (CubeCount::Static((n as u32).div_ceil(64), 1, 1), CubeDim::new_1d(64));
+        let one_d = |n: usize| (cube_count(n, 64), CubeDim::new_1d(64));
         // SAFETY: the buffers have the sizes the kernels index (see their loops' bounds)
         unsafe {
             let both = FINE + COARSE;
             let taps_len = self.close_taps + (2 * self.wide_radius + 1) as usize;
             let (count, dim) = one_d(both);
             glow_cells::launch_unchecked(client, count.clone(), dim, arg(frame, frame_words), arg(&self.grid, both * 4), sw, sh);
+            after("glow_cells");
             glow_blur::launch_unchecked(
                 client, count.clone(), dim,
                 arg(&self.grid, both * 4), arg(&self.taps, taps_len), arg(&self.tmp, both * 4),
                 1u32, self.close_radius, self.wide_radius, self.close_taps as u32,
             );
+            after("glow_blur_h");
             glow_blur::launch_unchecked(
                 client, count, dim,
                 arg(&self.tmp, both * 4), arg(&self.taps, taps_len), arg(&self.blurred, both * 4),
                 0u32, self.close_radius, self.wide_radius, self.close_taps as u32,
             );
+            after("glow_blur_v");
             let (count, dim) = one_d(FINE);
             glow_merge::launch_unchecked(
                 client, count, dim,
                 arg(&self.blurred, both * 4), arg(&self.glow, FINE * 4),
                 self.kernel_weights.0, self.kernel_weights.1,
             );
-            let count = || CubeCount::Static((self.out_len as u32).div_ceil(self.cube_dim), 1, 1);
+            after("glow_merge");
+            let count = || cube_count(self.out_len, self.cube_dim);
             slots::launch_unchecked(
                 client,
                 count(),
@@ -496,6 +549,7 @@ impl Pipeline {
                 arg(&self.lights, self.out_len),
                 sw, sh,
             );
+            after("slots");
             crt::launch_unchecked(
                 client,
                 count(),
@@ -503,6 +557,7 @@ impl Pipeline {
                 arg(&self.lights, self.out_len), arg(&self.glow, FINE * 4), arg(&self.params, PARAMS),
                 arg(&self.out, self.out_len),
             );
+            after("crt");
         }
     }
 }
@@ -583,6 +638,10 @@ pub fn frame_bytes(src: &RgbImage) -> (Cow<'_, [u8]>, u32, u32) {
         (src.height() as usize).min(SRC_HEIGHT),
     );
     let raw = src.as_raw();
+    if w == 0 || h == 0 {
+        // an empty frame: one black word, so that there is a buffer to bind
+        return (Cow::Owned(vec![0u8; 4]), 0, 0);
+    }
     let mut bytes = Cow::Borrowed(&raw[..w * h * 3]);
     if w != src.width() as usize {
         let row = src.width() as usize * 3;

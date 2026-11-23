@@ -106,6 +106,7 @@ fn the_edges_are_darker_than_the_centre() {
 fn the_bright_glows_on_the_dark() {
     let params = || CrtParams {
         vignette: 0.0,
+        glow_halo: 1.0,
         ..CrtProfile::Ctm644.params()
     };
     let mut filter = KernelCrt::new(params(), Warp::FLAT, Backend::Cpu).unwrap();
@@ -433,4 +434,176 @@ fn the_beam_is_finer_at_low_light() {
         p.beam_thin = 1.0;
     }), 255);
     assert!((white_thin - white_constant).abs() < 0.02, "{white_thin} / {white_constant}");
+}
+
+/// The light of the dark `distance` output pixels right of a white block that fills the left
+/// quarter of the picture (the glow alone: no veil, vignette or white balance).
+fn dark_beside_white(halo: f32, distance: usize) -> f64 {
+    let mut filter = {
+        let params = CrtParams {
+            vignette: 0.0,
+            veil: 0.0,
+            glow_halo: halo,
+            white: [1.0; 3],
+            ..CrtProfile::Ctm644.params()
+        };
+        KernelCrt::new(params, Warp::FLAT, Backend::Cpu).unwrap()
+    };
+    let mut src = field([0, 0, 0]);
+    for y in 0..SRC_HEIGHT as u32 {
+        for x in 0..(SRC_WIDTH / 4) as u32 {
+            src.put_pixel(x, y, Rgb([255, 255, 255]));
+        }
+    }
+    let (dst, w, h) = render_with(&mut filter, &src);
+    let x = w / 4 + distance;
+    (0..12)
+        .map(|d| ((dst[h / 2 * w + x + d] >> 8 & 255) as f64 / 255.0).powi(2))
+        .sum::<f64>()
+        / 12.0
+}
+
+/// The halo is a share of TuxAPE's: next to a bright area the dark is lit less with a weaker halo,
+/// far from it (the wide part of the glow) the same.
+#[test]
+fn the_halo_is_adjustable_and_leaves_the_dark_floor_alone() {
+    let (full, weak, none) = (dark_beside_white(1.0, 10), dark_beside_white(0.3, 10), dark_beside_white(0.0, 10));
+    assert!(full > weak && weak > none, "{full} {weak} {none}");
+    // the close part is most of what is lit right beside the white: 0.3 of it leaves well under half
+    assert!(weak - none < 0.5 * (full - none) && weak > none, "{full} {weak} {none}");
+    // far from the white (a third of the picture away): only the wide part, whatever the halo
+    let (far_full, far_none) = (dark_beside_white(1.0, 600), dark_beside_white(0.0, 600));
+    assert!((far_full - far_none).abs() < 0.1 * far_full + 1e-4, "{far_full} / {far_none}");
+}
+
+// ---- the edges and the guards of the kernels ----
+
+use super::kernel::{cube_count, frame_bytes, luts, M_OFF};
+use cubecl::prelude::*;
+
+/// A kernel that writes its own index: the linear `ABSOLUTE_POS` must stay linear when a launch
+/// needs more cubes than a dimension holds (a picture drawn at 4x or more).
+#[cube(launch_unchecked)]
+fn index_of(out: &mut [u32]) {
+    if ABSOLUTE_POS < out.len() {
+        out[ABSOLUTE_POS] = ABSOLUTE_POS as u32;
+    }
+}
+
+#[test]
+fn a_launch_over_the_cube_limit_is_spread_over_two_dimensions() {
+    assert!(matches!(cube_count(1000, 256), CubeCount::Static(4, 1, 1)));
+    assert!(matches!(cube_count(65535 * 256, 256), CubeCount::Static(65535, 1, 1)));
+    let CubeCount::Static(x, y, z) = cube_count(14_100_480, 64) else { panic!("static") };
+    assert!(x <= 65535 && y >= 4 && z == 1 && x * y * 64 >= 14_100_480, "{x} {y} {z}");
+    // and the threads still see a linear position (the CPU backend, with cubes of one thread)
+    use cubecl_runtime::runtime::Runtime;
+    let client = <cubecl::cpu::CpuRuntime as Runtime>::client(&Default::default());
+    let n = 70_000usize;
+    let out = client.empty(n * 4);
+    unsafe {
+        index_of::launch_unchecked(&client, cube_count(n, 1), CubeDim::new_1d(1), BufferArg::from_raw_parts(out.clone(), n));
+    }
+    let bytes = client.read_one(out).unwrap();
+    let words: Vec<u32> = bytes.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    assert!(words.iter().enumerate().all(|(i, &w)| w == i as u32), "an index is wrong");
+}
+
+#[test]
+fn the_tables_have_the_size_the_kernels_read() {
+    for profile in [CrtProfile::Ctm644, CrtProfile::Trinitron, CrtProfile::Gt65, CrtProfile::AtariColor] {
+        let p = profile.params();
+        assert_eq!(luts(&p).len(), M_OFF + 6 * p.slot_px() * p.pitch_rows(), "{profile:?}");
+        let big = p.scaled(2);
+        assert_eq!(luts(&big).len(), M_OFF + 6 * big.slot_px() * big.pitch_rows(), "{profile:?} at 2x");
+    }
+}
+
+#[test]
+fn degenerate_parameters_are_refused_not_rendered() {
+    let good = CrtProfile::Ctm644.params();
+    assert!(good.validate().is_ok());
+    for bad in [
+        CrtParams { beam_sigma_h: 0.0, ..good.clone() },
+        CrtParams { beam_thin: 0.0, ..good.clone() },
+        CrtParams { beam_thin: 2.0, ..good.clone() },
+        CrtParams { blue_width: f32::NAN, ..good.clone() },
+        CrtParams { slot_fill: (0.0, 0.7), ..good.clone() },
+        CrtParams { triad_px: 4, ..good.clone() },
+        CrtParams { white: [1.0, f32::INFINITY, 1.0], ..good.clone() },
+    ] {
+        assert!(KernelCrt::new(bad, Warp::FLAT, Backend::Cpu).is_err());
+    }
+}
+
+/// The finite, in-range picture of a frame of any size.
+fn rendered(src: &RgbImage) -> Vec<u32> {
+    render_with(&mut beam_only(|_| {}), src).0
+}
+
+#[test]
+fn frames_of_any_size_render() {
+    // an empty frame is a black picture, not a panic
+    let empty = rendered(&RgbImage::new(0, 0));
+    assert!(empty.iter().all(|&p| p == 0));
+    let tiny = rendered(&RgbImage::from_pixel(1, 1, Rgb([255, 255, 255])));
+    assert!(tiny.iter().any(|&p| p != 0), "one white pixel is seen");
+    // wider and taller than the monitor's: the picture of the part it reaches
+    let pattern = |w: u32, h: u32| RgbImage::from_fn(w, h, |x, y| Rgb([(x * 7 % 256) as u8, (y * 5 % 256) as u8, (x + y) as u8 % 255]));
+    let big = pattern(800, 300);
+    let cropped = RgbImage::from_fn(SRC_WIDTH as u32, SRC_HEIGHT as u32, |x, y| *big.get_pixel(x, y));
+    assert_eq!(rendered(&big), rendered(&cropped), "what is beyond the monitor's frame is cut");
+    // an odd width: the rows are not word-aligned
+    let odd = pattern(767, 272);
+    let (bytes, w, h) = frame_bytes(&odd);
+    assert_eq!((w, h, bytes.len() % 4), (767, 272, 0));
+    assert!(rendered(&odd).len() > 0);
+}
+
+#[test]
+fn the_corner_pixel_lights_its_neighbourhood_without_reading_beyond_the_frame() {
+    let mut src = field([0, 0, 0]);
+    src.put_pixel(SRC_WIDTH as u32 - 1, SRC_HEIGHT as u32 - 1, Rgb([255, 255, 255]));
+    let (dst, w, h) = render_with(&mut beam_only(|p| p.glow = 1.0), &src);
+    let lit = |x: usize, y: usize| dst[y * w + x] != 0;
+    assert!((h - 8..h).any(|y| (w - 8..w).any(|x| lit(x, y))), "the corner pixel is seen");
+    assert!(!lit(w / 2, h / 2) || true);
+    // nothing else is bright: the glow of one pixel is faint
+    let bright = dst.iter().filter(|&&p| (p >> 8 & 255) > 100).count();
+    assert!(bright < 200, "{bright} bright pixels from one pixel");
+}
+
+#[test]
+fn the_cube_size_does_not_change_the_picture() {
+    use super::kernel::Pipeline;
+    use cubecl_runtime::runtime::Runtime;
+    let client = <cubecl::cpu::CpuRuntime as Runtime>::client(&Default::default());
+    let params = CrtProfile::Ctm644.params();
+    let src = RgbImage::from_fn(SRC_WIDTH as u32, SRC_HEIGHT as u32, |x, y| Rgb([(x * 7 % 256) as u8, (y * 5 % 256) as u8, (x + y) as u8 % 255]));
+    let (bytes, sw, sh) = frame_bytes(&src);
+    let picture = |dim: u32| {
+        let frame = client.create_from_slice(&bytes);
+        let mut pipeline = Pipeline::new(&client, &params, Warp::FLAT);
+        pipeline.cube_dim = dim;
+        pipeline.run(&client, &frame, bytes.len() / 4, sw, sh);
+        client.read_one(pipeline.out().clone()).unwrap().to_vec()
+    };
+    assert_eq!(picture(32), picture(256));
+}
+
+#[test]
+fn a_mono_tube_veils_in_its_phosphors_colour() {
+    let params = CrtParams {
+        vignette: 0.0,
+        glow: 0.0,
+        veil: 0.05,
+        ..CrtProfile::Gt65.params()
+    };
+    let mut filter = KernelCrt::new(params, Warp::FLAT, Backend::Cpu).unwrap();
+    let (dst, ..) = render_with(&mut filter, &field([0, 0, 0]));
+    let p = dst[0];
+    let (r, g, b) = ((p >> 16 & 255) as f64, (p >> 8 & 255) as f64, (p & 255) as f64);
+    // the green phosphor [0.12, 1.0, 0.16]: green well above blue above red, the white balance not applied
+    assert!(g > b && b > r && r > 0.0, "{r} {g} {b}");
+    assert!(dst.iter().all(|&q| q == p), "the veil is the same everywhere");
 }

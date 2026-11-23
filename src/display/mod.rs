@@ -19,6 +19,8 @@ mod kernel;
 mod kernel_crt;
 #[cfg(all(test, feature = "crt-gpu", crt_cpu))]
 mod kernel_tests;
+#[cfg(all(test, feature = "crt-gpu", crt_cpu))]
+mod gpu_tests;
 #[cfg(feature = "crt-gpu")]
 mod picture;
 pub mod resize;

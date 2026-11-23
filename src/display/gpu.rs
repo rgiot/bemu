@@ -208,12 +208,20 @@ impl FrameTexture {
 
     /// Upload `src` (any size up to the monitor's: the rest is black).
     pub fn upload(&mut self, queue: &wgpu::Queue, src: &RgbImage) {
-        self.rgba.fill(0);
-        let width = (src.width() as usize).min(SRC_WIDTH);
-        for y in 0..(src.height() as usize).min(SRC_HEIGHT) {
-            let row = &src.as_raw()[y * src.width() as usize * 3..][..width * 3];
-            for (x, pixel) in row.chunks_exact(3).enumerate() {
-                self.rgba[(y * SRC_WIDTH + x) * 4..][..3].copy_from_slice(pixel);
+        // black where the frame does not reach (it is the monitor's size or smaller)
+        let (w, h) = (src.width() as usize, src.height() as usize);
+        if w < SRC_WIDTH || h < SRC_HEIGHT {
+            self.rgba.fill(0);
+        }
+        let width = w.min(SRC_WIDTH);
+        for y in 0..h.min(SRC_HEIGHT) {
+            let row = &src.as_raw()[y * w * 3..][..width * 3];
+            let out = &mut self.rgba[y * SRC_WIDTH * 4..][..width * 4];
+            for (rgb, rgba) in row.chunks_exact(3).zip(out.chunks_exact_mut(4)) {
+                rgba[0] = rgb[0];
+                rgba[1] = rgb[1];
+                rgba[2] = rgb[2];
+                rgba[3] = 255;
             }
         }
         queue.write_texture(
@@ -323,17 +331,22 @@ pub struct GpuFrame {
 }
 
 impl GpuFrame {
-    pub fn new(ctx: &GpuContext) -> Self {
+    /// Fails when the frame's buffer is not where `write_buffer` can fill it (4-byte aligned): the
+    /// buffer is CubeCL's, which keeps it where it is for as long as the handle lives.
+    pub fn new(ctx: &GpuContext) -> Result<Self, String> {
         let words = SRC_WIDTH * SRC_HEIGHT * 3 / 4 + 1;
         let handle = ctx.client.create_from_slice(&vec![0u8; words * 4]);
         let buffer = ctx.buffer(&handle);
-        Self {
+        if buffer.1 % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
+            return Err(format!("the frame's buffer is at {}, not a multiple of 4", buffer.1));
+        }
+        Ok(Self {
             ctx: ctx.clone(),
             handle,
             buffer,
             words,
             size: (SRC_WIDTH as u32, SRC_HEIGHT as u32),
-        }
+        })
     }
 
     /// The monitor's next frame (what is larger than the monitor's picture is cut).
@@ -355,6 +368,7 @@ impl CrtPass {
         params: &CrtParams,
         warp: Warp,
     ) -> Result<Self, String> {
+        params.validate()?;
         let (w, h) = params.output_size();
         let pipeline_cube = super::kernel::Pipeline::new(&ctx.client, params, warp);
         let out_buffer = ctx.buffer(pipeline_cube.out());
@@ -465,6 +479,15 @@ impl CrtPass {
         bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
     }
 
+    /// Seen through another glass: only the parameters' buffer changes (nothing is rebuilt).
+    pub fn set_warp(&self, queue: &wgpu::Queue, params: &CrtParams, warp: Warp) {
+        let (buffer, offset) = self.ctx.buffer(self.pipeline_cube.params_handle());
+        let packed = super::kernel::pack(params, warp);
+        // what the kernels still have to read is submitted before the new parameters are written
+        let _ = self.ctx.client.flush();
+        queue.write_buffer(&buffer, offset, bytemuck::cast_slice(&packed));
+    }
+
     /// A texture the pass can draw in, of the picture's size.
     pub fn create_target(
         device: &wgpu::Device,
@@ -489,7 +512,8 @@ impl CrtPass {
     }
 
     /// Run the kernels on `frame` (submitted now), then draw the picture into `target` with
-    /// `encoder`.
+    /// `encoder`. The picture's buffer is shared: draw it before the next `encode` of the same
+    /// pass (one `encode` per frame, its `encoder` submitted before the next).
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, frame: &GpuFrame) {
         self.pipeline_cube
             .run(&self.ctx.client, &frame.handle, frame.words, frame.size.0, frame.size.1);

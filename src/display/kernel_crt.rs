@@ -59,6 +59,7 @@ pub struct KernelCrt {
 impl KernelCrt {
     /// Fails (with a message) where `backend` is not available.
     pub fn new(params: CrtParams, warp: Warp, backend: Backend) -> Result<Self, String> {
+        params.validate()?;
         let client = match backend {
             Backend::Gpu => gpu_client()?,
             Backend::Cpu => cpu_client()?,
@@ -72,6 +73,17 @@ impl KernelCrt {
             client,
             pipeline,
         })
+    }
+
+    /// The light of every slot of the picture of `src` (floats, row after row): what the first
+    /// kernel makes, for the tests that compare the backends.
+    #[cfg(test)]
+    pub fn slot_lights(&mut self, src: &RgbImage) -> Vec<f32> {
+        let (bytes, sw, sh) = frame_bytes(src);
+        let frame = self.client.create_from_slice(&bytes);
+        self.pipeline.run(&self.client, &frame, bytes.len() / 4, sw, sh);
+        let raw = self.client.read_one(self.pipeline.lights().clone()).expect("the lights");
+        raw.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
     }
 
     pub fn backend(&self) -> Backend {
