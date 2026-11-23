@@ -211,15 +211,13 @@ pub fn slots(lin: &[f32], luts: &[f32], pr: &[f32], hf: &[f32], cols: &[f32], ro
     let y = ABSOLUTE_POS_Y as usize;
     let w = pr[OUT_W] as usize;
     if x < w && y < pr[OUT_H] as usize {
-        let mut light = 0.0f32;
         if pr[WARP_KX] == 0.0 && pr[WARP_KY] == 0.0 {
             let at = rows[y * 8 + 5] as usize + cols[x * 12 + 11] as usize;
             let next = rows[y * 8 + 7] as usize + cols[x * 12 + 11] as usize;
-            light = shade(luts, pr, hf[at], hf[next], rows[y * 8 + 6] as usize, x, y);
+            lights[y * w + x] = shade(luts, pr, hf[at], hf[next], rows[y * 8 + 6] as usize, x, y);
         } else {
-            light = slot_light(lin, luts, pr, x, y);
+            lights[y * w + x] = slot_light(lin, luts, pr, x, y);
         }
-        lights[y * w + x] = light;
     }
 }
 
