@@ -76,6 +76,7 @@ fn byte(frame: &[u32], at: u32) -> f32 {
 /// Linear light of gun `c` of the source pixel (i, j), from the padded linear frame (`to_linear`):
 /// black beyond the picture, where the index is clamped into the zeros of the border. A mono tube
 /// reads the luminance (the fourth float of a pixel) whatever the gun.
+#[allow(unused_assignments)]
 #[cube]
 fn gun(lin: &[f32], pr: &[f32], i: i32, j: i32, c: u32) -> f32 {
     let pi = i32::clamp(i + 4, 0, 775) as u32;
@@ -504,6 +505,7 @@ impl Pipeline {
     }
 
     /// The light of every slot (the `slots` kernel's output), for the tests.
+    #[cfg(test)]
     pub fn lights(&self) -> &cubecl::server::Handle {
         &self.lights
     }

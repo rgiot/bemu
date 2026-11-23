@@ -70,7 +70,7 @@ pub fn envelope_levels(shape: u8) -> Vec<u8> {
 pub fn show(ui: &mut egui::Ui, mb: &Motherboard) {
     let psg = mb.psg();
     let reg = |r: u8| psg.register(r);
-    let id = egui::Id::new("psg-window");
+    let id = egui::Id::unique("psg-window");
     let mut memory: Memory = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     let values: Vec<u32> = (0..16u8).map(|r| u32::from(reg(r))).collect();
     super::heat::observe(ui, &mut memory.heat, 0, mb, &values);

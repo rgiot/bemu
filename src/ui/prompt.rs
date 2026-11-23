@@ -67,7 +67,7 @@ impl Prompt {
         let id = self.question.id;
         let escape = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         egui::Window::new(self.question.title)
-            .id(egui::Id::new(("prompt", id)))
+            .id(egui::Id::unique(("prompt", id)))
             .collapsible(false)
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])

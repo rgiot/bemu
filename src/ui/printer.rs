@@ -307,7 +307,7 @@ mod tests {
             });
         };
 
-        let mut mb = MotherboardBuilder::default().build();
+        let mb = MotherboardBuilder::default().build();
         draw(&mb, &mut state, 0.0);
         assert!(state.text.is_empty() && state.sheets.is_empty(), "no printer");
 
