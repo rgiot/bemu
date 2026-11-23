@@ -1,5 +1,5 @@
 ; Batman Forever on 3" discs (drive A a 3" drive): disk 1 side A, then side B when asked
-csl_version 1.0
+csl_version 1.4
 crtc_select 0
 key_delay 70000 70000 400000
 reset
