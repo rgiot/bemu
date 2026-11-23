@@ -10,7 +10,7 @@ use image::RgbImage;
 
 use super::crt::{CrtParams, Warp, SRC_HEIGHT, SRC_WIDTH};
 use super::gpu::{Blit, CrtPass, FrameTexture, GpuContext, GpuFrame, Resampler};
-use super::{Backend, DisplayFilter, DisplayMode, KernelCrt, PictureSize, RAW_HEIGHT, RAW_WIDTH};
+use super::{DisplayFilter, DisplayMode, PictureSize, RAW_HEIGHT, RAW_WIDTH};
 
 /// The most a CRT's picture is drawn larger than its profile's (a texture of 4320 x 3264).
 const MAX_CRT_LEVEL: usize = 3;
@@ -27,12 +27,23 @@ struct CrtState {
     size: (usize, usize),
 }
 
+/// The CRT on CubeCL's CPU backend (a page has none: it is the GPU or nothing).
+#[cfg(not(target_arch = "wasm32"))]
+fn cpu_filter(params: &CrtParams, warp: Warp) -> Result<Box<dyn DisplayFilter>, String> {
+    super::KernelCrt::new(params.clone(), warp, super::Backend::Cpu).map(|f| Box::new(f) as Box<dyn DisplayFilter>)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn cpu_filter(_: &CrtParams, _: Warp) -> Result<Box<dyn DisplayFilter>, String> {
+    Err("a page has no CPU rendering".into())
+}
+
 /// The picture of a CRT display made on the CPU (CubeCL's CPU backend), for when the hardware
 /// acceleration is off: read back, then uploaded as a texture.
 struct SoftState {
     mode: DisplayMode,
     warp: Warp,
-    filter: KernelCrt,
+    filter: Box<dyn DisplayFilter>,
     buffer: Vec<u32>,
     rgba: Vec<u8>,
     target: wgpu::Texture,
@@ -139,7 +150,7 @@ impl Picture {
             return true;
         }
         let params = profile.params();
-        let filter = match KernelCrt::new(params.clone(), warp, Backend::Cpu) {
+        let filter = match cpu_filter(&params, warp) {
             Ok(filter) => filter,
             Err(e) => {
                 eprintln!("no CRT on the CPU ({e}): the GPU draws it");

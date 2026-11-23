@@ -121,6 +121,14 @@ impl Gfx {
         }
     }
 
+    /// What made the last picture, for the status bar ("GPU · name (WebGPU)", the raw picture).
+    pub fn renderer(&self) -> String {
+        match self {
+            Self::Gpu(gpu) => gpu.picture.renderer().to_owned(),
+            Self::Flat(_) => "Canvas 2D (raw picture, no GPU)".to_owned(),
+        }
+    }
+
     /// "webgpu" or "canvas2d".
     pub fn backend(&self) -> &'static str {
         match self {
@@ -274,7 +282,9 @@ impl Gpu {
         } else {
             None
         };
-        let picture = Picture::new(&device, format, cube);
+        let mut picture = Picture::new(&device, format, cube);
+        let info = adapter.get_info();
+        picture.adapter = if info.name.is_empty() { "WebGPU".to_owned() } else { format!("{} (WebGPU)", info.name) };
         Ok(Self { surface, device, queue, config, picture, painter: None })
     }
 
