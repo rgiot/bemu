@@ -184,7 +184,6 @@ dependencies = [
  "cubecl",
  "cubecl-runtime",
  "delegate 0.5.2",
- "derive_more 0.99.20",
  "egui",
  "egui-wgpu",
  "fatfs",
@@ -194,13 +193,10 @@ dependencies = [
  "getrandom 0.3.4",
  "hxcfe",
  "image 0.23.14",
- "itertools 0.10.5",
  "lazy_static",
  "minifb",
  "nuked-opl3",
  "num",
- "num_enum",
- "rand 0.8.8",
  "rustyline",
  "rustysynth",
  "schemars",
@@ -211,7 +207,6 @@ dependencies = [
  "smallvec",
  "tar",
  "tokio",
- "tuple-map",
  "web-time",
  "webp-animation",
  "wgpu",
@@ -1219,12 +1214,6 @@ checksum = "136d3e02915a2cea4d74caa8681e2d44b1c3254bdbf17d11d41d587ff858832c"
 
 [[package]]
 name = "convert_case"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
-
-[[package]]
-name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
@@ -1378,7 +1367,7 @@ dependencies = [
  "time",
  "ureq",
  "urlencoding",
- "winnow 1.0.4",
+ "winnow",
 ]
 
 [[package]]
@@ -1729,7 +1718,7 @@ dependencies = [
  "cfg_aliases",
  "cubecl-environment",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "float4",
  "float8",
  "half",
@@ -1759,7 +1748,7 @@ dependencies = [
  "cubecl-runtime",
  "cubecl-zspace",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "float-ord",
  "half",
  "hashbrown 0.17.1",
@@ -1787,7 +1776,7 @@ dependencies = [
  "cubecl-opt",
  "cubecl-runtime",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "half",
  "itertools 0.15.0",
  "log",
@@ -1924,7 +1913,7 @@ dependencies = [
  "cubecl-environment",
  "cubecl-macros-internal",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "float-ord",
  "foldhash 0.2.0",
  "half",
@@ -1973,7 +1962,7 @@ checksum = "0c67962ecb52dc6fd493df1ef6c01990bc8c98a29039765a5e58bef00d9ab304"
 dependencies = [
  "darling 0.24.1",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "ident_case",
  "inflections",
  "itertools 0.15.0",
@@ -2046,7 +2035,7 @@ dependencies = [
  "cubecl-environment",
  "cubecl-ir",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "downcast-rs 2.0.2",
  "foldhash 0.2.0",
  "hashbrown 0.17.1",
@@ -2074,7 +2063,7 @@ dependencies = [
  "cubecl-monitoring",
  "cubecl-zspace",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "foldhash 0.2.0",
  "futures-util",
  "hashbrown 0.17.1",
@@ -2105,7 +2094,7 @@ dependencies = [
  "cubecl-runtime",
  "cubecl-zspace",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "foldhash 0.2.0",
  "futures-util",
  "hashbrown 0.17.1",
@@ -2179,7 +2168,7 @@ dependencies = [
  "cubecl-server",
  "cubecl-spirv",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "half",
  "hashbrown 0.17.1",
  "itertools 0.15.0",
@@ -2413,19 +2402,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
-]
-
-[[package]]
-name = "derive_more"
-version = "0.99.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6edb4b64a43d977b8e99788fe3a04d483834fba1215a7e02caa415b626497f7f"
-dependencies = [
- "convert_case 0.4.0",
- "proc-macro2",
- "quote",
- "rustc_version",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -4935,27 +4911,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num_enum"
-version = "0.5.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f646caf906c20226733ed5b1374287eb97e3c2a5c227ce668c1f2ce20ae57c9"
-dependencies = [
- "num_enum_derive",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.5.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcbff9bc912032c62bf65ef1d5aea88983b420f4f839db1e9b0c281a25c9c799"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "nutype"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5442,7 +5397,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae0a48754284b6cd23479c3736f328e7443aa1ca06db82d07ee6afeeb3c3ea47"
 dependencies = [
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "itertools 0.15.0",
  "pliron",
  "thiserror 2.0.21",
@@ -5600,16 +5555,6 @@ dependencies = [
  "lazy_static",
  "term",
  "unicode-width 0.1.14",
-]
-
-[[package]]
-name = "proc-macro-crate"
-version = "1.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f4c021e1093a56626774e81216a4ce732a735e5bad4868a03f3ed65ca0c3919"
-dependencies = [
- "once_cell",
- "toml_edit",
 ]
 
 [[package]]
@@ -7144,17 +7089,11 @@ dependencies = [
  "indexmap",
  "serde_core",
  "serde_spanned",
- "toml_datetime 1.1.3+spec-1.1.0",
+ "toml_datetime",
  "toml_parser",
  "toml_writer",
- "winnow 1.0.4",
+ "winnow",
 ]
-
-[[package]]
-name = "toml_datetime"
-version = "0.6.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
 
 [[package]]
 name = "toml_datetime"
@@ -7166,23 +7105,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml_edit"
-version = "0.19.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b5bb770da30e5cbfde35a2d7b9b8a2c4b8ef89548a7a6aeab5c9a576e3e7421"
-dependencies = [
- "indexmap",
- "toml_datetime 0.6.11",
- "winnow 0.5.40",
-]
-
-[[package]]
 name = "toml_parser"
 version = "1.1.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6769c452d71ba30696c6b37770c439a9cc9110f47f7d5cdbeda79840ef5ea31"
 dependencies = [
- "winnow 1.0.4",
+ "winnow",
 ]
 
 [[package]]
@@ -7332,12 +7260,6 @@ checksum = "eee55b64228381514ddc4ad004e631ccf45e594e428d13ce197697ce56ef1c55"
 dependencies = [
  "recasting",
 ]
-
-[[package]]
-name = "tuple-map"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23d5919d7121237af683b7fa982450597b1eaa2643e597aec3b519e4e5ab3d62"
 
 [[package]]
 name = "turso"
@@ -8566,15 +8488,6 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
-
-[[package]]
-name = "winnow"
-version = "0.5.40"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f593a95398737aeed53e489c785df13f3618e41dbcd6718c6addbf1395aa6876"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "winnow"

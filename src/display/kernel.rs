@@ -566,6 +566,7 @@ impl Pipeline {
     }
 
     /// The light of every slot (the `slots` kernel's output), for the tests.
+    #[cfg(test)]
     pub fn lights(&self) -> &cubecl::server::Handle {
         &self.lights
     }

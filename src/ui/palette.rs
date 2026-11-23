@@ -222,7 +222,7 @@ impl Palette {
         }
         let mut open = true;
         egui::Window::new("Command palette")
-            .id(egui::Id::new("command-palette"))
+            .id(egui::Id::unique("command-palette"))
             .title_bar(false)
             .anchor(egui::Align2::CENTER_TOP, [0.0, 36.0])
             .default_width(WIDTH)
@@ -238,7 +238,7 @@ impl Palette {
     }
 
     fn field(&mut self, ui: &mut egui::Ui, hint: &str) {
-        let id = egui::Id::new(("command-palette-field", self.step_key()));
+        let id = egui::Id::unique(("command-palette-field", self.step_key()));
         // what is typed before the field has the focus (the frame it opens) is its
         if !ui.memory(|m| m.has_focus(id)) {
             let typed: String = ui.input_mut(|i| {

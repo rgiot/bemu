@@ -1201,7 +1201,7 @@ fn keyboard_view(
         |key_rect: egui::Rect, key: CpcKey, key_id: u32, label: &str, tall: bool| {
             let response = ui.interact(
                 key_rect,
-                egui::Id::new(("virtual-key", key_id)),
+                egui::Id::unique(("virtual-key", key_id)),
                 egui::Sense::click_and_drag(),
             );
             let lit = matrix.is_pressed(key) || input.keys_held.contains(&key);
@@ -1415,7 +1415,7 @@ mod joystick_tests {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(root, |ui| {
-                    stick = joystick_controls(ui, egui::Id::new("test-stick"))
+                    stick = joystick_controls(ui, egui::Id::unique("test-stick"))
                 });
         });
         stick

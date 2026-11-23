@@ -73,7 +73,7 @@ fn ga_inks(ui: &mut egui::Ui, mb: &Motherboard, bus: &mut CommandBus) {
                         ink.number(),
                         ink.hardware_number()
                     );
-                    let id = egui::Id::new(("ga-pen", index));
+                    let id = egui::Id::unique(("ga-pen", index));
                     if let Some(Picked::Ink(new)) = ink_picker(
                         ui,
                         id,

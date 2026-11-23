@@ -6,7 +6,7 @@
 //! [`FrameQueue`]; the audio device's callback pulls them from its own
 //! thread. With the `audio` cargo feature, [`AudioOut`] opens the default
 //! output device through cpal. Its clock then paces the emulation: the
-//! window loop waits while more than [`TARGET_LATENCY`] of sound is
+//! window loop waits while more than [`amsrust::audio_mix::Pacing::DESKTOP`]'s target of sound is
 //! queued, instead of relying on minifb's 50Hz frame limiter, so the
 //! emulated machine runs exactly at the speed the device plays it.
 //!
@@ -19,8 +19,6 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-/// How much sound the window loop keeps queued ahead of the device.
-pub const TARGET_LATENCY: Duration = amsrust::audio_mix::Pacing::DESKTOP.target;
 /// Beyond this, the oldest samples are dropped so the latency can't grow.
 pub const MAX_LATENCY: Duration = amsrust::audio_mix::Pacing::DESKTOP.max;
 
