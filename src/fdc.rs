@@ -143,6 +143,9 @@ pub enum DriveKind {
     Gotek,
 }
 
+/// A 3" drive steps slower during its first seconds of running (about fifteen turns of the disc; SEEKJIT4 still sees it cold after 2 s).
+const COLD_DRIVE_US: u64 = 3_000_000;
+
 impl DriveKind {
     /// The last cylinder the head can reach.
     pub fn max_track(self) -> u8 {
@@ -215,15 +218,23 @@ impl DriveKind {
 
     /// How long a seek of `steps` tracks takes, the FDC stepping every `step_us`: a real
     /// drive's head moves then settles, a Gotek's has nothing to move.
-    pub fn seek_us(self, steps: u64, step_us: u64) -> u64 {
+    pub fn seek_us(self, steps: u64, step_us: u64, motor_on_us: u64) -> u64 {
         match self {
             DriveKind::Gotek => 1,
             // the user's real 3" drive (SEEKJIT4): the time is the steps and nothing more, a seek of
             // 2 tracks takes twice one of 1, no 15 ms of head settling
             // (86 SEEKJIT4 loops a track on the real drive, 80 when a step takes the 12 ms
             // SPECIFY asks: 43/40 of it; a seek of 2 tracks or more costs about 12 loops more, 1.8 ms)
+            // the head steps slower while the drive is cold, just after its motor started: later it
+            // steps at the pace SPECIFY asks (HBL's loader gives a seek of 33 tracks 425 ms on a real
+            // 6128, the 12.9 ms a step of the cold drive would take 427 ms)
             DriveKind::ThreeInch if steps > 0 => {
-                steps * step_us * 43 / 40 + if steps >= 2 { 1_800 } else { 0 }
+                let step_us = if motor_on_us < COLD_DRIVE_US {
+                    step_us * 43 / 40
+                } else {
+                    step_us
+                };
+                steps * step_us + if steps >= 2 { 1_800 } else { 0 }
             }
             _ if steps > 0 => steps * step_us + SETTLE_US,
             _ => 1_000,
@@ -468,6 +479,8 @@ pub struct Fdc {
     /// the drive is ready after it was switched on: a real 3" drive needs its spindle to reach its
     /// speed (see `spin_up_us`).
     motor_off_at: Option<u64>,
+    /// When the motor was last switched on.
+    motor_on_at: u64,
     ready_at: u64,
     /// From when the heads read IDs and sectors: a little after the READY line (see `set_motor`).
     read_ready_at: u64,
@@ -532,6 +545,7 @@ impl Default for Fdc {
         let mut fdc = Self {
             motor: false,
             motor_off_at: None,
+            motor_on_at: 0,
             ready_at: 0,
             read_ready_at: 0,
             executions: 0,
@@ -663,10 +677,13 @@ impl Fdc {
 
     pub fn set_motor(&mut self, on: bool) {
         if on && !self.motor {
+            self.motor_on_at = self.now_us;
             self.ready_at = self.now_us + self.spin_up_us();
             self.read_ready_at = self.ready_at
                 + if self.timing {
-                    self.drives[self.selected_drive()].kind.read_ready_delay_us()
+                    self.drives[self.selected_drive()]
+                        .kind
+                        .read_ready_delay_us()
                 } else {
                     0
                 };
@@ -681,7 +698,9 @@ impl Fdc {
         if !self.timing {
             return 0;
         }
-        let off_s = self.motor_off_at.map(|t| self.now_us.saturating_sub(t) as f64 / 1e6);
+        let off_s = self
+            .motor_off_at
+            .map(|t| self.now_us.saturating_sub(t) as f64 / 1e6);
         self.drives[self.selected_drive()].kind.spin_up_us(off_s)
     }
 
@@ -1105,7 +1124,12 @@ impl Fdc {
             let steps = u64::from(from.abs_diff(to));
             // The READY line is tied high on a CPC: even without a disc the seek ends normally
             let st0 = st0::SE | unit as u8;
-            let done = self.now_us + self.drives[unit].kind.seek_us(steps, self.step_us);
+            let done = self.now_us
+                + self.drives[unit].kind.seek_us(
+                    steps,
+                    self.step_us,
+                    self.now_us.saturating_sub(self.motor_on_at),
+                );
             self.seeks.retain(|seek| seek.1 != unit);
             self.seeks.push((done, unit, to, st0));
             self.seeking |= 1 << unit;
