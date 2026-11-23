@@ -53,6 +53,18 @@ pub struct FileRequest {
     pub default_name: &'static str,
 }
 
+const HOVERED_FILE: &str = "hovered-file";
+
+/// The menu item under the pointer opens a file chooser: [`Gui::hovered_file`].
+fn hover_file(
+    ctx: &egui::Context,
+    id: &'static str,
+    extensions: &'static [&'static str],
+    rect: egui::Rect,
+) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(HOVERED_FILE), (id, extensions, rect)));
+}
+
 /// A message shown for a while at the bottom of the picture.
 struct Toast {
     text: String,
@@ -433,6 +445,12 @@ impl Gui {
             || self.ctx.any_popup_open()
     }
 
+    /// The menu item under the pointer that opens a file chooser, if any: its command, the
+    /// extensions of the file, and where it is (in points). A page puts its file input there.
+    pub fn hovered_file(&self) -> Option<(&'static str, &'static [&'static str], egui::Rect)> {
+        self.ctx.data(|data| data.get_temp(egui::Id::unique(HOVERED_FILE)))
+    }
+
     /// Whether the pointer is over the interface.
     pub fn wants_pointer(&self) -> bool {
         self.ctx.egui_wants_pointer_input()
@@ -497,6 +515,9 @@ impl Gui {
     ) -> egui::FullOutput {
         let ctx = self.ctx.clone();
         apply_zoom(&ctx, target);
+        ctx.data_mut(|data| {
+            data.remove::<(&'static str, &'static [&'static str], egui::Rect)>(egui::Id::unique(HOVERED_FILE))
+        });
         let output = ctx.run_ui(raw, |ui| self.ui(ui, target, bus));
         self.follow_links();
         output

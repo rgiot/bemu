@@ -117,6 +117,30 @@ impl CommandSpec {
     }
 }
 
+/// The extensions of the file an input command asks when it is chosen in a menu, for the commands
+/// that always ask one (a page lays its file input over the item, as a browser opens a file
+/// chooser only from the user's own click). The commands that ask one only in some states
+/// (toggles, a cartridge on a CPC without one) are not here.
+pub fn file_picker(id: &str) -> Option<&'static [&'static str]> {
+    const DISCS: &[&str] = &["dsk", "hfe", "zip", "7z", "gz"];
+    const ROMS: &[&str] = &["rom", "bin"];
+    Some(match id {
+        "drive-a-select-disc" | "drive-b-select-disc" | "tools-disc-catalog" => DISCS,
+        "tools-disc-convert" => &["dsk", "hfe"],
+        "tape-insert" => &["cdt", "tzx"],
+        "albireo-select-path" => &["img", "ima", "bin", "fat"],
+        "snapshot-load" => &["sna"],
+        "config-load" => &["json"],
+        "csl-load" => &["csl"],
+        "symbols-load" => &["sym", "lst", "txt", "asm"],
+        "printer-select-rom" | "m4-select-rom" => ROMS,
+        "willy-s2p-select-soundfont" => &["sf2"],
+        "autotype-file" | "basic-load" => &["txt", "bas", "asc"],
+        "cartridge-insert" => &["cpr", "zip"],
+        _ => return None,
+    })
+}
+
 /// Every command, in menu order.
 pub fn all() -> &'static [CommandSpec] {
     COMMANDS
