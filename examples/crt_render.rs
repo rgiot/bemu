@@ -2,10 +2,10 @@
 //! raw mode) through a CRT model, for tuning it without running a machine.
 //!
 //! ```text
-//! cargo run --release --example crt_render -- in.png out.png ctm [triad_px] [bench] [curve=F|oldcurve=F]
+//! cargo run --release --example crt_render -- in.png out.png ctm [triad_px] [bench] [curve=F] [gpu] [neutral] [glow-halo=F]
 //! ```
 
-use amsrust::display::{CpuCrt, CrtParams, Curved, DisplayFilter, DisplayMode, RawFilter};
+use amsrust::display::{Backend, CrtParams, DisplayFilter, DisplayMode, KernelCrt, RawFilter, Warp};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -25,20 +25,48 @@ fn main() {
                     rows_per_line: triad_px * 4 / 3,
                     ..profile.params()
                 };
-                Box::new(CpuCrt::new(params))
+                let backend = if rest.iter().any(|a| a == "gpu") { Backend::Gpu } else { Backend::Cpu };
+                Box::new(KernelCrt::new(params, Warp::FLAT, backend).expect("no CRT rendering here"))
             }
             (DisplayMode::Crt(_), None) => mode.filter(),
             (DisplayMode::Raw, _) => Box::new(RawFilter),
         };
-    // curve=F: the glass bends the beam under the mask; oldcurve=F: the finished picture warped
+    // curve=F: the glass bends the beam under the mask
     let curve = |key: &str| {
         rest.iter()
             .find_map(|a| a.strip_prefix(key).and_then(|v| v.parse::<f32>().ok()))
     };
     if let Some(curvature) = curve("curve=") {
-        filter = mode.filter_on(false, curvature);
-    } else if let Some(curvature) = curve("oldcurve=") {
-        filter = Box::new(Curved::new(filter, mode.warp(curvature)));
+        filter = mode.filter_on(rest.iter().any(|a| a == "gpu"), curvature);
+    }
+    // glow-halo=F: the share kept of the glow's close part (the halo around the bright)
+    if let (Some(halo), DisplayMode::Crt(profile)) = (curve("glow-halo="), mode) {
+        let neutral = rest.iter().any(|a| a == "neutral");
+        let params = CrtParams {
+            glow_halo: halo,
+            blue_shift: if neutral { 0.0 } else { profile.params().blue_shift },
+            blue_width: if neutral { 1.0 } else { profile.params().blue_width },
+            beam_thin: if neutral { 1.0 } else { profile.params().beam_thin },
+            white: if neutral { [1.0; 3] } else { profile.params().white },
+            ..profile.params()
+        };
+        let warp = curve("curve=").map_or(Warp::FLAT, |c| mode.warp(c));
+        let backend = if rest.iter().any(|a| a == "gpu") { Backend::Gpu } else { Backend::Cpu };
+        filter = Box::new(KernelCrt::new(params, warp, backend).expect("no CRT rendering here"));
+    }
+    // neutral: without the touches of TuxAPE's (cold white, blue gun off and wider, finer beam at low
+    // light), as the CTM was drawn before them
+    if let (true, DisplayMode::Crt(profile)) = (rest.iter().any(|a| a == "neutral"), mode) {
+        let params = CrtParams {
+            blue_shift: 0.0,
+            blue_width: 1.0,
+            beam_thin: 1.0,
+            white: [1.0; 3],
+            ..profile.params()
+        };
+        let warp = curve("curve=").map_or(Warp::FLAT, |c| mode.warp(c));
+        let backend = if rest.iter().any(|a| a == "gpu") { Backend::Gpu } else { Backend::Cpu };
+        filter = Box::new(KernelCrt::new(params, warp, backend).expect("no CRT rendering here"));
     }
     if rest.iter().any(|a| a == "bench") {
         let (w, h) = filter.output_size();

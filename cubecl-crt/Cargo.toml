@@ -8,7 +8,7 @@ publish = false
 [workspace]
 
 [dependencies]
-cubecl = { version = "=0.11.4", default-features = false, features = ["std", "wgpu"] }
+cubecl = { version = "=0.11.4", default-features = false, features = ["std", "wgpu", "cpu"] }
 cubecl-runtime = "=0.11.4"
 amsrust = { path = "..", default-features = false }
 image = "0.23.14"

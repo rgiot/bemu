@@ -1368,7 +1368,7 @@ fn play_frame_audio(audio: Option<&AudioOut>, samples: &[f32], window: &dyn Fron
     #[cfg(feature = "audio")]
     if let Some(audio) = audio {
         audio.push(samples);
-        while audio.buffered() > host_audio::TARGET_LATENCY && window.is_open() {
+        while amsrust::audio_mix::Pacing::DESKTOP.should_wait(audio.buffered()) && window.is_open() {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }

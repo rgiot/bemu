@@ -1,11 +1,21 @@
-//! Spike: the CRT model of bemu (crt.wgsl) as one CubeCL kernel (`kernel.rs`), compared with the CPU renderer.
-mod kernel;
-use amsrust::display::crt::GlowField;
-use amsrust::display::{CpuCrt, CrtProfile, DisplayFilter, Warp};
+//! Spike and benchmark: the CRT model of bemu as the CubeCL kernels of the application itself
+//! (`src/display/kernel.rs`, included as it is), compared with the CPU renderer.
+mod display;
+use amsrust::display::crt::{SRC_HEIGHT, SRC_WIDTH};
+use amsrust::display::{CrtProfile, Warp};
 use cubecl::prelude::*;
 use cubecl::wgpu::wgpu;
 use cubecl_runtime::runtime::Runtime;
-use kernel::*;
+use display::kernel::Pipeline;
+use image::{Rgb, RgbImage};
+
+fn test_picture() -> RgbImage {
+    let mut src = RgbImage::new(SRC_WIDTH as u32, SRC_HEIGHT as u32);
+    for (x, y, p) in src.enumerate_pixels_mut() {
+        *p = Rgb([(x * 7 % 256) as u8, (y * 5 % 256) as u8, ((x / 3 + y) * 11 % 256) as u8]);
+    }
+    src
+}
 
 /// The app's own wgpu device, shared with CubeCL (`init_device`), and the output buffer of a
 /// kernel taken back as a `wgpu::Buffer` of that device: what a render pass would read directly.
@@ -64,9 +74,9 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// The whole path of a frame without readback: the CRT kernel writes its picture in a buffer of the
-/// app's wgpu device, and a fullscreen pass of that device reads the buffer as storage and draws
-/// it (here into a texture, read back to check it against the CPU renderer).
+/// The whole path of a frame without readback: the kernels write the picture in a buffer of the
+/// app's wgpu device, and a fullscreen pass of that device reads the buffer as storage and draws it
+/// (here into a texture, read back to check it against the CPU renderer).
 fn quad_pass_check() {
     use cubecl::wgpu::{init_device, AutoCompiler, RuntimeOptions, WgpuServer, WgpuSetup};
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -79,26 +89,15 @@ fn quad_pass_check() {
     let params = profile.params();
     let (w, h) = params.output_size();
     let src = test_picture();
-    let frame: Vec<u32> = src.pixels().map(|p| p[0] as u32 | (p[1] as u32) << 8 | (p[2] as u32) << 16).collect();
-    let glow = GlowField::new(&src).texels();
-    let pr = pack(&params, warp);
-    let frame_h = client.create_from_slice(u32::as_bytes(&frame));
-    let glow_h = client.create_from_slice(f32::as_bytes(&glow));
-    let pr_h = client.create_from_slice(f32::as_bytes(&pr));
-    let out_h = client.empty(w * h * 4);
-    let n = (w * h) as u32;
-    unsafe {
-        crt::launch_unchecked(&client, CubeCount::Static(n.div_ceil(256), 1, 1), CubeDim::new_1d(256),
-            BufferArg::from_raw_parts(frame_h, frame.len()), BufferArg::from_raw_parts(glow_h, glow.len()),
-            BufferArg::from_raw_parts(pr_h, pr.len()), BufferArg::from_raw_parts(out_h.clone(), w * h));
-    }
-    let bytes = client.read_one(out_h.clone()).unwrap();
+    let frame = client.create_from_slice(src.as_raw());
+    let pipeline = Pipeline::new(&client, &params, warp);
+    pipeline.run(&client, &frame, src.as_raw().len() / 4, src.width(), src.height());
+    let bytes = client.read_one(pipeline.out().clone()).unwrap();
     let px = u32::from_bytes(&bytes);
     let sum = px.iter().fold(0u64, |a, &v| a + v as u64);
-    println!("native (lavapipe) {w}x{h} sum {sum} first {:06x} {:06x} {:06x}", px[0], px[700 * w + 500], px[w * h - 1]);
-    let resource = client.get_resource::<WgpuServer<AutoCompiler>>(out_h).unwrap();
+    println!("native {w}x{h} sum {sum} first {:06x} {:06x} {:06x}", px[0], px[700 * w + 500], px[w * h - 1]);
+    let resource = client.get_resource::<WgpuServer<AutoCompiler>>(pipeline.out().clone()).unwrap();
     let res = resource.resource();
-
     // the pass
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(QUAD.into()) });
     let dim = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
@@ -149,9 +148,7 @@ fn quad_pass_check() {
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let data = staging.slice(..).get_mapped_range().unwrap();
 
-    let mut cpu = CpuCrt::new(params.clone()).curved(warp);
-    let mut want = vec![0u32; w * h];
-    cpu.render(&src, &mut want);
+    let (want, _, _) = cpu_reference(&params, warp, &src);
     let (mut worst, mut off) = (0i32, 0usize);
     for y in 0..h {
         for x in 0..w {
@@ -165,11 +162,79 @@ fn quad_pass_check() {
         }
     }
     let cpu_sum = want.iter().fold(0u64, |a, &v| a + v as u64);
-    println!("CPU renderer sum {cpu_sum} first {:06x} {:06x} {:06x}", want[0], want[700 * w + 500], want[w * h - 1]);
-    println!("quad pass of the kernel's buffer vs the CPU renderer: worst {worst}, {off} values off by >3 of {}", w * h * 3);
+    println!("CPU backend sum {cpu_sum} first {:06x} {:06x} {:06x}", want[0], want[700 * w + 500], want[w * h - 1]);
+    println!("quad pass of the kernel's buffer vs the CPU backend: worst {worst}, {off} values off by >3 of {}", w * h * 3);
+}
+
+/// The picture of the kernels on CubeCL's CPU backend (LLVM JIT): the reference the GPU's is
+/// compared with, and its timing.
+fn cpu_reference(params: &amsrust::display::CrtParams, warp: Warp, src: &RgbImage) -> (Vec<u32>, f64, f64) {
+    type C = cubecl::cpu::CpuRuntime;
+    let client = <C as Runtime>::client(&Default::default());
+    let frame = client.create_from_slice(src.as_raw());
+    let mut pipeline = Pipeline::new(&client, params, warp);
+    pipeline.cube_dim = 32;
+    let words = src.as_raw().len() / 4;
+    let t = std::time::Instant::now();
+    pipeline.run(&client, &frame, words, src.width(), src.height());
+    let mut bytes = client.read_one(pipeline.out().clone()).unwrap().to_vec();
+    let first = t.elapsed().as_secs_f64() * 1e3;
+    let mut best = f64::MAX;
+    for _ in 0..4 {
+        let t = std::time::Instant::now();
+        pipeline.run(&client, &frame, words, src.width(), src.height());
+        bytes = client.read_one(pipeline.out().clone()).unwrap().to_vec();
+        best = best.min(t.elapsed().as_secs_f64() * 1e3);
+    }
+    (u32::from_bytes(&bytes).to_vec(), first, best)
+}
+
+/// Where the time goes: each launch of a frame waited for, averaged over a few frames.
+fn launch_profile(client: &cubecl::client::Client, params: &amsrust::display::CrtParams, warp: Warp, src: &RgbImage, cube_dim: u32) -> Vec<(&'static str, f64)> {
+    let frame = client.create_from_slice(src.as_raw());
+    let mut pipeline = Pipeline::new(client, params, warp);
+    pipeline.cube_dim = cube_dim;
+    let words = src.as_raw().len() / 4;
+    let mut totals: Vec<(&'static str, f64)> = Vec::new();
+    let frames = 6;
+    for frame_number in 0..frames + 1 {
+        let mut last = std::time::Instant::now();
+        let mut step = 0;
+        pipeline.run_with(client, &frame, words, src.width(), src.height(), |name| {
+            let _ = pollster::block_on(client.sync());
+            let now = std::time::Instant::now();
+            let ms = (now - last).as_secs_f64() * 1e3;
+            last = now;
+            // the first frame compiles the kernels: left out
+            if frame_number > 0 {
+                if totals.len() <= step {
+                    totals.push((name, 0.0));
+                }
+                totals[step].1 += ms / frames as f64;
+            }
+            step += 1;
+        });
+    }
+    totals
+}
+
+fn print_profile(label: &str, profile: &[(&'static str, f64)]) {
+    let total: f64 = profile.iter().map(|p| p.1).sum();
+    let parts: Vec<String> = profile.iter().map(|(n, ms)| format!("{n} {ms:.2}")).collect();
+    println!("{label}: {total:.1} ms ({})", parts.join(", "));
 }
 
 fn main() {
+    {
+        let src = test_picture();
+        for (label, warp) in [("flat", Warp::FLAT), ("curved", Warp::of(CrtProfile::Ctm644, 1.0))] {
+            let params = CrtProfile::Ctm644.params();
+            let cpu = <cubecl::cpu::CpuRuntime as Runtime>::client(&Default::default());
+            print_profile(&format!("CPU backend, CTM {label}, launch by launch"), &launch_profile(&cpu, &params, warp, &src, 32));
+            let gpu = <cubecl::wgpu::WgpuRuntime as Runtime>::client(&Default::default());
+            print_profile(&format!("GPU (this adapter), CTM {label}, launch by launch"), &launch_profile(&gpu, &params, warp, &src, 256));
+        }
+    }
     quad_pass_check();
     shared_device_check();
     type R = cubecl::wgpu::WgpuRuntime;
@@ -182,37 +247,17 @@ fn main() {
         let params = profile.params();
         let (w, h) = params.output_size();
         let src = test_picture();
-        let frame: Vec<u32> = src.pixels().map(|p| p[0] as u32 | (p[1] as u32) << 8 | (p[2] as u32) << 16).collect();
-        let glow = GlowField::new(&src).texels();
-        let pr = pack(&params, warp);
+        let (want, jit_ms, cpu_ms) = cpu_reference(&params, warp, &src);
 
-        let mut cpu = CpuCrt::new(params.clone()).curved(warp);
-        let mut want = vec![0u32; w * h];
-        let t = std::time::Instant::now();
-        cpu.render(&src, &mut want);
-        let cpu_ms = t.elapsed().as_secs_f64() * 1e3;
-
-        let frame_h = client.create_from_slice(u32::as_bytes(&frame));
-        let glow_h = client.create_from_slice(f32::as_bytes(&glow));
-        let pr_h = client.create_from_slice(f32::as_bytes(&pr));
-        let out_h = client.empty(w * h * 4);
-        let n = (w * h) as u32;
+        let frame = client.create_from_slice(src.as_raw());
+        let words = src.as_raw().len() / 4;
+        let pipeline = Pipeline::new(&client, &params, warp);
         let mut got_bytes = Vec::new();
         let mut best = f64::MAX;
         for _ in 0..4 {
             let t = std::time::Instant::now();
-            unsafe {
-                crt::launch_unchecked(
-                    &client,
-                    CubeCount::Static(n.div_ceil(256), 1, 1),
-                    CubeDim::new_1d(256),
-                    BufferArg::from_raw_parts(frame_h.clone(), frame.len()),
-                    BufferArg::from_raw_parts(glow_h.clone(), glow.len()),
-                    BufferArg::from_raw_parts(pr_h.clone(), pr.len()),
-                    BufferArg::from_raw_parts(out_h.clone(), w * h),
-                );
-            }
-            got_bytes = client.read_one(out_h.clone()).unwrap().to_vec();
+            pipeline.run(&client, &frame, words, src.width(), src.height());
+            got_bytes = client.read_one(pipeline.out().clone()).unwrap().to_vec();
             best = best.min(t.elapsed().as_secs_f64() * 1e3);
         }
         let got = u32::from_bytes(&got_bytes);
@@ -224,6 +269,6 @@ fn main() {
                 off += (d > 3) as usize;
             }
         }
-        println!("{profile:?} {} {w}x{h}: worst {worst}, {off} values off by >3 of {}; cpu {cpu_ms:.1} ms, cubecl(lavapipe) {best:.1} ms", if warp.is_flat() { "flat" } else { "curved" }, w * h * 3);
+        println!("{profile:?} {} {w}x{h}: worst {worst}, {off} values off by >3 of {}; CPU backend {cpu_ms:.1} ms (first frame {jit_ms:.0} ms with the JIT), GPU {best:.1} ms (glow + picture + readback)", if warp.is_flat() { "flat" } else { "curved" }, w * h * 3);
     }
 }

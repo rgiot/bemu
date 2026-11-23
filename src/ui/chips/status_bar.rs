@@ -109,26 +109,65 @@ pub fn status_bar(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget
             let paused = target
                 .debugger()
                 .map_or(settings.is_some_and(|s| s.paused), |d| d.paused());
+            let measured = measured_speed(ui, mb, !paused);
             let state = if target.csl_running() {
                 "CSL script".to_owned()
             } else if paused {
                 format!("paused at &{:04X}", mb.pc())
             } else {
-                match settings.map(|s| s.speed) {
+                let mode = match settings.map(|s| s.speed) {
                     Some(crate::commands::Speed::Max) => "full speed".to_owned(),
                     Some(crate::commands::Speed::Factor(f)) if (f - 1.0).abs() > 1e-3 => {
-                        format!("{:.0} %", f * 100.0)
+                        format!("target {:.0} %", f * 100.0)
                     }
                     _ => "running".to_owned(),
+                };
+                match measured {
+                    Some(speed) => format!("{mode} · {speed:.0} %"),
+                    None => mode,
                 }
             };
-            ui.label(state);
+            let label = ui.label(state);
+            if measured.is_some() && !paused {
+                label.on_hover_text(
+                    "How fast the machine runs: the share of a real CPC's time (4 MHz Z80) it \
+                     emulates each second. Under 100 % the emulation does not keep up.",
+                );
+            }
             if let Some(port) = target.debugger().and_then(|d| d.listening_port()) {
                 crate::ui::widgets::rule(ui);
                 ui.label(format!("debug server :{port}"));
             }
         });
     });
+}
+
+/// How fast the machine runs, as the share of real time (a CPC's Z80 does 4 000 000 T-states a
+/// second) the T-states it emulated since the last measure stand for, over the last half second or
+/// more; `None` until the first measure, and while paused. A check that the emulation (and the
+/// rendering that comes with it) keeps up.
+fn measured_speed(ui: &egui::Ui, mb: &crate::motherboard::Motherboard, running: bool) -> Option<f64> {
+    const WINDOW_S: f64 = 0.5;
+    const T_STATES_PER_S: f64 = 4_000_000.0;
+    let now = ui.input(|i| i.time);
+    let ticks = mb.t_state_counter().value();
+    let id = egui::Id::new("status-measured-speed");
+    // when it was last measured, the T-states then, and the speed found
+    let (mut t0, mut k0, mut speed): (f64, usize, Option<f64>) =
+        ui.data(|d| d.get_temp(id)).unwrap_or((now, ticks, None));
+    if ticks < k0 || !running {
+        // a reset, or a pause: start again
+        (t0, k0, speed) = (now, ticks, None);
+    } else if now - t0 >= WINDOW_S {
+        speed = Some((ticks - k0) as f64 / ((now - t0) * T_STATES_PER_S) * 100.0);
+        (t0, k0) = (now, ticks);
+    }
+    ui.data_mut(|d| d.insert_temp(id, (t0, k0, speed)));
+    if running {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(WINDOW_S));
+    }
+    speed
 }
 
 /// The drives, right to left (B at the edge): the LED lit while the motor turns for the drive

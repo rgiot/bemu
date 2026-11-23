@@ -271,8 +271,9 @@ pub struct Args {
     #[arg(long, value_name = DisplayMode::NAMES, help_heading = DISPLAY)]
     display: Option<DisplayMode>,
 
-    /// Renders the CRTs on the GPU (a build with --features crt-gpu).
-    #[arg(long = "crt-gpu", help_heading = DISPLAY)]
+    /// Renders the CRTs on the GPU (the default; --crt-gpu=false renders them on the CPU, which is
+    /// also what happens when there is no GPU).
+    #[arg(long = "crt-gpu", value_name = "BOOL", default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set, help_heading = DISPLAY)]
     pub gpu: bool,
 
     /// How curved a CRT's glass is, times its tube's own bulge: 0 (flat) to 4. 1 by default in

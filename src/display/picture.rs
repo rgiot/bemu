@@ -9,7 +9,7 @@
 use image::RgbImage;
 
 use super::crt::{CrtParams, Warp, SRC_HEIGHT, SRC_WIDTH};
-use super::gpu::{crt_inputs, Blit, CrtPass, FrameTexture, GpuContext, Resampler};
+use super::gpu::{Blit, CrtPass, FrameTexture, GpuContext, GpuFrame, Resampler};
 use super::{DisplayMode, PictureSize, RAW_HEIGHT, RAW_WIDTH};
 
 /// The most a CRT's picture is drawn larger than its profile's (a texture of 4320 x 3264).
@@ -36,9 +36,17 @@ pub struct Picture {
     /// CubeCL on the device (the CRT's kernel), if it can run compute shaders: without it a CRT
     /// display shows the raw picture.
     cube: Option<GpuContext>,
-    /// The last frame uploaded, for the CRT's kernel, and whether it is not yet in its buffers.
-    last: Option<RgbImage>,
-    fresh: bool,
+    /// The last frame uploaded, as the CRT's kernels read it.
+    gpu_frame: Option<GpuFrame>,
+    /// A frame arrived (or a pass is new) since the CRT's picture was made: the picture is made
+    /// again only then, so a redraw for the interface's sake costs the CRT nothing.
+    crt_dirty: bool,
+    /// The last draw showed the CRT (the raw frame's texture is then left alone).
+    crt_shown: bool,
+    /// The raw texture is behind the last frame (it was not uploaded while the CRT was shown).
+    raw_stale: bool,
+    /// The last frame, kept only while the CRT is shown, for the raw texture when it comes back.
+    last_rgb: Option<RgbImage>,
     /// The picture resized without moiré (a CRT's at a fractional zoom, any below x1).
     resampler: Option<Resampler>,
     format: wgpu::TextureFormat,
@@ -52,6 +60,14 @@ impl Picture {
         format: wgpu::TextureFormat,
         cube: Option<GpuContext>,
     ) -> Self {
+        let gpu_frame = cube.as_ref().and_then(|ctx| match GpuFrame::new(ctx) {
+            Ok(frame) => Some(frame),
+            Err(e) => {
+                eprintln!("no CRT picture: {e}");
+                None
+            }
+        });
+        let cube = cube.filter(|_| gpu_frame.is_some());
         let frame = FrameTexture::new(device);
         let blit = Blit::new(device, format);
         let raw_bind_group = blit.bind_group(device, frame.view(), false, Warp::FLAT);
@@ -60,9 +76,12 @@ impl Picture {
             blit,
             raw_bind_group,
             crt: None,
+            gpu_frame,
+            crt_dirty: false,
+            crt_shown: false,
+            raw_stale: false,
+            last_rgb: None,
             cube,
-            last: None,
-            fresh: false,
             resampler: None,
             format,
             size: PictureSize::default(),
@@ -71,10 +90,37 @@ impl Picture {
 
     /// The monitor's next frame.
     pub fn upload(&mut self, queue: &wgpu::Queue, frame: &RgbImage) {
-        self.frame.upload(queue, frame);
-        if self.cube.is_some() {
-            self.last = Some(frame.clone());
-            self.fresh = true;
+        if self.crt_shown {
+            // the raw texture is not drawn: its conversion waits for the switch back
+            match &mut self.last_rgb {
+                Some(last) => last.clone_from(frame),
+                None => self.last_rgb = Some(frame.clone()),
+            }
+            self.raw_stale = true;
+        } else {
+            self.frame.upload(queue, frame);
+            self.raw_stale = false;
+        }
+        if let Some(gpu_frame) = &mut self.gpu_frame {
+            gpu_frame.upload(queue, frame);
+            self.crt_dirty = true;
+        }
+    }
+
+    /// Make the CRT's pass for `mode` now, and run it once on a black frame: the kernels are
+    /// compiled (WGSL, shader modules, pipelines) before the first frame that shows them, not in
+    /// the middle of it. Nothing is drawn.
+    pub fn prewarm(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, mode: DisplayMode, warp: Warp) {
+        if !matches!(mode, DisplayMode::Crt(_)) {
+            return;
+        }
+        self.use_mode(device, queue, mode, 1, warp);
+        if let (Some(crt), Some(frame)) = (self.crt.as_ref(), self.gpu_frame.as_ref()) {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            crt.pass.encode(&mut encoder, &crt.target.create_view(&wgpu::TextureViewDescriptor::default()), frame);
+            queue.submit([encoder.finish()]);
+            // the first real frame makes the picture again
+            self.crt_dirty = true;
         }
     }
 
@@ -94,18 +140,20 @@ impl Picture {
 
     /// Make `mode`'s pass the current one, drawn `level` times larger, through the glass `warp`.
     /// Whether it was made now (its picture is to be drawn).
-    fn use_mode(&mut self, device: &wgpu::Device, mode: DisplayMode, level: usize, warp: Warp) -> bool {
+    fn use_mode(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, mode: DisplayMode, level: usize, warp: Warp) -> bool {
         let DisplayMode::Crt(profile) = mode else {
             return false;
         };
-        if self
-            .crt
-            .as_ref()
-            .is_some_and(|crt| crt.mode == mode && crt.level == level && crt.warp == warp)
-        {
+        let params: CrtParams = profile.params().scaled(level);
+        if let Some(crt) = self.crt.as_mut().filter(|crt| crt.mode == mode && crt.level == level) {
+            if crt.warp != warp {
+                // only the glass changed: its four numbers are rewritten, nothing is rebuilt
+                crt.pass.set_warp(queue, &params, warp);
+                crt.warp = warp;
+                self.crt_dirty = true;
+            }
             return false;
         }
-        let params: CrtParams = profile.params().scaled(level);
         let Some(cube) = &self.cube else {
             return false;
         };
@@ -130,6 +178,7 @@ impl Picture {
             bind_group,
             size: params.output_size(),
         });
+        self.crt_dirty = true;
         true
     }
 
@@ -152,23 +201,27 @@ impl Picture {
         let (top, bottom) = bars;
         let (window_w, window_h) = (target.0 as f32, (target.1 as f32 - top - bottom).max(1.0));
         let level = self.level(mode, (window_w, window_h));
-        let made = self.use_mode(device, mode, level, warp);
+        let _ = again; // what changed is tracked here (`crt_dirty`), whoever calls
+        let _made = self.use_mode(device, queue, mode, level, warp);
         let crt_shown = matches!(mode, DisplayMode::Crt(_)) && self.crt.is_some();
         if let (true, Some(crt)) = (crt_shown, self.crt.as_ref()) {
-            if made || self.fresh {
-                if let Some(last) = &self.last {
-                    let (frame, glow) = crt_inputs(last);
-                    crt.pass.upload(queue, &frame, &glow);
-                }
-                self.fresh = false;
-            }
-            if !again || made {
+            if let (true, Some(frame)) = (self.crt_dirty, self.gpu_frame.as_ref()) {
                 crt.pass.encode(
                     encoder,
                     &crt.target.create_view(&wgpu::TextureViewDescriptor::default()),
+                    frame,
                 );
+                self.crt_dirty = false;
             }
         }
+        // the raw picture comes back: its texture catches up with the last frame
+        if !crt_shown && self.raw_stale {
+            if let Some(last) = &self.last_rgb {
+                self.frame.upload(queue, last);
+            }
+            self.raw_stale = false;
+        }
+        self.crt_shown = crt_shown;
         let (picture_w, picture_h) = match self.crt.as_ref().filter(|_| crt_shown) {
             Some(crt) => crt.size,
             None => (RAW_WIDTH, RAW_HEIGHT),

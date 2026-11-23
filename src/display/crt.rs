@@ -68,7 +68,7 @@ impl CrtProfile {
 
 /// The curved glass of the tube, as the viewer sees the flat picture through it: a barrel warp
 /// of the whole picture (the CRT model's output), with the glass's rounded corners. The same
-/// formula runs on the CPU ([`super::Curved`]) and in the GPU blit (`blit.wgsl`).
+/// formula runs in the GPU blit (`blit.wgsl`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Warp {
     /// Horizontal and vertical bulge: a point at (x, y) of [-1, 1]² shows the flat picture's
@@ -186,16 +186,40 @@ pub struct CrtParams {
     /// corners' distance (a camera's lens takes its share of it). It is more than the photographs'
     /// 0.30 a unit of r² in light because the white of the model is clipped: the centre is above 1.
     pub vignette: f32,
-    /// How strong the glow is, 1 as TuxAPE's. See [`GlowField`].
+    /// How strong the glow is, 1 as TuxAPE's. See `kernel.rs` (the glow of the frame).
     pub glow: f32,
+    /// The share kept of the glow's **close** part, the halo around the bright (1: TuxAPE's weight
+    /// [`GLOW_CLOSE`]). The wide part, which lifts the dark of a picture to what the photographs
+    /// show, is `glow` alone: the photographs cannot tell the halo (their dark areas ask for the
+    /// wide part), and on a real CTM it is seen much weaker than TuxAPE's.
+    pub glow_halo: f32,
+    /// How far to the right of the red and green the blue gun lands (convergence), in pixels of the
+    /// monitor's frame (the source is 768 across): TuxAPE measured a fifth of a mode 1 pixel on
+    /// photographs of a CTM. 0 on the other tubes.
+    pub blue_shift: f32,
+    /// How much wider the blue gun's spot is than the others' (its Gaussian's sigma times this).
+    pub blue_width: f32,
+    /// How much finer the beam is at low light: the scanline's Gaussian is this share of its width
+    /// at a black and all of it at a white, growing with the level (a beam's spot swells with its
+    /// current; TuxAPE: "scan lines show most in the middle tones", 0.27 to 0.37 of a line).
+    /// 1: a constant width.
+    pub beam_thin: f32,
+    /// What the tube's white is: the light of each gun times this (a cold white: TuxAPE's
+    /// 0.95, 0.99, 1.05). Ignored by the monochrome tubes.
+    pub white: [f32; 3],
 }
 
-/// The floor under the glow: none, a black picture is black.
+/// The veil's default share of a white's light: none, a black picture is black (the dark areas
+/// of the photographs, 3.5 % of the white, are the glow's wide part: see [`GLOW_WIDE`]). `veil`
+/// stays a parameter for a constant floor.
 pub const VEIL: f32 = 0.0;
 
 /// The glow's grid: a cell is 4 pixels of the source.
 pub const GLOW_W: usize = SRC_WIDTH / 4;
 pub const GLOW_H: usize = SRC_HEIGHT / 4;
+/// The coarse grid of the wide blur: four fine cells to a coarse one (and a last row).
+pub const GLOW_CW: usize = GLOW_W / 4;
+pub const GLOW_CH: usize = GLOW_H / 4 + 1;
 
 /// The glow of what is bright on what is around it, as TuxAPE's view of a CTM has it (what it
 /// measured on photographs: right beside a large bright area the dark is lit to a few hundredths
@@ -210,126 +234,21 @@ pub const GLOW_WIDE: (f32, f32) = (160.0, 0.085);
 /// gives 0.085 for the wide one, TuxAPE's own value (the data cannot tell the close one, whose
 /// light is under a pixel of the edge of the bright).
 pub const GLOW: f32 = 1.0;
+/// The share of the close part of the glow kept: 0.3 of TuxAPE's (a real CTM's halo, as the owner
+/// of one sees it, is much weaker than that).
+pub const GLOW_HALO: f32 = 0.3;
 
-/// The glow of a frame, in units of a white's light: the light of the source blurred two ways,
-/// weighted, on a grid of [`GLOW_W`] × [`GLOW_H`] cells.
-pub struct GlowField {
-    cells: Vec<[f32; 3]>,
-}
-
-impl GlowField {
-    pub fn new(src: &image::RgbImage) -> Self {
-        let mut level = [0.0f32; 256];
-        for (i, l) in level.iter_mut().enumerate() {
-            *l = (i as f32 / 255.0).powi(2);
-        }
-        // the source's light, by cells
-        let mut light = vec![[0.0f32; 3]; GLOW_W * GLOW_H];
-        let (w, h) = (src.width() as usize, src.height() as usize);
-        let raw = src.as_raw();
-        for y in 0..h.min(SRC_HEIGHT) {
-            for x in 0..w.min(SRC_WIDTH) {
-                let cell = &mut light[(y / 4) * GLOW_W + x / 4];
-                for c in 0..3 {
-                    cell[c] += level[raw[(y * w + x) * 3 + c] as usize] / 16.0;
-                }
-            }
-        }
-        let close = Self::blur(&light, GLOW_W, GLOW_H, GLOW_CLOSE.0 / 4.0);
-        // the wide one on a grid four times coarser, then back (it is smooth)
-        let (cw, ch) = (GLOW_W / 4, GLOW_H / 4 + 1);
-        let mut coarse = vec![[0.0f32; 3]; cw * ch];
-        for y in 0..GLOW_H {
-            for x in 0..GLOW_W {
-                for c in 0..3 {
-                    coarse[(y / 4) * cw + x / 4][c] += light[y * GLOW_W + x][c] / 16.0;
-                }
-            }
-        }
-        let wide = Self::blur(&coarse, cw, ch, GLOW_WIDE.0 / 16.0);
-        let mut cells = vec![[0.0f32; 3]; GLOW_W * GLOW_H];
-        for y in 0..GLOW_H {
-            for x in 0..GLOW_W {
-                let at = |gx: f32, gy: f32| {
-                    let (gx, gy) = (gx.clamp(0.0, (cw - 1) as f32), gy.clamp(0.0, (ch - 1) as f32));
-                    let (x0, y0) = (gx.floor() as usize, gy.floor() as usize);
-                    let (x1, y1) = ((x0 + 1).min(cw - 1), (y0 + 1).min(ch - 1));
-                    let (fx, fy) = (gx - x0 as f32, gy - y0 as f32);
-                    let mut o = [0.0; 3];
-                    for c in 0..3 {
-                        let top = wide[y0 * cw + x0][c] * (1.0 - fx) + wide[y0 * cw + x1][c] * fx;
-                        let bottom = wide[y1 * cw + x0][c] * (1.0 - fx) + wide[y1 * cw + x1][c] * fx;
-                        o[c] = top * (1.0 - fy) + bottom * fy;
-                    }
-                    o
-                };
-                let wide = at((x as f32 + 0.5) / 4.0 - 0.5, (y as f32 + 0.5) / 4.0 - 0.5);
-                for c in 0..3 {
-                    cells[y * GLOW_W + x][c] =
-                        GLOW_CLOSE.1 * close[y * GLOW_W + x][c] + GLOW_WIDE.1 * wide[c];
-                }
-            }
-        }
-        Self { cells }
-    }
-
-    /// Gaussian blur (zero outside the picture) with `sigma` cells.
-    fn blur(cells: &[[f32; 3]], w: usize, h: usize, sigma: f32) -> Vec<[f32; 3]> {
-        let radius = (sigma * 4.0).ceil() as isize;
-        let mut kernel: Vec<f32> = (-radius..=radius)
-            .map(|d| (-((d * d) as f32) / (2.0 * sigma * sigma)).exp())
-            .collect();
-        let sum: f32 = kernel.iter().sum();
-        kernel.iter_mut().for_each(|k| *k /= sum);
-        let mut tmp = vec![[0.0f32; 3]; w * h];
-        let mut out = vec![[0.0f32; 3]; w * h];
-        for y in 0..h {
-            for x in 0..w {
-                for (k, d) in kernel.iter().zip(-radius..=radius) {
-                    let sx = x as isize + d;
-                    if (0..w as isize).contains(&sx) {
-                        for c in 0..3 {
-                            tmp[y * w + x][c] += k * cells[y * w + sx as usize][c];
-                        }
-                    }
-                }
-            }
-        }
-        for y in 0..h {
-            for x in 0..w {
-                for (k, d) in kernel.iter().zip(-radius..=radius) {
-                    let sy = y as isize + d;
-                    if (0..h as isize).contains(&sy) {
-                        for c in 0..3 {
-                            out[y * w + x][c] += k * tmp[sy as usize * w + x][c];
-                        }
-                    }
-                }
-            }
-        }
-        out
-    }
-
-    /// The glow at the place `(u, v)` of the picture (0 to 1 each), bilinear between the cells.
-    pub fn at(&self, u: f32, v: f32) -> [f32; 3] {
-        let gx = (u * GLOW_W as f32 - 0.5).clamp(0.0, (GLOW_W - 1) as f32);
-        let gy = (v * GLOW_H as f32 - 0.5).clamp(0.0, (GLOW_H - 1) as f32);
-        let (x0, y0) = (gx.floor() as usize, gy.floor() as usize);
-        let (x1, y1) = ((x0 + 1).min(GLOW_W - 1), (y0 + 1).min(GLOW_H - 1));
-        let (fx, fy) = (gx - x0 as f32, gy - y0 as f32);
-        let mut o = [0.0; 3];
-        for c in 0..3 {
-            let top = self.cells[y0 * GLOW_W + x0][c] * (1.0 - fx) + self.cells[y0 * GLOW_W + x1][c] * fx;
-            let bottom = self.cells[y1 * GLOW_W + x0][c] * (1.0 - fx) + self.cells[y1 * GLOW_W + x1][c] * fx;
-            o[c] = top * (1.0 - fy) + bottom * fy;
-        }
-        o
-    }
-
-    /// The cells as texels of four floats (the fourth is 0), row by row.
-    pub fn texels(&self) -> Vec<f32> {
-        self.cells.iter().flat_map(|c| [c[0], c[1], c[2], 0.0]).collect()
-    }
+/// The taps of a Gaussian of `sigma` cells, from -4 sigma to 4 sigma, their sum 1: what the CPU
+/// blur and the GPU's (`kernel.rs`) share.
+pub fn gauss_taps(sigma: f32) -> Vec<f32> {
+    let sigma = sigma.max(1e-3);
+    let radius = (sigma * 4.0).ceil() as isize;
+    let mut kernel: Vec<f32> = (-radius..=radius)
+        .map(|d| (-((d * d) as f32) / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let sum: f32 = kernel.iter().sum();
+    kernel.iter_mut().for_each(|k| *k /= sum);
+    kernel
 }
 
 /// What the real CTMs' photographs show of the edges, see [`CrtParams::vignette`].
@@ -357,9 +276,22 @@ impl CrtParams {
             veil: VEIL,
             vignette: VIGNETTE,
             glow: GLOW,
+            glow_halo: GLOW_HALO,
+            blue_shift: 0.0,
+            blue_width: 1.0,
+            beam_thin: 1.0,
+            white: [1.0; 3],
         };
         match profile {
-            CrtProfile::Ctm644 => base,
+            // what TuxAPE measured on photographs of a CTM: a blue gun a fifth of a pixel off and
+            // wider, a beam finer at low light, a cold white
+            CrtProfile::Ctm644 => Self {
+                blue_shift: 0.4,
+                blue_width: 1.5,
+                beam_thin: 0.73,
+                white: [0.95, 0.99, 1.05],
+                ..base
+            },
             CrtProfile::Trinitron => Self {
                 slot_fill: (0.9, 1.2),
                 stagger: 0.0,
@@ -402,9 +334,6 @@ impl CrtParams {
         }
     }
 
-    /// The mean light of a white field, worked out as the renderers do: each slot's light, the
-    /// halation of its neighbours, the clipping of what is too bright, averaged over a period of
-    /// the pattern and over the three guns (the one phosphor of a mono tube).
     /// The light, added to every slot whatever its gun, that makes a black the [`Self::veil`] of a
     /// white field's mean light.
     pub fn veil_light(&self) -> f32 {
@@ -414,9 +343,42 @@ impl CrtParams {
         self.veil * self.white_light()
     }
 
-    /// The light of the glow where the picture is white (see [`GlowField`]).
+    /// The light of the glow where the picture is white (see `kernel.rs`).
     pub fn glow_light(&self) -> f32 {
         self.glow * self.white_light()
+    }
+
+    /// Whether the parameters can be rendered: finite, widths and fills above zero, a triad of whole
+    /// slots (the kernels index tables by them: a NaN or a zero would read out of bounds).
+    pub fn validate(&self) -> Result<(), String> {
+        let positive = [
+            ("beam_sigma_h", self.beam_sigma_h),
+            ("beam_sigma_v", self.beam_sigma_v),
+            ("blue_width", self.blue_width),
+            ("beam_thin", self.beam_thin),
+            ("slot_fill.0", self.slot_fill.0),
+            ("slot_fill.1", self.slot_fill.1),
+            ("gain", self.gain),
+        ];
+        for (name, value) in positive {
+            if !(value.is_finite() && value > 0.0) {
+                return Err(format!("CRT parameter {name} must be above 0, not {value}"));
+            }
+        }
+        if self.beam_thin > 1.0 {
+            return Err(format!("CRT parameter beam_thin must be at most 1, not {}", self.beam_thin));
+        }
+        let others = [self.spill, self.halation, self.veil, self.vignette, self.glow, self.glow_halo, self.blue_shift];
+        if others.iter().chain(self.white.iter()).any(|v| !v.is_finite()) {
+            return Err("a CRT parameter is not finite".into());
+        }
+        if self.triad_px == 0 || self.triad_px % 3 != 0 || self.rows_per_line == 0 || self.pitch_rows() == 0 {
+            return Err(format!(
+                "CRT triad_px ({}) must be a multiple of 3 and rows_per_line ({}) above 0",
+                self.triad_px, self.rows_per_line
+            ));
+        }
+        Ok(())
     }
 
     /// The mean light of a white field, worked out as the renderers do: each slot's light, the

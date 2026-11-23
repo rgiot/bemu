@@ -49,7 +49,23 @@ fn shortcut(cell: &str) -> Option<String> {
     (modifiers_ok && key_ok).then(|| chord.to_owned())
 }
 
+/// CubeCL's CPU backend links a prebuilt LLVM that exists for these targets only (and not for a
+/// web page): the same condition as the target table of `Cargo.toml` that asks for it.
+fn cubecl_cpu_backend() -> bool {
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    std::env::var_os("CARGO_FEATURE_CRT_GPU").is_some()
+        && matches!(
+            (os.as_str(), arch.as_str()),
+            ("linux", "x86_64" | "aarch64") | ("macos", "aarch64") | ("windows", "x86_64")
+        )
+}
+
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(crt_cpu)");
+    if cubecl_cpu_backend() {
+        println!("cargo:rustc-cfg=crt_cpu");
+    }
     println!("cargo:rerun-if-changed=doc/menu-ui.csv");
     println!("cargo:rerun-if-changed=build.rs");
     let text = std::fs::read_to_string("doc/menu-ui.csv").expect("doc/menu-ui.csv");

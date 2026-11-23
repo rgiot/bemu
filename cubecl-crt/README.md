@@ -1,6 +1,6 @@
 # CubeCL spike: one source for the CRT model
 
-`src/main.rs` is `src/display/crt.wgsl` (flat glass, colour and mono tubes, halation, veil, glow,
+`src/main.rs` runs the kernels of the application itself (`src/display/kernel.rs`, included through `src/display/mod.rs`) (flat glass, colour and mono tubes, halation, veil, glow,
 vignette) written once as a CubeCL `#[cube]` kernel, run through CubeCL's wgpu backend and compared
 with bemu's CPU renderer (`CpuCrt`).
 
@@ -36,3 +36,11 @@ channel values each:
   the picture within 0.01 % of it (rounding of `exp`/`sqrt` between the two adapters). The `.wasm` is
   29 MB (6.5 MB gzipped) before any `wasm-opt`.
 * Not done: the integration into `Picture` (the quad pass replaces `CrtPass`).
+
+## The glow and the frame on the GPU
+
+The glow of the frame (two Gaussian blurs of its light, `GlowField` for the CPU renderer) and the
+conversion of the frame are kernels too (`glow_cells`, `glow_coarse`, `glow_blur`, `glow_merge`;
+the frame is read as its RGB bytes): nothing but a copy of the frame is left on the CPU. The glow cells
+equal `GlowField`'s to 1e-4 (test `the_glow_is_the_same_on_the_gpu`, also on frames smaller and larger
+than the monitor's), the picture is the same as before (same sums, same worst differences).

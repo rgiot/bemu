@@ -757,6 +757,16 @@ mod tests {
     use crate::debug_server::DebugServer;
     use crate::motherboard::Motherboard;
 
+    /// egui 0.37 has no fonts unless `default_fonts` is on: every character of the interface was a
+    /// square.
+    #[test]
+    fn the_interface_has_its_fonts() {
+        assert!(
+            !egui::FontDefinitions::default().font_data.is_empty(),
+            "egui is built without its fonts: enable its `default_fonts` feature"
+        );
+    }
+
     struct Target(Motherboard, DebugServer, HostSettings);
 
     impl CommandTarget for Target {

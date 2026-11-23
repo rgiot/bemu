@@ -681,9 +681,7 @@ impl Fdc {
             self.ready_at = self.now_us + self.spin_up_us();
             self.read_ready_at = self.ready_at
                 + if self.timing {
-                    self.drives[self.selected_drive()]
-                        .kind
-                        .read_ready_delay_us()
+                    self.drives[self.selected_drive()].kind.read_ready_delay_us()
                 } else {
                     0
                 };
@@ -698,9 +696,7 @@ impl Fdc {
         if !self.timing {
             return 0;
         }
-        let off_s = self
-            .motor_off_at
-            .map(|t| self.now_us.saturating_sub(t) as f64 / 1e6);
+        let off_s = self.motor_off_at.map(|t| self.now_us.saturating_sub(t) as f64 / 1e6);
         self.drives[self.selected_drive()].kind.spin_up_us(off_s)
     }
 

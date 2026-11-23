@@ -285,7 +285,7 @@ impl Window {
                     return self.notify("no picture yet".into(), true);
                 };
                 let path = path.unwrap_or_else(|| PathBuf::from("bemu.png"));
-                let picture = core.settings.display.filter().render_to_image(frame);
+                let picture = core.settings.display.filter_on(core.settings.crt_gpu, 0.0).render_to_image(frame);
                 match picture.save(&path) {
                     Ok(()) => self.notify(format!("{}: screenshot saved", path.display()), false),
                     Err(e) => self.notify(format!("{}: {e}", path.display()), true),
@@ -294,7 +294,7 @@ impl Window {
             #[cfg(feature = "gui")]
             HostRequest::CopyScreenshot => {
                 if let (Some(gui), Some(frame)) = (&self.gui, &self.last_frame) {
-                    let picture = core.settings.display.filter().render_to_image(frame);
+                    let picture = core.settings.display.filter_on(core.settings.crt_gpu, 0.0).render_to_image(frame);
                     let size = [picture.width() as usize, picture.height() as usize];
                     gui.context()
                         .copy_image(egui::ColorImage::from_rgb(size, picture.as_raw()));
@@ -449,7 +449,7 @@ impl Window {
                 self.filter = core
                     .settings
                     .display
-                    .filter_on(false, core.settings.curvature);
+                    .filter_on(core.settings.crt_gpu, core.settings.curvature);
                 let (width, height) = self.filter.output_size();
                 self.buffer = vec![0; width * height];
                 match crate::recorder::Recorder::start(
@@ -620,7 +620,7 @@ impl Window {
         #[cfg(feature = "audio")]
         if !settings.muted {
             if let Some(audio) = &self.audio {
-                return audio.buffered() < crate::host_audio::TARGET_LATENCY / 2;
+                return amsrust::audio_mix::Pacing::DESKTOP.is_behind(audio.buffered());
             }
         }
         let _ = settings;
@@ -632,22 +632,17 @@ impl Window {
         if settings.muted || settings.speed != Speed::Factor(1.0) {
             return;
         }
-        let stereo = self.audio_stereo();
-        let gain = f32::from(settings.volume) / 100.0;
-        if gain == 1.0 && (settings.stereo || !stereo) {
+        let channels = if self.audio_stereo() { 2 } else { 1 };
+        let mix = amsrust::audio_mix::Mix {
+            stereo: settings.stereo,
+            volume: settings.volume,
+        };
+        if mix.is_neutral(channels) {
             play_frame_audio(self.audio.as_ref(), samples, self.window.as_ref());
             return;
         }
         let mut samples = samples.to_vec();
-        if stereo && !settings.stereo {
-            for pair in samples.chunks_mut(2) {
-                let mono = pair.iter().sum::<f32>() / pair.len() as f32;
-                pair.fill(mono);
-            }
-        }
-        for sample in &mut samples {
-            *sample *= gain;
-        }
+        mix.apply(&mut samples, channels);
         play_frame_audio(self.audio.as_ref(), &samples, self.window.as_ref());
     }
 
@@ -1059,7 +1054,7 @@ pub fn run_window(
             if series.seen.is_multiple_of(series.every) {
                 let path = series.folder.join(format!("bemu_{:04}.png", series.shot));
                 series.shot += 1;
-                let picture = core.settings.display.filter().render_to_image(&frame);
+                let picture = core.settings.display.filter_on(core.settings.crt_gpu, 0.0).render_to_image(&frame);
                 if let Err(e) = picture.save(&path) {
                     eprintln!("{}: {e}", path.display());
                 }
