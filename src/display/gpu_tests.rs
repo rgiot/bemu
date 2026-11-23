@@ -56,6 +56,17 @@ fn the_gpu_gives_the_cpu_backends_picture() {
             let (worst, off) = compare(&a, &b);
             // where the worst difference is (for the report)
             let (at, _) = a.iter().zip(&b).enumerate().map(|(i, (p, q))| (i, [0, 8, 16].iter().map(|s| (((p >> s) & 255) as i32 - ((q >> s) & 255) as i32).abs()).max().unwrap())).max_by_key(|x| x.1).unwrap();
+            let mut by_y = std::collections::BTreeMap::new();
+            let mut by_channel = [0usize; 3];
+            for (i, (p, q)) in a.iter().zip(&b).enumerate() {
+                for (c, shift) in [16, 8, 0].into_iter().enumerate() {
+                    if (((p >> shift) & 255) as i32 - ((q >> shift) & 255) as i32).abs() > 3 {
+                        *by_y.entry(i / w).or_insert(0usize) += 1;
+                        by_channel[c] += 1;
+                    }
+                }
+            }
+            println!("off by channel (r, g, b) {by_channel:?}; rows: {:?}", by_y.iter().take(12).collect::<Vec<_>>());
             println!("{profile:?} {curvature} {name}: worst {worst} at ({}, {}) cpu {:06x} gpu {:06x}, {off} off", at % w, at / w, a[at], b[at]);
             assert!(worst <= 6 && off < w * h * 3 / 1000, "{profile:?} {curvature}: worst {worst}, {off} values off by more than 3");
         }
