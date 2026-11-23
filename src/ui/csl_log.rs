@@ -56,7 +56,7 @@ impl ViewWindow for CslLogWindow {
         ));
         super::widgets::rule(ui);
 
-        let id = egui::Id::new("csl-log-textures");
+        let id = egui::Id::unique("csl-log-textures");
         let mut textures: Textures = ui.ctx().data_mut(|d| d.get_temp(id)).unwrap_or_default();
         if textures.log != log.id() {
             textures = Textures {

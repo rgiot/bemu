@@ -151,7 +151,7 @@ fn measured_speed(ui: &egui::Ui, mb: &crate::motherboard::Motherboard, running: 
     const T_STATES_PER_S: f64 = 4_000_000.0;
     let now = ui.input(|i| i.time);
     let ticks = mb.t_state_counter().value();
-    let id = egui::Id::new("status-measured-speed");
+    let id = egui::Id::unique("status-measured-speed");
     // when it was last measured, the T-states then, and the speed found
     let (mut t0, mut k0, mut speed): (f64, usize, Option<f64>) =
         ui.data(|d| d.get_temp(id)).unwrap_or((now, ticks, None));
@@ -183,7 +183,7 @@ fn drive_leds(ui: &mut egui::Ui, target: &dyn crate::commands::CommandTarget) {
     let fdc = mb.fdc();
     let now = ui.input(|i| i.time);
     // each drive's track and when it last changed
-    let id = egui::Id::new("status-drive-tracks");
+    let id = egui::Id::unique("status-drive-tracks");
     let mut tracks: [(u8, f64); 2] = ui.data(|d| d.get_temp(id)).unwrap_or([
         (fdc.track(0), f64::NEG_INFINITY),
         (fdc.track(1), f64::NEG_INFINITY),

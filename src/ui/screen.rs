@@ -292,7 +292,7 @@ fn pens(ui: &mut egui::Ui, mb: &Motherboard, state: &mut ScreenState) {
                     ),
                 ),
             };
-            let id = egui::Id::new(("screen-pen", pen));
+            let id = egui::Id::unique(("screen-pen", pen));
             match colour_picker(
                 ui,
                 id,
