@@ -688,20 +688,35 @@ export class Bemu {
                         .catch((error) => this.#emit('error', error));
                 });
                 input.addEventListener('cancel', done);
-                // Safari opens a chooser only from a user gesture still active, and in the DOM: the
-                // menu's click went to the worker, so the request can come after it expired; then the
-                // next click or key press opens it
+                // Safari opens a chooser only from the click handler of the user's own gesture, in the
+                // DOM: the menu's click went to the worker, so the request comes too late. There the
+                // page asks for a click of its own; the other browsers open it at once.
                 document.body.append(input);
-                if (navigator.userActivation?.isActive ?? true) {
+                const safari = /^((?!chrome|chromium|android).)*safari/i.test(navigator.userAgent ?? '');
+                if (!safari) {
                     input.click();
-                } else {
-                    const gestures = ['pointerup', 'mouseup', 'touchend', 'keydown'];
-                    const open = () => {
-                        for (const type of gestures) document.removeEventListener(type, open, true);
-                        input.click();
-                    };
-                    for (const type of gestures) document.addEventListener(type, open, true);
+                    break;
                 }
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = 'Choose a file…';
+                button.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);'
+                    + 'z-index:2147483647;padding:12px 24px;font:600 16px system-ui,sans-serif;'
+                    + 'border:0;border-radius:8px;background:#fff;color:#000;box-shadow:0 4px 24px #000a;cursor:pointer';
+                const close = () => {
+                    button.remove();
+                    document.removeEventListener('keydown', onKey, true);
+                    done();
+                };
+                const onKey = (event) => { if (event.key === 'Escape') close(); };
+                button.addEventListener('click', () => {
+                    input.click();
+                    button.remove();
+                    document.removeEventListener('keydown', onKey, true);
+                });
+                document.addEventListener('keydown', onKey, true);
+                document.body.append(button);
+                button.focus();
                 break;
             }
             case 'download': {
