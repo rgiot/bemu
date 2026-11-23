@@ -71,6 +71,8 @@ const MONITOR_MIN_VSYNC_TICKS: usize = 12 * 16;
 /// Pulses (in ticks) too short or too long to be taken for a line sync.
 /// The phase detector of the line oscillator (see `follow_sync`)
 const MONITOR_PLL_MAX_PULL: i64 = 12;
+/// Line-lock error (ticks) up to which the oscillator follows a fifth of it.
+const MONITOR_PLL_KNEE: i64 = 9;
 const MONITOR_PLL_CAPTURE_EARLY: i64 = 48;
 const MONITOR_PLL_CAPTURE_LATE: i64 = 36;
 
@@ -732,9 +734,14 @@ impl Monitor {
         // a fifth of the error each line, the remainder of the division carried to the next line: the
         // picture follows a step as a smooth exponential and gets there (CLAUDESTRAD, which agrees with
         // the real CTM 644's photo: 3, 4, 5, 6, 6, 7, 7, 7, 7, 8 for a step of 8; tests/hsyncpos_probe.rs)
-        let accum = error + self.pll_rem;
-        self.pll_rem = accum % 5;
-        let pull = (accum / 5).clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL);
+        // Small errors are followed with a fifth of the error. Beyond MONITOR_PLL_KNEE ticks (the
+        // demos that wave the picture line by line, e.g. What a Cool Weekend) half of the excess is
+        // followed too, else the line lock lags beyond the capture window and the picture jumps.
+        let big = (error.abs() - MONITOR_PLL_KNEE).max(0);
+        let small = error.abs().min(MONITOR_PLL_KNEE);
+        let scaled = (small * 2 + big * 5) * error.signum() + self.pll_rem; // in 1/10 of a tick
+        self.pll_rem = scaled % 10;
+        let pull = (scaled / 10).clamp(-MONITOR_PLL_MAX_PULL, MONITOR_PLL_MAX_PULL);
         let start = error - pull + adj; // ticks since the new line start, at this sync
         if start >= 0 {
             self.x = start as usize;
@@ -1146,10 +1153,10 @@ mod test {
     }
 
     /// The line oscillator is referenced to the middle of the sync: 8 ticks a microsecond of R3,
-    /// down to a 1 usec C-HSYNC (R3=3 on CRTC 1: 24 ticks, as AMSpiriT), reached by the PLL.
+    /// down to a 2 usec C-HSYNC; a 1 usec one is not taken for a sync (see MONITOR_MIN_HSYNC_TICKS).
     #[test]
     fn a_narrower_sync_moves_the_picture_half_as_much() {
-        for (width, expected) in [(48, 8), (32, 16), (16, 24)] {
+        for (width, expected) in [(48, 8), (32, 16), (16, 0)] {
             let shifts = shifts_by_width(&[width; 30]);
             assert_eq!(shifts[29], expected, "C-HSYNC of {width} ticks: {shifts:?}");
             assert!(shifts.windows(2).all(|w| w[0] <= w[1]), "{shifts:?}");
