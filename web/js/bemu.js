@@ -676,15 +676,32 @@ export class Bemu {
                 if (typeof document === 'undefined') return;
                 const input = document.createElement('input');
                 input.type = 'file';
+                input.style.display = 'none';
                 if (request.accept) input.accept = request.accept;
+                const done = () => input.remove();
                 input.addEventListener('change', async () => {
                     const file = input.files?.[0];
+                    done();
                     if (!file) return;
                     const bytes = new Uint8Array(await file.arrayBuffer());
                     this.#transport.call('answerFile', [request.id, file.name, bytes], [bytes.buffer])
                         .catch((error) => this.#emit('error', error));
                 });
-                input.click();
+                input.addEventListener('cancel', done);
+                // Safari opens a chooser only from a user gesture still active, and in the DOM: the
+                // menu's click went to the worker, so the request can come after it expired; then the
+                // next click or key press opens it
+                document.body.append(input);
+                if (navigator.userActivation?.isActive ?? true) {
+                    input.click();
+                } else {
+                    const gestures = ['pointerup', 'mouseup', 'touchend', 'keydown'];
+                    const open = () => {
+                        for (const type of gestures) document.removeEventListener(type, open, true);
+                        input.click();
+                    };
+                    for (const type of gestures) document.addEventListener(type, open, true);
+                }
                 break;
             }
             case 'download': {
