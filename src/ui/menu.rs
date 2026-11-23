@@ -218,6 +218,11 @@ fn item(
         _ => ui.add_enabled(state.enabled, button),
     };
     let clicked = response.clicked();
+    if spec.kind == Kind::Input && state.enabled && response.hovered() {
+        if let Some(extensions) = commands::file_picker(spec.id) {
+            super::hover_file(ui.ctx(), spec.id, extensions, response.rect);
+        }
+    }
     response
         .on_hover_text(hover(spec))
         .on_disabled_hover_text(why_not);

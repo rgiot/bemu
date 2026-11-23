@@ -22,6 +22,12 @@ pub enum PageRequest {
         title: String,
         accept: String,
     },
+    /// The menu item under the pointer that opens a file chooser (`None`: no more), in CSS
+    /// pixels of the canvas: the page lays its file input over it, which the browser opens from
+    /// the user's own click.
+    FileTarget {
+        target: Option<FileTarget>,
+    },
     /// Save `data` as `name` (a download).
     Download {
         name: String,
@@ -60,6 +66,17 @@ pub enum PageRequest {
     Screenshot,
 }
 
+/// Where a menu item opening a file chooser is.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct FileTarget {
+    pub id: String,
+    pub accept: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
 mod serde_bytes_as_array {
     pub fn serialize<S: serde::Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_bytes(bytes)
@@ -78,6 +95,8 @@ pub struct WebUi {
     chords: Vec<(bool, &'static str)>,
     requests: Vec<HostRequest>,
     pub page: Vec<PageRequest>,
+    /// The file target the page was last told of.
+    file_target: Option<FileTarget>,
     events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
     pixels_per_point: f32,
@@ -203,6 +222,7 @@ impl WebUi {
             settings,
             requests: Vec::new(),
             page: Vec::new(),
+            file_target: None,
             events: Vec::new(),
             modifiers: egui::Modifiers::default(),
             pixels_per_point: 1.0,
@@ -378,6 +398,19 @@ impl WebUi {
                 title: title.to_owned(),
                 accept,
             });
+        }
+        let zoom = self.gui.context().zoom_factor();
+        let file_target = self.gui.hovered_file().map(|(id, extensions, rect)| FileTarget {
+            id: id.to_owned(),
+            accept: extensions.iter().map(|ext| format!(".{ext}")).collect::<Vec<_>>().join(","),
+            x: rect.min.x * zoom,
+            y: rect.min.y * zoom,
+            width: rect.width() * zoom,
+            height: rect.height() * zoom,
+        });
+        if file_target != self.file_target {
+            self.file_target = file_target.clone();
+            self.page.push(PageRequest::FileTarget { target: file_target });
         }
         let reports: Vec<_> = self.bus.take_reports().collect();
         self.gui.report(reports.into_iter());
