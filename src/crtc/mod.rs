@@ -294,6 +294,14 @@ impl Crtc {
         self.set_data_on_pins(data);
     }
 
+    /// What the CRTC drives on the data bus when it is read (a read of its selected register, as a
+    /// cycle with A14=0 and A9=A8=1 does), without the side effects of a real read.
+    pub fn bus_value(&mut self) -> Option<u8> {
+        self.chip
+            .drives_bus_in_a_write()
+            .then(|| self.chip.read_register(&Self::read_context(&mut self.core)))
+    }
+
     /// What a register read may depend on. Advances the noise source, as a
     /// floating bus would return something different each time.
     fn read_context(core: &mut Core) -> ReadContext<'_> {

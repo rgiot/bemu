@@ -496,7 +496,7 @@ impl CrtcChip for Crtc0 {
     }
 
     fn has_r6_zero_conflict(&self) -> bool {
-        true
+        false
     }
 
     // ---- VSYNC ----

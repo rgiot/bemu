@@ -1665,6 +1665,33 @@ impl Motherboard {
                 self.cpu.get_pin(Z80Pin::D6) && self.cpu.get_pin(Z80Pin::D7),
             );
             self.pal.set_pin(PalPin::IOWR, !neg_iowr);
+            // An OUT to a port with A14=0 and A9=A8=1 is also a read of the CRTC, which drives the
+            // data bus against the Z80: a line is low if either pulls it (PALA14B on a real 6128:
+            // OUT (C),&C4 to &3FC4 selects bank &C4 only if the selected register reads back &C4).
+            // D6 and D7, which decide a Gate Array command, are not pulled (PALA14B's last line).
+            if !neg_iowr
+                && self.asic.is_none()
+                && !self.cpu.get_pin(Z80Pin::A14)
+                && self.cpu.get_pin(Z80Pin::A9)
+                && self.cpu.get_pin(Z80Pin::A8)
+            {
+                if let Some(driven) = self.crtc.bus_value() {
+                    let pal_pins = [
+                        PalPin::D0,
+                        PalPin::D1,
+                        PalPin::D2,
+                        PalPin::D3,
+                        PalPin::D4,
+                        PalPin::D5,
+                    ];
+                    for (bit, pal_pin) in pal_pins.into_iter().enumerate() {
+                        if driven >> bit & 1 == 0 {
+                            self.ga.set_pin(GateArray::pins_data()[bit], false);
+                            self.pal.set_pin(pal_pin, false);
+                        }
+                    }
+                }
+            }
 
             // CPU to the expansion port's large RAM card, if any is plugged
             // in - it needs the full data byte (not `Pal`'s
