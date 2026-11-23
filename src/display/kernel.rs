@@ -60,6 +60,8 @@ pub const PARAMS: usize = 30;
 /// column's place on the picture (`dx` and `dx^2`); and per output row: the glow's cells and
 /// weight, `dy` and `dy^2`. Built once (`axis_tables`): no division, no `floor`, no clamp per pixel.
 pub const COL: usize = 12;
+/// The source lines `hfilter` covers: from the one above the picture to two below it.
+pub const HF_LINES: usize = SRC_HEIGHT + 4;
 pub const ROW: usize = 8;
 /// The frame as linear light, padded with zeros: `PAD` pixels around the monitor's 768 x 272, so
 /// that a beam's taps beyond the picture read black without any test (a read outside is clamped
@@ -102,68 +104,122 @@ fn slot_channel(pr: &[f32], x: i32) -> u32 {
     c
 }
 
+/// The beam's horizontal filter on source line `j` for the slot whose centre reads at `wx` (0..1 of
+/// the picture), in the phosphor `c`: the four taps of the tables at the beam's fractional place.
+#[cube]
+fn hrow(lin: &[f32], luts: &[f32], pr: &[f32], wx: f32, c: u32, j: i32) -> f32 {
+    // the blue gun lands a little to the right of the others (the beam is read to its left)
+    let mut v = wx * pr[OUT_W] / pr[X_RATIO] - 0.5;
+    let mut table = 0usize;
+    if c == 2u32 && pr[MONO] < 0.5 {
+        v = v - pr[BLUE_SHIFT];
+        table = HB_OFF;
+    }
+    let fl = f32::floor(v);
+    let first = fl as i32 - 1;
+    let hp = table + u32::min(((v - fl) * 1024.0) as u32, 1023u32) as usize * 4;
+    luts[hp] * gun(lin, pr, first, j, c)
+        + luts[hp + 1] * gun(lin, pr, first + 1, j, c)
+        + luts[hp + 2] * gun(lin, pr, first + 2, j, c)
+        + luts[hp + 3] * gun(lin, pr, first + 3, j, c)
+}
+
+/// [`hrow`] for the lines `j` and `j + 1` (the beam's weights worked out once).
+#[cube]
+fn hpair(lin: &[f32], luts: &[f32], pr: &[f32], wx: f32, c: u32, j: i32) -> (f32, f32) {
+    let mut v = wx * pr[OUT_W] / pr[X_RATIO] - 0.5;
+    let mut table = 0usize;
+    if c == 2u32 && pr[MONO] < 0.5 {
+        v = v - pr[BLUE_SHIFT];
+        table = HB_OFF;
+    }
+    let fl = f32::floor(v);
+    let first = fl as i32 - 1;
+    let hp = table + u32::min(((v - fl) * 1024.0) as u32, 1023u32) as usize * 4;
+    let (w0, w1, w2, w3) = (luts[hp], luts[hp + 1], luts[hp + 2], luts[hp + 3]);
+    let la = w0 * gun(lin, pr, first, j, c)
+        + w1 * gun(lin, pr, first + 1, j, c)
+        + w2 * gun(lin, pr, first + 2, j, c)
+        + w3 * gun(lin, pr, first + 3, j, c);
+    let lb = w0 * gun(lin, pr, first, j + 1, c)
+        + w1 * gun(lin, pr, first + 1, j + 1, c)
+        + w2 * gun(lin, pr, first + 2, j + 1, c)
+        + w3 * gun(lin, pr, first + 3, j + 1, c);
+    (la, lb)
+}
+
+/// The light of a slot from the two source lines' filtered values `la`, `lb` around the beam
+/// (`phase` of 1024 between them): the scanline's width by level, the slot mask's coverage.
+#[cube]
+fn shade(luts: &[f32], pr: &[f32], la: f32, lb: f32, phase: usize, x: usize, y: usize) -> f32 {
+    // a scanline is wider the brighter it is: weights by the level of each line
+    let lv0 = (f32::min(la, 1.0) * 15.0 + 0.5) as usize;
+    let lv1 = (f32::min(lb, 1.0) * 15.0 + 0.5) as usize;
+    let a = luts[V_OFF + lv0 * 1024 + phase];
+    let b = luts[V_OFF + lv1 * 1024 + 1023 - phase];
+    let level = a * la + b * lb;
+    let period = 6 * pr[SLOT_PX] as usize;
+    let distance = luts[M_OFF + (y % pr[PITCH] as usize) * period + x % period];
+    let cov = f32::clamp(0.5 - (distance - pr[SPILL] * level), 0.0, 1.0);
+    level * cov * pr[SCALE]
+}
+
 /// The light of the slot at output column `x`, row `y`, in its own phosphor; none outside the
 /// picture. The Gaussian weights and the slot mask come from the tables `luts` (a phase of 1/1024
-/// of a pixel: below the rounding of the picture).
+/// of a pixel: below the rounding of the picture). The general glass: the raster bends under the
+/// fixed mask, so the slot reads where its centre's warped place is.
 #[cube]
-fn slot_light(lin: &[f32], luts: &[f32], pr: &[f32], x: i32, y: i32) -> f32 {
-    let mut out = 0.0f32;
-    if x >= 0 && x < pr[OUT_W] as i32 {
-        let sw = pr[SLOT_PX] as i32;
-        let slot = x / sw;
-        let c = slot_channel(pr, x);
-        // the beam's raster bends under the fixed mask: the slot reads where its centre's warped place is
-        let ow = pr[OUT_W];
-        let oh = pr[OUT_H];
-        let qx = ((slot as f32 + 0.5) * sw as f32 / ow) * 2.0 - 1.0;
-        let qy = ((y as f32 + 0.5) / oh) * 2.0 - 1.0;
-        let wx = (qx * (1.0 + pr[WARP_KX] * qy * qy) + 1.0) / 2.0;
-        let wy = (qy * (1.0 + pr[WARP_KY] * qx * qx) + 1.0) / 2.0;
-        // the blue gun lands a little to the right of the others (the beam is read to its left)
-        let mut v = wx * ow / pr[X_RATIO] - 0.5;
-        let mut table = 0usize;
-        if c == 2u32 && pr[MONO] < 0.5 {
-            v = v - pr[BLUE_SHIFT];
-            table = HB_OFF;
-        }
-        let fl = f32::floor(v);
-        let first = fl as i32 - 1;
-        let hp = table + u32::min(((v - fl) * 1024.0) as u32, 1023u32) as usize * 4;
-        let (w0, w1, w2, w3) = (luts[hp], luts[hp + 1], luts[hp + 2], luts[hp + 3]);
-        let f = wy * oh / pr[ROWS] - 0.5;
-        let line = f32::floor(f) as i32;
-        let la = w0 * gun(lin, pr, first, line, c)
-            + w1 * gun(lin, pr, first + 1, line, c)
-            + w2 * gun(lin, pr, first + 2, line, c)
-            + w3 * gun(lin, pr, first + 3, line, c);
-        let lb = w0 * gun(lin, pr, first, line + 1, c)
-            + w1 * gun(lin, pr, first + 1, line + 1, c)
-            + w2 * gun(lin, pr, first + 2, line + 1, c)
-            + w3 * gun(lin, pr, first + 3, line + 1, c);
-        // a scanline is wider the brighter it is: weights by the level of each line
-        let phase = u32::min(((f - line as f32) * 1024.0) as u32, 1023u32) as usize;
-        let lv0 = (f32::min(la, 1.0) * 15.0 + 0.5) as usize;
-        let lv1 = (f32::min(lb, 1.0) * 15.0 + 0.5) as usize;
-        let a = luts[V_OFF + lv0 * 1024 + phase];
-        let b = luts[V_OFF + lv1 * 1024 + 1023 - phase];
-        let level = a * la + b * lb;
-        let period = (6 * sw) as usize;
-        let distance = luts[M_OFF + (y as usize % pr[PITCH] as usize) * period + x as usize % period];
-        let cov = f32::clamp(0.5 - (distance - pr[SPILL] * level), 0.0, 1.0);
-        out = level * cov * pr[SCALE];
+fn slot_light(lin: &[f32], luts: &[f32], pr: &[f32], x: usize, y: usize) -> f32 {
+    let sw = pr[SLOT_PX] as usize;
+    let slot = x / sw;
+    let c = slot_channel(pr, x as i32);
+    let ow = pr[OUT_W];
+    let oh = pr[OUT_H];
+    let qx = ((slot as f32 + 0.5) * sw as f32 / ow) * 2.0 - 1.0;
+    let qy = ((y as f32 + 0.5) / oh) * 2.0 - 1.0;
+    let wx = (qx * (1.0 + pr[WARP_KX] * qy * qy) + 1.0) / 2.0;
+    let wy = (qy * (1.0 + pr[WARP_KY] * qx * qx) + 1.0) / 2.0;
+    let f = wy * oh / pr[ROWS] - 0.5;
+    let line = f32::floor(f) as i32;
+    let (la, lb) = hpair(lin, luts, pr, wx, c, line);
+    let phase = u32::min(((f - line as f32) * 1024.0) as u32, 1023u32) as usize;
+    shade(luts, pr, la, lb, phase, x, y)
+}
+
+/// The horizontally filtered value of every slot on every source line (`HF_LINES` from the line
+/// above the picture), for the flat glass: where the beam reads depends on the slot's column alone,
+/// so the filter is done once per slot and line, not per pixel.
+#[cube(launch_unchecked)]
+pub fn hfilter(lin: &[f32], luts: &[f32], pr: &[f32], hf: &mut [f32]) {
+    let s = ABSOLUTE_POS_X as usize;
+    let r = ABSOLUTE_POS_Y as usize;
+    let sw = pr[SLOT_PX] as usize;
+    let ns = (pr[OUT_W] as usize + sw - 1) / sw;
+    if s < ns && r < 276 && pr[WARP_KX] == 0.0 && pr[WARP_KY] == 0.0 {
+        let c = slot_channel(pr, (s * sw) as i32);
+        let qx = ((s as f32 + 0.5) * sw as f32 / pr[OUT_W]) * 2.0 - 1.0;
+        hf[r * ns + s] = hrow(lin, luts, pr, (qx + 1.0) / 2.0, c, r as i32 - 1);
     }
-    out
 }
 
 /// The light of the slot of every pixel (its own phosphor), once: the halation of the neighbours is
-/// then a sum of three of them.
+/// then a sum of three of them. A flat glass reads the filtered lines (`hfilter`) at the slot and
+/// line the column and row tables name; a curved one works the beam out per pixel.
 #[cube(launch_unchecked)]
-pub fn slots(lin: &[f32], luts: &[f32], pr: &[f32], lights: &mut [f32]) {
+pub fn slots(lin: &[f32], luts: &[f32], pr: &[f32], hf: &[f32], cols: &[f32], rows: &[f32], lights: &mut [f32]) {
     let x = ABSOLUTE_POS_X as usize;
     let y = ABSOLUTE_POS_Y as usize;
     let w = pr[OUT_W] as usize;
     if x < w && y < pr[OUT_H] as usize {
-        lights[y * w + x] = slot_light(lin, luts, pr, x as i32, y as i32);
+        let mut light = 0.0f32;
+        if pr[WARP_KX] == 0.0 && pr[WARP_KY] == 0.0 {
+            let at = rows[y * 8 + 5] as usize + cols[x * 12 + 11] as usize;
+            let next = rows[y * 8 + 7] as usize + cols[x * 12 + 11] as usize;
+            light = shade(luts, pr, hf[at], hf[next], rows[y * 8 + 6] as usize, x, y);
+        } else {
+            light = slot_light(lin, luts, pr, x, y);
+        }
+        lights[y * w + x] = light;
     }
 }
 
@@ -424,6 +480,8 @@ pub struct Pipeline {
     cols: cubecl::server::Handle,
     rows: cubecl::server::Handle,
     out_size: (usize, usize),
+    hf: cubecl::server::Handle,
+    slot_count: usize,
     lights: cubecl::server::Handle,
     luts_len: usize,
     out: cubecl::server::Handle,
@@ -487,6 +545,8 @@ impl Pipeline {
             cols: client.create_from_slice(f32::as_bytes(&axis_tables(params).0)),
             rows: client.create_from_slice(f32::as_bytes(&axis_tables(params).1)),
             out_size: (w, h),
+            hf: client.empty(HF_LINES * w.div_ceil(params.slot_px()) * 4),
+            slot_count: w.div_ceil(params.slot_px()),
             luts_len: luts.len(),
             luts: client.create_from_slice(f32::as_bytes(&luts)),
             lights: client.empty(w * h * 4),
@@ -571,11 +631,21 @@ impl Pipeline {
             after("glow_merge");
             let (gw, gh) = self.out_size;
             let count = || grid_count(gw, gh, self.cube_dim);
+            let ns = self.slot_count;
+            hfilter::launch_unchecked(
+                client,
+                CubeCount::Static((ns as u32).div_ceil(self.cube_dim), HF_LINES as u32, 1),
+                CubeDim::new_2d(self.cube_dim, 1),
+                arg(&self.lin, LIN_W * LIN_H * 4), arg(&self.luts, self.luts_len), arg(&self.params, PARAMS),
+                arg(&self.hf, HF_LINES * ns),
+            );
+            after("hfilter");
             slots::launch_unchecked(
                 client,
                 count(),
                 CubeDim::new_2d(self.cube_dim, 1),
                 arg(&self.lin, LIN_W * LIN_H * 4), arg(&self.luts, self.luts_len), arg(&self.params, PARAMS),
+                arg(&self.hf, HF_LINES * ns), arg(&self.cols, gw * COL), arg(&self.rows, gh * ROW),
                 arg(&self.lights, self.out_len),
             );
             after("slots");
@@ -651,16 +721,26 @@ pub fn axis_tables(p: &CrtParams) -> (Vec<f32>, Vec<f32>) {
             gx - x0,
             dx,
             dx * dx,
-            0.0,
+            (x / sw) as f32,
         ]);
     }
+    let ns = w.div_ceil(sw);
     let mut rows = Vec::with_capacity(h * ROW);
     for y in 0..h {
         let v = (y as f32 + 0.5) / h as f32;
         let gy = (v * GLOW_H as f32 - 0.5).clamp(0.0, (GLOW_H - 1) as f32);
         let y0 = gy.floor();
         let dy = v * 2.0 - 1.0;
-        rows.extend_from_slice(&[y0, (y0 + 1.0).min((GLOW_H - 1) as f32), gy - y0, dy, dy * dy, 0.0, 0.0, 0.0]);
+        // the flat glass: the source line the beam is on (and its phase), as the offsets in `hf`
+        let qy = ((y as f32 + 0.5) / h as f32) * 2.0 - 1.0;
+        let f = ((qy + 1.0) / 2.0) * h as f32 / p.rows_per_line as f32 - 0.5;
+        let line = f.floor();
+        let phase = (((f - line) * 1024.0) as usize).min(1023);
+        let r = ((line as i32 + 1).clamp(0, HF_LINES as i32 - 2)) as usize;
+        rows.extend_from_slice(&[
+            y0, (y0 + 1.0).min((GLOW_H - 1) as f32), gy - y0, dy, dy * dy,
+            (r * ns) as f32, phase as f32, ((r + 1) * ns) as f32,
+        ]);
     }
     (cols, rows)
 }

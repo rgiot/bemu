@@ -265,8 +265,11 @@ fn unbent_glass_reads_the_beam_as_the_flat_model() {
     });
     let (flat, w, h) = render(CrtProfile::Ctm644, &src);
     // the curved passes, with no bulge and corners too small to cut a pixel
+    // (a bulge of 1e-9 is none to the eye but takes the general path, the beam worked out per pixel;
+    // zero takes the flat path, the filtered lines looked up: the two must agree)
+    for k in [0.0, 1e-9] {
     let mut curved = KernelCrt::new(bare(CrtProfile::Ctm644), Warp {
-        k: (0.0, 0.0),
+        k: (k, k),
         corner: 1e-6,
     }, Backend::Cpu).unwrap();
     let mut dst = vec![0; w * h];
@@ -285,6 +288,7 @@ fn unbent_glass_reads_the_beam_as_the_flat_model() {
                 i / w
             );
         }
+    }
     }
 }
 
