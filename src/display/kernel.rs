@@ -498,6 +498,20 @@ impl Pipeline {
     /// Work out the glow of `frame` (`sw` x `sh` pixels of RGB bytes, `sw` <= 768, `sh` <= 272) and
     /// the picture, in the buffers of `self`.
     pub fn run(&self, client: &cubecl::client::Client, frame: &cubecl::server::Handle, frame_words: usize, sw: u32, sh: u32) {
+        self.run_with(client, frame, frame_words, sw, sh, |_| {});
+    }
+
+    /// [`Self::run`], calling `after(name)` after each launch (a benchmark waits for the launch
+    /// there to time it).
+    pub fn run_with(
+        &self,
+        client: &cubecl::client::Client,
+        frame: &cubecl::server::Handle,
+        frame_words: usize,
+        sw: u32,
+        sh: u32,
+        mut after: impl FnMut(&'static str),
+    ) {
         let arg = |h: &cubecl::server::Handle, len: usize| unsafe { BufferArg::from_raw_parts(h.clone(), len) };
         let one_d = |n: usize| (cube_count(n, 64), CubeDim::new_1d(64));
         // SAFETY: the buffers have the sizes the kernels index (see their loops' bounds)
@@ -506,22 +520,26 @@ impl Pipeline {
             let taps_len = self.close_taps + (2 * self.wide_radius + 1) as usize;
             let (count, dim) = one_d(both);
             glow_cells::launch_unchecked(client, count.clone(), dim, arg(frame, frame_words), arg(&self.grid, both * 4), sw, sh);
+            after("glow_cells");
             glow_blur::launch_unchecked(
                 client, count.clone(), dim,
                 arg(&self.grid, both * 4), arg(&self.taps, taps_len), arg(&self.tmp, both * 4),
                 1u32, self.close_radius, self.wide_radius, self.close_taps as u32,
             );
+            after("glow_blur_h");
             glow_blur::launch_unchecked(
                 client, count, dim,
                 arg(&self.tmp, both * 4), arg(&self.taps, taps_len), arg(&self.blurred, both * 4),
                 0u32, self.close_radius, self.wide_radius, self.close_taps as u32,
             );
+            after("glow_blur_v");
             let (count, dim) = one_d(FINE);
             glow_merge::launch_unchecked(
                 client, count, dim,
                 arg(&self.blurred, both * 4), arg(&self.glow, FINE * 4),
                 self.kernel_weights.0, self.kernel_weights.1,
             );
+            after("glow_merge");
             let count = || cube_count(self.out_len, self.cube_dim);
             slots::launch_unchecked(
                 client,
@@ -531,6 +549,7 @@ impl Pipeline {
                 arg(&self.lights, self.out_len),
                 sw, sh,
             );
+            after("slots");
             crt::launch_unchecked(
                 client,
                 count(),
@@ -538,6 +557,7 @@ impl Pipeline {
                 arg(&self.lights, self.out_len), arg(&self.glow, FINE * 4), arg(&self.params, PARAMS),
                 arg(&self.out, self.out_len),
             );
+            after("crt");
         }
     }
 }
