@@ -242,6 +242,12 @@ pub struct Args {
     #[arg(long, value_name = "FILE.bas", help_heading = TYPING)]
     pub basic: Option<String>,
 
+    /// Starts the media by itself once the machine has booted, as a user would: RUN" of the
+    /// disc's program (--dsk: its menu or loader, else its biggest file), |CPM for a CP/M
+    /// system disc, |TAPE and RUN" for --cdt. Typed at --type-at, before --type.
+    #[arg(long, help_heading = TYPING)]
+    pub autorun: bool,
+
     /// When --type and --basic start, in seconds.
     #[arg(long, value_name = "S", default_value_t = 3.0, help_heading = TYPING)]
     pub type_at: f64,

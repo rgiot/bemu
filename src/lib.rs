@@ -2,6 +2,7 @@
 #![recursion_limit = "256"]
 
 pub mod asic;
+pub mod autorun;
 pub mod chip;
 
 #[cfg(feature = "booster")]
@@ -43,6 +44,7 @@ pub mod sound_export;
 pub mod state;
 pub mod symbols;
 pub mod tape;
+pub mod typist;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod webp;
 #[cfg(feature = "willy")]

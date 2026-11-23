@@ -113,7 +113,7 @@ fn main() {
                 })
                 .unwrap_or_else(|| panic!("{name:?} is not on {}", disc_path.display()))
         })
-        .or_else(|| pick_program(&catalog))
+        .or_else(|| amsrust::autorun::pick_program(&catalog))
         .unwrap_or_else(|| {
             panic!(
                 "no plausible file to run on {} (see the catalog above, try --run)",
@@ -208,40 +208,4 @@ fn print_catalog(catalog: &[AmsdosEntry]) {
         };
         eprintln!("  {}:{}{flag}", entry.user, entry.filename());
     }
-}
-
-/// A default entry to `RUN` when the caller doesn't name one: prefers an
-/// obvious menu/loader name, then the biggest `.BIN`, then the biggest
-/// `.BAS`, then whatever plausible entry sorts first - all among entries
-/// [`AmsdosEntry::is_plausible_filename`] accepts (real files, not CATART).
-fn pick_program(catalog: &[AmsdosEntry]) -> Option<&AmsdosEntry> {
-    let real: Vec<&AmsdosEntry> = catalog
-        .iter()
-        .filter(|e| e.is_plausible_filename())
-        .collect();
-
-    let by_name = |wanted: &str| {
-        real.iter()
-            .find(|e| e.name.eq_ignore_ascii_case(wanted))
-            .copied()
-    };
-    let contains = |needle: &str| {
-        real.iter()
-            .filter(|e| e.name.to_ascii_uppercase().contains(needle))
-            .max_by_key(|e| e.records)
-            .copied()
-    };
-    let biggest_with_extension = |extension: &str| {
-        real.iter()
-            .filter(|e| e.extension.eq_ignore_ascii_case(extension))
-            .max_by_key(|e| e.records)
-            .copied()
-    };
-
-    by_name("DISC")
-        .or_else(|| contains("MENU"))
-        .or_else(|| contains("INTRO"))
-        .or_else(|| biggest_with_extension("BIN"))
-        .or_else(|| biggest_with_extension("BAS"))
-        .or_else(|| real.into_iter().min_by_key(|e| e.filename()))
 }
