@@ -310,6 +310,9 @@ impl RasterBreakpoint {
                 let (before, after) = (before.linear(), after.linear());
                 if after >= before {
                     before < target && target <= after
+                } else if before - after < BEAM_TICKS_PER_LINE {
+                    // the monitor's oscillator pulled the picture back a little: nothing was crossed
+                    false
                 } else {
                     // A new frame started.
                     target > before || target <= after
@@ -318,6 +321,8 @@ impl RasterBreakpoint {
             None if after.line == before.line && after.x >= before.x => {
                 before.x < self.x && self.x <= after.x
             }
+            // pulled back within the line by the monitor's oscillator
+            None if after.line == before.line => false,
             None => self.x > before.x || self.x <= after.x,
         }
     }
@@ -3602,6 +3607,9 @@ mod test {
         assert!(at(None, 10).passed(beam(150, 8), beam(170, 8)));
         assert!(at(None, 0).passed(beam(1010, 8), beam(10, 9)));
         assert!(!at(None, 10).passed(beam(170, 8), beam(200, 8)));
+        // The monitor pulled the picture back a few ticks: not a new frame, not a new line.
+        assert!(!at(Some(100), 10).passed(beam(170, 5), beam(160, 5)));
+        assert!(!at(None, 10).passed(beam(170, 8), beam(160, 8)));
     }
 
     #[test]
