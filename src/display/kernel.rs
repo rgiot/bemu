@@ -55,6 +55,12 @@ pub const V_OFF: usize = 2 * PHASES * 4;
 pub const M_OFF: usize = V_OFF + V_LEVELS * PHASES;
 /// The parameters' count.
 pub const PARAMS: usize = 30;
+/// What `crt` looks up per output column (floats): the phosphor of the slot and of its two
+/// neighbours, their halation weights (0 beyond the picture), the glow's cells and weight, the
+/// column's place on the picture (`dx` and `dx^2`); and per output row: the glow's cells and
+/// weight, `dy` and `dy^2`. Built once (`axis_tables`): no division, no `floor`, no clamp per pixel.
+pub const COL: usize = 12;
+pub const ROW: usize = 8;
 /// The frame as linear light, padded with zeros: `PAD` pixels around the monitor's 768 x 272, so
 /// that a beam's taps beyond the picture read black without any test (a read outside is clamped
 /// into the border).
@@ -153,46 +159,17 @@ fn slot_light(lin: &[f32], luts: &[f32], pr: &[f32], x: i32, y: i32) -> f32 {
 /// then a sum of three of them.
 #[cube(launch_unchecked)]
 pub fn slots(lin: &[f32], luts: &[f32], pr: &[f32], lights: &mut [f32]) {
-    let i = ABSOLUTE_POS;
-    if i < lights.len() {
-        let w = pr[OUT_W] as usize;
-        lights[i] = slot_light(lin, luts, pr, (i % w) as i32, (i / w) as i32);
+    let x = ABSOLUTE_POS_X as usize;
+    let y = ABSOLUTE_POS_Y as usize;
+    let w = pr[OUT_W] as usize;
+    if x < w && y < pr[OUT_H] as usize {
+        lights[y * w + x] = slot_light(lin, luts, pr, x as i32, y as i32);
     }
-}
-
-/// The light of the slot at column `x` of row `y`, from [`slots`]; none outside.
-#[cube]
-fn lit(lights: &[f32], pr: &[f32], x: i32, y: i32) -> f32 {
-    let mut out = 0.0f32;
-    if x >= 0 && x < pr[OUT_W] as i32 {
-        out = lights[(y as u32 * pr[OUT_W] as u32 + x as u32) as usize];
-    }
-    out
-}
-
-#[cube]
-fn glow_cell(glow: &[f32], x: i32, y: i32, c: u32) -> f32 {
-    glow[((y * 192 + x) * 4) as usize + c as usize]
-}
-
-#[cube]
-fn glow_at(glow: &[f32], u: f32, v: f32, c: u32) -> f32 {
-    let gx = f32::clamp(u * 192.0 - 0.5, 0.0, 191.0);
-    let gy = f32::clamp(v * 68.0 - 0.5, 0.0, 67.0);
-    let x0 = f32::floor(gx) as i32;
-    let y0 = f32::floor(gy) as i32;
-    let x1 = i32::min(x0 + 1, 191);
-    let y1 = i32::min(y0 + 1, 67);
-    let fx = gx - x0 as f32;
-    let fy = gy - y0 as f32;
-    let top = glow_cell(glow, x0, y0, c) * (1.0 - fx) + glow_cell(glow, x1, y0, c) * fx;
-    let bottom = glow_cell(glow, x0, y1, c) * (1.0 - fx) + glow_cell(glow, x1, y1, c) * fx;
-    top * (1.0 - fy) + bottom * fy
 }
 
 /// `l` if the slot's phosphor is `want`.
 #[cube]
-fn only(c: u32, want: u32, l: f32) -> f32 {
+fn only(c: f32, want: f32, l: f32) -> f32 {
     let mut out = 0.0f32;
     if c == want {
         out = l;
@@ -208,31 +185,40 @@ fn encode(v: f32, add: f32, fall: f32, alpha: f32) -> u32 {
 }
 
 #[cube(launch_unchecked)]
-pub fn crt(lights: &[f32], glow: &[f32], pr: &[f32], out: &mut [u32]) {
-    let i = ABSOLUTE_POS;
-    if i < out.len() {
-        let w = pr[OUT_W] as usize;
-        let x = (i % w) as i32;
-        let y = (i / w) as i32;
-        // the slot of the pixel and its two neighbours (halation), each worked out once
-        let sw = pr[SLOT_PX] as i32;
-        let h = pr[HALATION];
-        let (xl, xr) = (x - sw, x + sw);
-        let (ll, lc, lr) = (
-            h * lit(lights, pr, xl, y),
-            (1.0 - 2.0 * h) * lit(lights, pr, x, y),
-            h * lit(lights, pr, xr, y),
-        );
-        let (cl, cc, cr) = (slot_channel(pr, xl), slot_channel(pr, x), slot_channel(pr, xr));
-        let mut r = only(cl, 0u32, ll) + only(cc, 0u32, lc) + only(cr, 0u32, lr);
-        let mut g = only(cl, 1u32, ll) + only(cc, 1u32, lc) + only(cr, 1u32, lr);
-        let mut b = only(cl, 2u32, ll) + only(cc, 2u32, lc) + only(cr, 2u32, lr);
-        // the veil and the glow of the picture around (a mono tube: of its luminance, in its colour)
-        let u = (x as f32 + 0.5) / pr[OUT_W];
-        let v = (y as f32 + 0.5) / pr[OUT_H];
-        let mut ar = pr[VEIL] + pr[GLOW] * glow_at(glow, u, v, 0u32);
-        let mut ag = pr[VEIL] + pr[GLOW] * glow_at(glow, u, v, 1u32);
-        let mut ab = pr[VEIL] + pr[GLOW] * glow_at(glow, u, v, 2u32);
+pub fn crt(lights: &[f32], glow: &[f32], pr: &[f32], cols: &[f32], rows: &[f32], out: &mut [u32]) {
+    let x = ABSOLUTE_POS_X as usize;
+    let y = ABSOLUTE_POS_Y as usize;
+    let w = pr[OUT_W] as usize;
+    if x < w && y < pr[OUT_H] as usize {
+        let c = x * 12;
+        let q = y * 8;
+        // the slot of the pixel and its two neighbours (halation): the weight of a neighbour beyond
+        // the picture is 0, so the read is just kept in the row
+        let sw = pr[SLOT_PX] as usize;
+        let row = y * w;
+        let xl = if x >= sw { x - sw } else { 0usize };
+        let xr = if x + sw < w { x + sw } else { w - 1 };
+        let ll = cols[c + 3] * lights[row + xl];
+        let lc = cols[c + 4] * lights[row + x];
+        let lr = cols[c + 5] * lights[row + xr];
+        let (cl, cc, cr) = (cols[c], cols[c + 1], cols[c + 2]);
+        let mut r = only(cl, 0.0, ll) + only(cc, 0.0, lc) + only(cr, 0.0, lr);
+        let mut g = only(cl, 1.0, ll) + only(cc, 1.0, lc) + only(cr, 1.0, lr);
+        let mut b = only(cl, 2.0, ll) + only(cc, 2.0, lc) + only(cr, 2.0, lr);
+        // the veil and the glow of the picture around (a mono tube: of its luminance, in its colour):
+        // the glow's four cells and weights from the tables
+        let (fx, fy) = (cols[c + 8], rows[q + 2]);
+        let x0 = cols[c + 6] as usize;
+        let x1 = cols[c + 7] as usize;
+        let y0 = rows[q] as usize * 192;
+        let y1 = rows[q + 1] as usize * 192;
+        let (a00, a01, a10, a11) = ((y0 + x0) * 4, (y0 + x1) * 4, (y1 + x0) * 4, (y1 + x1) * 4);
+        let gr = (glow[a00] * (1.0 - fx) + glow[a01] * fx) * (1.0 - fy) + (glow[a10] * (1.0 - fx) + glow[a11] * fx) * fy;
+        let gg = (glow[a00 + 1] * (1.0 - fx) + glow[a01 + 1] * fx) * (1.0 - fy) + (glow[a10 + 1] * (1.0 - fx) + glow[a11 + 1] * fx) * fy;
+        let gb = (glow[a00 + 2] * (1.0 - fx) + glow[a01 + 2] * fx) * (1.0 - fy) + (glow[a10 + 2] * (1.0 - fx) + glow[a11 + 2] * fx) * fy;
+        let mut ar = pr[VEIL] + pr[GLOW] * gr;
+        let mut ag = pr[VEIL] + pr[GLOW] * gg;
+        let mut ab = pr[VEIL] + pr[GLOW] * gb;
         if pr[MONO] > 0.5 {
             let s = ll + lc + lr;
             let luma = 0.299 * (ar - pr[VEIL]) + 0.587 * (ag - pr[VEIL]) + 0.114 * (ab - pr[VEIL]);
@@ -243,21 +229,25 @@ pub fn crt(lights: &[f32], glow: &[f32], pr: &[f32], out: &mut [u32]) {
             ag = pr[TINT + 1] * (pr[VEIL] + luma);
             ab = pr[TINT + 2] * (pr[VEIL] + luma);
         }
-        let dx = u * 2.0 - 1.0;
-        let dy = v * 2.0 - 1.0;
-        let fall = f32::max(1.0 - pr[VIGNETTE] * (dx * dx + dy * dy), 0.0);
-        // the glass's rounded edge, smoothed over about a pixel
-        let wx = dx * (1.0 + pr[WARP_KX] * dy * dy);
-        let wy = dy * (1.0 + pr[WARP_KY] * dx * dx);
-        let ex = f32::abs(wx) - (1.0 - pr[WARP_CORNER]);
-        let ey = f32::abs(wy) - (1.0 - pr[WARP_CORNER]);
-        let ox = f32::max(ex, 0.0);
-        let oy = f32::max(ey, 0.0);
-        let distance = f32::sqrt(ox * ox + oy * oy) + f32::min(f32::max(ex, ey), 0.0) - pr[WARP_CORNER];
-        let pixel = 2.0 / f32::max(pr[OUT_W], pr[OUT_H]);
-        let edge = f32::clamp(0.5 - distance / pixel, 0.0, 1.0);
-        let alpha = (1.0 - pr[EDGED]) + pr[EDGED] * edge;
-        out[i] = (encode(r, ar, fall * pr[WHITE], alpha) << 16u32)
+        let (dx, dx2, dy, dy2) = (cols[c + 9], cols[c + 10], rows[q + 3], rows[q + 4]);
+        let fall = f32::max(1.0 - pr[VIGNETTE] * (dx2 + dy2), 0.0);
+        // the glass's rounded edge, smoothed over about a pixel: none for a flat glass, and a pixel
+        // well inside it (the common case) needs no square root
+        let mut alpha = 1.0f32;
+        if pr[EDGED] > 0.5 {
+            let wx = dx * (1.0 + pr[WARP_KX] * dy2);
+            let wy = dy * (1.0 + pr[WARP_KY] * dx2);
+            let ex = f32::abs(wx) - (1.0 - pr[WARP_CORNER]);
+            let ey = f32::abs(wy) - (1.0 - pr[WARP_CORNER]);
+            let pixel = 2.0 / f32::max(pr[OUT_W], pr[OUT_H]);
+            if ex >= 0.0 - pixel || ey >= 0.0 - pixel {
+                let ox = f32::max(ex, 0.0);
+                let oy = f32::max(ey, 0.0);
+                let distance = f32::sqrt(ox * ox + oy * oy) + f32::min(f32::max(ex, ey), 0.0) - pr[WARP_CORNER];
+                alpha = f32::clamp(0.5 - distance / pixel, 0.0, 1.0);
+            }
+        }
+        out[row + x] = (encode(r, ar, fall * pr[WHITE], alpha) << 16u32)
             | (encode(g, ag, fall * pr[WHITE + 1], alpha) << 8u32)
             | encode(b, ab, fall * pr[WHITE + 2], alpha);
     }
@@ -431,6 +421,9 @@ pub struct Pipeline {
     luts: cubecl::server::Handle,
     /// The frame as padded linear light (`to_linear`, made by `glow_cells`).
     lin: cubecl::server::Handle,
+    cols: cubecl::server::Handle,
+    rows: cubecl::server::Handle,
+    out_size: (usize, usize),
     lights: cubecl::server::Handle,
     luts_len: usize,
     out: cubecl::server::Handle,
@@ -456,6 +449,12 @@ const _: () = assert!(LIN_W == 776 && LIN_H == 280 && LIN_W * LIN_H == 217_280 &
 
 /// The most cubes a dimension of a launch may have (wgpu's default limit).
 const MAX_CUBES: u32 = 65535;
+
+/// The cubes for a `w` x `h` picture, `dim` x 1 threads each: a row of cubes per row of pixels
+/// (the kernels read their pixel from `ABSOLUTE_POS_X` / `_Y`, no division).
+pub fn grid_count(w: usize, h: usize, dim: u32) -> CubeCount {
+    CubeCount::Static((w as u32).div_ceil(dim), h as u32, 1)
+}
 
 /// The cubes to run `n` threads in cubes of `dim`: in one dimension, or spread over two when there
 /// would be more than the GPU's limit (a picture drawn at 4x or more); the kernels' `i < len`
@@ -485,6 +484,9 @@ impl Pipeline {
             glow: cells(FINE),
             params: client.create_from_slice(f32::as_bytes(&pack(params, warp))),
             lin: client.create_from_slice(&vec![0u8; LIN_W * LIN_H * 16]),
+            cols: client.create_from_slice(f32::as_bytes(&axis_tables(params).0)),
+            rows: client.create_from_slice(f32::as_bytes(&axis_tables(params).1)),
+            out_size: (w, h),
             luts_len: luts.len(),
             luts: client.create_from_slice(f32::as_bytes(&luts)),
             lights: client.empty(w * h * 4),
@@ -567,11 +569,12 @@ impl Pipeline {
                 self.kernel_weights.0, self.kernel_weights.1,
             );
             after("glow_merge");
-            let count = || cube_count(self.out_len, self.cube_dim);
+            let (gw, gh) = self.out_size;
+            let count = || grid_count(gw, gh, self.cube_dim);
             slots::launch_unchecked(
                 client,
                 count(),
-                CubeDim::new_1d(self.cube_dim),
+                CubeDim::new_2d(self.cube_dim, 1),
                 arg(&self.lin, LIN_W * LIN_H * 4), arg(&self.luts, self.luts_len), arg(&self.params, PARAMS),
                 arg(&self.lights, self.out_len),
             );
@@ -579,8 +582,9 @@ impl Pipeline {
             crt::launch_unchecked(
                 client,
                 count(),
-                CubeDim::new_1d(self.cube_dim),
+                CubeDim::new_2d(self.cube_dim, 1),
                 arg(&self.lights, self.out_len), arg(&self.glow, FINE * 4), arg(&self.params, PARAMS),
+                arg(&self.cols, gw * COL), arg(&self.rows, gh * ROW),
                 arg(&self.out, self.out_len),
             );
             after("crt");
@@ -620,6 +624,45 @@ pub fn luts(p: &CrtParams) -> Vec<f32> {
         }
     }
     v
+}
+
+/// The per-column and per-row tables of the `crt` kernel (see [`COL`]).
+pub fn axis_tables(p: &CrtParams) -> (Vec<f32>, Vec<f32>) {
+    let (w, h) = p.output_size();
+    let sw = p.slot_px();
+    let channel = |x: usize| if p.phosphor.is_some() { 1.0 } else { ((x / sw) % 3) as f32 };
+    let halation = p.halation;
+    let mut cols = Vec::with_capacity(w * COL);
+    for x in 0..w {
+        let (xl, xr) = (x.saturating_sub(sw), (x + sw).min(w - 1));
+        let u = (x as f32 + 0.5) / w as f32;
+        let gx = (u * GLOW_W as f32 - 0.5).clamp(0.0, (GLOW_W - 1) as f32);
+        let x0 = gx.floor();
+        let dx = u * 2.0 - 1.0;
+        cols.extend_from_slice(&[
+            channel(xl),
+            channel(x),
+            channel(xr),
+            if x >= sw { halation } else { 0.0 },
+            1.0 - 2.0 * halation,
+            if x + sw < w { halation } else { 0.0 },
+            x0,
+            (x0 + 1.0).min((GLOW_W - 1) as f32),
+            gx - x0,
+            dx,
+            dx * dx,
+            0.0,
+        ]);
+    }
+    let mut rows = Vec::with_capacity(h * ROW);
+    for y in 0..h {
+        let v = (y as f32 + 0.5) / h as f32;
+        let gy = (v * GLOW_H as f32 - 0.5).clamp(0.0, (GLOW_H - 1) as f32);
+        let y0 = gy.floor();
+        let dy = v * 2.0 - 1.0;
+        rows.extend_from_slice(&[y0, (y0 + 1.0).min((GLOW_H - 1) as f32), gy - y0, dy, dy * dy, 0.0, 0.0, 0.0]);
+    }
+    (cols, rows)
 }
 
 pub fn pack(p: &CrtParams, warp: Warp) -> Vec<f32> {
