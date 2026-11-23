@@ -10,7 +10,7 @@ use image::RgbImage;
 
 use super::crt::{CrtParams, Warp, SRC_HEIGHT, SRC_WIDTH};
 use super::gpu::{Blit, CrtPass, FrameTexture, GpuContext, GpuFrame, Resampler};
-use super::{DisplayMode, PictureSize, RAW_HEIGHT, RAW_WIDTH};
+use super::{DisplayFilter, DisplayMode, PictureSize, RAW_HEIGHT, RAW_WIDTH};
 
 /// The most a CRT's picture is drawn larger than its profile's (a texture of 4320 x 3264).
 const MAX_CRT_LEVEL: usize = 3;
@@ -25,6 +25,32 @@ struct CrtState {
     target: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     size: (usize, usize),
+}
+
+/// The CRT on CubeCL's CPU backend (a page has none: it is the GPU or nothing).
+#[cfg(not(target_arch = "wasm32"))]
+fn cpu_filter(params: &CrtParams, warp: Warp) -> Result<Box<dyn DisplayFilter>, String> {
+    super::KernelCrt::new(params.clone(), warp, super::Backend::Cpu).map(|f| Box::new(f) as Box<dyn DisplayFilter>)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn cpu_filter(_: &CrtParams, _: Warp) -> Result<Box<dyn DisplayFilter>, String> {
+    Err("a page has no CPU rendering".into())
+}
+
+/// The picture of a CRT display made on the CPU (CubeCL's CPU backend), for when the hardware
+/// acceleration is off: read back, then uploaded as a texture.
+struct SoftState {
+    mode: DisplayMode,
+    warp: Warp,
+    filter: Box<dyn DisplayFilter>,
+    buffer: Vec<u32>,
+    rgba: Vec<u8>,
+    target: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    size: (usize, usize),
+    /// The picture is to be made again (a frame arrived, or the state is new).
+    dirty: bool,
 }
 
 /// The picture's textures and passes, for the frames of one surface.
@@ -51,6 +77,17 @@ pub struct Picture {
     resampler: Option<Resampler>,
     format: wgpu::TextureFormat,
     pub size: PictureSize,
+    /// Hardware acceleration: the CRT is made by the GPU (default). Off, it is made on the CPU
+    /// (CubeCL's CPU backend, where the build has one), slower but the same on every machine.
+    pub hardware: bool,
+    /// The GPU's name, for [`Self::renderer`].
+    pub adapter: String,
+    software: Option<SoftState>,
+    /// The last frame, kept while the hardware acceleration is off.
+    soft_frame: Option<RgbImage>,
+    /// The CPU rendering cannot be had (no CPU backend in this build): the GPU draws.
+    software_unavailable: bool,
+    renderer: String,
 }
 
 impl Picture {
@@ -85,25 +122,98 @@ impl Picture {
             resampler: None,
             format,
             size: PictureSize::default(),
+            hardware: true,
+            adapter: String::new(),
+            software: None,
+            soft_frame: None,
+            software_unavailable: false,
+            renderer: String::new(),
         }
+    }
+
+    /// What made the last picture drawn, in words for the interface ("GPU · name", "CPU
+    /// (software)", the raw picture).
+    pub fn renderer(&self) -> &str {
+        &self.renderer
+    }
+
+    /// The CPU's picture of `mode` through `warp`, made if it is not the current one. Whether
+    /// there is one (the hardware acceleration is off and the build can render on the CPU).
+    fn use_software(&mut self, device: &wgpu::Device, mode: DisplayMode, warp: Warp) -> bool {
+        let DisplayMode::Crt(profile) = mode else {
+            return false;
+        };
+        if self.hardware || self.software_unavailable {
+            return false;
+        }
+        if self.software.as_ref().is_some_and(|s| s.mode == mode && s.warp == warp) {
+            return true;
+        }
+        let params = profile.params();
+        let filter = match cpu_filter(&params, warp) {
+            Ok(filter) => filter,
+            Err(e) => {
+                eprintln!("no CRT on the CPU ({e}): the GPU draws it");
+                self.software_unavailable = true;
+                return false;
+            }
+        };
+        let (w, h) = params.output_size();
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("crt picture (CPU)"),
+            size: wgpu::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = self.blit.bind_group(device, &view, true, Warp::FLAT);
+        self.software = Some(SoftState {
+            mode,
+            warp,
+            filter,
+            buffer: vec![0; w * h],
+            rgba: [0, 0, 0, 255].repeat(w * h),
+            target,
+            bind_group,
+            size: (w, h),
+            dirty: true,
+        });
+        true
     }
 
     /// The monitor's next frame.
     pub fn upload(&mut self, queue: &wgpu::Queue, frame: &RgbImage) {
+        // kept whatever is shown: a switch of the renderer (raw, GPU, CPU) draws the last frame
+        match &mut self.last_rgb {
+            Some(last) => last.clone_from(frame),
+            None => self.last_rgb = Some(frame.clone()),
+        }
         if self.crt_shown {
             // the raw texture is not drawn: its conversion waits for the switch back
-            match &mut self.last_rgb {
-                Some(last) => last.clone_from(frame),
-                None => self.last_rgb = Some(frame.clone()),
-            }
             self.raw_stale = true;
         } else {
             self.frame.upload(queue, frame);
             self.raw_stale = false;
         }
+        if !self.hardware && !self.software_unavailable {
+            // the CPU makes the picture, from the frame as it is
+            match &mut self.soft_frame {
+                Some(last) => last.clone_from(frame),
+                None => self.soft_frame = Some(frame.clone()),
+            }
+            if let Some(soft) = &mut self.software {
+                soft.dirty = true;
+            }
+        }
         if let Some(gpu_frame) = &mut self.gpu_frame {
-            gpu_frame.upload(queue, frame);
-            self.crt_dirty = true;
+            if self.hardware || self.software_unavailable || self.software.is_none() {
+                gpu_frame.upload(queue, frame);
+                self.crt_dirty = true;
+            }
         }
     }
 
@@ -202,9 +312,46 @@ impl Picture {
         let (window_w, window_h) = (target.0 as f32, (target.1 as f32 - top - bottom).max(1.0));
         let level = self.level(mode, (window_w, window_h));
         let _ = again; // what changed is tracked here (`crt_dirty`), whoever calls
-        let _made = self.use_mode(device, queue, mode, level, warp);
-        let crt_shown = matches!(mode, DisplayMode::Crt(_)) && self.crt.is_some();
-        if let (true, Some(crt)) = (crt_shown, self.crt.as_ref()) {
+        // the GPU takes over again: the frame it was not given while the CPU drew
+        if self.hardware {
+            if let (Some(frame), Some(gpu_frame)) = (self.soft_frame.take(), self.gpu_frame.as_mut()) {
+                gpu_frame.upload(queue, &frame);
+                self.crt_dirty = true;
+            }
+        }
+        let soft = self.use_software(device, mode, warp);
+        if !soft {
+            self.use_mode(device, queue, mode, level, warp);
+        }
+        let gpu_crt = !soft && matches!(mode, DisplayMode::Crt(_)) && self.crt.is_some();
+        if soft {
+            if let (Some(state), Some(frame)) = (self.software.as_mut(), self.soft_frame.as_ref().or(self.last_rgb.as_ref())) {
+                if state.dirty {
+                    state.filter.render(frame, &mut state.buffer);
+                    for (rgba, word) in state.rgba.chunks_exact_mut(4).zip(&state.buffer) {
+                        rgba[0] = (word >> 16) as u8;
+                        rgba[1] = (word >> 8) as u8;
+                        rgba[2] = *word as u8;
+                    }
+                    queue.write_texture(
+                        state.target.as_image_copy(),
+                        &state.rgba,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(state.size.0 as u32 * 4),
+                            rows_per_image: Some(state.size.1 as u32),
+                        },
+                        wgpu::Extent3d {
+                            width: state.size.0 as u32,
+                            height: state.size.1 as u32,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                    state.dirty = false;
+                }
+            }
+        }
+        if let (true, Some(crt)) = (gpu_crt, self.crt.as_ref()) {
             if let (true, Some(frame)) = (self.crt_dirty, self.gpu_frame.as_ref()) {
                 crt.pass.encode(
                     encoder,
@@ -214,6 +361,7 @@ impl Picture {
                 self.crt_dirty = false;
             }
         }
+        let crt_shown = gpu_crt || soft;
         // the raw picture comes back: its texture catches up with the last frame
         if !crt_shown && self.raw_stale {
             if let Some(last) = &self.last_rgb {
@@ -222,8 +370,38 @@ impl Picture {
             self.raw_stale = false;
         }
         self.crt_shown = crt_shown;
-        let (picture_w, picture_h) = match self.crt.as_ref().filter(|_| crt_shown) {
-            Some(crt) => crt.size,
+        // the CRT's picture, whoever made it: its view, its bind group, its size
+        let shown: Option<(wgpu::TextureView, wgpu::BindGroup, (usize, usize))> = if soft {
+            self.software.as_ref().map(|s| {
+                (s.target.create_view(&wgpu::TextureViewDescriptor::default()), s.bind_group.clone(), s.size)
+            })
+        } else if gpu_crt {
+            self.crt.as_ref().map(|c| {
+                (c.target.create_view(&wgpu::TextureViewDescriptor::default()), c.bind_group.clone(), c.size)
+            })
+        } else {
+            None
+        };
+        self.renderer = if soft {
+            "CPU (software rendering)".to_owned()
+        } else if gpu_crt {
+            let unavailable = if self.software_unavailable && !self.hardware {
+                " (software rendering unavailable in this build)"
+            } else {
+                ""
+            };
+            if self.adapter.is_empty() {
+                format!("GPU{unavailable}")
+            } else {
+                format!("GPU · {}{unavailable}", self.adapter)
+            }
+        } else if matches!(mode, DisplayMode::Crt(_)) {
+            "raw picture (the GPU cannot run the CRT)".to_owned()
+        } else {
+            "raw picture".to_owned()
+        };
+        let (picture_w, picture_h) = match &shown {
+            Some((_, _, size)) => *size,
             None => (RAW_WIDTH, RAW_HEIGHT),
         };
         let scale = picture_scale(
@@ -241,12 +419,8 @@ impl Picture {
         let whole = scale >= 1.0 && (scale - scale.round()).abs() < 1e-4;
         let resampled = scale < 1.0 || (crt_shown && !whole);
         if resampled {
-            let (source, size) = match self.crt.as_ref().filter(|_| crt_shown) {
-                Some(crt) => (
-                    crt.target
-                        .create_view(&wgpu::TextureViewDescriptor::default()),
-                    (crt.size.0 as u32, crt.size.1 as u32),
-                ),
+            let (source, size) = match &shown {
+                Some((view, _, size)) => (view.clone(), (size.0 as u32, size.1 as u32)),
                 None => (
                     self.frame.view().clone(),
                     (SRC_WIDTH as u32, SRC_HEIGHT as u32),
@@ -284,8 +458,8 @@ impl Picture {
         match (&self.resampler, resampled) {
             (Some(resampler), true) => resampler.draw(&mut pass),
             _ => {
-                let bind_group = match self.crt.as_ref().filter(|_| crt_shown) {
-                    Some(crt) => &crt.bind_group,
+                let bind_group = match &shown {
+                    Some((_, bind_group, _)) => bind_group,
                     None => &self.raw_bind_group,
                 };
                 self.blit.draw(&mut pass, bind_group)

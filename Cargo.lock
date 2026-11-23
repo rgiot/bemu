@@ -224,7 +224,6 @@ dependencies = [
  "cubecl",
  "cubecl-runtime",
  "delegate 0.5.1",
- "derive_more 0.99.13",
  "egui",
  "egui-wgpu",
  "egui-winit",
@@ -241,8 +240,6 @@ dependencies = [
  "minifb",
  "nuked-opl3",
  "num",
- "num_enum 0.5.1",
- "rand 0.8.8",
  "rustyline",
  "rustysynth",
  "schemars",
@@ -253,7 +250,6 @@ dependencies = [
  "smallvec",
  "tar",
  "tokio",
- "tuple-map",
  "ureq 2.12.1",
  "web-time",
  "webp-animation",
@@ -278,7 +274,7 @@ dependencies = [
  "ndk",
  "ndk-context",
  "ndk-sys",
- "num_enum 0.7.6",
+ "num_enum",
  "thiserror 2.0.20",
 ]
 
@@ -1350,12 +1346,6 @@ checksum = "136d3e02915a2cea4d74caa8681e2d44b1c3254bdbf17d11d41d587ff858832c"
 
 [[package]]
 name = "convert_case"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
-
-[[package]]
-name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
@@ -1933,7 +1923,7 @@ dependencies = [
  "cfg_aliases",
  "cubecl-environment",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "float4",
  "float8",
  "half",
@@ -1963,7 +1953,7 @@ dependencies = [
  "cubecl-runtime",
  "cubecl-zspace",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "float-ord",
  "half",
  "hashbrown 0.17.1",
@@ -1991,7 +1981,7 @@ dependencies = [
  "cubecl-opt",
  "cubecl-runtime",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "half",
  "itertools 0.15.0",
  "log",
@@ -2076,7 +2066,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "spin",
- "toml 1.2.2+spec-1.1.0",
+ "toml",
  "turso",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2128,7 +2118,7 @@ dependencies = [
  "cubecl-environment",
  "cubecl-macros-internal",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "float-ord",
  "foldhash 0.2.0",
  "half",
@@ -2177,7 +2167,7 @@ checksum = "0c67962ecb52dc6fd493df1ef6c01990bc8c98a29039765a5e58bef00d9ab304"
 dependencies = [
  "darling 0.24.1",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "ident_case",
  "inflections",
  "itertools 0.15.0",
@@ -2250,7 +2240,7 @@ dependencies = [
  "cubecl-environment",
  "cubecl-ir",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "downcast-rs 2.0.2",
  "foldhash 0.2.0",
  "hashbrown 0.17.1",
@@ -2278,7 +2268,7 @@ dependencies = [
  "cubecl-monitoring",
  "cubecl-zspace",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "foldhash 0.2.0",
  "futures-util",
  "hashbrown 0.17.1",
@@ -2289,7 +2279,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "thiserror 2.0.20",
- "toml 1.2.2+spec-1.1.0",
+ "toml",
  "wasm-bindgen-futures",
 ]
 
@@ -2309,7 +2299,7 @@ dependencies = [
  "cubecl-runtime",
  "cubecl-zspace",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "foldhash 0.2.0",
  "futures-util",
  "hashbrown 0.17.1",
@@ -2383,7 +2373,7 @@ dependencies = [
  "cubecl-server",
  "cubecl-spirv",
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "half",
  "hashbrown 0.17.1",
  "itertools 0.15.0",
@@ -2613,17 +2603,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derivative"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcc3dd5e9e9c0b295d6e1e4d811fb6f157d5ffd784b8d202fc62eac8035a770b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.71",
-]
-
-[[package]]
 name = "derive-new"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2643,18 +2622,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "derive_more"
-version = "0.99.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f82b1b72f1263f214c0f823371768776c4f5841b942c9883aa8e5ec584fd0ba6"
-dependencies = [
- "convert_case 0.4.0",
- "proc-macro2",
- "quote",
- "syn 1.0.71",
 ]
 
 [[package]]
@@ -5131,7 +5098,7 @@ dependencies = [
  "jni-sys 0.3.1",
  "log",
  "ndk-sys",
- "num_enum 0.7.6",
+ "num_enum",
  "raw-window-handle",
  "thiserror 1.0.69",
 ]
@@ -5371,34 +5338,12 @@ dependencies = [
 
 [[package]]
 name = "num_enum"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "226b45a5c2ac4dd696ed30fa6b94b057ad909c7b7fc2e0d0808192bced894066"
-dependencies = [
- "derivative",
- "num_enum_derive 0.5.1",
-]
-
-[[package]]
-name = "num_enum"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d0bca838442ec211fa11de3a8b0e0e8f3a4522575b5c4c06ed722e005036f26"
 dependencies = [
- "num_enum_derive 0.7.6",
+ "num_enum_derive",
  "rustversion",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c0fd9eba1d5db0994a239e09c1be402d35622277e35468ba891aa5e3188ce7e"
-dependencies = [
- "proc-macro-crate 0.1.5",
- "proc-macro2",
- "quote",
- "syn 1.0.71",
 ]
 
 [[package]]
@@ -5407,7 +5352,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
 dependencies = [
- "proc-macro-crate 3.5.0",
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6228,7 +6173,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae0a48754284b6cd23479c3736f328e7443aa1ca06db82d07ee6afeeb3c3ea47"
 dependencies = [
  "derive-new",
- "derive_more 2.1.1",
+ "derive_more",
  "itertools 0.15.0",
  "pliron",
  "thiserror 2.0.20",
@@ -6386,15 +6331,6 @@ dependencies = [
  "lazy_static",
  "term",
  "unicode-width 0.1.14",
-]
-
-[[package]]
-name = "proc-macro-crate"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d6ea3c4595b96363c13943497db34af4460fb474a95c43f4446ad341b8c9785"
-dependencies = [
- "toml 0.5.8",
 ]
 
 [[package]]
@@ -8068,15 +8004,6 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.5.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a31142970826733df8241ef35dc040ef98c679ab14d7c3e54d827099b3acecaa"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "toml"
 version = "1.2.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5426cb1b964690d913f6c5c1a1ae0b42f428ec506bb4d452876d7a209c9bca3b"
@@ -8285,12 +8212,6 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
-
-[[package]]
-name = "tuple-map"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23d5919d7121237af683b7fa982450597b1eaa2643e597aec3b519e4e5ab3d62"
 
 [[package]]
 name = "turso"
@@ -10244,7 +10165,3 @@ name = "zx0"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01df7a825d645551d63d922e23529331b04c32bec8cc56d95e7c71bdcee28146"
-
-[[patch.unused]]
-name = "cpclib-xfertool"
-version = "0.11.0"

@@ -1,4 +1,4 @@
-csl_version 1.1
+csl_version 1.4
 ; Onescreen Colonies (Vanity): CRTC 1 (most of the series runs on it only), Gate Array 40007 as AMSpiriT Lite
 gate_array 40007
 crtc_select 1

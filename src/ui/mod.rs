@@ -640,7 +640,7 @@ impl Gui {
             if native && key.view().info().debugger {
                 return true;
             }
-            let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::new(key.title()));
+            let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::unique(key.title()));
             ctx.move_to_top(layer);
             false
         });
@@ -718,7 +718,7 @@ impl Gui {
         if self.toasts.is_empty() {
             return;
         }
-        egui::Area::new(egui::Id::new("toasts"))
+        egui::Area::new(egui::Id::unique("toasts"))
             .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -12.0])
             .interactable(false)
             .show(ctx, |ui| {

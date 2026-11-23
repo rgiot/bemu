@@ -155,3 +155,102 @@ fn the_slot_lights_are_the_same_on_both_backends() {
         }
     }
 }
+
+/// The picture with the hardware acceleration off is made on the CPU (and says so), and is the
+/// picture the GPU makes (to rounding); with it on again, the GPU makes it.
+#[test]
+fn the_picture_is_made_on_the_cpu_when_the_acceleration_is_off() {
+    use super::picture::Picture;
+    use super::DisplayMode;
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let Ok(adapter) = wait_for(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+        eprintln!("skipped: no GPU adapter");
+        return;
+    };
+    let (device, queue) = wait_for(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+    let Ok(ctx) = GpuContext::new(&instance, &adapter, &device, &queue) else {
+        eprintln!("skipped: no compute shaders");
+        return;
+    };
+    let profile = CrtProfile::Ctm644;
+    let (w, h) = profile.params().output_size();
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let mut picture = Picture::new(&device, format, Some(ctx));
+    picture.adapter = "test adapter".into();
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let padded = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (padded * h) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut draw = |picture: &mut Picture| -> Vec<u32> {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        picture.draw(
+            &device, &queue, &mut encoder, &view, (w as u32, h as u32), (0.0, 0.0),
+            DisplayMode::Crt(profile), Warp::FLAT, false,
+        );
+        encoder.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded as u32), rows_per_image: None },
+            },
+            wgpu::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
+        );
+        queue.submit([encoder.finish()]);
+        staging.slice(..).map_async(wgpu::MapMode::Read, |r| r.unwrap());
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let shown = {
+            let data = staging.slice(..).get_mapped_range().unwrap();
+            (0..h)
+                .flat_map(|y| (0..w).map(move |x| (y, x)))
+                .map(|(y, x)| {
+                    let p = &data[y * padded + x * 4..][..4];
+                    (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32
+                })
+                .collect()
+        };
+        staging.unmap();
+        shown
+    };
+    let src = pattern();
+    let mut cpu = KernelCrt::new(profile.params(), Warp::FLAT, Backend::Cpu).unwrap();
+    let mut want = vec![0; w * h];
+    cpu.render(&src, &mut want);
+
+    picture.upload(&queue, &src);
+    let on_gpu = draw(&mut picture);
+    assert_eq!(picture.renderer(), "GPU · test adapter");
+    let (worst, off) = compare(&want, &on_gpu);
+    assert!(worst <= 6 && off < w * h * 3 / 1000, "GPU: worst {worst}, {off} off");
+
+    // off: the CPU backend's picture itself (a paused picture is made from the frame kept)
+    picture.hardware = false;
+    let on_cpu = draw(&mut picture);
+    assert_eq!(picture.renderer(), "CPU (software rendering)");
+    assert_eq!(compare(&want, &on_cpu).1, 0, "the CPU's picture is the CPU backend's");
+    picture.upload(&queue, &noise());
+    let _ = draw(&mut picture);
+    assert_eq!(picture.renderer(), "CPU (software rendering)");
+
+    // on again: the GPU draws the last frame (noise), not a stale one
+    picture.hardware = true;
+    let back = draw(&mut picture);
+    assert_eq!(picture.renderer(), "GPU · test adapter");
+    let mut want_noise = vec![0; w * h];
+    cpu.render(&noise(), &mut want_noise);
+    let (worst, off) = compare(&want_noise, &back);
+    assert!(worst <= 6 && off < w * h * 3 / 1000, "back on the GPU: worst {worst}, {off} off");
+}

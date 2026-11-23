@@ -4,5 +4,6 @@
 		"*.latex": "latex",
 		"*.jinja2": "latex",
 		"CPCEC.C": "cpp"
-	}
+	},
+	"rust-analyzer.cargo.targetDir": true
 }

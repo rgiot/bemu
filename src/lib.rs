@@ -1,3 +1,6 @@
+// wgpu's `Send` chain, checked by cubecl's `get_resource` (src/display/gpu.rs), is deeper than 128
+#![recursion_limit = "256"]
+
 pub mod asic;
 pub mod chip;
 

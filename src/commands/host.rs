@@ -159,8 +159,11 @@ pub struct HostSettings {
     /// The monitor's H-hold and V-hold knobs, -100 to 100 (0: steady, see `Monitor::with_holds`).
     pub hhold: i8,
     pub vhold: i8,
-    /// The CRT drawn by the GPU.
+    /// The CRT drawn by the GPU (Video > GPU acceleration).
     pub crt_gpu: bool,
+    /// What made the picture last shown, as the frontend says it ("GPU · name", "CPU (software
+    /// rendering)"; empty: not known): not a choice, shown in the status bar.
+    pub crt_renderer: String,
     /// The picture as large as the window allows (Video > Maximal size): by default it is
     /// zoomed by a whole factor, every CPC pixel the same size.
     pub free_zoom: bool,
@@ -273,6 +276,7 @@ impl Default for HostSettings {
             vhold: 0,
             ui_zoom: 1.0,
             crt_gpu: true,
+            crt_renderer: String::new(),
             free_zoom: false,
             native_zoom: false,
             fullscreen: false,

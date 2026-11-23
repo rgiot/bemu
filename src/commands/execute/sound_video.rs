@@ -225,7 +225,8 @@ pub(super) fn state(id: &str, cx: &StateCx) -> Option<CommandState> {
         "video-curvature-set" | "video-brightness-set" | "video-hhold-set" | "video-vhold-set" => {
             needs_settings
         }
-        // a page always draws the CRT on the GPU (or raw on Canvas 2D)
+        // a page always draws the CRT on the GPU (WebGPU; raw on Canvas 2D): there is no CPU
+        // renderer in wasm, so the switch is shown checked but cannot be changed there
         "video-crt-gpu-toggle" => CommandState {
             enabled: has_settings && cfg!(feature = "crt-gpu") && files,
             checked: settings.is_some_and(|s| s.crt_gpu),

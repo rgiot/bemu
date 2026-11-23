@@ -1005,6 +1005,11 @@ impl Emulator {
                         ui.not_drawn(output);
                     }
                 });
+                // the status bar says what draws the picture (always the GPU on a page)
+                let renderer = self.gfx.renderer();
+                if ui.settings.crt_renderer != renderer {
+                    ui.settings.crt_renderer = renderer;
+                }
                 self.ui = Some(ui);
                 shown
             },

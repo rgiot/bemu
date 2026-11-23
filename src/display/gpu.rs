@@ -7,13 +7,11 @@
 //! table. The kernel runs on the application's own wgpu device ([`GpuContext`]) and writes the
 //! picture in a buffer; a full-screen triangle draws that buffer in a texture.
 //!
-//! [`GpuCrt`] is a [`DisplayFilter`] that reads the picture back, so it can
+//! [`GpuCrt`] is a [`DisplayFilter`](super::DisplayFilter) that reads the picture back, so it can
 //! feed any frontend, the recorder and the screenshots; a frontend that
 //! presents the texture itself would skip that read-back.
 
 use super::crt::{CrtParams, Warp, SRC_HEIGHT, SRC_WIDTH};
-#[cfg(not(target_arch = "wasm32"))]
-use super::DisplayFilter;
 use image::RgbImage;
 
 /// The [`Warp`] of `blit.wgsl`.
