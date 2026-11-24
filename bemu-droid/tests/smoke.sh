@@ -58,6 +58,11 @@ if grep -E "FATAL EXCEPTION|panicked at" "$out/logcat.txt"; then
     echo "the app crashed"
     exit 1
 fi
+# a GPU kernel refused (the CRT asked of a GPU that cannot run it) shows a broken picture
+if grep -E "refused the pipeline|A launch error happened" "$out/logcat.txt"; then
+    echo "the GPU refused a kernel"
+    exit 1
+fi
 grep -q "load $name: ok:" "$out/logcat.txt" || { echo "the disc was not loaded"; exit 1; }
 grep -q "drawing with" "$out/logcat.txt" || { echo "nothing was drawn"; exit 1; }
 echo "smoke test passed"
