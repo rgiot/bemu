@@ -619,6 +619,33 @@ impl KeyboardLayout {
         key_at(index).map(|key| vec![CpcKey::Shift, key])
     }
 
+    /// What the key of the firmware's number `index` (line * 8 + bit) types, without and with
+    /// Shift, as its keycap shows it (the French ROMs' ISO 646-FR codes as é, è, à...); `None` for
+    /// a key that types no printable character (RETURN, the cursor keys...).
+    pub fn legend(self, index: usize) -> Option<(char, char)> {
+        if index >= 80 {
+            return None;
+        }
+        let (normal, shifted) = self.tables().split_at(80);
+        let char_of = |code: u8| -> Option<char> {
+            if !(0x20..0x7f).contains(&code) || code == b' ' {
+                return None;
+            }
+            Some(match (self, code) {
+                (Self::French, b'{') => 'é',
+                (Self::French, b'}') => 'è',
+                (Self::French, b'@') => 'à',
+                (Self::French, b'\\') => 'ç',
+                (Self::French, b'|') => 'ù',
+                (Self::French, b']') => '§',
+                (Self::French, b'[') => '°',
+                (_, code) => char::from(code),
+            })
+        };
+        let normal = char_of(normal[index])?;
+        Some((normal, char_of(shifted[index]).unwrap_or(normal)))
+    }
+
     /// The key a host key labelled as the UK `key` (a letter) is here: the one that types the same
     /// letter (`A` is where the UK `Q` is on an AZERTY keyboard). Other keys stay where they are.
     pub fn key_labelled(self, key: CpcKey) -> CpcKey {
@@ -641,6 +668,24 @@ impl KeyboardLayout {
 #[cfg(test)]
 mod layout_test {
     use super::*;
+
+    #[test]
+    fn the_keycaps_show_what_the_firmware_types() {
+        let index = |key: CpcKey| {
+            let (line, bit) = key.matrix_position();
+            usize::from(line) * 8 + usize::from(bit)
+        };
+        let uk = KeyboardLayout::Uk;
+        assert_eq!(uk.legend(index(CpcKey::Q)), Some(('q', 'Q')));
+        assert_eq!(uk.legend(index(CpcKey::Digit1)), Some(('1', '!')));
+        assert_eq!(uk.legend(index(CpcKey::Return)), None);
+        assert_eq!(uk.legend(index(CpcKey::Space)), None);
+        let fr = KeyboardLayout::French;
+        // AZERTY: A where the UK Q is, the digits shifted
+        assert_eq!(fr.legend(index(CpcKey::Q)), Some(('a', 'A')));
+        assert_eq!(fr.legend(index(CpcKey::Digit1)), Some(('&', '1')));
+        assert_eq!(fr.legend(index(CpcKey::Digit2)), Some(('é', '2')));
+    }
 
     #[test]
     fn every_matrix_position_has_one_key() {

@@ -58,6 +58,7 @@ fun stickBits(dx: Float, dy: Float, radius: Float): Int {
 /** A stick: a thumb dragged from where it touches; [onDirections] gets the direction bits. */
 @Composable
 fun Stick(onDirections: (Int) -> Unit, modifier: Modifier = Modifier) {
+    val feedback = touchFeedback()
     var knob by remember { mutableStateOf(Offset.Zero) }
     var bits by remember { mutableStateOf(0) }
     Canvas(
@@ -81,6 +82,7 @@ fun Stick(onDirections: (Int) -> Unit, modifier: Modifier = Modifier) {
                             stickBits(d.x, d.y, radius)
                         }
                         if (newBits != bits) {
+                            if (newBits != 0) feedback()
                             bits = newBits
                             onDirections(newBits)
                         }
@@ -105,6 +107,7 @@ fun Stick(onDirections: (Int) -> Unit, modifier: Modifier = Modifier) {
 /** A fire button: held while touched. */
 @Composable
 fun FireButton(label: String, onHeld: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    val feedback = touchFeedback()
     var held by remember { mutableStateOf(false) }
     Box(
         modifier = modifier
@@ -114,6 +117,7 @@ fun FireButton(label: String, onHeld: (Boolean) -> Unit, modifier: Modifier = Mo
             .pointerInput(Unit) {
                 detectTapGestures(onPress = {
                     held = true
+                    feedback()
                     onHeld(true)
                     tryAwaitRelease()
                     held = false

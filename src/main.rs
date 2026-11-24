@@ -453,13 +453,7 @@ fn main() {
     }
     start_sound_export(&args, &mut motherboard);
     let autorun = args.autorun.then(|| autorun_text(&args, &motherboard)).flatten();
-    // UniDOS and the M4 boot for longer: what is typed before is lost
-    let type_at = if autorun.is_some() {
-        args.type_at
-            .max(amsrust::autorun::boot_seconds(&motherboard))
-    } else {
-        args.type_at
-    };
+    let autorunning = autorun.is_some();
     let typed = match (autorun, &args.text) {
         (Some(autorun), Some(text)) => Some(format!("{autorun}{text}")),
         (autorun, text) => autorun.or_else(|| text.clone()),
@@ -471,13 +465,18 @@ fn main() {
             Some(Typist::with_basic(
                 typed.as_deref().unwrap_or(""),
                 source,
-                type_at,
+                args.type_at,
                 motherboard.keyboard_layout(),
             ))
         }
+        // --autorun: typed as soon as the firmware waits for a key (UniDOS and the M4 boot for
+        // longer: what is typed before is lost)
+        None if autorunning => typed
+            .as_deref()
+            .map(|text| amsrust::autorun::typist(text, &motherboard)),
         None => typed
             .as_deref()
-            .map(|text| Typist::new(text, type_at, motherboard.keyboard_layout())),
+            .map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout())),
     };
     if typist.is_some() && monitor_mode {
         eprintln!("--type is ignored in the interactive monitor");

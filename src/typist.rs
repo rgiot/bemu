@@ -19,6 +19,29 @@ pub struct Typist {
     /// T-state at which the next press or release is due.
     next_at: usize,
     pressed: Option<Vec<CpcKey>>,
+    /// [`Self::when_waiting_for_a_key`]: the typing waits for the firmware to wait for a key, or
+    /// for this T-state at the latest.
+    waiting_for_a_key: Option<usize>,
+    /// The address the machine watches for it.
+    watched: Option<u16>,
+}
+
+/// The firmware's jumpblock entry of KM WAIT CHAR: `RST 1` (&CF) and the address of the routine in
+/// the lower ROM (the 464's, 664's or 6128's: the entry says).
+const KM_WAIT_CHAR_ENTRY: u16 = 0xbb06;
+
+/// How long after the firmware first waits for a key the typing starts: a key pressed during its
+/// first scans of the keyboard is lost (measured: at 20 ms after, not at 50 ms).
+const KEY_SETTLE_T_STATES: usize = T_STATES_PER_SECOND / 10;
+
+/// Before this, the jumpblock may not be set up yet: its bytes mean nothing.
+const JUMPBLOCK_READY: usize = T_STATES_PER_SECOND / 4;
+
+/// The lower ROM's KM WAIT CHAR, as the jumpblock says, once it is set up.
+fn km_wait_char(motherboard: &Motherboard) -> Option<u16> {
+    let entry = |offset| motherboard.read_byte(KM_WAIT_CHAR_ENTRY + offset);
+    // RST 1 (LOW JUMP): an address of the lower ROM (its top bits: the ROM selection)
+    (entry(0) == 0xcf).then(|| (u16::from(entry(1)) | u16::from(entry(2)) << 8) & 0x3fff)
 }
 
 /// 40ms: 2 frames, long enough for the firmware's keyboard scan.
@@ -76,6 +99,8 @@ impl Typist {
             keys,
             next_at: (at_seconds * T_STATES_PER_SECOND as f64) as usize,
             pressed: None,
+            waiting_for_a_key: None,
+            watched: None,
         }
     }
 
@@ -93,8 +118,54 @@ impl Typist {
 
     /// Press or release the keys that are due. Cheap: call it as often as
     /// wanted (every instruction or every frame).
+    /// `text`, typed as soon as the firmware waits for a key (BASIC's prompt, booted: the PC reaches
+    /// KM WAIT CHAR), or at `max_seconds` at the latest. Keys typed before are lost when the ROMs
+    /// boot for long (UniDOS, the M4): this does not guess how long.
+    pub fn when_waiting_for_a_key(
+        text: &str,
+        max_seconds: f64,
+        layout: crate::keyboard::KeyboardLayout,
+    ) -> Self {
+        let mut typist = Self::new(text, 0.0, layout);
+        typist.waiting_for_a_key = Some((max_seconds * T_STATES_PER_SECOND as f64) as usize);
+        typist
+    }
+
+    /// Whether the typing has begun (it does not wait for the firmware any more).
+    pub fn started(&self) -> bool {
+        self.waiting_for_a_key.is_none()
+    }
+
+    /// Whether the typing still waits for the firmware (see [`Self::when_waiting_for_a_key`]).
+    fn wait_for_a_key(&mut self, motherboard: &mut Motherboard, now: usize) -> bool {
+        let Some(latest) = self.waiting_for_a_key else {
+            return false;
+        };
+        let waiting = now >= JUMPBLOCK_READY && motherboard.pc_watch_hit();
+        if waiting || now >= latest {
+            motherboard.watch_pc(None);
+            self.waiting_for_a_key = None;
+            // a key pressed in the first scans after it is lost (between 20 and 50 ms): 100 ms
+            self.next_at = now + if waiting { KEY_SETTLE_T_STATES } else { 0 };
+            return false;
+        }
+        // the jumpblock set up (or changed: another firmware), its routine watched
+        if now >= JUMPBLOCK_READY {
+            if let Some(address) = km_wait_char(motherboard) {
+                if !motherboard.pc_watch_hit() && self.watched != Some(address) {
+                    motherboard.watch_pc(Some(address));
+                    self.watched = Some(address);
+                }
+            }
+        }
+        true
+    }
+
     pub fn update(&mut self, motherboard: &mut Motherboard) {
         let now = motherboard.t_state_counter().value();
+        if self.wait_for_a_key(motherboard, now) {
+            return;
+        }
         if now >= self.next_at {
             if let Some(source) = self.basic.take() {
                 // as LOAD would (BASIC is up by now: --type-at); what the tokenizer can't read
@@ -152,7 +223,10 @@ impl Typist {
 impl Typist {
     /// Whether everything was typed (nothing pressed, nothing left).
     pub fn is_done(&self) -> bool {
-        self.basic.is_none() && self.keys.is_empty() && self.pressed.is_none()
+        self.waiting_for_a_key.is_none()
+            && self.basic.is_none()
+            && self.keys.is_empty()
+            && self.pressed.is_none()
     }
 
     /// The keys held now: a frontend that sets the whole matrix each frame keeps them pressed.

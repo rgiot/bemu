@@ -93,8 +93,9 @@ cargo run --release -- --drive-a 3.5 --dsk 'batman_forever.zip#Batman Forever (O
 
 `--autorun` starts the disc in drive A (or the tape) by itself once the machine has booted, as a
 user would: `RUN"` of its program (its menu or loader, else its biggest file; CATART entries are
-not files), `|CPM` for a CP/M system disc, `|TAPE` then `RUN"` for `--cdt`. It is typed at
-`--type-at`, 5 s at least with UniDOS or the M4 (which boot for longer), before `--type`.
+not files), `|CPM` for a CP/M system disc, `|TAPE` then `RUN"` for `--cdt`. It is typed as soon
+as BASIC waits for a key (the firmware reaches KM WAIT CHAR: 0.8 s on a 6128, 3.7 s with UniDOS
+and the M4, whose ROMs boot for longer), before `--type`.
 
 ```sh
 cargo run --release -- --dsk validation/Benediction/bnd4_package.dsk --autorun

@@ -161,15 +161,20 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # its own default packages include `tools`, which the SDK no longer has: ours instead
       - uses: android-actions/setup-android@v3
-      - name: Install the SDK platform and the NDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018'
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,x86_64-linux-android
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
+      # the dependencies cached from this branch's runs too (by default only the default branch
+      # writes the cache): fewer downloads from Maven Central, which throttles (HTTP 429)
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
       - name: Release key
         if: env.KEYSTORE_BASE64 != ''
         run: |
@@ -178,24 +183,71 @@ jobs:
       - name: Build the APKs
         working-directory: bemu/bemu-droid
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon assembleDebug assembleRelease
+        run: |
+          # the NDK installed above, not a newer one of the runner's image
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
+          ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleRelease bundleRelease
       - name: Test the machine on the host
         working-directory: bemu/bemu-droid/rust
         run: cargo test --release --no-default-features
       - name: Prepare distribution
         run: |
           mkdir -p dist
-          cp bemu-droid/app/build/outputs/apk/debug/app-debug.apk dist/bemu-droid-debug.apk
-          cp bemu-droid/app/build/outputs/apk/release/app-release.apk dist/bemu-droid.apk
+          apk=bemu-droid/app/build/outputs/apk
+          cp $apk/debug/app-universal-debug.apk dist/bemu-droid-debug.apk
+          cp $apk/release/app-universal-release.apk dist/bemu-droid.apk
+          cp $apk/release/app-arm64-v8a-release.apk dist/bemu-droid-arm64.apk
+          cp bemu-droid/app/build/outputs/bundle/release/app-release.aab dist/bemu-droid.aab
       - uses: actions/upload-artifact@v4
         with:
           name: bemu-android
-          path: bemu/dist/*.apk
+          path: |
+            bemu/dist/*.apk
+            bemu/dist/*.aab
           if-no-files-found: error
+
+  # The app run on an Android emulator: a disc opened and started by itself, both orientations,
+  # the background and back, no crash (bemu-droid/tests/smoke.sh). The emulator draws with GLES:
+  # the raw picture; the CTM (Vulkan) needs a phone.
+  android-smoke:
+    name: Android emulator smoke test
+    needs: android
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: bemu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bemu
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: bemu-android
+          path: bemu/dist
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          working-directory: bemu
+          script: bemu-droid/tests/smoke.sh dist/bemu-droid-debug.apk validation/Benediction/bnd4_package.dsk smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bemu-android-smoke
+          path: bemu/smoke/
+          if-no-files-found: warn
 
   # Make the distributions available on the GitHub release page:
   # - a push on master refreshes the "latest" development pre-release

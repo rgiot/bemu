@@ -3,6 +3,7 @@ package org.bemu.droid
 import android.content.res.Configuration
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,6 +57,11 @@ interface Controls {
 fun BemuScreen(controls: Controls) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var keyboard by remember { mutableStateOf(false) }
+    // Back closes the keyboard before it leaves the app
+    BackHandler(enabled = keyboard) {
+        keyboard = false
+        Native.releaseKeys(controls.handle)
+    }
     val joystick = remember { JoystickState { bits -> Native.joystick(controls.handle, bits) } }
     val onKey = { number: Int, down: Boolean -> Native.key(controls.handle, number, down) }
 

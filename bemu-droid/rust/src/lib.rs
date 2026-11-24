@@ -5,6 +5,7 @@
 //! touch controls, and calls the functions of [`jni_api`] through its `Native` object.
 
 pub mod config;
+pub mod governor;
 pub mod machine;
 
 #[cfg(target_os = "android")]

@@ -56,8 +56,22 @@ fun SettingsDialog(initial: Settings, onApply: (Settings) -> Unit, onLicences: (
                 Toggle("RulezCharge (|RZ: downloads from cpcrulez.fr)", s.rulezcharge) { s = s.copy(rulezcharge = it) }
                 Toggle("UniDOS", s.unidos) { s = s.copy(unidos = it) }
                 Toggle("PlayCity", s.playcity) { s = s.copy(playcity = it) }
-                Toggle("French ROMs and AZERTY (6128)", s.language == "fr") {
-                    s = s.copy(language = if (it) "fr" else "en")
+                Toggle("Vibrate on touch", s.vibrate) { s = s.copy(vibrate = it) }
+                Text("Language: ROMs and keyboard (French: 6128 only)", fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+                androidx.compose.foundation.layout.FlowRow {
+                    val phone = Settings.languageFor(Settings.phoneLocale())
+                    listOf(
+                        Settings.AUTO to "Follow the phone (${if (phone == "fr") "French" else "English"})",
+                        "en" to "English (QWERTY)",
+                        "fr" to "French (AZERTY)",
+                    ).forEach { (choice, label) ->
+                        FilterChip(
+                            selected = s.languageChoice == choice,
+                            onClick = { s = s.copy(languageChoice = choice) },
+                            label = { Text(label) },
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
                 }
             }
         },

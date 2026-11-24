@@ -63,8 +63,8 @@ fn init(env: &mut JNIEnv, context: &JObject) {
     });
 }
 
-/// `create(context, settingsJson, sdFolder): Long` — 0 when the machine cannot be built (see the
-/// log).
+/// `create(context, settingsJson, sdFolder, stateFolder): Long` — 0 when the machine cannot be
+/// built (see the log). The machine saved in `stateFolder` comes back if its settings are these.
 #[no_mangle]
 pub extern "system" fn Java_org_bemu_droid_Native_create(
     mut env: JNIEnv,
@@ -72,10 +72,12 @@ pub extern "system" fn Java_org_bemu_droid_Native_create(
     context: JObject,
     settings: JString,
     sd: JString,
+    state: JString,
 ) -> jlong {
     init(&mut env, &context);
     let settings = string(&mut env, &settings);
     let sd = string(&mut env, &sd);
+    let state = string(&mut env, &state);
     let config = match Config::from_json(&settings) {
         Ok(config) => config,
         Err(e) => {
@@ -84,7 +86,7 @@ pub extern "system" fn Java_org_bemu_droid_Native_create(
         }
     };
     let input = Arc::new(Input::default());
-    match runner::spawn(config, sd.into(), Arc::clone(&input)) {
+    match runner::spawn(config, sd.into(), state.into(), Arc::clone(&input)) {
         Ok(commands) => Box::into_raw(Box::new(Handle {
             commands: Mutex::new(commands),
             input,
@@ -242,5 +244,53 @@ pub extern "system" fn Java_org_bemu_droid_Native_hasCrt(_env: JNIEnv, _this: JO
     match unsafe { self::handle(handle) } {
         Some(handle) if handle.input.crt.load(std::sync::atomic::Ordering::Relaxed) => JNI_TRUE,
         _ => JNI_FALSE,
+    }
+}
+
+/// `keyLegends(language): String`: the keycaps of the CPC's keyboard in `language` ("en" or "fr"):
+/// 80 lines (the firmware's key numbers), each "normal\tshifted", or empty for a key that types no
+/// printable character. Taken from the firmware's own key tables.
+#[no_mangle]
+pub extern "system" fn Java_org_bemu_droid_Native_keyLegends(mut env: JNIEnv, _this: JObject, language: JString) -> jni::sys::jstring {
+    let layout = match string(&mut env, &language).as_str() {
+        "fr" => amsrust::keyboard::KeyboardLayout::French,
+        _ => amsrust::keyboard::KeyboardLayout::Uk,
+    };
+    let lines: Vec<String> = (0..80)
+        .map(|index| layout.legend(index).map_or(String::new(), |(normal, shifted)| format!("{normal}\t{shifted}")))
+        .collect();
+    jstring(&mut env, &lines.join("\n"))
+}
+
+/// `save(handle): String?` — the machine saved (the app going to the background, which Android
+/// may end): null, or why it could not be.
+#[no_mangle]
+pub extern "system" fn Java_org_bemu_droid_Native_save(mut env: JNIEnv, _this: JObject, handle: jlong) -> jni::sys::jstring {
+    let Some(handle) = (unsafe { self::handle(handle) }) else {
+        return std::ptr::null_mut();
+    };
+    let (reply, answer) = channel();
+    handle.send(Command::Save(reply));
+    match answer.recv() {
+        Ok(Err(e)) => jstring(&mut env, &e),
+        _ => std::ptr::null_mut(),
+    }
+}
+
+/// `takeCrtDropped(handle): Boolean`: whether the phone was found too slow for the CRT since the
+/// last call (the picture is raw now: the app says so).
+#[no_mangle]
+pub extern "system" fn Java_org_bemu_droid_Native_takeCrtDropped(_env: JNIEnv, _this: JObject, handle: jlong) -> jboolean {
+    match unsafe { self::handle(handle) } {
+        Some(handle) if handle.input.crt_dropped.swap(false, std::sync::atomic::Ordering::Relaxed) => JNI_TRUE,
+        _ => JNI_FALSE,
+    }
+}
+
+/// `keepCrt(handle)`: the CRT back, too slow as it is (the user asked).
+#[no_mangle]
+pub extern "system" fn Java_org_bemu_droid_Native_keepCrt(_env: JNIEnv, _this: JObject, handle: jlong) {
+    if let Some(handle) = unsafe { self::handle(handle) } {
+        handle.send(Command::KeepCrt);
     }
 }

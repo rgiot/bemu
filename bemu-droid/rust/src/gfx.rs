@@ -12,6 +12,9 @@ use raw_window_handle::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplay
 
 type Window = std::ptr::NonNull<std::ffi::c_void>;
 
+/// The storage buffers the CRT's kernels bind in a compute stage (the kernel `slots`: 8).
+const CRT_STORAGE_BUFFERS: u32 = 8;
+
 struct Gpu {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
@@ -168,23 +171,33 @@ impl Gpu {
             ..Default::default()
         }))
         .map_err(|e| format!("no adapter: {e}"))?;
+        // the CRT's kernels bind up to 8 storage buffers in a compute stage: a GPU allowing fewer
+        // (the emulator's SwiftShader: 4) shows the raw picture rather than kernels it refuses
+        let supported = adapter.limits();
         let compute = adapter
             .get_downlevel_capabilities()
             .flags
-            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+            && supported.max_storage_buffers_per_shader_stage >= CRT_STORAGE_BUFFERS;
+        if !compute {
+            log::info!(
+                "no CRT: {} storage buffers per shader stage, {CRT_STORAGE_BUFFERS} needed",
+                supported.max_storage_buffers_per_shader_stage
+            );
+        }
         let request = |limits: wgpu::Limits| {
             amsrust::display::wait_for(adapter.request_device(&wgpu::DeviceDescriptor {
-                required_limits: limits.using_resolution(adapter.limits()),
+                required_limits: limits,
                 ..Default::default()
             }))
         };
-        let (device, queue) = if compute {
-            request(wgpu::Limits::downlevel_defaults())
-                .or_else(|_| request(wgpu::Limits::downlevel_webgl2_defaults()))
-        } else {
-            request(wgpu::Limits::downlevel_webgl2_defaults())
-        }
-        .map_err(|e| format!("no device: {e}"))?;
+        // all the GPU allows (the downlevel defaults allow 4 storage buffers: too few for the CRT)
+        let (device, queue) = request(supported.clone())
+            .or_else(|_| request(wgpu::Limits::downlevel_defaults().using_resolution(supported.clone())))
+            .or_else(|_| request(wgpu::Limits::downlevel_webgl2_defaults().using_resolution(supported.clone())))
+            .map_err(|e| format!("no device: {e}"))?;
+        let compute = compute
+            && device.limits().max_storage_buffers_per_shader_stage >= CRT_STORAGE_BUFFERS;
 
         let capabilities = surface.get_capabilities(&adapter);
         let format = format_of(&capabilities).ok_or("the surface has no format")?;

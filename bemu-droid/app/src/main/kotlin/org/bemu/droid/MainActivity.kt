@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.widget.Toast
@@ -11,9 +12,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.IntentCompat
@@ -21,6 +28,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
+import kotlinx.coroutines.delay
 import kotlin.concurrent.thread
 
 /**
@@ -33,6 +41,8 @@ class MainActivity : ComponentActivity(), Controls {
     private var settings by mutableStateOf(Settings())
     private var showSettings by mutableStateOf(false)
     private var showLicences by mutableStateOf(false)
+    /** The phone was found too slow for the CTM: the app says so (once). */
+    private var crtDropped by mutableStateOf(false)
 
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(::load)
@@ -48,13 +58,17 @@ class MainActivity : ComponentActivity(), Controls {
         fullScreen()
         settings = Settings.load(this)
         Licences.preload(this)
-        handle = Native.create(this, settings.toJson(), sdFolder.absolutePath)
+        handle = Native.create(this, settings.toEngineJson(), sdFolder.absolutePath, File(filesDir, "state").absolutePath)
         if (handle == 0L) {
             Toast.makeText(this, "The emulator could not start", Toast.LENGTH_LONG).show()
         }
         setContent {
+            val language = settings.language()
+            val legends = remember(language) { parseKeyLegends(Native.keyLegends(language)) }
             MaterialTheme(colorScheme = darkColorScheme()) {
-                BemuScreen(this)
+                CompositionLocalProvider(LocalVibrate provides settings.vibrate, LocalKeyLegends provides legends) {
+                    BemuScreen(this)
+                }
                 if (showSettings) {
                     SettingsDialog(
                         initial = settings,
@@ -68,6 +82,27 @@ class MainActivity : ComponentActivity(), Controls {
                 }
                 if (showLicences) {
                     LicencesScreen(onClose = { showLicences = false })
+                }
+                // the emulator tells when the phone is too slow for the CTM
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        delay(1000)
+                        if (Native.takeCrtDropped(handle)) crtDropped = true
+                    }
+                }
+                if (crtDropped) {
+                    AlertDialog(
+                        onDismissRequest = { slowPhone(keepCrt = false) },
+                        title = { Text("CTM monitor turned off") },
+                        text = {
+                            Text(
+                                "This phone is too slow to draw the CTM644's picture at the CPC's speed: " +
+                                    "the picture is now shown raw. You can turn the CTM on again in Settings.",
+                            )
+                        },
+                        confirmButton = { TextButton(onClick = { slowPhone(keepCrt = false) }) { Text("OK") } },
+                        dismissButton = { TextButton(onClick = { slowPhone(keepCrt = true) }) { Text("Keep the CTM") } },
+                    )
                 }
             }
         }
@@ -85,6 +120,12 @@ class MainActivity : ComponentActivity(), Controls {
         super.onResume()
         fullScreen()
         Native.pause(handle, false)
+    }
+
+    override fun onStop() {
+        // in the background Android may end the app: the machine comes back as it was
+        Native.save(handle)?.let { Log.w("bemu", "not saved: $it") }
+        super.onStop()
     }
 
     override fun onPause() {
@@ -126,6 +167,8 @@ class MainActivity : ComponentActivity(), Controls {
             } catch (e: Exception) {
                 "error:$name: ${e.message}"
             }
+            // the CI's smoke test reads it (bemu-droid/tests/smoke.sh)
+            Log.i("bemu", "load $name: $answer")
             runOnUiThread {
                 val message = when {
                     answer.startsWith("error:") -> answer.removePrefix("error:")
@@ -160,9 +203,20 @@ class MainActivity : ComponentActivity(), Controls {
         return uri.lastPathSegment?.substringAfterLast('/') ?: "file"
     }
 
+    /** The answer to the slow phone's notice: the raw picture saved in the settings, or the CTM kept. */
+    private fun slowPhone(keepCrt: Boolean) {
+        crtDropped = false
+        if (keepCrt) {
+            Native.keepCrt(handle)
+        } else {
+            settings = settings.copy(ctm = false)
+            settings.save(this)
+        }
+    }
+
     private fun applySettings(new: Settings) {
         showSettings = false
-        val error = Native.configure(handle, new.toJson())
+        val error = Native.configure(handle, new.toEngineJson())
         if (error != null) {
             Toast.makeText(this, error, Toast.LENGTH_LONG).show()
         } else {

@@ -52,9 +52,24 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     androidResources {
         // the licences' inventory is gzipped already
         noCompress += "gzip"
+    }
+
+    // an APK per ABI (arm64 alone is about half the size) besides the universal one; Google Play
+    // gets the bundle (bundleRelease), which it splits itself
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include(*abis().toTypedArray())
+            isUniversalApk = true
+        }
     }
 
     packaging {
@@ -122,4 +137,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
+
+    testImplementation("junit:junit:4.13.2")
+    // the real org.json for the JVM tests (android.jar only has stubs)
+    testImplementation("org.json:json:20240303")
 }

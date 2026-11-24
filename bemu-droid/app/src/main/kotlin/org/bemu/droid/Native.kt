@@ -13,8 +13,14 @@ object Native {
         System.loadLibrary("bemu_droid")
     }
 
-    /** An emulator configured by [settings] (JSON, see [Settings]), its M4 SD card in [sdFolder]; 0 on failure. */
-    external fun create(context: Context, settings: String, sdFolder: String): Long
+    /**
+     * An emulator configured by [settings] (JSON, see [Settings]), its M4 SD card in [sdFolder]; 0 on
+     * failure. The machine saved in [stateFolder] ([save]) comes back if it had these settings.
+     */
+    external fun create(context: Context, settings: String, sdFolder: String, stateFolder: String): Long
+
+    /** The machine saved (settings, medium, snapshot), to come back if Android ends the app: null, or why not. */
+    external fun save(handle: Long): String?
 
     external fun destroy(handle: Long)
 
@@ -45,6 +51,18 @@ object Native {
 
     /** [Joystick] bits: up 1, down 2, left 4, right 8, fire 1 16, fire 2 32. */
     external fun joystick(handle: Long, bits: Int)
+
+    /**
+     * The keycaps in [language] ("en", "fr"): 80 lines by the firmware's key numbers, "normal<TAB>shifted",
+     * empty for a key that types no printable character.
+     */
+    external fun keyLegends(language: String): String
+
+    /** Whether the phone was found too slow for the CRT since the last call (the picture is raw now). */
+    external fun takeCrtDropped(handle: Long): Boolean
+
+    /** The CRT back, too slow as it is (the user asked). */
+    external fun keepCrt(handle: Long)
 
     /** Whether the GPU draws the CRT (else the picture is raw). */
     external fun hasCrt(handle: Long): Boolean
