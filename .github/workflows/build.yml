@@ -170,7 +170,11 @@ jobs:
           targets: aarch64-linux-android,x86_64-linux-android
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
+      # the dependencies cached from this branch's runs too (by default only the default branch
+      # writes the cache): fewer downloads from Maven Central, which throttles (HTTP 429)
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
       - name: Release key
         if: env.KEYSTORE_BASE64 != ''
         run: |
