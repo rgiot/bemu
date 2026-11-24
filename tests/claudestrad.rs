@@ -200,6 +200,12 @@ const KNOWN_DIFFERENCES: &[(&str, &str, f64)] = &[
     // the real 6128+ runs the DMA 3 us later than CLAUDESTRAD's emulation (the green rectangle is
     // 3 us to the right, the yellow one off the screen): bemu follows the photo
     ("PLUSDMA2", "6128plus", 0.90),
+    // the six bands of HSYNCW (R3 = 6, 5, 4, 6, 5, 4) shift the picture as the real CTM 644's photo
+    // does (about 0.5 us a band step on bemu, 0.3 to 0.7 on the photo, whose camera adds a tilt); the
+    // stripes of CLAUDESTRAD's own picture sit elsewhere
+    ("HSYNCW", "crtc0", 0.86),
+    ("HSYNCW", "crtc1", 0.86),
+    ("HSYNCW", "crtc2", 0.86),
 ];
 
 fn machine(machine: Machine, playcity: bool) -> MotherboardBuilder {
