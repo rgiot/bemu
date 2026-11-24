@@ -64,7 +64,6 @@ clap = { version = "4.5", features = ["derive", "wrap_help"] }
 # HFE disc images, read and written by the HxC floppy library (a C library: desktop only)
 hxcfe = "0.3.4"
 rustyline = "8.2.0" # Make not mandaotry
-minifb = "0.28.0"
 cpal = { version = "0.18.2", optional = true }
 ctrlc = { version = "3.5.2", features = ["termination"] }
 # the debug server: HTTP (axum, on a tokio runtime of its own thread) and its OpenAPI
@@ -81,6 +80,10 @@ wgpu = { version = "30", optional = true, default-features = false, features = [
 # `--frontend winit`: a window drawn by the GPU, see src/frontend/winit_gpu.rs
 winit = { version = "0.30", optional = true }
 egui-winit = { version = "0.37", optional = true, default-features = false, features = ["clipboard", "links", "wayland", "x11"] }
+
+# The minifb window of the desktop binary (no Android backend: bemu-droid draws with wgpu).
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
+minifb = "0.28.0"
 
 # wgpu needs a native backend per OS; "vulkan" alone leaves macOS with none.
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -1,0 +1,8 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+# built by rust/build-android.sh
+app/src/main/jniLibs/
+rust/target/

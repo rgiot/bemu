@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- the monitor -->
+    <path android:fillColor="#D8D8D8" android:pathData="M30,34h48a4,4 0,0 1,4 4v28a4,4 0,0 1,-4 4h-48a4,4 0,0 1,-4 -4v-28a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#000080" android:pathData="M33,38h42v26h-42z" />
+    <!-- the CPC's red, green and blue -->
+    <path android:fillColor="#FF0000" android:pathData="M37,58h10v3h-10z" />
+    <path android:fillColor="#00FF00" android:pathData="M49,58h10v3h-10z" />
+    <path android:fillColor="#0080FF" android:pathData="M61,58h10v3h-10z" />
+    <!-- READY -->
+    <path android:fillColor="#FFFF00" android:pathData="M37,42h22v3h-22z" />
+    <path android:fillColor="#FFFF00" android:pathData="M37,47h4v4h-4z" />
+    <!-- the stand -->
+    <path android:fillColor="#D8D8D8" android:pathData="M46,70h16v4h-16z" />
+</vector>

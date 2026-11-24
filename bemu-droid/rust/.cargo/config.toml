@@ -1,0 +1,7 @@
+# The HxC floppy library (HFE images, a C library built by hxcfe-sys) sets the scheduling of its
+# threads with pthread_attr_setinheritsched, which Android's libc (Bionic) has not: a no-op there.
+[env]
+CFLAGS_aarch64_linux_android = "-DPTHREAD_EXPLICIT_SCHED=1 -Dpthread_attr_setinheritsched(a,b)=0"
+CFLAGS_armv7_linux_androideabi = "-DPTHREAD_EXPLICIT_SCHED=1 -Dpthread_attr_setinheritsched(a,b)=0"
+CFLAGS_x86_64_linux_android = "-DPTHREAD_EXPLICIT_SCHED=1 -Dpthread_attr_setinheritsched(a,b)=0"
+CFLAGS_i686_linux_android = "-DPTHREAD_EXPLICIT_SCHED=1 -Dpthread_attr_setinheritsched(a,b)=0"

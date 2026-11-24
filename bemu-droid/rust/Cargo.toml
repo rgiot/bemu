@@ -1,0 +1,54 @@
+[package]
+name = "bemu-droid"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "The bemu Amstrad CPC emulator on Android: the native library of the bemu-droid app"
+
+[lib]
+# libbemu_droid.so, loaded by the app (org.bemu.droid.Native); rlib for the host tests
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The whole machine, the CTM's CRT on the GPU, the M4 (its WiFi: RulezCharge), UniDOS...
+amsrust = { path = "../..", default-features = false, features = [
+    "m4", "m4-wifi", "unidos", "albireo", "nova", "playcity", "digiblaster", "willy",
+    "dandanator",
+] }
+image = "0.23.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "gles"] }
+raw-window-handle = "0.6"
+
+[features]
+default = ["crt"]
+# The CRT (the CTM644...) drawn by the GPU; the host tests go without (on the host CubeCL wants its
+# CPU backend, which downloads LLVM).
+crt = ["amsrust/crt-gpu"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk = { version = "0.9", features = ["rwh_06"] }
+ndk-context = "0.1"
+android_logger = "0.14"
+# the sound, through AAudio
+cpal = "0.18.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+# the JNI functions stay exported (dynamic symbols)
+strip = true
+
+[profile.dev]
+# the emulator is too slow unoptimised to be usable on a phone
+opt-level = 2
+
+
+[dev-dependencies]
+# discs made for the tests
+cpclib-disc = { path = "../../../rust.cpcdemotools/cpclib-disc", default-features = false }

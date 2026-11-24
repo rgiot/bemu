@@ -7,12 +7,14 @@ Amstrad CPC emulator written in Rust.
 The **Build distributions** workflow runs on pushes, pull requests and manual dispatch. Download
 its artifacts from a successful run's **Artifacts** section in GitHub Actions: Linux x86-64,
 macOS ARM64 and Windows x86-64 archives contain the executable; `bemu-web` contains the web
-package and demo. Extract the Unix tarballs to preserve executable permissions. Artifacts expire
-according to the repository's Actions retention policy.
+package and demo; `bemu-android` contains the Android app, bemu-droid (its release and debug
+APKs). Extract the Unix tarballs to preserve executable permissions. Artifacts expire according
+to the repository's Actions retention policy.
 
 The builds use the current default branch of `cpcsdk/rust.cpclib` as the sibling
 `rust.cpcdemotools` checkout. See [NOTICE.md](NOTICE.md) for the bundled ROMs and library licences.
-The web demo must be served over HTTP, as described in [web/README.md](web/README.md).
+The web demo must be served over HTTP, as described in [web/README.md](web/README.md). The Android
+app, bemu-droid, is described in [bemu-droid/README.md](bemu-droid/README.md).
 
 ## Running the emulator
 
@@ -87,6 +89,15 @@ same. `validation/demos/batman` has both: the 3" set and the one disc version fo
 
 ```sh
 cargo run --release -- --drive-a 3.5 --dsk 'batman_forever.zip#Batman Forever (One disk version).dsk'
+```
+
+`--autorun` starts the disc in drive A (or the tape) by itself once the machine has booted, as a
+user would: `RUN"` of its program (its menu or loader, else its biggest file; CATART entries are
+not files), `|CPM` for a CP/M system disc, `|TAPE` then `RUN"` for `--cdt`. It is typed at
+`--type-at`, 5 s at least with UniDOS or the M4 (which boot for longer), before `--type`.
+
+```sh
+cargo run --release -- --dsk validation/Benediction/bnd4_package.dsk --autorun
 ```
 
 ## Menus and command palette
