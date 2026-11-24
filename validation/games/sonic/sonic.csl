@@ -14,19 +14,19 @@ screenshot
 wait 7000000
 screenshot_name 'sonic_03_title'
 screenshot
-joystick 0 fire1
+joystick 0,fire1
 wait 300000
 joystick 0
 wait 4000000
 screenshot_name 'sonic_04_after_fire'
 screenshot
-joystick 0 fire1
+joystick 0,fire1
 wait 300000
 joystick 0
 wait 6000000
 screenshot_name 'sonic_05_level'
 screenshot
-joystick 0 right
+joystick 0,right
 wait 3000000
 screenshot_name 'sonic_06_run_right'
 screenshot

@@ -1,0 +1,3 @@
+canaux 0+1+2 : C0 042 C1 043 C2 044
+canal seul : C0 040 C1 040 C2 040
+canal seul : C0 032 C1 032 C2 032

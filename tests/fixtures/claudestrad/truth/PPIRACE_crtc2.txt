@@ -1,0 +1,4 @@
+~Lectures du programme principal : 41337
+Interruptions : 3000
+~Lectures fausses (ESPACE vue) : 311.5
+Premieres valeurs fausses : 00 00 00 00 00 00 00 00

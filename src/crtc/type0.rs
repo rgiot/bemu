@@ -399,19 +399,19 @@ impl CrtcChip for Crtc0 {
         self.counters_frozen = core.regs[0] == 0;
         if self.counters_frozen {
             if self.r0_zero_wraps == 0 {
-                // First C0=0 with R0=0: C9 is compared with R9 for the first time; on C9=R9 it
-                // stays put and C4 moves on the next one (13.2.6), starting the additional
-                // management when C4=R4. Nothing moves at all while an adjustment is running
-                // (13.2.3).
-                let hiccup = !core.in_vertical_adjust && self.c9_is_last(core);
-                if !hiccup && !core.in_vertical_adjust {
+                // First C0=0 with R0=0: C9 is compared with R9 for the first time. Short of R9 C9 moves
+                // on (nothing moves at all while an adjustment is running, ACCC 13.2.3); on R9 the row
+                // ends as usual, C9 back to 0 and C4 on (or the frame's end on C4=R4): the user's real
+                // CRTC 0 (R0ZTEST: C4=32 C9=7 then 1536, C4=38 C9=7 then 1280 loops) does not keep C9
+                // on R9 to move C4 on the next wrap.
+                let ends_row = !core.in_vertical_adjust && self.c9_is_last(core);
+                if ends_row {
+                    self.counters_frozen = false;
+                } else if !core.in_vertical_adjust {
                     core.vlc += 1;
                 }
-                self.r0_zero_c4_pending = hiccup;
-                if hiccup && core.vcc == core.regs[4] {
-                    self.r0_enlarge_c9_to_r5 = true;
-                }
             } else if self.r0_zero_wraps == 1 && self.r0_zero_c4_pending {
+                // (R0=0 written on the C0=0 that had just counted: C4 moves once, see `register_written`)
                 core.vcc += 1;
                 self.r0_zero_c4_pending = false;
             }

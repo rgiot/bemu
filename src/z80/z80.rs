@@ -316,6 +316,11 @@ pub struct Z80 {
     /// "ld a,r/ld a,i p/v int test", on a CPC).
     ld_a_ir_ending: bool,
 
+    /// Q: the flags the previous instruction wrote, 0 when it wrote none (SCF and CCF of a Zilog Z80
+    /// take their X and Y from it). `flags_written` tells that the running instruction writes some.
+    q: u8,
+    flags_written: bool,
+
     /// T-states of the instruction running so far, and the one INT was first seen low on: the Z80
     /// samples INT on the last T-state the instruction uses, so an INT that only comes during the
     /// idle T-states the CPC pads it with to its last microsecond waits for the next instruction
@@ -393,6 +398,7 @@ impl Z80 {
 
     #[inline]
     pub fn set_flag(&mut self, flag: Z80Flags, val: bool) {
+        self.flags_written = true;
         let f = &mut self.reg8_mut(Reg8::F).val;
         flag.set(val, f);
     }
@@ -421,11 +427,13 @@ impl Z80 {
 
     #[inline]
     fn set_flags(&mut self, flags: u8) {
+        self.flags_written = true;
         self.reg8_mut(Reg8::F).set(flags);
     }
 
     #[inline]
     fn auto_update_flags(&mut self, val: u8) {
+        self.flags_written = true;
         let f = &mut self.reg8_mut(Reg8::F).val;
         Z80Flags::auto_update(
             &[
@@ -442,6 +450,7 @@ impl Z80 {
 
     #[inline]
     fn auto_update_flags_x_y(&mut self, val: u8) {
+        self.flags_written = true;
         let f = &mut self.reg8_mut(Reg8::F).val;
         Z80Flags::auto_update(&[Z80Flags::X, Z80Flags::Y], f, val);
     }
@@ -995,7 +1004,7 @@ impl Z80 {
             }
 
             Mnemonic::Ccf => {
-                let flags = alu::ccf(self.a(), self.flags());
+                let flags = alu::ccf(self.a(), self.flags(), self.q);
                 self.set_flags(flags);
             }
 
@@ -1676,7 +1685,7 @@ impl Z80 {
                 self.set_flag_off(Z80Flags::N);
             }
             Mnemonic::Scf => {
-                let flags = alu::scf(self.a(), self.flags());
+                let flags = alu::scf(self.a(), self.flags(), self.q);
                 self.set_flags(flags);
             }
 
@@ -2211,6 +2220,8 @@ impl Z80 {
     /// Work out how many T-states the instruction that just ended left idle
     /// in its last microsecond.
     fn record_idle_tail(&mut self) {
+        self.q = if self.flags_written { self.flags() } else { 0 };
+        self.flags_written = false;
         let (prefix, op) = (self.instr_prefix, self.instr_op);
         let pc = self.pc.get();
         let start = self.instr_start_pc;
@@ -2232,6 +2243,12 @@ impl Z80 {
             - u8::from(
                 self.last_idle_t > 0 && super::tstates::ends_with_write(prefix, op, taken),
             );
+    }
+
+    /// Sets Q, the flags the previous instruction wrote (0 when it wrote none), for a test that
+    /// starts a core from a given state.
+    pub fn set_q(&mut self, q: u8) {
+        self.q = q;
     }
 
     /// T-states the last executed instruction left idle in its last microsecond.

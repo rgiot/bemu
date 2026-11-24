@@ -221,6 +221,9 @@ export class Bemu {
     #canvas; #transport; #options;
     #listeners = new Map();
     #handlers = [];
+    /** The file input over the menu item under the pointer, and the one the user is choosing a file with. */
+    #fileInput = null;
+    #chosen = null;
     #running = false;
     #frameLoop = 0;
     #audio = null;
@@ -268,7 +271,10 @@ export class Bemu {
         this.#listen(canvas, 'pointermove', pointer('move'));
         this.#listen(canvas, 'pointerdown', pointer('down'));
         this.#listen(canvas, 'pointerup', pointer('up'));
-        this.#listen(canvas, 'pointerleave', pointer('leave'));
+        // the pointer going to the file input over a menu item is still over the item
+        this.#listen(canvas, 'pointerleave', (event) => {
+            if (event.relatedTarget !== this.#fileInput) pointer('leave')(event);
+        });
         if (typeof document !== 'undefined') {
             this.#listen(document, 'fullscreenchange', () =>
                 this.#send('uiFullscreen', document.fullscreenElement === canvas));
@@ -604,6 +610,8 @@ export class Bemu {
         this.#destroyed = true;
         for (const [target, type, fn] of this.#handlers) target.removeEventListener(type, fn);
         this.#handlers = [];
+        this.#fileInput?.remove();
+        this.#chosen?.remove();
         this.#resizeObserver?.disconnect();
         this.#pixelRatioQuery?.removeEventListener('change', this.#pixelRatioChanged);
         this.#audio?.context.close();
@@ -669,11 +677,80 @@ export class Bemu {
         this.#emit(event, detail);
     }
 
+    /**
+     * A transparent file input over the menu item that opens a file chooser (`target`, in CSS pixels
+     * of the canvas; `null`: none). A browser opens the chooser only from the user's own click, and
+     * Safari not from a menu drawn by the worker: the click lands on a real input. The pointer is
+     * forwarded to the menus meanwhile, which see it over their item.
+     */
+    #showFileTarget(target) {
+        if (typeof document === 'undefined') return;
+        if (!target) {
+            this.#fileInput?.remove();
+            this.#fileInput = null;
+            return;
+        }
+        let input = this.#fileInput;
+        if (!input || input.dataset.id !== target.id) {
+            this.#fileInput?.remove();
+            input = document.createElement('input');
+            input.type = 'file';
+            input.dataset.id = target.id;
+            input.accept = target.accept;
+            input.title = '';
+            input.style.cssText = 'position:fixed;opacity:0;cursor:pointer;z-index:2147483647;font-size:0';
+            const canvas = this.#canvas;
+            const forward = (kind) => (event) => {
+                const box = canvas.getBoundingClientRect();
+                this.#send('uiPointer', kind, event.clientX - box.left, event.clientY - box.top, event.button ?? 0);
+            };
+            input.addEventListener('pointermove', forward('move'));
+            input.addEventListener('pointerup', forward('up'));
+            input.addEventListener('pointerdown', (event) => {
+                // the menus run the command and then ask the page for the file: it is this one
+                this.#chosen?.remove();
+                this.#chosen = { id: target.id, time: Date.now(), remove: () => input.remove() };
+                this.#fileInput = null;
+                forward('down')(event);
+            });
+            // while the chooser is open the input no longer covers the item
+            input.addEventListener('click', () => { input.style.pointerEvents = 'none'; });
+            input.addEventListener('pointerleave', (event) => {
+                if (event.relatedTarget !== canvas) forward('leave')(event);
+            });
+            input.addEventListener('change', async () => {
+                const file = input.files?.[0];
+                input.remove();
+                if (this.#chosen?.id === target.id) this.#chosen = null;
+                if (!file) return;
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                this.#transport.call('answerFile', [target.id, file.name, bytes], [bytes.buffer])
+                    .catch((error) => this.#emit('error', error));
+            });
+            input.addEventListener('cancel', () => {
+                input.remove();
+                if (this.#chosen?.id === target.id) this.#chosen = null;
+            });
+            document.body.append(input);
+            this.#fileInput = input;
+        }
+        const box = this.#canvas.getBoundingClientRect();
+        input.style.left = `${box.left + target.x}px`;
+        input.style.top = `${box.top + target.y}px`;
+        input.style.width = `${target.width}px`;
+        input.style.height = `${target.height}px`;
+    }
+
     /** What the menus ask the page: a file to pick, one to save, the volume, fullscreen. */
     #uiRequest(request) {
         switch (request?.type) {
+            case 'fileTarget':
+                this.#showFileTarget(request.target);
+                break;
             case 'pickFile': {
                 if (typeof document === 'undefined') return;
+                // the user clicked the file input over the menu item: it has the dialog
+                if (this.#chosen?.id === request.id && Date.now() - this.#chosen.time < 10_000) break;
                 const input = document.createElement('input');
                 input.type = 'file';
                 input.style.display = 'none';

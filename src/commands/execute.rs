@@ -666,6 +666,26 @@ pub(super) fn is_known(id: &str) -> bool {
     !matches!(execute(command, &mut probe), Err(CommandError::Unknown(_)))
 }
 
+/// Every input command that always asks a file to read is in [`file_picker`].
+#[cfg(test)]
+#[test]
+fn file_pickers_are_listed() {
+    for spec in super::all().iter().filter(|spec| spec.kind == super::Kind::Input) {
+        let mut probe = Probe::default();
+        let Ok(command) = Command::new(spec.id) else { continue };
+        if let Ok(Outcome::NeedsArg(ArgPrompt { kind: ArgKind::OpenFile(extensions), .. })) =
+            execute(command, &mut probe)
+        {
+            assert_eq!(
+                super::file_picker(spec.id),
+                Some(extensions),
+                "{} asks a file: list it in file_picker",
+                spec.id
+            );
+        }
+    }
+}
+
 /// A target for [`is_known`]: a machine, no host.
 #[cfg(test)]
 #[derive(Default)]

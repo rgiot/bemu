@@ -113,6 +113,12 @@ pub const SNAPSHOT_CHUNK_LEN: usize = 0x8f8;
 /// "10 us" of "Extra CPC Plus Hardware Information" ("to be checked") are later.
 const RASTER_INTERRUPT_DELAY: u8 = 2;
 
+/// Microseconds added between the last fetch of a line and the executions. The user's real 6128+
+/// shows the DMA's flags and interrupts 3 us later than the fetches alone put them, the raster
+/// interrupt being where it was (PLUSDMA: the first flag 40 us after the PRI interrupt with one
+/// channel, 42-44 with three; PLUSDMA2: the DMA interrupt's rectangle 3 us right of the PRI's).
+const DMA_EXECUTE_DELAY_US: u8 = 3;
+
 /// Microseconds a DMA LOAD lasts (Arnold V 2.6: "at least 8 cycles").
 const DMA_LOAD_US: u8 = 8;
 
@@ -443,6 +449,10 @@ impl Asic {
                     if enable && !dma.enabled {
                         dma.pause = 0;
                     }
+                    if !enable {
+                        // a channel disabled between its fetch and its execution does not execute
+                        dma.fetched = None;
+                    }
                     dma.enabled = enable;
                     // a 1 written to an interrupt bit clears it
                     if value & (0x40 >> channel) != 0 {
@@ -654,7 +664,7 @@ impl Asic {
         }
         if us == fetches {
             // all fetched: the executions follow, one after the other
-            let mut at = fetches + 1;
+            let mut at = fetches + 1 + DMA_EXECUTE_DELAY_US;
             for &channel in &active {
                 let dma = &mut self.dma[channel];
                 dma.execute_at = at;
@@ -1161,6 +1171,48 @@ mod test {
         assert!(
             !asic.dma_interrupt(),
             "cleared by the acknowledge, IVR bit 0 being clear"
+        );
+    }
+
+    /// Runs one DMA line of channel 0 (one INT instruction) and tells the microsecond of its
+    /// execution, `None` if it never happened; `disable_at` writes DCSR=0 at that microsecond.
+    fn int_executed_at(disable_at: Option<u8>) -> Option<u8> {
+        let mut asic = Asic::default();
+        let mut video = AsicVideo::default();
+        let mut psg = crate::psg::Psg::default();
+        let ram: Vec<u8> = 0x4010u16.to_le_bytes().to_vec();
+        let read = |address: u16| ram.get(usize::from(address) - 0x100).copied().unwrap_or(0);
+        asic.write(&mut video, 0x6c00, 0x00);
+        asic.write(&mut video, 0x6c01, 0x01);
+        asic.write(&mut video, 0x6c0f, 0x01);
+        asic.start_dma_line();
+        for us in 1..20 {
+            if disable_at == Some(us) {
+                asic.write(&mut video, 0x6c0f, 0x00);
+            }
+            if asic.dma_us.is_some() {
+                asic.dma_microsecond(us, &mut psg, read);
+            }
+            if asic.dma_interrupt() {
+                return Some(us);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn a_dma_instruction_executes_after_its_fetch_and_the_extra_delay() {
+        // fetch at 1, then the executions: the delay and one more microsecond
+        assert_eq!(int_executed_at(None), Some(2 + DMA_EXECUTE_DELAY_US));
+    }
+
+    #[test]
+    fn a_channel_disabled_before_its_execution_does_not_execute() {
+        assert_eq!(int_executed_at(Some(2)), None);
+        assert_eq!(
+            int_executed_at(Some(2 + DMA_EXECUTE_DELAY_US + 1)),
+            Some(2 + DMA_EXECUTE_DELAY_US),
+            "already executed"
         );
     }
 

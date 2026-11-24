@@ -112,7 +112,11 @@ every command of the desktop window (see the top README), the command palette (C
 type a few letters of a command, Enter runs it) and the debugger's windows. The menus change the
 running machine (CRTC, RAM, cards...) without resetting it. What only the page can do comes
 back as an `ui-request` event that `Bemu` handles: `pickFile` opens a file chooser, `download`
-saves a file, `volume`, `fullscreen`, `openUrl`, `speed`. The keys go to the menus while they
+saves a file, `volume`, `fullscreen`, `openUrl`, `speed`. A browser opens a file chooser only from
+the user's own click, and Safari not from a menu drawn by the worker: over a menu item that opens
+one (`fileTarget`), `Bemu` lays a transparent file input, so the click lands on it. A chooser asked
+otherwise (a key, the palette) opens at once, or in Safari after a click on a "Choose a file…"
+button. The keys go to the menus while they
 have the focus, to the CPC otherwise.
 
 **Methods** (a file `source` is a URL, a `File`/`Blob`, an `ArrayBuffer` or a typed array):

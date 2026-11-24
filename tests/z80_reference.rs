@@ -85,6 +85,9 @@ fn load(motherboard: &mut Motherboard, code: &[u8], seed: u32, state: &State) {
     cpu.reg8_mut(Reg8::I).set(state[12] as u8);
     cpu.reg8_mut(Reg8::R).set(state[13] as u8);
     cpu.set_iffs(state[14] != 0, state[15] != 0);
+    // the reference works from F as the previous instruction's flags (Q = F): SCF and CCF take their
+    // X and Y from A alone then
+    cpu.set_q(state[0] as u8);
 }
 
 fn read_state(motherboard: &Motherboard) -> State {
