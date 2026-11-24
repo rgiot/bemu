@@ -90,8 +90,8 @@ data class Settings(
             val d = Settings()
             Settings(
                 model = o.optString("model", d.model),
-                // before "languageChoice" there was only "language", chosen by hand
-                languageChoice = o.optString("languageChoice", o.optString("language", d.languageChoice)),
+                // the first version saved "language" (English unless chosen): the phone's from now on
+                languageChoice = o.optString("languageChoice", AUTO),
                 ctm = if (o.has("ctm")) o.optBoolean("ctm") else o.optString("display", "ctm") != "raw",
                 m4 = o.optBoolean("m4", d.m4),
                 m4Wifi = o.optBoolean("m4Wifi", d.m4Wifi),

@@ -46,10 +46,13 @@ class SettingsTest {
     fun theSettingsAreSavedAndReadBack() {
         val s = Settings(model = "464", languageChoice = "fr", ctm = false, playcity = true, vibrate = false)
         assertEquals(s, Settings.fromPrefsJson(s.toPrefsJson()))
-        // the settings of the first version (a "language" chosen by hand, "display")
-        val old = Settings.fromPrefsJson("""{"model":"6128","language":"fr","display":"raw"}""")
+        // the settings of the first version ("language" saved as English by default, "display"):
+        // the language follows the phone from now on
+        val old = Settings.fromPrefsJson("""{"model":"6128","language":"en","display":"raw"}""")
         assertNotNull(old)
-        assertEquals("fr", old!!.languageChoice)
+        assertEquals(Settings.AUTO, old!!.languageChoice)
+        assertEquals("fr", old.language(Locale.FRANCE))
+        assertEquals("en", old.language(Locale.US))
         assertEquals(false, old.ctm)
     }
 
