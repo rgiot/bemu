@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity(), Controls {
         enableEdgeToEdge()
         fullScreen()
         settings = Settings.load(this)
+        Licences.preload(this)
         handle = Native.create(this, settings.toJson(), sdFolder.absolutePath)
         if (handle == 0L) {
             Toast.makeText(this, "The emulator could not start", Toast.LENGTH_LONG).show()

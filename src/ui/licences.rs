@@ -1,6 +1,9 @@
 //! Help > Third-party licences: what this build contains and is not bemu's own (the ROMs, the
 //! libraries), each with its licence's text, from `third_party/licenses.json` (written by
 //! `tools/licenses.py`, see NOTICE.md).
+//!
+//! The inventory is embedded gzipped (build.rs), and decompressed when the program starts
+//! ([`preload`], on a thread of its own where there are threads).
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -9,8 +12,8 @@ use serde::Deserialize;
 
 use super::window::{Cx, ViewWindow};
 
-/// The inventory, embedded.
-const INVENTORY: &str = include_str!("../../third_party/licenses.json");
+/// The inventory, embedded gzipped (build.rs).
+const INVENTORY_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/licenses.json.gz"));
 
 /// This build, as the inventory names it.
 #[cfg(not(target_arch = "wasm32"))]
@@ -65,9 +68,30 @@ pub struct Text {
     pub text: String,
 }
 
+static INVENTORY: OnceLock<Inventory> = OnceLock::new();
+
+/// The inventory, decompressed and read (once).
 pub fn inventory() -> &'static Inventory {
-    static INVENTORY_PARSED: OnceLock<Inventory> = OnceLock::new();
-    INVENTORY_PARSED.get_or_init(|| serde_json::from_str(INVENTORY).expect("third_party/licenses.json"))
+    INVENTORY.get_or_init(|| {
+        let mut json = Vec::new();
+        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(INVENTORY_GZ), &mut json)
+            .expect("the embedded licences");
+        serde_json::from_slice(&json).expect("third_party/licenses.json")
+    })
+}
+
+/// The inventory decompressed now, the program starting: on a thread of its own on the desktop
+/// (the window opens meanwhile); in a page, where there are no threads, when it is first shown.
+pub fn preload() {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static STARTED: std::sync::Once = std::sync::Once::new();
+        STARTED.call_once(|| {
+            let _ = std::thread::Builder::new().name("licences".to_owned()).spawn(|| {
+                inventory();
+            });
+        });
+    }
 }
 
 /// The components of this build.

@@ -61,7 +61,21 @@ fn cubecl_cpu_backend() -> bool {
         )
 }
 
+/// `third_party/licenses.json` (1.6 MB of licence texts) gzipped into `$OUT_DIR/licenses.json.gz`:
+/// what the executable embeds for Help > Third-party licences (`src/ui/licences.rs`), a tenth of
+/// the size, decompressed when the program starts.
+fn compress_licences() {
+    use std::io::Write;
+    println!("cargo:rerun-if-changed=third_party/licenses.json");
+    let json = std::fs::read("third_party/licenses.json").expect("third_party/licenses.json");
+    let out = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("licenses.json.gz");
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    encoder.write_all(&json).unwrap();
+    std::fs::write(out, encoder.finish().unwrap()).unwrap();
+}
+
 fn main() {
+    compress_licences();
     println!("cargo::rustc-check-cfg=cfg(crt_cpu)");
     if cubecl_cpu_backend() {
         println!("cargo:rustc-cfg=crt_cpu");

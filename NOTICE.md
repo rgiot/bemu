@@ -69,10 +69,6 @@ a Cargo feature (`unidos`, `orgams`, `m4`, `m4-wifi`), so a build can also leave
   - xDMS (public domain);
   - Dave Dunfield's Teledisk decoder (his terms);
   - Parallax Software's LZW packer (non-commercial).
-- **cpclib-asm's Z80 decompression routines** are assembler include files, not run by the emulator. They
-  are the ZX0/ZX7, LZSA, aPLib, bzpack and upkr decoders (BSD, Zlib, Unlicense), plus Exomizer, Shrinkler,
-  Pucrunch and LZ48/LZ49 decrunchers whose licences are not stated. They are listed with their authors in
-  the inventory.
 - **nuked-opl3** (Willy's OPL3: the `willy` feature): [GNU LGPL 2.1 or later](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html),
   linked statically. The source offer above lets its users relink it against a modified nuked-opl3.
   A build without the `willy` feature leaves it out.
@@ -85,9 +81,11 @@ a Cargo feature (`unidos`, `orgams`, `m4`, `m4-wifi`), so a build can also leave
 - The other dependencies are under permissive licences (MIT, Apache-2.0, BSD, ISC, Zlib...). All are
   in `third_party/licenses.json`.
 
-cpclib's compressors (`cpclib-crunchers`: Exomizer, Shrinkler, PuCrunch...) are **not** in bemu's
-builds. bemu uses cpclib without their features (`Cargo.toml`), because some of their licences forbid
-commercial use or are not stated.
+bemu's builds leave out the following parts of cpclib, because some of their licences forbid commercial
+use or are not stated. bemu uses cpclib without their features (`Cargo.toml`).
+- **The compressors** (`cpclib-crunchers`: Exomizer, Shrinkler, PuCrunch...).
+- **cpclib-asm's `inner://` include files** (`cpclib-asm/assets`): Z80 decrunchers by various authors and
+  firmware labels. Its `embedded-files` feature puts them in.
 
 ## Test data
 

@@ -127,6 +127,7 @@ impl Default for Gui {
 
 impl Gui {
     pub fn new() -> Self {
+        licences::preload();
         let ctx = new_context();
         Self {
             ctx,

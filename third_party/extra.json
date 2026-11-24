@@ -85,19 +85,6 @@
   },
   {
    "kind": "c-library",
-   "name": "Z80 decompression routines (inside cpclib-asm)",
-   "license": "Their authors' terms (see the text)",
-   "owner": "Einar Saukas, spke, uniabis, Dan Weiss, Milos Bazelides, Peter Helcmanovsky, Metalbrain and others",
-   "builds": [
-    "desktop",
-    "web",
-    "android"
-   ],
-   "text": "cpclib-asm (cpclib, MIT) embeds these Z80 decompression routines as include files for its assembler (cpclib-asm/assets). The emulator does not run them; they come with the assembler. Each keeps its authors' terms:\n\n- dzx0_*.asm, dzx7_turbo.asm: ZX0 / ZX7 decoders by Einar Saukas, Urusergi, introspec (BSD-3-Clause, as ZX0 and ZX7).\n- unlzsa1_*.asm, unlzsa2_*.asm: LZSA decompressors by spke and uniabis (Zlib, as LZSA).\n- unaplib.asm, unaplib_fast.asm: aPLib decompressors by Dan Weiss (Dwedit) and spke (Zlib).\n- bzpack_backward_*.asm: by Milos \"baze\" Bazelides, Aleksey \"introspec\" Pichugin, Pavel \"Zilog\" Cimbal (BSD-2-Clause, stated in the files).\n- upkr.asm: by Peter \"Ped\" Helcmanovsky (Unlicense, as upkr, stated in the file).\n- deexo.asm: Exomizer decruncher by Metalbrain, optimised by Antonio Villena and Urusergi (no licence stated).\n- deshrink.asm: Shrinkler decruncher for the Z80 (no licence stated).\n- pucrunch_z80.asm: Pucrunch decruncher, ported by Jeff Frohwein (no licence stated; Pucrunch itself is LGPL).\n- lz48decrunch.asm, lz49decrunch.asm, lz4_docent.asm: LZ48 / LZ49 / LZ4 decrunchers (no licence stated).",
-   "note": "Assembler include files of cpclib-asm, not run by the emulator."
-  },
-  {
-   "kind": "c-library",
    "name": "HxC Floppy Emulator library (libhxcfe, libhxcadaptor)",
    "license": "GPL-3.0-only",
    "owner": "Jean-François Del Nero",

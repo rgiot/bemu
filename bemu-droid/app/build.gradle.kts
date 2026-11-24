@@ -1,3 +1,5 @@
+import java.util.zip.GZIPOutputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -50,6 +52,11 @@ android {
         compose = true
     }
 
+    androidResources {
+        // the licences' inventory is gzipped already
+        noCompress += "gzip"
+    }
+
     packaging {
         jniLibs {
             // the libraries are already stripped (Cargo's release profile)
@@ -76,17 +83,30 @@ val cargoBuild by tasks.registering(Exec::class) {
     onlyIf { !project.hasProperty("skipCargo") }
 }
 
+// The inventory of the third-party licences (tools/licenses.py), gzipped: a tenth of its 1.6 MB,
+// named .gzip (the Android build would unpack a .gz asset into the APK),
+// decompressed when the app starts (Licences.kt).
+val compressLicences by tasks.registering {
+    description = "Gzips third_party/licenses.json"
+    val source = rootProject.file("../third_party/licenses.json")
+    val target = layout.buildDirectory.file("licences/licenses.json.gzip")
+    inputs.file(source)
+    outputs.file(target)
+    doLast {
+        val out = target.get().asFile
+        out.parentFile.mkdirs()
+        GZIPOutputStream(out.outputStream()).use { it.write(source.readBytes()) }
+    }
+}
+
 // The licences shown by Settings > Licences, and shipped with the APK: bemu's notice, its licences
-// (the app is GPL-3.0: it links the HxC library) and the third-party inventory (tools/licenses.py).
+// (the app is GPL-3.0: it links the HxC library) and the third-party inventory.
 val copyLicences by tasks.registering(Copy::class) {
-    description = "Copies NOTICE.md, the licences and third_party/licenses.json into the assets"
-    val repository = rootProject.file("..")
-    from(repository) {
+    description = "Copies NOTICE.md, the licences and the gzipped inventory into the assets"
+    from(rootProject.file("..")) {
         include("NOTICE.md", "LICENSE-MIT", "LICENSE-APACHE", "LICENSE-GPL-3.0")
     }
-    from(File(repository, "third_party")) {
-        include("licenses.json")
-    }
+    from(compressLicences)
     into(layout.projectDirectory.dir("src/main/assets"))
 }
 

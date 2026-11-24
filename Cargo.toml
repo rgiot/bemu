@@ -129,6 +129,10 @@ debug = false
 lto = "fat"
 codegen-units = 1
 
+[build-dependencies]
+# build.rs gzips third_party/licenses.json (Help > Third-party licences)
+flate2 = "1"
+
 [dev-dependencies]
 # reads the text of a CPC screen (tests/claudestrad.rs); standalone, meant for cpclib
 cpclib-ocr = { path = "crates/cpclib-ocr" }

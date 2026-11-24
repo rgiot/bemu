@@ -46,9 +46,30 @@ data class Component(
     val texts: List<Pair<String, String>>,
 )
 
-/** The components of the Android build, from the app's assets (copied there by the Gradle build). */
-fun loadComponents(context: Context): List<Component> {
-    val json = JSONObject(context.assets.open("licenses.json").bufferedReader().use { it.readText() })
+/**
+ * The components of the Android build, from the app's assets (licenses.json.gzip, gzipped by the
+ * Gradle build): decompressed when the app starts ([preload]), on a thread of its own.
+ */
+object Licences {
+    @Volatile
+    private var components: List<Component>? = null
+
+    /** Decompresses and reads the inventory in the background (the app starting). */
+    fun preload(context: Context) {
+        val app = context.applicationContext
+        Thread({ get(app) }, "licences").start()
+    }
+
+    /** The components (read now if [preload] has not finished yet). */
+    @Synchronized
+    fun get(context: Context): List<Component> =
+        components ?: runCatching { loadComponents(context) }.getOrDefault(emptyList()).also { components = it }
+}
+
+private fun loadComponents(context: Context): List<Component> {
+    val text = java.util.zip.GZIPInputStream(context.assets.open("licenses.json.gzip"))
+        .bufferedReader().use { it.readText() }
+    val json = JSONObject(text)
     val texts = json.getJSONObject("texts")
     val components = json.getJSONArray("components")
     return (0 until components.length()).map { components.getJSONObject(it) }
@@ -86,7 +107,7 @@ private fun kindTitle(kind: String) = when (kind) {
 @Composable
 fun LicencesScreen(onClose: () -> Unit) {
     val context = LocalContext.current
-    val components = remember { runCatching { loadComponents(context) }.getOrDefault(emptyList()) }
+    val components = remember { Licences.get(context) }
     val gpl = remember {
         runCatching { context.assets.open("LICENSE-GPL-3.0").bufferedReader().use { it.readText() } }.getOrDefault("")
     }
