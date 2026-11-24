@@ -2,7 +2,7 @@
 //! themselves), the touch keyboard and joystick applied, run a frame at a time. Plain Rust, tested
 //! on the host; `runner.rs` drives it on Android.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use amsrust::autorun::{self, MediaKind};
@@ -37,6 +37,8 @@ pub struct Input {
     joystick: AtomicU8,
     /// The CRT can be drawn (the GPU has compute shaders).
     pub crt: AtomicBool,
+    /// The phone was too slow for the CRT: the picture is raw now (the app says so once).
+    pub crt_dropped: AtomicBool,
 }
 
 impl Input {
@@ -69,6 +71,37 @@ struct Medium {
     kind: MediaKind,
     name: String,
     bytes: Vec<u8>,
+}
+
+/// The files of a saved machine (see [`Machine::save_state`]).
+const STATE_FILE: &str = "state.json";
+const SNAPSHOT_FILE: &str = "state.sna";
+const MEDIUM_FILE: &str = "medium.bin";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedState {
+    config: Config,
+    /// The medium's name and kind (its bytes: [`MEDIUM_FILE`]).
+    medium: Option<(String, String)>,
+}
+
+fn kind_name(kind: MediaKind) -> &'static str {
+    match kind {
+        MediaKind::Disc => "disc",
+        MediaKind::Tape => "tape",
+        MediaKind::Cartridge => "cartridge",
+        MediaKind::Snapshot => "snapshot",
+    }
+}
+
+fn kind_of(name: &str) -> Option<MediaKind> {
+    Some(match name {
+        "disc" => MediaKind::Disc,
+        "tape" => MediaKind::Tape,
+        "cartridge" => MediaKind::Cartridge,
+        "snapshot" => MediaKind::Snapshot,
+        _ => return None,
+    })
 }
 
 pub struct Machine {
@@ -152,6 +185,11 @@ impl Machine {
 
     /// The machine built again, the medium inserted and its autorun typed; what is typed.
     fn power_on(&mut self) -> Result<Option<String>, String> {
+        self.power_on_with(true)
+    }
+
+    /// [`Self::power_on`], the autorun typed only if `autorun` (not for a machine restored).
+    fn power_on_with(&mut self, autorun: bool) -> Result<Option<String>, String> {
         let medium = self.medium.clone();
         let cartridge = medium.as_ref().filter(|m| m.kind == MediaKind::Cartridge);
         // a cartridge needs a CPC+
@@ -183,12 +221,75 @@ impl Machine {
             }
         }
         motherboard.set_audio_output(self.audio);
-        let typed = typed.filter(|_| self.config.autorun);
+        let typed = typed.filter(|_| self.config.autorun && autorun);
         // typed as soon as the firmware waits for a key (BASIC's prompt)
         self.typist = typed.as_deref().map(|text| autorun::typist(text, &motherboard));
         self.motherboard = motherboard;
         self.monitor = Monitor::default();
         Ok(typed)
+    }
+
+    /// The machine saved in `dir` (the app going to the background, which Android may then end):
+    /// the settings, the medium (the disc as the CPC wrote it, if it did) and a snapshot.
+    pub fn save_state(&mut self, dir: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        // the disc as the CPC wrote it: what the medium is from now on
+        if let Some(medium) = self.medium.as_mut().filter(|m| m.kind == MediaKind::Disc) {
+            if self.motherboard.fdc().is_modified(FdcDrive::A) {
+                if let Some(disc) = self.motherboard.fdc().image(FdcDrive::A) {
+                    medium.bytes = disc.to_bytes();
+                    if !medium.name.to_ascii_lowercase().ends_with(".dsk") {
+                        medium.name.push_str(".dsk");
+                    }
+                }
+            }
+        }
+        let sna = amsrust::snapshot::save_sna_bytes(&self.motherboard)?;
+        let state = SavedState {
+            config: self.config.clone(),
+            medium: self.medium.as_ref().map(|m| (m.name.clone(), kind_name(m.kind).to_owned())),
+        };
+        let write = |name: &str, bytes: &[u8]| {
+            // written aside, then renamed: a state half written is never read
+            let path = dir.join(name);
+            let partial = dir.join(format!("{name}.partial"));
+            std::fs::write(&partial, bytes)
+                .and_then(|()| std::fs::rename(&partial, &path))
+                .map_err(|e| format!("{}: {e}", path.display()))
+        };
+        if let Some(medium) = &self.medium {
+            write(MEDIUM_FILE, &medium.bytes)?;
+        }
+        write(SNAPSHOT_FILE, &sna)?;
+        write(STATE_FILE, serde_json::to_string(&state).map_err(|e| e.to_string())?.as_bytes())
+    }
+
+    /// The machine saved in `dir` by [`Self::save_state`], if it was saved with `config` (other
+    /// settings: a new machine instead), restored as it was, without its autorun.
+    pub fn restore(config: Config, sd: PathBuf, dir: &Path) -> Option<Self> {
+        let state: SavedState = serde_json::from_slice(&std::fs::read(dir.join(STATE_FILE)).ok()?).ok()?;
+        if state.config != config {
+            return None;
+        }
+        let sna = std::fs::read(dir.join(SNAPSHOT_FILE)).ok()?;
+        let mut machine = Self::new(config, sd).ok()?;
+        if let Some((name, kind)) = state.medium {
+            machine.medium = Some(Medium {
+                kind: kind_of(&kind)?,
+                name,
+                bytes: std::fs::read(dir.join(MEDIUM_FILE)).ok()?,
+            });
+        }
+        machine.power_on_with(false).ok()?;
+        amsrust::snapshot::load_sna_bytes(&mut machine.motherboard, &sna).ok()?;
+        Some(machine)
+    }
+
+    /// Forget the machine saved in `dir` (it could not be restored, or it is outdated).
+    pub fn forget_state(dir: &Path) {
+        for name in [STATE_FILE, SNAPSHOT_FILE, MEDIUM_FILE] {
+            let _ = std::fs::remove_file(dir.join(name));
+        }
     }
 
     /// Text typed on the keyboard, as `--type` does (CSL escapes: `\(RET)`...).
@@ -307,6 +408,35 @@ mod tests {
         let matrix = machine.motherboard.keyboard_mut();
         assert!(!matrix.is_pressed(amsrust::keyboard::CpcKey::A));
         assert!(!matrix.is_pressed(amsrust::keyboard::CpcKey::Joy0Up));
+    }
+
+    #[test]
+    fn a_machine_saved_comes_back_as_it_was() {
+        let dir = sd().join("state");
+        Machine::forget_state(&dir);
+        let mut machine = Machine::new(Config::default(), sd()).unwrap();
+        machine.load("game.dsk", game_disc()).unwrap();
+        let input = Input::default();
+        while machine.motherboard.t_state_counter().value() < 7 * 4_000_000 {
+            machine.run_frame(&input);
+        }
+        assert_eq!(machine.motherboard.read_bank_byte(2, 0x1000), Some(0x42), "GAME.BIN ran");
+        // the RAM and the CPU as they are, and a sector "written"
+        machine.motherboard.write_bank_byte(1, 0x0123, 0x99);
+        let pc = machine.motherboard.pc();
+        machine.save_state(&dir).unwrap();
+
+        let restored = Machine::restore(Config::default(), sd(), &dir).expect("restored");
+        assert_eq!(restored.motherboard.read_bank_byte(2, 0x1000), Some(0x42));
+        assert_eq!(restored.motherboard.read_bank_byte(1, 0x0123), Some(0x99));
+        assert_eq!(restored.motherboard.pc(), pc);
+        assert!(restored.motherboard.fdc().image(FdcDrive::A).is_some(), "the disc is back in");
+        assert!(restored.typist.is_none(), "no autorun for a machine restored");
+        // other settings: not this machine
+        let other = Config { model: "464".to_owned(), ..Config::default() };
+        assert!(Machine::restore(other, sd(), &dir).is_none());
+        Machine::forget_state(&dir);
+        assert!(Machine::restore(Config::default(), sd(), &dir).is_none());
     }
 
     #[test]
