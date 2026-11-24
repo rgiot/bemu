@@ -83,6 +83,15 @@ fn droid_machine() -> Motherboard {
     motherboard
 }
 
+/// Runs the machine and its typist until the typing begins: when, in seconds.
+fn run_until_started(motherboard: &mut Motherboard, typist: &mut Typist) -> f64 {
+    while !typist.started() {
+        assert!(motherboard.t_state_counter().value() < 10 * T_STATES_PER_SECOND, "never started");
+        run(motherboard, typist, 0.001);
+    }
+    motherboard.t_state_counter().value() as f64 / T_STATES_PER_SECOND as f64
+}
+
 /// Runs the machine and its typist for `seconds` of emulated time.
 fn run(motherboard: &mut Motherboard, typist: &mut Typist, seconds: f64) {
     let end = motherboard.t_state_counter().value() + (seconds * T_STATES_PER_SECOND as f64) as usize;
@@ -104,11 +113,12 @@ fn a_disc_starts_by_itself_on_unidos_and_the_m4() {
 
     let mut motherboard = droid_machine();
     motherboard.fdc_mut().insert_image(FdcDrive::A, Some(disc));
-    let layout = motherboard.keyboard_layout();
-    let at = boot_seconds(&motherboard);
-    assert_eq!(at, AUTORUN_EXPANDED_AT_SECONDS);
-    let mut typist = Typist::new(&text, at, layout);
-    run(&mut motherboard, &mut typist, at + 4.0);
+    assert_eq!(boot_seconds(&motherboard), AUTORUN_EXPANDED_AT_SECONDS);
+    let mut typist = amsrust::autorun::typist(&text, &motherboard);
+    let started = run_until_started(&mut motherboard, &mut typist);
+    // UniDOS and the M4 boot until 3.7 s: keys typed before were lost
+    assert!((3.0..AUTORUN_EXPANDED_AT_SECONDS).contains(&started), "typing started at {started:.2} s");
+    run(&mut motherboard, &mut typist, 4.0);
     assert!(typist.is_done(), "everything was typed");
     assert_eq!(
         motherboard.read_bank_byte(2, 0x1000),
@@ -125,8 +135,22 @@ fn a_disc_starts_by_itself_on_a_stock_6128() {
     let mut motherboard = MotherboardBuilder::default().build();
     motherboard.fdc_mut().insert_image(FdcDrive::A, Some(disc.clone()));
     assert_eq!(boot_seconds(&motherboard), AUTORUN_AT_SECONDS);
-    let layout = motherboard.keyboard_layout();
-    let mut typist = Typist::new(&disc_command(&disc).unwrap(), AUTORUN_AT_SECONDS, layout);
-    run(&mut motherboard, &mut typist, AUTORUN_AT_SECONDS + 5.0);
+    let mut typist = amsrust::autorun::typist(&disc_command(&disc).unwrap(), &motherboard);
+    let started = run_until_started(&mut motherboard, &mut typist);
+    // BASIC's prompt waits for a key at 0.8 s: not the 3 s a fixed delay takes
+    assert!((0.5..1.5).contains(&started), "typing started at {started:.2} s");
+    run(&mut motherboard, &mut typist, 5.0);
     assert_eq!(motherboard.read_bank_byte(2, 0x1000), Some(0x42), "GAME.BIN ran");
+}
+
+#[test]
+fn the_typing_waits_for_basic_on_a_464_too() {
+    let mut builder = MotherboardBuilder::default();
+    builder.set_model("464".parse().unwrap());
+    let mut motherboard = builder.build();
+    let mut typist = amsrust::autorun::typist("PRINT 1\\(RET)", &motherboard);
+    let started = run_until_started(&mut motherboard, &mut typist);
+    assert!((0.5..1.5).contains(&started), "typing started at {started:.2} s");
+    run(&mut motherboard, &mut typist, 2.0);
+    assert!(typist.is_done());
 }

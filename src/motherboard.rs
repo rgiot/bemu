@@ -135,6 +135,8 @@ pub struct Motherboard {
     t_state_counter: Counter,
     // Counter of nops
     nops_counter: Counter,
+    /// An address watched (see [`Motherboard::watch_pc`]), and whether an instruction there ran.
+    pc_watch: Option<(u16, bool)>,
 }
 
 impl fmt::Debug for Motherboard {
@@ -206,6 +208,7 @@ impl Default for Motherboard {
 
             t_state_counter: Default::default(),
             nops_counter: Default::default(),
+            pc_watch: None,
         };
         motherboard.stabilize_run();
         motherboard
@@ -1373,6 +1376,21 @@ impl Motherboard {
                 break;
             }
         }
+        if let Some((address, hit)) = &mut self.pc_watch {
+            *hit |= self.cpu.pc() == *address;
+        }
+    }
+
+    /// Watch `address`: [`Self::pc_watch_hit`] tells whether an instruction there was reached since
+    /// (`None`: no watch). One comparison per instruction while a watch is set: the typist waits so
+    /// for the firmware to read the keyboard (see [`crate::typist::Typist::when_waiting_for_a_key`]).
+    pub fn watch_pc(&mut self, address: Option<u16>) {
+        self.pc_watch = address.map(|address| (address, false));
+    }
+
+    /// Whether the watched address was reached (see [`Self::watch_pc`]).
+    pub fn pc_watch_hit(&self) -> bool {
+        self.pc_watch.is_some_and(|(_, hit)| hit)
     }
 
     /// Completly execute an opcode and returns the set of video information associated

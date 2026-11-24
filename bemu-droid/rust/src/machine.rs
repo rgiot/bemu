@@ -184,13 +184,8 @@ impl Machine {
         }
         motherboard.set_audio_output(self.audio);
         let typed = typed.filter(|_| self.config.autorun);
-        self.typist = typed.as_deref().map(|text| {
-            Typist::new(
-                text,
-                autorun::boot_seconds(&motherboard),
-                motherboard.keyboard_layout(),
-            )
-        });
+        // typed as soon as the firmware waits for a key (BASIC's prompt)
+        self.typist = typed.as_deref().map(|text| autorun::typist(text, &motherboard));
         self.motherboard = motherboard;
         self.monitor = Monitor::default();
         Ok(typed)

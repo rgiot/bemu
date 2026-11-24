@@ -244,7 +244,7 @@ pub struct Args {
 
     /// Starts the media by itself once the machine has booted, as a user would: RUN" of the
     /// disc's program (--dsk: its menu or loader, else its biggest file), |CPM for a CP/M
-    /// system disc, |TAPE and RUN" for --cdt. Typed at --type-at, before --type.
+    /// system disc, |TAPE and RUN" for --cdt. Typed as soon as BASIC waits for a key, before --type.
     #[arg(long, help_heading = TYPING)]
     pub autorun: bool,
 

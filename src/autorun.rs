@@ -13,7 +13,22 @@ pub const AUTORUN_AT_SECONDS: f64 = 3.0;
 /// before are lost), a second more for margin.
 pub const AUTORUN_EXPANDED_AT_SECONDS: f64 = 5.0;
 
-/// When to start typing on `motherboard` once reset: [`AUTORUN_EXPANDED_AT_SECONDS`] when it
+/// How long after a reset the autorun waits at most for the firmware to wait for a key (beyond
+/// [`boot_seconds`]): a machine that never reaches BASIC's prompt still gets the text typed.
+pub const AUTORUN_MARGIN_SECONDS: f64 = 2.0;
+
+/// The typist of an autorun's `text` on `motherboard`, just reset: it types as soon as the firmware
+/// waits for a key (BASIC's prompt), [`boot_seconds`] + [`AUTORUN_MARGIN_SECONDS`] at the latest.
+pub fn typist(text: &str, motherboard: &crate::motherboard::Motherboard) -> crate::typist::Typist {
+    crate::typist::Typist::when_waiting_for_a_key(
+        text,
+        boot_seconds(motherboard) + AUTORUN_MARGIN_SECONDS,
+        motherboard.keyboard_layout(),
+    )
+}
+
+/// When to start typing on `motherboard` once reset, when the firmware cannot be watched (a fixed
+/// time: see [`typist`], which waits for the firmware instead): [`AUTORUN_EXPANDED_AT_SECONDS`] when it
 /// has UniDOS (an upper ROM other than AMSDOS in slot 7) or the M4, else
 /// [`AUTORUN_AT_SECONDS`].
 pub fn boot_seconds(motherboard: &crate::motherboard::Motherboard) -> f64 {
