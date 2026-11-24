@@ -52,6 +52,10 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     androidResources {
         // the licences' inventory is gzipped already
         noCompress += "gzip"
@@ -122,4 +126,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
+
+    testImplementation("junit:junit:4.13.2")
+    // the real org.json for the JVM tests (android.jar only has stubs)
+    testImplementation("org.json:json:20240303")
 }

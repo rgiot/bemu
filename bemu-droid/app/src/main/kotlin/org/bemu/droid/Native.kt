@@ -46,6 +46,12 @@ object Native {
     /** [Joystick] bits: up 1, down 2, left 4, right 8, fire 1 16, fire 2 32. */
     external fun joystick(handle: Long, bits: Int)
 
+    /**
+     * The keycaps in [language] ("en", "fr"): 80 lines by the firmware's key numbers, "normal<TAB>shifted",
+     * empty for a key that types no printable character.
+     */
+    external fun keyLegends(language: String): String
+
     /** Whether the GPU draws the CRT (else the picture is raw). */
     external fun hasCrt(handle: Long): Boolean
 }

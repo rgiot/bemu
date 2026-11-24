@@ -134,9 +134,27 @@ fun CpcKeyboard(onKey: (number: Int, down: Boolean) -> Unit, modifier: Modifier 
     }
 }
 
+/**
+ * What a keycap shows: the firmware's legend for a character key (the AZERTY one with the French
+ * ROMs), the label of the table for the others (RETURN, the cursor keys...). A letter shows its
+ * capital; another key its shifted character above the normal one, as on the CPC.
+ */
+fun keycapText(key: CpcKey, legends: Map<Int, Pair<String, String>>): String {
+    if (key.label.length > 1) return key.label
+    val (normal, shifted) = legends[key.number] ?: return key.label
+    return when {
+        // a letter key: Shift gives its capital (é is a letter, but its key's Shift gives 2)
+        normal.length == 1 && normal[0].isLetter() && shifted == normal.uppercase() -> shifted
+        normal == shifted -> normal
+        else -> "$shifted\n$normal"
+    }
+}
+
 @Composable
 private fun KeyCap(key: CpcKey, latched: Boolean, onPress: (Boolean) -> Unit, modifier: Modifier) {
     var held by remember { mutableStateOf(false) }
+    val feedback = touchFeedback()
+    val text = keycapText(key, LocalKeyLegends.current)
     val background = when {
         held || latched -> Color(0xCCFFD24D)
         key.label.length > 1 -> Color(0x88505050)
@@ -149,6 +167,7 @@ private fun KeyCap(key: CpcKey, latched: Boolean, onPress: (Boolean) -> Unit, mo
             .pointerInput(key) {
                 detectTapGestures(onPress = {
                     held = true
+                    feedback()
                     onPress(true)
                     tryAwaitRelease()
                     held = false
@@ -158,12 +177,17 @@ private fun KeyCap(key: CpcKey, latched: Boolean, onPress: (Boolean) -> Unit, mo
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = key.label,
+            text = text,
             color = if (held || latched) Color.Black else Color(0xEEFFFFFF),
-            fontSize = if (key.label.length > 2) 10.sp else 14.sp,
+            fontSize = when {
+                text.length > 2 -> 10.sp
+                '\n' in text -> 11.sp
+                else -> 14.sp
+            },
+            lineHeight = 11.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
-            maxLines = 1,
+            maxLines = 2,
         )
     }
 }

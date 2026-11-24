@@ -244,3 +244,18 @@ pub extern "system" fn Java_org_bemu_droid_Native_hasCrt(_env: JNIEnv, _this: JO
         _ => JNI_FALSE,
     }
 }
+
+/// `keyLegends(language): String`: the keycaps of the CPC's keyboard in `language` ("en" or "fr"):
+/// 80 lines (the firmware's key numbers), each "normal\tshifted", or empty for a key that types no
+/// printable character. Taken from the firmware's own key tables.
+#[no_mangle]
+pub extern "system" fn Java_org_bemu_droid_Native_keyLegends(mut env: JNIEnv, _this: JObject, language: JString) -> jni::sys::jstring {
+    let layout = match string(&mut env, &language).as_str() {
+        "fr" => amsrust::keyboard::KeyboardLayout::French,
+        _ => amsrust::keyboard::KeyboardLayout::Uk,
+    };
+    let lines: Vec<String> = (0..80)
+        .map(|index| layout.legend(index).map_or(String::new(), |(normal, shifted)| format!("{normal}\t{shifted}")))
+        .collect();
+    jstring(&mut env, &lines.join("\n"))
+}

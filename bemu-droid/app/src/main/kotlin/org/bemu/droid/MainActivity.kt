@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.widget.Toast
@@ -13,7 +14,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.IntentCompat
@@ -48,13 +51,17 @@ class MainActivity : ComponentActivity(), Controls {
         fullScreen()
         settings = Settings.load(this)
         Licences.preload(this)
-        handle = Native.create(this, settings.toJson(), sdFolder.absolutePath)
+        handle = Native.create(this, settings.toEngineJson(), sdFolder.absolutePath)
         if (handle == 0L) {
             Toast.makeText(this, "The emulator could not start", Toast.LENGTH_LONG).show()
         }
         setContent {
+            val language = settings.language()
+            val legends = remember(language) { parseKeyLegends(Native.keyLegends(language)) }
             MaterialTheme(colorScheme = darkColorScheme()) {
-                BemuScreen(this)
+                CompositionLocalProvider(LocalVibrate provides settings.vibrate, LocalKeyLegends provides legends) {
+                    BemuScreen(this)
+                }
                 if (showSettings) {
                     SettingsDialog(
                         initial = settings,
@@ -126,6 +133,8 @@ class MainActivity : ComponentActivity(), Controls {
             } catch (e: Exception) {
                 "error:$name: ${e.message}"
             }
+            // the CI's smoke test reads it (bemu-droid/tests/smoke.sh)
+            Log.i("bemu", "load $name: $answer")
             runOnUiThread {
                 val message = when {
                     answer.startsWith("error:") -> answer.removePrefix("error:")
@@ -162,7 +171,7 @@ class MainActivity : ComponentActivity(), Controls {
 
     private fun applySettings(new: Settings) {
         showSettings = false
-        val error = Native.configure(handle, new.toJson())
+        val error = Native.configure(handle, new.toEngineJson())
         if (error != null) {
             Toast.makeText(this, error, Toast.LENGTH_LONG).show()
         } else {
