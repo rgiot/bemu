@@ -76,8 +76,16 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 where C's `char` is `u8` on ARM, so they do not build for arm64. The script builds with copies of both crates
 that have the cast fixed, until fixed releases are out.
 
-The CI (`.github/workflows/build.yml`, the `android` job) builds both APKs and uploads them as the `bemu-android`
-artifact.
+The CI (`.github/workflows/build.yml`) builds the app and tests it:
+- The `android` job runs the Kotlin unit tests and the host tests. It uploads the `bemu-android` artifact:
+  - `bemu-droid.apk` (universal);
+  - `bemu-droid-arm64.apk` (about half the size, for most phones);
+  - `bemu-droid.aab` (for Google Play);
+  - `bemu-droid-debug.apk`.
+- The `android-smoke` job installs the debug APK on an Android emulator and opens a disc as "Open with" would. It
+  checks that the disc starts by itself, in both orientations and back from the background, with no crash. Its
+  screenshots and log are the `bemu-android-smoke` artifact. The emulator draws with GLES, so the picture is raw:
+  the CTM needs a phone with Vulkan.
 
 ## Licence
 

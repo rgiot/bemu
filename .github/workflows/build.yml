@@ -185,20 +185,65 @@ jobs:
         run: |
           # the NDK installed above, not a newer one of the runner's image
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
-          ./gradlew --no-daemon assembleDebug assembleRelease
+          ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleRelease bundleRelease
       - name: Test the machine on the host
         working-directory: bemu/bemu-droid/rust
         run: cargo test --release --no-default-features
       - name: Prepare distribution
         run: |
           mkdir -p dist
-          cp bemu-droid/app/build/outputs/apk/debug/app-debug.apk dist/bemu-droid-debug.apk
-          cp bemu-droid/app/build/outputs/apk/release/app-release.apk dist/bemu-droid.apk
+          apk=bemu-droid/app/build/outputs/apk
+          cp $apk/debug/app-universal-debug.apk dist/bemu-droid-debug.apk
+          cp $apk/release/app-universal-release.apk dist/bemu-droid.apk
+          cp $apk/release/app-arm64-v8a-release.apk dist/bemu-droid-arm64.apk
+          cp bemu-droid/app/build/outputs/bundle/release/app-release.aab dist/bemu-droid.aab
       - uses: actions/upload-artifact@v4
         with:
           name: bemu-android
-          path: bemu/dist/*.apk
+          path: |
+            bemu/dist/*.apk
+            bemu/dist/*.aab
           if-no-files-found: error
+
+  # The app run on an Android emulator: a disc opened and started by itself, both orientations,
+  # the background and back, no crash (bemu-droid/tests/smoke.sh). The emulator draws with GLES:
+  # the raw picture; the CTM (Vulkan) needs a phone.
+  android-smoke:
+    name: Android emulator smoke test
+    needs: android
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: bemu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bemu
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: bemu-android
+          path: bemu/dist
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          working-directory: bemu
+          script: bemu-droid/tests/smoke.sh dist/bemu-droid-debug.apk validation/Benediction/bnd4_package.dsk smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bemu-android-smoke
+          path: bemu/smoke/
+          if-no-files-found: warn
 
   # Make the distributions available on the GitHub release page:
   # - a push on master refreshes the "latest" development pre-release

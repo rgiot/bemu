@@ -61,6 +61,17 @@ android {
         noCompress += "gzip"
     }
 
+    // an APK per ABI (arm64 alone is about half the size) besides the universal one; Google Play
+    // gets the bundle (bundleRelease), which it splits itself
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include(*abis().toTypedArray())
+            isUniversalApk = true
+        }
+    }
+
     packaging {
         jniLibs {
             // the libraries are already stripped (Cargo's release profile)
