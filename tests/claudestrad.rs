@@ -570,9 +570,15 @@ fn check_truth(case: &Case, failures: &mut Vec<String>) {
                 None => t.trim_end_matches(',').parse::<f64>().ok(),
             }
         };
+        // a line that ends with `...` is a prefix: what follows on the screen (CLAUDESTRAD's own columns
+        // beside the measure, say) is not the real machine's
         let close = |want: &str, line: &str| -> bool {
-            let (a, b): (Vec<&str>, Vec<&str>) =
+            let (mut a, mut b): (Vec<&str>, Vec<&str>) =
                 (want.split(' ').collect(), line.split(' ').collect());
+            if a.last() == Some(&"...") {
+                a.pop();
+                b.truncate(a.len());
+            }
             a.len() == b.len()
                 && a.iter().zip(&b).all(|(x, y)| match (number(x), number(y)) {
                     (Some(x), Some(y)) => (x - y).abs() <= (x.abs() * 0.015).max(1.0),
