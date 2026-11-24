@@ -161,9 +161,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # its own default packages include `tools`, which the SDK no longer has: ours instead
       - uses: android-actions/setup-android@v3
-      - name: Install the SDK platform and the NDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018'
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,x86_64-linux-android
@@ -178,11 +179,13 @@ jobs:
       - name: Build the APKs
         working-directory: bemu/bemu-droid
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon assembleDebug assembleRelease
+        run: |
+          # the NDK installed above, not a newer one of the runner's image
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
+          ./gradlew --no-daemon assembleDebug assembleRelease
       - name: Test the machine on the host
         working-directory: bemu/bemu-droid/rust
         run: cargo test --release --no-default-features
