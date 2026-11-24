@@ -195,7 +195,7 @@ fn the_picture_is_made_on_the_cpu_when_the_acceleration_is_off() {
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let mut draw = |picture: &mut Picture| -> Vec<u32> {
+    let draw = |picture: &mut Picture| -> Vec<u32> {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         picture.draw(
             &device, &queue, &mut encoder, &view, (w as u32, h as u32), (0.0, 0.0),
