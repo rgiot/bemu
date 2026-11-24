@@ -10,7 +10,7 @@ instructions (`CSL:6: +339454 keyboard_write(...)`); this script turns them into
 
 `--cart` starts the script with a GX4000 and that cartridge (else the header is `reset` alone);
 `--shift` moves everything after the reset by US microseconds. A `keyboard_write` that only
-holds line 9 becomes `joystick 0 ...` (CSL 1.6).
+holds line 9 becomes `joystick 0,...` (CSL 1.6).
 """
 import argparse
 import re
@@ -43,7 +43,7 @@ for line in open(args.log, encoding="utf-8", errors="replace"):
         rows = [int(v) for v in params.split(",")]
         if all(r == 255 for r in rows[:9]) and rows[9] & 0x80:
             held = [word for word, bit in JOY if not rows[9] >> bit & 1]
-            lines.append(" ".join(["joystick 0"] + held))
+            lines.append(",".join(["joystick 0"] + held))
         else:
             lines.append("keyboard_write " + ",".join(map(str, rows)))
     elif name in ("screenshot_name", "key_output", "screenshot_dir"):
