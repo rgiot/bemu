@@ -113,6 +113,12 @@ pub const SNAPSHOT_CHUNK_LEN: usize = 0x8f8;
 /// "10 us" of "Extra CPC Plus Hardware Information" ("to be checked") are later.
 const RASTER_INTERRUPT_DELAY: u8 = 2;
 
+/// Microseconds between the last fetch of a line and the first execution. The user's real 6128+ shows
+/// the DMA's flags and interrupts 3 us later than the fetches put them, the PRI interrupt
+/// being where it was (PLUSDMA: the first flag at 40 us after the PRI's interrupt with one
+/// channel, bemu's 37; PLUSDMA2: the green rectangle 3 us to the right of bemu's, the red one equal).
+const DMA_EXECUTE_DELAY_US: u8 = 3;
+
 /// Microseconds a DMA LOAD lasts (Arnold V 2.6: "at least 8 cycles").
 const DMA_LOAD_US: u8 = 8;
 
@@ -443,6 +449,10 @@ impl Asic {
                     if enable && !dma.enabled {
                         dma.pause = 0;
                     }
+                    if !enable {
+                        // a channel disabled between its fetch and its execution does not execute
+                        dma.fetched = None;
+                    }
                     dma.enabled = enable;
                     // a 1 written to an interrupt bit clears it
                     if value & (0x40 >> channel) != 0 {
@@ -654,7 +664,7 @@ impl Asic {
         }
         if us == fetches {
             // all fetched: the executions follow, one after the other
-            let mut at = fetches + 1;
+            let mut at = fetches + 1 + DMA_EXECUTE_DELAY_US;
             for &channel in &active {
                 let dma = &mut self.dma[channel];
                 dma.execute_at = at;
