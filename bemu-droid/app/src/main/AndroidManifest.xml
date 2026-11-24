@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- the M4 board's WiFi: RulezCharge downloads games and demos from cpcrulez.fr -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- the CRT is drawn with Vulkan when there is one (GLES otherwise, the picture raw) -->
+    <uses-feature android:name="android.hardware.vulkan.version" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.Bemu"
+        android:usesCleartextTraffic="true"
+        android:hasFragileUserData="true">
+
+        <!-- the activity follows the phone's orientation itself: the emulator keeps running -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="fullUser"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
+            android:windowSoftInputMode="adjustNothing">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- discs, tapes, cartridges, snapshots by their name -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.dsk" />
+                <data android:pathPattern=".*\\..*\\.dsk" />
+                <data android:pathPattern=".*\\..*\\..*\\.dsk" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.dsk" />
+                <data android:pathPattern=".*\\.cdt" />
+                <data android:pathPattern=".*\\..*\\.cdt" />
+                <data android:pathPattern=".*\\..*\\..*\\.cdt" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.cdt" />
+                <data android:pathPattern=".*\\.cpr" />
+                <data android:pathPattern=".*\\..*\\.cpr" />
+                <data android:pathPattern=".*\\..*\\..*\\.cpr" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.cpr" />
+                <data android:pathPattern=".*\\.hfe" />
+                <data android:pathPattern=".*\\..*\\.hfe" />
+                <data android:pathPattern=".*\\..*\\..*\\.hfe" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.hfe" />
+                <data android:pathPattern=".*\\.sna" />
+                <data android:pathPattern=".*\\..*\\.sna" />
+                <data android:pathPattern=".*\\..*\\..*\\.sna" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.sna" />
+                <data android:pathPattern=".*\\.tzx" />
+                <data android:pathPattern=".*\\..*\\.tzx" />
+                <data android:pathPattern=".*\\..*\\..*\\.tzx" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.tzx" />
+                <data android:pathPattern=".*\\.DSK" />
+                <data android:pathPattern=".*\\..*\\.DSK" />
+                <data android:pathPattern=".*\\..*\\..*\\.DSK" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.DSK" />
+                <data android:pathPattern=".*\\.CDT" />
+                <data android:pathPattern=".*\\..*\\.CDT" />
+                <data android:pathPattern=".*\\..*\\..*\\.CDT" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.CDT" />
+                <data android:pathPattern=".*\\.CPR" />
+                <data android:pathPattern=".*\\..*\\.CPR" />
+                <data android:pathPattern=".*\\..*\\..*\\.CPR" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.CPR" />
+                <data android:pathPattern=".*\\.HFE" />
+                <data android:pathPattern=".*\\..*\\.HFE" />
+                <data android:pathPattern=".*\\..*\\..*\\.HFE" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.HFE" />
+                <data android:pathPattern=".*\\.SNA" />
+                <data android:pathPattern=".*\\..*\\.SNA" />
+                <data android:pathPattern=".*\\..*\\..*\\.SNA" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.SNA" />
+                <data android:pathPattern=".*\\.TZX" />
+                <data android:pathPattern=".*\\..*\\.TZX" />
+                <data android:pathPattern=".*\\..*\\..*\\.TZX" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.TZX" />
+            </intent-filter>
+
+            <!-- what a file manager hands without a name it knows: any binary, an archive -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/x-amstrad-dsk" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/x-7z-compressed" />
+            </intent-filter>
+
+            <!-- shared from another app -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/*" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

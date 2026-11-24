@@ -1,0 +1,331 @@
+{
+ "_comment": "The parts of bemu's binaries Cargo does not know of, for tools/licenses.py (which writes third_party/licenses.json).",
+ "components": [
+  {
+   "kind": "rom",
+   "name": "Amstrad CPC firmware, BASIC and AMSDOS ROMs",
+   "version": "",
+   "license": "Owner's terms (see the text)",
+   "owner": "Amstrad plc, Locomotive Software",
+   "builds": [
+    "desktop",
+    "web",
+    "android"
+   ],
+   "text": "The CPC's firmware, BASIC and AMSDOS are copyright Amstrad plc and Locomotive Software. Amstrad has allowed their distribution with emulators, provided they are not charged for and Amstrad's copyright notices are kept: bemu's binaries must therefore be given away, not sold. They remain Amstrad's property.",
+   "note": "os464, os664, os6128 (and French), basic464, basic664, basic6128 (and French), amsdos"
+  },
+  {
+   "kind": "rom",
+   "name": "Amstrad DMP2000 printer EPROM",
+   "version": "",
+   "license": "Owner's terms (see the text)",
+   "owner": "Amstrad plc",
+   "builds": [
+    "desktop",
+    "web",
+    "android"
+   ],
+   "text": "Copyright Amstrad plc. Distributed with the emulator under the same understanding as the CPC's ROMs: not charged for, Amstrad's copyright kept.",
+   "note": "The DMP2000's characters (Spanish version, dumped by the CPC community, CPCWiki)"
+  },
+  {
+   "kind": "rom",
+   "name": "M4 board ROM v2.0.8",
+   "version": "",
+   "license": "Owner's terms (see the text)",
+   "owner": "Duke (M4Duke)",
+   "builds": [
+    "desktop",
+    "web",
+    "android"
+   ],
+   "text": "Copyright Duke (M4Duke). Its source is published at https://github.com/M4Duke/m4rom; it remains its author's property and is distributed with bemu to emulate the M4 board. Its author can ask for its removal.",
+   "note": "The M4 board's firmware (m4rom)",
+   "url": "https://github.com/M4Duke/m4rom"
+  },
+  {
+   "kind": "rom",
+   "name": "RulezCharge 0.9b2 for the M4",
+   "version": "",
+   "license": "Owner's terms (see the text)",
+   "owner": "CPCrulez (https://cpcrulez.fr)",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text": "Copyright CPCrulez. Its licence is not stated: it is distributed with bemu, unmodified, so that RulezCharge can be used with the emulated M4. Its authors can ask for its removal.",
+   "note": "RulezCharge: downloads software from cpcrulez.fr (|RZ)",
+   "url": "https://cpcrulez.fr"
+  },
+  {
+   "kind": "rom",
+   "name": "UniDOS 1.51, its nodes and UniTools",
+   "version": "",
+   "license": "Owner's terms (see the text)",
+   "owner": "Futurs'",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text": "Copyright Futurs'. Distributed with bemu, unmodified, as a free download from its authors; it remains their property under their terms. Its authors can ask for its removal.",
+   "note": "unidos, unidos-nova, unidos-albireo, unidos-m4, unitools"
+  },
+  {
+   "kind": "rom",
+   "name": "Orgams ROMs",
+   "version": "",
+   "license": "Owner's terms (see the text)",
+   "owner": "The Orgams authors",
+   "builds": [
+    "desktop"
+   ],
+   "text": "Copyright the Orgams authors. Distributed with bemu, unmodified, as a free download from its authors; it remains their property under their terms. Its authors can ask for its removal.",
+   "note": "orgams, orgext, monogams, bricbrac, orgass"
+  },
+  {
+   "kind": "c-library",
+   "name": "HxC Floppy Emulator library (libhxcfe, libhxcadaptor)",
+   "license": "GPL-3.0-only",
+   "owner": "Jean-François Del Nero",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text_files": [
+    {
+     "crate": "hxcfe-sys-0.3.4",
+     "path": "vendor/HxCFloppyEmulator/libhxcfe/COPYING"
+    }
+   ],
+   "note": "Reads and writes HFE images. Because it is GPL-3.0, bemu's binaries are distributed under the GPL-3.0.",
+   "url": "https://github.com/jfdelnero/HxCFloppyEmulator"
+  },
+  {
+   "kind": "c-library",
+   "name": "zlib and minizip (inside HxC)",
+   "license": "Zlib",
+   "owner": "Jean-loup Gailly, Mark Adler, Gilles Vollant",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text_files": [
+    {
+     "crate": "hxcfe-sys-0.3.4",
+     "path": "vendor/HxCFloppyEmulator/libhxcfe/sources/thirdpartylibs/zlib/LICENSE"
+    }
+   ]
+  },
+  {
+   "kind": "c-library",
+   "name": "Expat (inside HxC)",
+   "license": "MIT",
+   "owner": "Thai Open Source Software Center, Clark Cooper, the Expat maintainers",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text_files": [
+    {
+     "crate": "hxcfe-sys-0.3.4",
+     "path": "vendor/HxCFloppyEmulator/libhxcfe/sources/thirdpartylibs/expat/COPYING"
+    }
+   ]
+  },
+  {
+   "kind": "c-library",
+   "name": "LZ4 and xxHash (inside HxC)",
+   "license": "BSD-2-Clause",
+   "owner": "Yann Collet",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text_files": [
+    {
+     "crate": "hxcfe-sys-0.3.4",
+     "path": "vendor/HxCFloppyEmulator/libhxcfe/sources/thirdpartylibs/lz4/lib/LICENSE"
+    }
+   ]
+  },
+  {
+   "kind": "c-library",
+   "name": "libspng (inside HxC)",
+   "license": "BSD-2-Clause",
+   "owner": "Randy",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text_files": [
+    {
+     "crate": "hxcfe-sys-0.3.4",
+     "path": "vendor/HxCFloppyEmulator/libhxcfe/sources/thirdpartylibs/libspng/LICENSE"
+    }
+   ]
+  },
+  {
+   "kind": "c-library",
+   "name": "FAT File IO Library (inside HxC)",
+   "license": "GPL-2.0-or-later",
+   "owner": "Ultra-Embedded.com",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text_files": [
+    {
+     "crate": "hxcfe-sys-0.3.4",
+     "path": "vendor/HxCFloppyEmulator/libhxcfe/sources/thirdpartylibs/FATIOlib/COPYRIGHT.txt"
+    }
+   ]
+  },
+  {
+   "kind": "c-library",
+   "name": "ADFlib (inside HxC)",
+   "license": "GPL-2.0-or-later",
+   "owner": "Laurent Clévy and contributors",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text_files": [
+    {
+     "crate": "hxcfe-sys-0.3.4",
+     "path": "vendor/HxCFloppyEmulator/libhxcfe/sources/thirdpartylibs/adflib/COPYING.txt"
+    }
+   ]
+  },
+  {
+   "kind": "c-library",
+   "name": "libsap (inside HxC)",
+   "license": "GPL-2.0-or-later",
+   "owner": "Alexandre Pukall, Eric Botcazou",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text_files": [
+    {
+     "crate": "hxcfe-sys-0.3.4",
+     "path": "vendor/HxCFloppyEmulator/libhxcfe/sources/thirdpartylibs/libsap/licence.txt"
+    }
+   ]
+  },
+  {
+   "kind": "c-library",
+   "name": "xDMS (inside HxC)",
+   "license": "Public domain",
+   "owner": "Andre Rodrigues de la Rocha",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text": "xDMS v1.3 - Portable DMS archive unpacker - Public Domain."
+  },
+  {
+   "kind": "c-library",
+   "name": "TD02IMD Teledisk decoder (inside HxC: td0_lzss.c)",
+   "license": "Author's terms (see the text)",
+   "owner": "Dave Dunfield",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text": "Copyright 2007-2008 Dave Dunfield. All rights reserved.\n\nFor the record: I am retaining copyright on this code, however this is for the purpose of keeping a say in it's disposition. I encourage the use of ideas, algorithms and code fragments contained herein to be used in the creation of compatible programs on other platforms (eg: Linux)."
+  },
+  {
+   "kind": "c-library",
+   "name": "LZW packer from Descent (inside HxC: xml_disk/packer/lzw.c)",
+   "license": "Non-commercial (see the text)",
+   "owner": "Parallax Software Corporation",
+   "builds": [
+    "desktop",
+    "android"
+   ],
+   "text": "THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX SOFTWARE CORPORATION (\"PARALLAX\"). PARALLAX, IN DISTRIBUTING THE CODE TO END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A ROYALTY-FREE, PERPETUAL LICENSE TO SUCH END-USERS FOR USE BY SUCH END-USERS IN USING, DISPLAYING, AND CREATING DERIVATIVE WORKS THEREOF, SO LONG AS SUCH USE, DISPLAY OR CREATION IS FOR NON-COMMERCIAL, ROYALTY OR REVENUE FREE PURPOSES. IN NO EVENT SHALL THE END-USER USE THE COMPUTER CODE CONTAINED HEREIN FOR REVENUE-BEARING PURPOSES. THE END-USER UNDERSTANDS AND AGREES TO THE TERMS HEREIN AND ACCEPTS THE SAME BY USE OF THIS FILE.\nCOPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION. ALL RIGHTS RESERVED.",
+   "note": "Compiled into the HxC library by hxcfe-sys. Its non-commercial condition is one more reason bemu's binaries must not be sold."
+  },
+  {
+   "kind": "android",
+   "name": "LLVM libc++ (libc++_shared.so)",
+   "license": "Apache-2.0 WITH LLVM-exception",
+   "owner": "The LLVM project",
+   "builds": [
+    "android"
+   ],
+   "spdx_texts": [
+    "Apache-2.0",
+    "LLVM-exception"
+   ],
+   "url": "https://libcxx.llvm.org",
+   "note": "The C++ runtime of the NDK, for the C++ code of dependencies."
+  },
+  {
+   "kind": "android",
+   "name": "AndroidX (core, activity, lifecycle, savedstate, collection, annotation, emoji2, startup, profileinstaller...)",
+   "license": "Apache-2.0",
+   "owner": "The Android Open Source Project",
+   "builds": [
+    "android"
+   ],
+   "spdx_texts": [
+    "Apache-2.0"
+   ],
+   "note": "androidx.* libraries of the app"
+  },
+  {
+   "kind": "android",
+   "name": "Jetpack Compose (runtime, ui, foundation, animation, material3)",
+   "license": "Apache-2.0",
+   "owner": "The Android Open Source Project",
+   "builds": [
+    "android"
+   ],
+   "spdx_texts": [
+    "Apache-2.0"
+   ],
+   "note": "The app's interface"
+  },
+  {
+   "kind": "android",
+   "name": "Kotlin standard library",
+   "license": "Apache-2.0",
+   "owner": "JetBrains s.r.o. and Kotlin contributors",
+   "builds": [
+    "android"
+   ],
+   "spdx_texts": [
+    "Apache-2.0"
+   ],
+   "note": "org.jetbrains.kotlin:kotlin-stdlib"
+  },
+  {
+   "kind": "android",
+   "name": "kotlinx.coroutines",
+   "license": "Apache-2.0",
+   "owner": "JetBrains s.r.o.",
+   "builds": [
+    "android"
+   ],
+   "spdx_texts": [
+    "Apache-2.0"
+   ],
+   "note": "org.jetbrains.kotlinx:kotlinx-coroutines-*"
+  },
+  {
+   "kind": "android",
+   "name": "JetBrains annotations, JSpecify, Guava listenablefuture",
+   "license": "Apache-2.0",
+   "owner": "JetBrains s.r.o., the JSpecify authors, Google",
+   "builds": [
+    "android"
+   ],
+   "spdx_texts": [
+    "Apache-2.0"
+   ],
+   "note": "Annotations and ListenableFuture, used by AndroidX"
+  }
+ ]
+}

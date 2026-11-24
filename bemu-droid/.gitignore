@@ -1,0 +1,10 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+# built by rust/build-android.sh
+app/src/main/jniLibs/
+rust/target/
+# copied by the copyLicences task from the repository's root
+app/src/main/assets/
