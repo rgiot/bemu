@@ -76,8 +76,22 @@ val cargoBuild by tasks.registering(Exec::class) {
     onlyIf { !project.hasProperty("skipCargo") }
 }
 
+// The licences shown by Settings > Licences, and shipped with the APK: bemu's notice, its licences
+// (the app is GPL-3.0: it links the HxC library) and the third-party inventory (tools/licenses.py).
+val copyLicences by tasks.registering(Copy::class) {
+    description = "Copies NOTICE.md, the licences and third_party/licenses.json into the assets"
+    val repository = rootProject.file("..")
+    from(repository) {
+        include("NOTICE.md", "LICENSE-MIT", "LICENSE-APACHE", "LICENSE-GPL-3.0")
+    }
+    from(File(repository, "third_party")) {
+        include("licenses.json")
+    }
+    into(layout.projectDirectory.dir("src/main/assets"))
+}
+
 tasks.named("preBuild") {
-    dependsOn(cargoBuild)
+    dependsOn(cargoBuild, copyLicences)
 }
 
 dependencies {

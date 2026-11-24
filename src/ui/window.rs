@@ -132,6 +132,7 @@ pub fn new_window(view: View, copy: u8) -> Box<dyn ViewWindow> {
         View::History => plain(views::history),
         View::Shortcuts => plain(views::shortcuts),
         View::About => plain(views::about),
+        View::Licences => Box::<super::licences::Licences>::default(),
         View::Ppi => plain(|ui, cx| super::chips::ppi(ui, cx.target.motherboard())),
         View::Tape => plain(|ui, cx| super::chips::tape(ui, cx.target.motherboard(), cx.bus)),
         View::Asic => plain(|ui, cx| super::chips::asic(ui, cx.target.motherboard(), cx.bus)),

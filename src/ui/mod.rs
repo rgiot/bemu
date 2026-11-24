@@ -16,6 +16,7 @@ mod code_views;
 mod csl_log;
 mod files;
 mod heat;
+mod licences;
 mod menu;
 mod paging;
 mod paint;
@@ -810,7 +811,7 @@ mod tests {
         );
         let mut bus = CommandBus::default();
         let mut gui = Gui::new();
-        for view in [View::Disassembly, View::About, View::Z80] {
+        for view in [View::Disassembly, View::About, View::Licences, View::Z80] {
             frame(&mut gui, &target, &mut bus, 0.0);
             gui.handle(&HostRequest::Open(view));
             for n in 1..5 {

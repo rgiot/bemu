@@ -51,7 +51,7 @@ jobs:
         shell: bash
         run: |
           mkdir dist
-          cp "target/release/${{ matrix.executable }}" README.md NOTICE.md LICENSE-MIT LICENSE-APACHE dist/
+          cp "target/release/${{ matrix.executable }}" README.md NOTICE.md LICENSE-MIT LICENSE-APACHE LICENSE-GPL-3.0 third_party/licenses.json dist/
       - name: Archive Unix distribution
         if: runner.os != 'Windows'
         run: tar -czf "bemu-${{ matrix.name }}.tar.gz" -C dist .
@@ -106,12 +106,35 @@ jobs:
         run: |
           mkdir -p dist
           cp -R web/pkg web/demo dist/
-          cp web/README.md NOTICE.md LICENSE-MIT LICENSE-APACHE dist/
+          cp web/README.md NOTICE.md LICENSE-MIT LICENSE-APACHE third_party/licenses.json dist/
       - uses: actions/upload-artifact@v4
         with:
           name: bemu-web
           path: bemu/dist/
           if-no-files-found: error
+
+  # third_party/licenses.json (Help > Third-party licences, NOTICE.md) lists what the builds link:
+  # it must follow the dependencies (tools/licenses.py writes it)
+  licenses:
+    name: Third-party licences
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: bemu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bemu
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cpcsdk/rust.cpclib
+          path: rust.cpcdemotools
+          submodules: recursive
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check the inventory
+        run: python3 tools/licenses.py --check
 
   android:
     name: Android (bemu-droid)

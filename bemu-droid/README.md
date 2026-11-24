@@ -78,3 +78,15 @@ that have the cast fixed, until fixed releases are out.
 
 The CI (`.github/workflows/build.yml`, the `android` job) builds both APKs and uploads them as the `bemu-android`
 artifact.
+
+## Licence
+
+bemu's source code, this app's included, is under the MIT or the Apache-2.0 licence. The APK links
+the HxC floppy library (HFE images, GPL-3.0-only), so **the APK is distributed under the GNU GPL,
+version 3** (see `../NOTICE.md`). It must be given away, not sold, because of the terms of the CPC's
+ROMs and of a part of HxC.
+
+Settings > Licences lists everything in the app that is not bemu's own, with its licence. That
+covers the ROMs, the C libraries inside HxC, the Rust crates, LLVM's libc++, AndroidX, Compose and
+Kotlin. The list comes from `third_party/licenses.json` (written by `tools/licenses.py`), which the
+build copies into the APK's assets along with `NOTICE.md` and the licences.

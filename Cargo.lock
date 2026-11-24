@@ -1089,16 +1089,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cdivsufsort"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edefce019197609da416762da75bb000bbd2224b2d89a7e722c2296cbff79b8c"
-dependencies = [
- "cc",
- "sacabase",
-]
-
-[[package]]
 name = "cexpr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1311,18 +1301,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "console"
-version = "0.16.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e96a4956774c13c126a8b5af4daa79384f4d826534c95a02d76afb39e2ab64e3"
-dependencies = [
- "encode_unicode",
- "libc",
- "unicode-width 0.2.2",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "console_error_panic_hook"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1473,7 +1451,6 @@ dependencies = [
  "cpclib-macros",
  "cpclib-sna",
  "cpclib-sprite-compiler",
- "cpclib-xfer",
  "cpclib-z80emu",
  "custom_error",
  "delegate 0.13.5",
@@ -1512,7 +1489,6 @@ dependencies = [
  "getset",
  "globset",
  "hashbag",
- "indicatif",
  "libc",
  "line-span",
  "memchr",
@@ -1563,11 +1539,9 @@ dependencies = [
  "bitvec",
  "camino",
  "clap",
- "http",
  "itertools 0.14.0",
  "num",
  "num-bigint",
- "rand 0.9.4",
  "rayon",
  "resolve-path",
  "semver",
@@ -1575,8 +1549,6 @@ dependencies = [
  "smol_str 0.3.6",
  "strsim",
  "time",
- "ureq 3.4.2",
- "urlencoding",
  "winnow",
 ]
 
@@ -1597,8 +1569,6 @@ dependencies = [
  "cxx",
  "cxx-build",
  "libc",
- "upkr",
- "zx0",
 ]
 
 [[package]]
@@ -1738,26 +1708,6 @@ dependencies = [
  "paste",
  "regex",
  "remain",
- "serde",
-]
-
-[[package]]
-name = "cpclib-xfer"
-version = "0.11.0"
-dependencies = [
- "arrayref",
- "built",
- "camino-tempfile",
- "cfg-if",
- "cpclib-common",
- "cpclib-disc",
- "cpclib-sna",
- "custom_error",
- "delegate 0.13.5",
- "either",
- "fs-err",
- "getset",
- "path-absolutize",
  "serde",
 ]
 
@@ -4253,19 +4203,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "indicatif"
-version = "0.18.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9433806cd6b4ec1aba79c021c7e4c58fb4c3b9977c085062e611ac929998fb0c"
-dependencies = [
- "console",
- "portable-atomic",
- "unicode-width 0.2.2",
- "unit-prefix",
- "web-time",
-]
-
-[[package]]
 name = "inflections"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4573,12 +4510,6 @@ name = "lebe"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
-
-[[package]]
-name = "lexopt"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "803ec87c9cfb29b9d2633f20cba1f488db3fd53f2158b1024cbefb47ba05d413"
 
 [[package]]
 name = "libc"
@@ -6007,24 +5938,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
-name = "path-absolutize"
-version = "3.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4af381fe79fa195b4909485d99f73a80792331df0625188e707854f0b3383f5"
-dependencies = [
- "path-dedot",
-]
-
-[[package]]
-name = "path-dedot"
-version = "3.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07ba0ad7e047712414213ff67533e6dd477af0a4e1d14fb52343e53d30ea9397"
-dependencies = [
- "once_cell",
-]
-
-[[package]]
 name = "peniko"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7074,15 +6987,6 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
-
-[[package]]
-name = "sacabase"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9883fc3d6ce3d78bb54d908602f8bc1f7b5f983afe601dabe083009d86267a84"
-dependencies = [
- "num-traits",
-]
 
 [[package]]
 name = "safe_arch"
@@ -8413,7 +8317,7 @@ version = "2.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 dependencies = [
- "rand 0.9.4",
+ "rand 0.10.4",
 ]
 
 [[package]]
@@ -8492,12 +8396,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
 
 [[package]]
-name = "unit-prefix"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
-
-[[package]]
 name = "universal-hash"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8525,18 +8423,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
-name = "upkr"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2172e0ddb0eedac5beca061e50450657b688c5f389f9ee89510f7d707c964c39"
-dependencies = [
- "anyhow",
- "cdivsufsort",
- "lexopt",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "ureq"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8559,7 +8445,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a7ac20be9b7726e0bbdbf974c059676d9acb1cd414961f570a4e8231cacd7fc"
 dependencies = [
  "base64 0.23.1",
- "flate2",
  "log",
  "percent-encoding",
  "rustls",
@@ -10159,9 +10044,3 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
-
-[[package]]
-name = "zx0"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01df7a825d645551d63d922e23529331b04c32bec8cc56d95e7c71bdcee28146"

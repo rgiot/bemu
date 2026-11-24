@@ -572,11 +572,14 @@ pub(super) fn shortcuts(ui: &mut egui::Ui, _: &mut Cx) {
     });
 }
 
-pub(super) fn about(ui: &mut egui::Ui, _: &mut Cx) {
+pub(super) fn about(ui: &mut egui::Ui, cx: &mut Cx) {
     ui.heading(format!("bemu {}", env!("CARGO_PKG_VERSION")));
     ui.label("An Amstrad CPC, CPC+ and GX4000 emulator.");
     ui.label(env!("CARGO_PKG_AUTHORS"));
-    ui.label("Licence: MIT or Apache-2.0");
+    ui.label(super::licences::BUILD_LICENCE);
+    if ui.button("Third-party licences…").clicked() {
+        cx.bus.push_id("help-licences");
+    }
 }
 
 /// The symbols, filtered by name.

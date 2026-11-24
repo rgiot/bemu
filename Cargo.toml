@@ -57,8 +57,10 @@ cpclib-dap = { path = "../rust.cpcdemotools/cpclib-dap", optional = true, defaul
 # lossless WebP, still or animated (the CSL screenshots), through libwebp: the encoder of the
 # image crate 0.23 has none, and the pure Rust ones compress about 3 times worse
 webp-animation = "0.10"
-cpclib = {path = "../rust.cpcdemotools/cpclib"}
-cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm"}
+# without their default features: those link cpclib-crunchers' compressors, which bemu does not use
+# and some of which have licences it cannot take (Exomizer's is non-commercial; see NOTICE.md)
+cpclib = {path = "../rust.cpcdemotools/cpclib", default-features = false}
+cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm", default-features = false, features = ["colored_errors", "hfe"]}
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens"}
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
 # HFE disc images, read and written by the HxC floppy library (a C library: desktop only)
@@ -109,7 +111,6 @@ cpclib-disc = {path = "../rust.cpcdemotools/cpclib-disc/"}
 cpclib-macros = {path = "../rust.cpcdemotools/cpclib-macros/"}
 cpclib-sna = {path = "../rust.cpcdemotools/cpclib-sna/"}#
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens/"}
-cpclib-xfer = {path = "../rust.cpcdemotools/cpclib-xfer/"}
 cpclib-z80emu = {path = "../rust.cpcdemotools/cpclib-z80emu/"}
 
 [profile.test]

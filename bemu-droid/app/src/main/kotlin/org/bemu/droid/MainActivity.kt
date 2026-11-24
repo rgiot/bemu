@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity(), Controls {
         private set
     private var settings by mutableStateOf(Settings())
     private var showSettings by mutableStateOf(false)
+    private var showLicences by mutableStateOf(false)
 
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(::load)
@@ -57,8 +58,15 @@ class MainActivity : ComponentActivity(), Controls {
                     SettingsDialog(
                         initial = settings,
                         onApply = { applySettings(it) },
+                        onLicences = {
+                            showSettings = false
+                            showLicences = true
+                        },
                         onDismiss = { showSettings = false },
                     )
+                }
+                if (showLicences) {
+                    LicencesScreen(onClose = { showLicences = false })
                 }
             }
         }

@@ -23,12 +23,17 @@ import androidx.compose.ui.unit.sp
 
 /** The settings; applying them switches the machine off and on with them. */
 @Composable
-fun SettingsDialog(initial: Settings, onApply: (Settings) -> Unit, onDismiss: () -> Unit) {
+fun SettingsDialog(initial: Settings, onApply: (Settings) -> Unit, onLicences: () -> Unit, onDismiss: () -> Unit) {
     var s by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = { onApply(s) }) { Text("Apply (resets the CPC)") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onLicences) { Text("Licences") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
         title = { Text("Settings") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {

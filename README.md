@@ -388,9 +388,19 @@ PATH picks another (`MUS0F/ALONEDRK/01INTRO.VGM`), or `-` leaves the player's pr
 
 ## Licence
 
-bemu is licensed under either of the [MIT licence](LICENSE-MIT) or the
-[Apache License, Version 2.0](LICENSE-APACHE), at your option. The ROMs it embeds and the
-LGPL-licensed OPL3 core (the `willy` feature) are not: see [NOTICE.md](NOTICE.md).
+- **bemu's source code** is licensed under either of the [MIT licence](LICENSE-MIT) or the
+  [Apache License, Version 2.0](LICENSE-APACHE), at your option.
+- **bemu's binaries** (the desktop executables and the Android app) are distributed under the
+  [GNU GPL, version 3](LICENSE-GPL-3.0). They link the HxC floppy library (HFE images), which is
+  GPL-3.0-only. Their source is this repository, with
+  [cpcsdk/rust.cpclib](https://github.com/cpcsdk/rust.cpclib) and the crates of `Cargo.lock`. The
+  web package does not contain HxC.
+- What bemu contains and is not bemu's (the ROMs, the libraries) keeps its own licence. See
+  [NOTICE.md](NOTICE.md); every component and its licence text are in
+  [third_party/licenses.json](third_party/licenses.json), and Help > Third-party licences (Settings >
+  Licences in the Android app) shows them.
+- The ROMs and part of HxC may not be used for profit, so **bemu's binaries must be given away, not
+  sold**.
 
 Unless you explicitly state otherwise, any contribution you submit for inclusion in bemu is
 dual-licensed as above, without any additional terms or conditions.

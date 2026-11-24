@@ -258,5 +258,6 @@ preferences-open,new,added,all
 help-shortcuts,--help (after_long_help),added,
 help-api-doc,/api/doc,added,
 help-about,--version,added,
+help-licences,NOTICE.md; third_party/licenses.json,added,
 csl-log-save,new,added,
 view-watch,new,added,
