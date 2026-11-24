@@ -7,12 +7,14 @@ Amstrad CPC emulator written in Rust.
 The **Build distributions** workflow runs on pushes, pull requests and manual dispatch. Download
 its artifacts from a successful run's **Artifacts** section in GitHub Actions: Linux x86-64,
 macOS ARM64 and Windows x86-64 archives contain the executable; `bemu-web` contains the web
-package and demo. Extract the Unix tarballs to preserve executable permissions. Artifacts expire
-according to the repository's Actions retention policy.
+package and demo; `bemu-android` contains the Android app, bemu-droid (its release and debug
+APKs). Extract the Unix tarballs to preserve executable permissions. Artifacts expire according
+to the repository's Actions retention policy.
 
 The builds use the current default branch of `cpcsdk/rust.cpclib` as the sibling
 `rust.cpcdemotools` checkout. See [NOTICE.md](NOTICE.md) for the bundled ROMs and library licences.
-The web demo must be served over HTTP, as described in [web/README.md](web/README.md).
+The web demo must be served over HTTP, as described in [web/README.md](web/README.md). The Android
+app, bemu-droid, is described in [bemu-droid/README.md](bemu-droid/README.md).
 
 ## Running the emulator
 
@@ -87,6 +89,15 @@ same. `validation/demos/batman` has both: the 3" set and the one disc version fo
 
 ```sh
 cargo run --release -- --drive-a 3.5 --dsk 'batman_forever.zip#Batman Forever (One disk version).dsk'
+```
+
+`--autorun` starts the disc in drive A (or the tape) by itself once the machine has booted, as a
+user would: `RUN"` of its program (its menu or loader, else its biggest file; CATART entries are
+not files), `|CPM` for a CP/M system disc, `|TAPE` then `RUN"` for `--cdt`. It is typed at
+`--type-at`, 5 s at least with UniDOS or the M4 (which boot for longer), before `--type`.
+
+```sh
+cargo run --release -- --dsk validation/Benediction/bnd4_package.dsk --autorun
 ```
 
 ## Menus and command palette
@@ -377,9 +388,19 @@ PATH picks another (`MUS0F/ALONEDRK/01INTRO.VGM`), or `-` leaves the player's pr
 
 ## Licence
 
-bemu is licensed under either of the [MIT licence](LICENSE-MIT) or the
-[Apache License, Version 2.0](LICENSE-APACHE), at your option. The ROMs it embeds and the
-LGPL-licensed OPL3 core (the `willy` feature) are not: see [NOTICE.md](NOTICE.md).
+- **bemu's source code** is licensed under either of the [MIT licence](LICENSE-MIT) or the
+  [Apache License, Version 2.0](LICENSE-APACHE), at your option.
+- **bemu's binaries** (the desktop executables and the Android app) are distributed under the
+  [GNU GPL, version 3](LICENSE-GPL-3.0). They link the HxC floppy library (HFE images), which is
+  GPL-3.0-only. Their source is this repository, with
+  [cpcsdk/rust.cpclib](https://github.com/cpcsdk/rust.cpclib) and the crates of `Cargo.lock`. The
+  web package does not contain HxC.
+- What bemu contains and is not bemu's (the ROMs, the libraries) keeps its own licence. See
+  [NOTICE.md](NOTICE.md); every component and its licence text are in
+  [third_party/licenses.json](third_party/licenses.json), and Help > Third-party licences (Settings >
+  Licences in the Android app) shows them.
+- The ROMs and part of HxC may not be used for profit, so **bemu's binaries must be given away, not
+  sold**.
 
 Unless you explicitly state otherwise, any contribution you submit for inclusion in bemu is
 dual-licensed as above, without any additional terms or conditions.

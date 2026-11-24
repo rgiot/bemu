@@ -30,6 +30,10 @@ use crate::expansion_port::{ExpansionDevice, ExpansionPin, ExpansionPort};
 /// The upper ROM slot of the M4's ROM, unless told another (with UniDOS, above 16: 127).
 pub const M4_ROM_SLOT: u8 = 6;
 
+/// The slot of the M4's ROM beside UniDOS: above 16, where UniDOS initialises it after itself
+/// (in slot 6 it takes the discs over: AMSDOS's drive A is not found any more).
+pub const M4_ROM_SLOT_WITH_UNIDOS: u8 = 127;
+
 /// Where the response goes, in the ROM (&E800).
 const RESPONSE: usize = 0x2800;
 /// The ROM's configuration area (&F400).

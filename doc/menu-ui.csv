@@ -317,3 +317,4 @@ Help,Keyboard shortcuts,,,help-shortcuts,,List the F-keys and other shortcuts,,a
 Help,Debug API documentation,,,help-api-doc,,Open the debug server's documentation,Same as debug-server-open-doc,act,,
 Help,,,,,,,,sep,,
 Help,About,,,help-about,,"Version, authors, licence",,act,,
+Help,Third-party licences,,,help-licences,,"The licences of what bemu contains and is not its own: ROMs, libraries",,act,,

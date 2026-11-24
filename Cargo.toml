@@ -57,14 +57,15 @@ cpclib-dap = { path = "../rust.cpcdemotools/cpclib-dap", optional = true, defaul
 # lossless WebP, still or animated (the CSL screenshots), through libwebp: the encoder of the
 # image crate 0.23 has none, and the pure Rust ones compress about 3 times worse
 webp-animation = "0.10"
-cpclib = {path = "../rust.cpcdemotools/cpclib"}
-cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm"}
+# without their default features: those link cpclib-crunchers' compressors, which bemu does not use
+# and some of which have licences it cannot take (Exomizer's is non-commercial; see NOTICE.md)
+cpclib = {path = "../rust.cpcdemotools/cpclib", default-features = false}
+cpclib-asm = {path = "../rust.cpcdemotools/cpclib-asm", default-features = false, features = ["colored_errors", "hfe"]}
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens"}
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
 # HFE disc images, read and written by the HxC floppy library (a C library: desktop only)
 hxcfe = "0.3.4"
 rustyline = "8.2.0" # Make not mandaotry
-minifb = "0.28.0"
 cpal = { version = "0.18.2", optional = true }
 ctrlc = { version = "3.5.2", features = ["termination"] }
 # the debug server: HTTP (axum, on a tokio runtime of its own thread) and its OpenAPI
@@ -81,6 +82,10 @@ wgpu = { version = "30", optional = true, default-features = false, features = [
 # `--frontend winit`: a window drawn by the GPU, see src/frontend/winit_gpu.rs
 winit = { version = "0.30", optional = true }
 egui-winit = { version = "0.37", optional = true, default-features = false, features = ["clipboard", "links", "wayland", "x11"] }
+
+# The minifb window of the desktop binary (no Android backend: bemu-droid draws with wgpu).
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
+minifb = "0.28.0"
 
 # wgpu needs a native backend per OS; "vulkan" alone leaves macOS with none.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -106,7 +111,6 @@ cpclib-disc = {path = "../rust.cpcdemotools/cpclib-disc/"}
 cpclib-macros = {path = "../rust.cpcdemotools/cpclib-macros/"}
 cpclib-sna = {path = "../rust.cpcdemotools/cpclib-sna/"}#
 cpclib-tokens = {path = "../rust.cpcdemotools/cpclib-tokens/"}
-cpclib-xfer = {path = "../rust.cpcdemotools/cpclib-xfer/"}
 cpclib-z80emu = {path = "../rust.cpcdemotools/cpclib-z80emu/"}
 
 [profile.test]
@@ -124,6 +128,10 @@ debug = false
 # (crates optimised apart), for a longer build.
 lto = "fat"
 codegen-units = 1
+
+[build-dependencies]
+# build.rs gzips third_party/licenses.json (Help > Third-party licences)
+flate2 = "1"
 
 [dev-dependencies]
 # reads the text of a CPC screen (tests/claudestrad.rs); standalone, meant for cpclib

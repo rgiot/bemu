@@ -6,6 +6,9 @@
 //! A sector the FDC writes is written through the library when the disc is saved (it encodes the
 //! field and its CRC again), as HFE version 3. The emulator only encodes cells itself to format a
 //! track ([`BitTrack::formatted`], the uPD765's layout) and to give a sector a deleted data mark.
+//!
+//! The HxC library is GPL-3.0-only: the binaries that link it (desktop, Android) are distributed
+//! under the GPL-3.0, bemu's own source staying MIT or Apache-2.0 (see NOTICE.md).
 
 use std::fmt;
 

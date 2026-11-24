@@ -61,13 +61,12 @@ use amsrust::debug_server::DebugServer;
 use amsrust::disc_image::load_disc_file;
 use amsrust::display::DisplayFilter;
 use amsrust::fdc::FdcDrive;
-use amsrust::keyboard::CpcKey;
 use amsrust::monitor::Monitor as CrtMonitor;
 use amsrust::motherboard::{Motherboard, MotherboardBuilder};
 use amsrust::overlay::Overlay;
 use amsrust::psg::AudioConfig;
 use frontend::Frontend;
-use std::collections::VecDeque;
+use amsrust::typist::Typist;
 
 mod cli;
 mod frontend;
@@ -453,21 +452,32 @@ fn main() {
         ctrlc::set_handler(|| STOP.store(true, std::sync::atomic::Ordering::Relaxed)).ok();
     }
     start_sound_export(&args, &mut motherboard);
+    let autorun = args.autorun.then(|| autorun_text(&args, &motherboard)).flatten();
+    // UniDOS and the M4 boot for longer: what is typed before is lost
+    let type_at = if autorun.is_some() {
+        args.type_at
+            .max(amsrust::autorun::boot_seconds(&motherboard))
+    } else {
+        args.type_at
+    };
+    let typed = match (autorun, &args.text) {
+        (Some(autorun), Some(text)) => Some(format!("{autorun}{text}")),
+        (autorun, text) => autorun.or_else(|| text.clone()),
+    };
     let mut typist = match &args.basic {
         Some(file) => {
             let source =
                 std::fs::read_to_string(file).unwrap_or_else(|e| panic!("--basic {file}: {e}"));
             Some(Typist::with_basic(
-                args.text.as_deref().unwrap_or(""),
+                typed.as_deref().unwrap_or(""),
                 source,
-                args.type_at,
+                type_at,
                 motherboard.keyboard_layout(),
             ))
         }
-        None => args
-            .text
+        None => typed
             .as_deref()
-            .map(|text| Typist::new(text, args.type_at, motherboard.keyboard_layout())),
+            .map(|text| Typist::new(text, type_at, motherboard.keyboard_layout())),
     };
     if typist.is_some() && monitor_mode {
         eprintln!("--type is ignored in the interactive monitor");
@@ -744,143 +754,28 @@ fn finish_ym(motherboard: &mut Motherboard) {
 /// T-states per second at the CPC's 4MHz clock.
 const T_STATES_PER_SECOND: usize = 4_000_000;
 
-/// `--type`: the text typed on the CPC keyboard, one character after the
-/// other, each held for 2 frames then released for 2 frames.
-struct Typist {
-    /// `--basic`'s listing, put in memory (then RUN typed) when the typing starts.
-    basic: Option<String>,
-    keys: VecDeque<Step>,
-    /// T-state at which the next press or release is due.
-    next_at: usize,
-    pressed: Option<Vec<CpcKey>>,
-}
-
-/// 40ms: 2 frames, long enough for the firmware's keyboard scan.
-const KEY_T_STATES: usize = T_STATES_PER_SECOND / 25;
-
-/// What `--type` does next: press keys together, or wait (`\(WAIT n)`, n seconds).
-enum Step {
-    Keys(Vec<CpcKey>),
-    Pause(usize),
-}
-
-/// `text`'s keys, with its `\(WAIT n)` pauses (n seconds: a program's prompt to wait for).
-fn steps_of_text(
-    text: &str,
-    layout: amsrust::keyboard::KeyboardLayout,
-) -> Result<Vec<Step>, String> {
-    const WAIT: &str = "\\(WAIT ";
-    let mut steps = Vec::new();
-    let mut rest = text;
-    loop {
-        let (keys, after) = match rest.find(WAIT) {
-            Some(start) => (&rest[..start], Some(&rest[start + WAIT.len()..])),
-            None => (rest, None),
-        };
-        steps.extend(
-            amsrust::csl_runner::keys_of_text(keys, layout)?
-                .into_iter()
-                .map(Step::Keys),
-        );
-        let Some(after) = after else {
-            return Ok(steps);
-        };
-        let end = after
-            .find(')')
-            .ok_or_else(|| format!("{WAIT}... without its )"))?;
-        let seconds: f64 = after[..end]
-            .trim()
-            .parse()
-            .map_err(|_| format!("{WAIT}{}): not a number of seconds", &after[..end]))?;
-        steps.push(Step::Pause((seconds * T_STATES_PER_SECOND as f64) as usize));
-        rest = &after[end + 1..];
+/// `--autorun`: what to type for the disc in drive A, else the tape (see `amsrust::autorun`).
+fn autorun_text(args: &Args, motherboard: &Motherboard) -> Option<String> {
+    let disc = args
+        .dsk_a
+        .as_ref()
+        .and_then(|_| motherboard.fdc().image(FdcDrive::A));
+    if let Some(disc) = disc {
+        let text = amsrust::autorun::disc_command(disc);
+        if text.is_none() {
+            eprintln!("--autorun: nothing to run on the disc in drive A");
+        }
+        return text;
     }
-}
-
-impl Typist {
-    fn new(text: &str, at_seconds: f64, layout: amsrust::keyboard::KeyboardLayout) -> Self {
-        let keys = steps_of_text(text, layout)
-            .unwrap_or_else(|e| {
-                eprintln!("--type: {e}");
-                Vec::new()
-            })
-            .into();
-        Self {
-            basic: None,
-            keys,
-            next_at: (at_seconds * T_STATES_PER_SECOND as f64) as usize,
-            pressed: None,
-        }
+    if args.cdt.is_some() {
+        return Some(amsrust::autorun::tape_command(
+            motherboard.has_disc_interface(),
+        ));
     }
-
-    /// `--basic`: the listing goes in memory at `at_seconds`, then RUN and `text` are typed.
-    fn with_basic(
-        text: &str,
-        basic: String,
-        at_seconds: f64,
-        layout: amsrust::keyboard::KeyboardLayout,
-    ) -> Self {
-        let mut typist = Self::new(&format!("RUN\n{text}"), at_seconds, layout);
-        typist.basic = Some(basic);
-        typist
+    if args.cart.is_none() {
+        eprintln!("--autorun: no --dsk or --cdt to start");
     }
-
-    /// Press or release the keys that are due. Cheap: call it as often as
-    /// wanted (every instruction or every frame).
-    fn update(&mut self, motherboard: &mut Motherboard) {
-        let now = motherboard.t_state_counter().value();
-        if now >= self.next_at {
-            if let Some(source) = self.basic.take() {
-                // as LOAD would (BASIC is up by now: --type-at); what the tokenizer can't read
-                // is typed instead (slower: the firmware tokenizes it)
-                if let Err(error) = amsrust::basic_program::load(motherboard, &source) {
-                    eprintln!("--basic: {error}\n--basic: typing the listing instead");
-                    let layout = motherboard.keyboard_layout();
-                    let typed = source
-                        .lines()
-                        .map(|line| format!("{line}\n"))
-                        .collect::<String>();
-                    match amsrust::csl_runner::keys_of_text(&typed, layout) {
-                        Ok(keys) => {
-                            for key in keys.into_iter().rev() {
-                                self.keys.push_front(Step::Keys(key));
-                            }
-                        }
-                        Err(error) => {
-                            eprintln!("--basic: {error}");
-                            self.keys.clear();
-                        }
-                    }
-                }
-            }
-        }
-        if now < self.next_at {
-            // Held keys stay pressed even if something else (the window's
-            // host keyboard) released them meanwhile.
-            for &key in self.pressed.iter().flatten() {
-                motherboard.keyboard_mut().set_pressed(key, true);
-            }
-            return;
-        }
-        let (keys, pressed) = match self.pressed.take() {
-            Some(keys) => (keys, false),
-            None => match self.keys.pop_front() {
-                Some(Step::Keys(keys)) => (keys, true),
-                Some(Step::Pause(t_states)) => {
-                    self.next_at = now + t_states;
-                    return;
-                }
-                None => return,
-            },
-        };
-        for &key in &keys {
-            motherboard.keyboard_mut().set_pressed(key, pressed);
-        }
-        if pressed {
-            self.pressed = Some(keys);
-        }
-        self.next_at = now + KEY_T_STATES;
-    }
+    None
 }
 
 /// `--watch`: the machine takes the files again when they change.
@@ -1371,30 +1266,5 @@ fn play_frame_audio(audio: Option<&AudioOut>, samples: &[f32], window: &dyn Fron
         while amsrust::audio_mix::Pacing::DESKTOP.should_wait(audio.buffered()) && window.is_open() {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use amsrust::keyboard::KeyboardLayout;
-
-    use super::{steps_of_text, Step, T_STATES_PER_SECOND};
-
-    #[test]
-    fn typed_text_waits_where_asked() {
-        let steps = steps_of_text("ab\\(WAIT 1.5)c\\(RET)", KeyboardLayout::Uk).unwrap();
-        let shape: Vec<Option<usize>> = steps
-            .iter()
-            .map(|step| match step {
-                Step::Keys(_) => None,
-                Step::Pause(t_states) => Some(*t_states),
-            })
-            .collect();
-        assert_eq!(
-            shape,
-            [None, None, Some(T_STATES_PER_SECOND * 3 / 2), None, None]
-        );
-        assert!(steps_of_text("\\(WAIT x)a", KeyboardLayout::Uk).is_err());
-        assert!(steps_of_text("\\(WAIT 2", KeyboardLayout::Uk).is_err());
     }
 }

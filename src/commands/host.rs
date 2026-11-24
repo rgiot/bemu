@@ -330,6 +330,7 @@ pub enum View {
     Preferences,
     Shortcuts,
     About,
+    Licences,
     Joystick,
     Keyboard,
 }
@@ -382,7 +383,7 @@ impl ViewInfo {
 
 impl View {
     /// Every view, in the order of the Window menu.
-    pub const ALL: [View; 27] = [
+    pub const ALL: [View; 28] = [
         View::Z80,
         View::Stack,
         View::Crtc,
@@ -408,6 +409,7 @@ impl View {
         View::Preferences,
         View::Shortcuts,
         View::About,
+        View::Licences,
         View::Joystick,
         View::Keyboard,
     ];
@@ -440,6 +442,9 @@ impl View {
             View::Preferences => I::debugger("preferences-open", "Preferences").not_debugger(),
             View::Shortcuts => I::debugger("help-shortcuts", "Keyboard shortcuts").not_debugger(),
             View::About => I::debugger("help-about", "About bemu").not_debugger(),
+            View::Licences => I::debugger("help-licences", "Third-party licences")
+                .not_debugger()
+                .resizable(640.0, 560.0),
             View::Joystick => I::debugger("joystick-simulated-window", "Joystick"),
             View::Keyboard => I::debugger("keyboard-view", "Keyboard").resizable(820.0, 300.0),
         }
