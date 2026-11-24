@@ -196,7 +196,11 @@ const CASES: &[Case] = &[
 /// pixels it reaches today (ignored for a screen of text, which is then only reported). Keep it
 /// honest: a missing entry means "identical text, or at least [`MIN_MATCH`] of the pixels".
 /// (Filled in from a first run, see the commit that added this file.)
-const KNOWN_DIFFERENCES: &[(&str, &str, f64)] = &[];
+const KNOWN_DIFFERENCES: &[(&str, &str, f64)] = &[
+    // the real 6128+ runs the DMA 3 us later than CLAUDESTRAD's emulation (the green rectangle is
+    // 3 us to the right, the yellow one off the screen): bemu follows the photo
+    ("PLUSDMA2", "6128plus", 0.90),
+];
 
 fn machine(machine: Machine, playcity: bool) -> MotherboardBuilder {
     let mut builder = MotherboardBuilder::default();
@@ -308,7 +312,8 @@ fn run(case: &Case, which: Machine, target: Option<&str>, m4: bool) -> RgbImage 
         {
             break;
         }
-        let asks = last_line(&seen).contains("touche");
+        // (PPIRACE says not to touch the keyboard: a key pressed there is a false reading of its own)
+        let asks = last_line(&seen).contains("touche") && !last_line(&seen).contains("ne touchez pas");
         if asks && seen != target && !as_far && stable >= 1_500_000 && presses < 40 {
             presses += 1;
             runner
@@ -516,7 +521,11 @@ fn check_truth(case: &Case, failures: &mut Vec<String>) {
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().into_string().unwrap())
-        .filter(|f| f.starts_with(&format!("{}_crtc", case.name)) && f.ends_with(".txt"))
+        .filter(|f| {
+            (f.starts_with(&format!("{}_crtc", case.name))
+                || f.starts_with(&format!("{}_6128plus", case.name)))
+                && f.ends_with(".txt")
+        })
         .collect();
     files.sort();
     for file in files {
@@ -525,7 +534,7 @@ fn check_truth(case: &Case, failures: &mut Vec<String>) {
             .trim_end_matches(".txt")
             .to_owned();
         let m4 = label.ends_with("_m4");
-        let crtc: u8 = label[4..5].parse().unwrap();
+        let plus = label == "6128plus";
         // The M4's ROM answers `RUN"` from its SD card, so the disc in drive A is never read
         // (`|A` did not bring it back): the photos with an M4 cannot be replayed yet.
         if m4 {
@@ -535,9 +544,13 @@ fn check_truth(case: &Case, failures: &mut Vec<String>) {
             );
             continue;
         }
-        let which = Machine::Crtc(crtc);
+        let which = if plus {
+            Machine::Plus
+        } else {
+            Machine::Crtc(label[4..5].parse().unwrap())
+        };
         // the screen CLAUDESTRAD shows is where the run stops
-        let reference = image::open(format!("{FIXTURES}/refs/{}_crtc{crtc}.png", case.name))
+        let reference = image::open(format!("{FIXTURES}/refs/{}_{}.png", case.name, which.label()))
             .unwrap()
             .to_rgb8();
         let target = read_text(&reference).text();
