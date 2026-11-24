@@ -312,7 +312,8 @@ fn run(case: &Case, which: Machine, target: Option<&str>, m4: bool) -> RgbImage 
         {
             break;
         }
-        let asks = last_line(&seen).contains("touche");
+        // (PPIRACE says not to touch the keyboard: a key pressed there is a false reading of its own)
+        let asks = last_line(&seen).contains("touche") && !last_line(&seen).contains("ne touchez pas");
         if asks && seen != target && !as_far && stable >= 1_500_000 && presses < 40 {
             presses += 1;
             runner
