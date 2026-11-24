@@ -27,7 +27,7 @@ impl Painter {
         view: &wgpu::TextureView,
         size: [u32; 2],
         ctx: &egui::Context,
-        output: egui::FullOutput,
+        mut output: egui::FullOutput,
     ) {
         self.paint_shapes(
             device,
@@ -38,7 +38,7 @@ impl Painter {
             ctx,
             output.shapes,
             output.pixels_per_point,
-            &output.textures_delta,
+            &mut output.textures_delta,
         );
     }
 
@@ -55,7 +55,7 @@ impl Painter {
         ctx: &egui::Context,
         shapes: Vec<egui::epaint::ClippedShape>,
         pixels_per_point: f32,
-        textures: &egui::TexturesDelta,
+        textures: &mut egui::TexturesDelta,
     ) {
         let jobs = ctx.tessellate(shapes, pixels_per_point);
         for (id, deltas) in &textures.set {
@@ -97,5 +97,6 @@ impl Painter {
         for id in &textures.free {
             self.renderer.free_texture(id);
         }
+        textures.clear();
     }
 }

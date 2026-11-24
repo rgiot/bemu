@@ -75,12 +75,33 @@ struct ViewWindow {
     state: egui_winit::State,
     ctx: egui::Context,
     painter: Option<amsrust::ui::Painter>,
+    /// Texture updates from frames whose surface was unavailable.
+    pending_textures: PendingTextures,
     fitting: Fitting,
     /// When its scale factor changed (another screen, a Retina one): a `Resized` just after is
     /// the system's.
     scale_changed: Option<std::time::Instant>,
     /// Where it is, as its last move or resize left it (for the workspace).
     geometry: Option<amsrust::ui::workspace::Geometry>,
+}
+
+#[derive(Default)]
+struct PendingTextures(egui::TexturesDelta);
+
+impl PendingTextures {
+    fn append(&mut self, textures: egui::TexturesDelta) {
+        self.0.append(textures);
+    }
+
+    fn take(&mut self) -> egui::TexturesDelta {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Drop for PendingTextures {
+    fn drop(&mut self) {
+        self.0.clear();
+    }
 }
 
 /// A window sized to its content until the user resizes it.
@@ -237,6 +258,7 @@ impl ViewWindow {
             state,
             ctx,
             painter: None,
+            pending_textures: PendingTextures::default(),
             // the keyboard scales to its window; the others, the joystick's included (one or two
             // sticks), are as large as their content
             scale_changed: None,
@@ -310,6 +332,8 @@ impl ViewWindow {
     fn draw(&mut self, gfx: &Gfx, mut output: egui::FullOutput) {
         self.state
             .handle_platform_output(&self.window, std::mem::take(&mut output.platform_output));
+        self.pending_textures
+            .append(std::mem::take(&mut output.textures_delta));
         // the surface at the window's size now (a resize may not have been reported yet: a
         // surface of the old size would be stretched to the window)
         let size = self.window.inner_size();
@@ -355,6 +379,7 @@ impl ViewWindow {
         let painter = self
             .painter
             .get_or_insert_with(|| amsrust::ui::Painter::new(&gfx.device, format));
+        let mut textures = self.pending_textures.take();
         painter.paint_shapes(
             &gfx.device,
             &gfx.queue,
@@ -364,7 +389,7 @@ impl ViewWindow {
             &self.ctx,
             output.shapes,
             output.pixels_per_point,
-            &output.textures_delta,
+            &mut textures,
         );
         gfx.queue.submit([encoder.finish()]);
         gfx.queue.present(surface_texture);
@@ -498,7 +523,7 @@ impl Gfx {
         // the menus and windows over it
         if let Some(ui) = ui {
             // a new frame of the interface (its texture updates once), else the last one again
-            let textures = match ui.output.take() {
+            let mut textures = match ui.output.take() {
                 Some(output) => {
                     ui.shapes = output.shapes;
                     ui.pixels_per_point = output.pixels_per_point;
@@ -518,7 +543,7 @@ impl Gfx {
                 &ui.ctx,
                 ui.shapes.clone(),
                 ui.pixels_per_point,
-                &textures,
+                &mut textures,
             );
         }
         self.queue.submit([encoder.finish()]);
@@ -1619,7 +1644,108 @@ impl Frontend for WinitGpuFrontend {
 
 #[cfg(test)]
 mod test {
-    use super::refreshes_per_frame;
+    use super::{refreshes_per_frame, PendingTextures};
+
+    fn image_delta(pos: Option<[usize; 2]>) -> egui::epaint::ImageDelta {
+        let image = egui::ColorImage::new([2, 2], vec![egui::Color32::WHITE; 4]);
+        match pos {
+            Some(pos) => {
+                egui::epaint::ImageDelta::partial(pos, image, egui::TextureOptions::LINEAR)
+            }
+            None => egui::epaint::ImageDelta::full(image, egui::TextureOptions::LINEAR),
+        }
+    }
+
+    #[test]
+    fn skipped_view_frames_keep_texture_allocation_and_updates() {
+        let id = egui::TextureId::Managed(0);
+        let mut pending = PendingTextures::default();
+        for pos in [None, Some([2, 0]), Some([4, 0])] {
+            let mut delta = egui::TexturesDelta::default();
+            delta.push(id, image_delta(pos));
+            pending.append(delta);
+        }
+        let mut textures = pending.take();
+        let updates = textures.set.get(&id).unwrap();
+        assert_eq!(
+            updates.iter().map(|delta| delta.pos).collect::<Vec<_>>(),
+            [None, Some([2, 0]), Some([4, 0])]
+        );
+        assert!(pending.take().is_empty());
+        textures.clear();
+
+        let mut new_allocation = egui::TexturesDelta::default();
+        new_allocation.push(id, image_delta(None));
+        pending.append(new_allocation);
+        let mut freed = egui::TexturesDelta::default();
+        freed.free(id);
+        pending.append(freed);
+        let mut textures = pending.take();
+        assert!(!textures.set.contains_key(&id));
+        assert!(textures.free.contains(&id));
+        textures.clear();
+
+        let mut abandoned = egui::TexturesDelta::default();
+        abandoned.push(id, image_delta(None));
+        pending.append(abandoned);
+        drop(pending);
+    }
+
+    #[test]
+    fn skipped_view_texture_updates_can_be_painted() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let Ok(adapter) = amsrust::display::wait_for(
+            instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
+        ) else {
+            eprintln!("skipped: no GPU adapter");
+            return;
+        };
+        let (device, queue) =
+            amsrust::display::wait_for(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                .unwrap();
+        let id = egui::TextureId::Managed(0);
+        let mut pending = PendingTextures::default();
+        for pos in [None, Some([0, 0])] {
+            let mut delta = egui::TexturesDelta::default();
+            delta.push(id, image_delta(pos));
+            pending.append(delta);
+        }
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let ctx = egui::Context::default();
+        let mut initial_output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        initial_output.textures_delta.clear();
+        let mut painter = amsrust::ui::Painter::new(&device, format);
+        let mut textures = pending.take();
+        painter.paint_shapes(
+            &device,
+            &queue,
+            &mut encoder,
+            &view,
+            [4, 4],
+            &ctx,
+            vec![],
+            1.0,
+            &mut textures,
+        );
+        assert!(textures.is_empty());
+        queue.submit([encoder.finish()]);
+    }
 
     #[test]
     fn a_window_is_fitted_until_the_user_resizes_it() {
