@@ -71,6 +71,22 @@ impl Gfx {
         self.gpu.as_ref().is_some_and(|gpu| gpu.crt)
     }
 
+    pub fn diagnostics(&self) -> String {
+        match (&self.gpu, &self.target) {
+            (Some(gpu), Some(target)) => {
+                let info = gpu.adapter.get_info();
+                let picture = gpu.picture.renderer();
+                format!(
+                    "Graphics: {} ({:?}, {:?})\nSurface: {}x{}, {:?}\nCRT compute available: {}\nLast picture: {}",
+                    info.name, info.backend, info.device_type,
+                    target.config.width, target.config.height, target.config.present_mode, gpu.crt,
+                    if picture.is_empty() { "not drawn yet" } else { picture }
+                )
+            }
+            _ => "Graphics: surface unavailable".to_owned(),
+        }
+    }
+
     /// Draw in the window `window` (an `ANativeWindow*`), `size` pixels; the GPU made the first time.
     ///
     /// # Safety

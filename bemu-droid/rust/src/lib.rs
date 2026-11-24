@@ -7,6 +7,7 @@
 pub mod config;
 pub mod governor;
 pub mod machine;
+pub mod performance;
 
 #[cfg(target_os = "android")]
 mod audio;

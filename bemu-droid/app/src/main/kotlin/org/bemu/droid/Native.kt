@@ -66,4 +66,7 @@ object Native {
 
     /** Whether the GPU draws the CRT (else the picture is raw). */
     external fun hasCrt(handle: Long): Boolean
+
+    /** A periodically updated graphics and timing snapshot. */
+    external fun diagnostics(handle: Long): String
 }

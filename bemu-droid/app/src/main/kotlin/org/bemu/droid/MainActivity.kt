@@ -1,5 +1,8 @@
 package org.bemu.droid
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -12,6 +15,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -23,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.core.content.IntentCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -41,6 +47,7 @@ class MainActivity : ComponentActivity(), Controls {
     private var settings by mutableStateOf(Settings())
     private var showSettings by mutableStateOf(false)
     private var showLicences by mutableStateOf(false)
+    private var showDiagnostics by mutableStateOf(false)
     /** The phone was found too slow for the CTM: the app says so (once). */
     private var crtDropped by mutableStateOf(false)
 
@@ -77,11 +84,38 @@ class MainActivity : ComponentActivity(), Controls {
                             showSettings = false
                             showLicences = true
                         },
+                        onDiagnostics = {
+                            showDiagnostics = true
+                        },
                         onDismiss = { showSettings = false },
                     )
                 }
                 if (showLicences) {
                     LicencesScreen(onClose = { showLicences = false })
+                }
+                if (showDiagnostics) {
+                    var report by remember { mutableStateOf("Collecting measurements...") }
+                    LaunchedEffect(handle) {
+                        while (true) {
+                            report = Native.diagnostics(handle)
+                            delay(1000)
+                        }
+                    }
+                    AlertDialog(
+                        onDismissRequest = { showDiagnostics = false },
+                        title = { Text("Performance diagnostics") },
+                        text = { Text(report, Modifier.verticalScroll(rememberScrollState())) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("bemu diagnostics", report))
+                                Toast.makeText(this, "Diagnostics copied", Toast.LENGTH_SHORT).show()
+                            }) { Text("Copy") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showDiagnostics = false }) { Text("Close") }
+                        },
+                    )
                 }
                 // the emulator tells when the phone is too slow for the CTM
                 LaunchedEffect(Unit) {

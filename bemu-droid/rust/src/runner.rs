@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::gfx::Gfx;
 use crate::governor::{Decision, Governor};
 use crate::machine::{Input, Machine};
+use crate::performance::Performance;
 
 /// A frame of the CPC: 50.08 Hz.
 const FRAME: Duration = Duration::from_micros(19_968);
@@ -84,6 +85,8 @@ struct Runner {
     paused: bool,
     audio: Option<AudioOut>,
     next_frame: Instant,
+    performance: Performance,
+    last_frame_end: Option<Instant>,
 }
 
 impl Runner {
@@ -100,6 +103,8 @@ impl Runner {
             paused: false,
             audio: None,
             next_frame: Instant::now(),
+            performance: Performance::default(),
+            last_frame_end: None,
         };
         runner.update_audio();
         runner
@@ -107,6 +112,22 @@ impl Runner {
 
     fn running(&self) -> bool {
         self.gfx.attached() && !self.paused
+    }
+
+    fn reset_performance(&mut self) {
+        self.performance = Performance::default();
+        self.last_frame_end = None;
+        let status = if self.paused {
+            "Emulation paused"
+        } else if !self.gfx.attached() {
+            "Graphics surface unavailable"
+        } else {
+            "Collecting measurements..."
+        };
+        match self.input.diagnostics.lock() {
+            Ok(mut diagnostics) => *diagnostics = status.to_owned(),
+            Err(error) => log::error!("cannot reset diagnostics: {error}"),
+        }
     }
 
     /// Sound on when the settings and the app want it, the machine producing what the device plays.
@@ -165,38 +186,45 @@ impl Runner {
                 self.next_frame = Instant::now();
                 self.governor.reset();
                 self.update_audio();
+                self.reset_performance();
                 let _ = done.send(());
             }
             Command::Resize(width, height) => {
                 self.size = (width, height);
                 self.gfx.resize(self.size);
+                self.reset_performance();
             }
             Command::Pause(paused) => {
                 self.paused = paused;
                 self.governor.reset();
                 self.next_frame = Instant::now();
                 self.update_audio();
+                self.reset_performance();
             }
             Command::Load(name, bytes, reply) => {
                 let result = self.machine.load(&name, bytes);
                 if let Err(e) = &result {
                     log::warn!("{e}");
                 }
+                self.reset_performance();
                 let _ = reply.send(result);
             }
             Command::Reset => {
                 if let Err(e) = self.machine.reset() {
                     log::error!("reset: {e}");
                 }
+                self.reset_performance();
             }
             Command::Configure(config, reply) => {
                 let _ = reply.send(self.machine.configure(config));
                 self.update_audio();
+                self.reset_performance();
             }
             Command::KeepCrt => {
                 self.governor.crt_droppable = false;
                 self.machine.config.display = "ctm".to_owned();
                 self.governor.reset();
+                self.reset_performance();
             }
             Command::Save(reply) => {
                 let result = self.machine.save_state(&self.state);
@@ -215,6 +243,7 @@ impl Runner {
     fn frame(&mut self) {
         let start = Instant::now();
         let picture = self.machine.run_frame(&self.input);
+        let emulation = start.elapsed();
         let samples = self.machine.take_audio();
         if let Some(audio) = &self.audio {
             audio.push(&samples, Pacing::DESKTOP.max);
@@ -222,21 +251,29 @@ impl Runner {
         let (mode, warp) = self.machine.display();
         self.frames += 1;
         // a phone too slow draws one frame in two (the machine and its sound run them all)
-        if !(self.governor.skipping() && self.frames % 2 == 1) {
+        let attempted_draw = !(self.governor.skipping() && self.frames % 2 == 1);
+        let draw_start = Instant::now();
+        if attempted_draw {
             if let Err(e) = self.gfx.show(picture.as_ref(), mode, warp) {
                 log::error!("{e}");
             }
         }
+        let drawing = if attempted_draw { draw_start.elapsed() } else { Duration::ZERO };
         let crt = !mode.is_raw() && self.gfx.has_crt();
-        match self.governor.frame(start.elapsed(), crt) {
-            Decision::Keep => {}
+        let changed = match self.governor.frame(start.elapsed(), crt) {
+            Decision::Keep => false,
             Decision::DropCrt => {
                 log::warn!("{:?} a frame with the CRT: the picture raw", self.governor.average());
                 self.machine.config.display = "raw".to_owned();
                 self.input.crt_dropped.store(true, std::sync::atomic::Ordering::Relaxed);
+                true
             }
-            Decision::SkipFrames(skip) => log::warn!("one frame drawn in two: {skip}"),
-        }
+            Decision::SkipFrames(skip) => {
+                log::warn!("one frame drawn in two: {skip}");
+                true
+            }
+        };
+        let pacing_start = Instant::now();
         match &self.audio {
             // the device's clock: wait while enough sound is ahead
             Some(audio) => {
@@ -255,6 +292,29 @@ impl Runner {
                     // too far behind (a slow phone): no catching up
                     self.next_frame = now;
                 }
+            }
+        }
+        let pacing = pacing_start.elapsed();
+        if changed {
+            self.reset_performance();
+            return;
+        }
+        let end = Instant::now();
+        let elapsed = end.duration_since(self.last_frame_end.unwrap_or(start));
+        self.last_frame_end = Some(end);
+        if let Some(performance) = self.performance.record(elapsed, emulation, drawing, pacing, attempted_draw) {
+            let sound = match &self.audio {
+                Some(audio) => format!("on (buffer {:.1} ms)", audio.buffered().as_secs_f64() * 1000.0),
+                None if self.machine.config.audio => "requested, unavailable".to_owned(),
+                None => "off".to_owned(),
+            };
+            let report = format!(
+                "{}\nDisplay requested: {} | frame skipping: {}\nSound: {}\n{}\nDraw submission is CPU time, not GPU execution time.",
+                self.gfx.diagnostics(), self.machine.config.display, self.governor.skipping(), sound, performance
+            );
+            match self.input.diagnostics.lock() {
+                Ok(mut diagnostics) => *diagnostics = report,
+                Err(error) => log::error!("cannot update diagnostics: {error}"),
             }
         }
     }

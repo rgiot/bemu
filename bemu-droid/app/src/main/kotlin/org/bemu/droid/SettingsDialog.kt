@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.sp
 
 /** The settings; applying them switches the machine off and on with them. */
 @Composable
-fun SettingsDialog(initial: Settings, onApply: (Settings) -> Unit, onLicences: () -> Unit, onDismiss: () -> Unit) {
+fun SettingsDialog(initial: Settings, onApply: (Settings) -> Unit, onLicences: () -> Unit, onDiagnostics: () -> Unit, onDismiss: () -> Unit) {
     var s by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -37,6 +37,7 @@ fun SettingsDialog(initial: Settings, onApply: (Settings) -> Unit, onLicences: (
         title = { Text("Settings") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                TextButton(onClick = onDiagnostics) { Text("Performance diagnostics") }
                 Text("Model", fontSize = 14.sp)
                 androidx.compose.foundation.layout.FlowRow {
                     Settings.MODELS.forEach { model ->

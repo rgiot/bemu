@@ -45,6 +45,10 @@ bemu-droid/
   - `Fn` shows the function keys (f0–f9) and the cursor keys.
 - **Hardware keyboards and gamepads**: a keyboard's keys map to the CPC's keys. A gamepad's d-pad and A/B buttons map to
   the joystick.
+- **Performance diagnostics**: Settings > Performance diagnostics shows the selected graphics adapter and backend,
+  emulation and draw rates, and average CPU-side emulation, draw submission and pacing times. Let it run for a few
+  seconds, then use Copy to share the measurements. Draw attempts may not result in a presented frame, and draw
+  submission time is CPU-side and does not measure GPU execution time.
 
 ## Building
 

@@ -5,6 +5,7 @@
 
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex, Once};
+use std::sync::TryLockError;
 
 use jni::objects::{JByteArray, JObject, JString};
 use jni::sys::{jboolean, jint, jlong, JNI_FALSE, JNI_TRUE};
@@ -40,6 +41,27 @@ fn string(env: &mut JNIEnv, s: &JString) -> String {
 
 fn jstring(env: &mut JNIEnv, s: &str) -> jni::sys::jstring {
     env.new_string(s).map(JString::into_raw).unwrap_or(std::ptr::null_mut())
+}
+
+/// Latest performance snapshot; reading it does not wait for the emulation thread.
+#[no_mangle]
+pub extern "system" fn Java_org_bemu_droid_Native_diagnostics(
+    mut env: JNIEnv,
+    _this: JObject,
+    raw_handle: jlong,
+) -> jni::sys::jstring {
+    let Some(handle) = (unsafe { handle(raw_handle) }) else {
+        return jstring(&mut env, "Emulator unavailable");
+    };
+    match handle.input.diagnostics.try_lock() {
+        Ok(report) if report.is_empty() => jstring(&mut env, "Collecting measurements..."),
+        Ok(report) => jstring(&mut env, &report),
+        Err(TryLockError::WouldBlock) => jstring(&mut env, "Updating measurements..."),
+        Err(TryLockError::Poisoned(error)) => {
+            log::error!("cannot read diagnostics: {error}");
+            jstring(&mut env, "Diagnostics unavailable")
+        }
+    }
 }
 
 static INIT: Once = Once::new();

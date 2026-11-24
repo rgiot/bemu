@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::Mutex;
 
 use amsrust::autorun::{self, MediaKind};
 use amsrust::display::{DisplayMode, Warp};
@@ -39,6 +40,8 @@ pub struct Input {
     pub crt: AtomicBool,
     /// The phone was too slow for the CRT: the picture is raw now (the app says so once).
     pub crt_dropped: AtomicBool,
+    /// Latest diagnostic snapshot, refreshed by the emulation thread.
+    pub diagnostics: Mutex<String>,
 }
 
 impl Input {
