@@ -180,16 +180,20 @@ pub const fn cpl(a: u8, flags: u8) -> (u8, u8) {
     )
 }
 
-/// SCF.
+/// SCF. `q` is the flags the previous instruction wrote (0 when it wrote none): on a Zilog Z80 the
+/// undocumented flags X and Y come from `(q ^ flags) | a`, not from `a` alone as on a NEC (the real
+/// CPCs' Z80s are Zilog's: CLAUDESTRAD's Z80TYPE reads &28 with Q=0, A=0, F=&28).
 #[inline]
-pub const fn scf(a: u8, flags: u8) -> u8 {
-    (flags & (S | Z | PV)) | C | (a & (Y | X))
+pub const fn scf(a: u8, flags: u8, q: u8) -> u8 {
+    (flags & (S | Z | PV)) | C | (((q ^ flags) | a) & (Y | X))
 }
 
-/// CCF: H receives the old carry.
+/// CCF: H receives the old carry (X and Y as for [`scf`]).
 #[inline]
-pub const fn ccf(a: u8, flags: u8) -> u8 {
-    (flags & (S | Z | PV)) | (if flags & C != 0 { H } else { C }) | (a & (Y | X))
+pub const fn ccf(a: u8, flags: u8, q: u8) -> u8 {
+    (flags & (S | Z | PV))
+        | (if flags & C != 0 { H } else { C })
+        | (((q ^ flags) | a) & (Y | X))
 }
 
 /// DAA.
@@ -288,8 +292,12 @@ mod test {
     #[test]
     fn flag_only_instructions() {
         assert_eq!(cpl(0x00, 0), (0xff, H | N | Y | X));
-        assert_eq!(scf(0x00, S | Z | PV | H | N), S | Z | PV | C);
-        assert_eq!(ccf(0x00, C), H);
-        assert_eq!(ccf(0x00, 0), C);
+        assert_eq!(scf(0x00, S | Z | PV | H | N, S | Z | PV | H | N), S | Z | PV | C);
+        // Q=0: X and Y of F come through (Zilog), or A's
+        assert_eq!(scf(0x00, X | Y, 0), X | Y | C);
+        assert_eq!(scf(0x00, X | Y, X | Y), C);
+        assert_eq!(scf(X, 0, 0), X | C);
+        assert_eq!(ccf(0x00, C, C), H);
+        assert_eq!(ccf(0x00, 0, 0), C);
     }
 }

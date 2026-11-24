@@ -1,0 +1,4 @@
+1. OUT (C),0 envoie &00 : NMOS
+SCF : 255 0 0 0
+CCF : 255 0 0 0
+3. P/V apres LD A,I + interruption : 0 : 50 fois, 1 : 0 fois : NMOS
