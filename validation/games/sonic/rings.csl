@@ -7,287 +7,287 @@ cpc_model 6
 rom_config C 0 'Sonic the Hedgehog (UK) (64K) (2025) [Original].cpr'
 reset
 wait 15053098
-joystick 0 fire1
+joystick 0,fire1
 wait 339454
 joystick 0
 wait 7028736
-joystick 0 right
+joystick 0,right
 screenshot_name 'r00'
 screenshot
 wait 279552
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r01'
 screenshot
 wait 279553
 screenshot_name 'r02'
 screenshot
 wait 279551
-joystick 0 right
+joystick 0,right
 screenshot_name 'r03'
 screenshot
 wait 279553
 screenshot_name 'r04'
 screenshot
 wait 279552
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r05'
 screenshot
 wait 279552
 screenshot_name 'r06'
 screenshot
 wait 279551
-joystick 0 right
+joystick 0,right
 screenshot_name 'r07'
 screenshot
 wait 279553
 screenshot_name 'r08'
 screenshot
 wait 279552
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r09'
 screenshot
 wait 279553
 screenshot_name 'r10'
 screenshot
 wait 279551
-joystick 0 right
+joystick 0,right
 screenshot_name 'r11'
 screenshot
 wait 279551
 screenshot_name 'r12'
 screenshot
 wait 279552
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r13'
 screenshot
 wait 279555
 screenshot_name 'r14'
 screenshot
 wait 279550
-joystick 0 right
+joystick 0,right
 screenshot_name 'r15'
 screenshot
 wait 279550
 screenshot_name 'r16'
 screenshot
 wait 279553
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r17'
 screenshot
 wait 279553
 screenshot_name 'r18'
 screenshot
 wait 279552
-joystick 0 right
+joystick 0,right
 screenshot_name 'r19'
 screenshot
 wait 279551
 screenshot_name 'r20'
 screenshot
 wait 279552
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r21'
 screenshot
 wait 279552
 screenshot_name 'r22'
 screenshot
 wait 279553
-joystick 0 right
+joystick 0,right
 screenshot_name 'r23'
 screenshot
 wait 279552
 screenshot_name 'r24'
 screenshot
 wait 279551
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r25'
 screenshot
 wait 279552
 screenshot_name 'r26'
 screenshot
 wait 279551
-joystick 0 right
+joystick 0,right
 screenshot_name 'r27'
 screenshot
 wait 279553
 screenshot_name 'r28'
 screenshot
 wait 279551
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r29'
 screenshot
 wait 279552
 screenshot_name 'r30'
 screenshot
 wait 279555
-joystick 0 right
+joystick 0,right
 screenshot_name 'r31'
 screenshot
 wait 279550
 screenshot_name 'r32'
 screenshot
 wait 279552
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r33'
 screenshot
 wait 279554
 screenshot_name 'r34'
 screenshot
 wait 279550
-joystick 0 right
+joystick 0,right
 screenshot_name 'r35'
 screenshot
 wait 279553
 screenshot_name 'r36'
 screenshot
 wait 279551
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r37'
 screenshot
 wait 279553
 screenshot_name 'r38'
 screenshot
 wait 279554
-joystick 0 right
+joystick 0,right
 screenshot_name 'r39'
 screenshot
 wait 279553
 screenshot_name 'r40'
 screenshot
 wait 279552
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r41'
 screenshot
 wait 279548
 screenshot_name 'r42'
 screenshot
 wait 279554
-joystick 0 right
+joystick 0,right
 screenshot_name 'r43'
 screenshot
 wait 279550
 screenshot_name 'r44'
 screenshot
 wait 279551
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r45'
 screenshot
 wait 279556
 screenshot_name 'r46'
 screenshot
 wait 279549
-joystick 0 right
+joystick 0,right
 screenshot_name 'r47'
 screenshot
 wait 279554
 screenshot_name 'r48'
 screenshot
 wait 279550
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r49'
 screenshot
 wait 279555
 screenshot_name 'r50'
 screenshot
 wait 279549
-joystick 0 right
+joystick 0,right
 screenshot_name 'r51'
 screenshot
 wait 279553
 screenshot_name 'r52'
 screenshot
 wait 279553
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r53'
 screenshot
 wait 279549
 screenshot_name 'r54'
 screenshot
 wait 279553
-joystick 0 right
+joystick 0,right
 screenshot_name 'r55'
 screenshot
 wait 279553
 screenshot_name 'r56'
 screenshot
 wait 279552
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r57'
 screenshot
 wait 279552
 screenshot_name 'r58'
 screenshot
 wait 279553
-joystick 0 right
+joystick 0,right
 screenshot_name 'r59'
 screenshot
 wait 279549
 screenshot_name 'r60'
 screenshot
 wait 279554
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r61'
 screenshot
 wait 279552
 screenshot_name 'r62'
 screenshot
 wait 279550
-joystick 0 right
+joystick 0,right
 screenshot_name 'r63'
 screenshot
 wait 279553
 screenshot_name 'r64'
 screenshot
 wait 279552
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r65'
 screenshot
 wait 279551
 screenshot_name 'r66'
 screenshot
 wait 279554
-joystick 0 right
+joystick 0,right
 screenshot_name 'r67'
 screenshot
 wait 279556
 screenshot_name 'r68'
 screenshot
 wait 279547
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r69'
 screenshot
 wait 279554
 screenshot_name 'r70'
 screenshot
 wait 279550
-joystick 0 right
+joystick 0,right
 screenshot_name 'r71'
 screenshot
 wait 279551
 screenshot_name 'r72'
 screenshot
 wait 279554
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r73'
 screenshot
 wait 279554
 screenshot_name 'r74'
 screenshot
 wait 279550
-joystick 0 right
+joystick 0,right
 screenshot_name 'r75'
 screenshot
 wait 279550
 screenshot_name 'r76'
 screenshot
 wait 279556
-joystick 0 right fire1
+joystick 0,right,fire1
 screenshot_name 'r77'
 screenshot
 wait 279550
 screenshot_name 'r78'
 screenshot
 wait 279555
-joystick 0 right
+joystick 0,right
 screenshot_name 'r79'
 screenshot

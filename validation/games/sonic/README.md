@@ -12,7 +12,7 @@ Compared with AMSpiriT Lite 1.16.0 (the Linux AppImage of amspirit.fr, run headl
 ## Scripts
 
 - `sonic.csl` (CSL 1.6): boots the cartridge on a GX4000, screenshots the disclaimer and the
-  title, `joystick 0 fire1` starts the game, `joystick 0 right` runs into the first Motobug.
+  title, `joystick 0,fire1` starts the game, `joystick 0,right` runs into the first Motobug.
 
       cargo run --release --example run_csl -- validation/games/sonic/sonic.csl /tmp/sonic
 
