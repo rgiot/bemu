@@ -4,6 +4,9 @@ ADB ?= $(firstword $(wildcard $(ANDROID_HOME)/platform-tools/adb $(ANDROID_SDK_R
 GRADLEW ?= ./gradlew
 BEMU_ABIS ?= arm64-v8a
 DEBUG_APK ?= app/build/outputs/apk/debug/app-universal-debug.apk
+JAVA21 := $(shell /usr/libexec/java_home -v 21 2>/dev/null || ls -d /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home 2>/dev/null)
+JAVA17 := $(shell /usr/libexec/java_home -v 17 2>/dev/null || ls -d /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home 2>/dev/null)
+BEMU_JAVA_HOME ?= $(or $(JAVA21),$(JAVA17))
 DEBUG_PACKAGE := org.bemu.droid.debug
 
 setup:
@@ -12,7 +15,8 @@ setup:
 debug:
 	@command -v "$(ADB)" >/dev/null || { echo "adb not found. Install platform-tools (https://developer.android.com/tools/releases/platform-tools, or brew install --cask android-platform-tools), then run: make debug ADB=/path/to/platform-tools/adb" >&2; exit 1; }
 	@"$(ADB)" get-state >/dev/null || { echo "Connect and authorize one Android device (or set ANDROID_SERIAL)" >&2; exit 1; }
-	BEMU_ABIS="$(BEMU_ABIS)" "$(GRADLEW)" --no-daemon assembleDebug -PbemuDebugApplicationIdSuffix=.debug
+	@test -n "$(BEMU_JAVA_HOME)" || { echo "Gradle needs JDK 17 or 21 (found only newer ones). Run: brew install openjdk@21, then: sudo ln -sfn /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-21.jdk (or set BEMU_JAVA_HOME=/path/to/jdk)" >&2; exit 1; }
+	JAVA_HOME="$(BEMU_JAVA_HOME)" BEMU_ABIS="$(BEMU_ABIS)" "$(GRADLEW)" --no-daemon assembleDebug -PbemuDebugApplicationIdSuffix=.debug
 	@"$(ADB)" install -r "$(DEBUG_APK)"
 	@output=$$("$(ADB)" shell am start -W -n "$(DEBUG_PACKAGE)/org.bemu.droid.MainActivity") || { echo "$$output"; exit 1; }; \
 		printf '%s\n' "$$output"; \
