@@ -351,6 +351,18 @@ impl Machine {
         amsrust::frame::run_frame(&mut self.motherboard, &mut self.monitor, None, None, 2 * FRAME_T_STATES)
     }
 
+    /// One frame nobody sees: no pixels are generated (the sync, the sound and the interrupts go on).
+    pub fn run_frame_hidden(&mut self, input: &Input) {
+        self.apply(input);
+        self.motherboard.set_video(false);
+        let end = self.motherboard.t_state_counter().value() + FRAME_T_STATES;
+        while self.motherboard.t_state_counter().value() < end {
+            self.motherboard.execute_next_opcode_no_video();
+        }
+        self.motherboard.take_io_writes().for_each(drop);
+        self.motherboard.set_video(true);
+    }
+
     /// The sound of the frames run since the last call (stereo, interleaved).
     pub fn take_audio(&mut self) -> Vec<f32> {
         self.motherboard.take_audio_samples()

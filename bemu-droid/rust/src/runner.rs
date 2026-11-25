@@ -250,7 +250,14 @@ impl Runner {
     /// One frame run, drawn, its sound queued; then the wait the sound (or the clock) asks.
     fn frame(&mut self) {
         let start = Instant::now();
-        let picture = self.machine.run_frame(&self.input);
+        // a phone too slow draws one frame in two (the machine and its sound run them all)
+        let attempted_draw = !(self.governor.skipping() && (self.frames + 1) % 2 == 1);
+        let picture = if attempted_draw {
+            self.machine.run_frame(&self.input)
+        } else {
+            self.machine.run_frame_hidden(&self.input);
+            None
+        };
         let emulation = start.elapsed();
         let samples = self.machine.take_audio();
         if let Some(audio) = &self.audio {
@@ -258,8 +265,6 @@ impl Runner {
         }
         let (mode, warp) = self.machine.display();
         self.frames += 1;
-        // a phone too slow draws one frame in two (the machine and its sound run them all)
-        let attempted_draw = !(self.governor.skipping() && self.frames % 2 == 1);
         let draw_start = Instant::now();
         if attempted_draw {
             if let Err(e) = self.gfx.show(picture.as_ref(), mode, warp) {

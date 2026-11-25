@@ -83,7 +83,8 @@ for abi in "${abis[@]}"; do
     esac
     symbols="$target_dir/android-symbols/$abi"
     mkdir -p "$symbols"
-    cp "$out/libbemu_droid.so" "$symbols/libbemu_droid.so"
+    # cargo-ndk strips the library it copies: the symbols come from cargo's own output
+    cp "$target_dir/$triple/$profile/libbemu_droid.so" "$symbols/libbemu_droid.so"
     "$strip" --strip-unneeded "$out/libbemu_droid.so"
     cp "$sysroot/usr/lib/$triple/libc++_shared.so" "$out/"
 done
