@@ -58,7 +58,7 @@ You need:
 - Rust, with the targets `rustup target add aarch64-linux-android x86_64-linux-android`
 - `cargo install cargo-ndk`
 - The Android SDK with the NDK (`sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"`)
-- JDK 17 or later
+- JDK 17 or 21 (the Gradle wrapper does not support every newer JDK)
 - cpclib checked out next to the repository (`../rust.cpcdemotools`), as for the desktop build
 
 ```sh
@@ -68,6 +68,23 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 ```
 
 `app/build/outputs/apk/` then holds the APK.
+
+For a debuggable app on a USB-connected, authorized phone, run:
+
+```sh
+cd bemu-droid
+make debug
+```
+
+This builds the APK with an optimized Rust core, installs it as `org.bemu.droid.debug` alongside the release app,
+launches it and streams its logcat output until Ctrl-C. It has separate settings, saved state and app-owned files;
+load the same workload in the debug app when comparing performance. It does not uninstall or replace the release.
+To save the stream, run `make debug 2>&1 | tee bemu-debug.log` and stop it with Ctrl-C. Logs can contain information
+about the device and files opened; review them before sharing.
+The target builds `arm64-v8a` by default; override `BEMU_ABIS` for another device. If needed, set `ADB` to the
+platform-tools executable and `ANDROID_SERIAL` to select a device. The build still requires the SDK, NDK, Rust
+Android target and cargo-ndk listed above. Device CPU profiling uses the same procedure below with package
+`org.bemu.droid.debug` and the matching local symbols in `rust/target/android-symbols/`.
 
 - Gradle runs `rust/build-android.sh` first, which puts `libbemu_droid.so` (always optimised, since a debug emulator is
   too slow) in `app/src/main/jniLibs`. Two options change this:
@@ -92,6 +109,32 @@ The CI (`.github/workflows/build.yml`) builds the app and tests it:
   checks that the disc starts by itself, in both orientations and back from the background, with no crash. Its
   screenshots and log are the `bemu-android-smoke` artifact. The emulator draws with GLES, so the picture is raw:
   the CTM needs a phone with Vulkan.
+- The `android-profile-symbols` artifact contains unstripped Rust libraries for profiling; use the symbols from the
+  same CI run as the APK.
+
+### Profiling Android CPU time
+
+Release APKs allow profiling from an authorized Android debugging shell on Android 10 or later; the app is not
+debuggable. This allows CPU sampling with minimal instrumentation instead of adding a timer to every emulated tick.
+Profiles can include information about the running program and device: only share them with someone you trust.
+
+With the matching APK running on a USB-debugging-enabled phone, download `android-profile-symbols` from its CI run and
+unzip it to a directory named `symbols`. On a computer with the Android NDK and `adb` on `PATH`, run:
+
+```sh
+mkdir bemu-profile
+cd bemu-profile
+"$ANDROID_NDK_HOME/simpleperf/app_profiler.py" -p org.bemu.droid \
+  -r "-e task-clock:u -f 200 --duration 20 -g" -lib /absolute/path/to/symbols
+"$ANDROID_NDK_HOME/simpleperf/report.py" -g > report.txt
+```
+
+Keep the emulator visible and running the workload throughout the capture. The report separates sampled CPU time
+by thread and function; focus on the `bemu` emulation thread. The `perf.data`, `binary_cache/` and `report.txt`
+are saved in the current directory. Repeat under the same workload with CTM enabled and disabled. CPU sampling
+does not measure GPU execution or time a thread spends waiting, and the sample percentages are estimates.
+`app_profiler.py` may pull system libraries from the phone; the matching unstripped app libraries are required
+for useful Rust symbols. Do not mix symbols and APKs from different builds.
 
 ### Signing CI releases
 

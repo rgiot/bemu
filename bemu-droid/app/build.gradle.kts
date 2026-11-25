@@ -36,6 +36,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Optional isolated install for local device debugging.
+            providers.gradleProperty("bemuDebugApplicationIdSuffix").orNull?.let {
+                applicationIdSuffix = it
+            }
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

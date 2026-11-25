@@ -203,6 +203,20 @@ jobs:
       - name: Test the machine on the host
         working-directory: bemu/bemu-droid/rust
         run: cargo test --release --no-default-features
+      - name: Verify Android profiling symbols
+        run: |
+          set -euo pipefail
+          readelf="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          apk=bemu-droid/app/build/outputs/apk/release/app-universal-release.apk
+          for abi in arm64-v8a x86_64; do
+            lib="bemu-droid/app/src/main/jniLibs/$abi/libbemu_droid.so"
+            symbols="bemu-droid/rust/target/android-symbols/$abi/libbemu_droid.so"
+            cmp "$lib" <(unzip -p "$apk" "lib/$abi/libbemu_droid.so")
+            lib_id=$("$readelf" -n "$lib" | grep 'Build ID:')
+            symbol_id=$("$readelf" -n "$symbols" | grep 'Build ID:')
+            test "$lib_id" = "$symbol_id"
+            "$readelf" -S "$symbols" | grep '\.symtab' > /dev/null
+          done
       - name: Prepare distribution
         run: |
           mkdir -p dist
@@ -217,6 +231,11 @@ jobs:
           path: |
             bemu/dist/*.apk
             bemu/dist/*.aab
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-profile-symbols
+          path: bemu/bemu-droid/rust/target/android-symbols/
           if-no-files-found: error
 
   # The app run on an Android emulator: a disc opened and started by itself, both orientations,

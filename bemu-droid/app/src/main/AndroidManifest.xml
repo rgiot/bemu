@@ -17,6 +17,9 @@
         android:usesCleartextTraffic="true"
         android:hasFragileUserData="true">
 
+        <!-- Allow shell CPU profiling of release builds without making the app debuggable. -->
+        <profileable android:shell="true" />
+
         <!-- the activity follows the phone's orientation itself: the emulator keeps running -->
         <activity
             android:name=".MainActivity"

@@ -41,8 +41,9 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
-# the JNI functions stay exported (dynamic symbols)
-strip = true
+# CI saves the matching symbols before stripping the library packaged in the APK.
+debug = 1
+strip = false
 
 [profile.dev]
 # the emulator is too slow unoptimised to be usable on a phone

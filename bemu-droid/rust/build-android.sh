@@ -62,6 +62,8 @@ cargo ndk "${targets[@]}" -P 26 -o "$here/../app/src/main/jniLibs" build "${flag
 # Only the app's library (cargo-ndk copies the cdylibs of dependencies too), and the C++ runtime
 # that the C++ code of dependencies links to.
 sysroot=$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" -maxdepth 2 -type d -name sysroot | head -n 1)
+strip="$(dirname "$sysroot")/bin/llvm-strip"
+[ -x "$strip" ] || { echo "NDK llvm-strip not found: $strip" >&2; exit 1; }
 for abi in "${abis[@]}"; do
     out="$here/../app/src/main/jniLibs/$abi"
     find "$out" -name '*.so' ! -name libbemu_droid.so -delete
@@ -71,5 +73,9 @@ for abi in "${abis[@]}"; do
         x86_64) triple=x86_64-linux-android ;;
         x86) triple=i686-linux-android ;;
     esac
+    symbols="$target_dir/android-symbols/$abi"
+    mkdir -p "$symbols"
+    cp "$out/libbemu_droid.so" "$symbols/libbemu_droid.so"
+    "$strip" --strip-unneeded "$out/libbemu_droid.so"
     cp "$sysroot/usr/lib/$triple/libc++_shared.so" "$out/"
 done
