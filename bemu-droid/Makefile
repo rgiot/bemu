@@ -4,8 +4,8 @@ ADB ?= $(firstword $(wildcard $(ANDROID_HOME)/platform-tools/adb $(ANDROID_SDK_R
 GRADLEW ?= ./gradlew
 BEMU_ABIS ?= arm64-v8a
 DEBUG_APK ?= app/build/outputs/apk/debug/app-universal-debug.apk
-JAVA21 := $(shell /usr/libexec/java_home -v 21 2>/dev/null || ls -d /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home 2>/dev/null)
-JAVA17 := $(shell /usr/libexec/java_home -v 17 2>/dev/null || ls -d /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home 2>/dev/null)
+JAVA21 := $(shell /usr/libexec/java_home --failfast -v 21 2>/dev/null || ls -d /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home 2>/dev/null)
+JAVA17 := $(shell /usr/libexec/java_home --failfast -v 17 2>/dev/null || ls -d /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home 2>/dev/null)
 BEMU_JAVA_HOME ?= $(or $(JAVA21),$(JAVA17))
 DEBUG_PACKAGE := org.bemu.droid.debug
 
