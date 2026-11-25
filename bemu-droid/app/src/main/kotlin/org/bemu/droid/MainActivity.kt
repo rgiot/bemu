@@ -65,7 +65,11 @@ class MainActivity : ComponentActivity(), Controls {
         fullScreen()
         settings = Settings.load(this)
         Licences.preload(this)
-        handle = Native.create(this, settings.toEngineJson(), sdFolder.absolutePath, File(filesDir, "state").absolutePath)
+        val stateFolder = File(filesDir, "state")
+        // a machine saved comes back only when Android ended the app and brings the screen back;
+        // a launch by the user (or after an update) starts a new one
+        if (savedInstanceState == null) stateFolder.deleteRecursively()
+        handle = Native.create(this, settings.toEngineJson(), sdFolder.absolutePath, stateFolder.absolutePath)
         if (handle == 0L) {
             Toast.makeText(this, "The emulator could not start", Toast.LENGTH_LONG).show()
         }
