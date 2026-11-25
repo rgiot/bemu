@@ -170,6 +170,8 @@ mod tests {
     fn the_defaults_make_the_droid_machine() {
         let config = Config::from_json("").unwrap();
         assert_eq!(config, Config::default());
+        assert!(!config.m4 && !config.rulezcharge, "the lighter machine by default");
+        let config = Config { m4: true, rulezcharge: true, ..config };
         assert!(!config.display().unwrap().is_raw(), "the CTM by default");
         let mb = config.build(None, &sd()).unwrap();
         assert!(mb.has_expansion::<amsrust::m4::M4Board>());
@@ -180,7 +182,7 @@ mod tests {
 
     #[test]
     fn only_motherboard_settings_require_restart() {
-        let config = Config::default();
+        let config = Config { m4: true, rulezcharge: true, ..Config::default() };
         let live = [
             Config { display: "raw".into(), ..config.clone() },
             Config { curvature: 0.0, ..config.clone() },

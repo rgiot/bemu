@@ -469,7 +469,7 @@ mod tests {
 
     #[test]
     fn hardware_settings_restart_the_machine() {
-        let mut machine = Machine::new(Config::default(), sd()).unwrap();
+        let mut machine = Machine::new(Config { m4: true, rulezcharge: true, ..Config::default() }, sd()).unwrap();
         machine.run_frame(&Input::default());
         machine.motherboard.write_bank_byte(1, 0x123, 0x99);
         let changed = Config { m4: false, ..machine.config.clone() };
