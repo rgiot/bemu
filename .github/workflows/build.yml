@@ -146,6 +146,10 @@ jobs:
       # Non-publishing builds can fall back to a temporary debug key.
       KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bemu
+          persist-credentials: false
       - name: Require persistent Android signing for published builds
         if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
         env:
@@ -157,10 +161,6 @@ jobs:
             echo "::error::Set all Android signing secrets before publishing: see bemu-droid/README.md"
             exit 1
           fi
-      - uses: actions/checkout@v4
-        with:
-          path: bemu
-          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: cpcsdk/rust.cpclib
