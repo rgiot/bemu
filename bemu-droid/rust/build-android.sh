@@ -23,11 +23,14 @@ for arg in "$@"; do
 done
 [ ${#abis[@]} -eq 0 ] && abis=(arm64-v8a x86_64)
 
-if [ -z "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_NDK_HOME:-}" ]; then
+if [ -z "${ANDROID_HOME:-}" ]; then
     # Gradle's SDK location when the environment has none
     sdk=$(sed -n 's/^sdk.dir=//p' "$here/../local.properties" 2>/dev/null | head -n 1)
     [ -n "$sdk" ] && export ANDROID_HOME="$sdk"
 fi
+# The NDK CI tests (newer ones, e.g. Homebrew's, break the bindgen builds), when installed
+pinned="${ANDROID_HOME:-}/ndk/27.2.12479018"
+[ -d "$pinned" ] && export ANDROID_NDK_HOME="$pinned"
 if [ -z "${ANDROID_NDK_HOME:-}" ] && [ -n "${ANDROID_HOME:-}" ] && [ -d "$ANDROID_HOME/ndk" ]; then
     ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$(ls "$ANDROID_HOME/ndk" | sort -V | tail -n 1)"
     export ANDROID_NDK_HOME
