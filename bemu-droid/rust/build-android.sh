@@ -23,6 +23,11 @@ for arg in "$@"; do
 done
 [ ${#abis[@]} -eq 0 ] && abis=(arm64-v8a x86_64)
 
+if [ -z "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_NDK_HOME:-}" ]; then
+    # Gradle's SDK location when the environment has none
+    sdk=$(sed -n 's/^sdk.dir=//p' "$here/../local.properties" 2>/dev/null | head -n 1)
+    [ -n "$sdk" ] && export ANDROID_HOME="$sdk"
+fi
 if [ -z "${ANDROID_NDK_HOME:-}" ] && [ -n "${ANDROID_HOME:-}" ] && [ -d "$ANDROID_HOME/ndk" ]; then
     ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$(ls "$ANDROID_HOME/ndk" | sort -V | tail -n 1)"
     export ANDROID_NDK_HOME
@@ -45,7 +50,7 @@ for crate in hxcfe-sys hxcfe; do
         cp -r "$source" "$patched"
         # hxcfe-sys writes the casts in the code its build script generates; hxcfe in its sources
         for file in "$patched/build.rs" $(find "$patched/src" -name '*.rs'); do
-            [ -f "$file" ] && sed -i 's/\*mut i8\b/*mut ::std::os::raw::c_char/g' "$file"
+            [ -f "$file" ] && perl -pi -e 's/\*mut i8\b/*mut ::std::os::raw::c_char/g' "$file"
         done
         touch "$patched/.fixed-$version"
     fi

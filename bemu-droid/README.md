@@ -59,6 +59,7 @@ You need:
 - `cargo install cargo-ndk`
 - The Android SDK with the NDK (`sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"`)
 - JDK 17 or newer (Gradle 9.5; it is pinned below 9.6 because AGP 8.13 needs it)
+- `make setup` installs the Android SDK, NDK, cargo-ndk and the Rust targets (into ~/Library/Android/sdk)
 - cpclib checked out next to the repository (`../rust.cpcdemotools`), as for the desktop build
 
 ```sh
