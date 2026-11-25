@@ -58,7 +58,7 @@ You need:
 - Rust, with the targets `rustup target add aarch64-linux-android x86_64-linux-android`
 - `cargo install cargo-ndk`
 - The Android SDK with the NDK (`sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"`)
-- JDK 17 or 21 (the Gradle wrapper does not support every newer JDK)
+- JDK 17 or newer (Gradle 9.5; it is pinned below 9.6 because AGP 8.13 needs it)
 - cpclib checked out next to the repository (`../rust.cpcdemotools`), as for the desktop build
 
 ```sh
