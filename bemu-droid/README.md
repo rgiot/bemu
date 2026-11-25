@@ -91,6 +91,42 @@ The CI (`.github/workflows/build.yml`) builds the app and tests it:
   screenshots and log are the `bemu-android-smoke` artifact. The emulator draws with GLES, so the picture is raw:
   the CTM needs a phone with Vulkan.
 
+### Signing CI releases
+
+Android only updates an installed app when the new APK has the same signing certificate. CI requires a persistent
+release key for pushes that publish the development build or a tagged release. Other CI builds can use a temporary
+debug key, which is not suitable for updating an installed release.
+
+To create a new key on macOS with Java and the authenticated GitHub CLI installed, run the following locally. The
+password and keystore are stored in a private folder and are not printed or added to the repository:
+
+```sh
+(
+set -eu
+umask 077
+mkdir -m 700 "$HOME/bemu-android-signing"
+openssl rand -hex 32 > "$HOME/bemu-android-signing/password.txt"
+keytool -genkeypair -v -keystore "$HOME/bemu-android-signing/release.jks" \
+  -storetype PKCS12 -alias bemu -keyalg RSA -keysize 3072 -validity 10000 \
+  -dname "CN=bemu Android" \
+  -storepass:file "$HOME/bemu-android-signing/password.txt" \
+  -keypass:file "$HOME/bemu-android-signing/password.txt"
+base64 -i "$HOME/bemu-android-signing/release.jks" | gh secret set ANDROID_KEYSTORE_BASE64 --repo rgiot/bemu
+gh secret set ANDROID_KEYSTORE_PASSWORD --repo rgiot/bemu < "$HOME/bemu-android-signing/password.txt"
+printf %s bemu | gh secret set ANDROID_KEY_ALIAS --repo rgiot/bemu
+gh secret set ANDROID_KEY_PASSWORD --repo rgiot/bemu < "$HOME/bemu-android-signing/password.txt"
+)
+```
+
+Only generate a key if there is no existing release key to preserve. Keep the keystore and password backed up
+securely: GitHub secrets cannot be read back, and losing the key prevents future in-place updates. Never commit
+them. The command refuses to overwrite an existing signing directory. If uploading a secret fails, use the existing
+files to retry the `gh secret set` commands rather than generating a new key. If a previously installed APK was
+signed with a different key, it must be uninstalled before the first
+installation with the new key; uninstalling can delete app data, so back up anything important first. Subsequent
+release APKs signed with the same key can be installed as updates. Use `bemu-droid.apk` or `bemu-droid-arm64.apk`,
+not the temporary-key debug APK.
+
 ## Licence
 
 bemu's source code, this app's included, is under the MIT or the Apache-2.0 licence. The APK links
