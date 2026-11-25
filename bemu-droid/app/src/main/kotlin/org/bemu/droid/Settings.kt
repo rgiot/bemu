@@ -17,9 +17,9 @@ data class Settings(
     /** "auto" (the phone's language), "en" or "fr". */
     val languageChoice: String = AUTO,
     val ctm: Boolean = true,
-    val m4: Boolean = true,
+    val m4: Boolean = false,
     val m4Wifi: Boolean = true,
-    val rulezcharge: Boolean = true,
+    val rulezcharge: Boolean = false,
     val unidos: Boolean = true,
     val playcity: Boolean = false,
     val autorun: Boolean = true,
