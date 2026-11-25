@@ -12,7 +12,7 @@ use ndk::native_window::NativeWindow;
 
 use crate::audio::AudioOut;
 use crate::config::Config;
-use crate::gfx::Gfx;
+use crate::gfx::Renderer;
 use crate::governor::{Decision, Governor};
 use crate::machine::{Input, Machine};
 use crate::performance::Performance;
@@ -81,7 +81,7 @@ struct Runner {
     state: PathBuf,
     input: Arc<Input>,
     // the surface's drawing before the window it draws in
-    gfx: Gfx,
+    gfx: Renderer,
     window: Option<NativeWindow>,
     size: (u32, u32),
     paused: bool,
@@ -100,7 +100,7 @@ impl Runner {
             frames: 0,
             state,
             input,
-            gfx: Gfx::default(),
+            gfx: Renderer::default(),
             window: None,
             size: (1, 1),
             paused: false,
@@ -267,9 +267,7 @@ impl Runner {
         self.frames += 1;
         let draw_start = Instant::now();
         if attempted_draw {
-            if let Err(e) = self.gfx.show(picture.as_ref(), mode, warp) {
-                log::error!("{e}");
-            }
+            self.gfx.show(picture, mode, warp);
         }
         let drawing = if attempted_draw { draw_start.elapsed() } else { Duration::ZERO };
         let crt = !mode.is_raw() && self.gfx.has_crt();

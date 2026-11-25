@@ -29,12 +29,12 @@ struct CrtState {
 
 /// The CRT on CubeCL's CPU backend (a page has none: it is the GPU or nothing).
 #[cfg(not(target_arch = "wasm32"))]
-fn cpu_filter(params: &CrtParams, warp: Warp) -> Result<Box<dyn DisplayFilter>, String> {
-    super::KernelCrt::new(params.clone(), warp, super::Backend::Cpu).map(|f| Box::new(f) as Box<dyn DisplayFilter>)
+fn cpu_filter(params: &CrtParams, warp: Warp) -> Result<Box<dyn DisplayFilter + Send>, String> {
+    super::KernelCrt::new(params.clone(), warp, super::Backend::Cpu).map(|f| Box::new(f) as Box<dyn DisplayFilter + Send>)
 }
 
 #[cfg(target_arch = "wasm32")]
-fn cpu_filter(_: &CrtParams, _: Warp) -> Result<Box<dyn DisplayFilter>, String> {
+fn cpu_filter(_: &CrtParams, _: Warp) -> Result<Box<dyn DisplayFilter + Send>, String> {
     Err("a page has no CPU rendering".into())
 }
 
@@ -43,7 +43,7 @@ fn cpu_filter(_: &CrtParams, _: Warp) -> Result<Box<dyn DisplayFilter>, String> 
 struct SoftState {
     mode: DisplayMode,
     warp: Warp,
-    filter: Box<dyn DisplayFilter>,
+    filter: Box<dyn DisplayFilter + Send>,
     buffer: Vec<u32>,
     rgba: Vec<u8>,
     target: wgpu::Texture,

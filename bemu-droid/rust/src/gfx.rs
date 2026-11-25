@@ -8,6 +8,9 @@
 
 use amsrust::display::{DisplayMode, Picture, Warp};
 use image::RgbImage;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Instant;
 use raw_window_handle::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle};
 
 type Window = std::ptr::NonNull<std::ffi::c_void>;
@@ -274,5 +277,128 @@ impl Target {
         };
         surface.configure(device, &config);
         Self { surface, config }
+    }
+}
+
+/// A picture to draw, the latest one wins: a draw slower than the machine drops pictures instead of
+/// slowing the machine.
+struct Job {
+    frame: Option<RgbImage>,
+    mode: DisplayMode,
+    warp: Warp,
+}
+
+#[derive(Default)]
+struct Slot {
+    job: Option<Job>,
+    quit: bool,
+}
+
+/// [`Gfx`] drawing on its own thread: the CRT's CPU cost (encoding and submitting the GPU work)
+/// does not take the time of the emulation.
+pub struct Renderer {
+    gfx: Arc<Mutex<Gfx>>,
+    slot: Arc<(Mutex<Slot>, Condvar)>,
+    /// The last draws' mean duration, in microseconds.
+    draw_micros: Arc<AtomicU64>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Default for Renderer {
+    fn default() -> Self {
+        let gfx = Arc::new(Mutex::new(Gfx::default()));
+        let slot = Arc::new((Mutex::new(Slot::default()), Condvar::new()));
+        let draw_micros = Arc::new(AtomicU64::new(0));
+        let thread = {
+            let (gfx, slot, draw_micros) = (gfx.clone(), slot.clone(), draw_micros.clone());
+            std::thread::Builder::new()
+                .name("bemu-render".to_owned())
+                .spawn(move || loop {
+                    let job = {
+                        let (lock, wake) = &*slot;
+                        let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                        loop {
+                            if guard.quit {
+                                return;
+                            }
+                            if let Some(job) = guard.job.take() {
+                                break job;
+                            }
+                            guard = wake.wait(guard).unwrap_or_else(|e| e.into_inner());
+                        }
+                    };
+                    let start = Instant::now();
+                    let result = gfx
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .show(job.frame.as_ref(), job.mode, job.warp);
+                    if let Err(e) = result {
+                        log::error!("{e}");
+                    }
+                    let micros = start.elapsed().as_micros() as u64;
+                    let before = draw_micros.load(Ordering::Relaxed);
+                    draw_micros.store(if before == 0 { micros } else { (before * 7 + micros) / 8 }, Ordering::Relaxed);
+                })
+                .ok()
+        };
+        Self { gfx, slot, draw_micros, thread }
+    }
+}
+
+impl Drop for Renderer {
+    fn drop(&mut self) {
+        self.slot.0.lock().unwrap_or_else(|e| e.into_inner()).quit = true;
+        self.slot.1.notify_one();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Renderer {
+    fn gfx(&self) -> std::sync::MutexGuard<'_, Gfx> {
+        self.gfx.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn attached(&self) -> bool {
+        self.gfx().attached()
+    }
+
+    pub fn has_crt(&self) -> bool {
+        self.gfx().has_crt()
+    }
+
+    pub fn diagnostics(&self) -> String {
+        format!(
+            "{}\nDraw on its thread: {:.1} ms/picture",
+            self.gfx().diagnostics(),
+            self.draw_micros.load(Ordering::Relaxed) as f64 / 1000.0
+        )
+    }
+
+    /// # Safety
+    /// See [`Gfx::attach`].
+    pub unsafe fn attach(&self, window: Window, size: (u32, u32)) -> Result<(), String> {
+        unsafe { self.gfx().attach(window, size) }
+    }
+
+    pub fn detach(&self) {
+        self.slot.0.lock().unwrap_or_else(|e| e.into_inner()).job = None;
+        self.gfx().detach();
+    }
+
+    pub fn resize(&self, size: (u32, u32)) {
+        self.gfx().resize(size);
+    }
+
+    /// `frame` to draw (`None`: the previous picture again) as `mode`, handed to the drawing
+    /// thread.
+    pub fn show(&self, frame: Option<RgbImage>, mode: DisplayMode, warp: Warp) {
+        let (lock, wake) = &*self.slot;
+        let mut slot = lock.lock().unwrap_or_else(|e| e.into_inner());
+        // a picture not drawn yet is kept when the new job only redraws
+        let frame = frame.or_else(|| slot.job.take().and_then(|job| job.frame));
+        slot.job = Some(Job { frame, mode, warp });
+        wake.notify_one();
     }
 }
