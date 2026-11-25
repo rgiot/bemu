@@ -71,6 +71,8 @@ pub fn spawn(config: Config, sd: PathBuf, state: PathBuf, input: Arc<Input>) -> 
 
 struct Runner {
     machine: Machine,
+    /// Reports published, to log one in a few.
+    reports: u32,
     /// What a phone too slow gives up.
     governor: Governor,
     /// Frames run, for the skipping (one in two drawn).
@@ -93,6 +95,7 @@ impl Runner {
     fn new(machine: Machine, input: Arc<Input>, state: PathBuf) -> Self {
         let mut runner = Self {
             machine,
+            reports: 0,
             governor: Governor::default(),
             frames: 0,
             state,
@@ -317,6 +320,10 @@ impl Runner {
                 "{}\nDisplay requested: {} | frame skipping: {}\nSound: {}\n{}\nDraw submission is CPU time, not GPU execution time.",
                 self.gfx.diagnostics(), self.machine.config.display, self.governor.skipping(), sound, performance
             );
+            self.reports += 1;
+            if self.reports % 5 == 1 {
+                log::info!("perf: display={} skipping={} | {}", self.machine.config.display, self.governor.skipping(), performance.replace('\n', " | "));
+            }
             match self.input.diagnostics.lock() {
                 Ok(mut diagnostics) => *diagnostics = report,
                 Err(error) => log::error!("cannot update diagnostics: {error}"),

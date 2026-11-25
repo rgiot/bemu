@@ -78,7 +78,7 @@ make debug
 ```
 
 This builds the APK with an optimized Rust core, installs it as `org.bemu.droid.debug` alongside the release app,
-launches it and streams its logcat output until Ctrl-C. It has separate settings, saved state and app-owned files;
+launches it and streams its logcat output until Ctrl-C.  Every 10 s it logs a `perf:` line (frames/s, emulation and draw ms). `make profile` records 15 s of the running app with simpleperf into profile.txt. It has separate settings, saved state and app-owned files;
 load the same workload in the debug app when comparing performance. It does not uninstall or replace the release.
 To save the stream, run `make debug 2>&1 | tee bemu-debug.log` and stop it with Ctrl-C. Logs can contain information
 about the device and files opened; review them before sharing.

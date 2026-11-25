@@ -1,4 +1,4 @@
-.PHONY: setup debug
+.PHONY: setup debug profile
 
 ADB ?= $(firstword $(wildcard $(ANDROID_HOME)/platform-tools/adb $(ANDROID_SDK_ROOT)/platform-tools/adb $(HOME)/Library/Android/sdk/platform-tools/adb $(HOME)/Android/Sdk/platform-tools/adb /opt/homebrew/bin/adb /usr/local/bin/adb) adb)
 GRADLEW ?= ./gradlew
@@ -35,3 +35,15 @@ debug:
 		case "$$pid" in ''|*[!0-9]*) echo "App is not running" >&2; exit 1;; esac; \
 		echo "Streaming app logcat (PID $$pid); press Ctrl-C to stop."; \
 		"$(ADB)" logcat --pid="$$pid" -v threadtime
+# Records the running debug app with simpleperf (start it with `make debug`, unlock the phone and
+# run the demo to measure first); the report is profile.txt, the raw data profile.data.
+PROFILE_SECONDS ?= 15
+SYMBOLS := rust/target/android-symbols/$(BEMU_ABIS)
+SIMPLEPERF := $(lastword $(sort $(wildcard $(SDK_ROOT)/ndk/*/simpleperf)))
+
+profile:
+	@command -v "$(ADB)" >/dev/null || { echo "adb not found; set ADB" >&2; exit 1; }
+	"$(ADB)" shell simpleperf record --app "$(DEBUG_PACKAGE)" -g -f 1000 --duration $(PROFILE_SECONDS) -o /data/local/tmp/bemu.data
+	"$(ADB)" pull /data/local/tmp/bemu.data profile.data
+	"$(SIMPLEPERF)/bin/darwin/x86_64/simpleperf" report -i profile.data --symfs "$(SYMBOLS)" --sort comm,dso,symbol -n > profile.txt
+	@head -40 profile.txt

@@ -8,3 +8,5 @@ app/src/main/jniLibs/
 rust/target/
 # copied by the copyLicences task from the repository's root
 app/src/main/assets/
+profile.data
+profile.txt
