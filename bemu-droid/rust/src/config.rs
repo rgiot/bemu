@@ -79,6 +79,18 @@ impl Config {
         self.model.parse::<CpcModel>()
     }
 
+    /// Settings that determine the motherboard, its ROMs and expansions.
+    pub fn requires_restart(&self, other: &Self) -> bool {
+        self.model != other.model
+            || self.crtc != other.crtc
+            || self.language != other.language
+            || self.m4 != other.m4
+            || self.m4_wifi != other.m4_wifi
+            || self.rulezcharge != other.rulezcharge
+            || self.unidos != other.unidos
+            || self.playcity != other.playcity
+    }
+
     /// The machine, `model` replacing the configured one (a cartridge needs a CPC+), with its
     /// expansions and ROMs; `sd`: the M4's SD card folder.
     pub fn build(&self, model: Option<CpcModel>, sd: &std::path::Path) -> Result<Motherboard, String> {
@@ -164,6 +176,33 @@ mod tests {
         assert!(mb.upper_rom(5).is_some(), "RulezCharge");
         assert!(mb.upper_rom(1).is_some(), "UniDOS's M4 node");
         assert_eq!(amsrust::autorun::boot_seconds(&mb), amsrust::autorun::AUTORUN_EXPANDED_AT_SECONDS);
+    }
+
+    #[test]
+    fn only_motherboard_settings_require_restart() {
+        let config = Config::default();
+        let live = [
+            Config { display: "raw".into(), ..config.clone() },
+            Config { curvature: 0.0, ..config.clone() },
+            Config { audio: false, ..config.clone() },
+            Config { autorun: false, ..config.clone() },
+        ];
+        let hardware = [
+            Config { model: "464".into(), ..config.clone() },
+            Config { crtc: Some(1), ..config.clone() },
+            Config { language: "fr".into(), ..config.clone() },
+            Config { m4: false, ..config.clone() },
+            Config { m4_wifi: false, ..config.clone() },
+            Config { rulezcharge: false, ..config.clone() },
+            Config { unidos: false, ..config.clone() },
+            Config { playcity: true, ..config.clone() },
+        ];
+        for changed in live {
+            assert!(!config.requires_restart(&changed), "{changed:?}");
+        }
+        for changed in hardware {
+            assert!(config.requires_restart(&changed), "{changed:?}");
+        }
     }
 
     #[test]

@@ -43,6 +43,24 @@ class SettingsTest {
     }
 
     @Test
+    fun onlyHardwareAndRomChangesRequireRestart() {
+        val settings = Settings()
+        val live = listOf(
+            settings.copy(ctm = false), settings.copy(audio = false),
+            settings.copy(autorun = false), settings.copy(vibrate = false),
+            settings.copy(languageChoice = "en"),
+        )
+        val hardware = listOf(
+            settings.copy(model = "464"), settings.copy(languageChoice = "fr"),
+            settings.copy(m4 = false), settings.copy(m4Wifi = false),
+            settings.copy(rulezcharge = false), settings.copy(unidos = false),
+            settings.copy(playcity = true),
+        )
+        live.forEach { assertEquals(false, settings.requiresRestart(it, Locale.US)) }
+        hardware.forEach { assertEquals(true, settings.requiresRestart(it, Locale.US)) }
+    }
+
+    @Test
     fun theSettingsAreSavedAndReadBack() {
         val s = Settings(model = "464", languageChoice = "fr", ctm = false, playcity = true, vibrate = false)
         assertEquals(s, Settings.fromPrefsJson(s.toPrefsJson()))

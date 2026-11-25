@@ -49,6 +49,8 @@ bemu-droid/
   emulation and draw rates, and average CPU-side emulation, draw submission and pacing times. Let it run for a few
   seconds, then use Copy to share the measurements. Draw attempts may not result in a presented frame, and draw
   submission time is CPU-side and does not measure GPU execution time.
+- **Live settings**: changing the monitor, sound, autorun, or touch vibration preserves the running CPC. Changing
+  the model, language, or expansion settings restarts it. Autorun changes apply the next time a medium is started.
 
 ## Building
 

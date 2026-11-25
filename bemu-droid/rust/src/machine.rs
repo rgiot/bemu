@@ -134,8 +134,10 @@ impl Machine {
 
     /// The sound wanted (none: silent).
     pub fn set_audio(&mut self, audio: Option<AudioConfig>) {
-        self.audio = audio;
-        self.motherboard.set_audio_output(audio);
+        if self.audio != audio {
+            self.audio = audio;
+            self.motherboard.set_audio_output(audio);
+        }
     }
 
     pub fn display(&self) -> (DisplayMode, Warp) {
@@ -143,12 +145,16 @@ impl Machine {
         (mode, mode.warp(self.config.curvature()))
     }
 
-    /// New settings: the machine switched off and on again with them, its medium in it.
+    /// Apply live settings without disturbing the machine; hardware changes restart it.
     pub fn configure(&mut self, config: Config) -> Result<(), String> {
+        config.display()?;
+        if !self.config.requires_restart(&config) {
+            self.config = config;
+            return Ok(());
+        }
         let old = std::mem::replace(&mut self.config, config);
         if let Err(e) = self.power_on() {
             self.config = old;
-            self.power_on()?;
             return Err(e);
         }
         Ok(())
@@ -411,6 +417,53 @@ mod tests {
         let matrix = machine.motherboard.keyboard_mut();
         assert!(!matrix.is_pressed(amsrust::keyboard::CpcKey::A));
         assert!(!matrix.is_pressed(amsrust::keyboard::CpcKey::Joy0Up));
+    }
+
+    #[test]
+    fn live_settings_preserve_machine_and_failed_changes_do_not_reset_it() {
+        let mut machine = Machine::new(Config::default(), sd()).unwrap();
+        machine.load("game.dsk", game_disc()).unwrap();
+        machine.run_frame(&Input::default());
+        machine.motherboard.write_bank_byte(1, 0x123, 0x99);
+        let ticks = machine.motherboard.t_state_counter().value();
+        let pc = machine.motherboard.pc();
+        assert!(machine.typing());
+        let live = Config {
+            display: "raw".to_owned(),
+            curvature: 0.0,
+            autorun: false,
+            audio: false,
+            ..machine.config.clone()
+        };
+        machine.configure(live.clone()).unwrap();
+        assert_eq!(machine.config, live);
+        assert!(machine.display().0.is_raw());
+        assert_eq!(machine.motherboard.t_state_counter().value(), ticks);
+        assert_eq!(machine.motherboard.pc(), pc);
+        assert_eq!(machine.motherboard.read_bank_byte(1, 0x123), Some(0x99));
+        assert!(machine.typing());
+        assert!(machine.motherboard.fdc().image(FdcDrive::A).is_some());
+
+        let invalid_display = Config { display: "invalid".to_owned(), ..live.clone() };
+        assert!(machine.configure(invalid_display).is_err());
+        let invalid_hardware = Config { model: "invalid".to_owned(), ..live.clone() };
+        assert!(machine.configure(invalid_hardware).is_err());
+        assert_eq!(machine.config, live);
+        assert_eq!(machine.motherboard.t_state_counter().value(), ticks);
+        assert_eq!(machine.motherboard.pc(), pc);
+        assert_eq!(machine.motherboard.read_bank_byte(1, 0x123), Some(0x99));
+        assert!(machine.typing());
+    }
+
+    #[test]
+    fn hardware_settings_restart_the_machine() {
+        let mut machine = Machine::new(Config::default(), sd()).unwrap();
+        machine.run_frame(&Input::default());
+        machine.motherboard.write_bank_byte(1, 0x123, 0x99);
+        let changed = Config { m4: false, ..machine.config.clone() };
+        machine.configure(changed).unwrap();
+        assert!(!machine.motherboard.has_expansion::<amsrust::m4::M4Board>());
+        assert_ne!(machine.motherboard.read_bank_byte(1, 0x123), Some(0x99));
     }
 
     #[test]

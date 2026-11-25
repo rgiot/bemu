@@ -27,6 +27,12 @@ data class Settings(
     /** A short vibration when a key, the stick or a fire button is touched. */
     val vibrate: Boolean = true,
 ) {
+    /** Hardware and ROM changes require rebuilding the CPC. */
+    fun requiresRestart(other: Settings, locale: Locale = phoneLocale()): Boolean =
+        model != other.model || language(locale) != other.language(locale) ||
+            m4 != other.m4 || m4Wifi != other.m4Wifi || rulezcharge != other.rulezcharge ||
+            unidos != other.unidos || playcity != other.playcity
+
     /** The CPC's language: the one chosen, or the phone's ([locale]) with "auto". */
     fun language(locale: Locale = phoneLocale()): String =
         if (languageChoice == AUTO) languageFor(locale) else languageChoice

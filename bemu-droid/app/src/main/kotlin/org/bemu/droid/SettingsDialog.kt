@@ -21,13 +21,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** The settings; applying them switches the machine off and on with them. */
+/** The settings; hardware changes restart the machine. */
 @Composable
 fun SettingsDialog(initial: Settings, onApply: (Settings) -> Unit, onLicences: () -> Unit, onDiagnostics: () -> Unit, onDismiss: () -> Unit) {
     var s by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = { onApply(s) }) { Text("Apply (resets the CPC)") } },
+        confirmButton = {
+            TextButton(onClick = { onApply(s) }) {
+                Text(if (s.requiresRestart(initial)) "Apply (resets the CPC)" else "Apply")
+            }
+        },
         dismissButton = {
             Row {
                 TextButton(onClick = onLicences) { Text("Licences") }

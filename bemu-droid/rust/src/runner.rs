@@ -216,9 +216,14 @@ impl Runner {
                 self.reset_performance();
             }
             Command::Configure(config, reply) => {
-                let _ = reply.send(self.machine.configure(config));
-                self.update_audio();
-                self.reset_performance();
+                let result = self.machine.configure(config);
+                if result.is_ok() {
+                    self.update_audio();
+                    self.next_frame = Instant::now();
+                    self.governor.reset();
+                    self.reset_performance();
+                }
+                let _ = reply.send(result);
             }
             Command::KeepCrt => {
                 self.governor.crt_droppable = false;
