@@ -113,8 +113,11 @@ impl Runner {
         runner
     }
 
+    // Whether the machine is shown: the window is drawn in, the app not in the background. The
+    // surface's state, read without the GPU's mutex (its draw runs on its own thread): the loop
+    // must not wait on a slow GPU to run the emulation, or to feed the governor its busy time.
     fn running(&self) -> bool {
-        self.gfx.attached() && !self.paused
+        self.window.is_some() && !self.paused
     }
 
     fn reset_performance(&mut self) {
@@ -270,7 +273,9 @@ impl Runner {
             self.gfx.show(picture, mode, warp);
         }
         let drawing = if attempted_draw { draw_start.elapsed() } else { Duration::ZERO };
-        let crt = !mode.is_raw() && self.gfx.has_crt();
+        // The CRT's capability, read from the flag set at attach time: not a lock on the GPU, which
+        // the render thread may hold during its draw.
+        let crt = !mode.is_raw() && self.input.crt.load(std::sync::atomic::Ordering::Relaxed);
         let changed = match self.governor.frame(start.elapsed(), crt) {
             Decision::Keep => false,
             Decision::DropCrt => {
