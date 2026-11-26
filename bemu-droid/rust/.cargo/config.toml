@@ -5,3 +5,11 @@ CFLAGS_aarch64_linux_android = "-DPTHREAD_EXPLICIT_SCHED=1 -Dpthread_attr_setinh
 CFLAGS_armv7_linux_androideabi = "-DPTHREAD_EXPLICIT_SCHED=1 -Dpthread_attr_setinheritsched(a,b)=0"
 CFLAGS_x86_64_linux_android = "-DPTHREAD_EXPLICIT_SCHED=1 -Dpthread_attr_setinheritsched(a,b)=0"
 CFLAGS_i686_linux_android = "-DPTHREAD_EXPLICIT_SCHED=1 -Dpthread_attr_setinheritsched(a,b)=0"
+
+# Targets explicitly my Samsung Galaxy S23
+[target.aarch64-linux-android]
+rustflags = [
+   # "-C", "target-cpu=armv9-a",
+    "-C", "target-feature=+neon,+crc,+crypto,+dotprod,+fp16,+lse,+ras,+rcpc,+rdm",
+    "-C", "llvm-args=-enable-dfa-jump-thread",
+]

@@ -42,8 +42,11 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 # CI saves the matching symbols before stripping the library packaged in the APK.
-debug = 1
-strip = false
+#debug = 1
+#strip = false
+debug = 0
+strip = true
+overflow-checks = false
 
 [profile.dev]
 # the emulator is too slow unoptimised to be usable on a phone
